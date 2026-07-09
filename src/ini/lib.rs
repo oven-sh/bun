@@ -229,7 +229,7 @@ mod draft {
     use bun_ast::E::Rope;
     use bun_ast::{E, Expr, ExprData};
     use bun_ast::{IntoStr, Loc, Log, Source};
-    use bun_collections::{ArrayHashMap, VecExt};
+    use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
     use bun_core::ZStr;
     use bun_core::{Global, Output};
     use bun_dotenv::Loader as DotEnvLoader;
@@ -1274,6 +1274,10 @@ mod draft {
         // so we need to collect them as we go for the final registry map
         // to be created at the end.
         let mut configs: Vec<ConfigItem> = Vec::new();
+        // Pre-`.npmrc` credentials per registry, so re-resolving over the growing
+        // `configs` restores what bunfig/the registry URL supplied rather than
+        // wiping it.
+        let mut baselines = Baselines::default();
 
         for &npmrc_path in npmrc_paths {
             let source = match bun_ast::source_from_file(
@@ -1295,7 +1299,15 @@ mod draft {
             };
             // `source.contents` is owned; drops at end of loop iteration.
 
-            match load_npmrc(install, env, npmrc_path, &mut log, &source, &mut configs) {
+            match load_npmrc_with_baselines(
+                install,
+                env,
+                npmrc_path,
+                &mut log,
+                &source,
+                &mut configs,
+                &mut baselines,
+            ) {
                 Ok(()) => {}
                 Err(AllocError) => bun_core::out_of_memory(),
             }
@@ -1319,6 +1331,309 @@ mod draft {
         }
     }
 
+    /// npm's "nerf dart" match: an `.npmrc` config path applies to a registry
+    /// path when it is equal to it, or is a path-*segment* ancestor of it.
+    /// An empty or `/` config path is the host root and matches everything.
+    fn path_is_ancestor(conf: &[u8], reg: &[u8]) -> bool {
+        let conf = bun_core::without_trailing_slash(conf);
+        let reg = bun_core::without_trailing_slash(reg);
+
+        if conf.is_empty() || conf == b"/" {
+            return true;
+        }
+        if conf == reg {
+            return true;
+        }
+        reg.len() > conf.len()
+            && bun_core::strings::starts_with(reg, conf)
+            && reg[conf.len()] == b'/'
+    }
+
+    /// How specific an `.npmrc` config path is: `(path length, trailing slash)`.
+    /// npm checks `//host/a/` before `//host/a`, so the trailing slash is part of the
+    /// key and breaks the tie above its unslashed twin. The host root is `(0, false)`.
+    fn path_match_depth(conf_item: &ConfigItem, conf_pathname: &[u8]) -> Depth {
+        let conf = bun_core::without_trailing_slash(conf_pathname);
+        let len = if conf == b"/" { 0 } else { conf.len() };
+        // `URL::parse` reports `/` for both `//host` and `//host/`, so the trailing
+        // slash has to come from the raw key.
+        let trailing_slash = conf_item.registry_url.last() == Some(&b'/');
+        (len, trailing_slash)
+    }
+
+    /// A registry's `(host, hostname, pathname)`, as parsed from its URL.
+    type RegistryParts<'a> = (&'a [u8], &'a [u8], &'a [u8]);
+
+    /// How specific a matching `.npmrc` config path is. Only ever compared; deepest wins.
+    type Depth = (usize, bool);
+
+    /// `Some(depth)` when this `.npmrc` config item applies to the registry.
+    fn conf_item_match_depth(conf_item: &ConfigItem, reg: RegistryParts<'_>) -> Option<Depth> {
+        let (host, hostname, pathname) = reg;
+        let conf_item_url = URL::parse(&conf_item.registry_url);
+
+        if bun_core::without_trailing_slash(host)
+            != bun_core::without_trailing_slash(conf_item_url.host)
+        {
+            return None;
+        }
+        if !conf_item_url.hostname.is_empty()
+            && bun_core::without_trailing_slash(hostname)
+                != bun_core::without_trailing_slash(conf_item_url.hostname)
+        {
+            return None;
+        }
+
+        path_is_ancestor(conf_item_url.pathname, pathname)
+            .then(|| path_match_depth(conf_item, conf_item_url.pathname))
+    }
+
+    /// The single credential mechanism npm's `Auth` constructor reads from one config
+    /// path: `_authToken`, else `_auth`, else `username` + `_password`. A precedence
+    /// chain, not last-write-wins, so the order of the lines in the file is irrelevant.
+    #[derive(Clone, Copy)]
+    enum AuthMechanism {
+        Token,
+        Auth,
+        UserPass,
+    }
+
+    /// npm tests each value for truthiness, so an empty one (`_authToken=`) supplies
+    /// nothing. An unset `${VAR}` stays literal in both, and is not empty.
+    fn auth_mechanism(
+        configs: &[ConfigItem],
+        reg: RegistryParts<'_>,
+        depth: Depth,
+    ) -> Option<AuthMechanism> {
+        let mut auth = false;
+        let mut username = false;
+        let mut password = false;
+        for conf_item in configs {
+            if conf_item.value.is_empty() || conf_item_match_depth(conf_item, reg) != Some(depth) {
+                continue;
+            }
+            match conf_item.optname {
+                ConfigOpt::_AuthToken => return Some(AuthMechanism::Token),
+                ConfigOpt::_Auth => auth = true,
+                ConfigOpt::Username => username = true,
+                ConfigOpt::_Password => password = true,
+                ConfigOpt::Certfile | ConfigOpt::Keyfile | ConfigOpt::Email => {}
+            }
+        }
+        if auth {
+            return Some(AuthMechanism::Auth);
+        }
+        (username && password).then_some(AuthMechanism::UserPass)
+    }
+
+    /// Where a registry's credentials come from once `.npmrc` has been resolved.
+    #[derive(Clone, Copy)]
+    enum CredentialSource {
+        /// npm's winning `hasAuth` path; only that path's winning mechanism is applied.
+        /// The baseline credentials are restored first, so a `bunfig.toml` token still
+        /// beats an `_auth`/`username`+`_password` from `.npmrc` downstream.
+        Auth(Depth, AuthMechanism),
+        /// No path supplies auth, so the deepest path with any credential value layers
+        /// over `bunfig.toml`'s credentials — Bun's second credential layer, which npm
+        /// does not have.
+        Fallback(Depth),
+    }
+
+    impl CredentialSource {
+        fn depth(self) -> Depth {
+            match self {
+                Self::Auth(depth, _) | Self::Fallback(depth) => depth,
+            }
+        }
+    }
+
+    /// Whether the winning path applies this credential line.
+    fn source_reads(conf_item: &ConfigItem, source: CredentialSource) -> bool {
+        match source {
+            CredentialSource::Fallback(_) => true,
+            CredentialSource::Auth(_, AuthMechanism::Token) => {
+                matches!(conf_item.optname, ConfigOpt::_AuthToken)
+            }
+            CredentialSource::Auth(_, AuthMechanism::Auth) => {
+                matches!(conf_item.optname, ConfigOpt::_Auth)
+            }
+            CredentialSource::Auth(_, AuthMechanism::UserPass) => {
+                matches!(
+                    conf_item.optname,
+                    ConfigOpt::Username | ConfigOpt::_Password
+                )
+            }
+        }
+    }
+
+    /// npm reads credentials from exactly one `.npmrc` path: the deepest ancestor of
+    /// the registry path that supplies auth. Order in the file is irrelevant.
+    fn auth_match_depth(configs: &[ConfigItem], reg: RegistryParts<'_>) -> Option<Depth> {
+        let mut best: Option<Depth> = None;
+        for conf_item in configs {
+            let Some(depth) = conf_item_match_depth(conf_item, reg) else {
+                continue;
+            };
+            if best.is_some_and(|best| best >= depth) {
+                continue;
+            }
+            if auth_mechanism(configs, reg, depth).is_some() {
+                best = Some(depth);
+            }
+        }
+        best
+    }
+
+    /// Bun layers a half credential (a lone `username`) over `bunfig.toml`'s, which npm
+    /// has no equivalent for. That layering is exact-path only: an ancestor's half pair
+    /// must not rebind a deeper registry's stored secret, and npm sends nothing for it.
+    fn credential_fallback_depth(configs: &[ConfigItem], reg: RegistryParts<'_>) -> Option<Depth> {
+        configs
+            .iter()
+            .filter(|conf_item| !matches!(conf_item.optname, ConfigOpt::Email))
+            .filter(|conf_item| !conf_item.value.is_empty())
+            .filter(|conf_item| conf_item_matches_exactly(conf_item, reg))
+            .filter_map(|conf_item| conf_item_match_depth(conf_item, reg))
+            .max()
+    }
+
+    /// The `.npmrc` path whose credential lines are applied to `reg`: npm's winning
+    /// `hasAuth` ancestor when one exists, otherwise `reg`'s own path if it declares a
+    /// partial credential to layer over `bunfig.toml`'s.
+    fn credential_source(
+        configs: &[ConfigItem],
+        reg: RegistryParts<'_>,
+    ) -> Option<CredentialSource> {
+        if let Some(depth) = auth_match_depth(configs, reg) {
+            return auth_mechanism(configs, reg, depth)
+                .map(|mechanism| CredentialSource::Auth(depth, mechanism));
+        }
+        credential_fallback_depth(configs, reg).map(CredentialSource::Fallback)
+    }
+
+    /// `email` is not a credential (npm's `getAuth` ignores it), so it resolves to its
+    /// own deepest matching path.
+    fn email_match_depth(configs: &[ConfigItem], reg: RegistryParts<'_>) -> Option<Depth> {
+        configs
+            .iter()
+            .filter(|conf_item| matches!(conf_item.optname, ConfigOpt::Email))
+            .filter(|conf_item| !conf_item.value.is_empty())
+            .filter_map(|conf_item| conf_item_match_depth(conf_item, reg))
+            .max()
+    }
+
+    /// The depth this config item must match at to be applied to `reg`.
+    fn applied_depth(
+        conf_item: &ConfigItem,
+        source: Option<CredentialSource>,
+        email_depth: Option<Depth>,
+    ) -> Option<Depth> {
+        if matches!(conf_item.optname, ConfigOpt::Email) {
+            email_depth
+        } else {
+            source.map(CredentialSource::depth)
+        }
+    }
+
+    /// Whether this `.npmrc` config path is the registry's own path, rather than a
+    /// proper ancestor of it. npm walks up ancestors silently, so diagnostics that
+    /// point at a config line must only fire when the line names the registry itself.
+    fn conf_item_matches_exactly(conf_item: &ConfigItem, reg: RegistryParts<'_>) -> bool {
+        let (_, _, pathname) = reg;
+        let conf_item_url = URL::parse(&conf_item.registry_url);
+        conf_item_match_depth(conf_item, reg).is_some()
+            && bun_core::without_trailing_slash(pathname)
+                == bun_core::without_trailing_slash(conf_item_url.pathname)
+    }
+
+    /// Pre-`.npmrc` credentials for a registry, from `bunfig.toml` or URL userinfo.
+    /// The resolution re-runs over the accumulating `configs` once per `.npmrc` file,
+    /// so the fields it owns are restored to this baseline, never blanket-cleared.
+    #[derive(Default)]
+    struct RegistryBaseline {
+        token: Box<[u8]>,
+        username: Box<[u8]>,
+        password: Box<[u8]>,
+        email: Box<[u8]>,
+    }
+
+    /// Invalidated whenever the registry itself is replaced (a later `registry=` or
+    /// `@scope:registry=` line), because the replacement brings its own pre-`.npmrc`
+    /// credentials.
+    #[derive(Default)]
+    struct Baselines {
+        default: Option<RegistryBaseline>,
+        scopes: StringArrayHashMap<RegistryBaseline>,
+    }
+
+    impl RegistryBaseline {
+        fn snapshot(v: &NpmRegistry) -> Self {
+            Self {
+                token: v.token.clone(),
+                username: v.username.clone(),
+                password: v.password.clone(),
+                email: v.email.clone(),
+            }
+        }
+    }
+
+    /// Reset the fields the resolution owns before the winning path is applied.
+    fn restore_baseline(
+        v: &mut NpmRegistry,
+        baseline: &RegistryBaseline,
+        source: Option<CredentialSource>,
+        email_depth: Option<Depth>,
+    ) {
+        match source {
+            None => {}
+            Some(_) => {
+                v.token = baseline.token.clone();
+                v.username = baseline.username.clone();
+                v.password = baseline.password.clone();
+            }
+        }
+        if email_depth.is_some() {
+            v.email = baseline.email.clone();
+        }
+    }
+
+    fn apply_conf_item(
+        v: &mut NpmRegistry,
+        conf_item: &ConfigItem,
+        log: &mut Log,
+        source: &Source,
+    ) -> OOM<()> {
+        match conf_item.optname {
+            ConfigOpt::_AuthToken => {
+                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                    v.token = x;
+                }
+            }
+            ConfigOpt::Username => {
+                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                    v.username = x;
+                }
+            }
+            ConfigOpt::_Password => {
+                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                    v.password = x;
+                }
+            }
+            ConfigOpt::_Auth => {
+                handle_auth(v, conf_item, log, source)?;
+            }
+            ConfigOpt::Email => {
+                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                    v.email = x;
+                }
+            }
+            ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
+        }
+        Ok(())
+    }
+
+    /// Single-file entry point: nothing has been resolved yet, so the baselines
+    /// start empty and are discarded on return.
     pub fn load_npmrc(
         install: &mut BunInstall,
         env: &mut DotEnvLoader<'_>,
@@ -1326,6 +1641,27 @@ mod draft {
         log: &mut Log,
         source: &Source,
         configs: &mut Vec<ConfigItem>,
+    ) -> OOM<()> {
+        let mut baselines = Baselines::default();
+        load_npmrc_with_baselines(
+            install,
+            env,
+            npmrc_path,
+            log,
+            source,
+            configs,
+            &mut baselines,
+        )
+    }
+
+    fn load_npmrc_with_baselines(
+        install: &mut BunInstall,
+        env: &mut DotEnvLoader<'_>,
+        npmrc_path: &ZStr,
+        log: &mut Log,
+        source: &Source,
+        configs: &mut Vec<ConfigItem>,
+        baselines: &mut Baselines,
     ) -> OOM<()> {
         // TODO: lifetime — `Parser<'a>` ties `src` and `env: &'a mut DotEnvLoader<'a>`
         // to a single invariant `'a`; threading that through this fn signature poisons
@@ -1360,6 +1696,7 @@ mod draft {
                 };
                 install.default_registry =
                     Some(p.parse_registry_url_string_impl(&Box::<[u8]>::from(str_))?);
+                baselines.default = None;
             }
         }
 
@@ -1564,6 +1901,7 @@ mod draft {
             while let Some(val) = iter.next()? {
                 if let Some(result) = val.get() {
                     let registry = result.registry.dupe();
+                    baselines.scopes.swap_remove(&result.scope);
                     registry_map.scopes.put(&*result.scope, registry)?;
                 }
             }
@@ -1593,15 +1931,27 @@ mod draft {
             // `install.default_registry.url` would conflict with the loop below
             // mutating that same field. Copy the two fields we compare against so
             // the borrow ends before the `install.default_registry` mutation.
-            let (default_registry_host, default_registry_pathname): (Box<[u8]>, Box<[u8]>) = 'brk: {
+            let (default_registry_host, default_registry_hostname, default_registry_pathname): (
+                Box<[u8]>,
+                Box<[u8]>,
+                Box<[u8]>,
+            ) = 'brk: {
                 if let Some(dr) = &install.default_registry {
                     let u = URL::parse(&dr.url);
-                    break 'brk (Box::from(u.host), Box::from(u.pathname));
+                    break 'brk (
+                        Box::from(u.host),
+                        Box::from(u.hostname),
+                        Box::from(u.pathname),
+                    );
                 }
                 let u = URL::parse(
                     bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes(),
                 );
-                (Box::from(u.host), Box::from(u.pathname))
+                (
+                    Box::from(u.host),
+                    Box::from(u.hostname),
+                    Box::from(u.pathname),
+                )
             };
 
             // I don't like having to do this but we'll need a mapping of scope -> bun.URL
@@ -1637,6 +1987,12 @@ mod draft {
 
                 url_map
             };
+
+            let default_reg: RegistryParts<'_> = (
+                &default_registry_host,
+                &default_registry_hostname,
+                &default_registry_pathname,
+            );
 
             let mut iter = ConfigIterator {
                 config: out_obj,
@@ -1681,113 +2037,118 @@ mod draft {
                 }
             }
 
+            // An empty `_auth` never wins a depth, so it never reaches `handle_auth`.
+            // Diagnose it here, where every registry is visible. npm walks past ancestor
+            // matches silently, so only a line naming a registry exactly is diagnosed.
             for conf_item in configs.iter() {
-                let conf_item_url = URL::parse(&conf_item.registry_url);
-
-                if bun_core::without_trailing_slash(&default_registry_host)
-                    == bun_core::without_trailing_slash(conf_item_url.host)
-                    && bun_core::without_trailing_slash(&default_registry_pathname)
-                        == bun_core::without_trailing_slash(conf_item_url.pathname)
-                {
-                    // Apply config to default registry
-                    let v: &mut NpmRegistry = 'brk: {
-                        if let Some(r) = install.default_registry.as_mut() {
-                            break 'brk r;
-                        }
-                        install.default_registry = Some(NpmRegistry {
-                            password: Box::default(),
-                            token: Box::default(),
-                            username: Box::default(),
-                            url: Box::<[u8]>::from(
-                                bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL
-                                    .as_bytes(),
-                            ),
-                            email: Box::default(),
-                        });
-                        install.default_registry.as_mut().unwrap()
-                    };
-
-                    match conf_item.optname {
-                        ConfigOpt::_AuthToken => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.token = x;
-                            }
-                        }
-                        ConfigOpt::Username => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.username = x;
-                            }
-                        }
-                        ConfigOpt::_Password => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.password = x;
-                            }
-                        }
-                        ConfigOpt::_Auth => {
-                            handle_auth(v, conf_item, log, source)?;
-                        }
-                        ConfigOpt::Email => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.email = x;
-                            }
-                        }
-                        ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
-                    }
+                if !matches!(conf_item.optname, ConfigOpt::_Auth) || !conf_item.value.is_empty() {
+                    continue;
                 }
+                let names_a_registry = conf_item_matches_exactly(conf_item, default_reg)
+                    || url_map.values().iter().any(|url_bytes| {
+                        let url = URL::parse(url_bytes);
+                        conf_item_matches_exactly(conf_item, (url.host, url.hostname, url.pathname))
+                    });
+                if names_a_registry {
+                    log.add_error_opts(
+                        b"invalid _auth value, expected base64 encoded \"<username>:<password>\", received an empty string",
+                        bun_ast::AddErrorOptions {
+                            source: Some(source),
+                            loc: conf_item.loc,
+                            redact_sensitive_information: true,
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
 
-                // `keys()`/`values_mut()` on the same map alias; since
-                // `url_map` was filled in lockstep with `registry_map.scopes` (same
-                // ArrayHashMap insertion order), zip its values directly instead
-                // of looking each one up by key.
-                for (url_bytes, v) in url_map
-                    .values()
-                    .iter()
-                    .zip(registry_map.scopes.values_mut())
-                {
-                    let url = URL::parse(url_bytes);
+            // Each registry independently picks the deepest `.npmrc` path that matches
+            // it, then applies that path's winning credential mechanism — so neither a
+            // shallower line later in the file nor a lower-precedence mechanism on the
+            // same path can clobber it.
+            let default_source = credential_source(configs, default_reg);
+            let default_email_depth = email_match_depth(configs, default_reg);
 
-                    if bun_core::without_trailing_slash(url.host)
-                        == bun_core::without_trailing_slash(conf_item_url.host)
-                        && bun_core::without_trailing_slash(url.pathname)
-                            == bun_core::without_trailing_slash(conf_item_url.pathname)
+            if default_source.is_some() || default_email_depth.is_some() {
+                // Apply config to default registry
+                let v: &mut NpmRegistry = 'brk: {
+                    if let Some(r) = install.default_registry.as_mut() {
+                        break 'brk r;
+                    }
+                    install.default_registry = Some(NpmRegistry {
+                        password: Box::default(),
+                        token: Box::default(),
+                        username: Box::default(),
+                        url: Box::<[u8]>::from(
+                            bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes(),
+                        ),
+                        email: Box::default(),
+                    });
+                    install.default_registry.as_mut().unwrap()
+                };
+
+                let baseline = baselines
+                    .default
+                    .get_or_insert_with(|| RegistryBaseline::snapshot(v));
+                restore_baseline(v, baseline, default_source, default_email_depth);
+
+                for conf_item in configs.iter() {
+                    let Some(depth) = conf_item_match_depth(conf_item, default_reg) else {
+                        continue;
+                    };
+                    if Some(depth) != applied_depth(conf_item, default_source, default_email_depth)
                     {
-                        if !conf_item_url.hostname.is_empty() {
-                            if bun_core::without_trailing_slash(url.hostname)
-                                != bun_core::without_trailing_slash(conf_item_url.hostname)
-                            {
-                                continue;
-                            }
-                        }
-                        // Apply config to scoped registry
-                        match conf_item.optname {
-                            ConfigOpt::_AuthToken => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.token = x;
-                                }
-                            }
-                            ConfigOpt::Username => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.username = x;
-                                }
-                            }
-                            ConfigOpt::_Password => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.password = x;
-                                }
-                            }
-                            ConfigOpt::_Auth => {
-                                handle_auth(v, conf_item, log, source)?;
-                            }
-                            ConfigOpt::Email => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.email = x;
-                                }
-                            }
-                            ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
-                        }
-                        // We have to keep going as it could match multiple scopes
                         continue;
                     }
+                    if !matches!(conf_item.optname, ConfigOpt::Email)
+                        && !default_source.is_some_and(|cred| source_reads(conf_item, cred))
+                    {
+                        continue;
+                    }
+                    apply_conf_item(v, conf_item, log, source)?;
+                }
+            }
+
+            // A config item can still apply to several distinct scopes, so resolve the
+            // deepest match per scope.
+            //
+            // `keys()`/`values_mut()` on the same map alias; since `url_map` was filled
+            // in lockstep with `registry_map.scopes` (same ArrayHashMap insertion
+            // order), zip its values directly instead of looking each one up by key.
+            for ((scope, url_bytes), v) in url_map
+                .keys()
+                .iter()
+                .zip(url_map.values().iter())
+                .zip(registry_map.scopes.values_mut())
+            {
+                let url = URL::parse(url_bytes);
+                let reg: RegistryParts<'_> = (url.host, url.hostname, url.pathname);
+                let cred_source = credential_source(configs, reg);
+                let email_depth = email_match_depth(configs, reg);
+
+                if cred_source.is_none() && email_depth.is_none() {
+                    continue;
+                }
+
+                if !baselines.scopes.contains_key(scope) {
+                    baselines.scopes.put(scope, RegistryBaseline::snapshot(v))?;
+                }
+                let baseline = baselines.scopes.get(scope).unwrap();
+                restore_baseline(v, baseline, cred_source, email_depth);
+
+                for conf_item in configs.iter() {
+                    let Some(depth) = conf_item_match_depth(conf_item, reg) else {
+                        continue;
+                    };
+                    if Some(depth) != applied_depth(conf_item, cred_source, email_depth) {
+                        continue;
+                    }
+                    if !matches!(conf_item.optname, ConfigOpt::Email)
+                        && !cred_source.is_some_and(|cred| source_reads(conf_item, cred))
+                    {
+                        continue;
+                    }
+                    apply_conf_item(v, conf_item, log, source)?;
                 }
             }
 
@@ -1929,16 +2290,10 @@ mod draft {
         log: &mut Log,
         source: &Source,
     ) -> OOM<()> {
+        // Empty `_auth` supplies no credentials. It is diagnosed in `load_npmrc`, where
+        // every registry is visible; reaching here means some other line at the same
+        // path won the depth, so stay silent rather than double-reporting.
         if conf_item.value.is_empty() {
-            log.add_error_opts(
-            b"invalid _auth value, expected base64 encoded \"<username>:<password>\", received an empty string",
-            bun_ast::AddErrorOptions {
-                source: Some(source),
-                loc: conf_item.loc,
-                redact_sensitive_information: true,
-                ..Default::default()
-            },
-        );
             return Ok(());
         }
         let decode_len = bun_base64::decode_len(&conf_item.value);

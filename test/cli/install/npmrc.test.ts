@@ -446,6 +446,48 @@ ${Object.keys(opts)
     },
   );
 
+  test("empty _auth in the home .npmrc is diagnosed against a registry from the project .npmrc", async () => {
+    using dir = tempDir("npmrc-empty-auth-two-files", {
+      "home/.npmrc": `//somehost.com/:_auth=\n`,
+      ".npmrc": `registry=http://somehost.com/\n`,
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+    });
+    const homeDir = join(String(dir), "home");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--dry-run"],
+      cwd: String(dir),
+      env: { ...env, HOME: homeDir, XDG_CONFIG_HOME: homeDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("received an empty string");
+    expect(exitCode).toBe(0);
+  });
+
+  test("empty _auth that only matches a registry's path ancestor is not diagnosed", async () => {
+    using dir = tempDir("npmrc-empty-auth-ancestor", {
+      "home/.npmrc": `//somehost.com/:_auth=\n`,
+      ".npmrc": `@myorg:registry=https://somehost.com/api/v4/packages/npm/\n`,
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+    });
+    const homeDir = join(String(dir), "home");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--dry-run"],
+      cwd: String(dir),
+      env: { ...env, HOME: homeDir, XDG_CONFIG_HOME: homeDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("received an empty string");
+    expect(exitCode).toBe(0);
+  });
+
   await makeTest([["email", "user@example.com"]], result => {
     expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
     expect(result.default_registry_email).toEqual("user@example.com");
@@ -492,6 +534,152 @@ registry=https://somehost.com/org1/npm/registry/
     expect(result.default_registry_url).toEqual("https://somehost.com/org1/npm/registry/");
     // Should be empty since there's no matching token for /org1/npm/registry/
     expect(result.default_registry_token).toBe("");
+  });
+
+  describe("default registry resolves auth by path-segment ancestor", () => {
+    // https://github.com/oven-sh/bun/issues/30311
+    test("host-root auth applies to a deep default registry", () => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/:_authToken=root
+`);
+      expect(result.default_registry_url).toEqual("https://somehost.com/org1/npm/registry/");
+      expect(result.default_registry_token).toBe("root");
+    });
+
+    test("mid-path ancestor auth applies to a deep default registry", () => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/org1/:_authToken=mid
+`);
+      expect(result.default_registry_token).toBe("mid");
+    });
+
+    test.each([
+      [
+        "shallow first",
+        `
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/:_authToken=root
+//somehost.com/org1/:_authToken=mid
+//somehost.com/org1/npm/registry/:_authToken=exact
+`,
+      ],
+      [
+        "deep first",
+        `
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/org1/npm/registry/:_authToken=exact
+//somehost.com/org1/:_authToken=mid
+//somehost.com/:_authToken=root
+`,
+      ],
+    ])("longest matching ancestor wins (%s)", (_name, ini) => {
+      expect(loadNpmrc(ini).default_registry_token).toBe("exact");
+    });
+
+    test.each([
+      ["trailing slash", "//somehost.com/api/v4/projects/12/:_authToken=attacker"],
+      ["no trailing slash", "//somehost.com/api/v4/projects/12:_authToken=attacker"],
+    ])("a path prefix that is not a segment ancestor never matches (%s)", (_name, line) => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/api/v4/projects/123/packages/npm/
+${line}
+`);
+      expect(result.default_registry_url).toEqual("https://somehost.com/api/v4/projects/123/packages/npm/");
+      expect(result.default_registry_token).toBe("");
+    });
+
+    test("host-root _auth applies to a deep default registry", () => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/:_auth=${Buffer.from("bilbo:verysecure").toString("base64")}
+`);
+      expect(result.default_registry_username).toBe("bilbo");
+      expect(result.default_registry_password).toBe("verysecure");
+    });
+
+    test("host-root username + _password apply to a deep default registry", () => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/:username=bilbo
+//somehost.com/:_password=${Buffer.from("verysecure").toString("base64")}
+`);
+      expect(result.default_registry_username).toBe("bilbo");
+      expect(result.default_registry_password).toBe("verysecure");
+    });
+
+    test("a deeper empty email does not clobber a shallower email", () => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/:email=bilbo@example.com
+//somehost.com/org1/:email=
+`);
+      expect(result.default_registry_email).toBe("bilbo@example.com");
+    });
+  });
+
+  describe("credentials that did not come from .npmrc survive resolution", () => {
+    test("an invalid _auth does not discard the registry URL's token", () => {
+      const result = loadNpmrc(`
+registry=https://:TOK@somehost.com/
+//somehost.com/:_auth=not-valid-base64
+`);
+      expect(result.default_registry_token).toBe("TOK");
+    });
+
+    test("an .npmrc username/_password does not discard the registry URL's token", () => {
+      const result = loadNpmrc(`
+registry=https://:TOK@somehost.com/
+//somehost.com/:username=gandalf
+//somehost.com/:_password=${Buffer.from("verysecure").toString("base64")}
+`);
+      expect(result.default_registry_token).toBe("TOK");
+      expect(result.default_registry_username).toBe("gandalf");
+      expect(result.default_registry_password).toBe("verysecure");
+    });
+  });
+
+  test("an empty _auth for an ancestor path of a registry is not an error", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("{}") });
+    const host = `127.0.0.1:${server.port}`;
+    using dir = tempDir("npmrc-empty-auth-ancestor-2", {
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+      ".npmrc": `@myorg:registry=http://${host}/deep/\n//${host}/:_auth=\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-save"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("received an empty string");
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
+
+  test("an empty _auth naming a registry's own path is still an error", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("{}") });
+    const host = `127.0.0.1:${server.port}`;
+    using dir = tempDir("npmrc-empty-auth-exact", {
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+      ".npmrc": `@myorg:registry=http://${host}/deep/\n//${host}/deep/:_auth=\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-save"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("received an empty string");
+    expect(exitCode).toBe(0);
   });
 });
 

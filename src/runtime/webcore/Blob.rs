@@ -7302,9 +7302,7 @@ pub trait FileCloser: Sized {
                 // `close_after_io` is only set by a successful
                 // `wait_for_readable`/`wait_for_writable`, so the IO loop is
                 // already initialized and `schedule` is infallible here.
-                if !io_request.scheduled
-                    && bun_io::IoRequestLoop::schedule(io_request).is_err()
-                {
+                if !io_request.scheduled && bun_io::IoRequestLoop::schedule(io_request).is_err() {
                     debug_assert!(false, "IoRequestLoop::schedule failed after init");
                 } else {
                     return true;

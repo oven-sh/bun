@@ -100,7 +100,9 @@ test("v8 heap snapshot labels Web Streams internal edges", async () => {
   expect(edges.WritableStreamDefaultController).toEqual(
     expect.arrayContaining(["stream", "underlyingSink", "writeAlgorithm", "abortController"]),
   );
-  expect(edges.WritableStreamDefaultWriter).toEqual(expect.arrayContaining(["stream", "closedPromise", "readyPromise"]));
+  expect(edges.WritableStreamDefaultWriter).toEqual(
+    expect.arrayContaining(["stream", "closedPromise", "readyPromise"]),
+  );
   expect(edges.TransformStream).toEqual(expect.arrayContaining(["readable", "writable", "controller"]));
   expect(edges.TransformStreamDefaultController).toEqual(
     expect.arrayContaining(["stream", "transformer", "transformAlgorithm"]),

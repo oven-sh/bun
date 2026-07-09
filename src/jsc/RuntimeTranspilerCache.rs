@@ -1035,7 +1035,7 @@ impl RuntimeTranspilerCache {
         }
         #[cfg(debug_assertions)]
         {
-            bun_core::scoped_log!(cache, "put() = {} bytes", output_code.latin1().len());
+            bun_core::scoped_log!(cache, "put() = {} bytes", output_code_bytes.len());
         }
     }
 }

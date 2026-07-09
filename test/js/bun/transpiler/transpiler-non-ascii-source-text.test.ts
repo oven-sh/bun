@@ -15,6 +15,7 @@ const raw = () => tag\`你好𐃘\\\\\`;
 const dyn = new Function('return "café";');
 
 console.log(JSON.stringify({
+  value: f(),
   fn: f.toString(),
   cls: Café.toString(),
   rx: rx.toString(),
@@ -22,11 +23,12 @@ console.log(JSON.stringify({
   dyn: dyn.toString(),
   emoji: (() => "👍").toString(),
 }));
+process.exit(0);
 `;
 
-async function run(file: string, cwd: string) {
+async function run(cmd: string[], cwd: string) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), file],
+    cmd,
     env: bunEnv,
     cwd,
     stdout: "pipe",
@@ -37,12 +39,21 @@ async function run(file: string, cwd: string) {
 }
 
 describe("runtime transpiler preserves non-ASCII source text", () => {
-  for (const ext of ["mjs", "cjs", "ts"] as const) {
-    test(`.${ext}`, async () => {
+  for (const [label, args] of [
+    [".mjs", ["entry.mjs"]],
+    [".cjs", ["entry.cjs"]],
+    [".ts", ["entry.ts"]],
+    [".mjs --hot", ["--hot", "entry.mjs"]],
+  ] as const) {
+    test(label, async () => {
+      const ext = args[args.length - 1].split(".").pop()!;
       using dir = tempDir("non-ascii-src", { [`entry.${ext}`]: fixture });
-      const { stdout, stderr, exitCode } = await run(`entry.${ext}`, String(dir));
+      const { stdout, stderr, exitCode } = await run([bunExe(), ...args], String(dir));
       expect(stderr).toBe("");
       const out = JSON.parse(stdout);
+
+      // Evaluated value — must be the real string, not mojibake
+      expect(out.value).toBe("café");
 
       // Function.prototype.toString — string literal preserved verbatim
       expect(out.fn).toContain('"café"');
@@ -77,7 +88,7 @@ describe("runtime transpiler preserves non-ASCII source text", () => {
     using dir = tempDir("non-ascii-rx", {
       "entry.mjs": `console.log(/π+/u.source);`,
     });
-    const { stdout, stderr, exitCode } = await run("entry.mjs", String(dir));
+    const { stdout, stderr, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
     expect(stderr).toBe("");
     expect(stdout).toBe("π+\n");
     expect(exitCode).toBe(0);
@@ -87,7 +98,7 @@ describe("runtime transpiler preserves non-ASCII source text", () => {
     using dir = tempDir("non-ascii-raw", {
       "entry.mjs": `console.log(String.raw\`你好\\n𐃘\`);`,
     });
-    const { stdout, stderr, exitCode } = await run("entry.mjs", String(dir));
+    const { stdout, stderr, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
     expect(stderr).toBe("");
     expect(stdout).toBe("你好\\n𐃘\n");
     expect(exitCode).toBe(0);

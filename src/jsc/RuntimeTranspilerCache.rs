@@ -1084,9 +1084,8 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             }
             debug_assert!(this.entry.is_none());
 
-            // Borrowed UTF-8 view: `to_file` reads `byte_slice()` + the encoding tag
-            // (marked 8-bit ZigString -> `is_utf8()` -> Encoding::UTF8), and
-            // `output_code_bytes` outlives the synchronous `to_file` call.
+            // UTF-8-tagged so `to_file` records Encoding::UTF8 (it then
+            // Box-copies into `OutputCode::Utf8`; see that fn's PERF note).
             let output_code = BunString::borrow_utf8(output_code_bytes);
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),

@@ -3785,6 +3785,18 @@ impl VirtualMachine {
                 ..Default::default()
             };
         }
+        // `ref_counted_string` wraps the bytes as a Latin-1 external string.
+        // The runtime transpiler now emits UTF-8, so non-ASCII output would be
+        // mojibaked; transcode it instead of interning on that (rare) path.
+        if !bun_core::strings::is_all_ascii(code) {
+            return ResolvedSource {
+                source_code: bun_core::String::clone_utf8(code),
+                specifier,
+                source_url: create_if_different(&specifier, source_url),
+                source_code_needs_deref: true,
+                ..Default::default()
+            };
+        }
         // Const-generic bool can't be `!ADD_DOUBLE_REF`, so branch.
         let source = if ADD_DOUBLE_REF {
             self.ref_counted_string::<false>(code, hash_)

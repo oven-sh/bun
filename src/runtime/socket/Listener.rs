@@ -234,33 +234,30 @@ impl Listener {
                         // `*mut Listener` and is removed in `do_stop`/`deinit`
                         // before the allocation is freed, so it is live here.
                         let existing: &Listener = unsafe { &*entry.ptr.cast::<Listener>() };
-                        if let Some(this_value) = existing.this_value.get().try_get() {
-                            // Write the new callbacks into the existing
-                            // listener's shared cell so every accepted socket
-                            // picks them up in place — same path as
-                            // `listener.reload()`.
-                            existing
-                                .handlers
-                                .copy_callbacks_from(global, &socket_config.handlers);
-                            let default_data = socket_config.default_data;
-                            existing.strong_data.with_mut(|s| {
-                                if default_data.is_empty() {
-                                    s.deinit();
-                                } else {
-                                    s.set(global, default_data);
-                                }
-                            });
-                            return Ok(this_value);
+                        let this_ref = existing.this_value.get();
+                        if this_ref.is_strong() {
+                            if let Some(this_value) = this_ref.try_get() {
+                                // Write the new callbacks into the existing
+                                // listener's shared cell so every accepted
+                                // socket picks them up in place — same path as
+                                // `listener.reload()`.
+                                existing
+                                    .handlers
+                                    .copy_callbacks_from(global, &socket_config.handlers);
+                                let default_data = socket_config.default_data;
+                                existing.strong_data.with_mut(|s| {
+                                    if default_data.is_empty() {
+                                        s.deinit();
+                                    } else {
+                                        s.set(global, default_data);
+                                    }
+                                });
+                                return Ok(this_value);
+                            }
                         }
-                        // `this_value` is gone ⇒ the previous listener's JS
-                        // wrapper was GC'd after an `unref()`. We can't mint
-                        // a second JS wrapper for the same `*mut Listener`
-                        // (two wrappers → double free on finalize), so close
-                        // its listen socket to release the port and fall
-                        // through to a fresh bind. `do_stop` also drops the
-                        // hot-map entry so the insert below won't collide.
-                        // Accepted connections on the old listener stay open
-                        // (force_close=false).
+                        // Weak (prev listener was `unref()`d) or Finalized:
+                        // a Weak JSValue may be GC-dead, so close the old
+                        // socket and fall through to a fresh bind instead.
                         Listener::do_stop(existing, false);
                     }
                 }

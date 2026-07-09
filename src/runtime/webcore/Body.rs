@@ -974,11 +974,7 @@ impl Value {
         locked.readable = webcore::readable_stream::Strong::init(readable, global_this);
 
         if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
-            on_readable_stream_available(
-                locked.task.unwrap(),
-                global_this,
-                locked.readable.get(global_this).unwrap(),
-            );
+            on_readable_stream_available(locked.task.unwrap(), global_this, readable);
         }
 
         // In text mode the returned stream emits strings, so it must not be

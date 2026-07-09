@@ -468,6 +468,15 @@ for (const { body, fn } of bodyTypes) {
         const out = (await Array.fromAsync(stream)).join("");
         expect(out).toBe("hello world 🫠");
       });
+      test("Bun's ReadableStream.text() on a fetch textStream() yields decoded text", async () => {
+        await using server = Bun.serve({
+          port: 0,
+          fetch: () => new Response(new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0xff, 0x62])),
+        });
+        const res = await fetch(server.url);
+        // The native-handle buffered fast path must not bypass the decode.
+        expect(await res.textStream().text()).toBe("a\ufffdb");
+      });
       test("streams an incoming request body server-side", async () => {
         const { promise, resolve, reject } = Promise.withResolvers<{
           chunks: string[];

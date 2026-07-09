@@ -110,6 +110,10 @@ JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const
 
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (exceedsStringLimit(toDecode.size())) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
     // Bun's simdutf-backed Buffer.toString('utf8') path: SIMD ASCII check,
     // external UTF-16 for non-ASCII, replacement chars for invalid sequences.
     // Small chunks avoid the FFI round-trip.

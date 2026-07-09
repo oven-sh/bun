@@ -876,6 +876,8 @@ JSValue tryUseReadableStreamBufferedFastPath(JSGlobalObject* globalObject, WebCo
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (stream->m_nativeTextMode)
+        return {};
     JSValue nativePtr = stream->nativePtrForJS();
     if (!nativePtr || !nativePtr.isCell())
         return {};

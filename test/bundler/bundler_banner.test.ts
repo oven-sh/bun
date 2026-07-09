@@ -100,6 +100,47 @@ module.exports = 1;`,
     },
   });
 
+  itBundled("banner/NonAsciiBannerTargetBun", {
+    banner: 'globalThis.BNR = "béta🚀";',
+    target: "bun",
+    files: {
+      "/a.js": `console.log(globalThis.BNR, globalThis.BNR.length);`,
+    },
+    onAfterBundle(api) {
+      const content = api.readFile("out.js");
+      expect(content).toStartWith("// @bun\n");
+      expect(content).toContain('globalThis.BNR = "béta🚀";');
+    },
+    run: { stdout: "béta🚀 6" },
+  });
+
+  itBundled("banner/NonAsciiIdentifierBannerTargetBun", {
+    banner: "globalThis.café = 42;",
+    target: "bun",
+    files: {
+      "/a.js": `console.log(globalThis.café);`,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("out.js")).toStartWith("// @bun\n");
+    },
+    run: { stdout: "42" },
+  });
+
+  itBundled("banner/NonAsciiBannerTargetBunImported", {
+    banner: 'globalThis.BNR = "béta🚀";',
+    target: "bun",
+    files: {
+      "/a.js": `console.log(globalThis.BNR, globalThis.BNR.length);`,
+    },
+    runtimeFiles: {
+      "/importer.js": `import "./out.js";`,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("out.js")).toStartWith("// @bun\n");
+    },
+    run: { file: "/importer.js", stdout: "béta🚀 6" },
+  });
+
   itBundled("banner/BannerWithESMAndTargetBun", {
     banner: "// Copyright 2024 Example Corp",
     format: "esm",

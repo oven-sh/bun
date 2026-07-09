@@ -2645,7 +2645,10 @@ fn transpile_source_code_inner(
                         _ => (core::ptr::null_mut(), 0),
                     };
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
-                        source_code: bun_core::String::clone_latin1(&source.contents),
+                        // `source.contents` may contain UTF-8 from banner/footer
+                        // that the printer never escaped; `clone_utf8`
+                        // fast-paths to Latin-1 when the input is all-ASCII.
+                        source_code: bun_core::String::clone_utf8(&source.contents),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         already_bundled: true,

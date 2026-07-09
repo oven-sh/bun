@@ -34,7 +34,7 @@
 #include "isBuiltinModule.h"
 #include "AsyncContextFrame.h"
 #include "ImportMetaObject.h"
-#include "PathInlines.h"
+#include "headers.h"
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
 
@@ -774,6 +774,10 @@ static WTF::ASCIILiteral loaderLabel(BunLoaderType loader)
         return "html"_s;
     case 19:
         return "yaml"_s;
+    case 20:
+        return "json5"_s;
+    case 21:
+        return "md"_s;
     default:
         return "js"_s;
     }
@@ -950,9 +954,10 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
             vm, builtinNames.pathPublicName(),
             pathJS);
         WTF::String importerString = importer->toWTFString(BunString::ZeroCopy);
+        JSC::JSValue importerJS = jsString(vm, importerString);
         paramsObject->putDirect(
             vm, builtinNames.importerPublicName(),
-            jsString(vm, importerString));
+            importerJS);
         bool isFileNamespace = namespaceWTFString.isEmpty() || namespaceWTFString == "file"_s;
         paramsObject->putDirect(
             vm, Identifier::fromString(vm, "namespace"_s),
@@ -962,14 +967,13 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
             jsNontrivialString(vm, importKindLabel(kind)));
         JSC::JSValue resolveDirValue = JSC::jsUndefined();
         if (isFileNamespace && !importerString.isEmpty()) {
-            size_t lastSep = importerString.reverseFind(PLATFORM_SEP);
+            EncodedJSValue encodedImporter = JSValue::encode(importerJS);
 #if OS(WINDOWS)
-            size_t lastSepFwd = importerString.reverseFind('/');
-            if (lastSepFwd != WTF::notFound && (lastSep == WTF::notFound || lastSepFwd > lastSep))
-                lastSep = lastSepFwd;
+            resolveDirValue = JSValue::decode(Bun__Path__dirname(globalObject, true, &encodedImporter, 1));
+#else
+            resolveDirValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedImporter, 1));
 #endif
-            if (lastSep != WTF::notFound && lastSep > 0)
-                resolveDirValue = jsString(vm, importerString.substring(0, lastSep));
+            RETURN_IF_EXCEPTION(scope, {});
         }
         paramsObject->putDirect(
             vm, Identifier::fromString(vm, "resolveDir"_s),

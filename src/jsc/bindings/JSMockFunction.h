@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/Strong.h>
 

@@ -5,8 +5,10 @@ FROM mysql:8.4
 # just `exec mysqld` (~2-3s instead of ~60s). The base image declares
 # `VOLUME /var/lib/mysql`, which discards build-time writes there, so
 # initialize into a sibling path and point mysqld at it via CMD; at runtime the
-# entrypoint sees `$DATADIR/mysql` exists and goes straight to exec. tzinfo
-# loading is skipped since no test uses MySQL's named-timezone tables.
+# entrypoint sees `$DATADIR/mysql` exists and goes straight to exec, so the
+# init-time MYSQL_* env vars below are build inputs only and runtime overrides
+# have no effect. tzinfo loading is skipped since no test uses MySQL's
+# named-timezone tables.
 ENV MYSQL_ALLOW_EMPTY_PASSWORD=yes \
     MYSQL_DATABASE=bun_sql_test \
     MYSQL_INITDB_SKIP_TZINFO=1

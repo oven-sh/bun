@@ -1,19 +1,18 @@
 services:
   # PostgreSQL Services
+  # These images bake a pre-initialized PGDATA (initdb + init scripts) into the
+  # image so cold container start is `exec postgres` (~1-2s) instead of the
+  # stock entrypoint's first-boot init. State lives on the container's CoW
+  # layer, so a fresh container is still a fresh cluster.
   postgres_plain:
     build:
       context: .
       dockerfile: Dockerfile.postgres-plain
     image: bun-postgres-plain:local
-    environment:
-      POSTGRES_HOST_AUTH_METHOD: trust
-      POSTGRES_USER: postgres
     ports:
       - target: 5432
         published: 0
         protocol: tcp
-    tmpfs:
-      - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -39,8 +38,6 @@ services:
       -c ssl_key_file=/etc/postgresql/ssl/server.key
       -c max_prepared_transactions=1000
       -c max_connections=2000
-    tmpfs:
-      - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -54,9 +51,6 @@ services:
       context: .
       dockerfile: Dockerfile.postgres-auth
     image: bun-postgres-auth:local
-    environment:
-      POSTGRES_HOST_AUTH_METHOD: trust
-      POSTGRES_USER: postgres
     ports:
       - target: 5432
         published: 0
@@ -66,8 +60,6 @@ services:
       -c hba_file=/etc/postgresql/pg_hba.conf
       -c max_prepared_transactions=1000
       -c max_connections=2000
-    tmpfs:
-      - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s

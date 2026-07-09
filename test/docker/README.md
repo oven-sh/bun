@@ -171,8 +171,8 @@ test("wait for service to be healthy", async () => {
 ```
 test/docker/
 ├── docker-compose.yml       # Service definitions
-├── Dockerfile.postgres-plain # postgres_plain image (bakes in init-scripts)
-├── Dockerfile.postgres-auth  # postgres_auth image (init-scripts + pg_hba)
+├── Dockerfile.postgres-plain # postgres_plain image (baked PGDATA + init-scripts)
+├── Dockerfile.postgres-auth  # postgres_auth image (baked PGDATA + init-scripts + pg_hba)
 ├── Dockerfile.mysql-plain           # mysql_plain image (baked data dir)
 ├── Dockerfile.mysql-native-password # mysql_native_password image (baked data dir, legacy auth)
 ├── Dockerfile.autobahn       # autobahn image (fuzzingserver.json)

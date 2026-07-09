@@ -1508,11 +1508,7 @@ impl<'a> Transpiler<'a> {
             // File readers keep a leading UTF-8 BOM so JS/TS source maps stay
             // byte-exact with disk; strip it for loaders that do not emit
             // source maps (text, json, html, toml, css, ...).
-            let contents = if loader.can_have_source_map() {
-                contents
-            } else {
-                strings::without_utf8_bom(contents)
-            };
+            let contents = loader.without_utf8_bom_unless_source_mapped(contents);
             match bun_ast::Source::init_recycled_file(&bun_ast::PathContentsPair { path, contents })
             {
                 Ok(s) => break 'brk s,

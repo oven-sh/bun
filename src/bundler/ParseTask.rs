@@ -2308,11 +2308,8 @@ pub mod parse_worker {
         // maps stay byte-exact with the on-disk file. Loaders that do not emit
         // source maps (text, json, html, toml, css, ...) have no use for it and
         // several of them treat the BOM as a syntax error, so strip it here.
-        let entry_contents: &[u8] = if loader.can_have_source_map() {
-            entry.contents.as_slice()
-        } else {
-            strings::without_utf8_bom(entry.contents.as_slice())
-        };
+        let entry_contents: &[u8] =
+            loader.without_utf8_bom_unless_source_mapped(entry.contents.as_slice());
         let is_empty = strings::is_all_whitespace(entry_contents);
 
         // SAFETY: `transpiler` derived from a live `&mut` above. Reborrow only the

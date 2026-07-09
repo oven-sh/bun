@@ -836,7 +836,8 @@ lexer_impl_header! {
                                 let mut is_out_of_range = false;
                                 'variable_length: loop {
                                     if !iterator.next(&mut iter) {
-                                        break 'variable_length;
+                                        // Ran out of literal before the closing `}`.
+                                        return self.syntax_error();
                                     }
                                     c3 = iter.c;
 
@@ -849,7 +850,9 @@ lexer_impl_header! {
                                         break 'variable_length;
                                     }
                                     match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = (value * 16) | d as i64,
+                                        // Saturate: `is_out_of_range` is sticky, so any
+                                        // digit count still reports the range error.
+                                        Some(d) => value = value.saturating_mul(16) | d as i64,
                                         None => {
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);

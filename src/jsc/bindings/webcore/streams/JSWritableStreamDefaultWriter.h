@@ -29,6 +29,7 @@ public:
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_stream, m_closedPromise, m_readyPromise, m_pipeOperation.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

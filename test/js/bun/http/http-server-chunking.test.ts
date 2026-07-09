@@ -466,7 +466,9 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
     });
 
     const { port } = server;
-    let remaining = 100;
+    // 10 == batchSize is deliberate: one full-width batch preserves the concurrent-accept
+    // pressure. The old value of 100 repeated the same per-connection path 10x over.
+    let remaining = 10;
     const batchSize = 10;
 
     for (let i = 0; i < remaining; i += batchSize) {
@@ -477,10 +479,11 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
             const { resolve: resolveClose, reject: rejectClose, promise: closePromise } = Promise.withResolvers();
 
             let buffer: Buffer;
+            let offset = 0;
 
             function actuallyWrite(socket) {
-              while (buffer.length > 0) {
-                const written = socket.write(buffer.slice(0, 1));
+              while (offset < buffer.length) {
+                const written = socket.write(buffer, offset, 1);
 
                 if (written == 0) break;
 
@@ -488,7 +491,7 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
                   throw new Error(`Written ${written} bytes, expected 1`);
                 }
                 socket.flush();
-                buffer = buffer.slice(written);
+                offset += written;
               }
             }
 

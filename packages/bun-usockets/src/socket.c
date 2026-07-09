@@ -494,8 +494,11 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written < 0) {
         /* bsd_send already retries EINTR; bsd_would_block() reads errno on
-         * POSIX and WSAGetLastError() on Windows. */
-        if (bsd_would_block()) {
+         * POSIX and WSAGetLastError() on Windows. ENOBUFS/ENOMEM are
+         * transient kernel resource exhaustion on a healthy connection -
+         * classifying them as fatal made the node:net drain path drop the
+         * buffered bytes on a socket that kept flowing. */
+        if (bsd_would_block() || bsd_send_is_transient_error()) {
             s->flags.last_write_failed = 1;
             us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
             return 0;

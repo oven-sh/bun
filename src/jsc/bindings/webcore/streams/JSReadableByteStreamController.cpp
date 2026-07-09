@@ -112,7 +112,7 @@ static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalOb
 // The [[pullAlgorithm]] dispatch. The reachable kind set on a byte controller is exactly
 // {JavaScript, Nothing, ByteTeeBranch}; the switch is total over SourceKind.
 // Returns nullptr with no exception pending when the pull completed synchronously with a
-// non-thenable result: the caller runs the upon-fulfillment steps inline.
+// non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableByteStreamController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -127,10 +127,10 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGl
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
+        StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
         JSC::JSValue result;
         JSC::JSValue thrown;
         {
-            StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             auto callData = JSC::getCallData(pullMethod);
             ASSERT(callData.type != JSC::CallData::Type::None);
@@ -602,16 +602,10 @@ void readableByteStreamControllerCallPullIfNeeded(JSGlobalObject* globalObject, 
     JSPromise* pullPromise = performByteControllerPullAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    if (pullPromise && pullPromise->status() != JSPromise::Status::Fulfilled) {
-        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSByteControllerPullFulfilled(), runtime->onRSByteControllerPullRejected(), jsUndefined(), controller);
-        return;
-    }
     // See readableStreamDefaultControllerCallPullIfNeeded.
-    if (!controller->m_pullAgain) {
-        controller->m_pulling = false;
-        return;
-    }
-    queueStreamsMicrotask(globalObject, runtime->onRSByteControllerPullFulfilled(), jsUndefined(), controller);
+    if (!pullPromise || pullPromise->status() == JSPromise::Status::Fulfilled)
+        return queueStreamsMicrotask(globalObject, runtime->onRSByteControllerPullFulfilled(), jsUndefined(), controller);
+    pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSByteControllerPullFulfilled(), runtime->onRSByteControllerPullRejected(), jsUndefined(), controller);
 }
 
 bool readableByteStreamControllerShouldCallPull(JSReadableByteStreamController* controller)

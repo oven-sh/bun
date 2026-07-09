@@ -53,7 +53,7 @@ static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalOb
 // The [[pullAlgorithm]] dispatch. ByteTeeBranch is byte-controller-only and CrossRealm sources
 // are never created (transferable streams are unimplemented); the switch is total over SourceKind.
 // Returns nullptr with no exception pending when the pull completed synchronously with a
-// non-thenable result: the caller runs the upon-fulfillment steps inline.
+// non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -68,10 +68,10 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::J
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
+        StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
         JSC::JSValue result;
         JSC::JSValue thrown;
         {
-            StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             auto callData = JSC::getCallData(pullMethod);
             ASSERT(callData.type != JSC::CallData::Type::None);
@@ -498,20 +498,13 @@ void readableStreamDefaultControllerCallPullIfNeeded(JSGlobalObject* globalObjec
     JSPromise* pullPromise = performDefaultControllerPullAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    if (pullPromise && pullPromise->status() != JSPromise::Status::Fulfilled) {
-        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSDefaultControllerPullFulfilled(), runtime->onRSDefaultControllerPullRejected(), jsUndefined(), controller);
-        return;
-    }
     // A non-thenable return, or an already-fulfilled promise from an internal pull arm,
-    // completed synchronously: skip the performPromiseThen reactions. When nothing during
-    // the pull set m_pullAgain, the upon-fulfillment steps are just m_pulling = false and
-    // can run inline. When m_pullAgain is set (enqueue()'s trailing callPullIfNeeded), defer
-    // the re-pull as its own microtask to preserve spec timing and bound stack depth.
-    if (!controller->m_pullAgain) {
-        controller->m_pulling = false;
-        return;
-    }
-    queueStreamsMicrotask(globalObject, runtime->onRSDefaultControllerPullFulfilled(), jsUndefined(), controller);
+    // completed synchronously: queue the upon-fulfillment handler directly, saving the
+    // wrapper promise and performPromiseThen reactions while keeping the spec's microtask
+    // boundary (m_pulling stays set until then, so pull-call count is unchanged).
+    if (!pullPromise || pullPromise->status() == JSPromise::Status::Fulfilled)
+        return queueStreamsMicrotask(globalObject, runtime->onRSDefaultControllerPullFulfilled(), jsUndefined(), controller);
+    pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSDefaultControllerPullFulfilled(), runtime->onRSDefaultControllerPullRejected(), jsUndefined(), controller);
 }
 
 bool readableStreamDefaultControllerShouldCallPull(JSReadableStreamDefaultController* controller)

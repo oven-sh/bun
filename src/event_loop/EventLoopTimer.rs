@@ -199,6 +199,8 @@ pub enum Tag {
     DevServerSweepSourceMaps,
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,
+    FetchConnectTimeout,
+    FetchTotalTimeout,
     DateHeaderTimer,
     BunTest,
     EventLoopDelayMonitor,

@@ -10,6 +10,10 @@ pub struct Signals {
     pub aborted: Option<NonNull<AtomicBool>>,
     pub cert_errors: Option<NonNull<AtomicBool>>,
     pub upgraded: Option<NonNull<AtomicBool>>,
+    /// Set once the transport is established (h1 socket open, h2 session adopted,
+    /// h3 handshake done). Read from the JS thread by the `connectTimeout`
+    /// deadline to tell "still dialing" from "connected".
+    pub connected: Option<NonNull<AtomicBool>>,
     pub body_receive_mode: Option<NonNull<AtomicU8>>,
 }
 
@@ -59,6 +63,7 @@ impl Signals {
             Field::Aborted => self.aborted,
             Field::CertErrors => self.cert_errors,
             Field::Upgraded => self.upgraded,
+            Field::Connected => self.connected,
         }?;
         Some(bun_ptr::BackRef::from(ptr))
     }
@@ -89,6 +94,7 @@ pub struct Store {
     pub aborted: AtomicBool,
     pub cert_errors: AtomicBool,
     pub upgraded: AtomicBool,
+    pub connected: AtomicBool,
     pub body_receive_mode: AtomicU8,
 }
 
@@ -100,6 +106,7 @@ impl Default for Store {
             aborted: AtomicBool::new(false),
             cert_errors: AtomicBool::new(false),
             upgraded: AtomicBool::new(false),
+            connected: AtomicBool::new(false),
             body_receive_mode: AtomicU8::new(BodyReceiveMode::AutoPause as u8),
         }
     }
@@ -113,6 +120,7 @@ impl Store {
             aborted: Some(NonNull::from(&self.aborted)),
             cert_errors: Some(NonNull::from(&self.cert_errors)),
             upgraded: Some(NonNull::from(&self.upgraded)),
+            connected: Some(NonNull::from(&self.connected)),
             body_receive_mode: None,
         }
     }
@@ -156,4 +164,5 @@ pub enum Field {
     Aborted,
     CertErrors,
     Upgraded,
+    Connected,
 }

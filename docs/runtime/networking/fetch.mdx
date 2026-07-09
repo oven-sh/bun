@@ -166,13 +166,83 @@ When using streams with S3:
 
 ### Fetching a URL with a timeout
 
-To fetch a URL with a timeout, use `AbortSignal.timeout`:
+The simplest deadline is `timeout`, a number of milliseconds: the whole request
+must finish within it, or it rejects.
 
 ```ts
-const response = await fetch("http://example.com", {
-  signal: AbortSignal.timeout(1000),
+// Fails if the request isn't completely done within 5 seconds.
+await fetch("http://example.com", { timeout: 5_000 });
+```
+
+One deadline for everything is a blunt instrument, though. A large download
+legitimately takes minutes, but nothing should spend minutes opening a socket.
+Two more options bound the individual phases.
+
+```ts
+const response = await fetch("http://example.com/large-file", {
+  // Give up if the connection isn't established within 5 seconds.
+  connectTimeout: 5_000,
+  // ...but let the download take as long as it needs, as long as bytes keep
+  // arriving at least every 2 minutes.
+  socketTimeout: 120_000,
 });
 ```
+
+| Option           | Covers                                                                 | Default     |
+| ---------------- | ---------------------------------------------------------------------- | ----------- |
+| `timeout`        | The whole request, from `fetch()` until the body finishes.             | No deadline |
+| `connectTimeout` | DNS resolution, the TCP handshake, and the TLS handshake for `https:`. | No deadline |
+| `socketTimeout`  | Any stretch where no bytes move in either direction, in any phase.     | 5 minutes   |
+
+All three are in milliseconds and all three reject with a `TimeoutError`.
+`connectTimeout` reports `The connection timed out.`, so a retry policy can tell
+"the network is down" from "the server is slow"; the other two report
+`The operation timed out.`
+
+`socketTimeout` and `timeout` answer different questions, and you often want
+both:
+
+- `socketTimeout` fires when the connection goes quiet. It is re-armed on every
+  byte in either direction, so a response that trickles in steadily never trips
+  it.
+- `timeout` fires regardless of activity. It is the one that catches a server
+  that is technically alive but far too slow.
+
+```ts
+// Bail if the server goes quiet for 30s, AND never spend more than 2 minutes.
+await fetch("http://example.com/", { socketTimeout: 30_000, timeout: 120_000 });
+```
+
+`timeout: false` (or `0`) disables _every_ timeout for the request, which is what
+you want for long-polling and server-sent events:
+
+```ts
+await fetch("http://example.com/events", { timeout: false });
+```
+
+<Note>
+
+`connectTimeout` applies to the initial connection, not to one reopened while
+following a redirect. It and `timeout` are both measured from the moment
+`fetch()` is called, so time spent queued behind the [simultaneous connection
+limit](#simultaneous-connection-limit) counts against them.
+
+`socketTimeout` is rounded up to whole seconds (and to whole minutes above 240
+seconds) because that is the resolution of the underlying socket timer, which may
+also fire up to one tick early, and values above 239 minutes are clamped to that
+ceiling. Treat it as a coarse backstop rather than a precise deadline; `timeout`
+and `connectTimeout` have millisecond precision. Its default can be changed
+process-wide with the `BUN_CONFIG_HTTP_IDLE_TIMEOUT` environment variable, in
+seconds.
+
+A numeric `timeout` also raises the effective `socketTimeout` to match unless
+`socketTimeout` is set explicitly, so the socket-idle default can never preempt
+the deadline you wrote. `{ timeout: 900_000, socketTimeout: 30_000 }` keeps both
+bounds; `{ timeout: 900_000 }` alone relaxes the idle backstop to 15 minutes.
+Setting `socketTimeout` explicitly outranks `timeout: false`, so
+`{ timeout: false, socketTimeout: 30_000 }` keeps the socket timer you asked for.
+
+</Note>
 
 #### Canceling a request
 

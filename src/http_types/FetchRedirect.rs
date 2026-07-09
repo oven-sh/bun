@@ -34,4 +34,5 @@ pub enum CommonAbortReason {
     Timeout = 1,
     UserAbort = 2,
     ConnectionClosed = 3,
+    ConnectionTimeout = 4,
 }

@@ -1048,6 +1048,19 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             timer_arm!(Subprocess<'_>, event_loop_timer, |c, _now, _vm| (*c)
                 .timeout_callback())
         }
+        EventLoopTimerTag::FetchConnectTimeout => {
+            // SAFETY: §Dispatch — tag set together with the container in
+            // `FetchTasklet::get`; `t` is the tasklet's `connect_timeout_timer`.
+            let container = unsafe { FetchTasklet::from_connect_timeout_timer_ptr(t) };
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_connect_timeout() };
+        }
+        EventLoopTimerTag::FetchTotalTimeout => {
+            // SAFETY: §Dispatch — `t` is the tasklet's `total_timeout_timer`.
+            let container = unsafe { FetchTasklet::from_total_timeout_timer_ptr(t) };
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_total_timeout() };
+        }
         EventLoopTimerTag::DevServerSweepSourceMaps => {
             // `sweep_weak_refs` takes the raw `*EventLoopTimer` and recovers
             // the store inside.

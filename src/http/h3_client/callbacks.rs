@@ -101,6 +101,7 @@ extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
         return;
     }
     session.handshake_done = true;
+    session.mark_pending_connected();
     for _ in 0..session.pending.len() {
         qs.make_stream();
     }

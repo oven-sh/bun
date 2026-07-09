@@ -1928,6 +1928,98 @@ interface BunFetchRequestInit extends RequestInit {
   tls?: BunFetchRequestInitTLS;
 
   /**
+   * Milliseconds the whole request may take, measured from the moment `fetch()`
+   * is called until the response body has finished. A hard wall-clock deadline:
+   * it fires even while bytes are actively arriving, so a server that trickles
+   * data forever is still cut off. Rejects with a
+   * `TimeoutError: The operation timed out.`
+   *
+   * The equivalent of `Client.Timeout` in Go, `timeout` in reqwest and
+   * `libcurl`, `callTimeout` in OkHttp, and `timeoutIntervalForResource` in
+   * `URLSession`.
+   *
+   * Defaults to `true`, which means "use the other timeout defaults with no
+   * whole-request deadline": {@link socketTimeout} is still on, but there is no
+   * overall wall-clock limit unless you pass a number here.
+   *
+   * A number also raises the effective {@link socketTimeout} to at least that
+   * value unless `socketTimeout` is set explicitly, so the socket-idle default
+   * can never fire ahead of the deadline you wrote.
+   *
+   * `false` (or `0`) disables *every* timeout for this request, including
+   * {@link socketTimeout}.
+   *
+   * Not part of the Fetch API specification.
+   *
+   * @default true
+   *
+   * @example
+   * ```js
+   * // The whole request must finish within 5 seconds.
+   * const response = await fetch("https://example.com/", { timeout: 5_000 });
+   * ```
+   *
+   * @example
+   * ```js
+   * // Never time out: useful for long-polling or server-sent events.
+   * const response = await fetch("https://example.com/events", { timeout: false });
+   * ```
+   */
+  timeout?: boolean | number;
+
+  /**
+   * Milliseconds to spend establishing the connection (DNS resolution, the TCP
+   * handshake, and the TLS handshake for `https:`) before the request rejects
+   * with a `TimeoutError: The connection timed out.` The distinct message lets a
+   * retry policy tell "the network is down" from "the server is slow".
+   *
+   * Applies to the initial connection, not to one reopened while following a
+   * redirect. Measured from the moment `fetch()` is called, so time spent queued
+   * behind `BUN_CONFIG_MAX_HTTP_REQUESTS` in-flight requests counts against it.
+   *
+   * `0` or `false` means no connect deadline.
+   *
+   * Not part of the Fetch API specification.
+   *
+   * @default false
+   *
+   * @example
+   * ```js
+   * // Fail fast on a dead network, but allow a slow response body.
+   * await fetch("https://example.com/large", {
+   *   connectTimeout: 5_000,
+   *   socketTimeout: 120_000,
+   * });
+   * ```
+   */
+  connectTimeout?: number | false;
+
+  /**
+   * Milliseconds the socket may sit with no bytes moving in either direction
+   * before the request rejects with a `TimeoutError: The operation timed out.`
+   * The timer is re-armed on every read and every write, so a response that
+   * trickles in steadily never trips it. Use {@link timeout} when you need a
+   * deadline that fires regardless of activity.
+   *
+   * This is `socketTimeoutMillis` in Ktor and `socket` in `got`. It is the
+   * equivalent of `read`/`bodyTimeout` elsewhere, except that it also covers a
+   * stalled upload.
+   *
+   * Rounded up to whole seconds (and to whole minutes above 240 seconds)
+   * because that is the resolution of the underlying socket timer, which may
+   * also fire up to one tick early. It is a coarse backstop, not a precise
+   * deadline.
+   *
+   * `0` or `false` means no socket deadline. Setting it explicitly outranks
+   * `timeout: false`.
+   *
+   * Not part of the Fetch API specification.
+   *
+   * @default 300_000 (overridable process-wide with `BUN_CONFIG_HTTP_IDLE_TIMEOUT`, in seconds)
+   */
+  socketTimeout?: number | false;
+
+  /**
    * Log the raw HTTP request and response to stdout, as a debugging aid.
    * This API may be removed in a future version of Bun without notice.
    * Not part of the Fetch API specification.

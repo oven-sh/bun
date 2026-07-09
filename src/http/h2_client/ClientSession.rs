@@ -299,6 +299,9 @@ impl ClientSession {
 
     pub fn adopt(&mut self, client: &mut HTTPClient) {
         client.h2_register_abort_tracker(self.socket);
+        // The session's socket is already established, so this request is past
+        // the connect phase even while it waits for SETTINGS in `pending_attach`.
+        client.mark_connected();
         // Park instead of attaching when (a) we're inside onData's deliver
         // loop — attach() mustn't mutate `streams` under iteration — or (b)
         // the server's first SETTINGS hasn't arrived yet, so the real
@@ -332,6 +335,7 @@ impl ClientSession {
     /// is routed via the session socket so `abortByHttpId` can find it.
     pub fn enqueue(&mut self, client: &mut HTTPClient<'_>) {
         client.h2_register_abort_tracker(self.socket);
+        client.mark_connected();
         self.pending_attach.push(client.as_erased_ptr().as_ptr());
         self.rearm_timeout();
     }
@@ -397,6 +401,7 @@ impl ClientSession {
     /// DATA, and flush.
     pub fn attach(&mut self, client: &mut HTTPClient) {
         debug_assert!(self.has_headroom());
+        client.mark_connected();
 
         let send_window = i32::try_from(self.remote_initial_window_size.min(wire::MAX_WINDOW_SIZE))
             .expect("int cast");
@@ -511,12 +516,11 @@ impl ClientSession {
         }
     }
 
-    /// Re-arm the shared socket's idle timer based on the aggregate of every
-    /// attached client. With multiplexed streams the per-request
-    /// `disable_timeout` flag can't drive the socket directly (last writer
-    /// would win and a `{timeout:false}` long-poll could be killed by a
-    /// sibling re-arming, or strip the safety net from one that wants it),
-    /// so the session disarms only when *every* attached client opted out.
+    /// Re-arm the shared socket's idle timer at the longest any attached client
+    /// asked for — treating `0` ("disarm") as unbounded, not as a minimum. The
+    /// fire handler kills the whole session, so a shorter value would cut off a
+    /// longer-timeout or `timeout: false` sibling; this only delays the short
+    /// one. Per-stream idle tracking would be the exact answer.
     fn rearm_timeout(&mut self) {
         // The socket is shared by every stream on the session, so arm the
         // longest effective idle timeout among them (0 = every client's

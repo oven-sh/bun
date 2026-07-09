@@ -2418,9 +2418,8 @@ where
             if let Some(readable) = strong.get(&global_this) {
                 readable.value.ensure_still_alive();
                 if let Some(bytes) = readable.ptr.bytes() {
-                    let mut err = Body::ValueError::AbortReason(
-                        jsc::CommonAbortReason::ConnectionClosed,
-                    );
+                    let mut err =
+                        Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
                     bytes.on_data(WebCore::streams::Result::Err(
                         err.to_stream_error(global_this),
                     ))?;

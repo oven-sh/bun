@@ -503,7 +503,7 @@ export interface Toolchain {
 export function detectHost(): Host {
   const plat = hostPlatform();
   const os: OS =
-    plat === "linux"
+    plat === "linux" || plat === "openharmony"
       ? "linux"
       : plat === "darwin"
         ? "darwin"

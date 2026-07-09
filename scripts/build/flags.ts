@@ -333,9 +333,15 @@ export const globalFlags: Flag[] = [
   {
     // Nix LLVM doesn't support zstd — but we target standard distros.
     // Nix users can override via profile if needed.
+    // OHOS host LLVM 22.1.7 ships without zstd; emit uncompressed -g3.
     flag: ["-g3", "-gz=zstd"],
-    when: c => c.unix && c.debug,
+    when: c => c.unix && c.debug && !c.ohos,
     desc: "Full debug info, zstd-compressed",
+  },
+  {
+    flag: "-g3",
+    when: c => c.unix && c.debug && c.ohos,
+    desc: "Full debug info, uncompressed (OHOS host LLVM lacks zstd)",
   },
   {
     flag: "-g1",
@@ -748,7 +754,7 @@ export const bunOnlyFlags: Flag[] = [
     desc: "Warn on unused vars in debug (catches dead code)",
   },
   {
-    // Suppress noisy warnings from system/dependency headers
+    // Windows: suppress noisy warnings from headers we don't control
     flag: [
       "-Wno-nullability-completeness",
       "-Wno-inconsistent-dllimport",
@@ -756,7 +762,7 @@ export const bunOnlyFlags: Flag[] = [
       "-Wno-deprecated-declarations",
       "-Wno-character-conversion",
     ],
-    when: c => c.windows || c.linux,
+    when: c => c.windows,
     desc: "Suppress noisy warnings from system/dependency headers",
   },
 ];
@@ -1202,13 +1208,12 @@ export const linkerFlags: Flag[] = [
       "-lc",
     ].filter(f => f !== ""),
     when: c => c.ohos,
-    desc: "OHOS: link LLVM 22 libc++ + libc++abi + libunwind + dynamic libc (zlib-ng from vendor/zlib/)",
+    desc: "OHOS: link LLVM 22 libc++ + libc++abi + libunwind + dynamic libc",
   },
   {
     flag: [
       "-Wl,--as-needed",
       "-Wl,-z,stack-size=8192000",
-      "-Wl,--compress-debug-sections=zlib",
       "-Wl,-z,lazy",
       "-Wl,-z,norelro",
       "-Wl,-O2",
@@ -1217,7 +1222,7 @@ export const linkerFlags: Flag[] = [
       "-Wl,--build-id=sha1",
     ],
     when: c => c.ohos,
-    desc: "OHOS linker tuning: 8MB stack, compressed debug",
+    desc: "OHOS linker tuning: 8MB stack (debug compression skipped — host LLVM lacks zlib)",
   },
   {
     flag: ["-pie", "-Wl,-dynamic-linker=/system/lib/ld-musl-aarch64.so.1"],
@@ -1228,6 +1233,16 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,--noinhibit-exec",
     when: c => c.ohos,
     desc: "OHOS: LLD alignment warnings → ignore (SCTLR_EL1.A is 0 on aarch64)",
+  },
+  {
+    flag: c => [
+      "-Wl,-Bsymbolic-functions",
+      "-rdynamic",
+      `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
+      `-Wl,--version-script=${c.cwd}/src/linker.lds`,
+    ],
+    when: c => c.ohos,
+    desc: "OHOS: dynamic symbol list + version script (mirror linux block; exposes napi_/node_api_ for .node dlopen)",
   },
 
   // ─── Linux ───
@@ -1374,34 +1389,8 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: "-Wl,--gc-sections",
-    when: c => c.linux && c.release && !c.ohos,
+    when: c => c.linux && c.release,
     desc: "Garbage-collect unused sections (release only; debug keeps Zig dbHelper symbols)",
-  },
-  {
-    // OHOS: gc-sections with Rust FFI strips uSockets symbols referenced
-    // only from Rust. --version-script exports Bun__dlopen to .dynsym.
-    // --export-dynamic is NOT used (it bloats .dynsym 40x → OOM).
-    // --export-dynamic makes symbols dynamic (needed for PIE), then
-    // --version-script with local: *; restricts exports to only Bun__dlopen.
-    flag: c => ["-Wl,--gc-sections", "-Wl,--export-dynamic", `-Wl,--version-script=${c.cwd}/src/symbols.dyn`,
-      "-Wl,--undefined=us_ssl_pop_pending_session",
-      "-Wl,--undefined=us_ssl_pop_pending_keylog",
-      "-Wl,--undefined=us_ssl_enable_pending_events",
-      "-Wl,--undefined=us_socket_write_check_error",
-      "-Wl,--undefined=us_internal_ssl_loop_state_save",
-      "-Wl,--undefined=us_internal_ssl_loop_state_restore",
-      "-Wl,--undefined=us_ssl_parse_pkcs12",
-      "-Wl,--undefined=us_ssl_ctx_add_ca_cert",
-      "-Wl,--undefined=us_socket_get_tos",
-      "-Wl,--undefined=us_socket_sni_resolve",
-      "-Wl,--undefined=us_socket_set_tos",
-      "-Wl,--undefined=us_socket_tls_feed",
-      "-Wl,--undefined=Bun__dlopen",
-      // Keep .bun section alive for --compile even though OHOS
-      // runtime reads payload via /proc/self/exe (doesn't reference it).
-      "-Wl,--undefined=BUN_COMPILED"],
-    when: c => c.release && c.ohos,
-    desc: "Force-keep uSockets SSL symbols + Bun__dlopen referenced via Rust FFI (OHOS)",
   },
   {
     // Always icf=safe in release. The stripped `bun` shares its build-id
@@ -1429,27 +1418,6 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,-z,keep-text-section-prefix",
     when: c => c.linux && c.release && !!c.pgoUse && !c.asan && !c.valgrind,
     desc: "Keep .text.hot/.text.unlikely prefixes from the PGO profile (cluster hot startup .text)",
-  },
-  {
-    // Same goal as keep-text-section-prefix, without needing a PGO profile:
-    // <buildDir>/linker.order lists the functions bun actually executes while
-    // starting up, and lld sorts their input sections to the front of `.text`.
-    // Starting up only touches ~8.5 MB of pages, but they are scattered over a
-    // ~50 MB `.text` and the kernel faults in 64 KB around each one, so the
-    // binary ends up with ~27 MB resident for `bun -e 'console.log(1)'`.
-    // Packing them together cuts that by a third for a same-size binary.
-    //
-    // The file is a build artifact, never committed: configure seeds an empty one
-    // (a no-op for lld) so this flag is unconditional and both link passes share
-    // one build.ninja — a release build regenerates it from its own pass-1 binary
-    // and reruns ninja, which relinks and nothing else. Symbols lld cannot find
-    // are skipped, so a stale file only costs part of the win.
-    //
-    // A local `bun run build:release` therefore links unordered until you run
-    // `bun run orderfile` and build again.
-    flag: c => [`-Wl,--symbol-ordering-file=${orderFilePath(c)}`, "-Wl,--no-warn-symbol-ordering"],
-    when: c => usesOrderFile(c),
-    desc: "Sort startup-hot functions to the front of .text (cuts resident binary pages)",
   },
 
   // ─── Symbols / exports ───
@@ -1518,8 +1486,8 @@ export const linkerFlags: Flag[] = [
     // and only on agents where the LLVM versions diverge. The system lld path
     // (linux/freebsd llvm-* packages) keeps compressing.
     flag: "-Wl,--compress-debug-sections=zlib",
-    when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld,
-    desc: "Compress ELF debug sections (skipped with rust-lld — built without zlib)",
+    when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld && !c.ohos,
+    desc: "Compress ELF debug sections (skipped with rust-lld and OHOS host LLVM — both built without zlib)",
   },
   {
     flag: "-Wl,--gc-sections",
@@ -1539,26 +1507,6 @@ export const linkerFlags: Flag[] = [
 ];
 
 /**
- * Whether this target links with an lld symbol ordering file. ELF only, and
- * only where the startup win is worth a relink: release linux builds.
- * Not under a sanitizer — the tracer mprotects `.text` out from under it, and
- * nobody measures startup RSS on an ASAN build anyway.
- *
- * gnu only: musl links statically, so LD_PRELOAD cannot load the tracer, and
- * android is cross-compiled, so the build host cannot run the binary to trace
- * it. Neither can produce an order file, so link them unordered rather than
- * attempt a trace that always fails and annotate every build about it.
- */
-export function usesOrderFile(cfg: Pick<Config, "linux" | "abi" | "release" | "asan" | "valgrind">): boolean {
-  return cfg.linux && cfg.abi === "gnu" && cfg.release && !cfg.asan && !cfg.valgrind;
-}
-
-/** The order file lives in the build directory — it is generated, never committed. */
-export function orderFilePath(cfg: Pick<Config, "buildDir">): string {
-  return join(cfg.buildDir, "linker.order");
-}
-
-/**
  * Files the linker reads via flags above. Return as implicit inputs so
  * ninja relinks when exported symbols / version script change.
  * CMake tracks these via set_target_properties LINK_DEPENDS.
@@ -1567,11 +1515,8 @@ export function linkDepends(cfg: Config): string[] {
   if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
-  // linux: ELF dynamic-list + version script, plus the release symbol ordering
-  // file — listing it here is what makes regenerating it relink, and only relink.
-  const linux = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
-  if (usesOrderFile(cfg)) linux.push(orderFilePath(cfg));
-  return linux;
+  // linux: ELF dynamic-list + version script
+  return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

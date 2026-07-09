@@ -43,7 +43,7 @@ export const WEBKIT_VERSION = "c9ad5813fd23bd8b98b0738abc3d037ec716aa92";
  *   like the old cmake — avoids debug/release mixing.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync, cpSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
@@ -75,7 +75,7 @@ function prebuiltSuffix(cfg: Config): string {
 }
 
 function prebuiltUrl(cfg: Config): string {
-  const os = cfg.windows ? "windows" : cfg.darwin ? "macos" : cfg.freebsd ? "freebsd" : "linux";
+  const os = cfg.windows ? "windows" : cfg.darwin ? "macos" : cfg.freebsd ? "freebsd" : cfg.ohos ? "ohos" : "linux";
   const arch = cfg.arm64 ? "arm64" : "amd64";
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
   const version = cfg.webkitVersion;
@@ -106,7 +106,9 @@ function prebuiltDestDir(cfg: Config): string {
           ? "-macos"
           : cfg.abi === "android"
             ? "-android"
-            : "";
+            : cfg.ohos
+              ? "-ohos"
+              : "";
   const archKey = cfg.arm64 ? "-arm64" : "";
   return resolve(cfg.cacheDir, `webkit-${version16}${osKey}${archKey}${prebuiltSuffix(cfg)}`);
 }
@@ -141,7 +143,7 @@ function prebuiltIcuLibs(cfg: Config): string[] {
     const d = cfg.debug ? "d" : "";
     return [`lib/sicudt${d}.lib`, `lib/sicuin${d}.lib`, `lib/sicuuc${d}.lib`];
   }
-  if (cfg.linux || cfg.freebsd) {
+  if (cfg.linux || cfg.freebsd || cfg.ohos) {
     return ["lib/libicudata.a", "lib/libicui18n.a", "lib/libicuuc.a"];
   }
   return []; // darwin: system ICU
@@ -194,6 +196,43 @@ export const webkit: Dependency = {
   versionMacro: "WEBKIT",
 
   source: cfg => {
+    // OHOS: use locally installed bun-webkit (formula) instead of downloading.
+    // The build environment pre-populates the cache from OHOS_WEBKIT_ROOT.
+    if (cfg.ohos) {
+      const destDir = prebuiltDestDir(cfg);
+      const identity = `${cfg.webkitVersion}${prebuiltSuffix(cfg)}`;
+      const identityPath = join(destDir, ".identity");
+      const ohosRoot = process.env.OHOS_WEBKIT_ROOT;
+      // Check if cache was pre-populated by the formula; skip if identity matches.
+      if (!existsSync(identityPath) || readFileSync(identityPath, "utf-8").trim() !== identity) {
+        if (!ohosRoot) {
+          throw new Error(
+            "OHOS build requires OHOS_WEBKIT_ROOT env var pointing to bun-webkit installation.\n" +
+            "  Install with: brew install bun-webkit"
+          );
+        }
+        mkdirSync(destDir, { recursive: true });
+        mkdirSync(join(destDir, "lib"), { recursive: true });
+        mkdirSync(join(destDir, "include"), { recursive: true });
+        for (const lib of ["libJavaScriptCore.a", "libWTF.a", "libbmalloc.a"]) {
+          symlinkSync(join(ohosRoot, "lib", lib), join(destDir, "lib", lib));
+        }
+        const inc = join(ohosRoot, "include", "webkit");
+        symlinkSync(join(inc, "JavaScriptCore"), join(destDir, "include", "JavaScriptCore"));
+        symlinkSync(join(inc, "wtf"), join(destDir, "include", "wtf"));
+        symlinkSync(join(inc, "bmalloc"), join(destDir, "include", "bmalloc"));
+        const cmakeCfg = join(inc, "cmakeconfig.h");
+        if (existsSync(cmakeCfg)) cpSync(cmakeCfg, join(destDir, "include", "cmakeconfig.h"));
+        writeFileSync(identityPath, identity);
+      }
+      return {
+        kind: "prebuilt",
+        identity,
+        destDir,
+        url: ohosRoot ? `file://${ohosRoot}` : `file:///dev/null`, // Already set up; fetch checks identity first
+      };
+    }
+
     if (cfg.webkit === "prebuilt") {
       const src: Source = {
         kind: "prebuilt",

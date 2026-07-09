@@ -691,7 +691,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // `lld-link.exe` (`cfg.ld`); both speak the `/X` dialect rustc emits.
     [`CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`]: cfg.windows
       ? (cfg.msvcLinker ?? cfg.ld)
-      : cfg.cxx,
+      : (cfg.ohos && process.env.OHOS_BUN_SIGNING_LINKER ? process.env.OHOS_BUN_SIGNING_LINKER : cfg.cxx),
   };
   if (cfg.cargoHome !== undefined) env.CARGO_HOME = cfg.cargoHome;
   if (cfg.rustupHome !== undefined) env.RUSTUP_HOME = cfg.rustupHome;

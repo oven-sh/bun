@@ -978,7 +978,10 @@ impl Channel {
             tv_sec: (max_ms / 1000) as _,
             tv_usec: ((max_ms % 1000) * 1000) as _,
         };
-        let mut tv = struct_timeval { tv_sec: 0, tv_usec: 0 };
+        let mut tv = struct_timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        };
         // SAFETY: c-ares FFI; both pointers are live stack locals. The return
         // aliases one of them (or is null only when `channel`/`tv` are null,
         // which they are not here).

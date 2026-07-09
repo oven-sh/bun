@@ -31,11 +31,7 @@ async function run(opt: { timeout: number; tries: number }) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   return JSON.parse(stdout.trim()) as {
     err: string;

@@ -711,7 +711,7 @@ impl IoRequestLoop {
             use bun_sys::FdExt as _;
             let raw = safe_c::epoll_create1(libc::EPOLL_CLOEXEC);
             if raw < 0 {
-                let err = sys::Error::from_code(sys::get_errno(raw), sys::Tag::epoll_ctl);
+                let err = sys::Error::from_code(sys::get_errno(raw), sys::Tag::epoll_create);
                 waker_fd.close();
                 return Err(err);
             }
@@ -790,12 +790,14 @@ impl IoRequestLoop {
             use bun_sys::FdExt as _;
             let err = sys::Error::from_code_int(
                 e.raw_os_error().unwrap_or(libc::EAGAIN),
-                sys::Tag::open,
+                sys::Tag::pthread_create,
             );
             #[cfg(any(target_os = "linux", target_os = "android"))]
             loop_.epoll_fd.close();
             #[cfg(target_os = "freebsd")]
             loop_.kqueue_fd.close();
+            #[cfg(target_os = "macos")]
+            crate::waker::io_darwin_close_machport(loop_.waker.machport);
             waker_fd.close();
             return Err(err);
         }
@@ -2121,6 +2123,7 @@ pub mod waker {
         // bad/dead ports are reported by mach return codes, not UB.
         fn io_darwin_create_machport(kq: i32, buf: *mut c_void, len: usize) -> bun_core::mach_port;
         safe fn io_darwin_schedule_wakeup(port: bun_core::mach_port) -> bool;
+        pub(crate) safe fn io_darwin_close_machport(port: bun_core::mach_port);
     }
 
     #[cfg(target_os = "macos")]

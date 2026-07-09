@@ -1442,6 +1442,8 @@ impl Tag {
     pub const ioctl: Tag = Tag(104);
     pub const getrlimit: Tag = Tag(105);
     pub const setrlimit: Tag = Tag(106);
+    pub const epoll_create: Tag = Tag(107);
+    pub const pthread_create: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1450,7 +1452,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 107] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1559,6 +1561,8 @@ impl Tag {
             "ioctl",
             "getrlimit",
             "setrlimit",
+            "epoll_create",
+            "pthread_create",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }

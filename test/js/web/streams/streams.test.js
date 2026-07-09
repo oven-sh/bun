@@ -703,6 +703,280 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     expect(value.byteLength).toBe(10);
   });
 
+  // A type:"direct" pull() is re-invoked per read as a demand signal, but never while a
+  // previous async pull() is still pending and never after end(). A pull that writes the
+  // whole body and ends therefore runs exactly once.
+  describe("a direct stream's async pull() is not re-entered while pending", () => {
+    const N = 30000;
+    const CS = 4096;
+    const body = new Uint8Array(N);
+    for (let i = 0; i < N; i++) body[i] = (i * 131) & 0xff;
+    const makeSource = counter => ({
+      type: "direct",
+      async pull(c) {
+        counter.pulls++;
+        for (let o = 0; o < N; o += CS) {
+          c.write(body.subarray(o, Math.min(o + CS, N)));
+          await c.flush();
+        }
+        c.end();
+      },
+    });
+    const readAll = async rs => {
+      const reader = rs.getReader();
+      const parts = [];
+      let total = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parts.push(value);
+        total += value.length;
+      }
+      const out = new Uint8Array(total);
+      let offset = 0;
+      for (const part of parts) {
+        out.set(part, offset);
+        offset += part.length;
+      }
+      return out;
+    };
+
+    it("via getReader()", async () => {
+      const counter = { pulls: 0 };
+      const bytes = await readAll(new ReadableStream(makeSource(counter)));
+      expect(counter.pulls).toBe(1);
+      expect(bytes.length).toBe(N);
+      expect(bytes).toEqual(body);
+    });
+
+    it("via tee()", async () => {
+      const counter = { pulls: 0 };
+      const [a, b] = new ReadableStream(makeSource(counter)).tee();
+      const [ba, bb] = await Promise.all([readAll(a), readAll(b)]);
+      expect(counter.pulls).toBe(1);
+      expect(ba.length).toBe(N);
+      expect(bb.length).toBe(N);
+      expect(ba).toEqual(body);
+      expect(bb).toEqual(body);
+    });
+
+    it("via for-await", async () => {
+      const counter = { pulls: 0 };
+      let total = 0;
+      for await (const chunk of new ReadableStream(makeSource(counter))) total += chunk.length;
+      expect(counter.pulls).toBe(1);
+      expect(total).toBe(N);
+    });
+
+    it("for-await receives the final chunk when end() follows a write without a flush", async () => {
+      // end() runs while no reader is waiting, so onClose arms m_finalChunk; the next
+      // for-await/tee read must receive it via its readRequest, not a dropped promise.
+      const mk = () =>
+        new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            c.write(new Uint8Array(10));
+            await c.flush();
+            c.write(new Uint8Array(20));
+            c.end();
+          },
+        });
+      let total = 0;
+      for await (const chunk of mk()) total += chunk.byteLength;
+      expect(total).toBe(30);
+      const [a, b] = mk().tee();
+      const [na, nb] = await Promise.all([readAll(a), readAll(b)]);
+      expect({ a: na.length, b: nb.length }).toEqual({ a: 30, b: 30 });
+    });
+
+    it("via readMany()", async () => {
+      const counter = { pulls: 0 };
+      const reader = new ReadableStream(makeSource(counter)).getReader();
+      let total = 0;
+      while (true) {
+        const r = await reader.readMany();
+        if (r.done) break;
+        for (const v of r.value) total += v.length;
+      }
+      expect(counter.pulls).toBe(1);
+      expect(total).toBe(N);
+    });
+
+    it("a write buffered while no reader is waiting is delivered on the next read", async () => {
+      const { promise: readerIdle, resolve: markReaderIdle } = Promise.withResolvers();
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      const { promise: wrote, resolve: markWrote } = Promise.withResolvers();
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          c.write(new Uint8Array(10));
+          await c.flush();
+          await readerIdle;
+          c.write(new Uint8Array(20));
+          markWrote();
+          await gate;
+          c.end();
+        },
+      });
+      const reader = rs.getReader();
+      expect((await reader.read()).value.byteLength).toBe(10);
+      markReaderIdle();
+      await wrote;
+      // Yield one macrotask so the end-of-tick auto-flush has already run (and found no
+      // waiting reader). The NEXT read must still drain the buffered 20 bytes from the sink.
+      await new Promise(resolve => setImmediate(resolve));
+      expect((await reader.read()).value.byteLength).toBe(20);
+      openGate();
+      expect((await reader.read()).done).toBe(true);
+    });
+
+    it("a per-call pull() that writes one chunk and returns is re-invoked on each read", async () => {
+      let pulls = 0;
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          pulls++;
+          if (pulls > 3) return c.end();
+          await Promise.resolve();
+          c.write(new Uint8Array([pulls]));
+          c.flush();
+        },
+      });
+      const reader = rs.getReader();
+      const out = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        for (const b of value) out.push(b);
+      }
+      expect({ pulls, out }).toEqual({ pulls: 4, out: [1, 2, 3] });
+    });
+
+    it("reads issued while pull() is suspended are each serviced by a subsequent pull", async () => {
+      let pulls = 0;
+      const gates = [];
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          pulls++;
+          if (pulls > 3) return c.end();
+          const { promise, resolve } = Promise.withResolvers();
+          gates.push(resolve);
+          await promise;
+          c.write(new Uint8Array([pulls]));
+          c.flush();
+        },
+      });
+      const reader = rs.getReader();
+      const p1 = reader.read();
+      // These arrive while pull #1 is suspended: must NOT re-enter pull() concurrently,
+      // and each must be serviced by a subsequent pull once the previous one settles.
+      const p2 = reader.read();
+      const p3 = reader.read();
+      expect(pulls).toBe(1);
+      gates.shift()();
+      expect((await p1).value[0]).toBe(1);
+      await new Promise(resolve => setImmediate(resolve));
+      gates.shift()();
+      expect((await p2).value[0]).toBe(2);
+      await new Promise(resolve => setImmediate(resolve));
+      gates.shift()();
+      expect((await p3).value[0]).toBe(3);
+      expect((await reader.read()).done).toBe(true);
+    });
+
+    // Three concurrent reads must each be serviced regardless of where the per-call
+    // producer's write/flush sits relative to its first await.
+    const perCallShapes = {
+      "write without flush": () => {
+        let n = 0;
+        return async c => {
+          n++;
+          await Promise.resolve();
+          c.write(new Uint8Array([n]));
+        };
+      },
+      "write and flush before the first await": () => {
+        let n = 0;
+        return async c => {
+          n++;
+          c.write(new Uint8Array([n]));
+          c.flush();
+          await Promise.resolve();
+        };
+      },
+      "first call async, later calls sync": () => {
+        let n = 0;
+        return c => {
+          n++;
+          if (n === 1)
+            return Promise.resolve().then(() => {
+              c.write(new Uint8Array([1]));
+              c.flush();
+            });
+          c.write(new Uint8Array([n]));
+          c.flush();
+        };
+      },
+      "first call async, later calls sync without flush": () => {
+        let n = 0;
+        return c => {
+          n++;
+          if (n === 1)
+            return Promise.resolve().then(() => {
+              c.write(new Uint8Array([1]));
+              c.flush();
+            });
+          c.write(new Uint8Array([n]));
+        };
+      },
+    };
+    it.each(Object.keys(perCallShapes))(
+      "three concurrent reads are each serviced by a per-call pull (%s)",
+      async shape => {
+        const rs = new ReadableStream({ type: "direct", pull: perCallShapes[shape]() });
+        const reader = rs.getReader();
+        const reads = [reader.read(), reader.read(), reader.read()];
+        const [r1, r2, r3] = await Promise.all(reads);
+        expect({ r1: r1.value[0], r2: r2.value[0], r3: r3.value[0] }).toEqual({ r1: 1, r2: 2, r3: 3 });
+      },
+    );
+
+    it("an async pull() that returns without writing is not re-invoked from its own fulfillment", async () => {
+      // Edge-triggered re-pull: a do-nothing pull must not livelock the microtask queue.
+      let pulls = 0;
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull() {
+          pulls++;
+        },
+      });
+      rs.getReader().read();
+      await new Promise(resolve => setImmediate(resolve));
+      expect(pulls).toBe(1);
+    });
+
+    it("a read whose demand was already satisfied does not cause a spurious re-pull", async () => {
+      let pulls = 0;
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          pulls++;
+          c.write(new Uint8Array([1]));
+          await c.flush();
+          c.write(new Uint8Array([2]));
+          await c.flush();
+        },
+      });
+      const reader = rs.getReader();
+      await Promise.all([reader.read(), reader.read()]);
+      await new Promise(resolve => setImmediate(resolve));
+      // Both reads were satisfied by pull #1's two flushes; m_pullAgain set by the second
+      // read() must not trigger a demand-less re-pull.
+      expect(pulls).toBe(1);
+    });
+  });
+
   it("a patched Object.prototype.then that releases the reader mid-resolution does not crash", async () => {
     let releaseNow = null;
     Object.defineProperty(Object.prototype, "then", {

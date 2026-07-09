@@ -84,19 +84,17 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // ES2024 Evaluate() step 2: for evaluating-async, return the cached
     // [[TopLevelCapability]] promise. m_evaluationResult is set only after the
     // first evaluate() returned, so Evaluating-without-result is sync re-entry.
-    if (m_status == Status::Evaluating && m_evaluationResult) {
-        return m_evaluationResult.get();
-    }
+    const bool evaluatingAsync = m_status == Status::Evaluating && m_evaluationResult;
 
-    if (m_status != Status::Linked && m_status != Status::Evaluated && m_status != Status::Errored) {
+    if (!evaluatingAsync && m_status != Status::Linked && m_status != Status::Evaluated && m_status != Status::Errored) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module status must be one of linked, evaluated, or errored"_s);
         return {};
     }
 
-    if (m_status == Status::Evaluated) {
-        // Node re-enters ModuleWrap::Evaluate even for already-evaluated
-        // modules; for microtaskMode "afterEvaluate" contexts that performs a
-        // microtask checkpoint on the context's own queue.
+    if (m_status == Status::Evaluated || evaluatingAsync) {
+        // Node re-enters ModuleWrap::Evaluate for both evaluated and
+        // evaluating-async; for microtaskMode "afterEvaluate" contexts that
+        // performs a microtask checkpoint on the context's own queue.
         NodeVMGlobalObject* nodeVmGlobalObject = NodeVM::getGlobalObjectFromContext(globalObject, m_context.get(), false);
         RETURN_IF_EXCEPTION(scope, {});
         if (nodeVmGlobalObject && nodeVmGlobalObject->hasOwnMicrotaskQueue()) {

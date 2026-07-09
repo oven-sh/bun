@@ -1007,8 +1007,18 @@ JSPromise* textDecodePullAlgorithm(JSGlobalObject* globalObject, JSReadableStrea
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* reader = uncheckedDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
     auto* readRequest = WebCore::JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::TextDecode, controller);
-    readableStreamDefaultReaderRead(globalObject, reader, readRequest);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSValue thrown;
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        readableStreamDefaultReaderRead(globalObject, reader, readRequest);
+        if (catchScope.exception()) [[unlikely]] {
+            thrown = takeAbruptCompletion(globalObject, catchScope);
+            if (thrown.isEmpty())
+                return nullptr;
+        }
+    }
+    if (!thrown.isEmpty())
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 

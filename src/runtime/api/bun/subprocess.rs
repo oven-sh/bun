@@ -860,6 +860,17 @@ impl Subprocess<'_> {
                 }
             }
         }
+        // The raw fd numbers are now visible to JS and the caller owns them.
+        // Downgrade so finalize_streams never closes a number JS may have
+        // already closed (whose value the kernel may have since recycled).
+        #[cfg(not(windows))]
+        this.stdio_pipes.with_mut(|pipes| {
+            for slot in pipes.iter_mut() {
+                if let ExtraPipe::OwnedFd(fd) = *slot {
+                    *slot = ExtraPipe::UnownedFd(fd);
+                }
+            }
+        });
         Ok(array)
     }
 

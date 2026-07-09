@@ -1541,6 +1541,7 @@ function renderNativeHeaders(res) {
   let hasDate = false;
   let hasConnection = false;
   let hasKeepAlive = false;
+  let userTEChunked; // undefined: no TE header; true/false: chunkExpression result
   if (headersMap !== null && headersMap !== undefined) {
     for (const key in headersMap) {
       const entry = headersMap[key];
@@ -1556,6 +1557,13 @@ function renderNativeHeaders(res) {
           res[kMustCloseConnection] = true;
         }
       } else if (key === "keep-alive") hasKeepAlive = true;
+      else if (key === "transfer-encoding") {
+        // Like Node.js's matchHeader: the body is chunk-framed iff the user's
+        // Transfer-Encoding value names `chunked` (any array element). The
+        // native writer otherwise decides framing from Content-Length alone,
+        // so the declared coding and the emitted framing disagree.
+        userTEChunked = chunkExpression.test($isArray(value) ? value.join(", ") : String(value));
+      }
       if ($isArray(value)) {
         const valueLength = value.length;
         if (valueLength < 2 || key !== "cookie") {
@@ -1653,6 +1661,16 @@ function renderNativeHeaders(res) {
     // gate - a HEAD response ends at the first empty line whatever headers
     // it carries (RFC 9112 6.3).
     flat.push("\u0000", "2");
+  } else if (userTEChunked === true) {
+    // Sentinel "3": chunk-frame the body even when a Content-Length header
+    // line was written (Node.js's _send obeys chunkedEncoding alone).
+    flat.push("\u0000", "3");
+    res.chunkedEncoding = true;
+  } else if (userTEChunked === false && !defectiveNoBodyResponse) {
+    // Sentinel "4": a non-chunked Transfer-Encoding (identity, gzip, ...)
+    // means the body bytes are written raw, like Node.js. Without this the
+    // native writer auto-chunks because it sees no Content-Length.
+    flat.push("\u0000", "4");
   }
 
   if (closeDelimited) {

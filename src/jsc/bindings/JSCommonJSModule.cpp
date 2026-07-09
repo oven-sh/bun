@@ -1486,21 +1486,30 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL);
 
 // module.id for a new CJS module object. id="." marks the Node main module, so
-// compare against vm.main instead of "first module seen" so -r preloads (which
-// run first) do not steal the main identity. For -e/-p/stdin entries Node uses
-// "[eval]"/"[stdin]" (the basename of the synthetic absolute filename).
+// compare against the entry path instead of "first module seen" so -r preloads
+// (which run first) do not steal the main identity. For -e/-p/stdin entries
+// Node uses "[eval]"/"[stdin]" (the basename of the synthetic absolute filename).
 static JSString* moduleIdForNewCommonJSModule(Zig::GlobalObject* globalObject, JSString* filename, const WTF::String& sourceURL, size_t sepIndex)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
         if (sepIndex != WTF::notFound) {
-            return JSC::jsSubstring(globalObject, filename, sepIndex + 1, sourceURL.length() - sepIndex - 1);
+            RELEASE_AND_RETURN(scope, JSC::jsSubstring(globalObject, filename, sepIndex + 1, sourceURL.length() - sepIndex - 1));
         }
         return filename;
     }
-    BunString sourceURLBunStr = Bun::toString(sourceURL);
-    if (Bun__isBunMain(globalObject, &sourceURLBunStr)) {
-        return JSC::jsString(vm, WTF::String("."_s));
+    // Compare against Bun.main (the realpath of the entry) rather than raw
+    // vm.main(): under e.g. the node-argv0 shim the entry may be requested via
+    // a symlink while this module is keyed by its realpath.
+    JSValue mainValue = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (mainValue.isString()) {
+        auto mainStr = asString(mainValue)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (mainStr == sourceURL) {
+            return JSC::jsString(vm, WTF::String("."_s));
+        }
     }
     return filename;
 }

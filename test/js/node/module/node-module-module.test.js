@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath, tempDir } from "harness";
+import { symlinkSync } from "fs";
+import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -388,6 +389,24 @@ describe.concurrent("main-module identity", () => {
       isMain: true,
       assigned: 42,
     });
+  });
+
+  test.skipIf(isWindows)("symlinked entry under the node-argv0 shim still gets id='.'", async () => {
+    using dir = tempDir("main-module-symlink", {
+      "real/main.cjs": `console.log(JSON.stringify({ id: module.id, reqMainIsModule: require.main === module }));\n`,
+    });
+    const cwd = String(dir);
+    symlinkSync("real", path.join(cwd, "link"), "dir");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join("link", "main.cjs")],
+      argv0: "node",
+      env: bunEnv,
+      cwd,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) expect({ stdout, stderr, exitCode }).toEqual({ stdout, stderr: "", exitCode: 0 });
+    expect(JSON.parse(stdout.trim())).toEqual({ id: ".", reqMainIsModule: true });
   });
 
   test("first CJS imported from an ESM entry is not the main module", async () => {

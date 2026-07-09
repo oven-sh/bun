@@ -253,7 +253,6 @@ describe("unterminated string literals in large files", () => {
   });
 });
 
-
 // https://github.com/oven-sh/bun/issues/32175
 describe.concurrent("implicit strict mode for files forced to ESM", () => {
   async function run(dir: unknown, file: string) {

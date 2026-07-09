@@ -38,7 +38,7 @@ async function run(cmd: string[], cwd: string) {
   return { stdout, stderr, exitCode };
 }
 
-describe("runtime transpiler preserves non-ASCII source text", () => {
+describe.concurrent("runtime transpiler preserves non-ASCII source text", () => {
   for (const [label, args] of [
     [".mjs", ["entry.mjs"]],
     [".cjs", ["entry.cjs"]],
@@ -101,6 +101,18 @@ describe("runtime transpiler preserves non-ASCII source text", () => {
     const { stdout, stderr, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
     expect(stderr).toBe("");
     expect(stdout).toBe("你好\\n𐃘\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("// @bun pragma with non-ASCII source", async () => {
+    using dir = tempDir("non-ascii-pragma", {
+      "entry.mjs": `// @bun\nfunction f() { return "café"; }\nconsole.log(JSON.stringify({ value: f(), src: f.toString() }));\n`,
+    });
+    const { stdout, stderr, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout);
+    expect(out.value).toBe("café");
+    expect(out.src).toContain('"café"');
     expect(exitCode).toBe(0);
   });
 });

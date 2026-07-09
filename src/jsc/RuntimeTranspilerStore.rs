@@ -1034,7 +1034,7 @@ impl TranspilerJob {
                 _ => (ptr::null_mut(), 0),
             };
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
-                source_code: String::clone_latin1(&parse_result.source.contents),
+                source_code: String::clone_utf8(&parse_result.source.contents),
                 already_bundled: true,
                 bytecode_cache,
                 bytecode_cache_size,

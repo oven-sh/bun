@@ -3795,7 +3795,7 @@ fn learn_nt_device(map: &mut Vec<(Vec<u16>, u16)>, dos: &[u16]) {
     ));
 }
 
-/// `VOLUME_NAME_DOS` was denied (sandboxed token). Answer with
+/// `VOLUME_NAME_DOS` was denied (AppContainer token). Answer with
 /// `<drive>:<VOLUME_NAME_NT path minus its device prefix>` via the learned
 /// device map; degrade to the original error for volumes never seen under a
 /// DOS spelling.
@@ -3803,6 +3803,12 @@ fn lowbox_dos_name_fallback(
     hFile: HANDLE,
     out_buffer: &mut [u16],
 ) -> Result<&mut [u16], GetFinalPathNameByHandleError> {
+    // The DOS-name denial is only worked around inside an AppContainer; any
+    // other token keeps the raw API's exact failure observables.
+    // SAFETY: argument-free query of the process token.
+    if unsafe { libuv::uv_os_is_app_container() } != 1 {
+        return Err(GetFinalPathNameByHandleError::FileNotFound);
+    }
     // Query the NT name before taking the lock so the per-handle syscall never
     // runs under it.
     let mut nt_buf = bun_paths::w_path_buffer_pool::get();
@@ -3866,11 +3872,11 @@ fn lowbox_dos_name_fallback(
 }
 
 /// This module's spelling of `GetFinalPathNameByHandleW`: raw-ABI drop-in
-/// (returns the length, or 0 with the thread's last error set) plus the same
-/// lowbox fallback as [`GetFinalPathNameByHandle`]. The fallback output keeps
-/// the `\\?\` prefix the raw API produces for `VOLUME_NAME_DOS`; the unwrapped
-/// extern stays reachable as `externs::GetFinalPathNameByHandleW` for the
-/// fallback machinery only.
+/// (returns the length, or 0 with the thread's last error set) plus, inside an
+/// AppContainer, the same lowbox fallback as [`GetFinalPathNameByHandle`]. The
+/// fallback output keeps the `\\?\` prefix the raw API produces for
+/// `VOLUME_NAME_DOS`; the unwrapped extern stays reachable as
+/// `externs::GetFinalPathNameByHandleW` for the fallback machinery only.
 ///
 /// # Safety
 /// `buf` must be valid for writes of `len` u16s.
@@ -3899,8 +3905,8 @@ pub unsafe fn GetFinalPathNameByHandleW(
     let rest_len = match lowbox_dos_name_fallback(hFile, &mut out[PFX.len()..]) {
         Ok(rest) => rest.len(),
         Err(_) => {
-            // The fallback's own (successful) queries clobbered the thread
-            // error; callers of this raw shape read it after a 0 return.
+            // The fallback's queries (or the container probe) clobbered the
+            // thread error; callers of this raw shape read it after a 0 return.
             kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
             return 0;
         }

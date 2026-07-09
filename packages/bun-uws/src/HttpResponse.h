@@ -170,10 +170,16 @@ public:
                  * type the C API casts to from a runtime `int ssl` - so this
                  * one shared read stays a runtime bit test.) */
                 auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
-                Super::write("0\r\n", 3);
-                Super::write(nodeHttpResponseData->nodeHttpResponseTrailers.data(), (int) nodeHttpResponseData->nodeHttpResponseTrailers.length());
-                Super::write("\r\n", 2);
-                nodeHttpResponseData->nodeHttpResponseTrailers.clear();
+                /* Emit the terminating chunk, the trailer section and the final CRLF as
+                 * ONE write: when the response is not corked (cork slots are contended
+                 * under high connection counts), separate writes become separate tiny
+                 * TCP segments on the tail of every response. The buffer is about to be
+                 * cleared anyway, so build the frame in place. */
+                std::string &trailers = nodeHttpResponseData->nodeHttpResponseTrailers;
+                trailers.insert(0, "0\r\n", 3);
+                trailers.append("\r\n", 2);
+                Super::write(trailers.data(), (int) trailers.length());
+                trailers.clear();
                 httpResponseData->hasNodeHttpResponseTrailers = false;
             } else {
                 Super::write("0\r\n\r\n", 5);

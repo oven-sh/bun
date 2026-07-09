@@ -889,8 +889,9 @@ test("markAsUncloneable blocks cloning a port but not transferring it", async ()
   b.close();
 });
 
-// The listener registry must not route through user-overridable Map/Set/WeakMap
-// methods. Spawned: it clobbers prototypes, which would poison the whole runner.
+// The listener registry must not route through user-overridable Map/Set/WeakMap:
+// not their methods, not the `size` getter, not their iterators. Spawned, because
+// it clobbers prototypes and would poison the whole runner.
 test("the listener registry survives tampered Map/Set/WeakMap prototypes", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -898,13 +899,15 @@ test("the listener registry survives tampered Map/Set/WeakMap prototypes", async
       "-e",
       `const { MessageChannel } = require("worker_threads");
        const boom = name => function () { throw new Error("tampered " + name); };
-       Map.prototype.get = boom("Map.get");
-       Map.prototype.set = boom("Map.set");
-       Map.prototype.delete = boom("Map.delete");
-       Set.prototype.add = boom("Set.add");
-       Set.prototype.delete = boom("Set.delete");
-       WeakMap.prototype.get = boom("WeakMap.get");
-       WeakMap.prototype.set = boom("WeakMap.set");
+       for (const [C, names] of [
+         [Map, ["get", "set", "delete", "has", "values", "keys", "entries", "forEach"]],
+         [Set, ["add", "delete", "has", "values", "keys", "entries", "forEach"]],
+         [WeakMap, ["get", "set", "has", "delete"]],
+       ]) {
+         for (const n of names) C.prototype[n] = boom(C.name + "." + n);
+         Object.defineProperty(C.prototype, "size", { get: boom(C.name + ".size"), configurable: true });
+         C.prototype[Symbol.iterator] = boom(C.name + "[Symbol.iterator]");
+       }
 
        const { port1, port2 } = new MessageChannel();
        const fn = () => {};

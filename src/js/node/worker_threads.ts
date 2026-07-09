@@ -4,6 +4,7 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
+const { SafeMap } = require("internal/primordials");
 const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
@@ -104,12 +105,14 @@ function injectFakeEmitter(Class) {
   // Per-instance registry mapping each event to (user listener -> wrapper), so
   // listenerCount/eventNames/removeAllListeners work over EventTarget's opaque
   // internal map and off() can find the wrapper a given listener registered.
-  // Keyed by a module-local symbol rather than a WeakMap: WeakMap.prototype
-  // .get/.set are user-overridable and JSC has no @get/@set private name.
+  // SafeMap: its prototype is a frozen, null-proto snapshot of Map.prototype, so
+  // .get/.set/.size/.values()/iteration all bypass a user-replaced Map.prototype.
+  // (It has no @get/@set private names, so the $-intrinsics don't apply to it.)
+  // Keyed by a module-local symbol, not a WeakMap — WeakMap has neither defence.
   const kListenerRegistry = Symbol("listenerRegistry");
   function registryFor(target, create) {
     let map = target[kListenerRegistry];
-    if (!map && create) target[kListenerRegistry] = map = new Map();
+    if (!map && create) target[kListenerRegistry] = map = new SafeMap();
     return map;
   }
 
@@ -161,11 +164,11 @@ function injectFakeEmitter(Class) {
   // same function are no-ops. Keying wrappers per listener reproduces that.
   function register(target, event, listener, wrapper, options) {
     const map = registryFor(target, true)!;
-    let byListener = map.$get(event);
-    if (!byListener) map.$set(event, (byListener = new Map()));
-    if (byListener.$has(listener)) return false;
+    let byListener = map.get(event);
+    if (!byListener) map.set(event, (byListener = new SafeMap()));
+    if (byListener.has(listener)) return false;
     target.addEventListener(event, wrapper, options);
-    byListener.$set(listener, wrapper);
+    byListener.set(listener, wrapper);
     return true;
   }
 
@@ -176,10 +179,10 @@ function injectFakeEmitter(Class) {
 
   function off(event, listener) {
     if (listener) {
-      const byListener = registryFor(this, false)?.$get(event);
-      const wrapper = byListener?.$get(listener) ?? listener;
+      const byListener = registryFor(this, false)?.get(event);
+      const wrapper = byListener?.get(listener) ?? listener;
       this.removeEventListener(event, wrapper);
-      byListener?.$delete(listener);
+      byListener?.delete(listener);
     } else {
       this.removeEventListener(event);
     }
@@ -193,7 +196,7 @@ function injectFakeEmitter(Class) {
     // registry — so purge it here or listenerCount()/eventNames() keep counting
     // a listener that already fired.
     function onceWrapper(ev) {
-      registryFor(target, false)?.$get(event)?.$delete(listener);
+      registryFor(target, false)?.get(event)?.delete(listener);
       return wrapper(ev);
     }
     register(this, event, listener, onceWrapper, { once: true });
@@ -225,7 +228,7 @@ function injectFakeEmitter(Class) {
     return this[kMaxListeners] ?? 10;
   }
   function listenerCount(type) {
-    return registryFor(this, false)?.$get(type)?.size ?? 0;
+    return registryFor(this, false)?.get(type)?.size ?? 0;
   }
   function eventNames() {
     const map = registryFor(this, false);
@@ -238,10 +241,10 @@ function injectFakeEmitter(Class) {
     const map = registryFor(this, false);
     if (!map) return this;
     const removeType = t => {
-      const byListener = map.$get(t);
+      const byListener = map.get(t);
       if (byListener) {
         for (const w of byListener.values()) this.removeEventListener(t, w);
-        map.$delete(t);
+        map.delete(t);
       }
     };
     if (arguments.length === 0) {

@@ -51,16 +51,6 @@ import { interactive, nameColor, status } from "./build/tty.ts";
 // Main
 // ───────────────────────────────────────────────────────────────────────────
 
-try {
-  await main();
-} catch (err) {
-  if (err instanceof BuildError) {
-    process.stderr.write(err.format());
-    process.exit(1);
-  }
-  throw err;
-}
-
 async function main(): Promise<void> {
   // Windows: re-exec inside the VS dev shell if not already there.
   // The shell provides PATH (mt.exe, rc.exe, cl.exe), INCLUDE, LIB,
@@ -591,3 +581,15 @@ Examples:
   bun scripts/build.ts --target=bun-rust
   bun scripts/build.ts --configure-only
 `;
+
+// Entry point — must run after all module-level declarations (USAGE) are
+// initialized, otherwise parseArgs hits a TDZ ReferenceError on --help.
+try {
+  await main();
+} catch (err) {
+  if (err instanceof BuildError) {
+    process.stderr.write(err.format());
+    process.exit(1);
+  }
+  throw err;
+}

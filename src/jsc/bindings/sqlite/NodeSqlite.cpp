@@ -1929,7 +1929,11 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSerialize, (JSGlobalObject * globalObject
     auto dbNameUtf8 = dbName.utf8();
 
     sqlite3_int64 size = 0;
-    unsigned char* data = sqlite3_serialize(self->connection(), dbNameUtf8.data(), &size, 0);
+    // Capture before the call: the authorizer fires from inside
+    // sqlite3_serialize's internal PRAGMA prepare and may re-enter close()
+    // (deferred, nulls m_db); read the error from the captured handle.
+    sqlite3* conn = self->connection();
+    unsigned char* data = sqlite3_serialize(conn, dbNameUtf8.data(), &size, 0);
     // For non-memdb schemas (regular :memory: or file-backed)
     // sqlite3_serialize internally prepares `PRAGMA "<s>".page_count`,
     // which fires the authorizer with SQLITE_PRAGMA. Surface a thrown
@@ -1951,7 +1955,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSerialize, (JSGlobalObject * globalObject
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(array);
         }
-        throwSqliteError(globalObject, scope, self->connection());
+        throwSqliteError(globalObject, scope, conn);
         return {};
     }
 
@@ -3562,6 +3566,12 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
     }
 
     if (!stmtObj) {
+        // A template-strings-array accessor above may have re-entered
+        // close(); re-check before handing SQLite the connection.
+        if (!db->isOpen()) {
+            throwNodeState(globalObject, scope, "database is not open"_s);
+            return nullptr;
+        }
         auto utf8 = sqlStr.utf8();
         sqlite3_stmt* stmt = nullptr;
         // SQLITE_PREPARE_PERSISTENT: TagStore-cached statements are exactly
@@ -3569,7 +3579,8 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
         // the flag is documented for; it keeps them out of lookaside memory.
         // Intentional divergence from Node (which uses prepare_v2) — the
         // hint is allocator-only, not observable behavior.
-        int r = sqlite3_prepare_v3(db->connection(), utf8.data(), -1, SQLITE_PREPARE_PERSISTENT, &stmt, nullptr);
+        sqlite3* conn = db->connection();
+        int r = sqlite3_prepare_v3(conn, utf8.data(), -1, SQLITE_PREPARE_PERSISTENT, &stmt, nullptr);
         // prepare() runs the authorizer callback (if any), which may
         // throw — surface that over SQLite's generic "not authorized"
         // so we don't overwrite the user's exception. Mirrors
@@ -3580,7 +3591,7 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
         }
         if (r != SQLITE_OK) {
             if (stmt) sqlite3_finalize(stmt);
-            throwSqliteError(globalObject, scope, db->connection());
+            throwSqliteError(globalObject, scope, conn);
             return nullptr;
         }
         if (!stmt) {

@@ -272,7 +272,12 @@ pub fn replace_package_manager_run(
 /// keeping byte-for-byte output) when no workspace flag is present, when the
 /// match is inside a quoted string, or when the segment's quotes are unbalanced:
 /// reordering tokens is only safe at shell top level with balanced quoting.
-fn rewrite_npm_run_workspaces(out: &mut Vec<u8>, cmd: &[u8], prefix_len: usize, delimiter: u8) -> usize {
+fn rewrite_npm_run_workspaces(
+    out: &mut Vec<u8>,
+    cmd: &[u8],
+    prefix_len: usize,
+    delimiter: u8,
+) -> usize {
     // Reordering tokens inside a quoted string would move the closing quote;
     // leave those to the plain prefix swap.
     if delimiter != b' ' {

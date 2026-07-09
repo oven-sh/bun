@@ -53,6 +53,39 @@ export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
   );
 }
 
+export function decodeSourceMappingsLine(line: string) {
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const segs: { gen: number; src: number; ol: number; oc: number }[] = [];
+  let gen = 0;
+  let src = 0;
+  let ol = 0;
+  let oc = 0;
+  for (const raw of line ? line.split(",") : []) {
+    const f: number[] = [];
+    let v = 0;
+    let sh = 0;
+    for (const c of raw) {
+      const d = B64.indexOf(c);
+      v |= (d & 31) << sh;
+      if (d & 32) {
+        sh += 5;
+        continue;
+      }
+      f.push(v & 1 ? -(v >>> 1) : v >>> 1);
+      v = 0;
+      sh = 0;
+    }
+    gen += f[0];
+    if (f.length > 1) {
+      src += f[1];
+      ol += f[2];
+      oc += f[3];
+    }
+    segs.push({ gen, src, ol, oc });
+  }
+  return segs;
+}
+
 let currentFile: string | undefined;
 
 function errorOrWarnParser(isError = true) {
@@ -1593,34 +1626,17 @@ for (const [key, blob] of build.outputs) {
           // decode the raw VLQ first to catch out-of-order segments (a
           // source-map spec violation).
           {
-            const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
             let ln = 0;
             for (const line of String(parsed.mappings).split(";")) {
               ln++;
-              let gen = 0;
-              let prev = -1;
-              for (const seg of line ? line.split(",") : []) {
-                let v = 0;
-                let sh = 0;
-                let delta: number | undefined;
-                for (const c of seg) {
-                  const d = B64.indexOf(c);
-                  v |= (d & 31) << sh;
-                  if (d & 32) {
-                    sh += 5;
-                    continue;
-                  }
-                  delta = v & 1 ? -(v >>> 1) : v >>> 1;
-                  break;
-                }
-                gen += delta!;
-                if (gen < prev) {
+              const segs = decodeSourceMappingsLine(line);
+              for (let i = 1; i < segs.length; i++) {
+                if (segs[i].gen < segs[i - 1].gen) {
                   throw new Error(
                     `${file}: out-of-order segments on generated line ${ln}: ` +
-                      `column ${prev} -> ${gen}\n  mappings line: ${line}`,
+                      `column ${segs[i - 1].gen} -> ${segs[i].gen}\n  mappings line: ${line}`,
                   );
                 }
-                prev = gen;
               }
             }
           }

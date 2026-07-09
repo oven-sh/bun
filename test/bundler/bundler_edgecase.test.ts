@@ -2,45 +2,12 @@ import { describe, expect } from "bun:test";
 import { isBroken, isWindows } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { itBundled } from "./expectBundled";
+import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
 // A public path composes with the referenced file's path relative to the output
 // directory, never relative to the importing chunk (esbuild's semantics).
 const CDN_PUBLIC_PATH = "https://cdn.example/app/";
 const cdnUrls = (source: string) => [...source.matchAll(/"(https:\/\/cdn\.example\/[^"]+)"/g)].map(match => match[1]);
-
-function decodeSourceMappingsLine(line: string) {
-  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  const segs: { gen: number; src: number; ol: number; oc: number }[] = [];
-  let gen = 0;
-  let src = 0;
-  let ol = 0;
-  let oc = 0;
-  for (const raw of line ? line.split(",") : []) {
-    const f: number[] = [];
-    let v = 0;
-    let sh = 0;
-    for (const c of raw) {
-      const d = B64.indexOf(c);
-      v |= (d & 31) << sh;
-      if (d & 32) {
-        sh += 5;
-        continue;
-      }
-      f.push(v & 1 ? -(v >>> 1) : v >>> 1);
-      v = 0;
-      sh = 0;
-    }
-    gen += f[0];
-    if (f.length > 1) {
-      src += f[1];
-      ol += f[2];
-      oc += f[3];
-    }
-    segs.push({ gen, src, ol, oc });
-  }
-  return segs;
-}
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {

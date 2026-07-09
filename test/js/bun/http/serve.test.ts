@@ -2387,11 +2387,8 @@ it.concurrent("should not send extra bytes when using sendfile", async () => {
 });
 
 describe.concurrent("Expect: 100-continue (case-insensitive match)", () => {
-  // RFC 7231 §5.1.1: expectation-name is a token; RFC 7230 §3.2.6: tokens are
-  // case-insensitive. Apache HttpComponents httpcore 4.x sends "100-Continue"
-  // verbatim (used by JBoss/Seam, Spring RestTemplate, Hadoop, Solr, AWS SDK
-  // v1, etc.); those clients would otherwise wait WAIT_FOR_CONTINUE (2s) before
-  // sending the body. See issue #30248.
+  // https://github.com/oven-sh/bun/issues/30248
+  // RFC 7231 §5.1.1 / RFC 7230 §3.2.6: expectation-name is a case-insensitive token.
   it.each(["100-continue", "100-Continue", "100-CONTINUE", "100-cOnTiNuE"])(
     "responds with 100 Continue for Expect: %s",
     async expectValue => {

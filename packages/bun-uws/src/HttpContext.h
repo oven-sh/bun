@@ -661,9 +661,8 @@ public:
 
             if (!httpContextData->flags.usingCustomExpectHandler) {
                 /* Middleware? Automatically respond to expectations.
-                 * RFC 7231 §5.1.1 expectation-name is a token and tokens are
-                 * case-insensitive (RFC 7230 §3.2.6), so match any ASCII casing
-                 * (e.g. "100-Continue" from Apache HttpComponents httpcore 4.x). */
+                 * RFC 7231 §5.1.1 / RFC 7230 §3.2.6: expectation-name is a
+                 * case-insensitive token. */
                 std::string_view expect = user.httpRequest->getHeader("expect");
                 if (utils::asciiIEquals(expect, "100-continue")) {
                     user.httpResponse->writeContinue();

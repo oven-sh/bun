@@ -1025,7 +1025,11 @@ where
                 resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
                 resp.write_header(b"content-encoding", b"gzip");
                 resp.write_header_int(b"content-length", WELCOME_PAGE_HTML_GZ.len() as u64);
-                ctx.end(WELCOME_PAGE_HTML_GZ, ctx.should_close_connection());
+                if ctx.method == Method::HEAD {
+                    ctx.end_without_body(ctx.should_close_connection());
+                } else {
+                    ctx.end(WELCOME_PAGE_HTML_GZ, ctx.should_close_connection());
+                }
                 return;
             }
             const MISSING_CONTENT: &[u8] =
@@ -1034,7 +1038,11 @@ where
             resp.write_header(b"content-type", &bun_http_types::MimeType::TEXT.value);
             resp.write_header_int(b"content-length", MISSING_CONTENT.len() as u64);
             ctx.flags.set_has_written_status(true);
-            ctx.end(MISSING_CONTENT, ctx.should_close_connection());
+            if ctx.method == Method::HEAD {
+                ctx.end_without_body(ctx.should_close_connection());
+            } else {
+                ctx.end(MISSING_CONTENT, ctx.should_close_connection());
+            }
         }
     }
 
@@ -1084,6 +1092,11 @@ where
             Output::pretty_errorln(fmt);
         }
         Output::flush();
+
+        if self.method == Method::HEAD {
+            self.end_without_body(self.should_close_connection());
+            return;
+        }
 
         // Explicitly use the global allocator and *not* the arena
         let mut bb: Vec<u8> = Vec::new();
@@ -3357,13 +3370,18 @@ where
                     self.end_without_body(self.should_close_connection());
                 }
                 _ => {
+                    const BODY: &[u8] = b"Something went wrong!";
                     if !self.flags.has_written_status() {
                         resp.write_status(b"500 Internal Server Error");
                         resp.write_header(b"content-type", b"text/plain");
                         self.flags.set_has_written_status(true);
                     }
-
-                    self.end(b"Something went wrong!", self.should_close_connection());
+                    if self.method == Method::HEAD {
+                        resp.write_header_int(b"content-length", BODY.len() as u64);
+                        self.end_without_body(self.should_close_connection());
+                    } else {
+                        self.end(BODY, self.should_close_connection());
+                    }
                 }
             }
         }
@@ -3823,6 +3841,21 @@ where
     /// Same contract as [`Self::set_response`].
     pub unsafe fn render(&mut self, response: *mut Response) {
         ctx_log!("render");
+
+        // A HEAD response never carries content (RFC 9110 §9.3.2). The normal
+        // handler path branches to `do_render_head_response` before reaching
+        // here, but the `error()` handler paths call `render()` directly.
+        if self.method == Method::HEAD {
+            if let Some(resp) = self.resp {
+                let mut pair = HeaderResponsePair {
+                    this: self,
+                    response,
+                };
+                resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+            }
+            return;
+        }
+
         // SAFETY: caller contract.
         unsafe { self.set_response(response) };
 

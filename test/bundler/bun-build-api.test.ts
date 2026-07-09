@@ -1038,20 +1038,36 @@ describe.concurrent("sourcemap positions", () => {
     });
   });
 
-  test("UTF-8 BOM: CSS input still parses", async () => {
-    const dir = tempDirWithFiles("build-bom-css", {
+  // The BOM is kept for JS/TS source-map fidelity but must not leak into the
+  // value produced by other loaders (text) or confuse their parsers (css/toml).
+  test("UTF-8 BOM: non-JS loaders strip it", async () => {
+    const dir = tempDirWithFiles("build-bom-loaders", {
       "a.css": `\uFEFF.foo { color: red; }\n`,
-      "e.js": `import "./a.css";\n`,
+      "c.toml": `\uFEFFkey = "value"\n`,
+      "t.txt": `\uFEFFhello\n`,
+      "e.js":
+        `import "./a.css";\n` +
+        `import c from "./c.toml";\n` +
+        `import t from "./t.txt";\n` +
+        `console.log(JSON.stringify({ c, t, tFirst: t.charCodeAt(0) }));\n`,
     });
     const build = await Bun.build({
       entrypoints: [join(dir, "e.js")],
       outdir: join(dir, "out"),
+      target: "bun",
     });
     expect(build.logs.map(l => l.message)).toEqual([]);
     expect(build.success).toBe(true);
     const css = await build.outputs.find(o => o.path.endsWith(".css"))!.text();
     expect(css).toContain(".foo");
     expect(css).toContain("red");
+
+    const js = build.outputs.find(o => o.kind === "entry-point")!;
+    await using proc = Bun.spawn({ cmd: [bunExe(), js.path], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ c: { key: "value" }, t: "hello\n", tFirst: 104 });
+    expect(exitCode).toBe(0);
   });
 });
 

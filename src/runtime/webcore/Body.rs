@@ -839,78 +839,7 @@ impl Value {
                 if let Some(readable) = locked.readable.get(global_this) {
                     return Ok(readable.value);
                 }
-                if locked.promise.is_some() || !locked.action.is_none() {
-                    return ReadableStream::used(global_this);
-                }
-                let mut drain_result = DrainResult::EstimatedSize(0);
-
-                if let Some(drain) = locked.on_start_streaming.take() {
-                    drain_result = drain(locked.task.unwrap());
-                }
-
-                if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
-                    *self = Value::Null;
-                    return ReadableStream::empty(global_this);
-                }
-
-                // `new_mut` centralises the post-allocation deref; ownership of the
-                // heap `NewSource` transfers to the JS wrapper's `m_ctx` in
-                // `to_readable_stream()` below (freed by the GC finalizer).
-                let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
-                    webcore::readable_stream::NewSource {
-                        // `ByteStream::default()` is the post-setup state.
-                        context: ByteStream::default(),
-                        global_this: Some(bun_ptr::BackRef::new(global_this)),
-                        ..Default::default()
-                    },
-                );
-
-                if let Some(task) = locked.task {
-                    if let Some(on_cancelled) = locked.on_stream_cancelled {
-                        reader.cancel_handler.set(Some(on_cancelled));
-                        reader.cancel_ctx.set(Some(task));
-                    }
-                    if let Some(on_drained) = locked.on_stream_drained {
-                        reader.drain_handler.set(Some(on_drained));
-                        reader.drain_ctx.set(Some(task));
-                    }
-                }
-
-                reader.context.setup();
-
-                match drain_result {
-                    DrainResult::EstimatedSize(estimated_size) => {
-                        reader.context.high_water_mark = estimated_size as blob::SizeType;
-                        reader
-                            .context
-                            .size_hint
-                            .set(estimated_size as blob::SizeType);
-                    }
-                    DrainResult::Owned { list, size_hint } => {
-                        reader.context.buffer.set(list);
-                        reader.context.size_hint.set(size_hint as blob::SizeType);
-                    }
-                    _ => {}
-                }
-
-                let context_ptr: *mut ByteStream = &raw mut reader.context;
-                locked.readable = webcore::readable_stream::Strong::init(
-                    ReadableStream {
-                        ptr: webcore::readable_stream::Source::Bytes(context_ptr),
-                        value: reader.to_readable_stream(global_this)?,
-                    },
-                    global_this,
-                );
-
-                if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
-                    on_readable_stream_available(
-                        locked.task.unwrap(),
-                        global_this,
-                        locked.readable.get(global_this).unwrap(),
-                    );
-                }
-
-                Ok(locked.readable.get(global_this).unwrap().value)
+                self.locked_to_native_stream(global_this, false)
             }
             Value::Error(err) => {
                 // Leave `self` as `Error` so the promise-returning readers
@@ -958,82 +887,103 @@ impl Value {
                 *self = Value::Used;
                 Ok(stream)
             }
-            Value::Locked(locked) => {
-                if locked.promise.is_some() || !locked.action.is_none() {
-                    return ReadableStream::used(global_this);
-                }
-                let mut drain_result = DrainResult::EstimatedSize(0);
-
-                if let Some(drain) = locked.on_start_streaming.take() {
-                    drain_result = drain(locked.task.unwrap());
-                }
-
-                if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
-                    *self = Value::Null;
-                    return ReadableStream::empty(global_this);
-                }
-
-                let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
-                    webcore::readable_stream::NewSource {
-                        context: ByteStream::default(),
-                        global_this: Some(bun_ptr::BackRef::new(global_this)),
-                        ..Default::default()
-                    },
-                );
-
-                if let Some(task) = locked.task {
-                    if let Some(on_cancelled) = locked.on_stream_cancelled {
-                        reader.cancel_handler.set(Some(on_cancelled));
-                        reader.cancel_ctx.set(Some(task));
-                    }
-                    if let Some(on_drained) = locked.on_stream_drained {
-                        reader.drain_handler.set(Some(on_drained));
-                        reader.drain_ctx.set(Some(task));
-                    }
-                }
-
-                reader.context.setup();
-
-                match drain_result {
-                    DrainResult::EstimatedSize(estimated_size) => {
-                        reader.context.high_water_mark = estimated_size as blob::SizeType;
-                        reader
-                            .context
-                            .size_hint
-                            .set(estimated_size as blob::SizeType);
-                    }
-                    DrainResult::Owned { list, size_hint } => {
-                        reader.context.buffer.set(list);
-                        reader.context.size_hint.set(size_hint as blob::SizeType);
-                    }
-                    _ => {}
-                }
-
-                let context_ptr: *mut ByteStream = &raw mut reader.context;
-                let stream_value = reader.to_text_readable_stream(global_this)?;
-                locked.readable = webcore::readable_stream::Strong::init(
-                    ReadableStream {
-                        ptr: webcore::readable_stream::Source::Bytes(context_ptr),
-                        value: stream_value,
-                    },
-                    global_this,
-                );
-
-                if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
-                    on_readable_stream_available(
-                        locked.task.unwrap(),
-                        global_this,
-                        locked.readable.get(global_this).unwrap(),
-                    );
-                }
-
-                Ok(stream_value)
-            }
+            Value::Locked(_) => self.locked_to_native_stream(global_this, true),
             Value::Error(err) => {
                 let reason = err.to_js(global_this);
                 ReadableStream::errored(global_this, reason)
             }
         }
+    }
+
+    /// Materialize a `Value::Locked` body (no readable yet) as a
+    /// `NewSource<ByteStream>`-backed native `ReadableStream` and wire up the
+    /// HTTP-client callbacks. Shared tail of [`to_readable_stream`] and
+    /// [`to_text_readable_stream`].
+    fn locked_to_native_stream(
+        &mut self,
+        global_this: &JSGlobalObject,
+        text_mode: bool,
+    ) -> JsResult<JSValue> {
+        let Value::Locked(locked) = self else {
+            unreachable!("locked_to_native_stream on non-Locked Value");
+        };
+        if locked.promise.is_some() || !locked.action.is_none() {
+            return ReadableStream::used(global_this);
+        }
+        let mut drain_result = DrainResult::EstimatedSize(0);
+
+        if let Some(drain) = locked.on_start_streaming.take() {
+            drain_result = drain(locked.task.unwrap());
+        }
+
+        if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
+            *self = Value::Null;
+            return ReadableStream::empty(global_this);
+        }
+
+        // `new_mut` centralises the post-allocation deref; ownership of the
+        // heap `NewSource` transfers to the JS wrapper's `m_ctx` in
+        // `to_readable_stream()` below (freed by the GC finalizer).
+        let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
+            webcore::readable_stream::NewSource {
+                // `ByteStream::default()` is the post-setup state.
+                context: ByteStream::default(),
+                global_this: Some(bun_ptr::BackRef::new(global_this)),
+                ..Default::default()
+            },
+        );
+
+        if let Some(task) = locked.task {
+            if let Some(on_cancelled) = locked.on_stream_cancelled {
+                reader.cancel_handler.set(Some(on_cancelled));
+                reader.cancel_ctx.set(Some(task));
+            }
+            if let Some(on_drained) = locked.on_stream_drained {
+                reader.drain_handler.set(Some(on_drained));
+                reader.drain_ctx.set(Some(task));
+            }
+        }
+
+        reader.context.setup();
+
+        match drain_result {
+            DrainResult::EstimatedSize(estimated_size) => {
+                reader.context.high_water_mark = estimated_size as blob::SizeType;
+                reader
+                    .context
+                    .size_hint
+                    .set(estimated_size as blob::SizeType);
+            }
+            DrainResult::Owned { list, size_hint } => {
+                reader.context.buffer.set(list);
+                reader.context.size_hint.set(size_hint as blob::SizeType);
+            }
+            _ => {}
+        }
+
+        let context_ptr: *mut ByteStream = &raw mut reader.context;
+        let stream_value = if text_mode {
+            reader.to_text_readable_stream(global_this)?
+        } else {
+            reader.to_readable_stream(global_this)?
+        };
+        locked.readable = webcore::readable_stream::Strong::init(
+            ReadableStream {
+                ptr: webcore::readable_stream::Source::Bytes(context_ptr),
+                value: stream_value,
+            },
+            global_this,
+        );
+
+        if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
+            on_readable_stream_available(
+                locked.task.unwrap(),
+                global_this,
+                locked.readable.get(global_this).unwrap(),
+            );
+        }
+
+        Ok(stream_value)
     }
 
     pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Value> {

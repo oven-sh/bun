@@ -1044,6 +1044,12 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
     if (!view || view->isDetached()) [[unlikely]] {
         auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not an ArrayBufferView"_s);
         RETURN_IF_EXCEPTION(scope, void());
+        if (auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get())) {
+            auto* cancelResult = readableStreamReaderGenericCancel(globalObject, reader, error);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (cancelResult)
+                markPromiseAsHandled(vm, cancelResult);
+        }
         readableStreamDefaultControllerError(globalObject, controller, error);
         return;
     }

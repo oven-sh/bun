@@ -392,6 +392,23 @@ for (const { body, fn } of bodyTypes) {
         await stream.cancel("stop");
         expect(cancelled).toBe("stop");
       });
+      test("cancels the source stream when it produces a non-ArrayBufferView chunk", async () => {
+        let cancelled: unknown;
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue("oops");
+          },
+          cancel(reason) {
+            cancelled = reason;
+          },
+        });
+        const stream = fn(input).textStream();
+        expect(async () => {
+          for await (const _ of stream) {
+          }
+        }).toThrow(TypeError);
+        expect(cancelled).toBeInstanceOf(TypeError);
+      });
       test("streams a fetch response body", async () => {
         await using server = Bun.serve({
           port: 0,
@@ -412,6 +429,48 @@ for (const { body, fn } of bodyTypes) {
         const out = (await Array.fromAsync(stream)).join("");
         expect(out).toBe("hello world 🫠");
         expect(res.bodyUsed).toBe(true);
+      });
+      test("streams an incoming request body server-side", async () => {
+        const { promise, resolve, reject } = Promise.withResolvers<{
+          chunks: string[];
+          bodyUsedAfter: boolean;
+          secondCallThrew: boolean;
+        }>();
+        await using server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            try {
+              const stream = req.textStream();
+              const chunks = await Array.fromAsync(stream);
+              let secondCallThrew = false;
+              try {
+                req.textStream();
+              } catch (e) {
+                secondCallThrew = e instanceof TypeError;
+              }
+              resolve({ chunks, bodyUsedAfter: req.bodyUsed, secondCallThrew });
+            } catch (e) {
+              reject(e);
+            }
+            return new Response("ok");
+          },
+        });
+        await fetch(server.url, {
+          method: "POST",
+          body: new ReadableStream({
+            start(c) {
+              for (const s of ["hello ", "world 🫠"]) c.enqueue(new TextEncoder().encode(s));
+              c.close();
+            },
+          }),
+        });
+        const result = await promise;
+        for (const chunk of result.chunks) {
+          expect(typeof chunk).toBe("string");
+        }
+        expect(result.chunks.join("")).toBe("hello world 🫠");
+        expect(result.bodyUsedAfter).toBe(true);
+        expect(result.secondCallThrew).toBe(true);
       });
     });
     describe("json()", () => {

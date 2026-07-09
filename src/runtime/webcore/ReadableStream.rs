@@ -1040,7 +1040,11 @@ impl<C: SourceContext> NewSource<C> {
         self.context.drain_internal_buffer()
     }
 
-    pub fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    fn to_readable_stream_with(
+        &mut self,
+        global_this: &JSGlobalObject,
+        from_native: fn(&JSGlobalObject, JSValue) -> JsResult<JSValue>,
+    ) -> JsResult<JSValue> {
         let out_value = if let Some(v) = self.this_jsvalue.try_get() {
             v
         } else {
@@ -1050,20 +1054,15 @@ impl<C: SourceContext> NewSource<C> {
         if self.this_jsvalue.is_empty() {
             self.this_jsvalue = jsc::JsRef::init_weak(out_value);
         }
-        ReadableStream::from_native(global_this, out_value)
+        from_native(global_this, out_value)
+    }
+
+    pub fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        self.to_readable_stream_with(global_this, ReadableStream::from_native)
     }
 
     pub fn to_text_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let out_value = if let Some(v) = self.this_jsvalue.try_get() {
-            v
-        } else {
-            <Self as NewSourceCodegen>::to_js(self, global_this)
-        };
-        out_value.ensure_still_alive();
-        if self.this_jsvalue.is_empty() {
-            self.this_jsvalue = jsc::JsRef::init_weak(out_value);
-        }
-        ReadableStream::from_native_text(global_this, out_value)
+        self.to_readable_stream_with(global_this, ReadableStream::from_native_text)
     }
 
     pub fn set_raw_mode_from_js(

@@ -117,7 +117,8 @@ enum class SourceKind : uint8_t {
     Native, // Bun: lazily-materialized native source on a DEFAULT controller
             // (context = JSNativeStreamSourceAdapter)
     TextDecode, // Body.textStream() reading from an existing byte stream
-                // (context = InternalFieldTuple{reader, 4-byte Uint8Array pending buffer})
+                // (algorithmContext = source JSReadableStreamDefaultReader;
+                // underlyingObject = 4-byte state Uint8Array)
 };
 
 // Which arm runs a writable controller's write/close/abort algorithms.
@@ -178,7 +179,7 @@ enum class ReadRequestKind : uint8_t {
     ResumableSinkPump, // Bun: ResumableSink pump read (context = JSResumableSinkPumpOperation)
     TextDecode, // Body.textStream()'s per-pull read: context = the output
                 // JSReadableStreamDefaultController (its algorithmContext is the
-                // JSStreamTextDecodeContext holding the decoder)
+                // source reader; underlyingObject is the 4-byte state Uint8Array)
 };
 
 // JSReadIntoRequest::m_kind (the BYOB parallel of ReadRequestKind).

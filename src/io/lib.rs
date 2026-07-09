@@ -849,18 +849,14 @@ impl IoRequestLoop {
     /// thread: only touches the lock-free `pending` queue and the
     /// async-signal-safe `waker`. This is the *only* cross-thread entry
     /// point — every other `IoRequestLoop` method is IO-thread-only.
-    pub fn schedule(request: &mut Request) {
-        if let Err(err) = Self::ensure_init() {
-            // Lazy init failed with a transient kernel resource error
-            // (ENOMEM/ENOSPC/EMFILE/…). Deliver it through the request's own
-            // error path instead of aborting the process: this mirrors how
-            // `tick_epoll` reports `register_for_epoll` failures.
-            match (request.callback)(request) {
-                Action::Readable(a) | Action::Writable(a) => (a.on_error)(a.ctx, &err),
-                Action::Close(a) => (a.on_done)(a.ctx),
-            }
-            return;
-        }
+    ///
+    /// Returns `Err` only when lazy init itself fails (a transient kernel
+    /// resource error: ENOMEM/ENOSPC/EMFILE/…); once init has succeeded this
+    /// is infallible. On `Err` the request was not touched; callers record the
+    /// error on their owning struct in place so the enclosing WorkPool task
+    /// reaches `on_finish()` without a re-entrant callback.
+    pub fn schedule(request: &mut Request) -> sys::Result<()> {
+        Self::ensure_init()?;
         debug_assert!(!request.scheduled);
         request.scheduled = true;
         let request = core::ptr::NonNull::from(request);
@@ -875,6 +871,7 @@ impl IoRequestLoop {
             (*core::ptr::addr_of!((*loop_p).pending)).push(request);
             (*core::ptr::addr_of_mut!((*loop_p).waker)).wake();
         }
+        Ok(())
     }
 
     pub fn tick(&self) {

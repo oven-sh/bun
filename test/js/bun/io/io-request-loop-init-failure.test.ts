@@ -92,7 +92,7 @@ int install_epoll_ctl_add_fault(int err) {
 
   const built = tryBuild();
 
-  const fixture = (so: string, fifo: string, errno: number) => `
+  const readFixture = (so: string, fifo: string, errno: number) => `
     const { dlopen } = require("bun:ffi");
     const fs = require("node:fs");
     const { install_epoll_ctl_add_fault } = dlopen(${JSON.stringify(so)}, {
@@ -116,6 +116,41 @@ int install_epoll_ctl_add_fault(int err) {
     }
   `;
 
+  async function run(fixture: string, expected: string) {
+    if (built == null) {
+      console.warn("SKIP io-loop-init-fault: cc or seccomp headers not available");
+      return;
+    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode === 77) {
+      console.warn("SKIP io-loop-init-fault: seccomp not permitted in this environment");
+      return;
+    }
+    expect({
+      stdout: stdout.trim(),
+      stderr: stderr.includes("panic") ? stderr : "",
+      signalCode: proc.signalCode,
+    }).toEqual({
+      stdout: expected,
+      stderr: "",
+      signalCode: null,
+    });
+    expect(exitCode).toBe(0);
+  }
+
+  function makeFifo(tag: string) {
+    const fifo = join(built!.dir, `fifo-${tag}`);
+    const mk = spawnSync("mkfifo", [fifo]);
+    if (mk.status !== 0) throw new Error("mkfifo failed: " + mk.stderr?.toString());
+    return fifo;
+  }
+
   const errnos = [
     { name: "ENOMEM", value: 12 },
     { name: "ENOSPC", value: 28 },
@@ -123,37 +158,9 @@ int install_epoll_ctl_add_fault(int err) {
 
   for (const { name, value } of errnos) {
     test(`Bun.file(fifo).text() rejects (not aborts) when epoll_ctl(ADD) returns ${name}`, async () => {
-      if (built == null) {
-        console.warn("SKIP io-loop-init-fault: cc or seccomp headers not available");
-        return;
-      }
-      const fifo = join(built.dir, `fifo-${name}`);
-      const mk = spawnSync("mkfifo", [fifo]);
-      if (mk.status !== 0) throw new Error("mkfifo failed: " + mk.stderr?.toString());
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", fixture(built.so, fifo, value)],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      if (exitCode === 77) {
-        console.warn("SKIP io-loop-init-fault: seccomp not permitted in this environment");
-        return;
-      }
-
-      expect({
-        stdout: stdout.trim(),
-        stderr: stderr.includes("panic") ? stderr : "",
-        signalCode: proc.signalCode,
-      }).toEqual({
-        stdout: `REJECTED:${name}:epoll_ctl`,
-        stderr: "",
-        signalCode: null,
-      });
-      expect(exitCode).toBe(0);
+      if (built == null) return run("", "");
+      const fifo = makeFifo(`r-${name}`);
+      await run(readFixture(built.so, fifo, value), `REJECTED:${name}:epoll_ctl`);
     });
   }
 });

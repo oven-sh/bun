@@ -270,13 +270,22 @@ impl WriteFile {
         })
     }
 
-    pub fn wait_for_writable(&mut self) {
+    /// Returns `false` if the IO request loop's lazy init failed; in that case
+    /// `errno`/`system_error` have been recorded and nothing was registered,
+    /// so the caller should fall through to its own `on_finish()` path.
+    pub fn wait_for_writable(&mut self) -> bool {
         self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_writable);
         if !self.io_request.scheduled {
-            io::IoRequestLoop::schedule(&mut self.io_request);
+            if let Err(err) = io::IoRequestLoop::schedule(&mut self.io_request) {
+                self.close_after_io = false;
+                self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+                self.system_error = Some(err.to_system_error().into());
+                return false;
+            }
         }
+        true
     }
 
     pub fn create_with_ctx(
@@ -571,8 +580,11 @@ impl WriteFile {
                 if self.could_block
                     && bun_core::is_writable(self.opened_fd) == bun_core::Pollable::NotReady
                 {
-                    self.wait_for_writable();
-                    return;
+                    if self.wait_for_writable() {
+                        return;
+                    }
+                    // schedule failed: errno is set, fall through to on_finish below
+                    break;
                 }
 
                 if wrote == 0 {

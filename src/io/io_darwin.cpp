@@ -119,7 +119,11 @@ extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker)
 
 extern "C" void io_darwin_close_machport(mach_port_t port)
 {
-    mach_port_deallocate(mach_task_self(), port);
+    mach_port_t self = mach_task_self();
+    // io_darwin_create_machport allocates a receive right and inserts a send
+    // right; release both so the port name is freed.
+    mach_port_deallocate(self, port);
+    mach_port_mod_refs(self, port, MACH_PORT_RIGHT_RECEIVE, -1);
 }
 
 #else

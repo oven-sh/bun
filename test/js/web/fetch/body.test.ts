@@ -400,6 +400,32 @@ for (const { body, fn } of bodyTypes) {
         expect(() => stream.getReader()).toThrow(TypeError);
         await expect(stream.cancel()).rejects.toBeInstanceOf(TypeError);
         expect((await Array.fromAsync(ts)).join("")).toBe("hello");
+        expect(stream.locked).toBe(false);
+      });
+      test("releases the source stream on close and cancel", async () => {
+        {
+          const source = new ReadableStream({
+            start(c) {
+              c.enqueue(new Uint8Array([65]));
+              c.close();
+            },
+          });
+          const ts = fn(source).textStream();
+          expect(source.locked).toBe(true);
+          expect((await Array.fromAsync(ts)).join("")).toBe("A");
+          expect(source.locked).toBe(false);
+        }
+        {
+          const source = new ReadableStream({
+            pull(c) {
+              c.enqueue(new Uint8Array([65]));
+            },
+          });
+          const ts = fn(source).textStream();
+          expect(source.locked).toBe(true);
+          await ts.cancel();
+          expect(source.locked).toBe(false);
+        }
       });
       test("second textStream() call throws", () => {
         const r = fn("hello");

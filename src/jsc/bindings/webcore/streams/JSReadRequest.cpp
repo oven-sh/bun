@@ -253,8 +253,17 @@ void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error)
         queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorRejectMicrotask(), error, promise);
         return;
     }
-    case ReadRequestKind::TextDecode:
-        RELEASE_AND_RETURN(scope, readableStreamDefaultControllerError(globalObject, uncheckedDowncast<JSReadableStreamDefaultController>(m_context.get()), error));
+    case ReadRequestKind::TextDecode: {
+        auto* controller = uncheckedDowncast<JSReadableStreamDefaultController>(m_context.get());
+        auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
+        readableStreamDefaultControllerError(globalObject, controller, error);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (reader) {
+            readableStreamDefaultReaderRelease(globalObject, reader);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        return;
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

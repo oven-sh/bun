@@ -109,6 +109,12 @@ public:
     {
         if (m_transferred)
             return JSC::jsNumber(-1);
+        // A text-mode native stream's handle wraps a raw byte source; hide it
+        // from JS-side native-transfer fast paths (Readable.fromWeb) so they
+        // fall back to a reader that sees decoded strings. ReadableStreamTag__tagged
+        // reads the raw slot, so the fetch/server push-side is unaffected.
+        if (m_nativeTextMode)
+            return {};
         return m_nativePtr.get(); // may be empty
     }
     bool nativeHandleDetached() const

@@ -644,9 +644,11 @@ function onOCSPResolution(state, err, response) {
   if (state.settled) return; // the callback must resolve exactly once
   state.settled = true;
   const { socketHandle } = state;
-  if (!err && response != null) {
-    // Not `$isTypedArrayView`: it excludes DataView, which the native side
-    // accepts and Node's validateBuffer (where this error comes from) allows.
+  // Node's `if (response)` gate: any falsy response means "nothing to staple".
+  // A truthy non-Buffer is rejected the way Node's native setOCSPResponse would
+  // (THROW_AND_RETURN_IF_NOT_BUFFER), only routed through 'tlsClientError'
+  // instead of landing as an uncaught exception in the listener's call stack.
+  if (!err && response) {
     isArrayBufferView ??= require("node:util/types").isArrayBufferView;
     if (!isArrayBufferView(response)) {
       err = $ERR_INVALID_ARG_TYPE("response", ["Buffer", "TypedArray", "DataView"], response);
@@ -657,7 +659,7 @@ function onOCSPResolution(state, err, response) {
     failOCSPConnection(socketHandle, state.failed);
     return;
   }
-  state.response = response == null ? undefined : response;
+  state.response = response || undefined;
   if (!state.suspended) return; // synchronous resolution - ocspRequest's return carries it
   // A response the TLS layer refuses to stage leaves the handshake parked, so
   // drop the connection rather than complete it without the staple.

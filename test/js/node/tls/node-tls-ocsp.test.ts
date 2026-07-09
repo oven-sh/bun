@@ -135,6 +135,19 @@ describe("OCSP stapling", () => {
     expect(clientLog).toEqual(["OCSPResponse null", "secureConnect"]);
   });
 
+  // Node's onOCSP gates on `if (response)` (internal/tls/wrap.js), not
+  // `response != null`: a falsy primitive is "nothing to staple", not a
+  // validation error.
+  it.each([0, false, ""])("treats callback(null, %p) as no staple", async falsy => {
+    const { serverLog, clientLog } = await exchange({
+      clientOptions: { requestOCSP: true },
+      // @ts-expect-error the listener is allowed to hand back nonsense
+      onOCSPRequest: callback => setImmediate(callback, null, falsy),
+    });
+    expect(serverLog).toEqual(["OCSPRequest certificate=Buffer issuer=undefined", "secureConnection"]);
+    expect(clientLog).toEqual(["OCSPResponse null", "secureConnect"]);
+  });
+
   it("never emits OCSPRequest when the client did not ask for stapling", async () => {
     const { serverLog, clientLog } = await exchange({
       onOCSPRequest: callback => callback(null, Buffer.from("never sent")),

@@ -64,6 +64,7 @@
 #include "IDLTypes.h"
 #include "FetchHeaders.h"
 #include "JSFetchHeaders.h"
+#include "JSDOMURL.h"
 #include "headers.h"
 #include "ObjectBindings.h"
 
@@ -291,6 +292,10 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                     // proxy: "http://proxy:8080"
                     proxyUrl = convert<IDLUSVString>(*lexicalGlobalObject, proxyValue);
                     RETURN_IF_EXCEPTION(throwScope, {});
+                } else if (auto* domUrl = dynamicDowncast<JSDOMURL>(proxyValue)) {
+                    // proxy: new URL("http://proxy:8080") — URL has no `.url` own
+                    // property, so the object branch below would silently drop it.
+                    proxyUrl = domUrl->wrapped().href().string();
                 } else if (proxyValue.isObject()) {
                     // proxy: { url: "http://proxy:8080", headers: {...} }
                     if (JSC::JSObject* proxyOptions = proxyValue.getObject()) {

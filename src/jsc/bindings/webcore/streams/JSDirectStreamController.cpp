@@ -100,6 +100,7 @@ void JSDirectStreamController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_stream);
     visitor.append(thisObject->m_underlyingSource);
+    visitor.append(thisObject->m_pull);
     visitor.append(thisObject->m_pendingRead);
     visitor.append(thisObject->m_deferCloseReason);
     visitor.append(thisObject->m_arrayBufferSink);
@@ -431,6 +432,41 @@ void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
         RELEASE_AND_RETURN(scope, readableStreamError(globalObject, stream, error));
 }
 
+// Invokes the user's pull() once, bracketed by m_pullInFlight (the spec sets [[pulling]]
+// before invoking pullAlgorithm); left set only when a promise's settlement reaction will
+// clear it. Returns the synchronous abrupt completion (empty on normal return/termination).
+static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
+    JSObject* pullFunction = controller->m_pull.get();
+    JSObject* underlyingSource = controller->m_underlyingSource.get();
+    controller->m_pullInFlight = true;
+    JSValue result;
+    JSValue abrupt;
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        MarkedArgumentBuffer args;
+        args.append(controller);
+        result = JSC::call(globalObject, pullFunction ? JSValue(pullFunction) : jsUndefined(), underlyingSource, args, "underlyingSource.pull is not a function"_s);
+        if (catchScope.exception()) [[unlikely]]
+            abrupt = takeAbruptCompletion(globalObject, catchScope);
+    }
+    if (!abrupt.isEmpty()) {
+        controller->m_pullInFlight = false;
+        return abrupt;
+    }
+    if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
+        auto* runtime = JSStreamsRuntime::from(globalObject);
+        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onDirectPullFulfilled(), runtime->onDirectPullRejected(), jsUndefined(), controller);
+        if (scope.exception()) [[unlikely]]
+            controller->m_pullInFlight = false;
+    } else {
+        controller->m_pullInFlight = false;
+    }
+    return {};
+}
+
 JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject)
 {
     auto& vm = getVM(globalObject);
@@ -441,12 +477,22 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject)
         m_finalChunkArmed = false;
         JSValue chunk = m_finalChunk.get();
         m_finalChunk.clear();
+        auto* stream = m_stream.get();
+        // Non-Promise readers (for-await/tee/pipeTo) queue the request BEFORE this call and
+        // drop the returned promise; deliver through chunkSteps instead of a wrapped promise.
+        if (stream && readableStreamHasDefaultReader(stream) && readableStreamGetNumReadRequests(stream) > 0) {
+            readableStreamFulfillReadRequest(globalObject, stream, chunk, false);
+            RETURN_IF_EXCEPTION(scope, {});
+            readableStreamCloseIfPossible(globalObject, stream);
+            RETURN_IF_EXCEPTION(scope, {});
+            return jsUndefined();
+        }
         JSObject* result = createIteratorResultObject(globalObject, chunk, false);
         RETURN_IF_EXCEPTION(scope, {});
         auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
         promise->fulfill(vm, result);
         RETURN_IF_EXCEPTION(scope, {});
-        if (auto* stream = m_stream.get()) {
+        if (stream) {
             readableStreamCloseIfPossible(globalObject, stream);
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -460,54 +506,38 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject)
     if (m_deferClose == -1)
         return jsUndefined();
 
-    m_deferClose = -1;
-    m_deferFlush = -1;
+    int8_t deferredClose = 0;
+    int8_t deferredFlush = 0;
 
-    JSValue abrupt;
-    bool threw = false;
-    {
-        StreamAsyncContextScope asyncContextScope(globalObject, stream);
-        JSObject* underlyingSource = m_underlyingSource.get();
-        JSValue result;
-        {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            // Unlike the spec, pull may be called many times; backpressure is the destination's job.
-            JSValue pullFunction = underlyingSource->get(globalObject, builtinNames(vm).pullPublicName());
-            if (!catchScope.exception()) [[likely]] {
-                MarkedArgumentBuffer args;
-                args.append(this);
-                result = JSC::call(globalObject, pullFunction, underlyingSource, args, "underlyingSource.pull is not a function"_s);
-            }
-            if (catchScope.exception()) [[unlikely]] {
-                threw = true;
-                abrupt = takeAbruptCompletion(globalObject, catchScope);
-            }
-        }
-        if (threw) {
+    // Serialize pull(): while an async pull's promise is pending, subsequent reads install
+    // m_pendingRead for it to deliver into via flush()/end(); its fulfillment reaction
+    // clears m_pullInFlight and re-pulls if a consumer is still waiting.
+    if (!m_pullInFlight) {
+        m_deferClose = -1;
+        m_deferFlush = -1;
+
+        JSValue abrupt = callDirectPull(vm, globalObject, this);
+
+        deferredClose = m_deferClose;
+        deferredFlush = m_deferFlush;
+        m_deferClose = 0;
+        m_deferFlush = 0;
+
+        if (!abrupt.isEmpty()) {
             // A synchronous throw from pull errors the stream and rejects the returned read.
-            if (abrupt)
-                handleError(globalObject, abrupt);
-        } else if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
-            // Nothing reads the result promise, but it must be a real one: onFulfilled is undefined,
-            // so a fulfilled pull forwards through PromiseResolveWithoutHandlerJob, which needs a
-            // promise to forward into. onDirectPullRejected returns normally, so it stays fulfilled.
-            auto* runtime = JSStreamsRuntime::from(globalObject);
-            auto* rejectionResult = JSPromise::create(vm, globalObject->promiseStructure());
-            pullPromise->performPromiseThenWithContext(vm, globalObject, jsUndefined(), runtime->onDirectPullRejected(), rejectionResult, this);
+            handleError(globalObject, abrupt);
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, abrupt));
         }
-    }
-
-    int8_t deferredClose = m_deferClose;
-    int8_t deferredFlush = m_deferFlush;
-    m_deferClose = 0;
-    m_deferFlush = 0;
-
-    if (threw && abrupt) {
+        // A VM termination from the pull, or a failure while registering the reaction.
         RETURN_IF_EXCEPTION(scope, {});
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, abrupt));
+    } else {
+        // A new read arrived while an async pull is pending: the fulfillment reaction will
+        // re-pull. Drain anything that pull already wrote; onFlush is a no-op-restore on an
+        // empty sink.
+        m_pullAgain = true;
+        deferredFlush = 1;
     }
-    // A VM termination from the pull, or a failure while registering the rejection reaction.
-    RETURN_IF_EXCEPTION(scope, {});
 
     // controller.error() inside pull is not deferred: re-validate before adding a read request.
     stream = m_stream.get();
@@ -663,6 +693,10 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
             // (its registrar drops it).
             if (!headOfLinePromiseIsActiveConsumer(reader)) {
                 m_pendingRead.set(vm, this, pendingRead);
+                // The spec's enqueue → CallPullIfNeeded equivalent: re-arm when this delivery
+                // still leaves a consumer queued behind the in-flight pull.
+                if (m_pullInFlight && readableStreamGetNumReadRequests(stream) > 1)
+                    m_pullAgain = true;
                 RELEASE_AND_RETURN(scope, readableStreamFulfillReadRequest(globalObject, stream, flushed, false));
             }
             {
@@ -674,6 +708,8 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
                         m_pendingRead.set(vm, this, uncheckedDowncast<JSPromise>(readRequest->m_context.get()));
                 }
             }
+            if (m_pullInFlight && (m_pendingRead || readableStreamGetNumReadRequests(stream) > 0))
+                m_pullAgain = true;
             JSObject* result = createIteratorResultObject(globalObject, flushed, false);
             RETURN_IF_EXCEPTION(scope, );
             RELEASE_AND_RETURN(scope, pendingRead->fulfill(vm, result));
@@ -685,8 +721,11 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
     if (readableStreamGetNumReadRequests(stream) > 0) {
         JSValue flushed = flushDirectSink(vm, globalObject, this);
         RETURN_IF_EXCEPTION(scope, );
-        if (byteLengthOf(flushed))
+        if (byteLengthOf(flushed)) {
+            if (m_pullInFlight && readableStreamGetNumReadRequests(stream) > 1)
+                m_pullAgain = true;
             RELEASE_AND_RETURN(scope, readableStreamFulfillReadRequest(globalObject, stream, flushed, false));
+        }
         return;
     }
 
@@ -694,7 +733,81 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
         m_deferFlush = 1;
 }
 
-// The rejection reaction of the user pull()'s returned promise ([reaction-convention]).
+static bool takeDirectPullAgain(JSDirectStreamController* controller)
+{
+    bool pullAgain = controller->m_pullAgain;
+    controller->m_pullAgain = false;
+    return pullAgain;
+}
+
+static bool directControllerHasWaitingConsumer(JSDirectStreamController* controller, JSReadableStream* stream)
+{
+    return controller->m_pendingRead || (stream && readableStreamGetNumReadRequests(stream) > 0);
+}
+
+// Settlement reactions of the user pull()'s returned promise ([reaction-convention]).
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(1));
+    if (!controller) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    auto* stream = controller->m_stream.get();
+    if (controller->m_closed || !stream || stream->m_state != ReadableStreamState::Readable) {
+        controller->m_pullInFlight = false;
+        controller->m_pullAgain = false;
+        return JSValue::encode(jsUndefined());
+    }
+    // Drain anything this pull wrote while no reader was waiting. m_pullInFlight stays set
+    // so onFlush's delivery-branch re-arm fires for a pull that wrote without c.flush().
+    controller->onFlush(globalObject);
+    controller->m_pullInFlight = false;
+    RETURN_IF_EXCEPTION(scope, {});
+    bool pullAgain = takeDirectPullAgain(controller);
+    // Edge-triggered (m_pullAgain) AND level-checked (a consumer is waiting), the spec's
+    // ShouldCallPull equivalent; loop so a synchronous re-pull chains to the next consumer.
+    while (pullAgain && !controller->m_closed && !controller->m_pullInFlight
+        && directControllerHasWaitingConsumer(controller, controller->m_stream.get())) {
+        controller->m_deferClose = -1;
+        controller->m_deferFlush = -1;
+        JSValue abrupt = callDirectPull(vm, globalObject, controller);
+        int8_t deferredClose = controller->m_deferClose;
+        int8_t deferredFlush = controller->m_deferFlush;
+        controller->m_deferClose = 0;
+        controller->m_deferFlush = 0;
+        if (!abrupt.isEmpty()) {
+            controller->handleError(globalObject, abrupt);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSValue::encode(jsUndefined());
+        }
+        RETURN_IF_EXCEPTION(scope, {});
+        if (deferredClose == 1) {
+            JSValue reason = controller->m_deferCloseReason.get();
+            controller->m_deferCloseReason.clear();
+            controller->onClose(globalObject, reason);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else {
+            // An async re-pull left m_pullInFlight set: its own fulfillment reaction drains
+            // and picks up m_pullAgain.
+            if (controller->m_pullInFlight) {
+                if (deferredFlush == 1)
+                    controller->onFlush(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                break;
+            }
+            // Sync re-pull: drain with m_pullInFlight bracketed so onFlush's delivery-branch
+            // re-arm fires regardless of whether the pull called c.flush() itself.
+            controller->m_pullInFlight = true;
+            controller->onFlush(globalObject);
+            controller->m_pullInFlight = false;
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        pullAgain = takeDirectPullAgain(controller);
+    }
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
@@ -702,6 +815,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullRejected, (JSGlobalObje
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(1));
     if (!controller) [[unlikely]]
         return JSValue::encode(jsUndefined());
+    controller->m_pullInFlight = false;
     JSValue error = callFrame->argument(0);
     controller->handleError(globalObject, error);
     RETURN_IF_EXCEPTION(scope, {});
@@ -813,8 +927,13 @@ void setUpDirectStreamController(JSC::JSGlobalObject* globalObject, JSReadableSt
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* controller = JSDirectStreamController::create(vm, runtime->directStreamControllerStructure(bunGlobalObject), sinkKind);
     controller->m_stream.set(vm, controller, stream);
-    if (JSObject* underlyingSource = stream->m_directUnderlyingSource.get())
+    if (JSObject* underlyingSource = stream->m_directUnderlyingSource.get()) {
         controller->m_underlyingSource.set(vm, controller, underlyingSource);
+        JSValue pull = underlyingSource->get(globalObject, builtinNames(vm).pullPublicName());
+        RETURN_IF_EXCEPTION(scope, );
+        if (auto* pullObject = pull.getObject())
+            controller->m_pull.set(vm, controller, pullObject);
+    }
 
     switch (sinkKind) {
     case DirectSinkKind::ArrayBuffer: {

@@ -31,7 +31,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_stream, m_underlyingSource, m_pendingRead,
+    // visitChildrenImpl MUST visit: m_stream, m_underlyingSource, m_pull, m_pendingRead,
     // m_deferCloseReason, m_arrayBufferSink, m_array, m_closingPromise, m_finalChunk, and
     // the barrier container m_textAccumulator.pieces (via
     // m_textAccumulator.visit(locker, visitor) inside ONE `Locker { cellLock() }` scope
@@ -50,9 +50,10 @@ public:
     // Core state
     // $controlledReadableStream
     JSC::WriteBarrier<JSReadableStream> m_stream;
-    // the USER underlyingSource object; `pull` / `close` are re-[[Get]] on each use
-    // (deliberate: the direct protocol is NOT the spec's captured-once protocol).
+    // the USER underlyingSource object and its captured `pull` method (captured once at
+    // setUpDirectStreamController, matching the native-sink path's m_onPull).
     JSC::WriteBarrier<JSC::JSObject> m_underlyingSource;
+    JSC::WriteBarrier<JSC::JSObject> m_pull;
     // _pendingRead — the promise the in-flight read() is waiting on. handleError rejects
     // AND CLEARS it.
     JSC::WriteBarrier<JSC::JSPromise> m_pendingRead;
@@ -65,6 +66,11 @@ public:
     // Once closed, the five methods are no-ops (there is NO "swap all 5 methods to a
     // throwing stub" trick).
     bool m_closed { false };
+    // An async pull()'s returned promise has not yet settled; cleared by its settlement
+    // reactions. m_pullAgain is set only when a NEW read arrives while m_pullInFlight
+    // (edge-triggered, matching the spec default controller's [[pullAgain]]).
+    bool m_pullInFlight { false };
+    bool m_pullAgain { false };
     // which of the 3 sink flavors this controller runs.
     DirectSinkKind m_sinkKind { DirectSinkKind::ArrayBuffer };
 

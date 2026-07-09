@@ -174,6 +174,7 @@ class JSDirectStreamController;
 
 // owner: JSDirectStreamController.cpp. context = the JSDirectStreamController.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_DIRECT_CONTROLLER(V) \
+    V(onDirectPullFulfilled)                                       \
     V(onDirectPullRejected)
 
 // owner: JSReadableStreamDefaultReader.cpp (readMany). context = the reader.

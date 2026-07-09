@@ -342,13 +342,40 @@ impl StringOrURL {
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
 #[bun_jsc::host_fn(export = "Bun__fetch")]
 pub(crate) fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    fetch_impl::<false>(ctx, callframe)
+    reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
 }
 
 /// Internal entry point for Node.js HTTP client - allows body on GET/HEAD/OPTIONS
 #[bun_jsc::host_fn]
 pub(crate) fn node_http_client(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    fetch_impl::<true>(ctx, callframe)
+    reject_on_exception(ctx, fetch_impl::<true>(ctx, callframe))
+}
+
+/// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
+/// rejects the returned promise; `fetch()` never throws synchronously.
+fn reject_on_exception(
+    global_this: &JSGlobalObject,
+    result: JsResult<JSValue>,
+) -> JsResult<JSValue> {
+    let err = match result {
+        Ok(v) if !v.is_empty() => return Ok(v),
+        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
+        Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
+        Ok(_) | Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
+            Some(exc) if exc.is_termination_exception() => return Err(jsc::JsError::Terminated),
+            Some(exc) => exc.to_error().unwrap_or(exc),
+            None => {
+                // `fetch_impl` only returns Ok(ZERO)/Err(Thrown) with an exception
+                // pending; reaching here means it was cleared, which is a bug.
+                debug_assert!(
+                    false,
+                    "fetch_impl signaled a thrown exception but none is pending"
+                );
+                global_this.create_error_instance(format_args!("fetch() failed"))
+            }
+        },
+    };
+    Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(global_this, err))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -986,8 +1013,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(proxy_arg) = obj.get(global_this, "proxy")? {
+                    // A URL instance has no `.url` own property, so the `{url, headers}`
+                    // branch below would silently ignore it. Treat it as its href here.
+                    let is_url_instance =
+                        bun_jsc::DOMURL::cast_(proxy_arg, global_this.vm()).is_some();
                     // Handle string format: proxy: "http://proxy.example.com:8080"
-                    if proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0 {
+                    if is_url_instance || (proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0)
+                    {
                         let href = jsc::URL::href_from_js(proxy_arg, global_this)?;
                         if href.tag() == BunStringTag::Dead {
                             let err = ctx.to_type_error(
@@ -1017,7 +1049,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                     // Handle object format: proxy: { url: "http://proxy.example.com:8080", headers?: Headers }
                     // If the proxy object doesn't have a 'url' property, ignore it.
-                    // This handles cases like passing a URL object directly as proxy (which has 'href' not 'url').
                     if proxy_arg.is_object() {
                         // Get the URL from the proxy object
                         if let Some(proxy_url_arg) = proxy_arg.get(global_this, "url")? {

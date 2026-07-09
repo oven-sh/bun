@@ -420,6 +420,27 @@ impl Request {
         self.throw_if_body_unusable(global_this).ok()?;
         self.clone(global_this).ok()
     }
+
+    /// `JSBunRequest::clone` tail: mirror [`Self::do_clone`]'s cache sync so a
+    /// `routes:` handler that observed `.body` before cloning gets a fresh tee
+    /// branch from the next `.body` read instead of the locked tee source.
+    #[bun_uws::uws_callback(export = "Request__syncClonedBodyStreamCaches")]
+    pub fn ffi_sync_cloned_body_stream_caches(
+        &self,
+        global_this: &JSGlobalObject,
+        this_value: JSValue,
+        cloned: &Request,
+        js_wrapper: JSValue,
+    ) {
+        // `JSBunRequest::create` bypasses `to_js`, so seed the still-empty
+        // `js_ref` for `check_body_stream_ref`; guarded so a pre-populated
+        // Strong is never downgraded.
+        if cloned.js_ref.get().is_empty() {
+            cloned.js_ref.set(JsRef::init_weak(js_wrapper));
+        }
+        cloned.check_body_stream_ref(global_this);
+        self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
+    }
 }
 
 // NOTE: `EventType` and `impl InternalJSEventCallback` are defined once below
@@ -1223,7 +1244,7 @@ impl Request {
                         match request.body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match request.body_value_mut().clone(global_this) {
+                                match request.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }
@@ -1272,11 +1293,10 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Body) {
-                        let body_value = response.get_body_value();
-                        match body_value {
+                        match response.get_body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match body_value.clone(global_this) {
+                                match response.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }

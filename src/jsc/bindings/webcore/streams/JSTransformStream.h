@@ -29,6 +29,7 @@ public:
     // visitChildrenImpl MUST visit: m_readable, m_writable, m_controller,
     // m_backpressureChangePromise.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -49,9 +50,9 @@ public:
     JSC::WriteBarrier<JSC::JSPromise> m_backpressureChangePromise;
     // [[backpressure]] — InitializeTransformStream sets it (to true) before anything reads it,
     // so the spec's initial "undefined" state needs no separate representation.
-    bool m_backpressure { false };
+    bool m_backpressure : 1 { false };
     // [[Detached]] (transferable streams are not implemented; the slot exists)
-    bool m_detached { false };
+    bool m_detached : 1 { false };
 
 private:
     JSTransformStream(JSC::VM&, JSC::Structure*);

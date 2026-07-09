@@ -159,19 +159,19 @@ impl<'a> TestRunner<'a> {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;
         };
-        // Return the soonest per-entry deadline rather than the file timer:
-        // `update_min_timeout` only advances `timer.next` to sooner values, so
-        // the file timer can be stale (earlier than any running entry).
+        // Per-entry deadline, not the file timer (which only advances sooner
+        // and can be stale). Single-sequence gate mirrors Execution::handle_timeout
+        // so a sibling test.concurrent deadline never kills the caller's child.
         if active_file.phase == bun_test::Phase::Execution {
             if let Some(group) = active_file.execution.active_group_ref() {
-                let mut soonest = bun_core::Timespec::EPOCH;
-                for seq in group.sequences_const(&active_file.execution) {
-                    let Some(entry) = seq.active_entry else { continue };
-                    // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
-                    let ts = unsafe { entry.as_ref() }.timespec;
-                    soonest = soonest.min_ignore_epoch(ts);
+                let seqs = group.sequences_const(&active_file.execution);
+                if let [seq] = seqs {
+                    if let Some(entry) = seq.active_entry {
+                        // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+                        return unsafe { entry.as_ref() }.timespec;
+                    }
                 }
-                return soonest;
+                return bun_core::Timespec::EPOCH;
             }
         }
         if active_file.timer.state != TimerState::ACTIVE

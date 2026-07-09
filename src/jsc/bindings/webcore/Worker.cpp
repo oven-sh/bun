@@ -49,6 +49,7 @@
 #include "JSMessagePort.h"
 #include "JSBroadcastChannel.h"
 #include "JSStructuredSerializeOptions.h"
+#include "InternalModuleRegistry.h"
 
 namespace WebCore {
 
@@ -72,6 +73,7 @@ void* WebWorker__create(
     bool miniMode,
     bool unrefByDefault,
     bool evalMode,
+    bool hasCapturedStdio,
     StringImpl** argvPtr,
     size_t argvLen,
     bool defaultExecArgv,
@@ -162,6 +164,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         worker->m_options.mini,
         worker->m_options.unref,
         worker->m_options.evalMode,
+        worker->m_options.hasCapturedStdio,
         reinterpret_cast<WTF::StringImpl**>(worker->m_options.argv.begin()),
         worker->m_options.argv.size(),
         !worker->m_options.execArgv.has_value(),
@@ -643,6 +646,21 @@ extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* 
     worker->fireEarlyMessages(globalObject);
 }
 
+// Force-load `node:worker_threads` on the worker thread before the entry
+// module, so its top-level stdio setup (see worker_threads.ts) installs the
+// captured process.stdout/stderr and console before any user code runs.
+// Called from WebWorker::spin() only when options.hasCapturedStdio is set.
+extern "C" void WebWorker__setupNodeStdio(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::NodeWorkerThreads);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        Bun__reportError(globalObject, JSC::JSValue::encode(exception));
+    }
+}
+
 extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString* message, JSC::EncodedJSValue errorValue)
 {
     JSValue error = JSC::JSValue::decode(errorValue);
@@ -701,6 +719,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
+    JSValue stdioConfig = jsUndefined();
     JSMap* environmentData = nullptr;
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
@@ -716,9 +735,9 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         if (serialized) {
             JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
             RETURN_IF_EXCEPTION(scope, {});
-            // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
+            // Should always be set to an Array of length 3 in the constructor in JSWorker.cpp
             if (auto* pair = dynamicDowncast<JSArray>(deserialized)) {
-                ASSERT(pair->length() == 2);
+                ASSERT(pair->length() == 3);
                 ASSERT(pair->canGetIndexQuickly(0u));
                 ASSERT(pair->canGetIndexQuickly(1u));
                 workerData = pair->getIndexQuickly(0);
@@ -727,6 +746,10 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
                 // it might not be a Map if the parent had not set up environmentData yet
                 environmentData = environmentDataValue ? dynamicDowncast<JSMap>(environmentDataValue) : nullptr;
                 RETURN_IF_EXCEPTION(scope, {});
+                if (pair->length() > 2) {
+                    stdioConfig = pair->getIndex(globalObject, 2);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
             } else {
                 ASSERT_NOT_REACHED_WITH_MESSAGE("createNodeWorkerThreadsBinding: deserialized is not JSArray");
             }
@@ -742,12 +765,13 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     ASSERT(environmentData);
     globalObject->setNodeWorkerEnvironmentData(environmentData);
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 4);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 5);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 3, environmentData);
+    array->putDirectIndex(globalObject, 4, stdioConfig);
     return array;
 }
 

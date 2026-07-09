@@ -150,6 +150,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         options.kind = WorkerOptions::Kind::Node;
     }
     JSValue workerData = jsUndefined();
+    JSValue stdioConfig = jsUndefined();
     Vector<JSC::Strong<JSC::JSObject>> transferList;
 
     if (JSObject* optionsObject = dynamicDowncast<JSC::JSObject>(argument1.value())) {
@@ -283,6 +284,19 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
+        // Internal option set by node:worker_threads when `stdout`/`stderr`
+        // options request capture. Carries `{ port, stdout, stderr }`; the
+        // port is also in transferList (added by worker_threads.ts) so it is
+        // disentangled by SerializedScriptValue::create below.
+        if (options.kind == WorkerOptions::Kind::Node) {
+            auto stdioValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "__bunWorkerStdio"_s));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (stdioValue && stdioValue.isObject()) {
+                stdioConfig = stdioValue;
+                options.hasCapturedStdio = true;
+            }
+        }
+
         JSValue execArgvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "execArgv"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (execArgvValue && execArgvValue.pureToBoolean() != TriState::False) {
@@ -301,12 +315,13 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     }
 
     Vector<RefPtr<MessagePort>> ports;
-    auto* valueToTransfer = constructEmptyArray(globalObject, nullptr, 2);
+    auto* valueToTransfer = constructEmptyArray(globalObject, nullptr, 3);
     RETURN_IF_EXCEPTION(throwScope, {});
     valueToTransfer->putDirectIndex(globalObject, 0, workerData);
     auto* environmentData = globalObject->nodeWorkerEnvironmentData();
     // If node:worker_threads has not been imported, environment data will not be set up yet.
     valueToTransfer->putDirectIndex(globalObject, 1, environmentData ? environmentData : jsUndefined());
+    valueToTransfer->putDirectIndex(globalObject, 2, stdioConfig);
 
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTF::move(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {

@@ -23,8 +23,12 @@ struct WorkerOptions {
     // true, then we need to make sure that `process.argv` contains "[worker eval]" instead of the
     // Blob URL.
     bool evalMode { false };
+    // node:worker_threads `stdout`/`stderr` options: when set, spin() loads
+    // node:worker_threads before the entry module so its top-level code can
+    // redirect process.stdout/stderr and console over a MessagePort.
+    bool hasCapturedStdio { false };
     Kind kind { Kind::Web };
-    // Serialized array containing [workerData, environmentData]
+    // Serialized array containing [workerData, environmentData, stdioConfig]
     // (environmentData is always a Map)
     RefPtr<SerializedScriptValue> workerDataAndEnvironmentData;
     // Objects transferred for either data or environmentData in the transferList

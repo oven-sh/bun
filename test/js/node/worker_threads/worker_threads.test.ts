@@ -628,3 +628,133 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   expect(fh.fd).toBe(-1);
   expect(message).toEqual({ sameInstance: true, text: "hello" });
 });
+
+describe.concurrent("stdout/stderr options", () => {
+  const fixture = join(import.meta.dir, "worker-stdio-capture-fixture.ts");
+
+  async function run(parentSrc: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parentSrc],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("captures console.log, console.error and process.stdout.write", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker(${JSON.stringify(fixture)}, { stdout: true, stderr: true });
+      let out = "", err = "";
+      w.stdout.on("data", c => out += c);
+      w.stderr.on("data", c => err += c);
+      const done = new Promise((resolve, reject) => {
+        w.on("exit", resolve);
+        w.on("error", reject);
+      });
+      const code = await done;
+      await new Promise((resolve, reject) => {
+        if (w.stdout.readableEnded) return resolve();
+        w.stdout.once("end", resolve);
+        w.stdout.once("error", reject);
+      });
+      process.stdout.write(JSON.stringify({ out, err, code }));
+    `);
+    // Nothing the worker wrote may leak to the parent process's real stdio.
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify({ out: "hello-out\nraw-out\n", err: "hello-err\n", code: 0 }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("with stdout only, stderr still writes to the parent's stderr", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker(${JSON.stringify(fixture)}, { stdout: true });
+      if (w.stderr !== null) throw new Error("expected worker.stderr to be null");
+      let out = "";
+      w.stdout.on("data", c => out += c);
+      await new Promise((resolve, reject) => {
+        w.on("exit", resolve);
+        w.on("error", reject);
+      });
+      process.stdout.write(JSON.stringify({ out }));
+    `);
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify({ out: "hello-out\nraw-out\n" }),
+      stderr: "hello-err\n",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("with stderr only, stdout still writes to the parent's stdout", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker(${JSON.stringify(fixture)}, { stderr: true });
+      if (w.stdout !== null) throw new Error("expected worker.stdout to be null");
+      let err = "";
+      w.stderr.on("data", c => err += c);
+      await new Promise((resolve, reject) => {
+        w.on("exit", resolve);
+        w.on("error", reject);
+      });
+      process.stderr.write(JSON.stringify({ err }));
+    `);
+    expect({ stdout, stderr }).toEqual({
+      stdout: "hello-out\nraw-out\n",
+      stderr: JSON.stringify({ err: "hello-err\n" }),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("works alongside user workerData and transferList", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const worker = new Worker(
+      `
+      const { workerData } = require("node:worker_threads");
+      console.log("x=" + workerData.x);
+      workerData.port.postMessage("pong");
+      `,
+      { eval: true, stdout: true, stderr: true, workerData: { x: 42, port: port2 }, transferList: [port2] } as any,
+    );
+    let out = "";
+    worker.stdout!.on("data", c => (out += c));
+    const gotMessage = new Promise<string>((resolve, reject) => {
+      port1.on("message", resolve);
+      worker.on("error", reject);
+    });
+    const exited = new Promise<void>((resolve, reject) => {
+      worker.on("exit", resolve);
+      worker.on("error", reject);
+    });
+    try {
+      const msg = await gotMessage;
+      await exited;
+      expect({ out, msg }).toEqual({ out: "x=42\n", msg: "pong" });
+    } finally {
+      port1.close();
+    }
+  });
+
+  test("process.stdout in the worker is a non-TTY Writable", async () => {
+    const worker = new Worker(
+      `console.log(JSON.stringify({
+        isTTY: !!process.stdout.isTTY,
+        fd: process.stdout.fd,
+        isStdio: process.stdout._isStdio,
+        writable: process.stdout.writable,
+      }))`,
+      { eval: true, stdout: true, stderr: true } as any,
+    );
+    let out = "";
+    worker.stdout!.on("data", c => (out += c));
+    await new Promise<void>((resolve, reject) => {
+      worker.on("exit", resolve);
+      worker.on("error", reject);
+    });
+    expect(JSON.parse(out)).toEqual({ isTTY: false, fd: 1, isStdio: true, writable: true });
+  });
+});

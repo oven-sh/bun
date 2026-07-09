@@ -25,11 +25,13 @@ const {
   1: _threadId,
   2: _receiveMessageOnPort,
   3: environmentData,
+  4: _stdioConfig,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
   (port: unknown) => unknown,
   Map<unknown, unknown>,
+  { port: MessagePort; stdout: boolean; stderr: boolean } | undefined,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -353,6 +355,58 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   return packed;
 }
 
+// Worker-side stdio capture. When the parent passed `stdout`/`stderr` options,
+// it also transferred a MessagePort via the internal `__bunWorkerStdio` option.
+// Replace the requested process streams with Writables that post chunks over
+// that port, and rebuild `console` on top of them so `console.log` routes
+// through the captured stream instead of the native fd-backed ConsoleClient.
+// This runs at module load, which WebWorker::spin() forces before any user
+// code when capture is requested.
+if (!isMainThread && _stdioConfig !== undefined) {
+  const { port, stdout: wantStdout, stderr: wantStderr } = _stdioConfig;
+  const Writable = require("internal/streams/writable");
+
+  const makeStream = (fd: number) => {
+    const stream = new Writable({
+      decodeStrings: false,
+      write(chunk: any, encoding: string, cb: (err?: Error) => void) {
+        port.postMessage([fd, typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk]);
+        cb();
+      },
+      writev(chunks: Array<{ chunk: any; encoding: string }>, cb: (err?: Error) => void) {
+        for (const { chunk, encoding } of chunks)
+          port.postMessage([fd, typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk]);
+        cb();
+      },
+      final(cb: () => void) {
+        cb();
+      },
+    });
+    stream.fd = fd;
+    stream.isTTY = false;
+    stream._isStdio = true;
+    stream.destroySoon = stream.destroy;
+    stream._destroy = function (err: any, cb: (e?: any) => void) {
+      cb(err);
+      this._undestroy();
+      if (!this._writableState.emitClose) process.nextTick(() => this.emit("close"));
+    };
+    return stream;
+  };
+
+  if (wantStdout) Object.defineProperty(process, "stdout", { value: makeStream(1), configurable: true });
+  if (wantStderr) Object.defineProperty(process, "stderr", { value: makeStream(2), configurable: true });
+
+  // The native global console writes straight to fd 1/2 via the ConsoleClient;
+  // replace it with a Node-style Console backed by the (now possibly captured)
+  // process streams so console.log/console.error follow the redirect.
+  const Console = (console as any).Console;
+  globalThis.console = new Console({ stdout: process.stdout, stderr: process.stderr, colorMode: false });
+
+  // The port itself must not keep the worker event loop alive.
+  port.unref();
+}
+
 let workerData = unpackJSTransferables(_workerData);
 let threadId = _threadId;
 function receiveMessageOnPort(port: MessagePort) {
@@ -467,14 +521,30 @@ class Worker extends EventEmitter {
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
   #urlToRevoke = "";
-  // Created only when `options.stdout`/`options.stderr` request capture; the
-  // worker's output is not yet routed into them (TODO), but the streams exist
-  // and end on worker exit, matching Node's API shape.
+  // Created only when `options.stdout`/`options.stderr` request capture; fed by
+  // chunks the worker posts over #stdioPort and ended on worker exit.
   #stdout: InstanceType<typeof Readable> | null = null;
   #stderr: InstanceType<typeof Readable> | null = null;
+  #stdioPort: MessagePort | null = null;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
+
+    const wantStdout = !!options?.stdout;
+    const wantStderr = !!options?.stderr;
+    if (wantStdout || wantStderr) {
+      const { port1, port2 } = new MessageChannel();
+      this.#stdioPort = port1;
+      // JSWorker.cpp reads `__bunWorkerStdio` and serializes it alongside
+      // workerData; port2 must also be in transferList so structured clone
+      // disentangles it for the worker.
+      const transferList = options.transferList ? [...options.transferList, port2] : [port2];
+      options = {
+        ...options,
+        transferList,
+        ["__bunWorkerStdio"]: { port: port2, stdout: wantStdout, stderr: wantStderr },
+      };
+    }
 
     options = packJSTransferables(options);
 
@@ -497,6 +567,8 @@ class Worker extends EventEmitter {
       // Restore any transferList handles that were already neutered by
       // packJSTransferables, so their fds aren't orphaned.
       options[kRestoreJSTransferables]?.();
+      this.#stdioPort?.close();
+      this.#stdioPort = null;
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);
       }
@@ -505,8 +577,20 @@ class Worker extends EventEmitter {
     // The transfer is committed - release fds that were transferred but are
     // not referenced from workerData (nothing will deserialize them).
     options[kFinalizeJSTransferables]?.();
-    if (options.stdout) this.#stdout = new Readable({ read() {} });
-    if (options.stderr) this.#stderr = new Readable({ read() {} });
+    if (wantStdout) this.#stdout = new Readable({ read() {} });
+    if (wantStderr) this.#stderr = new Readable({ read() {} });
+    if (this.#stdioPort) {
+      const stdout = this.#stdout;
+      const stderr = this.#stderr;
+      this.#stdioPort.onmessage = ({ data }) => {
+        const { 0: fd, 1: chunk } = data;
+        if (fd === 1) stdout?.push(chunk);
+        else if (fd === 2) stderr?.push(chunk);
+      };
+      // The stdio channel must not keep the parent event loop alive on its
+      // own; the Worker's own keep-alive handles liveness.
+      this.#stdioPort.unref();
+    }
     // Tracing active (CLI flag or dynamic enable): record the Node-style
     // `[worker N] <name>` thread-name metadata event. No-op when tracing is
     // off — the agent module is a tiny one-time load.
@@ -549,12 +633,10 @@ class Worker extends EventEmitter {
   }
 
   get stdout() {
-    // TODO: route the worker's actual stdout into this stream.
     return this.#stdout;
   }
 
   get stderr() {
-    // TODO: route the worker's actual stderr into this stream.
     return this.#stderr;
   }
 
@@ -610,6 +692,8 @@ class Worker extends EventEmitter {
 
   #onClose(e) {
     this.#onExitPromise = e.code;
+    this.#stdioPort?.close();
+    this.#stdioPort = null;
     this.#stdout?.push(null);
     this.#stderr?.push(null);
     this.emit("exit", e.code);

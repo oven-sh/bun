@@ -96,6 +96,10 @@ pub struct WebWorker {
     execution_context_id: u32,
     mini: bool,
     eval_mode: bool,
+    /// node:worker_threads `stdout`/`stderr` options were set. When true,
+    /// `spin()` force-loads node:worker_threads before the entry module so its
+    /// top-level code installs the redirected process.stdout/stderr/console.
+    has_captured_stdio: bool,
     store_fd: bool,
     /// Borrowed from C++ `WorkerOptions` (kept alive by the owning `Worker`).
     argv_ptr: *const WTFStringImpl,
@@ -214,6 +218,7 @@ unsafe extern "C" {
     // API lock as a raw FFI call with NO RAII guard — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
     safe fn WebWorker__dispatchOnline(cpp_worker: *mut c_void, global: &JSGlobalObject);
+    safe fn WebWorker__setupNodeStdio(global: &JSGlobalObject);
     safe fn WebWorker__fireEarlyMessages(cpp_worker: *mut c_void, global: &JSGlobalObject);
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
@@ -475,6 +480,7 @@ impl WebWorker {
         mini: bool,
         default_unref: bool,
         eval_mode: bool,
+        has_captured_stdio: bool,
         argv_ptr: *const WTFStringImpl,
         argv_len: usize,
         inherit_exec_argv: bool,
@@ -534,6 +540,7 @@ impl WebWorker {
             execution_context_id: this_context_id,
             mini,
             eval_mode,
+            has_captured_stdio,
             store_fd,
             argv_ptr,
             argv_len,
@@ -1037,6 +1044,13 @@ impl WebWorker {
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
         // `preload: Vec<Box<[u8]>>` — clone the boxes (cheap, ≤handful).
         vm.as_mut().preload.clone_from(&self.preloads);
+
+        // node:worker_threads `stdout`/`stderr` capture: load the module now so
+        // its top-level setup redirects process.stdout/stderr and console before
+        // any user code (preloads included) can write to them.
+        if self.has_captured_stdio {
+            WebWorker__setupNodeStdio(vm.global());
+        }
 
         // Resolve the entry point on the worker thread (the parent only stored
         // the raw specifier). The returned slice is BORROWED — every exit from

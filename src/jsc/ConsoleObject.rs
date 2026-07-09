@@ -3963,11 +3963,9 @@ pub mod formatter {
                     self.failed = true;
                 }
             } else {
-                // A custom inspector that returns its own `this` (Node's web
-                // streams do for depth<0, and so does any wrong-receiver call
-                // on the prototype) would recurse forever; re-tag without the
-                // custom hook so it falls through to default formatting, same
-                // as util.inspect's `ret !== context` check.
+                // A custom inspector that returns its own `this` would recurse
+                // forever; re-tag without the custom hook so it falls through to
+                // default formatting (mirrors util.inspect's `ret !== context`).
                 let tag = if result == self.custom_formatted_object.this {
                     Tag::get_advanced(result, self.global_this, TagOptions::DISABLE_INSPECT_CUSTOM)?
                 } else {

@@ -833,8 +833,13 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         if (handle.finished || didFinish) {
           handle = undefined;
-          http_res[kCloseCallback] = undefined;
-          http_res.detachSocket(socket);
+          // A destroyed-but-not-closed response: leave the socket attached so
+          // the socket close path (#onClose) can emit res 'close' and destroy
+          // the request (Node.js: socketOnClose → onServerResponseClose).
+          if (http_res._closed || !http_res.destroyed) {
+            http_res[kCloseCallback] = undefined;
+            http_res.detachSocket(socket);
+          }
           return;
         }
         if (http_res.socket) {
@@ -1112,13 +1117,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this[kHandle] = undefined;
     handle.onclose = this.#onCloseForDestroy.bind(this, callback, err);
     handle.close();
-    // lets sync check and destroy the request if it's not complete
-    const message = this._httpMessage;
-    const req = message?.req;
-    if (req && !req.complete) {
-      // at this point the handle is not destroyed yet, lets destroy the request
-      req.destroy();
-    }
+    // Do not req.destroy() here: #onClose (scheduled as a task from the native
+    // close path) does it after pending nextTicks, so a fully-received request
+    // is not rewritten as aborted (Node.js's socketOnClose → abortIncoming).
   }
   #onClose() {
     this[kHandle] = null;
@@ -2416,11 +2417,14 @@ ServerResponse.prototype.destroy = function (err?: Error) {
   if (handle) {
     handle.abort();
   }
-  this?.socket?.destroy(err);
-  if (!this._closed) {
-    // res.closed must already be true inside the 'close' listeners.
-    this._closed = true;
-    this.emit("close");
+  // Writable.destroy semantics: 'close' is emitted on a later tick. The
+  // socket close path (#onClose → emitCloseNT) handles it when a socket is
+  // attached; otherwise schedule it here.
+  const socket = this.socket;
+  if (socket) {
+    socket.destroy(err);
+  } else {
+    process.nextTick(emitCloseNT, this);
   }
   return this;
 };

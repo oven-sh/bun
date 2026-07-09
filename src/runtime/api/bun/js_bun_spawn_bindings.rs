@@ -908,7 +908,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let _ = &inherited_env_storage;
 
     for fd_index in 0..stdio.len() {
-        if stdio[fd_index].can_use_memfd(IS_SYNC, fd_index > 0 && max_buffer.is_some()) {
+        if stdio[fd_index].can_use_memfd() {
             if stdio[fd_index].use_memfd(fd_index as u32) {
                 jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
             }
@@ -1942,6 +1942,13 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                         }
                     }
                 }
+            }
+
+            // Once the wait is being terminated (timeout, maxBuffer), stop
+            // waiting on pipe EOF; a grandchild may still hold the write end.
+            // Matches Node.js SyncProcessRunner::Kill() closing stdio pipes.
+            if did_timeout || subprocess.exited_due_to_maxbuf.get().is_some() {
+                subprocess.close_readable_pipes();
             }
         }
     }

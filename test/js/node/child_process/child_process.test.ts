@@ -435,6 +435,15 @@ describe("spawnSync()", () => {
     expect(detachedPgid).toMatch(/^\d+$/);
     expect(detachedPgid).not.toBe(parentPgid);
   });
+
+  it.skipIf(isWindows)("drains piped stdio to EOF after the direct child exits", () => {
+    // Node.js documents spawnSync as not returning until the child process has
+    // fully closed, i.e. every pipe has been read to EOF even when a grandchild
+    // that inherited the pipe is still writing after the direct child exited.
+    const cmd = ["-c", `printf A; ( sleep 0.3; printf B ) & exit 0`];
+    const { stdout, status, signal } = spawnSync("/bin/sh", cmd, { stdio: ["ignore", "pipe", "ignore"] });
+    expect({ stdout: String(stdout), status, signal }).toEqual({ stdout: "AB", status: 0, signal: null });
+  });
 });
 
 describe("execFileSync()", () => {

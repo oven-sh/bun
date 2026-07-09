@@ -1308,7 +1308,11 @@ describe.skipIf(!isWindows)("ignore stdio NUL substitution", () => {
 
   it("substituted ignore stdin delivers immediate EOF", async () => {
     await using proc = spawn({
-      cmd: [bunExe(), "-e", `let n = 0; for await (const c of process.stdin) n += c.length; console.log("COUNT:" + n);`],
+      cmd: [
+        bunExe(),
+        "-e",
+        `let n = 0; for await (const c of process.stdin) n += c.length; console.log("COUNT:" + n);`,
+      ],
       env: knobEnv,
       stdio: ["ignore", "pipe", "ignore"],
     });

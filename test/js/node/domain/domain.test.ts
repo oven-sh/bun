@@ -39,6 +39,49 @@ test("patching AsyncLocalStorage.prototype.getStore after loading node:domain do
   expect(r.exitCode).toBe(0);
 });
 
+test("process.domain accessor is configurable (matches Node)", async () => {
+  const r = await run(
+    `require("domain"); console.log(Object.getOwnPropertyDescriptor(process, "domain").configurable)`,
+  );
+  expect(r.stdout.trim()).toBe("true");
+  expect(r.exitCode).toBe(0);
+});
+
+test("Worker: throwing domain error handler emits parent 'error' and exits 1", async () => {
+  // Node's workerOnGlobalUncaughtException catches, posts the handler's
+  // error to the parent, and exits with kGenericUserError (1) — not 7.
+  const r = await run(`
+    const { Worker } = require("worker_threads");
+    const w = new Worker(
+      \`const d = require("domain").create();
+       d.on("error", () => { throw new Error("from handler") });
+       d.run(() => process.nextTick(() => { throw new Error("original") }));\`,
+      { eval: true },
+    );
+    let sawError = false;
+    w.on("error", e => { sawError = true; console.log("error:" + e.message); });
+    w.on("exit", code => { console.log("exit:" + code + ":" + sawError); });
+  `);
+  expect(r.stdout.trim().split("\n")).toEqual(["error:from handler", "exit:1:true"]);
+  expect(r.exitCode).toBe(0);
+});
+
+test("Worker: throwing capture callback emits parent 'error' and exits 1", async () => {
+  const r = await run(`
+    const { Worker } = require("worker_threads");
+    const w = new Worker(
+      \`process.setUncaughtExceptionCaptureCallback(() => { throw new Error("from capture") });
+       process.nextTick(() => { throw new Error("original") });\`,
+      { eval: true },
+    );
+    let sawError = false;
+    w.on("error", e => { sawError = true; console.log("error:" + e.message); });
+    w.on("exit", code => { console.log("exit:" + code + ":" + sawError); });
+  `);
+  expect(r.stdout.trim().split("\n")).toEqual(["error:from capture", "exit:1:true"]);
+  expect(r.exitCode).toBe(0);
+});
+
 test("EventEmitter constructed with captureRejections has no own emit property", async () => {
   // events.ts previously installed an own-property emit for
   // captureRejections; that shadowed domain's prototype override and forced

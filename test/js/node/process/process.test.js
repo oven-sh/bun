@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -1079,11 +1079,11 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(42);
   });
 
-  const spawnAbort = async (src, extraFlags = []) => {
+  const spawnAbort = async (src, extraFlags = [], exe = bunExe()) => {
     // The abort is intentional: disable core dumps like the upstream node
     // abort tests do, so CI lanes that collect core files at teardown don't
     // flag this child's core as a crash.
-    const cmd = [bunExe(), "--abort-on-uncaught-exception", ...extraFlags, "-e", src];
+    const cmd = [exe, "--abort-on-uncaught-exception", ...extraFlags, "-e", src];
     const proc = Bun.spawn(isWindows ? cmd : ["sh", "-c", 'ulimit -c 0 && exec "$@"', "sh", ...cmd], {
       env: bunEnv,
       stdout: "pipe",
@@ -1093,20 +1093,27 @@ describe.concurrent(() => {
     return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   };
   // The set of terminations node's own common.nodeProcessAborted accepts:
-  // Bun's abort() → SIGABRT on POSIX; STATUS_BREAKPOINT (0x80000003) or
-  // _exit(134) on Windows; SIGILL/SIGTRAP are what node/V8 emit via
-  // __builtin_trap on the sync-throw path and are accepted for parity.
+  // Bun's abort() → SIGABRT on POSIX; _exit(134) on Windows;
+  // SIGILL/SIGTRAP are what node/V8 emit via __builtin_trap on the
+  // sync-throw path and are accepted for parity.
   const aborted = r =>
     ["SIGABRT", "SIGILL", "SIGTRAP"].includes(r.signalCode) || r.exitCode === 134 || r.exitCode >>> 0 === 0x80000003;
+
+  const rejectionAbortFixture = `process.on("uncaughtExceptionMonitor", () => console.log("mon")); process.on("uncaughtException", () => console.log("listener")); Promise.reject(new Error("x"));`;
 
   it("--abort-on-uncaught-exception aborts an unhandled rejection even with an uncaughtException listener", async () => {
     // node's JS-facing triggerUncaughtException binding checks the flag and
     // aborts before process._fatalException runs, so neither the monitor
     // nor 'uncaughtException' listeners observe the rejection.
-    const r = await spawnAbort(
-      `process.on("uncaughtExceptionMonitor", () => console.log("mon")); process.on("uncaughtException", () => console.log("listener")); Promise.reject(new Error("x"));`,
-      ["--unhandled-rejections=strict"],
-    );
+    const r = await spawnAbort(rejectionAbortFixture, ["--unhandled-rejections=strict"]);
+    expect(r.stdout).toBe("");
+    expect(aborted(r)).toBe(true);
+  });
+
+  it.skipIf(!nodeExe())("--abort-on-uncaught-exception rejection ordering matches node (differential)", async () => {
+    // Pin the assertion above to node's observed behavior so a re-reading
+    // of node_errors.cc cannot silently flip it (17fb9a90 → 52d415c2).
+    const r = await spawnAbort(rejectionAbortFixture, ["--unhandled-rejections=strict"], nodeExe());
     expect(r.stdout).toBe("");
     expect(aborted(r)).toBe(true);
   });
@@ -1146,6 +1153,57 @@ describe.concurrent(() => {
     );
     expect(r.stdout).toBe("");
     expect(aborted(r)).toBe(true);
+  });
+
+  it("--abort-on-uncaught-exception aborts before monitor when node:domain is loaded but no domain would handle", async () => {
+    // Node's should_abort_on_uncaught_toggle stays 1 until a domain with an
+    // 'error' listener enters, so a bare require('domain') must not delay
+    // the throw-time abort past the monitor emit.
+    const r = await spawnAbort(
+      `require("domain"); process.on("uncaughtExceptionMonitor", () => console.log("monitor ran")); setTimeout(() => { throw new Error("x") }, 0)`,
+    );
+    expect(r.stdout).toBe("");
+    expect(aborted(r)).toBe(true);
+  });
+
+  it("--abort-on-uncaught-exception aborts before monitor when d.run() has no error listener", async () => {
+    const r = await spawnAbort(
+      `const d = require("domain").create(); process.on("uncaughtExceptionMonitor", () => console.log("monitor ran")); d.run(() => setTimeout(() => { throw new Error("x") }, 0))`,
+    );
+    expect(r.stdout).toBe("");
+    expect(aborted(r)).toBe(true);
+  });
+
+  it("--abort-on-uncaught-exception is suppressed by a capture callback (top-level throw)", async () => {
+    const r = await spawnAbort(
+      `process.setUncaughtExceptionCaptureCallback(e => console.log("capture", e.message)); throw new Error("foo")`,
+    );
+    expect(r.stdout.trim()).toBe("capture foo");
+    expect(aborted(r)).toBe(false);
+    expect(r.exitCode).toBe(0);
+  });
+
+  it("--abort-on-uncaught-exception is suppressed by a capture callback (setTimeout throw)", async () => {
+    const r = await spawnAbort(
+      `process.setUncaughtExceptionCaptureCallback(e => console.log("capture", e.message)); setTimeout(() => { throw new Error("foo") }, 0)`,
+    );
+    expect(r.stdout.trim()).toBe("capture foo");
+    expect(aborted(r)).toBe(false);
+    expect(r.exitCode).toBe(0);
+  });
+
+  it("--abort-on-uncaught-exception uses the throw-time capture snapshot even if the monitor clears it", async () => {
+    // Node decides abort once at Isolate::Throw and never re-checks; a
+    // monitor listener that nulls the capture callback must not turn a
+    // suppressed exception into a SIGABRT.
+    const r = await spawnAbort(
+      `process.setUncaughtExceptionCaptureCallback(() => {});
+       process.on("uncaughtExceptionMonitor", () => process.setUncaughtExceptionCaptureCallback(null));
+       process.on("uncaughtException", () => console.log("listener"));
+       setTimeout(() => { throw new Error("x") }, 0)`,
+    );
+    expect(r.stdout.trim()).toBe("listener");
+    expect(aborted(r)).toBe(false);
   });
 
   it("dispatches to a capture callback installed inside uncaughtExceptionMonitor", async () => {

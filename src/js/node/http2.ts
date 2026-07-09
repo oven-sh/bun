@@ -5722,8 +5722,7 @@ class Http2Server extends net.Server {
     this.setMaxListeners(0);
 
     // node registers connectionListener at construction time (before any user listener), so it
-    // also runs for manually emitted 'connection' events and is not lost when captureRejections
-    // installs an own `emit` on the instance (which would shadow a prototype emit override).
+    // also runs for manually emitted 'connection' events.
     this.on("connection", connectionListener);
     this.on("newListener", setupCompat);
     if (typeof onRequestHandler === "function") {

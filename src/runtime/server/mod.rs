@@ -1306,6 +1306,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         match &http_result {
             HttpResult::Exception(err) | HttpResult::Rejection(err) => {
                 // SAFETY: `vm` is the process-static VirtualMachine.
+                // Rejection keeps the listener-visible origin string
+                // "unhandledRejection" (pre-existing contract). Under
+                // --abort-on-uncaught-exception this aborts before
+                // domain/capture like Node's triggerUncaughtException
+                // binding — deliberate: Bun.serve has no Node equivalent.
                 let _ = unsafe { &mut *vm }.uncaught_exception(
                     global,
                     *err,

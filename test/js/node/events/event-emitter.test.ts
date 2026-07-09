@@ -914,6 +914,31 @@ test("EventEmitter.name", () => {
   expect(EventEmitter.name).toBe("EventEmitter");
 });
 
+test("class-default captureRejections applies to Object.create(EventEmitter.prototype)", async () => {
+  // Mirrors globalSettingNoConstructor in test-event-capture-rejections.js.
+  // Run in a subprocess: the class-level toggle is process-global.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const EventEmitter = require("node:events");
+      EventEmitter.captureRejections = true;
+      const ee = Object.create(EventEmitter.prototype);
+      process.on("unhandledRejection", e => { console.log("UNHANDLED:" + e.message); process.exit(1); });
+      ee.on("error", e => console.log("captured:" + e.message));
+      ee.on("boom", async () => { throw new Error("kaboom"); });
+      ee.emit("boom");
+      setTimeout(() => {}, 10);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "captured:kaboom", stderr, exitCode: 0 });
+});
+
 // Loading node:domain swaps in domain-aware EventEmitter internals
 // process-wide, so these run in a subprocess.
 describe("node:domain integration", () => {

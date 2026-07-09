@@ -32,6 +32,10 @@ class Process : public WebCore::JSEventEmitter {
     // 'uncaughtException' listeners; a truthy return marks the exception
     // as handled by a domain.
     WriteBarrier<Unknown> m_domainErrorHandler;
+    // Predicate installed alongside m_domainErrorHandler: true iff some
+    // domain currently on the stack has an 'error' listener (node's
+    // should_abort_on_uncaught_toggle equivalent).
+    WriteBarrier<Unknown> m_domainWouldClaim;
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
@@ -137,6 +141,16 @@ public:
     inline JSC::JSValue getDomainErrorHandler()
     {
         return m_domainErrorHandler.get();
+    }
+
+    inline void setDomainWouldClaim(JSC::JSValue callback)
+    {
+        m_domainWouldClaim.set(vm(), this, callback);
+    }
+
+    inline JSC::JSValue getDomainWouldClaim()
+    {
+        return m_domainWouldClaim.get();
     }
 
     inline Structure* cpuUsageStructure() { return m_cpuUsageStructure.getInitializedOnMainThread(this); }

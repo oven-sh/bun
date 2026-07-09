@@ -34,7 +34,7 @@ const ArrayPrototypePush = Array.prototype.push;
 const AlsGetStore = AsyncLocalStorage.prototype.getStore;
 const AlsEnterWith = AsyncLocalStorage.prototype.enterWith;
 
-const setDomainErrorHandler = $newCppFunction("BunProcess.cpp", "jsFunctionSetDomainErrorHandler", 1);
+const setDomainErrorHandler = $newCppFunction("BunProcess.cpp", "jsFunctionSetDomainErrorHandler", 2);
 
 const exports: any = {};
 
@@ -153,6 +153,7 @@ function setActive(d: any) {
 // _domain[0]; here it reads through to the async-local active domain.
 ObjectDefineProperty(process, "domain", {
   __proto__: null,
+  configurable: true,
   enumerable: true,
   get: function () {
     return currentActive();
@@ -195,6 +196,21 @@ ObjectDefineProperty(exports, "active", {
   },
 } as PropertyDescriptor);
 
+// Predicate for the native --abort-on-uncaught-exception gate: true iff
+// some domain on the effective stack has an 'error' listener (node's
+// should_abort_on_uncaught_toggle equivalent). currentStack() may unadopt()
+// a stale pairing — the same reconciliation fatalErrorDispatch/adopt() do
+// next, so calling this before the monitor emit is not observable.
+function domainWouldClaim(): boolean {
+  const s = currentStack();
+  const len = s.length;
+  for (let i = 0; i < len; i++) {
+    const d = s[i];
+    if (d != null && typeof d.listenerCount === "function" && d.listenerCount("error") > 0) return true;
+  }
+  return false;
+}
+
 function domainUncaughtExceptionClear() {
   adoptedDomain = null;
   adoptedIndex = -1;
@@ -212,13 +228,14 @@ function fatalErrorDispatch(er: any) {
   // callback start.
   adopt();
   let active = globalActive;
-  if ((active === null || active === undefined) && stack.length > 0) {
+  const stackLen = stack.length;
+  if ((active === null || active === undefined) && stackLen > 0) {
     // Reachable when userland nulls process.domain (or exports.active)
     // while domains are still on the synchronous stack: enter() pushed and
     // set globalActive together, but the setter can clear globalActive
     // without popping. The stack intentionally survives thrown exceptions,
     // so its top is the domain node's before() hook would have seen.
-    active = stack[stack.length - 1];
+    active = stack[stackLen - 1];
     setActive(active);
   }
   // A non-Domain value (e.g. userland `process.domain = {}`) falls through
@@ -307,8 +324,9 @@ class Domain extends EventEmitter {
         // The domain error handler threw! oh no!
         // See if another domain can catch THIS error, or else crash on the
         // original one.
-        if (stack.length) {
-          setActive(stack[stack.length - 1]);
+        const remaining = stack.length;
+        if (remaining) {
+          setActive(stack[remaining - 1]);
           caught = currentActive()._errorHandler(er2);
         } else {
           // Pass on to the native exception handler.
@@ -346,11 +364,12 @@ class Domain extends EventEmitter {
 
   // note: this works for timers as well.
   add(ee: any) {
+    const eeDomain = ee.domain;
     // If the domain is already added, then nothing left to do.
-    if (ee.domain === this) return;
+    if (eeDomain === this) return;
 
     // Has a domain already - remove it first.
-    if (ee.domain) ee.domain.remove(ee);
+    if (eeDomain) eeDomain.remove(ee);
 
     // Check for circular Domain->Domain links.
     // They cause big issues.
@@ -361,8 +380,9 @@ class Domain extends EventEmitter {
     // d.add(e);
     // e.add(d);
     // e.emit('error', er); // RangeError, stack overflow!
-    if (this.domain && ee instanceof Domain) {
-      for (let d = this.domain; d; d = d.domain) {
+    const thisDomain = this.domain;
+    if (thisDomain && ee instanceof Domain) {
+      for (let d = thisDomain; d; d = d.domain) {
         if (ee === d) return;
       }
     }
@@ -558,6 +578,6 @@ asyncHooks[Symbol.for("::bunternal::async_hooks.setDomainActiveGetter")](current
 
 // Hook the native uncaught-exception path. This is installed once when the
 // domain module is first loaded, like node's per-Domain asyncHook.enable().
-setDomainErrorHandler(fatalErrorDispatch);
+setDomainErrorHandler(fatalErrorDispatch, domainWouldClaim);
 
 export default exports;

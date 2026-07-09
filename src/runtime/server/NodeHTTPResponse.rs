@@ -1185,6 +1185,10 @@ pub(crate) fn node_http_request_on_reject(
         this.on_request_complete();
     }
 
+    // Rejection so listeners see origin "unhandledRejection" (pre-existing
+    // contract). Under --abort-on-uncaught-exception this aborts
+    // unconditionally like Node's JS-side triggerUncaughtException binding;
+    // Bun.serve has no Node equivalent to differ from.
     let _ = bun_vm_mut(global_object).uncaught_exception(
         global_object,
         err,

@@ -358,9 +358,11 @@ pub struct VirtualMachine {
 /// Forwarded to `Bun__handleUncaughtException` (BunProcess.cpp), which
 /// decides --abort-on-uncaught-exception ordering: both synchronous
 /// throws and true promise rejections abort before any monitor/capture/
-/// 'uncaughtException' listeners run (node aborts sync throws inside
-/// V8's Isolate::Throw and rejections at the top of the JS-facing
-/// TriggerUncaughtException binding, both before process._fatalException).
+/// 'uncaughtException' listeners run — unless a capture callback is set
+/// or a domain on the stack has an 'error' listener (node's
+/// should_abort_on_uncaught_toggle). Node aborts sync throws inside V8's
+/// Isolate::Throw and rejections at the top of the JS-facing
+/// TriggerUncaughtException binding, both before process._fatalException.
 /// The distinction matters for the origin string listeners observe when
 /// the flag is not set.
 #[repr(i32)]
@@ -383,6 +385,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         err: JSValue,
         origin: c_int,
+        substitute_error: *mut JSValue,
     ) -> c_int;
     safe fn Bun__handleUnhandledRejection(
         global: &JSGlobalObject,
@@ -1424,11 +1427,17 @@ impl VirtualMachine {
             panic!("Uncaught exception while handling uncaught exception");
         }
         self.is_handling_uncaught_exception = true;
+        let mut substitute = JSValue::ZERO;
         let handled = Bun__handleUncaughtException(
             global_object,
             err.to_error().unwrap_or(err),
             origin as c_int,
+            &mut substitute,
         ) > 0;
+        // A domain 'error' handler or capture callback that throws in a
+        // Worker returns its exception here; route that to the parent
+        // instead of the original (node's workerOnGlobalUncaughtException).
+        let err = if substitute.is_empty() { err } else { substitute };
         if !handled {
             // `beforeExit` has already been dispatched, so the run is winding
             // down and there is no loop turn left to defer to: print the error

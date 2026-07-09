@@ -244,7 +244,9 @@ function injectFakeEmitter(Class) {
       }
     };
     if (arguments.length === 0) {
-      for (const t of [...map.keys()]) removeType(t);
+      // removeType only deletes `t`, and a Map iterator tolerates deleting the
+      // entry it just yielded — so no snapshot copy is needed here.
+      for (const t of map.keys()) removeType(t);
     } else {
       removeType(type);
     }

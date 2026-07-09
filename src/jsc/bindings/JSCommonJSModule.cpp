@@ -1485,6 +1485,26 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL);
 
+// module.id for a new CJS module object. id="." marks the Node main module, so
+// compare against vm.main instead of "first module seen" so -r preloads (which
+// run first) do not steal the main identity. For -e/-p/stdin entries Node uses
+// "[eval]"/"[stdin]" (the basename of the synthetic absolute filename).
+static JSString* moduleIdForNewCommonJSModule(Zig::GlobalObject* globalObject, JSString* filename, const WTF::String& sourceURL, size_t sepIndex)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
+        if (sepIndex != WTF::notFound) {
+            return JSC::jsSubstring(globalObject, filename, sepIndex + 1, sourceURL.length() - sepIndex - 1);
+        }
+        return filename;
+    }
+    BunString sourceURLBunStr = Bun::toString(sourceURL);
+    if (Bun__isBunMain(globalObject, &sourceURLBunStr)) {
+        return JSC::jsString(vm, WTF::String("."_s));
+    }
+    return filename;
+}
+
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSString* requireMapKey,
@@ -1516,20 +1536,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         auto requireMap = globalObject->requireMap();
-        if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
-            // Node: module.id is "[eval]"/"[stdin]"; module.filename stays absolute.
-            if (index != WTF::notFound) {
-                requireMapKey = JSC::jsSubstring(globalObject, filename, index + 1, sourceURL.length() - index - 1);
-                RETURN_IF_EXCEPTION(scope, {});
-            }
-        } else {
-            // id="." marks the Node main module. Compare against vm.main so -r
-            // preloads (which run first) do not steal the main identity.
-            BunString sourceURLBunStr = Bun::toString(sourceURL);
-            if (Bun__isBunMain(globalObject, &sourceURLBunStr)) {
-                requireMapKey = JSC::jsString(vm, WTF::String("."_s));
-            }
-        }
+        requireMapKey = moduleIdForNewCommonJSModule(globalObject, filename, sourceURL, index);
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
             auto concat = makeString(
@@ -1644,17 +1652,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         auto requireMap = globalObject->requireMap();
-        if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
-            if (index != WTF::notFound) {
-                requireMapKey = JSC::jsSubstring(globalObject, filename, index + 1, sourceURL.length() - index - 1);
-                RETURN_IF_EXCEPTION(scope, {});
-            }
-        } else {
-            BunString sourceURLBunStr = Bun::toString(sourceURL);
-            if (Bun__isBunMain(globalObject, &sourceURLBunStr)) {
-                requireMapKey = JSC::jsString(vm, WTF::String("."_s));
-            }
-        }
+        requireMapKey = moduleIdForNewCommonJSModule(globalObject, filename, sourceURL, index);
+        RETURN_IF_EXCEPTION(scope, {});
 
         moduleObject = JSCommonJSModule::create(
             vm,

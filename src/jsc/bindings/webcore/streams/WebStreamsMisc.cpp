@@ -259,10 +259,10 @@ StreamAsyncContextScope::StreamAsyncContextScope(JSGlobalObject* globalObject, J
         return;
     auto* asyncContextData = globalObject->m_asyncContextData.get();
     JSValue current = asyncContextData->getInternalField(0);
-    if (snapshot == current)
-        return;
     m_asyncContextData = asyncContextData;
     m_previous = current;
+    if (snapshot == current)
+        return;
     asyncContextData->putInternalField(m_vm, 0, snapshot);
 }
 

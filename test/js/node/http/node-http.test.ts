@@ -3485,6 +3485,129 @@ it("Expect: 100-Continue matches case-insensitively like Node.js", async () => {
   }
 });
 
+// RFC 9110 15.2: a server MUST NOT send a 1xx response to an HTTP/1.0 client.
+// Node gates the whole Expect dispatch on HTTP/1.1, so an HTTP/1.0 Expect
+// request goes to the plain 'request' listener with no interim response.
+describe("HTTP/1.0 request with Expect: 100-continue", () => {
+  const post10 = (port: number) =>
+    new Promise<string>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1");
+      let data = "";
+      socket.on("data", chunk => (data += chunk));
+      socket.on("error", reject);
+      socket.on("close", () => resolve(data));
+      socket.write("POST / HTTP/1.0\r\nHost: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\nhello");
+    });
+
+  it("does not receive an automatic 100 Continue", async () => {
+    const server = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => res.end("v" + req.httpVersion));
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const out = await post10((server.address() as AddressInfo).port);
+      expect(out).not.toContain("100 Continue");
+      expect(out).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(out).toEndWith("v1.0");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("goes to 'request', not 'checkContinue'", async () => {
+    const events: string[] = [];
+    const server = createServer((req, res) => {
+      events.push("request");
+      req.resume();
+      req.on("end", () => res.end("v" + req.httpVersion));
+    });
+    server.on("checkContinue", (req, res) => {
+      events.push("checkContinue");
+      res.writeContinue();
+      req.resume();
+      req.on("end", () => res.end("v" + req.httpVersion));
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const out = await post10((server.address() as AddressInfo).port);
+      expect(events).toEqual(["request"]);
+      expect(out).not.toContain("100 Continue");
+      expect(out).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(out).toEndWith("v1.0");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("goes to 'request', not 'checkExpectation', for an unknown expectation", async () => {
+    const events: string[] = [];
+    const server = createServer((req, res) => {
+      events.push("request");
+      req.resume();
+      req.on("end", () => res.end("v" + req.httpVersion));
+    });
+    server.on("checkExpectation", (req, res) => {
+      events.push("checkExpectation");
+      res.writeHead(417);
+      res.end();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const out = await new Promise<string>((resolve, reject) => {
+        const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+        let data = "";
+        socket.on("data", chunk => (data += chunk));
+        socket.on("error", reject);
+        socket.on("close", () => resolve(data));
+        socket.write("POST / HTTP/1.0\r\nHost: x\r\nContent-Length: 0\r\nExpect: unknown\r\n\r\n");
+      });
+      expect(events).toEqual(["request"]);
+      expect(out).not.toContain("417");
+      expect(out).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(out).toEndWith("v1.0");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("still sends 100 Continue and fires 'checkContinue' for HTTP/1.1", async () => {
+    const events: string[] = [];
+    const server = createServer((req, res) => {
+      events.push("request");
+      res.end("unreached");
+    });
+    server.on("checkContinue", (req, res) => {
+      events.push("checkContinue");
+      res.writeContinue();
+      req.resume();
+      req.on("end", () => res.end("done"));
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const out = await new Promise<string>((resolve, reject) => {
+        const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+        let data = "";
+        socket.on("data", chunk => (data += chunk));
+        socket.on("error", reject);
+        socket.on("close", () => resolve(data));
+        socket.write(
+          "POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\nhello",
+        );
+      });
+      expect(events).toEqual(["checkContinue"]);
+      expect(out).toStartWith("HTTP/1.1 100 Continue\r\n\r\n");
+      expect(out).toEndWith("done");
+    } finally {
+      server.close();
+    }
+  });
+});
+
 it("the over-limit 503 advertises Connection: close, not keep-alive", async () => {
   // Node sets maxRequestsOnConnectionReached unconditionally
   // (maxRequestsPerSocket <= count), so the dropRequest 503 carries

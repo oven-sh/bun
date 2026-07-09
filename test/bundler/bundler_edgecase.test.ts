@@ -2771,6 +2771,33 @@ describe("bundler", () => {
       expect(out).not.toContain("require_foo\u2014bar");
     },
   });
+  itBundled("edgecase/NamelessNestedTypeCommonjsUnderTypeModule", {
+    files: {
+      "/entry.js": `import a from "pkg"; console.log(a.hello);`,
+      "/node_modules/pkg/package.json": `{"name":"pkg","type":"module","exports":{"default":"./dist/cjs/index.js"}}`,
+      "/node_modules/pkg/dist/cjs/package.json": `{"type":"commonjs"}`,
+      "/node_modules/pkg/dist/cjs/index.js": `
+        "use strict";
+        Object.defineProperty(exports, "__esModule", { value: true });
+        Object.defineProperty(exports, "hello", { value: "nested-cjs" });
+      `,
+    },
+    target: "node",
+    run: { stdout: "nested-cjs" },
+  });
+  itBundled("edgecase/ExportsMapImportConditionPointsAtCjs", {
+    files: {
+      "/entry.js": `import b from "pkg"; console.log(b.hello);`,
+      "/node_modules/pkg/package.json": `{"name":"pkg","type":"commonjs","exports":{"import":"./lib/index.js","require":"./lib/index.js"}}`,
+      "/node_modules/pkg/lib/index.js": `
+        "use strict";
+        Object.defineProperty(exports, "__esModule", { value: true });
+        Object.defineProperty(exports, "hello", { value: "import-cjs" });
+      `,
+    },
+    target: "node",
+    run: { stdout: "import-cjs" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

@@ -808,12 +808,28 @@ describe("fixtures", () => {
     expect(packument.description).toBe("d");
   });
 
+  test("a version directory may omit the package.json's semver build metadata", async () => {
+    // semver §10: build metadata is not part of a version's identity, and
+    // a registry keys the packument without it. `1.0.0+123` lives in `1.0.0/`.
+    using fixtures = tempDir("npm-registry-fixture-build-meta", {
+      "meta/1.0.0/package.json": JSON.stringify({ name: "meta", version: "1.0.0+123" }),
+    });
+    await using registry = await new NpmRegistry({ fixtures: String(fixtures) }).start();
+    const { status, body } = await getJson<any>(`${registry.url}meta`);
+    expect({ status, versions: Object.keys(body.versions), tags: body["dist-tags"] }).toEqual({
+      status: 200,
+      versions: ["1.0.0"],
+      tags: { latest: "1.0.0" },
+    });
+  });
+
   test("a fixture whose location and package.json disagree fails loudly", async () => {
     using fixtures = tempDir("npm-registry-fixture-bad", {
       "liar/1.0.0/package.json": JSON.stringify({ name: "liar", version: "9.9.9" }),
     });
     await using registry = await new NpmRegistry({ fixtures: String(fixtures) }).start();
     expect(await getJson(`${registry.url}liar`)).toMatchObject({ status: 500, body: { error: expect.any(String) } });
+    expect(registry.takeHandlerErrors()).toHaveLength(1);
   });
 
   test("a version defined by both a .tgz and a directory fails loudly", async () => {
@@ -829,6 +845,7 @@ describe("fixtures", () => {
       status: 500,
       body: { error: expect.stringContaining("version 1.0.0 is defined by both a .tgz and a directory") },
     });
+    expect(registry.takeHandlerErrors()).toHaveLength(1);
   });
 
   // Windows checks a committed symlink out as a regular file
@@ -848,6 +865,7 @@ describe("fixtures", () => {
       status: 500,
       body: { error: expect.stringContaining("only regular files and directories") },
     });
+    expect(registry.takeHandlerErrors()).toHaveLength(1);
   });
 });
 
@@ -888,6 +906,45 @@ describe("audit", () => {
       body: Bun.gzipSync(Buffer.from(JSON.stringify({ lodash: ["4.17.20"] }))),
     });
     expect(response).toMatchObject({ status: 200, body: { lodash: [JSON.parse(JSON.stringify(advisory))] } });
+  });
+});
+
+describe("handler errors", () => {
+  // Tests put `expect()` calls inside `intercept()` to assert on the wire
+  // (bun's `accept`, `npm-auth-type`, ...). A 500 alone would let a bun
+  // regression pass: the install often tolerates it.
+  //
+  // `stop()` throws here by design, so these cannot use `await using`; the
+  // `finally` drains first so the cleanup `stop()` is quiet.
+  async function withRegistry(body: (registry: NpmRegistry) => Promise<void>) {
+    const registry = await new NpmRegistry().start();
+    try {
+      await body(registry);
+    } finally {
+      registry.takeHandlerErrors();
+      registry.stop();
+    }
+  }
+
+  test("a throw inside an interceptor surfaces from stop(), not just as a 500", async () => {
+    await withRegistry(async registry => {
+      registry.intercept(() => {
+        throw new Error("wire contract violated");
+      });
+      expect(await getJson(`${registry.url}whatever`)).toMatchObject({ status: 500 });
+      expect(() => registry.stop()).toThrow("wire contract violated");
+    });
+  });
+
+  test("takeHandlerErrors drains, so a test that expects the throw can stop() cleanly", async () => {
+    await withRegistry(async registry => {
+      registry.intercept(() => {
+        throw new Error("expected");
+      });
+      await getJson(`${registry.url}whatever`);
+      expect(registry.takeHandlerErrors()).toMatchObject([{ message: "expected" }]);
+      expect(() => registry.stop()).not.toThrow();
+    });
   });
 });
 

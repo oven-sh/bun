@@ -196,13 +196,17 @@ function prebuiltVersion(name: string, tgzPath: string): StoredVersion {
 function directoryVersion(name: string, version: string, versionDir: string): StoredVersion {
   const manifest = memo(async () => {
     const raw = JSON.parse(readFileSync(join(versionDir, "package.json"), "utf8")) as Manifest;
-    // Catch a fixture whose directory name and package.json disagree
-    // before it turns into a confusing resolution failure in a test.
+    // Catch a fixture whose directory name and package.json disagree before
+    // it turns into a confusing resolution failure. Build metadata is not
+    // part of a version's identity (semver §10) and a registry keys the
+    // packument without it, so `1.0.0+123` may live in `1.0.0/`.
+    const withoutBuild = (value: unknown) => (typeof value === "string" ? value.split("+")[0] : value);
     for (const [field, expected] of [
       ["name", name],
-      ["version", version],
+      ["version", withoutBuild(version)],
     ] as const) {
-      if (raw[field] !== undefined && raw[field] !== expected) {
+      const actual = field === "version" ? withoutBuild(raw.version) : raw[field];
+      if (raw[field] !== undefined && actual !== expected) {
         throw new Error(
           `${versionDir}/package.json: "${field}" is ${JSON.stringify(raw[field])} ` +
             `but the fixture's location says ${JSON.stringify(expected)}`,

@@ -71,6 +71,16 @@ function putOctal(block: Uint8Array, offset: number, width: number, value: numbe
 }
 
 /**
+ * node-tar's `mode-fix.js` under `portable: true`, which `npm pack` always is.
+ * 0644 and 0755 are fixed points; 0444 packs as 0644 and 0777 as 0755. The
+ * `& 0o7777` is also what bounds the octal field: an unmasked mode would run
+ * past its 8 bytes and overwrite `uid`/`gid`.
+ */
+function modeFix(mode: number): number {
+  return ((mode & 0o7777) | 0o600) & ~0o22;
+}
+
+/**
  * Splits a path into ustar's `prefix` + `name` fields when it does not fit
  * in the 100-byte `name` field alone. The split must land on a `/` so that
  * `prefix + "/" + name` reconstructs the original path.
@@ -99,7 +109,7 @@ function header(path: string, size: number, mode: number): Uint8Array {
   const block = new Uint8Array(BLOCK);
   const { name, prefix } = splitName(path);
   putString(block, Field.name, name);
-  putOctal(block, Field.mode, 8, mode);
+  putOctal(block, Field.mode, 8, modeFix(mode));
   // node-tar in portable mode leaves uid/gid as all-NUL bytes.
   putOctal(block, Field.size, 12, size);
   putOctal(block, Field.mtime, 12, PORTABLE_MTIME);
@@ -122,11 +132,11 @@ function toBytes(contents: string | Uint8Array): Uint8Array {
 }
 
 /**
- * npm-packlist's entry sort, verbatim: extension, then basename, then
- * the full path, each compared case-insensitively with the `en` locale
- * ("optimize for compressibility").
+ * npm-packlist v9's entry sort, verbatim: extension, then basename, then
+ * full path, each case-insensitive under the `en` locale. `tar.test.ts`
+ * pins an ordering that exercises all three tiers.
  */
-function npmPacklistSort(a: string, b: string): number {
+export function npmPacklistSort(a: string, b: string): number {
   return (
     posix.extname(a).toLowerCase().localeCompare(posix.extname(b).toLowerCase(), "en") ||
     posix.basename(a).toLowerCase().localeCompare(posix.basename(b).toLowerCase(), "en") ||
@@ -153,7 +163,7 @@ export interface BuiltTarball extends TarballStats {
  * `package/` prefix is added here. Every entry is written with mode
  * 0644 unless `options.mode` names an override for it, so a tarball can
  * ship a non-executable bin the way real npm packages published from
- * Windows do.
+ * Windows do. An override goes through {@link modeFix} first.
  *
  * The output is byte-for-byte deterministic for a given input.
  */

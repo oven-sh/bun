@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { buildTarball, computeIntegrity, readPackageJson, readTarball } from "npm-registry";
+import { npmPacklistSort } from "./src/tar";
 import type { FileTree } from "./src/types";
 
 const FILES = {
@@ -56,6 +57,80 @@ describe("buildTarball", () => {
     expect(computeIntegrity(bytes).integrity).toMatchInlineSnapshot(
       `"sha512-LTPiu0U0O2Pfy+dl3ZvohGOVozxDeWg1H6DBVkT8wzlIxloxIYzblzxejT60VwETKlQYTjSPFW2HvX4jgeN9Ow=="`,
     );
+  });
+
+  // Every golden's file set is discriminated by extension alone, so the
+  // basename and full-path tiers of `npmPacklistSort` are unreachable
+  // from them. This order came out of a real `npm pack` over exactly
+  // these paths (npm 11.16.0 / npm-packlist v9).
+  test("npmPacklistSort orders by extension, then basename, then full path", () => {
+    const paths = [
+      "README.md",
+      "package.json",
+      "index.js",
+      "a/index.js",
+      "z/index.js",
+      "lib/z.js",
+      "index_.js",
+      "_p.js",
+      "-d.js",
+      "1.js",
+      "10.js",
+      "2.js",
+      "binding.gyp",
+      "Makefile",
+      "x.JSON",
+    ];
+    expect([...paths].sort(npmPacklistSort)).toEqual([
+      "Makefile",
+      "binding.gyp",
+      "_p.js",
+      "-d.js",
+      "1.js",
+      "10.js",
+      "2.js",
+      "index_.js",
+      "a/index.js",
+      "index.js",
+      "z/index.js",
+      "lib/z.js",
+      "package.json",
+      "x.JSON",
+      "README.md",
+    ]);
+  });
+
+  // node-tar's portable mode-fix. 0644 and 0755 are its fixed points —
+  // the only two the goldens exercise — so without this the writer would
+  // silently disagree with `npm pack` for every other mode.
+  test.each([
+    [0o644, "000644"],
+    [0o755, "000755"],
+    [0o600, "000600"],
+    [0o700, "000700"],
+    [0o444, "000644"],
+    [0o664, "000644"],
+    [0o777, "000755"],
+  ])("mode 0o%s packs as %s, like npm pack", (mode, expected) => {
+    const tar = Bun.gunzipSync(buildTarball({ "a.txt": "x" }, { mode: { "a.txt": mode as number } }).bytes);
+    expect(Buffer.from(tar.subarray(100, 106)).toString()).toBe(expected);
+    // The uid/gid fields stay all-NUL; an unbounded octal write would reach them.
+    expect(Buffer.from(tar.subarray(108, 124)).every(b => b === 0)).toBe(true);
+  });
+
+  // `mode &= 0o7777` is what bounds the octal field. Without it a large mode
+  // runs past its 8 bytes into uid/gid (1e21 wrote "15432711" / "53342736" /
+  // "50000000"). Expectations are node-tar's `modeFix` evaluated by hand.
+  test.each([
+    [0o10000000, "000600"],
+    [1e21, "000600"],
+    [-1, "007755"],
+    [420.5, "000644"],
+    [NaN, "000600"],
+  ])("out-of-range mode %p is masked to %s, the way node-tar masks it", (mode, expected) => {
+    const tar = Bun.gunzipSync(buildTarball({ "a.txt": "x" }, { mode: { "a.txt": mode as number } }).bytes);
+    expect(Buffer.from(tar.subarray(100, 106)).toString()).toBe(expected);
+    expect(Buffer.from(tar.subarray(108, 124)).every(b => b === 0)).toBe(true);
   });
 
   test("round-trips through bun's own tar reader", async () => {

@@ -6,11 +6,10 @@
  * source of truth from which both packument shapes are serialized
  * (`packument.ts`) — nothing about HTTP or JSON lives here.
  *
- * Both the manifest and the tarball of a {@link StoredVersion} are
- * memoized async thunks, so a record can be constructed without
- * reading or building anything: a registry pointed at hundreds of
- * on-disk fixtures is O(1) to start, and a registry with hundreds of
- * in-code packages only builds the tarballs a test actually installs.
+ * Both the manifest and the tarball of a {@link StoredVersion} are memoized
+ * async thunks, so a registry over hundreds of fixtures is O(1) to start.
+ * Serving one packument resolves *every* version of that package, tarball
+ * included (`dist.integrity` hashes the gzipped bytes), then memoizes.
  */
 
 import { computeIntegrity, type Integrity } from "./integrity";

@@ -1,6 +1,6 @@
 import { write } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { NpmRegistry, bunEnv, bunExe, isLinux, tmpdirSync } from "harness";
+import { NpmRegistry, bunEnv, bunExe, isASAN, isLinux, tmpdirSync } from "harness";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -32,7 +32,9 @@ import { join } from "node:path";
  * `require`able.
  */
 
-setDefaultTimeout(1000 * 60 * 5);
+// Mirrors what `scripts/runner.node.mjs` passes as `--timeout`, so running
+// this file directly behaves like CI instead of taking bun's 5 s default.
+setDefaultTimeout(isASAN ? 270_000 : 90_000);
 
 interface Mode {
   linker: "hoisted" | "isolated";
@@ -220,6 +222,8 @@ interface CellResult {
   lock: string;
   /** Packument requests issued during pass 2. */
   packuments2: number;
+  /** Whether pass 2 ran against pass 1's cache dir. This is the axis. */
+  reusedCacheDir: boolean;
 }
 
 /** One cell: a fresh registry, a fresh project, two resolves, a probe. */
@@ -292,29 +296,39 @@ linker = "${mode.linker}"
     exitCode: 0,
   });
 
-  return { lock: normalizeLock(await Bun.file(join(dir, "bun.lock")).text()), packuments2 };
+  return {
+    lock: normalizeLock(await Bun.file(join(dir, "bun.lock")).text()),
+    packuments2,
+    reusedCacheDir: cache2 === cache1,
+  };
 }
 
 describe.concurrent("resolver matrix", () => {
   for (const [name, scenario] of Object.entries(SCENARIOS)) {
     test(name, async () => {
-      const cells = await Promise.all(
-        MODES.map(async mode => [`${mode.linker}, ${mode.manifests}`, await runCell(mode, scenario)] as const),
-      );
+      // Run the cells one at a time. `describe.concurrent` already puts one
+      // `bun install` per scenario in flight, and the ASAN lane caps test
+      // concurrency at 5 (`src/options_types/context.rs`) precisely to bound
+      // live children; a `Promise.all` here would quadruple it behind the
+      // governor's back.
+      const cells: (readonly [string, CellResult])[] = [];
+      for (const mode of MODES) {
+        cells.push([`${mode.linker}, ${mode.manifests}`, await runCell(mode, scenario)] as const);
+      }
       const by = Object.fromEntries(cells) as Record<`${Mode["linker"]}, ${Mode["manifests"]}`, CellResult>;
-      // The axis is real: a fresh empty cache dir forces pass 2 back to
-      // the network (everywhere), and on Linux a warm pass 2 issues
-      // strictly fewer packument requests than a cold one (in practice
-      // 0). The `warm < cold` half is Linux-gated because a warm pass 2
-      // non-deterministically leaks 1-3 manifests on some Windows/macOS
-      // CI hosts, and for a 1-packument scenario `< cold` would then be
-      // `< 1` and flake exactly as `warm === 0` did.
+      // A warm pass 2's packument count is not a deterministic observable:
+      // bun writes the manifest cache fire-and-forget across process exit on
+      // purpose (`src/install/npm.rs`: "It's an optional cache. Therefore, we
+      // choose to not increment the pending task count"), so pass 1 drops an
+      // arbitrary subset of its writes and pass 2 refetches those. Every
+      // platform loses that race, Linux least often — the only reason
+      // `warm < cold` is asserted there and only `warm <= cold` everywhere.
       for (const linker of ["hoisted", "isolated"] as const) {
-        const warm = by[`${linker}, warm`].packuments2;
-        const cold = by[`${linker}, cold`].packuments2;
-        expect({ linker, warm, cold }).toMatchObject({ linker, warm: expect.any(Number), cold: expect.any(Number) });
-        if (isLinux) expect(warm).toBeLessThan(cold);
-        expect(cold).toBeGreaterThan(0);
+        const { packuments2: warm, reusedCacheDir: warmReused } = by[`${linker}, warm`];
+        const { packuments2: cold, reusedCacheDir: coldReused } = by[`${linker}, cold`];
+        expect({ linker, warmReused, coldReused, coldRefetched: cold > 0, warmNoWorse: warm <= cold }) //
+          .toEqual({ linker, warmReused: true, coldReused: false, coldRefetched: true, warmNoWorse: true });
+        if (isLinux) expect({ linker, warm, cold, warmFewer: warm < cold }).toMatchObject({ warmFewer: true });
       }
       // Resolution is a pure function of package.json and the registry:
       // the linker and the manifest cache's freshness must not change

@@ -119,6 +119,11 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
   /** In-flight web-auth sessions: opaque id → the OTP `doneUrl` hands out. */
   readonly #otpSessions = new Map<string, string>();
   readonly #observer = new RequestObserver();
+  /**
+   * Everything a handler or a test's {@link intercept} threw. {@link stop}
+   * rethrows the first; {@link takeHandlerErrors} drains it.
+   */
+  readonly #handlerErrors: unknown[] = [];
   readonly #options: NpmRegistryOptions;
   readonly #verbose: boolean;
   #server: Server | undefined;
@@ -150,9 +155,11 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
       routes: this.#routes(),
       fetch: request => this.#handle(request as RouteRequest, this.#unrouted),
       error: error => {
-        // A throw inside a handler is a bug in the registry (or in a
-        // test's interceptor). Make it visible instead of a bare 500.
+        // Print it where it happened, and keep it: `stop()` rethrows, so a
+        // failed `expect()` in an interceptor fails its test rather than
+        // becoming a 500 the install under test may well tolerate.
         console.error("[npm-registry] handler threw:", error);
+        this.#handlerErrors.push(error);
         return npmError(500, `registry handler threw: ${error?.message ?? error}`);
       },
     });
@@ -160,12 +167,22 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
   }
 
   /**
-   * Stops the server. In-flight connections are closed too, so a test
-   * can never leak a hung request past its own lifetime.
+   * Drains what handlers threw, oldest first — how a test says "the throw
+   * is what I was testing". Anything left rethrows from {@link stop}.
+   */
+  takeHandlerErrors(): unknown[] {
+    return this.#handlerErrors.splice(0);
+  }
+
+  /**
+   * Stops the server, closing in-flight connections, then rethrows the
+   * first thing a handler threw (a `SuppressedError` under `await using`
+   * if the body threw too). See {@link takeHandlerErrors}.
    */
   stop(): void {
     this.#server?.stop(true);
     this.#server = undefined;
+    if (this.#handlerErrors.length > 0) throw this.#handlerErrors.splice(0)[0];
   }
 
   [Symbol.dispose](): void {

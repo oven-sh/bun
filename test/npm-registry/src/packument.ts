@@ -151,9 +151,10 @@ function abbreviatedVersion(record: PackageRecord, loaded: LoadedVersion, dist: 
 }
 
 /**
- * Serializes a record into a packument. Versions whose tarball cannot be
- * resolved are still listed (the registry knows they exist), but without
- * integrity: the registry can't attest to bytes it doesn't have.
+ * Serializes a record into a packument. A version declared `tarball: null`
+ * is listed without integrity. An *error* resolving any version fails the
+ * whole packument, and stays failed — the thunks memoize. Broken fixtures
+ * should be loud.
  */
 export async function toPackument(record: PackageRecord, ctx: SerializeContext): Promise<Packument>;
 export async function toPackument(

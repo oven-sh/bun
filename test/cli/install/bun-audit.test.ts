@@ -46,6 +46,21 @@ afterAll(() => {
   server.stop();
 });
 
+// The keys of audit-fixtures.json are the exact bulk bodies bun sent to the
+// real registry.npmjs.org; the values are what it answered. Replaying them
+// pins `Bun.semver.satisfies` against npm's node-semver over these ranges.
+test("the derived advisory store reproduces registry.npmjs.org's recorded responses", async () => {
+  for (const [requestBody, recorded] of Object.entries(auditFixturesJson)) {
+    const response = await fetch(`${server.url}-/npm/v1/security/advisories/bulk`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: requestBody,
+    });
+    expect({ requestBody, status: response.status, body: await response.json() }) //
+      .toEqual({ requestBody, status: 200, body: recorded });
+  }
+});
+
 function doAuditTest(
   label: string,
   options: {

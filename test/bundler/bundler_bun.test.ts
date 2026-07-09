@@ -165,6 +165,36 @@ error: Hello World`,
     },
     run: { stdout: "7" },
   });
+  for (const target of ["node", "browser"] as const) {
+    itBundled(`bun/HashbangBunNoCjsWrapperFor_${target}`, {
+      target,
+      format: "cjs",
+      files: {
+        "/entry.ts": `#!/usr/bin/env bun\nconsole.log("ALIVE", 42);\n`,
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toStartWith("#!/usr/bin/env bun\n");
+        expect(out).not.toContain("@bun");
+        expect(out).not.toContain("(function(exports, require, module, __filename, __dirname)");
+      },
+      run: target === "node" ? { runtime: "node", stdout: "ALIVE 42" } : undefined,
+    });
+  }
+  itBundled("bun/HashbangBunCjsWrapperForBunTarget", {
+    target: "bun",
+    format: "cjs",
+    files: {
+      "/entry.ts": `#!/usr/bin/env bun\nconsole.log("ALIVE", 42);\n`,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toStartWith(
+        "#!/usr/bin/env bun\n// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {",
+      );
+    },
+    run: { stdout: "ALIVE 42" },
+  });
   if (Bun.version.startsWith("1.4") || Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {
       itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {

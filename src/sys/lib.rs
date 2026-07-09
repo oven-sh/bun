@@ -6532,6 +6532,9 @@ impl Default for NtCreateFileOptions {
 #[cfg(windows)]
 #[derive(Copy, Clone)]
 pub struct NormalizePathWindowsOpts {
+    /// Applies to the absolute-input branch only: `false` emits a Win32 path
+    /// (no `\??\`) for kernel32 APIs. Dirfd-relative resolution always yields
+    /// an NT `\Device\…` object name regardless of this flag.
     pub add_nt_prefix: bool,
 }
 #[cfg(windows)]
@@ -6543,10 +6546,59 @@ impl Default for NormalizePathWindowsOpts {
     }
 }
 
-/// `normalizePathWindows` — convert a (possibly relative) path
-/// into an NT object path suitable for `NtCreateFile` against `dir_fd`.
-/// u16-only here; the u8 entry points pre-convert via
-/// `bun_paths::string_paths::to_nt_path` and call this with the resulting wide slice.
+/// End of the volume prefix in an NT `\Device\…` path: past the 2nd component
+/// (`\Device\HarddiskVolume3`), or past the 4th for UNC redirector devices
+/// (`\Device\Mup\server\share`). Returns `path.len()` when there are fewer.
+#[cfg(windows)]
+fn nt_volume_prefix_len(path: &[u16]) -> usize {
+    const SEP: u16 = b'\\' as u16;
+    let component_end = |start: usize| {
+        path[start..]
+            .iter()
+            .position(|&c| c == SEP)
+            .map_or(path.len(), |i| start + i)
+    };
+    if path.first() != Some(&SEP) {
+        return path.len();
+    }
+    let device_end = component_end(1);
+    if device_end == path.len() {
+        return path.len();
+    }
+    let volume_end = component_end(device_end + 1);
+    let volume = &path[device_end + 1..volume_end];
+    // UNC resolves through a redirector device; keep `server\share` in the
+    // prefix so `..` clamps at the share root, mirroring the DOS
+    // `\\server\share` root.
+    if !bun_core::strings::eql_case_insensitive_t(volume, b"Mup")
+        && !bun_core::strings::eql_case_insensitive_t(volume, b"LanmanRedirector")
+    {
+        return volume_end;
+    }
+    if volume_end == path.len() {
+        return path.len();
+    }
+    // Session-qualified redirector paths interpose `;LanmanRedirector` /
+    // `;X:…` components before `server\share` — skip them so the prefix
+    // still ends after the share.
+    let mut server_start = volume_end + 1;
+    while server_start < path.len() && path[server_start] == b';' as u16 {
+        let end = component_end(server_start);
+        if end == path.len() {
+            return path.len();
+        }
+        server_start = end + 1;
+    }
+    let server_end = component_end(server_start);
+    if server_end == path.len() {
+        return path.len();
+    }
+    component_end(server_end + 1)
+}
+
+/// `normalizePathWindows` — convert a (possibly relative) path into an NT
+/// object name for `NtCreateFile` against `dir_fd`: absolute inputs become
+/// `\??\C:\…`, dirfd-relative inputs resolve to absolute `\Device\…` names.
 #[cfg(windows)]
 pub fn normalize_path_windows<'a>(
     dir_fd: Fd,
@@ -6556,6 +6608,8 @@ pub fn normalize_path_windows<'a>(
     normalize_path_windows_opts(dir_fd, path, buf, NormalizePathWindowsOpts::default())
 }
 
+/// Like [`normalize_path_windows`]; `opts.add_nt_prefix` applies to the
+/// absolute branch only — dirfd-relative inputs always resolve to `\Device\…`.
 #[cfg(windows)]
 pub fn normalize_path_windows_opts<'a>(
     dir_fd: Fd,
@@ -6676,20 +6730,32 @@ pub fn normalize_path_windows_opts<'a>(
         return Ok(WStr::from_buf(&buf[..], path.len()));
     }
 
-    // Otherwise: resolve `dir_fd` to its full path, join, normalize.
+    // Otherwise: resolve `dir_fd` to its NT device path, join, normalize.
+    debug_assert!(
+        opts.add_nt_prefix,
+        "Win32-path output (add_nt_prefix = false) is only supported for absolute inputs"
+    );
     let base_fd = if dir_fd.is_valid() {
         dir_fd.native()
     } else {
         Fd::cwd().native()
     };
     let mut base_buf = bun_paths::w_path_buffer_pool::get();
-    let base =
-        match windows::GetFinalPathNameByHandle(base_fd, Default::default(), &mut base_buf.0[..]) {
-            Ok(p) => p,
-            // `E.BADFD` (errno 77 'file descriptor in bad state'),
-            // not `EBADF` (9).
-            Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
-        };
+    // `VolumeName::Nt` is answered from the handle itself (no mount-manager
+    // IOCTL), so it works under AppContainer tokens and on volumes with no
+    // DOS drive letter; the `\Device\…` result feeds `NtCreateFile` as-is.
+    let base = match windows::GetFinalPathNameByHandle(
+        base_fd,
+        bun_windows_sys::GetFinalPathNameByHandleFormat {
+            volume_name: bun_windows_sys::VolumeName::Nt,
+        },
+        &mut base_buf.0[..],
+    ) {
+        Ok(p) => p,
+        // `E.BADFD` (errno 77 'file descriptor in bad state'),
+        // not `EBADF` (9).
+        Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
+    };
 
     // Strip a leading drive letter (`C:`) on the relative part.
     let mut rel = path;
@@ -6700,35 +6766,48 @@ pub fn normalize_path_windows_opts<'a>(
         rel = &rel[2..];
     }
 
+    // The generic normalizer's `..` clamp knows drive/UNC roots, not device
+    // roots: copy the volume prefix (`\Device\HarddiskVolume3`) verbatim and
+    // normalize only the remainder below it.
+    let prefix_len = nt_volume_prefix_len(base);
+    let mut rest = &base[prefix_len..];
+    // Volume-root handles yield a trailing `\` — trim it so `joined` below
+    // starts with exactly one separator.
+    while rest.last() == Some(&(b'\\' as u16)) {
+        rest = &rest[..rest.len() - 1];
+    }
+
     let mut joined = bun_paths::w_path_buffer_pool::get();
-    let joined_len = base.len() + 1 + rel.len();
-    // Reserve 8 u16 for the `\??\` prefix + NUL that
-    // `normalizeStringGenericTZ` writes into `buf` (same length as `joined`).
-    if joined_len > joined.0.len().saturating_sub(8) {
+    let joined_len = rest.len() + 1 + rel.len();
+    // `buf` holds the copied prefix + the normalized remainder (never longer
+    // than `joined_len`) + NUL; keep 8 u16 of headroom to stay conservative.
+    if joined_len > joined.0.len().saturating_sub(8)
+        || prefix_len + joined_len > buf.len().saturating_sub(8)
+    {
         return Err(too_long());
     }
-    joined.0[..base.len()].copy_from_slice(base);
-    joined.0[base.len()] = b'\\' as u16;
-    joined.0[base.len() + 1..joined_len].copy_from_slice(rel);
-    // `normalizeStringGenericTZ` with `add_nt_prefix` + `zero_terminate`. Must collapse
-    // `.`/`..` segments here: the relative input may be `"."` (e.g.
-    // `bun build entry.js` → dirname → `"."`), and the joined `…\.` is
-    // rejected by `NtCreateFile` if passed through verbatim.
-    let norm = bun_paths::resolve_path::normalize_string_generic_tz::<
+    buf[..prefix_len].copy_from_slice(&base[..prefix_len]);
+    joined.0[..rest.len()].copy_from_slice(rest);
+    joined.0[rest.len()] = b'\\' as u16;
+    joined.0[rest.len() + 1..joined_len].copy_from_slice(rel);
+    // `joined` starts with `\`, flooring the normalizer's `..` clamp right
+    // after the copied prefix. `.`/`..` must be collapsed here — `NtCreateFile`
+    // rejects them (e.g. `…\.` → OBJECT_NAME_NOT_FOUND).
+    let sub_len = bun_paths::resolve_path::normalize_string_generic_tz::<
         u16,
         /*ALLOW_ABOVE_ROOT*/ false,
         /*PRESERVE_TRAILING_SLASH*/ false,
         /*ZERO_TERMINATE*/ true,
-        /*ADD_NT_PREFIX*/ true,
+        /*ADD_NT_PREFIX*/ false,
     >(
         &joined.0[..joined_len],
-        buf,
+        &mut buf[prefix_len..],
         b'\\' as u16,
         bun_paths::is_sep_any_t::<u16>,
-    );
-    let len = norm.len();
-    // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
-    Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) })
+    )
+    .len();
+    // ZERO_TERMINATE wrote NUL at buf[prefix_len + sub_len].
+    Ok(WStr::from_buf(&buf[..], prefix_len + sub_len))
 }
 
 /// Open a `\\.\…` device path via kernel32 `CreateFileW`
@@ -6871,10 +6950,9 @@ pub fn open_dir_at_windows_nt_path(
     }
 }
 
-///
-/// For this function to open an absolute path, it must start with `\??\`.
-/// Otherwise you need a reference file descriptor; the "invalid_fd" file
-/// descriptor signifies that the current working directory should be used.
+/// Absolute paths (`\??\…`, `\Device\…`) must be full NT object names and
+/// open with no `RootDirectory`; relative paths resolve against `dir` (or the
+/// cwd when `dir` is the "invalid_fd" sentinel).
 #[cfg(windows)]
 pub fn open_file_at_windows_nt_path(
     dir: Fd,
@@ -6893,18 +6971,13 @@ pub fn open_file_at_windows_nt_path(
         MaximumLength: path_len_bytes,
         Buffer: p.as_ptr().cast_mut().cast::<u16>(),
     };
-    let has_nt_prefix = p.len() >= 4
-        && p[0] == b'\\' as u16
-        && p[1] == b'?' as u16
-        && p[2] == b'?' as u16
-        && p[3] == b'\\' as u16;
     let mut attr = w::OBJECT_ATTRIBUTES {
         Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
         // [ObjectName] must be a fully qualified file specification or the
-        // name of a device object, unless it is the name of a file relative
-        // to the directory specified by RootDirectory.
+        // name of a device object (`\??\…`, `\Device\…`), unless it is the
+        // name of a file relative to the directory specified by RootDirectory.
         ObjectName: &mut nt_name,
-        RootDirectory: if has_nt_prefix {
+        RootDirectory: if bun_paths::is_absolute_windows_wtf16(p) {
             core::ptr::null_mut()
         } else if dir.is_valid() {
             dir.native()
@@ -9615,5 +9688,209 @@ mod owned_handle_tests {
         let _ = close(to_dir);
         let _ = close(root);
         let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod normalize_path_windows_tests {
+    use super::*;
+    use bun_windows_sys::externs as w;
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().collect()
+    }
+
+    fn normalize(dir: Fd, path: &str) -> String {
+        let mut buf = bun_paths::w_path_buffer_pool::get();
+        let norm = normalize_path_windows(dir, &wide(path), &mut buf.0[..]).expect(path);
+        String::from_utf16(norm.as_slice()).unwrap()
+    }
+
+    /// Open a directory handle with raw `CreateFileW` so the fixture fd does
+    /// not depend on the code under test.
+    fn open_dir_handle(path: &std::path::Path) -> Fd {
+        use std::os::windows::ffi::OsStrExt;
+        let wp: Vec<u16> = path.as_os_str().encode_wide().chain([0u16]).collect();
+        // SAFETY: `wp` is NUL-terminated and outlives the call.
+        let h = unsafe {
+            w::CreateFileW(
+                wp.as_ptr(),
+                w::GENERIC_READ,
+                FILE_SHARE,
+                core::ptr::null_mut(),
+                w::OPEN_EXISTING,
+                w::FILE_FLAG_BACKUP_SEMANTICS,
+                core::ptr::null_mut(),
+            )
+        };
+        assert_ne!(
+            h,
+            bun_windows_sys::INVALID_HANDLE_VALUE,
+            "CreateFileW {path:?}"
+        );
+        Fd::from_system(h)
+    }
+
+    /// pid-suffixed temp dir removed on drop (declare before handle guards so
+    /// handles close first).
+    struct TempTree(std::path::PathBuf);
+    impl TempTree {
+        fn new(name: &str) -> Self {
+            let root = std::env::temp_dir().join(format!("bun_sys_{name}_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            Self(root)
+        }
+    }
+    impl Drop for TempTree {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn relative_resolves_to_nt_device_name() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_rel");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let got = normalize(*dir, "a\\b");
+        assert!(got.starts_with("\\Device\\"), "{got}");
+        assert!(got.ends_with("\\a\\b"), "{got}");
+        assert!(!got.contains("\\??\\"), "{got}");
+    }
+
+    #[test]
+    fn dotdot_resolves_into_parent() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_dotdot");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        let got = normalize(*child, "..\\x");
+        let base = normalize(*parent, ".");
+        assert_eq!(got, format!("{base}\\x"));
+    }
+
+    #[test]
+    fn excess_dotdot_clamps_at_volume_root() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_clamp");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let got = normalize(*dir, "..\\..\\..\\..\\..\\..\\..\\x");
+        assert!(got.starts_with("\\Device\\"), "{got}");
+        assert_eq!(got.matches("\\Device\\").count(), 1, "{got}");
+        // Exactly two components after `\Device\`: the volume and the
+        // clamped `x`; the volume matches the base directory's volume.
+        let comps: Vec<&str> = got["\\Device\\".len()..].split('\\').collect();
+        assert_eq!(comps.len(), 2, "{got}");
+        assert!(!comps[0].is_empty(), "{got}");
+        assert_eq!(comps[1], "x", "{got}");
+        let base = normalize(*dir, ".");
+        let base_vol = base["\\Device\\".len()..].split('\\').next().unwrap();
+        assert_eq!(comps[0], base_vol, "{got} vs {base}");
+    }
+
+    #[test]
+    fn dot_resolves_to_base_dir() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_dot");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let got = normalize(*dir, ".");
+        assert!(got.starts_with("\\Device\\"), "{got}");
+        assert!(!got.ends_with('\\'), "{got}");
+        let name = tree.0.file_name().unwrap().to_str().unwrap();
+        assert!(got.ends_with(&format!("\\{name}")), "{got}");
+    }
+
+    #[test]
+    fn bare_component_passes_through() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        // No separator and no `.` → passthrough, relative to RootDirectory.
+        let got = normalize(Fd::INVALID, "foo");
+        assert_eq!(got, "foo");
+    }
+
+    #[test]
+    fn absolute_branch_unchanged() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let got = normalize(Fd::INVALID, "C:\\x\\..\\y");
+        assert_eq!(got, "\\??\\C:\\y");
+    }
+
+    #[test]
+    fn volume_prefix_len_shapes() {
+        let ends_after = |path: &str, prefix: &str| {
+            assert!(path.starts_with(prefix), "{path}");
+            assert_eq!(nt_volume_prefix_len(&wide(path)), prefix.len(), "{path}");
+        };
+        // Local volume: prefix ends after the volume component.
+        ends_after(
+            "\\Device\\HarddiskVolume3\\Users\\x",
+            "\\Device\\HarddiskVolume3",
+        );
+        // Too few components: the whole path is the prefix.
+        ends_after("\\Device\\HarddiskVolume3", "\\Device\\HarddiskVolume3");
+        ends_after("\\Device", "\\Device");
+        // UNC redirector: prefix ends after `server\share`.
+        ends_after(
+            "\\Device\\Mup\\server\\share\\dir",
+            "\\Device\\Mup\\server\\share",
+        );
+        ends_after("\\Device\\Mup\\server", "\\Device\\Mup\\server");
+        // Session-qualified redirector shapes skip the `;…` components.
+        ends_after(
+            "\\Device\\Mup\\;LanmanRedirector\\;X:0000000000000000\\server\\share\\dir",
+            "\\Device\\Mup\\;LanmanRedirector\\;X:0000000000000000\\server\\share",
+        );
+        ends_after(
+            "\\Device\\LanmanRedirector\\;X:0\\server\\share",
+            "\\Device\\LanmanRedirector\\;X:0\\server\\share",
+        );
+    }
+
+    #[test]
+    fn nt_object_name_opens_via_ntcreatefile() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_open");
+        std::fs::create_dir_all(tree.0.join("sub")).unwrap();
+        std::fs::write(tree.0.join("sub").join("file.txt"), b"nt object name").unwrap();
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+
+        let fd = open_file_at_windows_a(
+            *dir,
+            b"sub\\file.txt",
+            NtCreateFileOptions {
+                access_mask: w::GENERIC_READ | w::SYNCHRONIZE,
+                disposition: w::FILE_OPEN,
+                options: w::FILE_SYNCHRONOUS_IO_NONALERT,
+                ..Default::default()
+            },
+        )
+        .expect("NtCreateFile accepts the \\Device\\ object name");
+        let file = File::from_fd(fd); // Drop closes.
+        let mut content = [0u8; 64];
+        let n = file.read_all(&mut content).unwrap();
+        assert_eq!(&content[..n], b"nt object name");
+
+        let sub = scopeguard::guard(
+            open_dir_at_windows_a(*dir, b"sub\\..\\sub", WindowsOpenDirOptions::default())
+                .expect("dir opens through `..` in the NT object name"),
+            |fd| {
+                let _ = close(fd);
+            },
+        );
+        assert!(fstat(*sub).is_ok());
     }
 }

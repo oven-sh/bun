@@ -351,3 +351,22 @@ test("a pending close event survives GC after the port becomes unreachable", asy
   for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
   expect(fired).toBe(50);
 });
+
+// The peer's notifyPeerClosed() task only holds a weak ref back to this port, so a
+// port whose only listener is 'close' must survive GC until the event is delivered.
+test("a close event from the peer survives GC of the unreachable port", async () => {
+  let fired = 0;
+  const peers: MessagePort[] = [];
+  for (let i = 0; i < 20; i++) {
+    (() => {
+      const { port1, port2 } = new MessageChannel();
+      port1.addEventListener("close", () => fired++);
+      peers.push(port2); // keep only the peer reachable
+    })();
+  }
+  Bun.gc(true);
+  Bun.gc(true);
+  for (const p of peers) p.close();
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  expect(fired).toBe(20);
+});

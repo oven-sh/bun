@@ -45,6 +45,7 @@ public:
         DrainScheduled = 1ull << 1, // a drain task for this side is in flight.
         Attached = 1ull << 2, // ctxId/port are valid; ok to schedule drains.
         ContextKnown = 1ull << 3, // ctxId/port are valid for close-notification only (no drains).
+        ClosedByRequest = 1ull << 4, // the Closed above came from close(), not from the port being collected.
 
         QueuedShift = 8,
         QueuedOne = 1ull << QueuedShift,
@@ -67,11 +68,17 @@ public:
     // NOT enable drains. No-op if already attached/registered/closed.
     void registerCloseContext(uint8_t side, ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<MessagePort>);
     void detach(uint8_t side);
-    void close(uint8_t side);
+    // Explicit == a JS close()/teardown; Collected == the owning MessagePort (or an
+    // orphaned transferred endpoint) was destroyed. The peer's jsRef() must ignore the
+    // latter: node never closes a channel just because a port got garbage-collected.
+    enum class CloseKind : uint8_t { Explicit,
+        Collected };
+    void close(uint8_t side, CloseKind = CloseKind::Collected);
 
     // Lockless snapshot for the GC visitor / hasPendingActivity.
     uint64_t state(uint8_t side) const { return m_sides[side].state.load(std::memory_order_acquire); }
     bool isOtherSideOpen(uint8_t side) const { return !(state(1 - side) & Closed); }
+    bool isOtherSideClosedByRequest(uint8_t side) const { return state(1 - side) & ClosedByRequest; }
 
     // Equality is by identity; used to reject "port posted through itself".
     bool operator==(const MessagePortPipe& other) const { return this == &other; }

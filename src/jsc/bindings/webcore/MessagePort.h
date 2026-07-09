@@ -142,6 +142,9 @@ private:
     // the wrapper alive until it runs, or the task dispatches into a dead listener.
     std::atomic<bool> m_closeEventPending { false };
     bool m_hasMessageEventListener { false };
+    // Read from the GC thread: a port whose only listener is 'close' must survive
+    // until that event is delivered, or the peer's close is lost to a collection.
+    std::atomic<bool> m_hasCloseEventListener { false };
     bool m_hasRef { false };
 
     // Whether .ref()/.unref() want this port to keep the loop alive (default refd);

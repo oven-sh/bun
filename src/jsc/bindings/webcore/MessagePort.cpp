@@ -66,7 +66,7 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
 MessagePort::~MessagePort()
 {
     if (!m_isDetached)
-        m_pipe->close(m_side);
+        m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected);
 }
 
 ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
@@ -195,7 +195,7 @@ void MessagePort::close()
 
     // m_pipe is held for the port's whole lifetime (the GC thread reads
     // it in hasPendingActivity()); marking our side Closed is sufficient.
-    m_pipe->close(m_side);
+    m_pipe->close(m_side, MessagePortPipe::CloseKind::Explicit);
 
     // Release the self-reference taken by jsRef() (set when .onmessage is
     // assigned or .ref() is called from JS). The JS .close() binding calls
@@ -396,6 +396,10 @@ bool MessagePort::hasPendingActivity() const
         return true;
     if (!scriptExecutionContext() || m_isDetached)
         return false;
+    // A 'close' listener has to outlive a GC until the event lands: the peer's
+    // notifyPeerClosed() task only holds a weak ref back to this port.
+    if (m_hasCloseEventListener.load(std::memory_order_acquire) && !m_closeEventDispatched)
+        return true;
     if (!m_hasMessageEventListener)
         return false;
 
@@ -497,11 +501,14 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
             if (auto* context = scriptExecutionContext())
                 m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
         }
-    } else if (eventType == eventNames().closeEvent && isEntangled()) {
-        // Record our context with the pipe so the peer's close() can deliver a
-        // 'close' event even if we never started (no 'message' listener).
-        if (auto* context = scriptExecutionContext())
-            m_pipe->registerCloseContext(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+    } else if (eventType == eventNames().closeEvent) {
+        m_hasCloseEventListener.store(true, std::memory_order_release);
+        if (isEntangled()) {
+            // Record our context with the pipe so the peer's close() can deliver a
+            // 'close' event even if we never started (no 'message' listener).
+            if (auto* context = scriptExecutionContext())
+                m_pipe->registerCloseContext(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+        }
     }
     return EventTarget::addEventListener(eventType, WTF::move(listener), options);
 }
@@ -511,6 +518,8 @@ bool MessagePort::removeEventListener(const AtomString& eventType, EventListener
     auto result = EventTarget::removeEventListener(eventType, listener, options);
     if (!hasEventListeners(eventNames().messageEvent))
         m_hasMessageEventListener = false;
+    if (!hasEventListeners(eventNames().closeEvent))
+        m_hasCloseEventListener.store(false, std::memory_order_release);
     return result;
 }
 
@@ -527,7 +536,9 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
     // ref taken afterwards. Same once the peer has closed: peerClosed() already
     // ran jsUnref(), and nothing releases a ref re-taken after it, so `.ref()`
     // or a late `onmessage =` would pin the loop forever. Node no-ops both.
-    if (!isEntangled() || !m_pipe->isOtherSideOpen(m_side))
+    // Only an explicit peer close counts: node never closes a channel because a
+    // port was collected, so keying on Closed alone made this GC-dependent.
+    if (!isEntangled() || m_pipe->isOtherSideClosedByRequest(m_side))
         return;
 
     // Re-acquire the message-listener loop-ref (if a listener is present) that .unref() released.

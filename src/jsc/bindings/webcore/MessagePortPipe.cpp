@@ -25,14 +25,14 @@ TransferredMessagePort::~TransferredMessagePort()
     // handed off to a new MessagePort via entangle()), the side is orphaned;
     // mark it Closed so the peer's hasPendingActivity() can return false.
     if (pipe)
-        pipe->close(side);
+        pipe->close(side, MessagePortPipe::CloseKind::Collected);
 }
 
 TransferredMessagePort& TransferredMessagePort::operator=(TransferredMessagePort&& other)
 {
     if (this != &other) {
         if (pipe)
-            pipe->close(side);
+            pipe->close(side, MessagePortPipe::CloseKind::Collected);
         pipe = WTF::move(other.pipe);
         side = other.side;
     }
@@ -244,7 +244,7 @@ void MessagePortPipe::detach(uint8_t side)
     s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled), std::memory_order_acq_rel);
 }
 
-void MessagePortPipe::close(uint8_t side)
+void MessagePortPipe::close(uint8_t side, CloseKind kind)
 {
     ASSERT(side < 2);
 
@@ -254,11 +254,11 @@ void MessagePortPipe::close(uint8_t side)
     // chain of nested transferred ports overflows the native stack. Drain the
     // cascade iteratively instead: steal transferred pipes from each batch of
     // dropped messages into a stack-local worklist and close them in a loop.
-    Vector<std::pair<RefPtr<MessagePortPipe>, uint8_t>> worklist;
-    worklist.append({ this, side });
+    Vector<std::tuple<RefPtr<MessagePortPipe>, uint8_t, CloseKind>> worklist;
+    worklist.append({ this, side, kind });
 
     while (!worklist.isEmpty()) {
-        auto [pipe, sd] = worklist.takeLast();
+        auto [pipe, sd, sdKind] = worklist.takeLast();
         auto& s = pipe->m_sides[sd];
 
         Deque<MessageWithMessagePorts> dropped;
@@ -267,7 +267,7 @@ void MessagePortPipe::close(uint8_t side)
             s.ctxId = 0;
             s.port = nullptr;
             // Closed is terminal; queued messages are dropped.
-            s.state.store(Closed, std::memory_order_release);
+            s.state.store(sdKind == CloseKind::Explicit ? (Closed | ClosedByRequest) : Closed, std::memory_order_release);
             dropped = std::exchange(s.inbox, {});
         }
 
@@ -276,7 +276,7 @@ void MessagePortPipe::close(uint8_t side)
         for (auto& message : dropped) {
             for (auto& tp : message.transferredPorts) {
                 if (auto p = std::exchange(tp.pipe, nullptr))
-                    worklist.append({ WTF::move(p), tp.side });
+                    worklist.append({ WTF::move(p), tp.side, CloseKind::Collected });
             }
         }
         // `dropped` (and the RefPtr in the structured binding) destruct

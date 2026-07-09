@@ -848,6 +848,20 @@ test("MessagePort.hasRef() reports actual loop-ref state", () => {
   port1.close();
 });
 
+// Collecting the unreferenced peer must not look like a peer close: node never
+// closes a channel because a port was garbage-collected, so ref() still works.
+test("hasRef() survives collection of the unreferenced peer", () => {
+  const { port1 } = new MessageChannel(); // port2 unreachable from birth
+  Bun.gc(true);
+  Bun.gc(true);
+  port1.on("message", () => {});
+  const afterListener = port1.hasRef();
+  port1.unref();
+  port1.ref();
+  expect({ afterListener, afterRefCycle: port1.hasRef() }).toEqual({ afterListener: true, afterRefCycle: true });
+  port1.close();
+});
+
 test("MessagePort NodeEventTarget methods", () => {
   const { port1 } = new MessageChannel();
   expect(typeof port1.listenerCount).toBe("function");

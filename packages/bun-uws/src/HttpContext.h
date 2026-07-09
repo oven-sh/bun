@@ -297,6 +297,17 @@ private:
                 return nullptr;
             }
 
+            /* A previous request on this connection marked it for close (HTTP/1.0
+             * or Connection: close, set below). RFC 9112 9.3/9.6: the connection
+             * is non-persistent; do not dispatch a pipelined follow-up. */
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
+                if (((AsyncSocket<SSL> *) s)->getBufferedAmount() == 0) {
+                    ((AsyncSocket<SSL> *) s)->shutdown();
+                    ((AsyncSocket<SSL> *) s)->close();
+                }
+                return nullptr;
+            }
+
             /* Mark pending request and emit it */
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 

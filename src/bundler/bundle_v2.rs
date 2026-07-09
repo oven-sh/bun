@@ -5722,6 +5722,19 @@ pub mod bv2_impl {
             // parse_result.value (invalidating the `result` pointer).
             let source_index = result.source.index;
             let target = result.ast.target;
+            // A hashbang on the entry can flip `ast.target` away from the map
+            // this file was registered under. Mirror it into
+            // `build_graphs[target]` so a descendant that circularly imports it
+            // dedupes instead of allocating a second source index. Server
+            // component boundaries are excluded: `on_parse_task_complete`
+            // intentionally maps their path to the generated reference proxy.
+            if result.use_directive == crate::UseDirective::None {
+                let map = this.path_to_source_index_map(target);
+                if map.get(result.source.path.text).is_none() {
+                    map.put(result.source.path.text, source_index.get())
+                        .expect("oom");
+                }
+            }
             let mut resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
                 import_records: &mut result.ast.import_records,
                 source: &result.source,

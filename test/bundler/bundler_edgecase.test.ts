@@ -2712,6 +2712,29 @@ describe("bundler", () => {
         expect(map.sources).toEqual([...new Set(map.sources)]);
       },
     });
+    itBundled(`edgecase/HashbangBunEntryTarget${target[0].toUpperCase()}${target.slice(1)}CircularEntry`, {
+      files: {
+        "/entry.ts": `#!/usr/bin/env bun
+          import { helper } from "./helper.ts";
+          export const CONFIG = { x: 1 };
+          console.log(helper() === CONFIG);
+        `,
+        "/helper.ts": `
+          import { CONFIG } from "./entry.ts";
+          export function helper() { return CONFIG; }
+        `,
+      },
+      target,
+      outdir: "/out",
+      sourceMap: "external",
+      run: { stdout: "true" },
+      onAfterBundle(api) {
+        const js = api.readFile("/out/entry.js");
+        expect([...js.matchAll(/CONFIG\w* = {/g)].map(m => m[0])).toEqual(["CONFIG = {"]);
+        const map = JSON.parse(api.readFile("/out/entry.js.map"));
+        expect(map.sources).toEqual([...new Set(map.sources)]);
+      },
+    });
   }
 });
 

@@ -61,12 +61,15 @@ describe.each([
     }).listen(0, "127.0.0.1");
     await once(server, "listening");
 
+    const { promise: clientClosed, resolve: resolveClientClosed } = Promise.withResolvers<void>();
     const client = connect((server.address() as AddressInfo).port, "127.0.0.1", () => {
       client.write("GET /x HTTP/1.1\r\nHost: h\r\n\r\n");
     });
+    // The server force-closes the connection; an ECONNRESET here is expected
+    // and must not fail the test (once(client, "close") would reject on it).
     client.on("error", () => {});
-    await once(client, "close");
-    await Promise.all([resClosed, reqClosed]);
+    client.on("close", () => resolveClientClosed());
+    await Promise.all([clientClosed, resClosed, reqClosed]);
 
     // Writable.destroy semantics: 'close' is emitted on a later tick.
     expect(closedAtReturn).toBe(false);

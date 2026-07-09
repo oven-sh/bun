@@ -211,6 +211,7 @@ function newHandle(type, lookup) {
     // Index of the first not-yet-drained sendQueue entry (see handleDrain).
     sendQueueHead: 0,
     send: handleSend,
+    drain: handleDrain,
     getSendQueueSize: handleGetSendQueueSize,
     getSendQueueCount: handleGetSendQueueCount,
     get fd() {

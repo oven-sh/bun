@@ -634,6 +634,88 @@ test("close() completes a send still queued behind backpressure with ECANCELED",
   expect(err.message).toStartWith("send ECANCELED");
 });
 
+// handleDrain's break-on-renewed-backpressure → resume path, its per-entry
+// catch (a throwing entry completes as an error and the loop continues), and
+// the running-index bookkeeping. Native send is stubbed for a deterministic
+// accept/refuse/throw sequence via the same reach-in as the test above.
+test("handleDrain resumes after renewed backpressure and steps past a throwing entry", async () => {
+  const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const socket = createSocket("udp4");
+  await new Promise<void>(resolve => socket.bind(0, "127.0.0.1", resolve));
+  await new Promise<void>(resolve => socket.connect(socket.address().port, "127.0.0.1", resolve));
+
+  const handle = socket[kStateSymbol].handle;
+  const realSocket = handle.socket;
+  try {
+    // Force the queued path: with sendQueue non-undefined every send() lands
+    // behind it (handleSend's don't-jump-the-queue check).
+    handle.sendQueue = [];
+
+    const lengths = [10, 20, 30, 40];
+    const fired: { i: number; err: any; sent: number }[] = [];
+    const done = lengths.map((n, i) => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      socket.send(Buffer.alloc(n), (err, sent) => {
+        fired.push({ i, err: err?.code ?? err, sent });
+        resolve();
+      });
+      return promise;
+    });
+    expect({ queued: handle.sendQueue.length, count: handle.queueCount, size: handle.queueSize }).toEqual({
+      queued: 4,
+      count: 4,
+      size: 100,
+    });
+
+    // First drain: kernel accepts entry 0 and 1, then reports full again.
+    let script: (() => boolean)[] = [() => true, () => true, () => false];
+    handle.socket = { send: () => script.shift()!() };
+    handle.drain();
+    await Promise.all(done.slice(0, 2));
+    expect(fired).toEqual([
+      { i: 0, err: null, sent: 10 },
+      { i: 1, err: null, sent: 20 },
+    ]);
+    expect({ head: handle.sendQueueHead, count: handle.queueCount, size: handle.queueSize }).toEqual({
+      head: 2,
+      count: 2,
+      size: 70,
+    });
+    // Consumed slots are nulled in place until the head crosses the compaction
+    // threshold; the still-queued entries stay behind them.
+    expect(handle.sendQueue.map((e: any) => e?.length)).toEqual([undefined, undefined, 30, 40]);
+
+    // Second drain: entry 2 throws (a per-entry send failure completes that
+    // request as an error and the loop continues); entry 3 succeeds.
+    const emsgsize = Object.assign(new Error("too big"), { code: "EMSGSIZE" });
+    script = [
+      () => {
+        throw emsgsize;
+      },
+      () => true,
+    ];
+    handle.drain();
+    await Promise.all(done);
+    // Callbacks fired in FIFO send order across both drains, with entry 2's
+    // throw surfacing as a decorated send error.
+    expect(fired).toEqual([
+      { i: 0, err: null, sent: 10 },
+      { i: 1, err: null, sent: 20 },
+      { i: 2, err: "EMSGSIZE", sent: undefined },
+      { i: 3, err: null, sent: 40 },
+    ]);
+    expect({
+      queue: handle.sendQueue,
+      head: handle.sendQueueHead,
+      count: handle.queueCount,
+      size: handle.queueSize,
+    }).toEqual({ queue: undefined, head: 0, count: 0, size: 0 });
+  } finally {
+    handle.socket = realSocket;
+    socket.close();
+  }
+});
+
 // Reserves an ephemeral UDP port and frees it, so datagrams sent there get
 // ICMP port-unreachable replies on loopback.
 async function getDeadPort() {

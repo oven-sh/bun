@@ -1169,7 +1169,9 @@ describe("Transactions", () => {
     const outer = sql`UPDATE accounts SET balance = balance + 7 WHERE id = 2`.then(() => {
       outerRan = true;
     });
-    await Promise.resolve();
+    // Macrotask barrier: drain the whole microtask chain so an unfixed build
+    // (where the UPDATE runs immediately) would have flipped outerRan by now.
+    await Bun.sleep(0);
     expect(outerRan).toBe(false);
 
     releaseTxn.resolve();

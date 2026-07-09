@@ -100,9 +100,9 @@ test("writer.write() with a sync sink does not allocate a wrapper promise per ch
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const { delta, writes } = JSON.parse(stdout.trim());
-  // writer.write()'s own request promise + backpressure's fresh readyPromise are one each per
-  // write and unavoidable; the old path additionally allocated a sink-write wrapper promise.
-  expect({ belowThreshold: delta < writes * 2.5, stderr, exitCode }).toEqual({
+  // Only writer.write()'s own request promise (~1/write); the old path also allocated the
+  // sink-write wrapper and a fresh readyPromise on each backpressure flip (~3/write).
+  expect({ belowThreshold: delta < writes * 1.5, stderr, exitCode }).toEqual({
     belowThreshold: true,
     stderr: "",
     exitCode: 0,

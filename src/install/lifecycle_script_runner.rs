@@ -271,9 +271,9 @@ pub fn replace_package_manager_run(
 /// Returns 0 (caller falls back to the plain `npm run` -> `bun run` prefix swap,
 /// keeping byte-for-byte output) when no workspace flag is present, when the
 /// match is inside a quoted string, when the segment's quotes are unbalanced, or
-/// when it contains shell grouping/escaping the tokenizer does not model (`(`,
-/// `)`, `$`, `` ` ``, `\`): reordering tokens is only safe at shell top level
-/// with balanced quoting and no such constructs.
+/// when it contains shell grouping/escaping/comments the tokenizer does not
+/// model (`(`, `)`, `$`, `` ` ``, `\`, `#`): reordering tokens is only safe at
+/// shell top level with balanced quoting and no such constructs.
 fn rewrite_npm_run_workspaces(
     out: &mut Vec<u8>,
     cmd: &[u8],
@@ -310,7 +310,7 @@ fn rewrite_npm_run_workspaces(
                         seg_end = i;
                         break;
                     }
-                    b'(' | b')' | b'$' | b'`' | b'\\' => has_unsupported = true,
+                    b'(' | b')' | b'$' | b'`' | b'\\' | b'#' => has_unsupported = true,
                     _ => {}
                 }
             }

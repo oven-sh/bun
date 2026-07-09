@@ -734,6 +734,7 @@ describe.concurrent("bun run", () => {
     it.each([
       ["(true && npm run greet -w app)", "subshell"],
       ["npm run greet -w $(echo app)", "command substitution"],
+      ["npm run greet # switch to -w app", "trailing comment"],
     ])("%s is not mangled by workspace-flag reordering (%s)", async rootScript => {
       using dir = tempDir("npm-ws-shell", rootScriptRepo(rootScript));
       await using proc = Bun.spawn({

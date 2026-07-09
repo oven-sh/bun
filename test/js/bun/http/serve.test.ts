@@ -1629,8 +1629,18 @@ describe("response framing", () => {
       const head = await rawRequest(server.port, "HEAD");
       const get = await rawRequest(server.port, "GET");
       expect({
-        head: { statusLine: head.statusLine, body: head.body, cl: head.headers["content-length"], x: head.headers["x-from"] },
-        get: { statusLine: get.statusLine, body: get.body, cl: get.headers["content-length"], x: get.headers["x-from"] },
+        head: {
+          statusLine: head.statusLine,
+          body: head.body,
+          cl: head.headers["content-length"],
+          x: head.headers["x-from"],
+        },
+        get: {
+          statusLine: get.statusLine,
+          body: get.body,
+          cl: get.headers["content-length"],
+          x: get.headers["x-from"],
+        },
       }).toEqual({
         head: { statusLine: "HTTP/1.1 503 Service Unavailable", body: "", cl: "5", x: "error" },
         get: { statusLine: "HTTP/1.1 503 Service Unavailable", body: "EBODY", cl: "5", x: "error" },

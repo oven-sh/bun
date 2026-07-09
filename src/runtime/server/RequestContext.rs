@@ -981,10 +981,17 @@ where
             return;
         }
 
+        // run_error_handler() may have started a streaming body (ReadableStream
+        // sink, ByteStream pipe, or sendfile). Those paths take a ref and arm
+        // their own completion without setting has_marked_pending; ending the
+        // exchange here would truncate the body mid-stream and orphan the sink.
         // SAFETY: FFI handle
         if !resp.has_responded()
             && !ctx.flags.has_marked_pending()
             && !ctx.flags.is_error_promise_pending()
+            && !ctx.flags.has_sendfile_ctx()
+            && ctx.sink.is_none()
+            && ctx.byte_stream.is_none()
         {
             ctx.render_missing();
             return;

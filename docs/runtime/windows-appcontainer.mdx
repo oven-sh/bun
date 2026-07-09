@@ -77,10 +77,16 @@ shipped apps cannot rely on.
 - **Process visibility is limited.** `process.kill` of unrelated pids and
   enumerating other users' processes are denied; managing your own children
   works.
-- On hosts that deny the `NUL` device (some Server AppContainers), an
-  `"ignore"` stdio slot is a closed pipe rather than a sink: a child that
-  treats a stdout/stderr write failure as fatal exits nonzero there, where
-  outside the sandbox it would write to `NUL` and exit 0.
+- **The `NUL` device is unreachable inside AppContainers by default.** Its
+  ACL predates AppContainers and is re-derived at every boot; it admits the
+  container only when the device ACL carries the container SIDs (some hosts
+  apply this per boot from an elevated context) or when a session-level `NUL`
+  symlink points at an accessible object. When reachable, `"ignore"` stdio
+  uses the real device; otherwise Bun substitutes a discarding pipe per spawn
+  — child writes succeed and are discarded, though a detached child that
+  outlives Bun loses the sink and its writes then fail. User code opening
+  `"NUL"` directly is subject to the device ACL and fails with `EACCES` when
+  denied.
 - A package cache created **outside** the container is currently
   re-validated as a miss inside it; prefer letting the sandboxed process
   populate its own `BUN_INSTALL_CACHE_DIR`.

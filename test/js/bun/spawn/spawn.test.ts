@@ -11,10 +11,11 @@ import {
   isPosix,
   isWindows,
   shellExe,
+  tempDir,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -1265,5 +1266,102 @@ describe("uid/gid", () => {
       thrown = e;
     }
     expect(thrown?.code).toBe("EPERM");
+  });
+});
+
+// Windows: when NUL is unreachable (AppContainer device ACL), "ignore" slots
+// get bun-owned discard pipes instead of failing the spawn.
+// BUN_INTERNAL_NUL_UNAVAILABLE forces the substitution on any host.
+describe.skipIf(!isWindows)("ignore stdio NUL substitution", () => {
+  const knobEnv = { ...bunEnv, BUN_INTERNAL_NUL_UNAVAILABLE: "1" };
+
+  it("all-ignore slots become discard pipes and a 1MB write succeeds", async () => {
+    using dir = tempDir("spawn-nul-substitute", {
+      "probe.js": `
+        const { dlopen, FFIType } = require("bun:ffi");
+        const k32 = dlopen("kernel32.dll", {
+          GetStdHandle: { args: [FFIType.i32], returns: FFIType.u64 },
+          GetFileType: { args: [FFIType.u64], returns: FFIType.u32 },
+        }).symbols;
+        // STD_OUTPUT_HANDLE = -11
+        const type = k32.GetFileType(k32.GetStdHandle(-11));
+        const fs = require("fs");
+        const chunk = Buffer.alloc(64 * 1024, "x");
+        let wrote = 0;
+        for (let i = 0; i < 16; i++) wrote += fs.writeSync(1, chunk);
+        fs.writeFileSync(process.argv[2], JSON.stringify({ type, wrote }));
+      `,
+    });
+    const results = join(String(dir), "results.json");
+    await using proc = spawn({
+      cmd: [bunExe(), join(String(dir), "probe.js"), results],
+      env: knobEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    const exitCode = await proc.exited;
+    const r = existsSync(results) ? JSON.parse(readFileSync(results, "utf8")) : {};
+    // FILE_TYPE_PIPE = 3; the real NUL device reports FILE_TYPE_CHAR = 2.
+    expect(r.type).toBe(3);
+    expect(r.wrote).toBe(16 * 64 * 1024);
+    expect(exitCode).toBe(0);
+  });
+
+  it("substituted ignore stdin delivers immediate EOF", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `let n = 0; for await (const c of process.stdin) n += c.length; console.log("COUNT:" + n);`],
+      env: knobEnv,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("COUNT:0");
+    expect(exitCode).toBe(0);
+  });
+
+  it("mixed slots: the pipe delivers while ignore slots discard", async () => {
+    const payload = "PAYLOAD_" + "y".repeat(1024);
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stderr.write("discarded" + "z".repeat(128 * 1024)); process.stdout.write(${JSON.stringify(payload)});`,
+      ],
+      env: knobEnv,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(payload);
+    expect(exitCode).toBe(0);
+  });
+
+  // Passes on system bun by design (real NUL); the type-3 test is the discriminator.
+  it("unref'd all-ignore child does not keep the parent alive", async () => {
+    let pid = 0;
+    try {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const cp = require("child_process");
+          const child = cp.spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
+            stdio: ["ignore", "ignore", "ignore"],
+            detached: true,
+          });
+          child.unref();
+          console.log(child.pid);`,
+        ],
+        env: knobEnv,
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      pid = parseInt(stdout.trim(), 10);
+      expect(pid).toBeGreaterThan(0);
+      expect(exitCode).toBe(0);
+    } finally {
+      if (pid > 0) {
+        try {
+          process.kill(pid);
+        } catch {}
+      }
+    }
   });
 });

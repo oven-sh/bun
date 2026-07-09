@@ -245,6 +245,11 @@ async function main() {
   const s = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log('SPAWN_OK')"] });
   r.spawnPiped = s.exitCode === 0 && s.stdout.toString().includes("SPAWN_OK");
 
+  // All-ignore stdio: works via the real NUL device on prepped hosts and via
+  // bun's discard-pipe substitution on unprepped ones.
+  const si = Bun.spawnSync({ cmd: ["cmd", "/c", "echo", "x"], stdio: ["ignore", "ignore", "ignore"] });
+  r.spawnIgnored = si.exitCode;
+
   r.realpath = fs.realpathSync(".") === fs.realpathSync.native(".");
 
   r.pipeNonLocal = await new Promise(resolve => {
@@ -338,6 +343,7 @@ main().then(
       // AppContainer children to the package's AC\Temp.
       expect(r.tempRewritten).toBe(true);
       expect(r.spawnPiped).toBe(true);
+      expect(r.spawnIgnored).toBe(0);
       expect(r.realpath).toBe(true);
       expect(r.pipeNonLocal).toBe("EACCES");
       expect(r.pipeLocal).toBe("LISTENED");

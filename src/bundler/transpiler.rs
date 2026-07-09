@@ -793,6 +793,10 @@ impl<'a> Transpiler<'a> {
             }
             DotEnvBehavior::disable => {
                 env.load_process()?;
+                if self.options.force_node_env == options::ForceNodeEnv::Production {
+                    env.map.put(b"NODE_ENV", b"production")?;
+                    env.map.put(b"BUN_ENV", b"production")?;
+                }
                 if env.is_production() {
                     self.options.set_production(true);
                     // See note in the `.prefix` arm.

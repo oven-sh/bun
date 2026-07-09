@@ -43,7 +43,7 @@ bun_core::declare_scope!(cache, visible);
 /// path reinstates the bug for any previously-cached TLA module (#30887).
 /// Version 23: Non-ASCII bytes in tagged-template raw contents and regex
 /// literals are preserved verbatim (#18115); entries from earlier builds
-/// contain `\uXXXX` escape sequences in their place.
+/// contain unicode escape sequences in their place.
 const EXPECTED_VERSION: u32 = 23;
 
 /// Source files smaller than this are not written to / read from the on-disk

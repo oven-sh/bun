@@ -114,7 +114,7 @@ describe("tagged-template .raw and RegExp.source preserve non-ASCII source text"
       cwd: String(dir),
     });
     expect(build.exitCode).toBe(0);
-    // The built output should keep the raw bytes verbatim (no `\uXXXX`).
+    // The built output should keep the raw bytes verbatim (no unicode escapes).
     expect(build.stdout).not.toContain("\\u00E9");
     expect(build.stdout).toContain("café");
 

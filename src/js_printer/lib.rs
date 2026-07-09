@@ -3137,8 +3137,8 @@ pub mod __gated_printer {
 
         fn print_raw_template_literal(&mut self, bytes: &[u8]) {
             // `TemplateStringsArray.raw` exposes these bytes verbatim at
-            // runtime, so re-encoding non-ASCII as `\uXXXX` would change the
-            // observed string value. esbuild exempts template contents too.
+            // runtime, so re-encoding non-ASCII as escape sequences would
+            // change the observed string value. esbuild exempts these too.
             self.print(bytes);
         }
 
@@ -4557,7 +4557,7 @@ pub mod __gated_printer {
 
             // `RegExp.prototype.source` is observable at runtime and must
             // round-trip the source bytes verbatim; re-encoding non-ASCII as
-            // `\uXXXX` changes what `.source` returns.
+            // escape sequences changes what `.source` returns.
             self.print(&e.value[..]);
 
             // Need a space before the next identifier to avoid it turning into flags

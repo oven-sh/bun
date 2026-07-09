@@ -1044,13 +1044,14 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
         RETURN_IF_EXCEPTION(scope, void());
         return;
     }
-    WTF::String decoded = streamingUTF8Decode(bytes, controller->m_algorithms.textDecodeState, /* flush */ false);
-    if (decoded.isEmpty()) {
+    auto* decoded = streamingUTF8Decode(globalObject, bytes, controller->m_algorithms.textDecodeState, /* flush */ false);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!decoded || !decoded->length()) {
         // No output from this chunk (held back as an incomplete sequence). Arm
         // `m_pullAgain` so the controller re-pulls once this pull settles.
         RELEASE_AND_RETURN(scope, readableStreamDefaultControllerCallPullIfNeeded(globalObject, controller));
     }
-    readableStreamDefaultControllerEnqueue(globalObject, controller, jsString(vm, WTF::move(decoded)));
+    readableStreamDefaultControllerEnqueue(globalObject, controller, decoded);
     RETURN_IF_EXCEPTION(scope, void());
 }
 
@@ -1060,9 +1061,10 @@ void textDecodeReadRequestCloseSteps(JSGlobalObject* globalObject, JSReadableStr
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!readableStreamDefaultControllerCanCloseOrEnqueue(controller))
         return;
-    WTF::String decoded = streamingUTF8Decode({}, controller->m_algorithms.textDecodeState, /* flush */ true);
-    if (!decoded.isEmpty()) {
-        readableStreamDefaultControllerEnqueue(globalObject, controller, jsString(vm, WTF::move(decoded)));
+    auto* decoded = streamingUTF8Decode(globalObject, {}, controller->m_algorithms.textDecodeState, /* flush */ true);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (decoded && decoded->length()) {
+        readableStreamDefaultControllerEnqueue(globalObject, controller, decoded);
         RETURN_IF_EXCEPTION(scope, void());
     }
     readableStreamDefaultControllerClose(globalObject, controller);

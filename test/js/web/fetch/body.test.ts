@@ -336,6 +336,18 @@ for (const { body, fn } of bodyTypes) {
         const input = new Uint8Array([0x61, 0xff, 0x62]);
         expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe("a\ufffdb");
       });
+      test.each([
+        ["ascii", Buffer.alloc(1000, "abcd").toString()],
+        ["mixed", Buffer.alloc(1000, "hello 🫠 ").toString()],
+      ])("decodes a large %s chunk from a ReadableStream body", async (_, big) => {
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(big));
+            controller.close();
+          },
+        });
+        expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe(big);
+      });
       test("marks body as used", async () => {
         const r = fn("hello");
         expect(r.bodyUsed).toBe(false);

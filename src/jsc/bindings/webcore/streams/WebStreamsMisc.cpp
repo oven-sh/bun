@@ -7,6 +7,7 @@
 #include "JSWritableStream.h"
 
 #include "BunClientData.h"
+#include "JSBuffer.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSStreamsRuntime.h"
 #include <JavaScriptCore/ArrayBuffer.h>
@@ -75,7 +76,7 @@ static size_t incompleteTrailingUTF8(std::span<const uint8_t> data)
     return 0;
 }
 
-WTF::String streamingUTF8Decode(std::span<const uint8_t> chunk, StreamingUTF8DecodeState& state, bool flush)
+JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const uint8_t> chunk, StreamingUTF8DecodeState& state, bool flush)
 {
     WTF::Vector<uint8_t> joinedStorage;
     std::span<const uint8_t> joined = chunk;
@@ -95,7 +96,7 @@ WTF::String streamingUTF8Decode(std::span<const uint8_t> chunk, StreamingUTF8Dec
         } else if (!flush && joined.size() < 3 && !memcmp(joined.data(), bom, joined.size())) {
             // Still a possible BOM prefix; carry it to the next chunk.
             state.setPending(joined.data(), static_cast<unsigned>(joined.size()));
-            return emptyString();
+            return nullptr;
         } else if (!joined.empty())
             state.bomSeen = true;
     }
@@ -105,8 +106,18 @@ WTF::String streamingUTF8Decode(std::span<const uint8_t> chunk, StreamingUTF8Dec
         state.setPending(joined.data() + (joined.size() - holdBack), static_cast<unsigned>(holdBack));
     auto toDecode = joined.first(joined.size() - holdBack);
     if (toDecode.empty())
-        return emptyString();
-    return WTF::String::fromUTF8ReplacingInvalidSequences(toDecode);
+        return nullptr;
+
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Bun's simdutf-backed Buffer.toString('utf8') path: SIMD ASCII check,
+    // external UTF-16 for non-ASCII, replacement chars for invalid sequences.
+    // Small chunks avoid the FFI round-trip.
+    if (toDecode.size() < 64)
+        return jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(toDecode));
+    JSValue decoded = JSValue::decode(Bun__encoding__toStringUTF8(toDecode.data(), toDecode.size(), globalObject));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return asString(decoded);
 }
 
 // spec IsNonNegativeNumber(v). Non-throwing leaf: pure type + range test, no coercion.

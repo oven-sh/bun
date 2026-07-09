@@ -391,11 +391,11 @@ static void nativeStorePendingView(JSC::VM& vm, JSNativeStreamSourceAdapter* ada
 static void nativeEnqueueTextChunk(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSReadableStreamDefaultController* controller, std::span<const uint8_t> bytes, bool flush)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    WTF::String decoded = streamingUTF8Decode(bytes, adapter->m_textState, flush);
-    if (decoded.isEmpty() || !controller)
+    auto* decoded = streamingUTF8Decode(globalObject, bytes, adapter->m_textState, flush);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!decoded || !decoded->length() || !controller)
         return;
-    JSString* chunk = jsString(vm, WTF::move(decoded));
-    readableStreamDefaultControllerEnqueue(globalObject, controller, chunk);
+    readableStreamDefaultControllerEnqueue(globalObject, controller, decoded);
     RETURN_IF_EXCEPTION(scope, void());
 }
 
@@ -595,9 +595,10 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
             if (stream->m_nativeTextMode) {
                 StreamingUTF8DecodeState state;
                 std::span<const uint8_t> bytes { static_cast<const uint8_t*>(drainView->vector()), drainView->byteLength() };
-                WTF::String decoded = streamingUTF8Decode(bytes, state, /* flush */ true);
-                if (!decoded.isEmpty()) {
-                    readableStreamDefaultControllerEnqueue(globalObject, controller, jsString(vm, WTF::move(decoded)));
+                auto* decoded = streamingUTF8Decode(globalObject, bytes, state, /* flush */ true);
+                RETURN_IF_EXCEPTION(scope, );
+                if (decoded && decoded->length()) {
+                    readableStreamDefaultControllerEnqueue(globalObject, controller, decoded);
                     RETURN_IF_EXCEPTION(scope, );
                 }
             } else {

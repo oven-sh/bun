@@ -193,9 +193,11 @@ void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSVa
 JSC::JSValue takeAbruptCompletion(JSC::JSGlobalObject*, JSC::TopExceptionScope&); // userJS: no — WebStreamsMisc.cpp
 
 // Joins any pending bytes, strips a single leading BOM per stream (ignoreBOM=false), holds
-// back a trailing incomplete sequence (unless `flush`), and returns the decoded span with
-// invalid sequences replaced by U+FFFD. The returned string may be empty.
-WTF::String streamingUTF8Decode(std::span<const uint8_t> chunk, StreamingUTF8DecodeState&, bool flush); // userJS: no — WebStreamsMisc.cpp
+// back a trailing incomplete sequence (unless `flush`), and decodes the remaining span via
+// Bun's simdutf-backed UTF-8 path (invalid sequences replaced by U+FFFD). Returns nullptr
+// when no complete code points were produced (callers skip the enqueue), or on a decode
+// throw (check the scope).
+JSC::JSString* streamingUTF8Decode(JSC::JSGlobalObject*, std::span<const uint8_t> chunk, StreamingUTF8DecodeState&, bool flush); // userJS: no — WebStreamsMisc.cpp
 
 // ReadableStreamOperations.cpp — stream-level RS ops, reader set-up, controller set-up,
 // tee, from-iterable.

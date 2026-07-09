@@ -627,7 +627,11 @@ describe("dns.lookupService with a numeric-string port", () => {
   // getnameinfo for 127.0.0.1 resolves on Linux/macOS but may ENOTFOUND on
   // Windows, so assert that "22" yields the same outcome as 22 rather than a
   // specific result.
-  const settle = p => p.then(v => ({ ok: v }), e => ({ err: e.code }));
+  const settle = p =>
+    p.then(
+      v => ({ ok: v }),
+      e => ({ err: e.code }),
+    );
 
   it("callback API coerces a numeric-string port", async () => {
     const run = port => {

@@ -86,4 +86,42 @@ describe("writeHead with array headers preserves wire order", () => {
     });
     expect(headers).toEqual(["X-D: 1", "X-A: q", "X-D: 2"]);
   });
+
+  it("throws ERR_HTTP_TRAILER_INVALID for array-form Content-Length + Trailer", async () => {
+    let code;
+    await readHead((req, res) => {
+      try {
+        res.writeHead(200, ["Content-Length", "2", "Trailer", "X"]);
+      } catch (e: any) {
+        code = e.code;
+      }
+      res.socket!.destroy();
+    });
+    expect(code).toBe("ERR_HTTP_TRAILER_INVALID");
+  });
+
+  it("enforces strictContentLength with an array-form Content-Length", async () => {
+    let code;
+    await readHead((req, res) => {
+      res.strictContentLength = true;
+      res.writeHead(200, ["Content-Length", "5"]);
+      try {
+        res.end("too many bytes here");
+      } catch (e: any) {
+        code = e.code;
+      }
+      res.socket!.destroy();
+    });
+    expect(code).toBe("ERR_HTTP_CONTENT_LENGTH_MISMATCH");
+  });
+
+  it("does not emit the rejected raw snapshot after ERR_HTTP_TRAILER_INVALID is caught", async () => {
+    const { headers } = await readHead((req, res) => {
+      try {
+        res.writeHead(200, ["Content-Length", "5", "Trailer", "X"]);
+      } catch {}
+      res.end("hello");
+    });
+    expect(headers.some(h => /^trailer:/i.test(h))).toBe(false);
+  });
 });

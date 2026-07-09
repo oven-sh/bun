@@ -811,11 +811,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // HTTP/1.0 client. Node gates the whole Expect dispatch on HTTP/1.1
           // and routes an HTTP/1.0 Expect request to the plain 'request'
           // listener instead.
-          if (
-            expectHeader !== undefined &&
-            http_req.httpVersionMajor === 1 &&
-            http_req.httpVersionMinor >= 1
-          ) {
+          if (expectHeader !== undefined && http_req.httpVersionMajor === 1 && http_req.httpVersionMinor >= 1) {
             // Case-insensitive, token-boundary match like Node's
             // parserOnIncoming (RFC 7231 5.1.1: expectation values compare
             // case-insensitively).

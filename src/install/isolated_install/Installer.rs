@@ -986,7 +986,7 @@ impl Task {
                                             // SAFETY: FFI — `folder_dir` is an open handle; `ptr`
                                             // points into a writable WPathBuffer of `cap` elements.
                                             let src_path_len = unsafe {
-                                                bun_sys::windows::GetFinalPathNameByHandleWLowbox(
+                                                bun_sys::windows::GetFinalPathNameByHandleW(
                                                     folder_dir.native(),
                                                     ptr,
                                                     u32::try_from(cap).expect("int cast"),

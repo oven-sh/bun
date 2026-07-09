@@ -3865,14 +3865,16 @@ fn lowbox_dos_name_fallback(
     Err(GetFinalPathNameByHandleError::FileNotFound)
 }
 
-/// Drop-in for raw `GetFinalPathNameByHandleW(h, buf, len, flags)` call sites
-/// (returns the length, or 0 with the thread's last error set), adding the
-/// same lowbox fallback as [`GetFinalPathNameByHandle`]. The fallback output
-/// keeps the `\\?\` prefix the raw API produces for `VOLUME_NAME_DOS`.
+/// This module's spelling of `GetFinalPathNameByHandleW`: raw-ABI drop-in
+/// (returns the length, or 0 with the thread's last error set) plus the same
+/// lowbox fallback as [`GetFinalPathNameByHandle`]. The fallback output keeps
+/// the `\\?\` prefix the raw API produces for `VOLUME_NAME_DOS`; the unwrapped
+/// extern stays reachable as `externs::GetFinalPathNameByHandleW` for the
+/// fallback machinery only.
 ///
 /// # Safety
 /// `buf` must be valid for writes of `len` u16s.
-pub unsafe fn GetFinalPathNameByHandleWLowbox(
+pub unsafe fn GetFinalPathNameByHandleW(
     hFile: HANDLE,
     buf: *mut u16,
     len: u32,
@@ -4488,7 +4490,6 @@ pub use bun_windows_sys::externs::CreateSymbolicLinkW;
 pub use bun_windows_sys::externs::DeleteFileW;
 pub use bun_windows_sys::externs::GetCommandLineW;
 pub use bun_windows_sys::externs::GetCurrentThread;
-pub use bun_windows_sys::externs::GetFinalPathNameByHandleW;
 pub use bun_windows_sys::externs::GetProcessTimes;
 pub use bun_windows_sys::externs::SetEndOfFile;
 

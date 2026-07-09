@@ -1245,7 +1245,7 @@ impl<'a> PackageInstall<'a> {
             // SAFETY: FFI — destbase.fd() is an open handle; state.buf is a valid writable
             // WPathBuffer of the passed length.
             let dest_path_length = unsafe {
-                windows::GetFinalPathNameByHandleWLowbox(
+                windows::GetFinalPathNameByHandleW(
                     destbase.fd().native(),
                     state.buf.as_mut_ptr(),
                     u32::try_from(state.buf.len()).expect("int cast"),
@@ -1284,7 +1284,7 @@ impl<'a> PackageInstall<'a> {
             // SAFETY: FFI — cached_package_dir.fd() is an open handle (opened above);
             // state.buf2 is a valid writable WPathBuffer of the passed length.
             let cache_path_length = unsafe {
-                windows::GetFinalPathNameByHandleWLowbox(
+                windows::GetFinalPathNameByHandleW(
                     state.cached_package_dir.fd().native(),
                     state.buf2.as_mut_ptr(),
                     u32::try_from(state.buf2.len()).expect("int cast"),
@@ -2195,7 +2195,7 @@ impl<'a> PackageInstall<'a> {
             // SAFETY: FFI — destination_dir.fd() is an open handle; wbuf is a valid writable
             // WPathBuffer of the passed length.
             let dest_path_length = unsafe {
-                windows::GetFinalPathNameByHandleWLowbox(
+                windows::GetFinalPathNameByHandleW(
                     destination_dir.fd().native(),
                     wbuf.as_mut_ptr(),
                     u32::try_from(wbuf.len()).expect("int cast"),

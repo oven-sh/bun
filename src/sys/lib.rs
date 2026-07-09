@@ -2187,8 +2187,8 @@ mod posix_impl {
         // musl/Android/OHOS: `libc` gates `statx`/`STATX_*` behind a build-script
         // `musl_v1_2_3` cfg that cross-compiles can't trigger, and bionic's
         // `statx()` wrapper requires API 30. Define the kernel-ABI struct +
-        // bits ourselves and dispatch via raw `syscall` — works on every
-        // Linux ABI.
+        // bits ourselves and dispatch via raw `syscall`, matching what Zig's
+        // `std.os.linux.statx` does on every Linux ABI.
         #[cfg(any(target_env = "musl", target_env = "ohos", target_os = "android"))]
         mod raw {
             #![allow(non_camel_case_types)]
@@ -2666,13 +2666,25 @@ mod posix_impl {
         // `buf.len()` bytes (including the NUL).
         let p = unsafe { libc::getcwd(buf.as_mut_ptr().cast(), buf.len()) };
         if p.is_null() {
-            return Err(err_with(Tag::getcwd));
+            return Err(Error::from_code_int(last_errno(), Tag::getcwd));
         }
         // SAFETY: on success `getcwd` returns `buf`'s pointer NUL-terminated.
-        Ok(unsafe { libc::strlen(p) })
+        let len = unsafe { libc::strlen(p) };
+        // OHOS (hmdfs/tmpfs): the kernel returns the cached path even after
+        // the cwd directory has been deleted via rmdir — getcwd never fails.
+        // A stat(".") probe surfaces ENOENT so callers detect deleted-cwd.
+        #[cfg(target_env = "ohos")]
+        {
+            let mut st: libc::stat = unsafe { core::mem::zeroed() };
+            // SAFETY: "." is a valid NUL-terminated path literal.
+            if unsafe { libc::stat(b".\0".as_ptr().cast(), &mut st) } < 0 {
+                return Err(Error::from_code(E::ENOENT, Tag::getcwd));
+            }
+        }
+        Ok(len)
     }
 
-    // ── link/perm/time/access group ──
+    // ── link/perm/time/access group (sys.zig:406-3973 posix arms) ──
     pub fn link(src: &ZStr, dest: &ZStr) -> Maybe<()> {
         check_p!(
             // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
@@ -2844,14 +2856,10 @@ mod posix_impl {
             );
             Ok(())
         }
-        // OHOS: seccomp blocks fchmodat2 (syscall #452) with SIGSYS.
-        // Skipping the syscall eliminates 3000+ signal handler invocations
-        // per test run, which would otherwise cause massive slowdown and OOM.
-        #[cfg(target_env = "ohos")]
-        {
-            return fchmodat(Fd::cwd(), path, mode, libc::AT_SYMLINK_NOFOLLOW);
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "freebsd", target_env = "ohos")))]
+        #[cfg(all(
+            not(any(target_os = "macos", target_os = "freebsd")),
+            not(target_env = "ohos")
+        ))]
         {
             const SYS_FCHMODAT2: libc::c_long = 452;
             loop {
@@ -2877,6 +2885,15 @@ mod posix_impl {
                 }
                 return Ok(());
             }
+        }
+        #[cfg(all(
+            not(any(target_os = "macos", target_os = "freebsd")),
+            target_env = "ohos"
+        ))]
+        {
+            // OHOS: fchmodat2 (#452) is blocked by seccomp → triggers SIGSYS.
+            // Skip the syscall and go directly to the fchmodat fallback.
+            return fchmodat(Fd::cwd(), path, mode, libc::AT_SYMLINK_NOFOLLOW);
         }
     }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
@@ -3445,6 +3462,7 @@ mod posix_impl {
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     impl MemfdFlags {
+        #[allow(dead_code)]
         #[inline]
         fn older_kernel_flag(self) -> u32 {
             match self {
@@ -3461,18 +3479,12 @@ mod posix_impl {
     static MEMFD_ENOSYS: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false when
-    /// `BUN_FEATURE_FLAG_DISABLE_MEMFD` is set or once `memfd_create` has
-    /// returned ENOSYS/EPERM/EACCES.
+    /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false once
+    /// `memfd_create` has returned ENOSYS/EPERM/EACCES.
+    /// OHOS: memfd_create verified available on 2026-06-07, no guard needed.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub fn can_use_memfd() -> bool {
-        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_MEMFD
-            .get()
-            .unwrap_or(false)
-        {
-            return false;
-        }
         !MEMFD_ENOSYS.load(core::sync::atomic::Ordering::Relaxed)
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -3487,39 +3499,43 @@ mod posix_impl {
     /// [`can_use_memfd`] to false.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn memfd_create(name: &core::ffi::CStr, flags_: MemfdFlags) -> Maybe<Fd> {
-        let mut flags: u32 = flags_ as u32;
-        loop {
-            // bionic only added the `memfd_create()` libc wrapper at API 30; we
-            // link against API 28. Raw-syscall it (kernel has had it since 3.17).
-            // SAFETY: `name` is a valid NUL-terminated C string.
-            #[cfg(target_os = "android")]
-            let rc = unsafe {
-                libc::syscall(libc::SYS_memfd_create, name.as_ptr(), flags) as core::ffi::c_int
-            };
-            // SAFETY: `name` is a valid NUL-terminated C string.
-            #[cfg(target_os = "linux")]
-            let rc = unsafe { libc::memfd_create(name.as_ptr(), flags) };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
+        // OHOS: memfd_create verified available (returned fd=4 on 2026-06-07).
+        {
+            let mut flags: u32 = flags_ as u32;
+            loop {
+                // Android/OHOS: libc may not have memfd_create wrapper.
+                // Raw-syscall it (kernel has had it since 3.17).
+                // SAFETY: `name` is a valid NUL-terminated C string.
+                #[cfg(any(target_os = "android", target_env = "ohos"))]
+                let rc = unsafe {
+                    libc::syscall(libc::SYS_memfd_create, name.as_ptr(), flags) as core::ffi::c_int
+                };
+                // SAFETY: `name` is a valid NUL-terminated C string.
+                #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+                let rc = unsafe { libc::memfd_create(name.as_ptr(), flags) };
+                if rc < 0 {
+                    let e = last_errno();
+                    if e == libc::EINTR {
+                        continue;
+                    }
+                    if e == libc::EINVAL && flags == flags_ as u32 {
+                        // MFD_EXEC / MFD_NOEXEC_SEAL require Linux 6.3.
+                        flags = flags_.older_kernel_flag();
+                        continue;
+                    }
+                    if e == libc::ENOSYS || e == libc::EPERM || e == libc::EACCES {
+                        MEMFD_ENOSYS.store(true, core::sync::atomic::Ordering::Relaxed);
+                    }
+                    return Err(Error::from_code_int(e, Tag::memfd_create));
                 }
-                if e == libc::EINVAL && flags == flags_ as u32 {
-                    // MFD_EXEC / MFD_NOEXEC_SEAL require Linux 6.3.
-                    flags = flags_.older_kernel_flag();
-                    continue;
-                }
-                if e == libc::ENOSYS || e == libc::EPERM || e == libc::EACCES {
-                    MEMFD_ENOSYS.store(true, core::sync::atomic::Ordering::Relaxed);
-                }
-                return Err(Error::from_code_int(e, Tag::memfd_create));
+                return Ok(Fd::from_native(rc));
             }
-            return Ok(Fd::from_native(rc));
         }
     }
 
-    /// `sendfile(src, dest, len)`. Clamps `len` (avoid EINVAL on
-    /// >2GB), EINTR-retries, and attaches the *source* fd to the error.
+    /// sys.zig:504 — `sendfile(src, dest, len)`. Clamps `len` (avoid EINVAL on
+    /// >2GB), EINTR-retries, and attaches the *source* fd to the error
+    /// (sys.zig:513 `errnoSysFd(rc, .sendfile, src)`).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Maybe<usize> {
         let len = len.min(i32::MAX as usize - 1);
@@ -3654,12 +3670,12 @@ mod windows_impl {
         }
     }
     pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
-        // kernel32 `WriteFile` directly
+        // sys.zig:1876-1909 — `.windows => { kernel32.WriteFile(fd.cast(), …) }`
         // (NOT via libuv — sys_uv::write → fd.uv() panics for HANDLE-backed
-        // Fds). Also remaps `ERROR_ACCESS_DENIED → EBADF` (a write to a
+        // Fds). Spec also remaps `ERROR_ACCESS_DENIED → EBADF` (a write to a
         // read-only-opened HANDLE yields ACCESS_DENIED, which POSIX surfaces
         // as EBADF "fd not open for writing").
-        debug_assert!(!buf.is_empty());
+        debug_assert!(!buf.is_empty()); // Zig: `bun.assert(bytes.len > 0)`
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
         let mut bytes_written: w::DWORD = 0;
         // SAFETY: FFI; `fd.cast()` is a valid HANDLE, buf valid for `adjusted_len`.
@@ -3770,138 +3786,14 @@ mod windows_impl {
         sys_uv::stat(path)
     }
     pub fn fstat(fd: Fd) -> Maybe<Stat> {
-        if fd.kind() == FdKind::Uv {
-            return sys_uv::fstat(fd);
-        }
-        // HANDLE-backed (`FdKind::System`, e.g. `openat()` results): stat the
-        // HANDLE directly instead of allocating a throwaway CRT fd via
-        // `_open_osfhandle` (which cannot be `_close`d without also closing
-        // the caller's HANDLE, so it leaked a CRT slot per call).
-        fstat_handle(fd)
-    }
-    /// Port of libuv's `fs__fstat_handle` + `fs__stat_handle` +
-    /// `fs__stat_assign_statbuf` (`src/win/fs.c`). Fills a `uv_stat_t` from a
-    /// raw HANDLE without touching the CRT fd table.
-    fn fstat_handle(fd: Fd) -> Maybe<Stat> {
-        use bun_core::S;
-        let handle = fd.native();
-        let nt_err = |rc: w::NTSTATUS| {
-            Error::new(w::translate_nt_status_to_errno(rc), Tag::fstat).with_fd(fd)
-        };
-        let mut st: Stat = bun_core::ffi::zeroed();
-
-        // Dispatch on handle type; pipes and consoles get a synthetic stat.
-        let file_type = w::GetFileType(handle);
-        if file_type == w::FILE_TYPE_PIPE {
-            st.st_mode = S::IFIFO as u64;
-            st.st_nlink = 1;
-            st.st_rdev = (w::FILE_DEVICE_NAMED_PIPE as u64) << 16;
-            st.st_ino = handle as usize as u64;
-            return Ok(st);
-        }
-        if file_type == w::FILE_TYPE_CHAR {
-            let mut mode: w::DWORD = 0;
-            // SAFETY: FFI; `handle` is a valid HANDLE, `mode` valid for write.
-            if unsafe { w::kernel32::GetConsoleMode(handle, &mut mode) } != 0 {
-                st.st_mode = S::IFCHR as u64;
-                st.st_nlink = 1;
-                st.st_rdev = (w::FILE_DEVICE_CONSOLE as u64) << 16;
-                st.st_ino = handle as usize as u64;
-                return Ok(st);
-            }
-            // Non-console char device (NUL, COM1, ...): fall through to the
-            // disk path, which special-cases `FILE_DEVICE_NULL`.
-        } else if file_type != w::FILE_TYPE_DISK {
-            return Err(Error::new(E::EBADF, Tag::fstat).with_fd(fd));
-        }
-
-        let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
-
-        let mut device_info: w::FILE_FS_DEVICE_INFORMATION = bun_core::ffi::zeroed();
-        // SAFETY: FFI; `handle` valid, output buffers valid for write.
-        let rc = unsafe {
-            w::ntdll::NtQueryVolumeInformationFile(
-                handle,
-                &mut io,
-                core::ptr::from_mut(&mut device_info).cast(),
-                core::mem::size_of::<w::FILE_FS_DEVICE_INFORMATION>() as u32,
-                w::FS_INFORMATION_CLASS::FileFsDeviceInformation,
-            )
-        };
-        if w::NT_ERROR(rc) {
-            return Err(nt_err(rc));
-        }
-        if device_info.DeviceType == w::FILE_DEVICE_NULL {
-            st.st_mode = (S::IFCHR | S::IRUSR | S::IWUSR) as u64;
-            st.st_mode |= (st.st_mode & 0o700) >> 3 | (st.st_mode & 0o700) >> 6;
-            st.st_nlink = 1;
-            st.st_blksize = 4096;
-            st.st_rdev = (w::FILE_DEVICE_NULL as u64) << 16;
-            return Ok(st);
-        }
-
-        let mut file_info: w::FILE_ALL_INFORMATION = bun_core::ffi::zeroed();
-        // SAFETY: FFI; `handle` valid, output buffers valid for write.
-        // STATUS_BUFFER_OVERFLOW (variable-length name truncated) is expected
-        // and is a warning, not an error; `NT_ERROR` excludes it.
-        let rc = unsafe {
-            w::ntdll::NtQueryInformationFile(
-                handle,
-                &mut io,
-                core::ptr::from_mut(&mut file_info).cast(),
-                core::mem::size_of::<w::FILE_ALL_INFORMATION>() as u32,
-                w::FILE_INFORMATION_CLASS::FileAllInformation,
-            )
-        };
-        if w::NT_ERROR(rc) {
-            return Err(nt_err(rc));
-        }
-
-        let mut volume_info: w::FILE_FS_VOLUME_INFORMATION = bun_core::ffi::zeroed();
-        // SAFETY: FFI; `handle` valid, output buffers valid for write.
-        let rc = unsafe {
-            w::ntdll::NtQueryVolumeInformationFile(
-                handle,
-                &mut io,
-                core::ptr::from_mut(&mut volume_info).cast(),
-                core::mem::size_of::<w::FILE_FS_VOLUME_INFORMATION>() as u32,
-                w::FS_INFORMATION_CLASS::FileFsVolumeInformation,
-            )
-        };
-        if rc == w::NTSTATUS::NOT_IMPLEMENTED {
-            st.st_dev = 0;
-        } else if w::NT_ERROR(rc) {
-            return Err(nt_err(rc));
-        } else {
-            st.st_dev = volume_info.VolumeSerialNumber as u64;
-        }
-
-        // libuv's `S_IFLNK` arm is gated on `do_lstat`, which is always 0 on
-        // the fstat path, so reparse points fall through to DIR-or-REG.
-        let attrs = file_info.BasicInformation.FileAttributes;
-        if attrs & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
-            st.st_mode = S::IFDIR as u64;
-            st.st_size = 0;
-        } else {
-            st.st_mode = S::IFREG as u64;
-            st.st_size = file_info.StandardInformation.EndOfFile as u64;
-        }
-        if attrs & w::FILE_ATTRIBUTE_READONLY != 0 {
-            st.st_mode |= S::IRUSR as u64;
-        } else {
-            st.st_mode |= (S::IRUSR | S::IWUSR) as u64;
-        }
-        st.st_mode |= (st.st_mode & 0o700) >> 3 | (st.st_mode & 0o700) >> 6;
-
-        st.atim = w::filetime_to_timespec(file_info.BasicInformation.LastAccessTime);
-        st.mtim = w::filetime_to_timespec(file_info.BasicInformation.LastWriteTime);
-        st.ctim = w::filetime_to_timespec(file_info.BasicInformation.ChangeTime);
-        st.birthtim = w::filetime_to_timespec(file_info.BasicInformation.CreationTime);
-        st.st_ino = file_info.InternalInformation.IndexNumber as u64;
-        st.st_nlink = file_info.StandardInformation.NumberOfLinks as u64;
-        st.st_blocks = (file_info.StandardInformation.AllocationSize as u64) >> 9;
-        st.st_blksize = 4096;
-        Ok(st)
+        // sys_uv::fstat does `fd.uv()` which PANICS for HANDLE-backed
+        // (`FdKind::System`) Fds — i.e. the result of `openat()`. Convert
+        // via `_open_osfhandle` first (acknowledged CRT-fd leak —
+        // a leak is strictly better than a guaranteed panic).
+        let uvfd = fd
+            .make_libuv_owned()
+            .map_err(|_| Error::new(E::EMFILE, Tag::uv_open_osfhandle).with_fd(fd))?;
+        sys_uv::fstat(uvfd)
     }
     pub fn lstat(path: &ZStr) -> Maybe<Stat> {
         sys_uv::lstat(path)
@@ -4337,15 +4229,24 @@ mod windows_impl {
         }
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        // `uv_fs_futime` takes a CRT fd (`fd.uv()` PANICS for HANDLE-backed
-        // `FdKind::System` fds); `SetFileTime` operates on the HANDLE
-        // directly. `fd.native()` yields the HANDLE for both kinds.
-        let a = w::timespec_to_filetime(atime);
-        let m = w::timespec_to_filetime(mtime);
-        // SAFETY: FFI; `fd.native()` is a valid HANDLE, `a`/`m` valid for read.
-        let rc = unsafe { w::kernel32::SetFileTime(fd.native(), core::ptr::null(), &a, &m) };
-        if rc == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::futimens).with_fd(fd));
+        // `uv_fs_futime` takes a CRT
+        // fd, and `fd.uv()` PANICS for HANDLE-backed (`FdKind::System`) Fds.
+        // Convert via `make_libuv_owned()` first (passes uv-backed Fds through
+        // unchanged) so an `openat()` result no longer crashes.
+        let uvfd = fd
+            .make_libuv_owned()
+            .map_err(|_| Error::new(E::EMFILE, Tag::uv_open_osfhandle).with_fd(fd))?;
+        let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
+        let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
+        let mut req = uv::fs_t::uninitialized();
+        let rc =
+            unsafe { uv::uv_fs_futime(core::ptr::null_mut(), &mut req, uvfd.uv(), a, m, None) };
+        // fs_t has no Drop impl; uv_fs_req_cleanup
+        // must run before any return (fd-based, so no path buffer is captured,
+        // but keep the pattern uniform with utimens/lutimens below).
+        req.deinit();
+        if let Some(err) = Error::from_uv_rc(rc, Tag::futimens) {
+            return Err(err.with_fd(fd));
         }
         Ok(())
     }
@@ -5462,7 +5363,7 @@ pub mod linux {
     #[cfg(not(any(target_env = "musl", target_env = "ohos")))]
     type time_t = libc::time_t;
 
-    /// kernel-shaped timespec (`sec`/`nsec`, no `tv_` prefix).
+    /// `std.os.linux.timespec` — Zig-shape (`sec`/`nsec`, no `tv_` prefix).
     /// Layout-identical to `libc::timespec` so a `*const timespec` can be
     /// passed straight to `syscall(SYS_futex, ..)`.
     #[repr(C)]
@@ -6217,7 +6118,7 @@ unsafe impl Send for DynLib {}
 // synchronized, so `&DynLib` may be shared across threads.
 unsafe impl Sync for DynLib {}
 impl DynLib {
-    /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryW(path)`.
+    /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryA(path)`.
     pub fn open(path: &[u8]) -> core::result::Result<Self, bun_core::Error> {
         let mut buf = bun_paths::PathBuffer::default();
         // `std.DynLib.open` returns `error.NameTooLong`; never truncate (could
@@ -6283,122 +6184,55 @@ pub mod RTLD {
     pub const LOCAL: i32 = 0;
 }
 
-/// OHOS: sign a binary by path (runs `binary-sign-tool sign`). OHOS
-/// requires all ELF executables to carry a valid code signature section;
-/// `bun build --compile` calls this on the output before returning.
-///
-/// Idempotent: if the file already has a valid signature (`display-sign`
-/// succeeds), the call is a no-op. `binary-sign-tool` is expected in $PATH
-/// on OHOS development devices; on consumer devices, only pre-signed system
-/// binaries run, so this function is a build-time concern.
-#[cfg(target_env = "ohos")]
-pub fn ohos_sign_binary(path: &ZStr) {
-    use std::process::Command;
-    let path_str = match path.as_cstr().to_str() {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-    // Skip if already signed.
-    if Command::new("binary-sign-tool")
-        .args(["display-sign", "-inFile", path_str])
-        .output()
-        .is_ok_and(|o| o.status.success())
-    {
-        return;
-    }
-    let _ = Command::new("binary-sign-tool")
-        .args(["sign", "-selfSign", "1", "-inFile", path_str, "-outFile", path_str])
-        .output();
-}
-
-/// OHOS: sign a binary by byte path (convenience wrapper for callers that
-/// have a `&[u8]` path instead of a `ZStr`).
-#[cfg(target_env = "ohos")]
-pub fn ohos_sign_binary_bytes(path: &[u8]) {
-    let mut buf = Vec::with_capacity(path.len() + 1);
-    buf.extend_from_slice(path);
-    buf.push(0);
-    // `from_slice_with_nul` requires trailing NUL which we just appended.
-    let zstr = ZStr::from_slice_with_nul(&buf);
-    ohos_sign_binary(zstr);
-}
-
-/// C-compatible entry point for `dlopen` — called from C++ as `Bun__dlopen`.
-/// OHOS needs this Rust wrapper (rather than bare `libc::dlopen`) to handle
-/// OHOS dlopen restrictions (see Appendix C in plan file).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__dlopen(path: *const c_char, flags: c_int) -> *mut c_void {
-    // SAFETY: caller guarantees `path` is a valid NUL-terminated C string.
-    let z = unsafe { ZStr::from_c_ptr(path) };
-    dlopen(z, flags).unwrap_or(core::ptr::null_mut())
-}
-
-/// `dlopen(filename, flags)`. Windows → `LoadLibraryExW` (UTF-8 → UTF-16).
-/// OHOS: if dlopen fails with EPERM (unsigned .node), sign and retry.
+/// sys.zig:4557 — `dlopen(filename, flags)`. Windows → `LoadLibraryA`.
 pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_env = "ohos")))]
     {
         // SAFETY: filename is NUL-terminated.
         let p = unsafe { libc::dlopen(filename.as_ptr(), flags) };
-        if !p.is_null() {
-            return Some(p);
-        }
-        // OHOS: shared libraries must be signed. Try signing on EPERM.
-        #[cfg(target_env = "ohos")]
-        {
-            let err = last_errno();
-            if err == libc::EPERM {
-                let bytes = filename.as_bytes();
-                // Only sign .so and .node files.
-                if bytes.ends_with(b".so") || bytes.ends_with(b".node") {
-                    if let Ok(path_str) = core::str::from_utf8(bytes) {
-                        let p = std::path::Path::new(path_str);
-                        // Check if already signed (in-place signing is safe to retry).
-                        if let Ok(elf_bytes) = std::fs::read(p) {
-                            if !ohos_sign::has_codesign(&elf_bytes) {
-                                let _ = ohos_sign::sign_selfsign_inplace(p);
-                            }
-                        }
-                        let p = unsafe { libc::dlopen(filename.as_ptr(), flags) };
-                        if !p.is_null() {
-                            return Some(p);
-                        }
-                    }
-                }
+        if p.is_null() { None } else { Some(p) }
+    }
+    #[cfg(target_env = "ohos")]
+    {
+        fn ensure_signed(path: &ZStr) {
+            let path_str = path.as_cstr().to_str().unwrap_or("");
+            let p = std::path::Path::new(path_str);
+            if ohos_sign::has_codesign(&std::fs::read(p).unwrap_or_default()) {
+                return;
             }
+            let _ = ohos_sign::sign_selfsign_inplace(p);
         }
-        None
+        ensure_signed(filename);
+        // SAFETY: filename is NUL-terminated.
+        let p = unsafe { libc::dlopen(filename.as_ptr(), flags) };
+        if p.is_null() { None } else { Some(p) }
     }
     #[cfg(windows)]
     {
         let _ = flags;
-        // `filename` is UTF-8; the `A` entry point would decode it as the
-        // system ANSI codepage and mangle any non-ASCII byte. Widen and use
-        // the `W` entry point like every other Windows path in this crate.
-        let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = bun_paths::string_paths::to_w_path(&mut wbuf, filename.as_bytes());
-        // Match libuv `uv_dlopen` (and Bun's own `process.dlopen`): request
-        // altered search so dependent DLLs resolve next to the loaded module.
-        // MSDN documents that flag as undefined for relative paths, so only
-        // set it when absolute; bare names keep the standard search order.
-        const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
-        let dw_flags = if bun_paths::is_absolute_windows(filename.as_bytes()) {
-            LOAD_WITH_ALTERED_SEARCH_PATH
-        } else {
-            0
-        };
-        // SAFETY: `to_w_path` NUL-terminates `wbuf`; `hFile` is reserved (NULL).
-        let p = unsafe {
-            bun_windows_sys::kernel32::LoadLibraryExW(
-                wpath.as_ptr(),
-                core::ptr::null_mut(),
-                dw_flags,
-            )
-        };
+        // SAFETY: filename is NUL-terminated.
+        let p = unsafe { bun_windows_sys::externs::LoadLibraryA(filename.as_ptr()) };
         if p.is_null() { None } else { Some(p.cast()) }
     }
 }
-/// `dlsym(handle, name)`.
+/// C-ABI wrapper so `BunProcess.cpp` (process.dlopen) routes through
+/// `sys::dlopen()` instead of calling `libc::dlopen()` directly.
+/// On OHOS this ensures the file is signed before loading.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__dlopen(path: *const core::ffi::c_char, flags: i32) -> *mut c_void {
+    if path.is_null() {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: path is a valid NUL-terminated C string (caller contract).
+    let len = unsafe { libc::strlen(path) };
+    let z = unsafe { ZStr::from_raw(path.cast::<u8>(), len) };
+    match dlopen(z, flags) {
+        Some(h) => h,
+        None => core::ptr::null_mut(),
+    }
+}
+
+/// sys.zig:4565 — `dlsym(handle, name)`.
 pub fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_void> {
     #[cfg(unix)]
     {
@@ -7530,9 +7364,12 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         if rc < 0 {
             let e = last_errno();
             match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
+                // ESPIPE: preadv2(RWF_NOWAIT) on pipe/FIFO fd returns
+                // "Illegal seek" — pipes don't support positional I/O.
+                // Disable RWF and fall back to plain read().
+                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES | libc::ESPIPE => {
                     linux::RWFFlagSupport::disable();
-                    // Only fall through to BLOCKING read if the fd is
+                    // sys.zig:4070 — only fall through to BLOCKING read if the fd is
                     // actually readable now; otherwise return retry (EAGAIN).
                     return match bun_core::is_readable(fd) {
                         bun_core::Pollable::Ready | bun_core::Pollable::Hup => read(fd, buf),
@@ -7560,9 +7397,12 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         if rc < 0 {
             let e = last_errno();
             match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
+                // ESPIPE: pwritev2(RWF_NOWAIT) on pipe/FIFO fd returns
+                // "Illegal seek" — pipes don't support positional I/O.
+                // Disable RWF and fall back to plain write().
+                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES | libc::ESPIPE => {
                     linux::RWFFlagSupport::disable();
-                    // Poll before issuing a blocking write.
+                    // sys.zig:4123 — poll before issuing a blocking write.
                     return match bun_core::is_writable(fd) {
                         bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
                         _ => {
@@ -7726,10 +7566,6 @@ fn get_fd_path_freebsd_linuxulator<'a>(
 /// fd → absolute path. Linux: readlink `/proc/self/fd/N`;
 /// macOS: `fcntl(F_GETPATH)`; Windows: `GetFinalPathNameByHandle`.
 pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a mut [u8]> {
-    // Guard against invalid fd to avoid readlink(/proc/self/fd/-2147483648) → ENOENT.
-    if fd == Fd::INVALID || fd == Fd::invalid() {
-        return Err(Error::from_code(E::EBADF, Tag::readlink));
-    }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Fast path: a previous call already proved this is
@@ -9162,20 +8998,17 @@ pub fn exists(path: &[u8]) -> bool {
     let z = ZStr::from_buf(&buf.0[..], path.len());
     exists_z(z)
 }
-/// `moveFileZ`. Routes through
-/// [`renameat_concurrently_without_fallback`] (renameat2 NOREPLACE → EXCHANGE →
-/// delete-tree + rename); on EISDIR removes the dest dir and
-/// retries; on EXDEV falls back to the slow open+copy path. Only opens the
-/// source inside the EXDEV branch.
+/// sys.zig:4246 — `moveFileZ`. Tries the rename first (no source open on the
+/// hot path); on EISDIR removes the dest dir and retries; on EXDEV falls back
+/// to the slow open+copy path. Only opens the source inside the EXDEV branch.
 pub fn move_file_z(
     from_dir: Fd,
     filename: &ZStr,
     to_dir: Fd,
     destination: &ZStr,
 ) -> core::result::Result<(), bun_core::Error> {
-    match renameat_concurrently_without_fallback(from_dir, filename, to_dir, destination) {
+    match renameat(from_dir, filename, to_dir, destination) {
         Ok(()) => Ok(()),
-        // allow over-writing an empty directory
         Err(e) if e.get_errno() == E::EISDIR => {
             #[cfg(unix)]
             // SAFETY: destination is NUL-terminated.
@@ -9510,7 +9343,7 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
 fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
     while !bytes.is_empty() {
         match write(fd, bytes) {
-            Ok(0) => return false, // short write → give up
+            Ok(0) => return false, // short write → give up (matches Zig quiet semantics)
             Ok(n) => bytes = &bytes[n..],
             Err(_) => return false,
         }

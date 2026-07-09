@@ -331,17 +331,20 @@ mod pe {
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 mod elf {
-    // ── Non-OHOS: use the linker-resolved BUN_COMPILED vaddr ─────────────
     #[cfg(not(target_env = "ohos"))]
     mod imp {
+        // Declared inline rather than in a dedicated `*_sys` crate: this crate is
+        // the symbol's only consumer.
         unsafe extern "C" {
             pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
         }
 
-        /// Returns `(base, len)` for the embedded ELF segment data.
-        /// Uses the linker-resolved virtual address of the `.bun` section.
+        /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
+        /// `*mut u8` so write-provenance is preserved end-to-end — collapsing to
+        /// `&[u8]` here would freeze it to read-only and make the later
+        /// `from_bytes` writable subslices UB under Stacked Borrows.
         pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-            // SAFETY: FFI call to C++ binding that returns &BUN_COMPILED.size.
+            // SAFETY: FFI call.
             let vaddr_ptr = unsafe { Bun__getStandaloneModuleGraphELFVaddr() };
             if vaddr_ptr.is_null() {
                 return None;
@@ -351,6 +354,11 @@ mod elf {
             if vaddr == 0 {
                 return None;
             }
+            // BUN_COMPILED.size holds the virtual address of the appended data.
+            // The kernel mapped it via PT_LOAD, so we can dereference directly.
+            // Format at target: [u64 payload_len][payload bytes]
+            // Synthesize a `*mut u8` directly so the provenance carries write
+            // permission for the in-place bytecode mutation done by JSC.
             let target = vaddr as *mut u8;
             // SAFETY: target points to 8-byte little-endian length prefix.
             let payload_len =
@@ -363,216 +371,206 @@ mod elf {
         }
     }
 
-    // ── OHOS: binary-sign-tool corrupts LOAD segments, killing vaddr
-    //   resolution. Instead, open /proc/self/exe, parse ELF section
-    //   headers to find `.bun`, and mmap the file at that offset.
-    //   Section headers survive signing (the tool only rewrites LOAD +
-    //   NOTE segments).  Fall back to a TRAILER scan if headers are
-    //   stripped. ─────────────────────────────────────────────────────────
     #[cfg(target_env = "ohos")]
     mod imp {
-        use core::mem::size_of;
         use std::fs::File;
-        use std::os::unix::fs::FileExt;
-        use std::os::unix::io::AsRawFd;
+        use std::os::fd::AsRawFd;
+        use std::ptr;
 
-        const TRAILER: &[u8] = b"\n---- Bun! ----\n";
+        const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
+        const EHDR_E_SHOFF: usize = 0x28;
+        const EHDR_E_SHENTSIZE: usize = 0x3a;
+        const EHDR_E_SHNUM: usize = 0x3c;
+        const EHDR_E_SHSTRNDX: usize = 0x3e;
+        const SHDR_SIZE: usize = 0x40;
+        const SHDR_SH_NAME: usize = 0x00;
+        const SHDR_SH_OFFSET: usize = 0x18;
+        const SHDR_SH_SIZE: usize = 0x20;
+        const BUN_SECTION_NAME: &[u8] = b".bun\0";
 
-        struct Elf64Ehdr([u8; 64]);
-        impl Elf64Ehdr {
-            fn magic(&self) -> &[u8] { &self.0[0..4] }
-            fn shoff(&self) -> u64 {
-                u64::from_le_bytes(self.0[0x28..0x30].try_into().unwrap())
+        fn read_at(file: &File, offset: u64, buf: &mut [u8]) -> Option<()> {
+            let n = unsafe {
+                libc::pread64(
+                    file.as_raw_fd(),
+                    buf.as_mut_ptr() as *mut libc::c_void,
+                    buf.len(),
+                    offset as i64,
+                )
+            };
+            if n < 0 || n as usize != buf.len() {
+                return None;
             }
-            fn shentsize(&self) -> u16 {
-                u16::from_le_bytes(self.0[0x3a..0x3c].try_into().unwrap())
-            }
-            fn shnum(&self) -> u16 {
-                u16::from_le_bytes(self.0[0x3c..0x3e].try_into().unwrap())
-            }
-            fn shstrndx(&self) -> u16 {
-                u16::from_le_bytes(self.0[0x3e..0x40].try_into().unwrap())
-            }
+            Some(())
         }
 
-        struct Elf64Shdr([u8; 64]);
-        impl Elf64Shdr {
-            fn name(&self) -> u32 {
-                u32::from_le_bytes(self.0[0x00..0x04].try_into().unwrap())
-            }
-            fn offset(&self) -> u64 {
-                u64::from_le_bytes(self.0[0x18..0x20].try_into().unwrap())
-            }
-            fn size(&self) -> u64 {
-                u64::from_le_bytes(self.0[0x20..0x28].try_into().unwrap())
-            }
-        }
+        fn locate_bun_section(file: &File) -> Option<(u64, u64)> {
+            let mut ehdr = [0u8; 64];
+            read_at(file, 0, &mut ehdr)?;
 
-        /// Read section header table entry at `sh_off`.
-        fn read_shdr(file: &File, sh_off: u64) -> Option<Elf64Shdr> {
-            let mut raw = [0u8; 64];
-            file.read_exact_at(&mut raw, sh_off).ok()?;
-            Some(Elf64Shdr(raw))
-        }
-
-        /// Parse the ELF, find `.bun` section, mmap at its file offset.
-        /// Verifies: 8-byte byte_count header + TRAILER at expected end.
-        /// Returns `(base + 8, payload_len)` matching the public contract.
-        fn get_data_via_sections(file: &File, _file_size: u64) -> Option<(*mut u8, usize)> {
-            let mut ehdr_raw = [0u8; 64];
-            file.read_exact_at(&mut ehdr_raw, 0).ok()?;
-            let ehdr = Elf64Ehdr(ehdr_raw);
-            if &ehdr.magic() != b"\x7fELF" {
+            if ehdr[0..4] != ELF_MAGIC {
                 return None;
             }
 
-            let shoff = ehdr.shoff();
-            let shentsize = ehdr.shentsize();
-            let shnum = ehdr.shnum() as usize;
-            let shstrndx = ehdr.shstrndx() as usize;
-            if shentsize < 64 || shnum == 0 || shstrndx >= shnum {
+            let shoff = u64::from_le_bytes(ehdr[EHDR_E_SHOFF..EHDR_E_SHOFF + 8].try_into().ok()?);
+            let shentsize =
+                u16::from_le_bytes(ehdr[EHDR_E_SHENTSIZE..EHDR_E_SHENTSIZE + 2].try_into().ok()?);
+            let shnum =
+                u16::from_le_bytes(ehdr[EHDR_E_SHNUM..EHDR_E_SHNUM + 2].try_into().ok()?);
+            let shstrndx =
+                u16::from_le_bytes(ehdr[EHDR_E_SHSTRNDX..EHDR_E_SHSTRNDX + 2].try_into().ok()?);
+
+            if shentsize != SHDR_SIZE as u16 || shstrndx >= shnum {
                 return None;
             }
 
-            let strtab_shdr = read_shdr(file, shoff + (shstrndx as u64) * (shentsize as u64))?;
-            let strtab_off = strtab_shdr.offset();
-            let strtab_size = strtab_shdr.size() as usize;
-            let mut strtab = vec![0u8; strtab_size];
-            file.read_exact_at(&mut strtab, strtab_off).ok()?;
+            let shstrtab_shoff = shoff + (shstrndx as u64) * SHDR_SIZE as u64;
+            let mut shstrtab_shdr = [0u8; 64];
+            read_at(file, shstrtab_shoff, &mut shstrtab_shdr)?;
 
-            // Scan sections for ".bun".
+            let shstrtab_offset = u64::from_le_bytes(
+                shstrtab_shdr[SHDR_SH_OFFSET..SHDR_SH_OFFSET + 8].try_into().ok()?,
+            );
+            let shstrtab_size = u64::from_le_bytes(
+                shstrtab_shdr[SHDR_SH_SIZE..SHDR_SH_SIZE + 8].try_into().ok()?,
+            );
+
+            let shstrtab_size_usize = shstrtab_size as usize;
+            let mut shstrtab = vec![0u8; shstrtab_size_usize];
+            read_at(file, shstrtab_offset, &mut shstrtab)?;
+
             for i in 0..shnum {
-                let shdr = read_shdr(file, shoff + (i as u64) * (shentsize as u64))?;
-                let name_off = shdr.name() as usize;
-                if name_off + 5 > strtab_size {
-                    continue;
-                }
-                if &strtab[name_off..name_off + 5] != b".bun\x00" {
-                    continue;
-                }
-                let sh_size = shdr.size() as usize;
-                let sh_offset = shdr.offset();
-                if sh_size < 8 + TRAILER.len() || sh_offset == 0 {
-                    return None;
-                }
+                let shdr_off = shoff + (i as u64) * SHDR_SIZE as u64;
+                let mut shdr = [0u8; 64];
+                read_at(file, shdr_off, &mut shdr)?;
 
-                let mut header = [0u8; 8];
-                file.read_exact_at(&mut header, sh_offset).ok()?;
-                let byte_count = u64::from_le_bytes(header) as usize;
-                // byte_count = payload.len() (modules data + TRAILER, no 8-byte header)
-                // sh_size = 8 + byte_count (includes the 8-byte header)
-                if byte_count + 8 != sh_size {
-                    return None;
-                }
+                let name_off = u32::from_le_bytes(
+                    shdr[SHDR_SH_NAME..SHDR_SH_NAME + 4].try_into().ok()?,
+                ) as usize;
 
-                let trailer_off = sh_offset + sh_size as u64 - TRAILER.len() as u64;
-                let mut trailer_buf = [0u8; 16];
-                file.read_exact_at(&mut trailer_buf, trailer_off).ok()?;
-                if &trailer_buf != TRAILER {
-                    return None;
+                if name_off + 5 <= shstrtab_size_usize
+                    && &shstrtab[name_off..name_off + 5] == BUN_SECTION_NAME
+                {
+                    let sec_offset = u64::from_le_bytes(
+                        shdr[SHDR_SH_OFFSET..SHDR_SH_OFFSET + 8].try_into().ok()?,
+                    );
+                    let sec_size = u64::from_le_bytes(
+                        shdr[SHDR_SH_SIZE..SHDR_SH_SIZE + 8].try_into().ok()?,
+                    );
+                    return Some((sec_offset, sec_size));
                 }
-
-                // mmap the section.  Use PROT_WRITE so JSC mutates bytecode in-place.
-                let mapping = unsafe {
-                    libc::mmap(
-                        std::ptr::null_mut(),
-                        sh_size,
-                        libc::PROT_READ | libc::PROT_WRITE,
-                        libc::MAP_PRIVATE,
-                        file.as_raw_fd(),
-                        sh_offset as libc::off_t,
-                    )
-                };
-                if mapping == libc::MAP_FAILED {
-                    return None;
-                }
-
-                // Return (data_start, byte_count) matching the original contract:
-                // len = byte_count (includes header offset + data + TRAILER).
-                // The caller uses base + len - offset to find Offsets + TRAILER.
-                return Some((unsafe { mapping.add(8) as *mut u8 }, byte_count));
             }
+
             None
         }
 
-        /// Fallback: mmap entire file, scan backward for TRAILER, then
-        /// find byte_count via self-consistency: candidate + byte_count == section_end.
-        fn get_data_via_trailer_scan(file: &File, file_size: u64) -> Option<(*mut u8, usize)> {
-            let fsize = file_size as usize;
-            if fsize < size_of::<u64>() + TRAILER.len() {
-                return None;
-            }
-
-            let mapping = unsafe {
-                libc::mmap(
-                    std::ptr::null_mut(),
-                    fsize,
-                    libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_PRIVATE,
-                    file.as_raw_fd(),
-                    0,
-                )
-            };
-            if mapping == libc::MAP_FAILED {
-                return None;
-            }
-            let file_view = unsafe { std::slice::from_raw_parts(mapping as *const u8, fsize) };
-
-            let mut trailer_off = fsize.saturating_sub(TRAILER.len());
-            let found = loop {
-                let chunk_start = trailer_off.saturating_sub(4096);
-                let chunk = &file_view[chunk_start..trailer_off + TRAILER.len()];
-                if let Some(pos) = chunk.windows(TRAILER.len()).rposition(|w| w == TRAILER) {
-                    break Some(chunk_start + pos);
-                }
-                if chunk_start == 0 {
-                    break None;
-                }
-                trailer_off = chunk_start;
-            };
-            let trailer_off = found?;
-            let section_end = trailer_off + TRAILER.len();
-
-            // Search backward from section_end for a self-consistent byte_count.
-            // byte_count must be <= section_end (it can't start before the file).
-            // Scan in 16-byte steps (aligned to u64).
-            let search_start = section_end.saturating_sub(64 * 1024 * 1024); // max 64 MB
-            let mut candidate = section_end.saturating_sub(size_of::<u64>());
-            loop {
-                let mut raw = [0u8; 8];
-                raw.copy_from_slice(&file_view[candidate..candidate + 8]);
-                let byte_count = u64::from_le_bytes(raw) as usize;
-                // byte_count must be >= 8 + TRAILER.len() and >= section_end - candidate
-                // and the section end must match exactly.
-                if byte_count >= size_of::<u64>() + TRAILER.len()
-                    && candidate + byte_count == section_end
-                {
-                    // Validate TRAILER again at expected position (belt-and-suspenders).
-                    let trailer_check = &file_view[section_end - TRAILER.len()..section_end];
-                    if trailer_check == TRAILER {
-                        return Some((
-                            unsafe { mapping.add(candidate + size_of::<u64>()) as *mut u8 },
-                            byte_count, // ← len must equal byte_count (includes trailer)
-                        ));
-                    }
-                }
-                if candidate <= search_start {
-                    break None;
-                }
-                candidate -= size_of::<u64>();
-            }
-        }
-
         pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-            let file = File::open("/proc/self/exe").ok()?;
-            let file_size = file.metadata().ok()?.len();
+            // Primary: read .bun section from /proc/self/exe via file I/O then
+            // mmap MAP_PRIVATE so JSC can mutate bytecode in place.
+            match File::open("/proc/self/exe") {
+                Ok(file) => {
+                    let (sh_offset, sh_size) = locate_bun_section(&file)?;
 
-            // Try section-header method first (fast path).
-            if let Some(result) = get_data_via_sections(&file, file_size) {
-                return Some(result);
+                    let mut hdr = [0u8; 8];
+                    read_at(&file, sh_offset, &mut hdr)?;
+                    let byte_count = u64::from_le_bytes(hdr) as usize;
+
+                    if byte_count.checked_add(8)? != sh_size as usize {
+                        return None;
+                    }
+
+                    let mapping = unsafe {
+                        libc::mmap(
+                            ptr::null_mut(),
+                            sh_size as usize,
+                            libc::PROT_READ | libc::PROT_WRITE,
+                            libc::MAP_PRIVATE,
+                            file.as_raw_fd(),
+                            sh_offset as i64,
+                        )
+                    };
+                    if mapping == libc::MAP_FAILED {
+                        return None;
+                    }
+
+                    Some((unsafe { (mapping as *mut u8).add(8) }, byte_count))
+                }
+                Err(_) => {
+                    // Execute-only fallback (chmod 0o111): OHOS hmdfs denies
+                    // open("/proc/self/exe") for files lacking the read bit.
+                    //
+                    // write_bun_section() stored the link-time virtual address of
+                    // the payload in BUN_COMPILED.size. On OHOS all binaries are
+                    // PIE, so that link-time vaddr must be shifted by the ASLR
+                    // base before dereferencing. We read /proc/self/maps (always
+                    // accessible, regardless of file execute-only permission) to
+                    // find the load base, then compute the runtime address.
+                    unsafe extern "C" {
+                        fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64;
+                    }
+                    // SAFETY: FFI call; symbol always present in ELF bun binaries.
+                    let vaddr_ptr = unsafe { Bun__getStandaloneModuleGraphELFVaddr() };
+                    if vaddr_ptr.is_null() {
+                        return None;
+                    }
+                    // link-time vaddr written by write_bun_section().
+                    let link_vaddr = unsafe { core::ptr::read_unaligned(vaddr_ptr) };
+                    if link_vaddr == 0 {
+                        return None;
+                    }
+
+                    // Find the PIE load base: scan /proc/self/maps for the first
+                    // file-backed mapping at file offset 0.  On OHOS (hmdfs/tmpfs)
+                    // the ELF header segment is mapped `r--p` (not `r-xp` as on
+                    // glibc Linux), so matching on execute permission misses it.
+                    // The first mapping with offset 0 and a real path is always
+                    // the ELF header PT_LOAD — its start address IS the PIE base.
+                    let load_base: usize = {
+                        let mut base = 0usize;
+                        if let Ok(maps) = std::fs::read_to_string("/proc/self/maps") {
+                            'maps: for line in maps.lines() {
+                                let mut cols = line.split_whitespace();
+                                let Some(addr_range) = cols.next() else { continue };
+                                let _perms = cols.next();
+                                let Some(file_off) = cols.next() else { continue };
+                                cols.next(); // dev
+                                let inode_str = cols.next().unwrap_or("0");
+                                let path = cols.next().unwrap_or("");
+                                // inode == 0 means anonymous mapping; skip those.
+                                if file_off == "00000000"
+                                    && inode_str != "0"
+                                    && !path.is_empty()
+                                    && !path.starts_with('[')
+                                {
+                                    if let Some(start_hex) = addr_range.split('-').next() {
+                                        if let Ok(b) = usize::from_str_radix(start_hex, 16) {
+                                            base = b;
+                                            break 'maps;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        base
+                    };
+                    if load_base == 0 {
+                        return None;
+                    }
+
+                    // runtime_addr = load_base + link_vaddr (PIE relocation).
+                    let runtime_addr = load_base.wrapping_add(link_vaddr as usize);
+                    let target = runtime_addr as *mut u8;
+                    // SAFETY: target points to an 8-byte little-endian length prefix
+                    // inside the writable PT_LOAD extended by write_bun_section().
+                    let payload_len = u64::from_le_bytes(unsafe {
+                        core::ptr::read_unaligned(target.cast::<[u8; 8]>())
+                    });
+                    if payload_len < 8 {
+                        return None;
+                    }
+                    // SAFETY: payload_len bytes follow the 8-byte header at `target`.
+                    Some((unsafe { target.add(8) }, payload_len as usize))
+                }
             }
-            // Fallback: TRAILER scan (for stripped binaries).
-            get_data_via_trailer_scan(&file, file_size)
         }
     }
 
@@ -674,10 +672,8 @@ impl LazySourceMap {
                 // copy the section bytes. Could switch
                 // the field to `Vec<&'static [u8]>` for the standalone path.
                 let mut file_names: Vec<Box<[u8]>> = Vec::with_capacity(source_files_count);
-                let decompressed_contents_slice: Vec<std::sync::OnceLock<Vec<u8>>> =
-                    std::iter::repeat_with(std::sync::OnceLock::new)
-                        .take(source_files_count)
-                        .collect();
+                let decompressed_contents_slice: Vec<Option<Vec<u8>>> =
+                    vec![None; source_files_count];
                 for i in 0..source_files_count {
                     // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange
                     // (disjoint from bytecode); StringPointer offsets were serialized by
@@ -1076,17 +1072,11 @@ pub(crate) fn to_bytes(
 
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
-                // `dest_path` keeps `..` for the embedded bunfs key below; neutralize
-                // every `..` segment here so the on-disk dump can't escape
-                // `dump_code_dir` (the join would otherwise normalize `..` above it).
-                let mut dump_rel: Vec<u8> = Vec::new();
-                options::write_sanitized_parent_dirs(&mut dump_rel, dest_path)
-                    .expect("write to Vec<u8>");
                 let mut path_buf = bun_paths::path_buffer_pool::get();
                 let dest_z = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
                     dump_code_dir,
                     &mut path_buf[..],
-                    &[&dump_rel],
+                    &[dest_path],
                 );
 
                 // Scoped block to handle dump failures without skipping module emission
@@ -1283,13 +1273,15 @@ pub(crate) fn inject(
     target: &CompileTarget,
 ) -> Fd {
     let _ = inject_options;
-
-    // Prepend tmpdir path so the temp file lands in a writable location
-    // (e.g. /data/local/tmp on OHOS, not the CWD which may be read-only).
-    let mut tmpbuf = PathBuffer::uninit();
-    let tmpname = match bun_fs::FileSystem::tmpname(
+    let mut buf = PathBuffer::uninit();
+    // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
+    // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
+    // buffer instead, so hoist that owner here so it outlives the loop.
+    let mut zname_owned: Option<Box<[u8]>> = None;
+    let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
         b"bun-build",
-        &mut tmpbuf[..],
+        &mut buf[..],
+        // i64 → u64 bitcast.
         bun_core::time::milli_timestamp() as u64,
     ) {
         Ok(n) => n,
@@ -1300,19 +1292,6 @@ pub(crate) fn inject(
             );
             return Fd::INVALID;
         }
-    };
-    let mut zname_owned: Option<Box<[u8]>>;
-    let zname_z = bun_core::strings::concat(&[
-        bun_bundler::bun_fs::RealFS::tmpdir_path(),
-        SEP_STR.as_bytes(),
-        tmpname.as_bytes(),
-        &[0],
-    ]);
-    let len = zname_z.len().saturating_sub(1);
-    zname_owned = Some(zname_z);
-    // SAFETY: trailing 0 byte appended above; `zname_owned` keeps the allocation alive.
-    let mut zname: &ZStr = unsafe {
-        ZStr::from_raw(zname_owned.as_ref().unwrap().as_ptr(), len)
     };
 
     let cleanup = |name: &ZStr, fd: Fd| {
@@ -1633,14 +1612,14 @@ pub(crate) fn inject(
                 return Fd::INVALID;
             }
 
-            // Write the modified ELF data back to the file.
-            // On OHOS, truncate first to break any COW/reflink relationship
-            // that copy_file_range may have created between the source and
-            // temp file. Without this, subsequent writes may silently fail
-            // to update the on-disk data.
+            // OHOS: Cut COW/reflink left by an earlier copy_file_range, otherwise
+            // subsequent writes to the cloned executable may silently fail (only the
+            // page cache updates while the disk content stays stale). Reference:
+            // springmin/bun ohos-aarch64 @ 39d8416e.
             #[cfg(target_env = "ohos")]
             let _ = Syscall::ftruncate(cloned_executable_fd, 0);
 
+            // Write the modified ELF data back to the file
             let write_file = bun_sys::File::borrow(&cloned_executable_fd);
             if let Err(err) = write_file.write_all(&elf_file.data) {
                 bun_core::pretty_errorln!("Error writing ELF file: {}", err);
@@ -1648,9 +1627,9 @@ pub(crate) fn inject(
                 return Fd::INVALID;
             }
 
-            // OHOS: fsync before move, because move_file_z_with_handle may use
-            // copy_file_range (EXDEV fallback) which reads from disk, not the
-            // page cache. Without fsync, the on-disk data may be stale.
+            // OHOS: fsync before move_file_z_with_handle, which uses
+            // copy_file_range (EXDEV fallback) reading from disk, not the page
+            // cache. Without fsync the move target gets stale data.
             #[cfg(target_env = "ohos")]
             unsafe { libc::fsync(cloned_executable_fd.native()); }
 
@@ -1779,17 +1758,7 @@ pub(crate) fn download_to_path(
             }
         };
         let url_str_copy: Box<[u8]> = Box::from(url_str);
-
-        // Support file:// protocol for local tarballs (e.g., CI cross-compile)
-        if strings::has_prefix(&url_str_copy, b"file://") {
-            let path = &url_str_copy[b"file://".len()..];
-            let path_str = String::from_utf8_lossy(path);
-            let raw_data = std::fs::read(std::path::Path::new(path_str.as_ref()))
-                .map_err(|e| bun_core::Error::from(std::io::Error::new(e.kind(), format!("reading local tarball {}: {}", path_str, e))))?;
-            compressed_archive_bytes.list = raw_data.into();
-            // Skip HTTP fetch, goto decompress below
-        } else {
-            let url = bun_url::URL::parse(&url_str_copy);
+        let url = bun_url::URL::parse(&url_str_copy);
         {
             // The unconditional
             // `progress.end()` below is sufficient: no fallible call sits between
@@ -1832,8 +1801,7 @@ pub(crate) fn download_to_path(
                 200 => {}
                 _ => return Err(err!("NetworkError")),
             }
-            }  // end HTTP block
-        }  // end else (HTTP fetch)
+        }
 
         let mut tarball_bytes: Vec<u8> = Vec::new();
         {
@@ -2028,11 +1996,6 @@ pub fn to_executable(
     // later reassignments; capturing by `&mut` conflicts with later uses. Explicit
     // `if fd != Fd::INVALID { fd.close(); }` calls are inserted at every return below
     // (both error and success paths).
-    if fd == Fd::INVALID {
-        return Ok(CompileResult::fail_fmt(format_args!(
-            "failed to create temporary file for standalone executable"
-        )));
-    }
     debug_assert!(fd.kind() == bun_sys::FdKind::System);
 
     #[cfg(unix)]
@@ -2466,7 +2429,7 @@ pub struct SerializedSourceMapLoaded {
     /// Only decompress source code once! Once a file is decompressed,
     /// it is stored here. Decompression failures are stored as an empty
     /// string, which will be treated as "no contents".
-    pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
+    pub decompressed_files: Box<[Option<Vec<u8>>]>,
 }
 
 pub(crate) fn serialize_json_source_map_for_standalone(

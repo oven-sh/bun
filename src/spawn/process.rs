@@ -3057,7 +3057,7 @@ mod spawn_process_body {
                 // the defer immediately below — registered here (not in the
                 // post-spawn `defer if (no_orphans)` block) so spawn-failure
                 // early returns don't leave subreaper armed process-wide.
-                // OHOS: prctl verified available on 2026-06-07.
+                // SAFETY: prctl
                 let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -3069,7 +3069,7 @@ mod spawn_process_body {
                     // between disarm and `onProcessExit`→`killDescendants()` escapes
                     // to init.
                     ParentDeathWatchdog::kill_subreaper_adoptees(siblings);
-                    // OHOS: prctl verified available on 2026-06-07.
+                    // SAFETY: prctl
                     let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0) };
                 }
             }
@@ -3219,6 +3219,10 @@ mod spawn_process_body {
                 if no_orphans
                     && (cfg!(any(target_os = "linux", target_os = "android"))
                         || cfg!(target_os = "macos"))
+                    // OHOS: wait_linux_signalfd uses signalfd+pidfd which hangs.
+                    // Use poll+wait4 with pidfd parent-death detection instead
+                    // (verified via ohos-pdeathsig-poll-verify.c on 2026-06-09).
+                    && !cfg!(target_env = "ohos")
                 {
                     let ppid = ParentDeathWatchdog::ppid_to_watch().unwrap_or(0);
                     #[cfg(target_os = "macos")]
@@ -3231,21 +3235,8 @@ mod spawn_process_body {
                         &mut out_fds_to_wait_for,
                         &mut out_fds,
                     );
-                    #[cfg(all(
-                        any(target_os = "linux", target_os = "android"),
-                        not(target_env = "ohos")
-                    ))]
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
                     let r: Option<Maybe<Status>> = wait_linux_signalfd(
-                        process.pid,
-                        ppid,
-                        no_orphans,
-                        &*_jc,
-                        &mut out,
-                        &mut out_fds_to_wait_for,
-                        &mut out_fds,
-                    );
-                    #[cfg(target_env = "ohos")]
-                    let r: Option<Maybe<Status>> = wait_linux_ohos(
                         process.pid,
                         ppid,
                         no_orphans,
@@ -3275,6 +3266,117 @@ mod spawn_process_body {
                     // null: kqueue()/kevent-receipt failed — fall through to the
                     // plain poll() loop so `.buffer` stdio still drains instead
                     // of being dropped (or deadlocking) in a blind `wait4()`.
+                }
+                // OHOS no_orphans: monitor parent death via pidfd + ppid polling.
+                // Same approach as wait_linux_signalfd but without signalfd/pidfd
+                // on the child (which hangs on OHOS).
+                #[cfg(target_env = "ohos")]
+                let (ohos_ppid, ohos_ppid_fd): (libc::pid_t, AutoCloseFd) = if no_orphans
+                {
+                    let ppid_from_watchdog = ParentDeathWatchdog::ppid_to_watch().unwrap_or(0);
+                    if ppid_from_watchdog > 1 {
+                        // Clear PDEATHSIG — SIGKILL is uncatchable and would prevent
+                        // our cleanup defer from running.  See wait_linux_signalfd:3697.
+                        let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, 0) };
+                        let fd = bun_sys::pidfd_open(ppid_from_watchdog, 0)
+                            .map(AutoCloseFd::new)
+                            .unwrap_or_else(|_| AutoCloseFd::invalid());
+                        (ppid_from_watchdog, fd)
+                    } else {
+                        (0, AutoCloseFd::invalid())
+                    }
+                } else {
+                    (0, AutoCloseFd::invalid())
+                };
+                #[cfg(not(target_env = "ohos"))]
+                let (_ohos_ppid, _ohos_ppid_fd): (libc::pid_t, AutoCloseFd) = (0, AutoCloseFd::invalid());
+
+                while out_fds_to_wait_for[0] != Fd::INVALID || out_fds_to_wait_for[1] != Fd::INVALID
+                {
+                    for i in 0..2 {
+                        if let Some(err) =
+                            drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i])
+                        {
+                            cleanup_spawn_posix(&mut out, out_fds, &process, success);
+                            return Ok(Err(err));
+                        }
+                    }
+
+                    // OHOS no_orphans needs a 3rd slot for the pidfd parent monitor.
+                    #[cfg(target_env = "ohos")]
+                    let mut poll_fds_buf: [libc::pollfd; 3] =
+                    // SAFETY: zeroed pollfd is valid
+                    unsafe { bun_core::ffi::zeroed_unchecked() };
+                    #[cfg(not(target_env = "ohos"))]
+                    let mut poll_fds_buf: [libc::pollfd; 2] =
+                    // SAFETY: zeroed pollfd is valid
+                    unsafe { bun_core::ffi::zeroed_unchecked() };
+                    let mut poll_len: usize = 0;
+                    #[cfg(target_env = "ohos")]
+                    let mut ohos_pidfd_idx: usize = 0;
+                    for &fd in &out_fds_to_wait_for {
+                        if fd == Fd::INVALID {
+                            continue;
+                        }
+                        poll_fds_buf[poll_len] = libc::pollfd {
+                            fd: fd.native(),
+                            events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
+                            revents: 0,
+                        };
+                        poll_len += 1;
+                    }
+                    // OHOS no_orphans: add pidfd for parent death detection
+                    #[cfg(target_env = "ohos")]
+                    if ohos_ppid > 1 && ohos_ppid_fd.fd() != Fd::INVALID {
+                        ohos_pidfd_idx = poll_len;
+                        poll_fds_buf[poll_len] = libc::pollfd {
+                            fd: ohos_ppid_fd.fd().native(),
+                            events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
+                            revents: 0,
+                        };
+                        poll_len += 1;
+                    }
+                    if poll_len == 0 {
+                        break;
+                    }
+
+                    // OHOS fallback: no pidfd → poll with 100ms timeout so we
+                    // can check getppid() for parent death on each iteration.
+                    #[allow(unused_mut)]
+                    let mut poll_timeout: libc::c_int = -1;
+                    #[cfg(target_env = "ohos")]
+                    if ohos_ppid > 1 && ohos_ppid_fd.fd() == Fd::INVALID {
+                        poll_timeout = 100;
+                    }
+
+                    // SAFETY: valid pollfd array
+                    let rc = unsafe { libc::poll(poll_fds_buf.as_mut_ptr(), poll_len as _, poll_timeout) };
+                    match bun_sys::get_errno(rc as isize) {
+                        bun_sys::E::SUCCESS => {}
+                        bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,
+                        err => {
+                            cleanup_spawn_posix(&mut out, out_fds, &process, success);
+                            return Ok(Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)));
+                        }
+                    }
+
+                    // Check parent death after poll returns.
+                    // The pidfd in the poll set fires when the parent exits;
+                    // getppid() fallback covers the no-pidfd case.
+                    #[cfg(target_env = "ohos")]
+                    if ohos_ppid > 1 {
+                        let parent_dead = if ohos_ppid_fd.fd() != Fd::INVALID {
+                            poll_fds_buf[ohos_pidfd_idx].revents != 0
+                        } else {
+                            false
+                        };
+                        if parent_dead || getppid() != ohos_ppid {
+                            ParentDeathWatchdog::kill_sync_script_tree();
+                            Global::exit(
+                                ParentDeathWatchdog::EXIT_CODE as u32
+                            );
+                        }
+                    }
                 }
                 reap_child(process.pid)
             };
@@ -3595,7 +3697,7 @@ mod spawn_process_body {
             }
         }
 
-        #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         fn wait_linux_signalfd(
             child: libc::pid_t,
             ppid: libc::pid_t,
@@ -3809,132 +3911,6 @@ mod spawn_process_body {
                     while bun_sys::read(chld_fd.fd(), &mut si_bytes).unwrap_or(0) == si_bytes.len()
                     {
                     }
-                }
-            }
-            for i in 0..2 {
-                let _ = drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i]);
-            }
-            Some(Ok(child_status.unwrap()))
-        }
-
-        /// OHOS variant of `wait_linux_signalfd` — same structure, no signalfd.
-        /// OHOS seccomp blocks SIGCHLD delivery to signalfd (verified 2026-07-03),
-        /// so child-exit relies solely on `pidfd_open(child)`. Poll timeout is
-        /// always 100ms because there is no signalfd to wake the poll loop.
-        #[cfg(target_env = "ohos")]
-        fn wait_linux_ohos(
-            child: libc::pid_t,
-            ppid: libc::pid_t,
-            drain_orphans: bool,
-            jc: &JobControl,
-            out: &mut [Vec<u8>; 2],
-            out_fds_to_wait_for: &mut [Fd; 2],
-            out_fds: &mut [Fd; 2],
-        ) -> Option<Maybe<Status>> {
-            // Child-exit: pidfd. OHOS signalfd(SIGCHLD) does not work, so
-            // child-exit notification relies entirely on pidfd_open(child).
-            let child_pidfd = match bun_sys::pidfd_open(child, 0) {
-                Ok(fd) => AutoCloseFd::new(fd),
-                Err(_) => AutoCloseFd::invalid(),
-            };
-
-            // Parent-death: pidfd when available (instant wake). When not
-            // (gVisor-like envs): bound the poll at 100ms and recheck `getppid()`.
-            let mut ppid_fd = AutoCloseFd::invalid();
-            if ppid > 1 {
-                match bun_sys::pidfd_open(ppid, 0) {
-                    Ok(fd) => ppid_fd = AutoCloseFd::new(fd),
-                    Err(e) => {
-                        if e.get_errno() == bun_sys::E::ESRCH {
-                            Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
-                        }
-                    }
-                }
-            }
-            if ppid > 1 {
-                let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, 0) };
-            }
-            scopeguard::defer! {
-                if ppid > 1 {
-                    let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
-                }
-            }
-            if ppid > 1 && getppid() != ppid {
-                Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
-            }
-
-            // Always bound poll at 100ms: no signalfd to wake us on OHOS.
-            let timeout_ms: i32 = 100;
-
-            let mut child_status: Option<Status> = None;
-            loop {
-                let wopts: u32 =
-                    (libc::WNOHANG | if jc.is_active() { libc::WUNTRACED } else { 0 }) as u32;
-                let wait_target: libc::pid_t = if drain_orphans { -1 } else { child };
-                loop {
-                    let r = posix_spawn::wait4(wait_target, wopts, None);
-                    let w = match &r {
-                        Err(_) => break,
-                        Ok(w) => *w,
-                    };
-                    if w.pid <= 0 {
-                        break;
-                    }
-                    if w.pid != child {
-                        continue;
-                    }
-                    if libc::WIFSTOPPED(w.status as i32) {
-                        jc.on_child_stopped();
-                    } else {
-                        child_status = Status::from(child, &r);
-                    }
-                }
-                if child_status.is_some() {
-                    break;
-                }
-
-                for i in 0..2 {
-                    if let Some(err) =
-                        drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i])
-                    {
-                        return Some(Err(err));
-                    }
-                }
-
-                let mut buf: [libc::pollfd; 4] = bun_core::ffi::zeroed();
-                let mut pfds_len: usize = 0;
-                let push = |l: &mut [libc::pollfd; 4], len: &mut usize, fd: Fd| {
-                    l[*len] = libc::pollfd {
-                        fd: fd.native(),
-                        events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
-                        revents: 0,
-                    };
-                    *len += 1;
-                };
-                for &fd in out_fds_to_wait_for.iter() {
-                    if fd != Fd::INVALID {
-                        push(&mut buf, &mut pfds_len, fd);
-                    }
-                }
-                let ppid_idx = pfds_len;
-                if ppid_fd.fd() != Fd::INVALID {
-                    push(&mut buf, &mut pfds_len, ppid_fd.fd());
-                }
-                if child_pidfd.fd() != Fd::INVALID {
-                    push(&mut buf, &mut pfds_len, child_pidfd.fd());
-                }
-
-                let rc = unsafe { libc::poll(buf.as_mut_ptr(), pfds_len as _, timeout_ms) };
-                match bun_sys::get_errno(rc as isize) {
-                    bun_sys::E::SUCCESS => {}
-                    bun_sys::E::EAGAIN | bun_sys::E::EINTR => {}
-                    err => return Some(Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll))),
-                }
-
-                if (ppid_fd.fd() != Fd::INVALID && buf[ppid_idx].revents != 0)
-                    || getppid() != ppid
-                {
-                    Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
                 }
             }
             for i in 0..2 {

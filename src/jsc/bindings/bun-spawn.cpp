@@ -30,9 +30,6 @@ extern char** environ;
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
 #endif
 
-// OHOS: prctl(PR_SET_PDEATHSIG) verified available on 2026-06-07.
-// No longer need to disable it.
-
 // Helper: get max fd from system, clamped to sane limits and optionally to 'end' parameter
 static inline int getMaxFd(int start, int end)
 {
@@ -136,9 +133,9 @@ extern "C" ssize_t posix_spawn_bun(
     sigset_t blockall, oldmask;
     int res = 0, cs = 0;
 
-#if OS(DARWIN) || OS(FREEBSD)
-    // On macOS, we use fork() which requires a self-pipe trick to detect exec failures.
-    // Create a pipe for child-to-parent error communication.
+#if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
+    // On macOS/FreeBSD/OHOS, we use fork() which requires a self-pipe trick to
+    // detect exec failures. Create a pipe for child-to-parent error communication.
     // The write end has O_CLOEXEC so it's automatically closed on successful exec.
     // If exec fails, child writes errno to the pipe.
     int errpipe[2];
@@ -160,14 +157,15 @@ extern "C" ssize_t posix_spawn_bun(
     // On other Unix platforms (macOS, FreeBSD), use fork() directly.
     volatile int child_errno = 0;
     bool use_fork_fallback = false;
+    int saved_dumpable = -1;
 
+    pid_t child;
+#if OS(LINUX) && !defined(__OHOS__)
     // The vfork child shares this mm, and set*id in the child resets the
     // mm-wide "dumpable" flag to /proc/sys/fs/suid_dumpable (commit_creds).
     // Save it so the parent can restore it once vfork returns, like Go's
     // forkAndExecInChild1 and systemd's safe_fork_full do.
-    int saved_dumpable = (request->set_uid || request->set_gid) ? prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) : -1;
-    pid_t child;
-#if OS(LINUX) && !defined(__OHOS__)
+    saved_dumpable = (request->set_uid || request->set_gid) ? prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) : -1;
     child = vfork();
     if (child == -1) {
         use_fork_fallback = true;
@@ -175,15 +173,9 @@ extern "C" ssize_t posix_spawn_bun(
     }
 #else
     child = fork();
-    // OHOS: vfork blocked by seccomp, use fork() directly.
-    // With fork(), child has its own memory — the volatile child_errno
-    // mechanism (used for vfork shared-memory semantics) is unreliable.
-#if defined(__OHOS__)
-    use_fork_fallback = true;
-#endif
 #endif
 
-#if OS(DARWIN) || OS(FREEBSD)
+#if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
     const auto childFailed = [&]() -> ssize_t {
         int err = errno;
         // Write errno to pipe so parent can read it
@@ -200,7 +192,6 @@ extern "C" ssize_t posix_spawn_bun(
         // With vfork(), we share memory with the parent, so we can communicate
         // the error directly via a volatile variable. The parent will see this
         // value after we call _exit().
-        // With fork() fallback, exec failure detection is best-effort.
         child_errno = errno;
         rawExit(127);
 
@@ -231,7 +222,6 @@ extern "C" ssize_t posix_spawn_bun(
         // Under vfork the parent is suspended, so there is no race between
         // vfork returning and this prctl taking effect.
         if (request->linux_pdeathsig != 0) {
-            // OHOS: prctl(PR_SET_PDEATHSIG) verified available on 2026-06-07.
             prctl(PR_SET_PDEATHSIG, request->linux_pdeathsig, 0, 0, 0);
         }
 #endif
@@ -372,15 +362,15 @@ extern "C" ssize_t posix_spawn_bun(
     };
 
     if (child == 0) {
-#if OS(DARWIN) || OS(FREEBSD)
+#if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
         // Close read end in child
         close(errpipe[0]);
 #endif
         return startChild();
     }
 
-#if OS(DARWIN) || OS(FREEBSD)
-    // macOS fork() path: use self-pipe trick to detect exec failure
+#if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
+    // macOS/FreeBSD/OHOS fork() path: use self-pipe trick to detect exec failure
     // Parent: close write end
     close(errpipe[1]);
 

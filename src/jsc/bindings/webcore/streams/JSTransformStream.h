@@ -27,7 +27,7 @@ public:
 
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_readable, m_writable, m_controller,
-    // m_backpressureChangePromise.
+    // m_backpressureChangePromise, m_pendingWriteChunk.
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -48,6 +48,8 @@ public:
     JSC::WriteBarrier<JSTransformStreamDefaultController> m_controller;
     // [[backpressureChangePromise]] — fulfilled + replaced every time [[backpressure]] flips.
     JSC::WriteBarrier<JSC::JSPromise> m_backpressureChangePromise;
+    // Chunk for the single in-flight sink write waiting on backpressure (writes are serialized).
+    JSC::WriteBarrier<JSC::Unknown> m_pendingWriteChunk;
     // [[backpressure]] — InitializeTransformStream sets it (to true) before anything reads it,
     // so the spec's initial "undefined" state needs no separate representation.
     bool m_backpressure : 1 { false };

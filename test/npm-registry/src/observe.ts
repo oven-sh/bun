@@ -27,11 +27,6 @@ export interface ObservedRequest {
   readonly headers: Headers;
 }
 
-/**
- * A hook that may replace the response for a request. Returning
- * `undefined` (or a promise of it) lets the request fall through to the
- * next interceptor and then to normal routing.
- */
 /** `decodeURIComponent`, or the input verbatim when it is malformed. */
 function safeDecodeURIComponent(s: string): string {
   try {
@@ -41,6 +36,11 @@ function safeDecodeURIComponent(s: string): string {
   }
 }
 
+/**
+ * A hook that may replace the response for a request. Returning
+ * `undefined` (or a promise of it) lets the request fall through to the
+ * next interceptor and then to normal routing.
+ */
 export type Interceptor = (
   request: Request,
   observed: ObservedRequest,

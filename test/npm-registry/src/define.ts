@@ -29,7 +29,25 @@ import {
   type PackageRecord,
   type StoredVersion,
 } from "./package-store";
-import type { Dist, FileTree, Version } from "./types";
+import type { Dist, FileContents, FileTree, Version } from "./types";
+
+/** A {@link FileTree} entry that also carries an explicit tar mode. */
+export type SpecFileEntry = FileContents | { contents: FileContents; mode?: number };
+export type SpecFileTree = Record<string, SpecFileEntry>;
+
+function splitSpecTree(tree: SpecFileTree): { files: FileTree; mode: Record<string, number> } {
+  const files: FileTree = {};
+  const mode: Record<string, number> = {};
+  for (const [path, entry] of Object.entries(tree)) {
+    if (typeof entry === "string" || entry instanceof Uint8Array) {
+      files[path] = entry;
+    } else {
+      files[path] = entry.contents;
+      if (entry.mode !== undefined) mode[path] = entry.mode;
+    }
+  }
+  return { files, mode };
+}
 
 /**
  * One version, as a test author writes it. Two keys are interpreted by
@@ -43,12 +61,14 @@ export interface VersionSpec {
    * - omitted: a tarball containing only the generated `package.json`.
    * - a file tree: those files plus the generated `package.json`,
    *   packed deterministically. Don't include a `package.json` here;
-   *   the other fields of this spec *are* the package.json.
+   *   the other fields of this spec *are* the package.json. An entry
+   *   may be `{ contents, mode }` to set its tar mode explicitly;
+   *   otherwise `bin` targets are 0755 and everything else is 0644.
    * - raw bytes: served verbatim. For malformed-archive tests.
    * - `null`: the version is listed in the packument but its tarball
    *   404s, like a registry whose storage lost the object.
    */
-  tarball?: FileTree | Uint8Array | null;
+  tarball?: SpecFileTree | Uint8Array | null;
   /**
    * Overrides for the registry-computed `dist` object. The registry
    * normally derives `integrity`/`shasum` from the bytes it serves;
@@ -98,25 +118,26 @@ export interface PackageOptions {
 const REGISTRY_ONLY_KEYS: readonly string[] = ["tarball", "dist"] satisfies readonly (keyof VersionSpec)[];
 
 /**
- * The set of paths within a package that should be executable: every
- * `bin` target, and everything under `directories.bin`. npm's `.bin/`
- * links only work when the target has the execute bit, and `npm pack`
- * preserves it from disk; an in-memory definition has no mode, so
- * derive it from intent.
+ * The per-file tar modes `npm pack` would assign for an in-code
+ * definition: 0755 for every `bin` / `directories.bin` target, 0644
+ * for everything else. `npm pack` on disk preserves the filesystem
+ * mode; an in-memory definition has none, so derive the default from
+ * intent. A {@link VersionSpec} can still override per entry.
  */
-export function executablePaths(manifest: Manifest, filePaths: Iterable<string>): string[] {
-  const paths = new Set<string>();
+export function binModeMap(manifest: Manifest, filePaths: Iterable<string>): Record<string, number> {
+  const modes: Record<string, number> = {};
+  const mark = (p: string) => (modes[p.replace(/^\.\//, "")] = 0o755);
   const bin = manifest.bin;
-  if (typeof bin === "string") paths.add(bin);
+  if (typeof bin === "string") mark(bin);
   else if (typeof bin === "object" && bin !== null) {
-    for (const target of Object.values(bin as Record<string, string>)) paths.add(target);
+    for (const target of Object.values(bin as Record<string, string>)) mark(target);
   }
   const binDir = (manifest.directories as { bin?: string } | undefined)?.bin;
   if (typeof binDir === "string") {
     const prefix = `${binDir.replace(/^\.\//, "").replace(/\/+$/, "")}/`;
-    for (const path of filePaths) if (path.startsWith(prefix)) paths.add(path);
+    for (const path of filePaths) if (path.startsWith(prefix)) mark(path);
   }
-  return [...paths].map(p => p.replace(/^\.\//, ""));
+  return modes;
 }
 
 function storedVersion(name: string, version: Version, spec: VersionSpec): StoredVersion {
@@ -149,8 +170,10 @@ function storedVersion(name: string, version: Version, spec: VersionSpec): Store
     const bytes = spec.tarball;
     tarball = tarballFromBytes(async () => bytes);
   } else {
-    const files = { "package.json": `${JSON.stringify(raw, null, 2)}\n`, ...extra };
-    tarball = tarballFromFiles(async () => ({ files, executable: executablePaths(manifest, Object.keys(files)) }));
+    const { files: extraFiles, mode: explicit } = splitSpecTree(extra ?? {});
+    const files = { "package.json": `${JSON.stringify(raw, null, 2)}\n`, ...extraFiles };
+    const mode = { ...binModeMap(manifest, Object.keys(files)), ...explicit };
+    tarball = tarballFromFiles(async () => ({ files, mode }));
   }
 
   return { manifest: manifestFromValue(manifest), tarball, distOverride: spec.dist };

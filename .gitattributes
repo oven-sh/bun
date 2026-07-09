@@ -26,6 +26,7 @@
 # hashes them, so an EOL conversion would change `dist.integrity` per
 # platform. They must be byte-exact on every checkout.
 test/cli/install/registry/packages/** -text
+test/npm-registry/goldens/** -text
 
 *.lockb binary diff=lockb
 

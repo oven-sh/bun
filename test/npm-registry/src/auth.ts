@@ -86,12 +86,6 @@ export class UserStore {
     return token;
   }
 
-  /** Forgets every user and token. Access rules are untouched. */
-  clear(): void {
-    this.users.clear();
-    this.tokens.clear();
-  }
-
   /** Resolves `Authorization` (and nothing else) to a user. */
   resolve(request: Request): AuthContext {
     const header = request.headers.get("authorization");

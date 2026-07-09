@@ -125,11 +125,11 @@ export function tarballFromBytes(read: () => Promise<Uint8Array>): () => Promise
  * in-code and directory fixtures avoid ever checking in a `.tgz`.
  */
 export function tarballFromFiles(
-  load: () => Promise<{ files: FileTree; executable?: Iterable<string> }>,
+  load: () => Promise<{ files: FileTree; mode?: Record<string, number> }>,
 ): () => Promise<ResolvedTarball> {
   return memo(async () => {
-    const { files, executable } = await load();
-    const built = buildTarball(files, { executable });
+    const { files, mode } = await load();
+    const built = buildTarball(files, { mode });
     return {
       bytes: built.bytes,
       fileCount: built.fileCount,

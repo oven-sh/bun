@@ -52,8 +52,8 @@ copied into package.json:
 - `tarball` — what to serve as the tarball.
   - omitted: a tarball containing only the generated `package.json`.
   - a `{ path: contents }` map: those files plus the generated
-    `package.json`. Files named by `bin` (or starting with `#!`) get the
-    execute bit.
+    `package.json`. `bin` targets are packed at mode 0755, everything
+    else at 0644; write an entry as `{ contents, mode }` to override.
   - a `Uint8Array`: served verbatim, for malformed-archive tests.
   - `null`: the version appears in the packument but its tarball 404s.
 - `dist` — overrides for the registry-computed `dist` object. Setting
@@ -119,9 +119,11 @@ it, which is what nearly every fixture wants.
 Three things to know when adding one:
 
 - **A file's execute bit in the packed tarball comes from being a `bin` /
-  `directories.bin` target or starting with `#!`,** never from its on-disk
-  mode. `statSync().mode` has no execute bit on Windows, so consulting it
+  `directories.bin` target,** never from its on-disk mode.
+  `statSync().mode` has no execute bit on Windows, so consulting it
   would give the same fixture a different `dist.integrity` per platform.
+  A fixture that needs a specific non-default mode (e.g. a 0644 bin, the
+  way real packages published from Windows ship) stays as a kept `.tgz`.
 
 - **A fixture that ships a `node_modules` of its own** (a bundled-dependency
   package) needs nothing special here, but the repo's top-level

@@ -8,15 +8,17 @@
  * pure function of its inputs. Writing ustar directly gives us that; the
  * format is a fixed-width 512-byte header per entry and nothing else.
  *
- * Conventions match `npm pack` (node-tar with `portable: true`):
- *   - every path lives under `package/`
- *   - uid/gid are 0, uname/gname are empty
- *   - mtime is the fixed epoch node-tar uses for reproducible archives
- *   - entries are sorted, `package/package.json` first
+ * The header encoding is byte-for-byte node-tar's with `portable: true`
+ * (what `npm pack` produces): every path under `package/`, entries in
+ * npm-packlist's sort order, mtime fixed to node-tar's reproducible
+ * epoch, uid/gid all-NUL, numeric fields as zero-padded octal + `" \0"`.
+ * The independent oracle
+ * for that is the `npm pack` golden vectors in `tar.test.ts`, which
+ * assert `gunzip(buildTarball(src))` byte-equals `gunzip(npm pack src)`.
  *
  * Extraction goes the other way (reading a prebuilt fixture `.tgz`) and
- * uses `Bun.Archive`, which also serves as a cross-check that what we
- * write is readable by an independent implementation.
+ * uses `Bun.Archive` — which is bun's own vendored libarchive, the same
+ * one `extract_tarball.rs` uses, so it is not an independent check.
  */
 
 import type { FileTree } from "./types";
@@ -42,6 +44,8 @@ const enum Field {
   typeflag = 156, // 1
   magic = 257, // 6
   version = 263, // 2
+  devmajor = 329, // 8
+  devminor = 337, // 8
   prefix = 345, // 155
 }
 
@@ -56,11 +60,11 @@ function putString(block: Uint8Array, offset: number, value: string): void {
 }
 
 /**
- * Writes a numeric field as zero-padded octal terminated by NUL, the
- * POSIX.1-1988 encoding every tar reader accepts.
+ * Writes a numeric field as node-tar does: (width-2) zero-padded octal
+ * digits, then space, then NUL.
  */
 function putOctal(block: Uint8Array, offset: number, width: number, value: number): void {
-  putString(block, offset, value.toString(8).padStart(width - 1, "0") + "\0");
+  putString(block, offset, value.toString(8).padStart(width - 2, "0") + " \0");
 }
 
 /**
@@ -86,26 +90,26 @@ function splitName(path: string): { name: string; prefix: string } {
   );
 }
 
-/** Builds one 512-byte ustar header. */
+/** Builds one 512-byte ustar header, byte-identical to node-tar portable. */
 function header(path: string, size: number, mode: number): Uint8Array {
   const block = new Uint8Array(BLOCK);
   const { name, prefix } = splitName(path);
   putString(block, Field.name, name);
   putOctal(block, Field.mode, 8, mode);
-  putOctal(block, Field.uid, 8, 0);
-  putOctal(block, Field.gid, 8, 0);
+  // node-tar in portable mode leaves uid/gid as all-NUL bytes.
   putOctal(block, Field.size, 12, size);
   putOctal(block, Field.mtime, 12, PORTABLE_MTIME);
   block[Field.typeflag] = "0".charCodeAt(0);
   putString(block, Field.magic, "ustar\0");
   putString(block, Field.version, "00");
+  putOctal(block, Field.devmajor, 8, 0);
+  putOctal(block, Field.devminor, 8, 0);
   putString(block, Field.prefix, prefix);
   // The checksum is the byte sum of the header with the 8-byte chksum
-  // field itself counted as spaces. It is stored as 6 octal digits, NUL,
-  // then a space (the one numeric field with its own terminator rule).
+  // field itself counted as spaces; encoded like every other numeric.
   let sum = 8 * 0x20;
   for (let i = 0; i < BLOCK; i++) sum += block[i]!;
-  putString(block, Field.chksum, sum.toString(8).padStart(6, "0") + "\0 ");
+  putOctal(block, Field.chksum, 8, sum);
   return block;
 }
 
@@ -113,9 +117,19 @@ function toBytes(contents: string | Uint8Array): Uint8Array {
   return typeof contents === "string" ? encoder.encode(contents) : contents;
 }
 
-/** `true` when a file's contents start with a `#!` shebang line. */
-function hasShebang(bytes: Uint8Array): boolean {
-  return bytes.length >= 2 && bytes[0] === 0x23 && bytes[1] === 0x21;
+/**
+ * npm-packlist's entry sort, verbatim: extension, then basename, then
+ * the full path, each compared case-insensitively with the `en` locale
+ * ("optimize for compressibility").
+ */
+function npmPacklistSort(a: string, b: string): number {
+  const ext = (p: string) => {
+    const s = p.lastIndexOf("/");
+    const d = p.lastIndexOf(".");
+    return d > s && d > 0 && d < p.length - 1 ? p.slice(d).toLowerCase() : "";
+  };
+  const base = (p: string) => p.slice(p.lastIndexOf("/") + 1).toLowerCase();
+  return ext(a).localeCompare(ext(b), "en") || base(a).localeCompare(base(b), "en") || a.localeCompare(b, "en");
 }
 
 export interface TarballStats {
@@ -134,21 +148,17 @@ export interface BuiltTarball extends TarballStats {
  * Builds a gzipped npm package tarball from an in-memory file tree.
  *
  * Paths in `files` are relative to the package root; the standard
- * `package/` prefix is added here. `executable` paths (and any file that
- * starts with a shebang) are written with mode 0755 so `bin` entries work
- * when extracted on POSIX.
+ * `package/` prefix is added here. Every entry is written with mode
+ * 0644 unless `options.mode` names an override for it, so a tarball can
+ * ship a non-executable bin the way real npm packages published from
+ * Windows do.
  *
  * The output is byte-for-byte deterministic for a given input.
  */
-export function buildTarball(files: FileTree, options: { executable?: Iterable<string> } = {}): BuiltTarball {
-  const executable = new Set(options.executable ?? []);
-  // package.json first (npm's convention: streaming consumers can stop
-  // after the first entry), then the rest in lexicographic order.
-  const paths = Object.keys(files).sort((a, b) => {
-    if (a === "package.json") return -1;
-    if (b === "package.json") return 1;
-    return a < b ? -1 : a > b ? 1 : 0;
-  });
+export function buildTarball(files: FileTree, options: { mode?: Record<string, number> } = {}): BuiltTarball {
+  const modes = options.mode ?? {};
+  // npm-packlist's sort: extension, then basename, then full path.
+  const paths = Object.keys(files).sort(npmPacklistSort);
 
   const blocks: Uint8Array[] = [];
   let unpackedSize = 0;
@@ -165,7 +175,7 @@ export function buildTarball(files: FileTree, options: { executable?: Iterable<s
       throw new Error(`non-ASCII tarball entry path is not supported: ${JSON.stringify(path)}`);
     }
     const bytes = toBytes(files[path]!);
-    const mode = executable.has(path) || hasShebang(bytes) ? 0o755 : 0o644;
+    const mode = modes[path] ?? 0o644;
     blocks.push(header(`package/${path}`, bytes.length, mode));
     blocks.push(bytes);
     const padding = (BLOCK - (bytes.length % BLOCK)) % BLOCK;

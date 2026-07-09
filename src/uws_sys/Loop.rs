@@ -663,10 +663,21 @@ pub use c::{us_loop_run, us_wakeup_loop};
 unsafe extern "C" {
     // safe: no args; clears the C side's thread-local loop pointer — no preconditions.
     safe fn bun_clear_loop_at_thread_exit();
+    // safe: no args; flips a thread-local bool — no preconditions.
+    safe fn bun_leak_loop_at_thread_exit();
 }
 
 /// Clears the C side's thread-local loop pointer. Call when a thread that ran
 /// a uws loop (e.g. a Worker thread) exits.
 pub fn on_thread_exit() {
     bun_clear_loop_at_thread_exit()
+}
+
+/// Deliberately leak this thread's lazily-created uWS loop: disarm the C++
+/// `thread_local LoopCleaner` whose destructor runs at thread exit (via
+/// `__cxa_thread_atexit` — independent of how the thread returns) and would
+/// otherwise `us_loop_free()` it. For teardown paths where other threads may
+/// still `wakeup()` the loop after this thread is gone.
+pub fn leak_loop_on_thread_exit() {
+    bun_leak_loop_at_thread_exit()
 }

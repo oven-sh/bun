@@ -316,7 +316,27 @@ pub struct VirtualMachine {
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
     pub has_started_debugger: bool,
-    pub has_terminated: bool,
+    /// `AtomicBool` (not `bool`): stored on the VM's own thread
+    /// (`destroy()`, and `WebWorker::shutdown`'s leak-the-VM branch) while
+    /// WorkPool threads concurrently read it through `&VirtualMachine` in
+    /// `EventLoop::enqueue_task_concurrent{,_batch}` to drop enqueues onto a
+    /// terminated VM. Zero-valid for the `alloc_zeroed` init.
+    pub has_terminated: core::sync::atomic::AtomicBool,
+
+    /// Number of Bake `DevServer` bundles currently in flight on this VM.
+    /// Incremented by `DevServer::start_async_bundle`, decremented when
+    /// `finalize_bundle` clears `current_bundle`. Same-thread only (the
+    /// `DevServer` lives on this VM's thread), hence `Cell`; zero-valid for
+    /// the `alloc_zeroed` init.
+    ///
+    /// Read by `WebWorker::shutdown`: a nonzero count means ParseTasks on the
+    /// shared `WorkPool` still hold pointers into this VM — the bundle's
+    /// `AnyEventLoop::Js` handle points at `self.event_loop` (a value field
+    /// of this struct) and result enqueues go through
+    /// `EventLoop::enqueue_task_concurrent`. Those tasks can be neither
+    /// cancelled nor waited for once the event loop stops draining, so the VM
+    /// must be leaked rather than freed while this is nonzero.
+    pub pending_async_bundles: core::cell::Cell<u32>,
 
     #[cfg(debug_assertions)]
     pub debug_thread_id: std::thread::ThreadId,
@@ -4427,6 +4447,14 @@ impl VirtualMachine {
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
+        // Publish the terminal flag before tearing the event loops down so a
+        // concurrent `EventLoop::enqueue_task_concurrent{,_batch}` (which
+        // no-ops once this is set) can't push into — and wake — a
+        // partially-deinitialized loop. Nothing drains the queue past this
+        // point anyway, so rejecting late producers loses no work.
+        self.has_terminated
+            .store(true, core::sync::atomic::Ordering::Release);
+
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
 
@@ -4488,7 +4516,6 @@ impl VirtualMachine {
             // once on the same thread; `self` is the live per-thread VM.
             unsafe { (hooks.deinit_runtime_state)(std::ptr::from_mut(self), state) };
         }
-        self.has_terminated = true;
     }
     /// Note: takes the concrete
     /// `bun_core::io::Writer` since every call site passes

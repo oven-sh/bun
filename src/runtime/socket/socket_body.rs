@@ -3278,8 +3278,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             let cache = {
                 let state = crate::jsc_hooks::runtime_state();
                 debug_assert!(!state.is_null(), "RuntimeState not installed");
-                // SAFETY: per-thread `RuntimeState` boxed by `init_runtime_state`;
-                // stable address for the VM's lifetime, JS-thread-only access.
+                // SAFETY: per-thread `RuntimeState` boxed by
+                // `bun_runtime_init_runtime_state`; stable address for the
+                // VM's lifetime, JS-thread-only access.
                 unsafe { &mut (*state).ssl_ctx_cache }
             };
             owned_ctx = match cache.get_or_create(cfg, &mut create_err) {

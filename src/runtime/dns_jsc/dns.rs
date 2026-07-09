@@ -67,7 +67,8 @@ type Sockaddr = netc::sockaddr;
 /// Helper: fetch the per-VM global DNS resolver (port of
 /// `RareData::globalDNSResolver`). The storage is
 /// [`crate::jsc_hooks::RuntimeState::global_dns_data`] — concrete
-/// `Option<Box<GlobalData>>`, freed by `deinit_runtime_state` on VM teardown.
+/// `Option<Box<GlobalData>>`, freed by `bun_runtime_deinit_runtime_state` on
+/// VM teardown.
 ///
 /// R-2: returns `&Resolver` (shared). All Resolver mutation routes through
 /// `Cell` / `JsCell` fields, so a shared borrow is sufficient and avoids the
@@ -2130,7 +2131,7 @@ impl Drop for GlobalData {
     fn drop(&mut self) {
         // `Resolver::deinit` ends with `heap::take(this)`, which is wrong for a
         // value field — open-code the channel teardown so the c-ares state
-        // frees when this box drops in `deinit_runtime_state`.
+        // frees when this box drops in `bun_runtime_deinit_runtime_state`.
         if let Some(channel) = self.resolver.channel.take() {
             // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
             unsafe { c_ares::Channel::destroy(channel) };

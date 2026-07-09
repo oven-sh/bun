@@ -1153,7 +1153,7 @@ pub(crate) fn resolver_bundle_options_subset(
 }
 
 impl<'a> Transpiler<'a> {
-    /// Called by [`init_runtime_state`](../runtime/jsc_hooks.rs)
+    /// Called by [`bun_runtime_init_runtime_state`](../runtime/jsc_hooks.rs)
     /// to write `vm.transpiler`. Builds on:
     ///   * [`options::BundleOptions::from_api`] — `bun_bundler::options`
     ///   * [`Resolver::init1`] — `bun_resolver`
@@ -1177,8 +1177,9 @@ impl<'a> Transpiler<'a> {
     /// In-place sibling of [`Self::init`]: builds the `Transpiler` directly into
     /// `dst` rather than returning it by value, so callers that already own its
     /// final storage — most importantly `VirtualMachine.transpiler`, written by
-    /// [`init_runtime_state`](../runtime/jsc_hooks.rs) once per VM — avoid the
-    /// multi-KB `stack temporary → return slot → final home` double `memcpy`.
+    /// [`bun_runtime_init_runtime_state`](../runtime/jsc_hooks.rs) once per VM —
+    /// avoid the multi-KB `stack temporary → return slot → final home` double
+    /// `memcpy`.
     ///
     /// On `Ok(())`, every field of `dst` is initialised. On `Err`, `dst` is
     /// untouched (all fallible work happens before the first field write), so the

@@ -310,8 +310,8 @@ unsafe fn bun_runtime_init_runtime_state(
     // this hook), so no uws wiring is repeated here.
 
     // Note: `heap::alloc` is paired with `heap::take` in
-    // [`deinit_runtime_state`] below — called from `VirtualMachine::deinit` /
-    // worker `destroy()` via `bun_runtime_deinit_runtime_state`.
+    // [`bun_runtime_deinit_runtime_state`] below — called from
+    // `VirtualMachine::deinit` / worker `destroy()`.
     // PORTING.md §Forbidden permits
     // `into_raw`-without-reclaim only for true process-lifetime singletons via
     // `OnceLock`, which this is not (per-VM / per-Worker-thread).

@@ -311,35 +311,88 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    UncheckedKeyHashSet<NodeVMModule*> deferVisited;
+
     for (const auto& request : record->requestedModules()) {
-        // `import defer` dependencies are left unevaluated here; the
-        // spec-level Evaluate() (innerModuleEvaluation) already handles the
-        // Defer phase correctly, and the deferred namespace's first property
-        // access triggers EvaluateModuleSync on the dependency's record.
-        if (request.m_phase == AbstractModuleRecord::ModulePhase::Defer)
+        auto iter = m_resolveCache.find(request.m_specifier.string());
+        if (iter == m_resolveCache.end())
             continue;
-        if (auto iter = m_resolveCache.find(request.m_specifier.string()); iter != m_resolveCache.end()) {
-            auto* dependency = uncheckedDowncast<NodeVMModule>(iter->value.get());
-            RELEASE_ASSERT(dependency != nullptr);
+        auto* dependency = uncheckedDowncast<NodeVMModule>(iter->value.get());
+        RELEASE_ASSERT(dependency != nullptr);
 
-            if (dependency->status() == Status::Unlinked) {
-                if (auto* syntheticDependency = dynamicDowncast<NodeVMSyntheticModule>(dependency)) {
-                    syntheticDependency->link(globalObject, nullptr, nullptr, jsUndefined());
-                    RETURN_IF_EXCEPTION(scope, );
-                }
-            }
+        // `import defer` dependencies must not run their SourceTextModule body
+        // here; the spec-level Evaluate() (innerModuleEvaluation) handles the
+        // Defer phase and the deferred namespace's first property access runs
+        // EvaluateModuleSync on the dependency's record. That JSC-level path
+        // has no reference to the wrapper's initializeImportMeta or a
+        // SyntheticModule's evaluateCallback, so perform those wrapper-side
+        // steps for the whole deferred subgraph now.
+        if (request.m_phase == AbstractModuleRecord::ModulePhase::Defer) {
+            dependency->prepareDeferredSubgraph(globalObject, deferVisited, timeout, breakOnSigint);
+            RETURN_IF_EXCEPTION(scope, );
+            continue;
+        }
 
-            if (dependency->status() == Status::Linked) {
-                JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
+        if (dependency->status() == Status::Unlinked) {
+            if (auto* syntheticDependency = dynamicDowncast<NodeVMSyntheticModule>(dependency)) {
+                syntheticDependency->link(globalObject, nullptr, nullptr, jsUndefined());
                 RETURN_IF_EXCEPTION(scope, );
-                // Source text dependencies evaluate via the spec-style
-                // Evaluate() and return a capability promise. A still-pending
-                // promise means the dependency uses top-level await; the
-                // root record's evaluate() drives the async machinery to
-                // completion and the wrapper status reconciles lazily
-                // (reconcileEvaluationState), so a pending result is fine
-                // here.
-                UNUSED_PARAM(dependencyResult);
+            }
+        }
+
+        if (dependency->status() == Status::Linked) {
+            JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
+            RETURN_IF_EXCEPTION(scope, );
+            // Source text dependencies evaluate via the spec-style
+            // Evaluate() and return a capability promise. A still-pending
+            // promise means the dependency uses top-level await; the
+            // root record's evaluate() drives the async machinery to
+            // completion and the wrapper status reconciles lazily
+            // (reconcileEvaluationState), so a pending result is fine
+            // here.
+            UNUSED_PARAM(dependencyResult);
+        }
+    }
+}
+
+void NodeVMModule::prepareDeferredSubgraph(JSGlobalObject* globalObject, UncheckedKeyHashSet<NodeVMModule*>& visited, uint32_t timeout, bool breakOnSigint)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    WTF::Vector<NodeVMModule*, 8> stack;
+    stack.append(this);
+    while (!stack.isEmpty()) {
+        NodeVMModule* module = stack.takeLast();
+        if (!visited.add(module).isNewEntry)
+            continue;
+
+        if (module->status() == Status::Unlinked) {
+            if (auto* syntheticModule = dynamicDowncast<NodeVMSyntheticModule>(module)) {
+                syntheticModule->link(globalObject, nullptr, nullptr, jsUndefined());
+                RETURN_IF_EXCEPTION(scope, );
+            }
+        }
+
+        if (dynamicDowncast<NodeVMSyntheticModule>(module)) {
+            if (module->status() == Status::Linked) {
+                module->evaluate(globalObject, timeout, breakOnSigint);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+            continue;
+        }
+
+        auto* sourceTextModule = dynamicDowncast<NodeVMSourceTextModule>(module);
+        if (!sourceTextModule || module->status() != Status::Linked)
+            continue;
+
+        sourceTextModule->initializeImportMeta(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+
+        if (auto* depRecord = sourceTextModule->moduleRecordIfExists()) {
+            for (const auto& request : depRecord->requestedModules()) {
+                if (auto iter = module->m_resolveCache.find(request.m_specifier.string()); iter != module->m_resolveCache.end())
+                    stack.append(uncheckedDowncast<NodeVMModule>(iter->value.get()));
             }
         }
     }

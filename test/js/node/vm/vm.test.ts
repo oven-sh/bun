@@ -1241,6 +1241,55 @@ describe("node:vm SourceTextModule import defer", () => {
     expect(seenPhase).toBe("defer");
   });
 
+  test("`import defer` of a SyntheticModule still runs its evaluation steps", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    const dep = new vm.SyntheticModule(
+      ["x"],
+      function () {
+        ctx.LOG.push("SYNTH");
+        this.setExport("x", 42);
+      },
+      { context: ctx, identifier: "dep" },
+    );
+    const root = new vm.SourceTextModule(
+      "import defer * as N from 'dep'; LOG.push('ROOT'); export const v = N.x;",
+      { context: ctx, identifier: "root" },
+    );
+    await root.link(() => dep);
+    await root.evaluate();
+
+    // The JSC SyntheticModuleRecord has no reference to the wrapper's
+    // evaluateCallback, so the wrapper must evaluate synthetic dependencies
+    // itself even for a defer-phase request.
+    expect(root.namespace.v).toBe(42);
+    expect(ctx.LOG).toContain("SYNTH");
+    expect(dep.status).toBe("evaluated");
+  });
+
+  test("`import defer` of a SourceTextModule still runs initializeImportMeta", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    let metaCalls = 0;
+    const dep = new vm.SourceTextModule("LOG.push('DEP'); export const u = import.meta.url;", {
+      context: ctx,
+      identifier: "dep",
+      initializeImportMeta(meta: any) {
+        metaCalls++;
+        meta.url = "file:///dep.js";
+      },
+    });
+    const root = new vm.SourceTextModule(
+      "import defer * as N from 'dep'; LOG.push('ROOT'); export const before = LOG.join('|'); export const u = N.u;",
+      { context: ctx, identifier: "root" },
+    );
+    await root.link(() => dep);
+    await root.evaluate();
+
+    expect(root.namespace.before).toBe("ROOT");
+    expect(root.namespace.u).toBe("file:///dep.js");
+    expect(ctx.LOG.join("|")).toBe("ROOT|DEP");
+    expect(metaCalls).toBe(1);
+  });
+
   test("`import.defer()` and `import()` from the same module report distinct phases", async () => {
     const ctx = vm.createContext({});
     const dep = new vm.SourceTextModule("export const v = 1;", { identifier: "dep", context: ctx });

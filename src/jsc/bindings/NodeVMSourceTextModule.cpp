@@ -539,13 +539,16 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
         return;
     }
 
-    CallData callData = JSC::getCallData(m_initializeImportMeta.get());
+    JSValue callback = m_initializeImportMeta.get();
+    m_initializeImportMeta.clear();
+
+    CallData callData = JSC::getCallData(callback);
 
     MarkedArgumentBuffer args;
     args.append(metaValue);
     args.append(m_moduleWrapper.get());
 
-    JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
+    JSC::call(globalObject, callback, callData, jsUndefined(), args);
     scope.release();
 }
 

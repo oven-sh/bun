@@ -41,8 +41,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 22: Serialize `has_tla` in the cached ESM record flags byte. Entries
 /// written before #30888 carried `has_tla=false` for every module; the cache-HIT
 /// path reinstates the bug for any previously-cached TLA module (#30887).
-/// Version 23: Raw template literals and regex literals are no longer escaped to
-/// \uXXXX, so cached output may contain non-ASCII UTF-8.
+/// Version 23: Raw template literals and regex literals are no longer rewritten
+/// to unicode escapes, so cached output may contain non-ASCII UTF-8.
 const EXPECTED_VERSION: u32 = 23;
 
 /// Source files smaller than this are not written to / read from the on-disk

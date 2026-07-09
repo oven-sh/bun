@@ -164,7 +164,7 @@ int main(int argc, char **argv) {
   ];
 
   for (const c of cases) {
-    test(`BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2 gates the ${c.name}`, async () => {
+    test.concurrent(`BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2 gates the ${c.name}`, async () => {
       if (helperBin == null) {
         console.warn("SKIP epoll_pwait2 seccomp: cc or seccomp headers not available");
         return;

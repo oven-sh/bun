@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, nodeExe, normalizeBunSnapshot } from "harness";
 import { join } from "node:path";
 
-describe("HTTP server with proxy-style absolute URLs", () => {
+// Each test spawns its own isolated subprocess; safe to run concurrently.
+describe.concurrent("HTTP server with proxy-style absolute URLs", () => {
   test("tests should run on node.js", async () => {
     await using process = Bun.spawn({
       cmd: [nodeExe(), "--test", join(import.meta.dir, "node-http-proxy-url.node.mts")],
@@ -25,7 +26,7 @@ describe("HTTP server with proxy-style absolute URLs", () => {
   });
 });
 
-describe("https request through a proxy agent", () => {
+describe.concurrent("https request through a proxy agent", () => {
   test("rejects a request host containing CR or LF with ERR_INVALID_CHAR", async () => {
     const script = `
       const net = require("node:net");

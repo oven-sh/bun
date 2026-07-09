@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { isASAN, withoutAggressiveGC } from "harness";
+
+// Consistency assertions are N-agnostic; ASAN already catches the memory bugs these loops guard against.
+const consistencyIterations = isASAN ? 10 : 100;
 
 test("Bun.file in CryptoHasher is not supported yet", () => {
   expect(() => Bun.SHA1.hash(Bun.file(import.meta.path))).toThrow();
@@ -130,7 +133,7 @@ describe("Hash is consistent", () => {
       const Class = globalThis.Bun[algorithm.toUpperCase() as "SHA1" | "SHA256" | "SHA512" | "MD5"];
       test("base64", () => {
         for (let buffer of inputs) {
-          for (let i = 0; i < 100; i++) {
+          for (let i = 0; i < consistencyIterations; i++) {
             const hasher = new Bun.CryptoHasher(algorithm);
             expect(hasher.update(buffer, "base64")).toBeInstanceOf(Bun.CryptoHasher);
             expect(Bun.CryptoHasher.hash(algorithm, buffer, "base64")).toEqual(
@@ -150,7 +153,7 @@ describe("Hash is consistent", () => {
 
       test("hex", () => {
         for (let buffer of inputs) {
-          for (let i = 0; i < 100; i++) {
+          for (let i = 0; i < consistencyIterations; i++) {
             const hasher = new Bun.CryptoHasher(algorithm);
             expect(hasher.update(buffer, "hex")).toBeInstanceOf(Bun.CryptoHasher);
             expect(Bun.CryptoHasher.hash(algorithm, buffer, "hex")).toEqual(
@@ -170,7 +173,7 @@ describe("Hash is consistent", () => {
 
       test("blob", () => {
         for (let buffer of inputs) {
-          for (let i = 0; i < 100; i++) {
+          for (let i = 0; i < consistencyIterations; i++) {
             const hasher = new Bun.CryptoHasher(algorithm);
             expect(hasher.update(buffer)).toBeInstanceOf(Bun.CryptoHasher);
             expect(Bun.CryptoHasher.hash(algorithm, buffer)).toEqual(Bun.CryptoHasher.hash(algorithm, buffer));
@@ -239,7 +242,7 @@ describe("CryptoHasher", () => {
           test("consistent", () => {
             const first = Bun.CryptoHasher.hash(algorithm, "hello", encoding);
             withoutAggressiveGC(() => {
-              for (let i = 0; i < 100; i++) {
+              for (let i = 0; i < consistencyIterations; i++) {
                 expect(Bun.CryptoHasher.hash(algorithm, "hello", encoding)).toStrictEqual(first);
               }
             });

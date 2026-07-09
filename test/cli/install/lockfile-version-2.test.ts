@@ -9,7 +9,7 @@ import { join } from "path";
 // loopback/unreachable endpoints — so no external network or registry is
 // required.
 
-it("a freshly written text lockfile defaults to version 2", async () => {
+it.concurrent("a freshly written text lockfile defaults to version 2", async () => {
   using dir = tempDir("lockfile-v2-default", {
     "package.json": JSON.stringify({ name: "root", dependencies: { dep: "file:./dep" } }),
     "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
@@ -35,7 +35,7 @@ it("a freshly written text lockfile defaults to version 2", async () => {
 // `lockfileVersion: 1`, even though every entry would satisfy the v2 invariants.
 // Only a lockfile with no prior version (fresh install / migration) is written
 // at the current version.
-it("re-saving a v1 lockfile keeps it at version 1 even after adding a dependency", async () => {
+it.concurrent("re-saving a v1 lockfile keeps it at version 1 even after adding a dependency", async () => {
   const v1Lockfile =
     JSON.stringify(
       {
@@ -82,7 +82,7 @@ it("re-saving a v1 lockfile keeps it at version 1 even after adding a dependency
 // `["name@workspace:path"]` form. Stamping v0 on that output would make the
 // next parse fail with "Missing dependencies object". So a re-saved v0 lockfile
 // is floored to v1 — and, critically, must still parse on the next install.
-it("re-saving a v0 lockfile floors it to version 1 so it stays parseable", async () => {
+it.concurrent("re-saving a v0 lockfile floors it to version 1 so it stays parseable", async () => {
   const v0Lockfile =
     JSON.stringify(
       {
@@ -143,7 +143,7 @@ it("re-saving a v0 lockfile floors it to version 1 so it stays parseable", async
   expect(secondExit).toBe(0);
 });
 
-it("an existing v1 lockfile still loads (backward compatible)", async () => {
+it.concurrent("an existing v1 lockfile still loads (backward compatible)", async () => {
   const v1Lockfile =
     JSON.stringify(
       {
@@ -179,7 +179,7 @@ it("an existing v1 lockfile still loads (backward compatible)", async () => {
 // An off-registry npm tarball URL with no integrity hash is a breaking change
 // introduced after the Rust rewrite: rejecting it breaks lockfiles written
 // before the check existed, so it is only enforced at version 2.
-it("off-registry npm tarball integrity is enforced only at version 2", async () => {
+it.concurrent("off-registry npm tarball integrity is enforced only at version 2", async () => {
   // A loopback host that is never the configured registry. For v2 parsing fails
   // before any fetch, so it is not contacted; for v1 parsing succeeds and the
   // install proceeds to request the tarball, hitting this 404 handler.
@@ -244,7 +244,7 @@ it("off-registry npm tarball integrity is enforced only at version 2", async () 
 // v2. `Repository::checkout` re-validates the tag before running git, so a v1
 // lockfile carrying an unsafe git tag still never executes anything unsafe.
 // (The `github` tarball path has no such re-validation — see the next test.)
-it("unsafe git .bun-tag is rejected only at version 2", async () => {
+it.concurrent("unsafe git .bun-tag is rejected only at version 2", async () => {
   // When v1 parsing succeeds, install proceeds to `git clone` (an https
   // attempt, then ssh). `GIT_ALLOW_PROTOCOL=file` makes git reject both
   // transports immediately, so the clone fails fast with no network at all —
@@ -307,7 +307,7 @@ it("unsafe git .bun-tag is rejected only at version 2", async () => {
 // `Repository::checkout`, so its `.bun-tag` is fed into the cache folder name
 // with no use-site re-validation. The parse-time safety check therefore stays
 // unconditional for github — an unsafe tag is rejected at every version.
-it("unsafe github .bun-tag is rejected at every version", async () => {
+it.concurrent("unsafe github .bun-tag is rejected at every version", async () => {
   const ghUrl = "github:example/repo#main";
   const lockfile = (lockfileVersion: number) =>
     JSON.stringify({
@@ -343,7 +343,7 @@ it("unsafe github .bun-tag is rejected at every version", async () => {
 // The writer must not silently upgrade a lockfile to v2 if doing so would make
 // it fail the v2 parse checks on the next install. A v1 lockfile with an
 // off-registry tarball and no integrity hash must round-trip as v1.
-it("re-saving a v1 off-registry lockfile keeps it at version 1", async () => {
+it.concurrent("re-saving a v1 off-registry lockfile keeps it at version 1", async () => {
   await using offRegistry = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -393,7 +393,7 @@ it("re-saving a v1 off-registry lockfile keeps it at version 1", async () => {
 // v2 — matching the writer's own scope — which then failed to parse for a
 // teammate or CI that lacks that scope. It must round-trip as v1 so it keeps
 // loading regardless of the reader's config.
-it("re-saving keeps v1 for a tarball under a writer-only scoped registry", async () => {
+it.concurrent("re-saving keeps v1 for a tarball under a writer-only scoped registry", async () => {
   // A scoped registry the writer knows about but a reader won't. `--lockfile-only`
   // never fetches the tarball, so the host need not be reachable.
   await using scopedRegistry = Bun.serve({

@@ -9,6 +9,7 @@ import {
   zstdDecompressSync,
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { isASAN, isDebug } from "harness";
 import path from "path";
 
 describe("Zstandard compression", async () => {
@@ -57,7 +58,8 @@ describe("Zstandard compression", async () => {
     // Ensure this input actually hits the streaming error path (not InvalidZstdData / fast path).
     expect(() => zstdDecompressSync(bad)).toThrowError(/ZstdDecompressionError/);
 
-    const iterations = 10000;
+    // 5000 iterations still leaks ~20 MiB/batch (>> 10 MiB threshold) on the unfixed build.
+    const iterations = isASAN || isDebug ? 5000 : 10000;
     function batch() {
       for (let i = 0; i < iterations; i++) {
         try {

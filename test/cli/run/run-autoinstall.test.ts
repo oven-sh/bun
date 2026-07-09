@@ -6,7 +6,8 @@ import { join } from "path";
 //   --install=<val>                 Configure auto-install behavior. One of "auto" (default, auto-installs when no node_modules), "fallback" (missing packages only), "force" (always).
 //   -i                              Auto-install dependencies during execution. Equivalent to --install=fallback.
 
-describe("basic autoinstall", () => {
+// Each test spawns its own subprocess in its own temp dir, so they can run concurrently.
+describe.concurrent("basic autoinstall", () => {
   for (const install of ["", "-i", "--install=auto", "--install=fallback", "--install=force"]) {
     for (const has_node_modules of [true, false]) {
       let should_install = false;
@@ -24,24 +25,24 @@ describe("basic autoinstall", () => {
         const dir = tmpdirSync();
         mkdirSync(dir, { recursive: true });
         await Bun.write(join(dir, "index.js"), "import isEven from 'is-even'; console.log(isEven(2));");
-        const env = bunEnv;
-        env.BUN_INSTALL = install;
+        const env = { ...bunEnv, BUN_INSTALL: install };
         if (has_node_modules) {
           mkdirSync(join(dir, "node_modules/abc"), { recursive: true });
         }
-        const { stdout, stderr } = Bun.spawnSync({
+        await using proc = Bun.spawn({
           cmd: [bunExe(), ...(install === "" ? [] : [install]), join(dir, "index.js")],
           cwd: dir,
           env,
           stdout: "pipe",
           stderr: "pipe",
         });
+        const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
         if (should_install) {
-          expect(stderr?.toString("utf8")).not.toContain("error: Cannot find package 'is-even'");
-          expect(stdout?.toString("utf8")).toBe("true\n");
+          expect(stderr).not.toContain("error: Cannot find package 'is-even'");
+          expect(stdout).toBe("true\n");
         } else {
-          expect(stderr?.toString("utf8")).toContain("error: Cannot find package 'is-even'");
+          expect(stderr).toContain("error: Cannot find package 'is-even'");
         }
       });
     }
@@ -52,7 +53,7 @@ describe("basic autoinstall", () => {
 // package (resolution tag `root`, not `npm`). With a name and an exact version
 // present, resolving any missing bare specifier used to read that resolution
 // through the npm union accessor: "assertion failed: self.tag == Tag::Npm".
-test("auto-install in a project whose package.json has a name and version", async () => {
+test.concurrent("auto-install in a project whose package.json has a name and version", async () => {
   const requests: string[] = [];
   using registry = Bun.serve({
     port: 0,
@@ -85,7 +86,7 @@ test("auto-install in a project whose package.json has a name and version", asyn
   expect(exitCode).toBe(1);
 });
 
-test("--install=fallback to install missing packages", async () => {
+test.concurrent("--install=fallback to install missing packages", async () => {
   const dir = tmpdirSync();
   mkdirSync(dir, { recursive: true });
   await Promise.all([
@@ -104,20 +105,23 @@ test("--install=fallback to install missing packages", async () => {
     ),
   ]);
 
-  Bun.spawnSync({
+  await Bun.spawn({
     cmd: [bunExe(), "install"],
     cwd: dir,
     env: bunEnv,
-  });
+    stdout: "ignore",
+    stderr: "ignore",
+  }).exited;
 
-  const { stdout, stderr } = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "--install=fallback", join(dir, "index.js")],
     cwd: dir,
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr?.toString("utf8")).not.toContain("error: Cannot find package 'is-odd'");
-  expect(stdout?.toString("utf8")).toBe("true false\n");
+  expect(stderr).not.toContain("error: Cannot find package 'is-odd'");
+  expect(stdout).toBe("true false\n");
 });

@@ -694,11 +694,12 @@ describe("empty", () => {
   }
 });
 
-describe("unhandled errors between tests are reported", () => {
+// Each test spawns its own subprocess in its own temp dir, so they can run concurrently.
+describe.concurrent("unhandled errors between tests are reported", () => {
   const stages = ["beforeAll", "beforeEach", "afterEach", "afterAll", "describe"];
 
   for (const stage of stages) {
-    test("in " + stage, () => {
+    test("in " + stage, async () => {
       const code = /*js*/ `
 import {test, beforeAll, expect, beforeEach, afterEach, afterAll, describe} from "bun:test";
 
@@ -719,14 +720,14 @@ test("my-test", () => {
         "package.json": "{}",
       });
 
-      const { stderr, exited } = spawnSync({
+      const { stderr, exited } = spawn({
         cmd: [bunExe(), "test", "my-test.test.js"],
         cwd: test_dir,
         stdout: "inherit",
         stderr: "pipe",
         env: bunEnv,
       });
-      const output = stderr.toString();
+      const [output] = await Promise.all([stderr.text(), exited]);
 
       expect(output).toContain(`## stage ${stage} ##`);
 

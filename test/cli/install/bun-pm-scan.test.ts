@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
 import { join } from "path";
 
-describe("bun pm scan", () => {
+// each test uses its own temp dir + subprocess; safe to run concurrently
+describe.concurrent("bun pm scan", () => {
   describe("configuration", () => {
     test("shows error when no security scanner configured", async () => {
       const dir = tempDirWithFiles("scan-no-config", {

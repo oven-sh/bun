@@ -1,9 +1,12 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunExe } from "harness";
+import { bunExe, isASAN, isDebug } from "harness";
+
+// ASAN instruments every spawn; fewer iterations still prove repeated spawn doesn't crash/corrupt output.
+const iterations = isASAN || isDebug ? 20 : 100;
 
 test("spawn stress", async () => {
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < iterations; i++) {
     try {
       console.log("=== Begin Iteration " + i, "===");
       const withoutCache = spawn({

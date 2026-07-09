@@ -245,6 +245,9 @@ it("fetch() does not leak intermediate redirect URLs in multi-hop chains", async
   // Run the fetch loop in a child process so server-side buffers don't
   // pollute the RSS we measure. The child samples RSS after warmup and
   // again after two equal batches so we can assert on steady-state growth.
+  // ASAN threshold is already loose (400 MiB), so fewer iterations prove the same bound faster.
+  const WARMUP = isASAN ? 5 : 15;
+  const BATCH = isASAN ? 10 : 25;
   const script = `
     const url = "${server.url.origin}/hop/0";
     async function once() {
@@ -252,11 +255,11 @@ it("fetch() does not leak intermediate redirect URLs in multi-hop chains", async
       if (await res.text() !== "ok") throw new Error("unexpected body: " + res.status);
     }
     function sample() { Bun.gc(true); return process.memoryUsage.rss(); }
-    for (let i = 0; i < 15; i++) await once();
+    for (let i = 0; i < ${WARMUP}; i++) await once();
     const rss0 = sample();
-    for (let i = 0; i < 25; i++) await once();
+    for (let i = 0; i < ${BATCH}; i++) await once();
     const rss1 = sample();
-    for (let i = 0; i < 25; i++) await once();
+    for (let i = 0; i < ${BATCH}; i++) await once();
     const rss2 = sample();
     console.log(JSON.stringify({ rss0, rss1, rss2 }));
   `;

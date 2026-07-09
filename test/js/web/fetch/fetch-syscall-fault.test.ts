@@ -57,7 +57,8 @@ async function runClientFetch(
   return { ...JSON.parse(stdout.trim() || "{}"), stderr, exitCode, signal: proc.signalCode };
 }
 
-describe.skipIf(skip)("fetch() under injected syscall faults (http)", () => {
+// Each test runs its own port:0 server and arms faults inside an isolated subprocess, so run concurrently.
+describe.concurrent.skipIf(skip)("fetch() under injected syscall faults (http)", () => {
   test("recv → ECONNRESET on response rejects with a connection error", async () => {
     using server = Bun.serve({
       port: 0,
@@ -191,7 +192,7 @@ describe.skipIf(skip)("fetch() under injected syscall faults (http)", () => {
   });
 });
 
-describe.skipIf(skip)("fetch() under injected syscall faults (https)", () => {
+describe.concurrent.skipIf(skip)("fetch() under injected syscall faults (https)", () => {
   test("TLS handshake under 3-byte sends still succeeds and body decrypts", async () => {
     using server = Bun.serve({
       port: 0,

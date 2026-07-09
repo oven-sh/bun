@@ -1,5 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+import { isASAN } from "harness";
 
 describe("Bun.serve response stream leak", () => {
   test("proxy server forwarding streaming response should not leak", async () => {
@@ -35,7 +36,9 @@ describe("Bun.serve response stream leak", () => {
       return await response.text();
     }
 
-    for (let i = 0; i < 200; i++) {
+    // A leak produces one object per iteration; 100 > 50 threshold still catches it under ASAN.
+    const iterations = isASAN ? 100 : 200;
+    for (let i = 0; i < iterations; i++) {
       await leak();
     }
 

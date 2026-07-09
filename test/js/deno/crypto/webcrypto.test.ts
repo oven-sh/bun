@@ -2,7 +2,10 @@
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/webcrypto_test.ts
 import { createDenoTest } from "deno:harness";
+import { describe } from "bun:test";
 const { test, assert, assertEquals, assertNotEquals, assertRejects } = createDenoTest(import.meta.path, 10_000);
+// Each test is an independent async WebCrypto op (no shared mutable state), so run concurrently.
+describe.concurrent("webcrypto", () => {
 test(async function testImportArrayBufferKey() {
     const subtle = window.crypto.subtle;
     assert(subtle);
@@ -2647,4 +2650,5 @@ test(async function testHmacJwkImport() {
         "sign",
         "verify"
     ]);
+});
 });

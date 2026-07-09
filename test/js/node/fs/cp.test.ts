@@ -525,7 +525,7 @@ test.skipIf(!isWindows)("cpSync recursive copies a directory symlink to a UNC ta
 describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
   "fs.%s recursive returns ENAMETOOLONG instead of overflowing path buffer",
   which => {
-    test(which, async () => {
+    test.concurrent(which, async () => {
       using dir = tempDir("cp-enametoolong", { s: {}, d: {} });
       const base = String(dir);
       const src = join(base, "s");
@@ -604,7 +604,7 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
 // file so that its SingleTask fails with EISDIR. This works even when running
 // as root. On macOS the pre-existing dst/ makes clonefile() fail with EEXIST
 // and fall through to the per-file SingleTask path being tested.
-test.skipIf(!isPosix)(
+test.concurrent.skipIf(!isPosix)(
   "fs.promises.cp recursive does not free parent task while subtasks are in flight after an error",
   async () => {
     const files: Record<string, string | object> = {};

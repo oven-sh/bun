@@ -24,9 +24,11 @@ import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 // process-lifetime WebKit singletons, so we also disable LSan for the subprocess.
 // On non-Linux platforms the test still verifies the upgrade completes
 // successfully — regressions are caught by the Linux ASAN lane.
-test("server.upgrade() clones Sec-WebSocket-* from request.headers before running option getters", async () => {
-  using dir = tempDir("ws-upgrade-header-uaf", {
-    "index.ts": `
+test.concurrent(
+  "server.upgrade() clones Sec-WebSocket-* from request.headers before running option getters",
+  async () => {
+    using dir = tempDir("ws-upgrade-header-uaf", {
+      "index.ts": `
       const server = Bun.serve({
         port: 0,
         fetch(req, server) {
@@ -72,36 +74,37 @@ test("server.upgrade() clones Sec-WebSocket-* from request.headers before runnin
       server.stop(true);
       process.exit(0);
     `,
-  });
+    });
 
-  const env: Record<string, string | undefined> = { ...bunEnv };
-  if (isLinux) {
-    // Route bmalloc through the system heap so ASAN sees StringImpl frees.
-    env.Malloc = "1";
-    // Skip symbolization so an ASAN abort (the pre-fix behaviour) exits
-    // promptly; disable LSan because routing WTF allocations through system
-    // malloc makes pre-existing process-lifetime WebKit singletons visible
-    // to LeakSanitizer at exit.
-    env.ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":");
-  }
+    const env: Record<string, string | undefined> = { ...bunEnv };
+    if (isLinux) {
+      // Route bmalloc through the system heap so ASAN sees StringImpl frees.
+      env.Malloc = "1";
+      // Skip symbolization so an ASAN abort (the pre-fix behaviour) exits
+      // promptly; disable LSan because routing WTF allocations through system
+      // malloc makes pre-existing process-lifetime WebKit singletons visible
+      // to LeakSanitizer at exit.
+      env.ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":");
+    }
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.ts"],
-    env,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toContain("got=hello");
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    expect(stdout).toContain("got=hello");
+    expect(exitCode).toBe(0);
+  },
+);
 
 for (const via of ["data", "headers"] as const) {
-  test(`server.upgrade() is safe against re-entrant upgrade from options.${via} getter`, async () => {
+  test.concurrent(`server.upgrade() is safe against re-entrant upgrade from options.${via} getter`, async () => {
     using dir = tempDir("ws-upgrade-reentrant", {
       "index.ts": `
         let opens = 0;

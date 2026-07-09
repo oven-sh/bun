@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // Every `element.onEndTag(fn)` call JSValue::protect()s its callback. The old
 // lol-html C-API binding parked that protection in a per-call heap handler it
@@ -69,7 +69,7 @@ test.skipIf(isDebug)(
         for (let i = 0; i < 32; i++) rw.onDocument(docNoop);
       }
 
-      const N = 4000;
+      const N = ${isASAN ? 2000 : 4000};
       function pass() {
         for (let i = 0; i < N; i++) once();
         Bun.gc(true);
@@ -113,9 +113,10 @@ test.skipIf(isDebug)(
 
     const { deltaMB } = JSON.parse(stdout.trim());
 
-    // Unfixed: ~50 MB over 3 measured passes. Fixed: ±1 MB plateau.
-    // Threshold sits at ~half the unfixed signal.
-    expect(deltaMB).toBeLessThan(25);
+    // Unfixed: ~50 MB over 3 measured passes at N=4000. Fixed: ±1 MB plateau.
+    // Threshold sits at ~half the unfixed signal; ASAN halves N (and threshold)
+    // to keep the same ratio — the leak is linear in N so detection is preserved.
+    expect(deltaMB).toBeLessThan(isASAN ? 12 : 25);
     expect(exitCode).toBe(0);
   },
   15_000,

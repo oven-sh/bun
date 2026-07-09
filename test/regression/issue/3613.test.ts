@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/3613
 // WebSocketServer handleProtocols option should set the selected protocol in the upgrade response
-test("ws WebSocketServer handleProtocols sets selected protocol", async () => {
+test.concurrent("ws WebSocketServer handleProtocols sets selected protocol", async () => {
   using dir = tempDir("ws-handle-protocols", {
     "server.js": `
 import { WebSocketServer } from 'ws';
@@ -63,7 +63,7 @@ wss.on('connection', (ws) => {
   expect(exitCode).toBe(0);
 });
 
-test("ws WebSocketServer handleProtocols with no protocol", async () => {
+test.concurrent("ws WebSocketServer handleProtocols with no protocol", async () => {
   using dir = tempDir("ws-handle-protocols-empty", {
     "server.js": `
 import { WebSocketServer } from 'ws';
@@ -122,7 +122,7 @@ wss.on('connection', (ws) => {
   expect(exitCode).toBe(0);
 });
 
-test("ws WebSocketServer without handleProtocols uses first client protocol", async () => {
+test.concurrent("ws WebSocketServer without handleProtocols uses first client protocol", async () => {
   using dir = tempDir("ws-no-handle-protocols", {
     "server.js": `
 import { WebSocketServer } from 'ws';

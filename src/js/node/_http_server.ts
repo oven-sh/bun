@@ -1464,26 +1464,44 @@ function _writeHead(statusCode, reason, obj, response) {
     // Fast-case: only writeHead() was called. Like Node.js, an array stays
     // out of kOutHeaders and is emitted verbatim (same-named fields keep
     // their positions) instead of being folded into the name-keyed map.
+    let rawHasContentLength = false;
+    let rawHasTrailer = false;
     if ($isArray(obj)) {
       const length = obj.length;
-      if (length && $isArray(obj[0])) {
-        for (let i = 0; i < length; i++) {
+      const nested = length && $isArray(obj[0]);
+      if (!nested && length % 2 !== 0) {
+        throw $ERR_INVALID_ARG_VALUE("headers", obj);
+      }
+      // Snapshot now: Node.js's _storeHeader renders the array inside
+      // writeHead(), so later mutation of the caller's array has no effect.
+      const flat: string[] = [];
+      for (let i = 0; i < length; i += nested ? 1 : 2) {
+        let name, value;
+        if (nested) {
           const entry = obj[i];
-          if (entry) {
-            validateHeaderName(entry[0]);
-            validateHeaderValue(entry[0], entry[1]);
+          if (!entry) continue;
+          name = entry[0];
+          value = entry[1];
+        } else {
+          name = obj[i];
+          value = obj[i + 1];
+        }
+        validateHeaderName(name);
+        validateHeaderValue(name, value);
+        const key = name.toLowerCase();
+        if (key === "content-length") rawHasContentLength = true;
+        else if (key === "trailer") rawHasTrailer = true;
+        if ($isArray(value)) {
+          if (value.length >= 2 && key === "cookie") {
+            flat.push(name, value.join("; "));
+          } else {
+            for (let j = 0; j < value.length; j++) flat.push(name, String(value[j]));
           }
-        }
-      } else {
-        if (length % 2 !== 0) {
-          throw $ERR_INVALID_ARG_VALUE("headers", obj);
-        }
-        for (let n = 0; n < length; n += 2) {
-          validateHeaderName(obj[n]);
-          validateHeaderValue(obj[n], obj[n + 1]);
+        } else {
+          flat.push(name, String(value));
         }
       }
-      response[kRawOutHeaders] = obj;
+      response[kRawOutHeaders] = flat;
     } else if (obj) {
       const keys = Object.keys(obj);
       // Retain for(;;) loop for performance reasons
@@ -1494,8 +1512,8 @@ function _writeHead(statusCode, reason, obj, response) {
       }
     }
     if (
-      (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
-      (response._trailer || response.hasHeader("trailer"))
+      (response.chunkedEncoding !== true || rawHasContentLength || response.hasHeader("content-length")) &&
+      (response._trailer || rawHasTrailer || response.hasHeader("trailer"))
     ) {
       if (hasContentLength) {
         response.removeHeader("trailer");
@@ -1620,43 +1638,21 @@ function renderNativeHeaders(res) {
     }
   } else if (rawHeaders !== undefined) {
     // writeHead() was called with an array and no prior setHeader(): emit the
-    // list verbatim (Node.js's _storeHeader raw-array branch) so same-named
+    // snapshot verbatim (Node.js's _storeHeader raw-array branch) so same-named
     // fields keep their original positions.
     const length = rawHeaders.length;
-    const nested = length && $isArray(rawHeaders[0]);
-    for (let i = 0; i < length; i += nested ? 1 : 2) {
-      let name, value;
-      if (nested) {
-        const entry = rawHeaders[i];
-        if (!entry) continue;
-        name = entry[0];
-        value = entry[1];
-      } else {
-        name = rawHeaders[i];
-        value = rawHeaders[i + 1];
-      }
+    for (let i = 0; i < length; i += 2) {
+      const name = rawHeaders[i];
+      const value = rawHeaders[i + 1];
       const key = name.toLowerCase();
       if (key === "date") hasDate = true;
       else if (key === "connection") {
         hasConnection = true;
-        if (RE_CONN_CLOSE.test($isArray(value) ? value.join(", ") : String(value))) {
-          res[kMustCloseConnection] = true;
-        }
+        if (RE_CONN_CLOSE.test(value)) res[kMustCloseConnection] = true;
       } else if (key === "keep-alive") hasKeepAlive = true;
       else if (key === "content-length") hasContentLength = true;
       else if (key === "transfer-encoding") hasTransferEncoding = true;
-      if ($isArray(value)) {
-        const valueLength = value.length;
-        if (valueLength < 2 || key !== "cookie") {
-          for (let j = 0; j < valueLength; j++) {
-            flat.push(name, String(value[j]));
-          }
-        } else {
-          flat.push(name, value.join("; "));
-        }
-      } else {
-        flat.push(name, String(value));
-      }
+      flat.push(name, value);
     }
   }
 

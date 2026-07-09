@@ -144,7 +144,7 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGl
             return nullptr;
         if (!result.isObject()) [[likely]]
             return nullptr;
-        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->structure() == globalObject->promiseStructure())
+        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
             return resultPromise;
         RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
     }

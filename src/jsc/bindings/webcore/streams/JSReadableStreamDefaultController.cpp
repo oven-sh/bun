@@ -85,10 +85,10 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::J
             return nullptr;
         if (!result.isObject()) [[likely]]
             return nullptr;
-        // %Promise.resolve%(x) returns x unchanged when IsPromise(x) and x.constructor is
-        // %Promise%; a vanilla-structure JSPromise satisfies both, so skip the wrapper and the
-        // thenable .then chain. Subclassed/patched promises and other objects fall through.
-        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->structure() == globalObject->promiseStructure())
+        // A vanilla JSPromise with an unpatched .then needs no wrapper: the caller uses
+        // performPromiseThenWithContext (internal reactions), so skipping promiseResolvedWith's
+        // thenable adoption is unobservable. Subclasses / patched .then fall through.
+        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
             return resultPromise;
         RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
     }

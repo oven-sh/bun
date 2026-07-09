@@ -306,6 +306,14 @@ NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String i
 {
 }
 
+static void linkIfUnlinkedSynthetic(JSGlobalObject* globalObject, NodeVMModule* module)
+{
+    if (module->status() != NodeVMModule::Status::Unlinked)
+        return;
+    if (auto* syntheticModule = dynamicDowncast<NodeVMSyntheticModule>(module))
+        syntheticModule->link(globalObject, nullptr, nullptr, jsUndefined());
+}
+
 void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint)
 {
     VM& vm = globalObject->vm();
@@ -333,12 +341,8 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
             continue;
         }
 
-        if (dependency->status() == Status::Unlinked) {
-            if (auto* syntheticDependency = dynamicDowncast<NodeVMSyntheticModule>(dependency)) {
-                syntheticDependency->link(globalObject, nullptr, nullptr, jsUndefined());
-                RETURN_IF_EXCEPTION(scope, );
-            }
-        }
+        linkIfUnlinkedSynthetic(globalObject, dependency);
+        RETURN_IF_EXCEPTION(scope, );
 
         if (dependency->status() == Status::Linked) {
             JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
@@ -367,12 +371,8 @@ void NodeVMModule::prepareDeferredSubgraph(JSGlobalObject* globalObject, Uncheck
         if (!visited.add(module).isNewEntry)
             continue;
 
-        if (module->status() == Status::Unlinked) {
-            if (auto* syntheticModule = dynamicDowncast<NodeVMSyntheticModule>(module)) {
-                syntheticModule->link(globalObject, nullptr, nullptr, jsUndefined());
-                RETURN_IF_EXCEPTION(scope, );
-            }
-        }
+        linkIfUnlinkedSynthetic(globalObject, module);
+        RETURN_IF_EXCEPTION(scope, );
 
         if (dynamicDowncast<NodeVMSyntheticModule>(module)) {
             if (module->status() == Status::Linked) {

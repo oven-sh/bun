@@ -1290,6 +1290,26 @@ describe("node:vm SourceTextModule import defer", () => {
     expect(metaCalls).toBe(1);
   });
 
+  test("a throwing deferred dependency surfaces the error and reports errored status", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    const dep = new vm.SourceTextModule("LOG.push('DEP'); throw new Error('boom'); export const a = 1;", {
+      identifier: "dep",
+      context: ctx,
+    });
+    const root = new vm.SourceTextModule(
+      "import defer * as N from 'dep'; LOG.push('ROOT'); export let caught; try { N.a; } catch (e) { caught = String(e); }",
+      { identifier: "root", context: ctx },
+    );
+    await root.link(() => dep);
+    await root.evaluate();
+
+    expect(root.namespace.caught).toBe("Error: boom");
+    expect(ctx.LOG.join("|")).toBe("ROOT|DEP");
+    expect(dep.status).toBe("errored");
+    expect(String(dep.error)).toBe("Error: boom");
+    expect(root.status).toBe("evaluated");
+  });
+
   test("`import.defer()` and `import()` from the same module report distinct phases", async () => {
     const ctx = vm.createContext({});
     const dep = new vm.SourceTextModule("export const v = 1;", { identifier: "dep", context: ctx });

@@ -270,8 +270,10 @@ pub fn replace_package_manager_run(
 /// placed before the script name and return the number of input bytes consumed.
 /// Returns 0 (caller falls back to the plain `npm run` -> `bun run` prefix swap,
 /// keeping byte-for-byte output) when no workspace flag is present, when the
-/// match is inside a quoted string, or when the segment's quotes are unbalanced:
-/// reordering tokens is only safe at shell top level with balanced quoting.
+/// match is inside a quoted string, when the segment's quotes are unbalanced, or
+/// when it contains shell grouping/escaping the tokenizer does not model (`(`,
+/// `)`, `$`, `` ` ``, `\`): reordering tokens is only safe at shell top level
+/// with balanced quoting and no such constructs.
 fn rewrite_npm_run_workspaces(
     out: &mut Vec<u8>,
     cmd: &[u8],
@@ -289,6 +291,9 @@ fn rewrite_npm_run_workspaces(
     // End of this simple command: first top-level (unquoted) shell separator.
     let mut seg_end = args.len();
     let (mut in_single, mut in_double) = (false, false);
+    // Shell grouping/escaping the tokenizer below does not model. Reordering
+    // tokens across these would scramble the command, so bail when present.
+    let mut has_unsupported = false;
     {
         let mut i = 0;
         while i < args.len() {
@@ -305,14 +310,15 @@ fn rewrite_npm_run_workspaces(
                         seg_end = i;
                         break;
                     }
+                    b'(' | b')' | b'$' | b'`' | b'\\' => has_unsupported = true,
                     _ => {}
                 }
             }
             i += 1;
         }
     }
-    // Unbalanced quotes mean we cannot safely tokenize/reorder this segment.
-    if in_single || in_double {
+    // Unbalanced quotes or unmodeled shell constructs: not safe to reorder.
+    if in_single || in_double || has_unsupported {
         return 0;
     }
     let segment = &args[..seg_end];

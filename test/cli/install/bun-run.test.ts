@@ -728,6 +728,28 @@ describe.concurrent("bun run", () => {
       expect(stdout).toContain("greet-done");
       expect(exitCode).toBe(0);
     });
+
+    // Shell grouping/substitution the rewrite does not model: it must fall back
+    // to the plain prefix swap rather than reorder tokens across them.
+    it.each([
+      ["(true && npm run greet -w app)", "subshell"],
+      ["npm run greet -w $(echo app)", "command substitution"],
+    ])("%s is not mangled by workspace-flag reordering (%s)", async rootScript => {
+      using dir = tempDir("npm-ws-shell", rootScriptRepo(rootScript));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "start"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15_000,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toContain("greet-done");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("'bun run' priority", async () => {

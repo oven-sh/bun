@@ -3943,8 +3943,10 @@ class ServerHttp2Session extends Http2Session {
       payload.writeBigUInt64LE(process.hrtime.bigint());
     }
     const parser = this.#parser;
-    if (!parser) return false;
-    if (!this[bunHTTP2Socket]) return false;
+    if (!parser || !this[bunHTTP2Socket]) {
+      process.nextTick(callback, $ERR_HTTP2_PING_CANCEL());
+      return false;
+    }
 
     if (this.#pingCallbacks) {
       this.#pingCallbacks.push([callback, Date.now()]);
@@ -4622,8 +4624,10 @@ class ClientHttp2Session extends Http2Session {
       payload.writeBigUInt64LE(process.hrtime.bigint());
     }
     const parser = this.#parser;
-    if (!parser) return false;
-    if (!this[bunHTTP2Socket]) return false;
+    if (!parser || !this[bunHTTP2Socket]) {
+      process.nextTick(callback, $ERR_HTTP2_PING_CANCEL());
+      return false;
+    }
 
     if (this.#pingCallbacks) {
       this.#pingCallbacks.push([callback, Date.now()]);

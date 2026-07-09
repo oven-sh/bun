@@ -119,7 +119,7 @@ describe("hash", () => {
               algorithm: "argon2id",
               memoryCost: invalid,
             }),
-          ).toThrow("Memory cost must be at least 8");
+          ).toThrow("Memory cost must be between 8 and 4194304");
         }
 
         expect(() =>
@@ -135,6 +135,34 @@ describe("hash", () => {
             cost: -999,
           }),
         ).toThrow();
+      });
+
+      // hash() must enforce the same upper bounds that verify() applies to
+      // PHC params, so Bun never produces a hash it cannot verify.
+      test("argon2 cost upper bounds match verify", () => {
+        expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost: 8, timeCost: 65537 })).toThrow(
+          "Time cost must be between 1 and 65536",
+        );
+        expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost: 4194305, timeCost: 1 })).toThrow(
+          "Memory cost must be between 8 and 4194304",
+        );
+      });
+
+      test("out-of-i32-range cost options throw instead of wrapping", () => {
+        for (const algorithm of ["argon2id", "argon2d", "argon2i"] as const) {
+          expect(() => hash(placeholder, { algorithm, memoryCost: 8, timeCost: 2 ** 32 + 2 })).toThrow(
+            "Time cost must be between 1 and 65536",
+          );
+          expect(() => hash(placeholder, { algorithm, memoryCost: 2 ** 32 + 64, timeCost: 1 })).toThrow(
+            "Memory cost must be between 8 and 4194304",
+          );
+          expect(() => hash(placeholder, { algorithm, memoryCost: 8, timeCost: 2 ** 31 })).toThrow(
+            "Time cost must be between 1 and 65536",
+          );
+        }
+        expect(() => hash(placeholder, { algorithm: "bcrypt", cost: 2 ** 32 + 5 })).toThrow(
+          "Rounds must be between 4 and 31",
+        );
       });
 
       test("coercion throwing doesn't crash", () => {
@@ -391,6 +419,16 @@ for (let algorithmValue of algorithms) {
     }
   });
 }
+
+// argon2 at t=65536 is too slow under debug/ASAN to finish in the default
+// timeout; release CI exercises the boundary.
+test.skipIf(isDebug)("argon2 cost options at the verify ceilings round-trip through hash and verify", async () => {
+  // Use the timeCost ceiling with the memoryCost floor; the memoryCost
+  // ceiling would allocate 4 GiB.
+  const hashed = await password.hash("p", { algorithm: "argon2id", memoryCost: 8, timeCost: 65536 });
+  expect(hashed).toContain("$m=8,t=65536,p=1$");
+  expect(await password.verify("p", hashed)).toBeTrue();
+});
 
 test("verify rejects encoded argon2 hashes with cost parameters above the supported maximums", async () => {
   // Hash with small, fast parameters so this test stays cheap on debug builds.

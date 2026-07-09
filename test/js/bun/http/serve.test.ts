@@ -3186,3 +3186,63 @@ it("type: direct stream — small write queued under backpressure is delivered i
     socket.destroy();
   }
 });
+
+// Aborting an upload mid-body while a req.body.tee() branch is the in-flight
+// response body must not crash the server process.
+it("survives aborted uploads while responding with a tee()d request-body branch", async () => {
+  const script = `
+    const net = require("node:net");
+    const readAll = async rs => { const rd = rs.getReader(); for (;;) { if ((await rd.read()).done) return; } };
+    let seen = 0, settled = 0, notify = () => {};
+    const srv = Bun.serve({
+      hostname: "127.0.0.1", port: 0, idleTimeout: 0,
+      error() { return new Response("err"); },
+      async fetch(req) {
+        if (!req.body) return new Response("nobody");
+        seen++;
+        const [a, b] = req.body.tee();
+        readAll(b).catch(() => {}).finally(() => { settled++; notify(); });
+        return new Response(a);
+      },
+    });
+    const chunk = Buffer.alloc(8192, 66);
+    let it = 0;
+    for (; it < 40; it++) {
+      await new Promise(done => {
+        const s = net.connect(srv.port, "127.0.0.1", () => {
+          s.write("POST / HTTP/1.1\\r\\nhost: x\\r\\ncontent-length: 262144\\r\\n\\r\\n");
+          setImmediate(() => {
+            s.write(chunk);
+            s.write(chunk);
+            s.write(chunk);
+            setImmediate(() => { s.destroy(); done(); });
+          });
+        });
+        s.on("data", () => {});
+        s.on("error", () => done());
+      });
+    }
+    // One clean request so every aborted connection's header has reached fetch().
+    await fetch(srv.url).then(r => r.text());
+    // readAll(b) settles only after the tee's source-error reaction has errored branch b,
+    // so settled == seen proves every tee reaction for every handled request has run.
+    while (settled < seen) await new Promise(r => { notify = r; });
+    console.log("SURVIVED", it, seen === settled);
+    srv.stop(true);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "SURVIVED 40 true",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});

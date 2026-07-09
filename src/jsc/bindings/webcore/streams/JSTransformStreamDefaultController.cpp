@@ -27,11 +27,14 @@ namespace WebStreams {
 
 using namespace JSC;
 
-// The transform's readable half always carries a default controller.
+// Null-safe: Bun's native-sink pumps clear a consumed stream's controller slot in their
+// finally step, so a transform reaction (or an async transform()/flush() resuming after
+// that teardown) can see a readable with no controller. A torn-down readable is terminal.
 static JSReadableStreamDefaultController* transformReadableController(JSTransformStream* stream)
 {
     auto* readable = stream->m_readable.get();
-    ASSERT(readable && readable->m_controllerKind == ControllerKind::Default);
+    if (readable->m_controllerKind != ControllerKind::Default)
+        return nullptr;
     return uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
 }
 
@@ -285,7 +288,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamDefaultControllerPrototypeGetter_desir
     auto* thisObject = dynamicDowncast<JSTransformStreamDefaultController>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, globalObject, "TransformStreamDefaultController"_s);
-    std::optional<double> desiredSize = readableStreamDefaultControllerGetDesiredSize(transformReadableController(thisObject->m_stream.get()));
+    auto* readableController = transformReadableController(thisObject->m_stream.get());
+    if (!readableController)
+        return JSValue::encode(jsNull());
+    std::optional<double> desiredSize = readableStreamDefaultControllerGetDesiredSize(readableController);
     if (!desiredSize)
         return JSValue::encode(jsNull());
     return JSValue::encode(jsNumber(*desiredSize));
@@ -351,7 +357,7 @@ void transformStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSTra
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = controller->m_stream.get();
     auto* readableController = transformReadableController(stream);
-    if (!readableStreamDefaultControllerCanCloseOrEnqueue(readableController)) {
+    if (!readableController || !readableStreamDefaultControllerCanCloseOrEnqueue(readableController)) {
         throwTypeError(globalObject, scope, "Cannot enqueue a chunk into a TransformStream whose readable side is closed or has already requested close"_s);
         return;
     }
@@ -407,8 +413,10 @@ void transformStreamDefaultControllerTerminate(JSGlobalObject* globalObject, JST
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = controller->m_stream.get();
-    readableStreamDefaultControllerClose(globalObject, transformReadableController(stream));
-    RETURN_IF_EXCEPTION(scope, void());
+    if (auto* readableController = transformReadableController(stream)) {
+        readableStreamDefaultControllerClose(globalObject, readableController);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     JSObject* error = createTypeError(globalObject, "The TransformStream has been terminated"_s);
     RELEASE_AND_RETURN(scope, transformStreamErrorWritableAndUnblockWrite(globalObject, stream, error));
 }

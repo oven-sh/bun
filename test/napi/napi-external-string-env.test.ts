@@ -19,14 +19,14 @@
 
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isLinux, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 const napiAppDir = join(import.meta.dir, "napi-app");
 const addon = join(napiAppDir, "build", "Debug", "external_string_addon.node");
 
-describe("node_api_create_external_string_* finalizer holds Ref<NapiEnv>", () => {
+describe.skipIf(!canBuildNodeAddons())("node_api_create_external_string_* finalizer holds Ref<NapiEnv>", () => {
   beforeAll(() => {
     if (existsSync(addon)) return;
     const install = spawnSync({

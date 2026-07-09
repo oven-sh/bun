@@ -506,12 +506,10 @@ fn message_with_type_and_level_(
     let writer: &mut dyn bun_io::Write = raw_writer;
 
     // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
-    // dep on the high tier). Dispatch through `RuntimeHooks` instead — the
-    // high-tier hook checks `Jest.runner` and calls `onBeforePrint()`; no-op
-    // when `bun test` isn't running or hooks aren't installed.
-    if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-        (hooks.console_on_before_print)();
-    }
+    // dep on the high tier). Dispatch through the link-time extern instead —
+    // the high-tier body checks `Jest.runner` and calls `onBeforePrint()`;
+    // no-op when `bun test` isn't running.
+    crate::virtual_machine::bun_runtime_console_on_before_print();
 
     let mut print_length = len;
     // Get console depth from CLI options or bunfig, fallback to default.
@@ -4691,21 +4689,20 @@ pub mod formatter {
             // `Response`/`Request`/`Blob`/`S3Client`/`Archive`/`BuildArtifact`/
             // `FetchHeaders`/`TimeoutObject`/`ImmediateObject`/`BuildMessage`/
             // `ResolveMessage`/Jest asymmetric matchers — all of which live in
-            // `bun_runtime` (forward-dep). Dispatch through `RuntimeHooks` so
-            // the high tier owns the downcasts. Hook returns `true` when it
-            // formatted `value`; otherwise we fall through to the generic
-            // object printer below.
-            if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-                // The hook only ever
-                // seeds a `ZigString` that `get_class_name` immediately
-                // overwrites with JSC-owned bytes, so a shared zero buffer is
-                // sufficient and keeps 512B off every recursive frame.
-                static NAME_BUF: [u8; 512] = [0; 512];
-                let handled =
-                    (hooks.console_print_runtime_object)(self, writer_, value, &NAME_BUF, C)?;
-                if handled {
-                    return Ok(());
-                }
+            // `bun_runtime` (forward-dep). Dispatch through the link-time
+            // extern so the high tier owns the downcasts. It returns `true`
+            // when it formatted `value`; otherwise we fall through to the
+            // generic object printer below.
+            //
+            // The hook only ever
+            // seeds a `ZigString` that `get_class_name` immediately
+            // overwrites with JSC-owned bytes, so a shared zero buffer is
+            // sufficient and keeps 512B off every recursive frame.
+            static NAME_BUF: [u8; 512] = [0; 512];
+            if crate::virtual_machine::bun_runtime_console_print_runtime_object(
+                self, writer_, value, &NAME_BUF, C,
+            )? {
+                return Ok(());
             }
 
             // `DOMFormData` is a C++-backed WebCore type — no `JsClass` derive,

@@ -943,9 +943,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // `bun_jsc::initialize`
         // is real (calls `JSCInitialize` over `bun_sys::environ()`); the
-        // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
-        // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
-        // a populated `RuntimeHooks` table.
+        // `bun_runtime_*` dispatch bodies `VirtualMachine::init` calls are
+        // link-time resolved (`jsc_hooks`), so nothing is installed at runtime.
         bun_jsc::initialize(ctx.runtime_options.eval.eval_and_print);
         bun_ast::initialize_store();
 

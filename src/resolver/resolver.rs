@@ -27,7 +27,8 @@ pub use ::bun_install_types::resolver_hooks::AutoInstaller as PackageManagerTrai
 // LAYERING: `PackageManager.initWithRuntime` lives in
 // `bun_install`, which depends on this crate. The lazy-init body is defined
 // `#[no_mangle]` in `bun_install::auto_installer` and resolved at link time
-// (same pattern as `__bun_regex_*` / `__BUN_RUNTIME_HOOKS`). `install` is the
+// (same pattern as `__bun_regex_*` / the `bun_runtime_*` VM hooks). `install`
+// is the
 // `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`
 // (lifetime-erased to `'static` — the install crate stores it as a raw
 // `NonNull<Loader<'static>>`).

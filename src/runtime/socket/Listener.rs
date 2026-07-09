@@ -55,8 +55,9 @@ fn with_ssl_ctx_cache<R>(
         "runtime_state() before init_runtime_state"
     );
     // SAFETY: `state` is the per-thread `RuntimeState` boxed in
-    // `init_runtime_state`, address-stable until VM teardown, and only the JS
-    // thread reaches here — so this `&mut` is unique for `f`'s duration.
+    // `bun_runtime_init_runtime_state`, address-stable until VM teardown, and
+    // only the JS thread reaches here — so this `&mut` is unique for `f`'s
+    // duration.
     f(unsafe { &mut (*state).ssl_ctx_cache })
 }
 

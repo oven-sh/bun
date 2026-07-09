@@ -25,14 +25,14 @@ TransferredMessagePort::~TransferredMessagePort()
     // handed off to a new MessagePort via entangle()), the side is orphaned;
     // mark it Closed so the peer's hasPendingActivity() can return false.
     if (pipe)
-        pipe->close(side, MessagePortPipe::CloseKind::Collected);
+        pipe->close(side, MessagePortPipe::CloseKind::Explicit);
 }
 
 TransferredMessagePort& TransferredMessagePort::operator=(TransferredMessagePort&& other)
 {
     if (this != &other) {
         if (pipe)
-            pipe->close(side, MessagePortPipe::CloseKind::Collected);
+            pipe->close(side, MessagePortPipe::CloseKind::Explicit);
         pipe = WTF::move(other.pipe);
         side = other.side;
     }
@@ -276,7 +276,7 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
         for (auto& message : dropped) {
             for (auto& tp : message.transferredPorts) {
                 if (auto p = std::exchange(tp.pipe, nullptr))
-                    worklist.append({ WTF::move(p), tp.side, CloseKind::Collected });
+                    worklist.append({ WTF::move(p), tp.side, CloseKind::Explicit });
             }
         }
         // `dropped` (and the RefPtr in the structured binding) destruct
@@ -286,7 +286,11 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
         // Notify each closed pipe's entangled peer so it can fire 'close' and
         // release its event-loop ref — including nested in-transit ports drained
         // from the worklist, not just the originally-closed side.
-        pipe->notifyPeerClosed(1 - sd);
+        // Only a real close reaches the peer. A collected wrapper must not: node never
+        // fires 'close' (nor releases the survivor's loop ref) for a GC, so doing it here
+        // would make both observable at GC timing.
+        if (sdKind == CloseKind::Explicit)
+            pipe->notifyPeerClosed(1 - sd);
     }
 }
 

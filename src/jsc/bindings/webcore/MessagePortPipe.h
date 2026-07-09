@@ -68,9 +68,10 @@ public:
     // NOT enable drains. No-op if already attached/registered/closed.
     void registerCloseContext(uint8_t side, ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<MessagePort>);
     void detach(uint8_t side);
-    // Explicit == a JS close()/teardown; Collected == the owning MessagePort (or an
-    // orphaned transferred endpoint) was destroyed. The peer's jsRef() must ignore the
-    // latter: node never closes a channel just because a port got garbage-collected.
+    // Explicit == a real, permanent close: close(), context teardown, or an orphaned
+    // transferred endpoint. Collected == the owning MessagePort's wrapper was garbage
+    // collected while still entangled. Node never closes a channel for a collection, so
+    // Collected neither notifies the peer nor sets ClosedByRequest.
     enum class CloseKind : uint8_t { Explicit,
         Collected };
     void close(uint8_t side, CloseKind = CloseKind::Collected);

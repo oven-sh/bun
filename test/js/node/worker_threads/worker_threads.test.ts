@@ -983,6 +983,63 @@ test("off() removes only the listener it names, per event and per port", () => {
   }
 });
 
+// Node never closes a channel because a port was garbage-collected: the survivor
+// gets no 'close' and keeps its event-loop ref. bun's ~MessagePort closes its pipe
+// side, so the collection must not be reported to the peer.
+test("collecting the unreferenced peer fires no close event", async () => {
+  let closed = 0;
+  const { port1 } = new MessageChannel(); // port2 unreachable, no listeners
+  port1.on("close", () => closed++);
+  Bun.gc(true);
+  Bun.gc(true);
+  Bun.gc(true);
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  expect(closed).toBe(0);
+  port1.close();
+});
+
+// An orphaned transferred endpoint IS a real close -- node fires 'close' on its peer.
+test("dropping a transferred port notifies its peer", async () => {
+  const { port1, port2 } = new MessageChannel();
+  const { port1: a, port2: b } = new MessageChannel();
+  const { promise, resolve } = Promise.withResolvers<void>();
+  b.on("close", () => resolve());
+  port1.postMessage(a, [a]); // queued in port2's inbox, never received
+  port2.close(); // drops the queued message, orphaning `a`
+  await promise;
+  b.close();
+  port1.close();
+});
+
+// close() outside a dispatch drops whatever is queued; close() from inside a
+// 'message' handler lets the in-flight drain finish. Both are node's behaviour.
+test("close() drops queued messages unless it runs inside a dispatch", async () => {
+  {
+    const { port1, port2 } = new MessageChannel();
+    let got = 0;
+    port2.on("message", () => got++);
+    port1.postMessage("x");
+    port2.close(); // sync close before the first drain
+    for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+    expect(got).toBe(0);
+    port1.close();
+  }
+  {
+    const { port1, port2 } = new MessageChannel();
+    const seen: number[] = [];
+    port2.on("message", m => {
+      seen.push(m);
+      if (m === 1) port2.close();
+    });
+    port1.postMessage(1);
+    port1.postMessage(2);
+    port1.postMessage(3);
+    for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+    expect(seen).toEqual([1, 2, 3]);
+    port1.close();
+  }
+});
+
 test("MessagePort NodeEventTarget methods", () => {
   const { port1 } = new MessageChannel();
   expect(typeof port1.listenerCount).toBe("function");

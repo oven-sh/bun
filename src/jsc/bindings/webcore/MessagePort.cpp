@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "MessagePort.h"
+#include <wtf/SetForScope.h>
 
 #include "BunClientData.h"
 #include "EventNames.h"
@@ -186,10 +187,12 @@ void MessagePort::close()
         return;
     m_isClosing = true;
 
-    // Deliver messages queued before close() (node defers handle teardown, so an
-    // in-flight drain finishes). Reentrant close() is short-circuited by m_isClosing;
-    // later sends are rejected by the pipe's Closed check.
-    flushQueuedMessagesBeforeClose();
+    // Only an in-flight drain finishes: node keeps delivering the rest of the batch
+    // when a 'message' handler calls close(), but drops everything still queued when
+    // close() runs outside a dispatch. Reentrant close() is short-circuited by
+    // m_isClosing; later sends are rejected by the pipe's Closed check.
+    if (m_isDispatching)
+        flushQueuedMessagesBeforeClose();
 
     m_isDetached = true;
 
@@ -327,6 +330,8 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
 {
     if (m_isDetached || !context.globalObject())
         return;
+
+    SetForScope dispatching { m_isDispatching, true };
 
     auto* globalObject = defaultGlobalObject(context.globalObject());
     Ref vm = globalObject->vm();

@@ -137,6 +137,10 @@ private:
     bool m_started { false };
     bool m_isDetached { false };
     bool m_isClosing { false };
+    // True while a 'message' handler is on the stack. close() called from inside one
+    // must finish delivering the in-flight drain (node does); a close from anywhere
+    // else drops whatever is still queued.
+    bool m_isDispatching { false };
     bool m_closeEventDispatched { false };
     // Set while the deferred close task is queued: hasPendingActivity() must keep
     // the wrapper alive until it runs, or the task dispatches into a dead listener.

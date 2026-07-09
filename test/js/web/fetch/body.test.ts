@@ -367,6 +367,16 @@ for (const { body, fn } of bodyTypes) {
         r.body!.getReader();
         expect(() => r.textStream()).toThrow(TypeError);
       });
+      test("locks a previously-accessed .body stream", async () => {
+        const r = fn("hello");
+        const stream = r.body!;
+        expect(stream.locked).toBe(false);
+        const ts = r.textStream();
+        expect(stream.locked).toBe(true);
+        expect(() => stream.getReader()).toThrow(TypeError);
+        expect(stream.cancel()).rejects.toBeInstanceOf(TypeError);
+        expect((await Array.fromAsync(ts)).join("")).toBe("hello");
+      });
       test("second textStream() call throws", () => {
         const r = fn("hello");
         r.textStream();

@@ -3952,7 +3952,13 @@ class ServerHttp2Session extends Http2Session {
       this.#pingCallbacks = [[callback, Date.now()]];
     }
 
-    parser.ping(payload);
+    try {
+      parser.ping(payload);
+    } catch {
+      this.#pingCallbacks.pop();
+      process.nextTick(callback, $ERR_HTTP2_PING_CANCEL());
+      return false;
+    }
     return true;
   }
   goaway(code = NGHTTP2_NO_ERROR, lastStreamID = 0, opaqueData) {
@@ -4625,7 +4631,13 @@ class ClientHttp2Session extends Http2Session {
       this.#pingCallbacks = [[callback, Date.now()]];
     }
 
-    parser.ping(payload);
+    try {
+      parser.ping(payload);
+    } catch {
+      this.#pingCallbacks.pop();
+      process.nextTick(callback, $ERR_HTTP2_PING_CANCEL());
+      return false;
+    }
     return true;
   }
   goaway(errorCode = constants.NGHTTP2_NO_ERROR, lastStreamId = 0, opaqueData) {

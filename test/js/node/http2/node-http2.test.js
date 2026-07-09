@@ -1027,6 +1027,39 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             client.close();
           }
         });
+        it("ping returns false and cancels via callback once maxOutstandingPings is reached", async () => {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          const client = http2.connect(HTTPS_SERVER, { ...TLS_OPTIONS, maxOutstandingPings: 2 });
+          client.on("error", reject);
+          client.on("connect", () => resolve());
+          await promise;
+          try {
+            const pA = Buffer.from("AAAAAAAA");
+            const pB = Buffer.from("BBBBBBBB");
+            const acks = [];
+            const ackPromise = new Promise((res, rej) => {
+              const record = name => (err, d, ret) => {
+                if (err) return rej(err);
+                acks.push([name, Buffer.from(ret)]);
+                if (acks.length === 2) res();
+              };
+              expect(client.ping(pA, record("A"))).toBe(true);
+              expect(client.ping(pB, record("B"))).toBe(true);
+            });
+            const cancelled = await new Promise((res, rej) => {
+              const ok = client.ping(Buffer.from("CCCCCCCC"), err => (err ? res(err) : rej("expected cancel")));
+              expect(ok).toBe(false);
+            });
+            expect(cancelled).toMatchObject({ code: "ERR_HTTP2_PING_CANCEL", name: "Error" });
+            await ackPromise;
+            expect(acks).toEqual([
+              ["A", pA],
+              ["B", pB],
+            ]);
+          } finally {
+            client.close();
+          }
+        });
         it("ping without payload echoes a non-zero timestamp", async () => {
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);

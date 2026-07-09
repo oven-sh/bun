@@ -2308,13 +2308,16 @@ console.log(<div {...obj} key="after" />);`),
     });
 
     it("unicode surrogates", () => {
-      expectPrinted_(`console.log("𐌴")`, 'console.log("\\uD800\\uDF34")');
-      expectPrinted_(`console.log("\\u{10334}")`, 'console.log("\\uD800\\uDF34")');
-      expectPrinted_(`console.log("\\uD800\\uDF34")`, 'console.log("\\uD800\\uDF34")');
+      expectPrinted_(`console.log("𐌴")`, 'console.log("𐌴")');
+      expectPrinted_(`console.log("\\u{10334}")`, 'console.log("𐌴")');
+      expectPrinted_(`console.log("\\uD800\\uDF34")`, 'console.log("𐌴")');
       expectPrinted_(`console.log("\\u{10334}" === "\\uD800\\uDF34")`, "console.log(true)");
       expectPrinted_(`console.log("\\u{10334}" === "\\uDF34\\uD800")`, "console.log(false)");
       expectPrintedMin_(`console.log("abc" + "def")`, 'console.log("abcdef")');
+      // Lone surrogates stay escaped; concatenation must not combine across operands.
       expectPrintedMin_(`console.log("\\uD800" + "\\uDF34")`, 'console.log("\\uD800" + "\\uDF34")');
+      expectPrinted_(`console.log("\\uD800")`, 'console.log("\\uD800")');
+      expectPrinted_(`console.log("\\uDF34")`, 'console.log("\\uDF34")');
     });
 
     it("fold string addition", () => {
@@ -3945,7 +3948,7 @@ console.log(foo, array);
 
       const input = `let list = ["•", "-", "◦", "▪", "▫"];\n`;
       const result = await transpiler.transform(input);
-      expect(result).toBe(`let list = [\"\\u2022\", \"-\", \"\\u25E6\", \"\\u25AA\", \"\\u25AB\"];\n`);
+      expect(result).toBe(`let list = ["•", "-", "◦", "▪", "▫"];\n`);
     });
   });
 

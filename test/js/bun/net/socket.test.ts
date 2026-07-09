@@ -2063,38 +2063,44 @@ Reo=
       },
     });
 
-    const client = await Bun.connect({
-      hostname: "127.0.0.1",
-      port: server.port,
-      tls: clientTls as Bun.TLSOptions,
-      socket: {
-        open() {},
-        handshake(socket, authorized, authorizationError) {
-          handshake.resolve({
-            authorizedArg: authorized,
-            authorizedGetter: socket.authorized,
-            callbackError: authorizationError?.message ?? null,
-            getterError: socket.getAuthorizationError()?.message ?? null,
-          });
+    let client: Bun.Socket;
+    try {
+      client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: clientTls as Bun.TLSOptions,
+        socket: {
+          open() {},
+          handshake(socket, authorized, authorizationError) {
+            handshake.resolve({
+              authorizedArg: authorized,
+              authorizedGetter: socket.authorized,
+              callbackError: authorizationError?.message ?? null,
+              getterError: socket.getAuthorizationError()?.message ?? null,
+            });
+          },
+          data(_socket, data) {
+            received.push(data.toString());
+            echoed.resolve();
+          },
+          close() {
+            closed.resolve();
+          },
+          error(_socket, err) {
+            handshake.reject(err);
+            echoed.reject(err);
+          },
+          connectError(_socket, err) {
+            handshake.reject(err);
+            closed.reject(err);
+            echoed.reject(err);
+          },
         },
-        data(_socket, data) {
-          received.push(data.toString());
-          echoed.resolve();
-        },
-        close() {
-          closed.resolve();
-        },
-        error(_socket, err) {
-          handshake.reject(err);
-          echoed.reject(err);
-        },
-        connectError(_socket, err) {
-          handshake.reject(err);
-          closed.reject(err);
-          echoed.reject(err);
-        },
-      },
-    });
+      });
+    } catch (e) {
+      server.stop(true);
+      throw e;
+    }
 
     return {
       server,

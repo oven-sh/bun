@@ -4129,8 +4129,10 @@ class ServerHttp2Session extends Http2Session {
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
       const queued = self.#pendingSettingsCallbacks.shift();
-      self.emit("localSettings", settings);
+      // Node's settingsCallback (lib/internal/http2/core.js) invokes the settings()
+      // callback first and emits 'localSettings' after it.
       if (queued != null) queued[0](null, settings, Date.now() - queued[1]);
+      self.emit("localSettings", settings);
     },
     remoteSettings(self: ServerHttp2Session, settings: Settings) {
       if (!self) return;
@@ -4978,8 +4980,10 @@ class ClientHttp2Session extends Http2Session {
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
       const queued = self.#pendingSettingsCallbacks.shift();
-      self.emit("localSettings", settings);
+      // Node's settingsCallback (lib/internal/http2/core.js) invokes the settings()
+      // callback first and emits 'localSettings' after it.
       if (queued != null) queued[0](null, settings, Date.now() - queued[1]);
+      self.emit("localSettings", settings);
     },
     remoteSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;

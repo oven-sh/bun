@@ -158,11 +158,11 @@ test("mocking a package", async () => {
 });
 
 test("mock.module propagates a throwing getter on the factory's return value", () => {
-  expect(getterThrowFixture.existing).toBe("original");
+  expect({ a: getterThrowFixture.a, b: getterThrowFixture.b }).toEqual({ a: "original-a", b: "original-b" });
 
   const sentinel = new Error("GETTER-THROW");
-  const mockExports: { existing: string } = {} as any;
-  Object.defineProperty(mockExports, "existing", {
+  const mockExports: { a: string; b: string } = { a: "mock-a" } as any;
+  Object.defineProperty(mockExports, "b", {
     enumerable: true,
     get: () => {
       throw sentinel;
@@ -170,7 +170,8 @@ test("mock.module propagates a throwing getter on the factory's return value", (
   });
 
   expect(() => mock.module("./mock-module-getter-throw-fixture", () => mockExports)).toThrow(sentinel);
-  expect(getterThrowFixture.existing).toBe("original");
+  // All values are read before any override is written, so a throwing getter leaves the namespace untouched.
+  expect({ a: getterThrowFixture.a, b: getterThrowFixture.b }).toEqual({ a: "original-a", b: "original-b" });
 });
 
 test("mocking a builtin", async () => {

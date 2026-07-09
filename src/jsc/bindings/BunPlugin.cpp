@@ -659,10 +659,19 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                             JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
                             RETURN_IF_EXCEPTION(scope, {});
 
+                            JSC::MarkedArgumentBuffer values;
+                            values.ensureCapacity(names.size());
                             for (auto& name : names) {
                                 JSValue value = object->get(globalObject, name);
                                 RETURN_IF_EXCEPTION(scope, {});
-                                moduleNamespaceObject->overrideExportValue(globalObject, name, value);
+                                values.append(value);
+                            }
+                            if (values.hasOverflowed()) [[unlikely]] {
+                                JSC::throwOutOfMemoryError(globalObject, scope);
+                                return {};
+                            }
+                            for (size_t i = 0; i < names.size(); ++i) {
+                                moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
 

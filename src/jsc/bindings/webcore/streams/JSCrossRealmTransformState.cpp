@@ -7,6 +7,7 @@
 #include "JSDOMGlobalObject.h"
 #include "JSReadableStreamDefaultController.h"
 #include "JSWritableStreamDefaultController.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
@@ -15,6 +16,7 @@
 namespace WebCore {
 
 using namespace JSC;
+using Bun::WebStreams::analyzeBarrierEdge;
 
 const ClassInfo JSCrossRealmTransformState::s_info = { "CrossRealmTransformState"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCrossRealmTransformState) };
 
@@ -63,6 +65,17 @@ void JSCrossRealmTransformState::visitChildrenImpl(JSCell* cell, Visitor& visito
     visitor.append(thisObject->m_backpressurePromise);
     visitor.append(thisObject->m_readableController);
     visitor.append(thisObject->m_writableController);
+}
+
+void JSCrossRealmTransformState::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSCrossRealmTransformState>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_port, "port"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_backpressurePromise, "backpressurePromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_readableController, "readableController"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_writableController, "writableController"_s);
 }
 
 } // namespace WebCore

@@ -18,6 +18,7 @@
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamsRuntime.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArrayBuffer.h>
@@ -43,6 +44,7 @@
 namespace WebCore {
 
 using namespace JSC;
+using Bun::WebStreams::analyzeBarrierEdge;
 
 // JSBunStandaloneTextSink — the GENERIC toText accumulator cell (BunStandaloneTextSink.h).
 
@@ -100,6 +102,19 @@ void JSBunStandaloneTextSink::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_accumulator.visit(locker, visitor);
 }
 
+void JSBunStandaloneTextSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSBunStandaloneTextSink>(cell);
+    Base::analyzeHeap(cell, analyzer);
+    WTF::Locker locker { thisObject->cellLock() };
+    auto& pieces = thisObject->m_accumulator.pieces;
+    for (uint32_t i = 0; i < pieces.size(); ++i) {
+        JSValue v = pieces[i].get();
+        if (v && v.isCell())
+            analyzer.analyzeIndexEdge(cell, v.asCell(), i);
+    }
+}
+
 // JSOneShotDirectSink — consumeDirectStreamToArrayBuffer's throwaway controller cell.
 
 const ClassInfo JSOneShotDirectSink::s_info = { "OneShotDirectSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSOneShotDirectSink) };
@@ -149,6 +164,17 @@ void JSOneShotDirectSink::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_arrayBufferSink);
     visitor.append(thisObject->m_capabilityPromise);
     visitor.append(thisObject->m_closeFunction);
+}
+
+void JSOneShotDirectSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSOneShotDirectSink>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_arrayBufferSink, "arrayBufferSink"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_capabilityPromise, "capabilityPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closeFunction, "closeFunction"_s);
 }
 
 // JSReadableStreamIntoArrayOperation — the queue-backed array pump's persistent state.
@@ -202,6 +228,16 @@ void JSReadableStreamIntoArrayOperation::visitChildrenImpl(JSCell* cell, Visitor
     visitor.append(thisObject->m_reader);
     visitor.append(thisObject->m_chunks);
     visitor.append(thisObject->m_result);
+}
+
+void JSReadableStreamIntoArrayOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableStreamIntoArrayOperation>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_reader, "reader"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_chunks, "chunks"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_result, "result"_s);
 }
 
 } // namespace WebCore

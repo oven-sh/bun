@@ -21,6 +21,7 @@
 #include "JSStreamPipeToOperation.h"
 #include "JSStreamTeeState.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/JSCInlines.h>
@@ -141,6 +142,19 @@ void JSStreamsRuntime::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         WTF::Locker locker { thisObject->cellLock() };
         for (auto& controller : thisObject->m_endOfTickFlushes)
             visitor.append(controller);
+    }
+}
+
+void JSStreamsRuntime::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSStreamsRuntime>(cell);
+    Base::analyzeHeap(cell, analyzer);
+    WTF::Locker locker { thisObject->cellLock() };
+    uint32_t i = 0;
+    for (auto& entry : thisObject->m_endOfTickFlushes) {
+        if (auto* controller = entry.get())
+            analyzer.analyzeIndexEdge(cell, controller, i);
+        ++i;
     }
 }
 

@@ -81,6 +81,7 @@ public:
     // visitChildrenImpl MUST visit the barrier container m_accumulator.pieces (via
     // m_accumulator.visit(locker, visitor) inside ONE `Locker { cellLock() }` scope).
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

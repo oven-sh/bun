@@ -13,6 +13,7 @@
 #include "JSTransformStreamDefaultController.h"
 #include "JSWritableStream.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -273,6 +274,17 @@ void JSTransformStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_writable);
     visitor.append(thisObject->m_controller);
     visitor.append(thisObject->m_backpressureChangePromise);
+}
+
+void JSTransformStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSTransformStream>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_readable, "readable"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_writable, "writable"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_backpressureChangePromise, "backpressureChangePromise"_s);
 }
 
 // Prototype host functions

@@ -32,6 +32,7 @@ public:
     // visitChildrenImpl MUST visit: m_handle, m_pendingView, m_closer, m_drainValue.
     // m_controller is a JSC::Weak and MUST NOT be visited (that is the whole point).
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

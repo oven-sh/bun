@@ -12,6 +12,7 @@
 #include "JSDOMWrapperCache.h"
 #include "JSReadableByteStreamController.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -169,6 +170,15 @@ void JSReadableStreamBYOBRequest::visitChildrenImpl(JSCell* cell, Visitor& visit
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_controller);
     visitor.append(thisObject->m_view);
+}
+
+void JSReadableStreamBYOBRequest::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableStreamBYOBRequest>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_view, "view"_s);
 }
 
 // Prototype host functions

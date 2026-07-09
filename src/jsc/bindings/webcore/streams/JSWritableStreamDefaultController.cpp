@@ -11,6 +11,7 @@
 #include "JSStreamsRuntime.h"
 #include "JSTransformStream.h"
 #include "JSWritableStream.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 
 #include <JavaScriptCore/Error.h>
@@ -290,6 +291,21 @@ void JSWritableStreamDefaultController::visitChildrenImpl(JSCell* cell, Visitor&
 }
 
 DEFINE_VISIT_CHILDREN(JSWritableStreamDefaultController);
+
+void JSWritableStreamDefaultController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSWritableStreamDefaultController>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_abortController, "abortController"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_strategySizeAlgorithm, "strategySizeAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.underlyingObject, "underlyingSink"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method1, "writeAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method2, "closeAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method3, "abortAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.algorithmContext, "algorithmContext"_s);
+}
 
 // [[AbortSteps]](reason)
 JSPromise* JSWritableStreamDefaultController::abortSteps(JSGlobalObject* globalObject, JSValue reason)

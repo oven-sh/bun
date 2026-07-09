@@ -11,6 +11,7 @@
 #include "JSStreamTeeState.h"
 #include "JSStreamsRuntime.h"
 #include "JSTransformStream.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 
 #include <JavaScriptCore/Error.h>
@@ -279,6 +280,19 @@ void JSReadableStreamDefaultController::visitChildrenImpl(JSCell* cell, Visitor&
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamDefaultController);
+
+void JSReadableStreamDefaultController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableStreamDefaultController>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_strategySizeAlgorithm, "strategySizeAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.underlyingObject, "underlyingSource"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method1, "pullAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method2, "cancelAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.algorithmContext, "algorithmContext"_s);
+}
 
 // [[CancelSteps]](reason)
 JSPromise* JSReadableStreamDefaultController::cancelSteps(JSGlobalObject* globalObject, JSValue reason)

@@ -18,6 +18,7 @@
 #include "JSResumableSinkPumpOperation.h"
 #include "JSSink.h"
 #include "JSStreamsRuntime.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/AggregateError.h>
@@ -43,6 +44,7 @@
 namespace WebCore {
 
 using namespace JSC;
+using Bun::WebStreams::analyzeBarrierEdge;
 
 const ClassInfo JSNativeStreamSourceAdapter::s_info = { "NativeStreamSourceAdapter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNativeStreamSourceAdapter) };
 
@@ -100,6 +102,17 @@ void JSNativeStreamSourceAdapter::visitChildrenImpl(JSCell* cell, Visitor& visit
 
 DEFINE_VISIT_CHILDREN(JSNativeStreamSourceAdapter);
 
+void JSNativeStreamSourceAdapter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSNativeStreamSourceAdapter>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_handle, "handle"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingView, "pendingView"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closer, "closer"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_drainValue, "drainValue"_s);
+}
+
 const ClassInfo JSDirectSinkCloseState::s_info = { "DirectSinkCloseState"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDirectSinkCloseState) };
 
 JSDirectSinkCloseState::JSDirectSinkCloseState(VM& vm, Structure* structure)
@@ -147,6 +160,16 @@ void JSDirectSinkCloseState::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSDirectSinkCloseState);
+
+void JSDirectSinkCloseState::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSDirectSinkCloseState>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_underlyingSource, "underlyingSource"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_sinkController, "sinkController"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closePromise, "closePromise"_s);
+}
 
 const ClassInfo JSReadStreamIntoSinkOperation::s_info = { "ReadStreamIntoSinkOperation"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadStreamIntoSinkOperation) };
 
@@ -197,6 +220,17 @@ void JSReadStreamIntoSinkOperation::visitChildrenImpl(JSCell* cell, Visitor& vis
 
 DEFINE_VISIT_CHILDREN(JSReadStreamIntoSinkOperation);
 
+void JSReadStreamIntoSinkOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadStreamIntoSinkOperation>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_reader, "reader"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_sink, "sink"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_result, "result"_s);
+}
+
 const ClassInfo JSResumableSinkPumpOperation::s_info = { "ResumableSinkPumpOperation"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSResumableSinkPumpOperation) };
 
 JSResumableSinkPumpOperation::JSResumableSinkPumpOperation(VM& vm, Structure* structure)
@@ -245,6 +279,17 @@ void JSResumableSinkPumpOperation::visitChildrenImpl(JSCell* cell, Visitor& visi
 }
 
 DEFINE_VISIT_CHILDREN(JSResumableSinkPumpOperation);
+
+void JSResumableSinkPumpOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSResumableSinkPumpOperation>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_sink, "sink"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_reader, "reader"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_error, "error"_s);
+}
 
 } // namespace WebCore
 

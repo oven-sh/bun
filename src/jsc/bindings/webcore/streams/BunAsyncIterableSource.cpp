@@ -13,6 +13,7 @@
 #include "JSReadableStream.h"
 #include "JSStreamsRuntime.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 
@@ -76,6 +77,16 @@ void JSAsyncIteratorSourceOperation::visitChildrenImpl(JSCell* cell, Visitor& vi
 }
 
 DEFINE_VISIT_CHILDREN(JSAsyncIteratorSourceOperation);
+
+void JSAsyncIteratorSourceOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSAsyncIteratorSourceOperation>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_iterator, "iterator"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pullPromise, "pullPromise"_s);
+}
 
 static void driveAsyncIterator(JSGlobalObject*, JSAsyncIteratorSourceOperation*);
 static void asyncIterReturnIteratorAndSettle(JSGlobalObject*, JSAsyncIteratorSourceOperation*);

@@ -14,6 +14,7 @@
 #include "JSStreamsRuntime.h"
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultWriter.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
@@ -87,6 +88,22 @@ void JSStreamPipeToOperation::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_currentWrite);
     visitor.append(thisObject->m_shutdownActionPromise);
     visitor.append(thisObject->m_shutdownError);
+}
+
+void JSStreamPipeToOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSStreamPipeToOperation>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_source, "source"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_destination, "destination"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_reader, "reader"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_writer, "writer"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_signal, "signal"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_promise, "promise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_currentWrite, "currentWrite"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_shutdownActionPromise, "shutdownActionPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_shutdownError, "shutdownError"_s);
 }
 
 static JSValue pipeShutdownError(JSStreamPipeToOperation* op)

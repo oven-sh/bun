@@ -12,6 +12,7 @@
 #include "JSTransformStreamDefaultController.h"
 #include "JSWritableStream.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
@@ -259,6 +260,15 @@ void JSTextDecoderStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_transform);
     visitor.append(thisObject->m_decoder);
+}
+
+void JSTextDecoderStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSTextDecoderStream>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_transform, "transform"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_decoder, "decoder"_s);
 }
 
 // Prototype accessors

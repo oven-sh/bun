@@ -12,6 +12,7 @@
 #include "JSWritableStreamDefaultController.h"
 #include "JSWritableStreamDefaultWriter.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -267,6 +268,31 @@ void JSWritableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         WTF::Locker locker { thisObject->cellLock() };
         for (auto& writeRequest : thisObject->m_writeRequests)
             visitor.append(writeRequest);
+    }
+}
+
+void JSWritableStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSWritableStream>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_writer, "writer"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_storedError, "storedError"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closeRequest, "closeRequest"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_inFlightWriteRequest, "inFlightWriteRequest"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_inFlightCloseRequest, "inFlightCloseRequest"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closedPromise, "closedPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingAbortRequest.promise, "pendingAbortRequestPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingAbortRequest.reason, "pendingAbortRequestReason"_s);
+    {
+        WTF::Locker locker { thisObject->cellLock() };
+        uint32_t i = 0;
+        for (auto& entry : thisObject->m_writeRequests) {
+            if (auto* value = entry.get())
+                analyzer.analyzeIndexEdge(cell, value, i);
+            ++i;
+        }
     }
 }
 

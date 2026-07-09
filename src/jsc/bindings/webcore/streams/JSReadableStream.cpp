@@ -17,6 +17,7 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSWritableStream.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -488,6 +489,20 @@ void JSReadableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_directUnderlyingSource);
     visitor.append(thisObject->m_asyncContext);
     visitor.append(thisObject->m_closedPromise);
+}
+
+void JSReadableStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableStream>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_reader, "reader"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_storedError, "storedError"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativePtr, "bunNativePtr"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_directUnderlyingSource, "underlyingSource"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_asyncContext, "asyncContext"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closedPromise, "closedPromise"_s);
 }
 
 void JSReadableStream::materializeIfNeeded(JSGlobalObject* globalObject)

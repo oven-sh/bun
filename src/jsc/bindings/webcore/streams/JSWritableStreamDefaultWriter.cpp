@@ -14,6 +14,7 @@
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultController.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
@@ -372,6 +373,17 @@ void JSWritableStreamDefaultWriter::visitChildrenImpl(JSCell* cell, Visitor& vis
     visitor.append(thisObject->m_closedPromise);
     visitor.append(thisObject->m_readyPromise);
     visitor.append(thisObject->m_pipeOperation);
+}
+
+void JSWritableStreamDefaultWriter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSWritableStreamDefaultWriter>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closedPromise, "closedPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_readyPromise, "readyPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pipeOperation, "pipeOperation"_s);
 }
 
 // Prototype accessors and host functions

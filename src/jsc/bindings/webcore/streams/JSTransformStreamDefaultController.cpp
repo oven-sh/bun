@@ -12,6 +12,7 @@
 #include "JSTextDecoderStream.h"
 #include "JSTextEncoderStream.h"
 #include "JSTransformStream.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 
 #include <JavaScriptCore/Error.h>
@@ -254,6 +255,20 @@ void JSTransformStreamDefaultController::visitChildrenImpl(JSCell* cell, Visitor
 }
 
 DEFINE_VISIT_CHILDREN(JSTransformStreamDefaultController);
+
+void JSTransformStreamDefaultController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSTransformStreamDefaultController>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_finishPromise, "finishPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_transformer, "transformer"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_transformMethod, "transformAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_flushMethod, "flushAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_cancelMethod, "cancelAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithmContext, "algorithmContext"_s);
+}
 
 // [reaction-convention]: handler(resolutionValue, contextCell).
 

@@ -13,6 +13,7 @@
 #include "JSStreamPipeToOperation.h"
 #include "JSStreamTeeState.h"
 #include "JSStreamsRuntime.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/IteratorOperations.h>
@@ -102,6 +103,14 @@ void JSReadRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_context);
+}
+
+void JSReadRequest::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadRequest>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_context, "context"_s);
 }
 
 void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
@@ -278,6 +287,14 @@ void JSReadIntoRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_context);
+}
+
+void JSReadIntoRequest::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadIntoRequest>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_context, "context"_s);
 }
 
 void JSReadIntoRequest::chunkSteps(JSGlobalObject* globalObject, JSArrayBufferView* chunk)

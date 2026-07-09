@@ -13,6 +13,7 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamTeeState.h"
 #include "JSStreamsRuntime.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 
@@ -337,6 +338,28 @@ void JSReadableByteStreamController::visitChildrenImpl(JSCell* cell, Visitor& vi
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableByteStreamController);
+
+void JSReadableByteStreamController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableByteStreamController>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_byobRequest, "byobRequest"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.underlyingObject, "underlyingSource"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method1, "pullAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method2, "cancelAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.algorithmContext, "algorithmContext"_s);
+    {
+        WTF::Locker locker { thisObject->cellLock() };
+        uint32_t i = 0;
+        for (auto& entry : thisObject->m_pendingPullIntos) {
+            if (auto* descriptor = entry.get())
+                analyzer.analyzeIndexEdge(cell, descriptor, i);
+            ++i;
+        }
+    }
+}
 
 // [[CancelSteps]](reason)
 JSPromise* JSReadableByteStreamController::cancelSteps(JSGlobalObject* globalObject, JSValue reason)

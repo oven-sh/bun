@@ -137,22 +137,31 @@ console.log(JSON.stringify({ m: typeof module, e: typeof exports, sep: typeof pa
       "mod.cjs": bareBody,
       "entry.mjs": `await import("./mod.cjs");\n`,
     });
-    const { stdout, exitCode } = await run(String(dir), "entry.mjs");
-    const out = JSON.parse(stdout);
-    expect({ m: out.m, e: out.e, exitCode }).toEqual({ m: "object", e: "object", exitCode: 0 });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      out: { m: "object", e: "object", thisIsCjs: true },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("ambiguous .js with typeof module still runs as CJS", async () => {
     using dir = tempDir("js-sniff", { "sniff.js": bareBody });
-    const { stdout, exitCode } = await run(String(dir), "sniff.js");
-    const out = JSON.parse(stdout);
-    expect({ m: out.m, e: out.e, exitCode }).toEqual({ m: "object", e: "object", exitCode: 0 });
+    const { stdout, stderr, exitCode } = await run(String(dir), "sniff.js");
+    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      out: { m: "object", e: "object", thisIsCjs: true },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test(".cjs with typeof module still runs as CJS", async () => {
     using dir = tempDir("cjs-sniff", { "sniff.cjs": bareBody });
-    const { stdout, exitCode } = await run(String(dir), "sniff.cjs");
-    const out = JSON.parse(stdout);
-    expect({ m: out.m, e: out.e, exitCode }).toEqual({ m: "object", e: "object", exitCode: 0 });
+    const { stdout, stderr, exitCode } = await run(String(dir), "sniff.cjs");
+    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      out: { m: "object", e: "object", thisIsCjs: true },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

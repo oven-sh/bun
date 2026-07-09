@@ -41,7 +41,9 @@ bun_core::declare_scope!(cache, visible);
 /// Version 22: Serialize `has_tla` in the cached ESM record flags byte. Entries
 /// written before #30888 carried `has_tla=false` for every module; the cache-HIT
 /// path reinstates the bug for any previously-cached TLA module (#30887).
-const EXPECTED_VERSION: u32 = 22;
+/// Version 23: Raw template literals and regex literals are no longer escaped to
+/// \uXXXX, so cached output may contain non-ASCII UTF-8.
+const EXPECTED_VERSION: u32 = 23;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -1014,7 +1016,7 @@ impl RuntimeTranspilerCache {
             return;
         }
         debug_assert!(self.entry.is_none());
-        let output_code = BunString::clone_latin1(output_code_bytes);
+        let output_code = BunString::clone_utf8(output_code_bytes);
         // Refcount stays at 1, sole owner.
         // BunString is Copy with no Drop, so an extra dupe_ref here would leak.
         self.output_code = Some(output_code);
@@ -1083,10 +1085,14 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             }
             debug_assert!(this.entry.is_none());
 
-            // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
-            // tag (unmarked 8-bit ZigString -> Encoding::LATIN1, same as clone_latin1),
-            // and `output_code_bytes` outlives the synchronous `to_file` call.
-            let output_code = BunString::ascii(output_code_bytes);
+            // Borrowed view; `output_code_bytes` outlives the synchronous
+            // `to_file` call. Non-ASCII (raw templates / regex literals) is
+            // tagged UTF8 so the load path decodes it correctly.
+            let output_code = if bun_core::strings::is_all_ascii(output_code_bytes) {
+                BunString::ascii(output_code_bytes)
+            } else {
+                BunString::borrow_utf8(output_code_bytes)
+            };
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),

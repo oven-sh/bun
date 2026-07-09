@@ -151,7 +151,7 @@ test("cancelling the readable inside the chunk's toString() rejects the write in
   const reader = stream.readable.getReader();
   const writer = stream.writable.getWriter();
   reader.read();
-  await null, await null, await null; // open the synchronous-transform window (backpressure cleared, write runs the transform inline)
+  (await null, await null, await null); // open the synchronous-transform window (backpressure cleared, write runs the transform inline)
 
   const writePromise = writer.write({
     toString() {

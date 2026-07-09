@@ -2453,7 +2453,9 @@ describe("bulk drain runs the user pull() against the already-reset queue", () =
   const makeSource = enqueue => {
     let pulls = 0;
     return {
-      start(c) { c.enqueue(enqueue("A")); },
+      start(c) {
+        c.enqueue(enqueue("A"));
+      },
       pull(c) {
         if (++pulls >= 2) {
           c.enqueue(enqueue("B"));
@@ -2464,7 +2466,10 @@ describe("bulk drain runs the user pull() against the already-reset queue", () =
   };
 
   test("text() keeps a chunk enqueued during the drain and settles on close()", async () => {
-    const rs = new ReadableStream(makeSource(s => s), { highWaterMark: 2 });
+    const rs = new ReadableStream(
+      makeSource(s => s),
+      { highWaterMark: 2 },
+    );
     await Bun.sleep(0); // let start + the initial pull settle so pull #2 fires inside the drain
     expect(await rs.text()).toBe("AB");
   });
@@ -2477,7 +2482,10 @@ describe("bulk drain runs the user pull() against the already-reset queue", () =
   });
 
   test("readMany() leaves the reentrantly-enqueued chunk readable and the stream closable", async () => {
-    const rs = new ReadableStream(makeSource(s => s), { highWaterMark: 2 });
+    const rs = new ReadableStream(
+      makeSource(s => s),
+      { highWaterMark: 2 },
+    );
     await Bun.sleep(0);
     const reader = rs.getReader();
     const first = await reader.readMany();
@@ -2546,7 +2554,11 @@ describe("ReadableStream async iterator reentrancy", () => {
 
   test("queued next() calls resolve in call order as chunks arrive", async () => {
     let controller;
-    const rs = new ReadableStream({ start(c) { controller = c; } });
+    const rs = new ReadableStream({
+      start(c) {
+        controller = c;
+      },
+    });
     const it = rs.values();
     const p1 = it.next();
     const p2 = it.next();

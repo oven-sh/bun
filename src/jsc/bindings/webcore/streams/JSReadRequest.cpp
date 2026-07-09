@@ -102,7 +102,7 @@ void JSReadRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSReadRequest>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_context);
+    visitor.appendHidden(thisObject->m_context);
 }
 
 void JSReadRequest::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -286,7 +286,7 @@ void JSReadIntoRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSReadIntoRequest>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_context);
+    visitor.appendHidden(thisObject->m_context);
 }
 
 void JSReadIntoRequest::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

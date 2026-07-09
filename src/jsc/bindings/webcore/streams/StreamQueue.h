@@ -219,7 +219,7 @@ private:
     static void analyzeEntry(JSC::JSCell*, JSC::HeapAnalyzer&, ByteQueueEntry&, uint32_t) {}
 
     template<typename Visitor>
-    static void visitEntry(Visitor& visitor, ValueWithSize& entry) { visitor.append(entry.value); }
+    static void visitEntry(Visitor& visitor, ValueWithSize& entry) { visitor.appendHidden(entry.value); }
     template<typename Visitor>
     static void visitEntry(Visitor&, ByteQueueEntry&) {} // RefPtr impl: nothing for the GC
 

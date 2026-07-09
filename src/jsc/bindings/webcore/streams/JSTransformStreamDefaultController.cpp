@@ -245,13 +245,13 @@ void JSTransformStreamDefaultController::visitChildrenImpl(JSCell* cell, Visitor
     auto* thisObject = uncheckedDowncast<JSTransformStreamDefaultController>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_finishPromise);
-    visitor.append(thisObject->m_transformer);
-    visitor.append(thisObject->m_transformMethod);
-    visitor.append(thisObject->m_flushMethod);
-    visitor.append(thisObject->m_cancelMethod);
-    visitor.append(thisObject->m_algorithmContext);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_finishPromise);
+    visitor.appendHidden(thisObject->m_transformer);
+    visitor.appendHidden(thisObject->m_transformMethod);
+    visitor.appendHidden(thisObject->m_flushMethod);
+    visitor.appendHidden(thisObject->m_cancelMethod);
+    visitor.appendHidden(thisObject->m_algorithmContext);
 }
 
 DEFINE_VISIT_CHILDREN(JSTransformStreamDefaultController);

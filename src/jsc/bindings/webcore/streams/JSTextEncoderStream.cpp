@@ -232,8 +232,8 @@ void JSTextEncoderStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSTextEncoderStream>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_transform);
-    visitor.append(thisObject->m_encoder);
+    visitor.appendHidden(thisObject->m_transform);
+    visitor.appendHidden(thisObject->m_encoder);
 }
 
 void JSTextEncoderStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

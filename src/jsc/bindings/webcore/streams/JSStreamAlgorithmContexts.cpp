@@ -59,8 +59,8 @@ void JSStreamFromIterableContext::visitChildrenImpl(JSCell* cell, Visitor& visit
     auto* thisObject = uncheckedDowncast<JSStreamFromIterableContext>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_iterator);
-    visitor.append(thisObject->m_nextMethod);
+    visitor.appendHidden(thisObject->m_iterator);
+    visitor.appendHidden(thisObject->m_nextMethod);
 }
 
 void JSStreamFromIterableContext::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

@@ -99,15 +99,15 @@ void JSDirectStreamController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSDirectStreamController>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_underlyingSource);
-    visitor.append(thisObject->m_pull);
-    visitor.append(thisObject->m_pendingRead);
-    visitor.append(thisObject->m_deferCloseReason);
-    visitor.append(thisObject->m_arrayBufferSink);
-    visitor.append(thisObject->m_array);
-    visitor.append(thisObject->m_closingPromise);
-    visitor.append(thisObject->m_finalChunk);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_underlyingSource);
+    visitor.appendHidden(thisObject->m_pull);
+    visitor.appendHidden(thisObject->m_pendingRead);
+    visitor.appendHidden(thisObject->m_deferCloseReason);
+    visitor.appendHidden(thisObject->m_arrayBufferSink);
+    visitor.appendHidden(thisObject->m_array);
+    visitor.appendHidden(thisObject->m_closingPromise);
+    visitor.appendHidden(thisObject->m_finalChunk);
     Locker locker { thisObject->cellLock() };
     thisObject->m_textAccumulator.visit(locker, visitor);
 }

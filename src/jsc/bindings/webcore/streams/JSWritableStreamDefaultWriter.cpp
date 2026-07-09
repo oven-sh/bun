@@ -369,10 +369,10 @@ void JSWritableStreamDefaultWriter::visitChildrenImpl(JSCell* cell, Visitor& vis
     auto* thisObject = uncheckedDowncast<JSWritableStreamDefaultWriter>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_closedPromise);
-    visitor.append(thisObject->m_readyPromise);
-    visitor.append(thisObject->m_pipeOperation);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_closedPromise);
+    visitor.appendHidden(thisObject->m_readyPromise);
+    visitor.appendHidden(thisObject->m_pipeOperation);
 }
 
 void JSWritableStreamDefaultWriter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

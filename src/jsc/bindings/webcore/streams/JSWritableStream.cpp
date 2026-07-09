@@ -255,19 +255,19 @@ void JSWritableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSWritableStream>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_controller);
-    visitor.append(thisObject->m_writer);
-    visitor.append(thisObject->m_storedError);
-    visitor.append(thisObject->m_closeRequest);
-    visitor.append(thisObject->m_inFlightWriteRequest);
-    visitor.append(thisObject->m_inFlightCloseRequest);
-    visitor.append(thisObject->m_closedPromise);
-    visitor.append(thisObject->m_pendingAbortRequest.promise);
-    visitor.append(thisObject->m_pendingAbortRequest.reason);
+    visitor.appendHidden(thisObject->m_controller);
+    visitor.appendHidden(thisObject->m_writer);
+    visitor.appendHidden(thisObject->m_storedError);
+    visitor.appendHidden(thisObject->m_closeRequest);
+    visitor.appendHidden(thisObject->m_inFlightWriteRequest);
+    visitor.appendHidden(thisObject->m_inFlightCloseRequest);
+    visitor.appendHidden(thisObject->m_closedPromise);
+    visitor.appendHidden(thisObject->m_pendingAbortRequest.promise);
+    visitor.appendHidden(thisObject->m_pendingAbortRequest.reason);
     {
         WTF::Locker locker { thisObject->cellLock() };
         for (auto& writeRequest : thisObject->m_writeRequests)
-            visitor.append(writeRequest);
+            visitor.appendHidden(writeRequest);
     }
 }
 

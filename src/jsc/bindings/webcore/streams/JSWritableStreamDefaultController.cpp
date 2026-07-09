@@ -277,14 +277,14 @@ void JSWritableStreamDefaultController::visitChildrenImpl(JSCell* cell, Visitor&
     auto* thisObject = uncheckedDowncast<JSWritableStreamDefaultController>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_abortController);
-    visitor.append(thisObject->m_algorithms.underlyingObject);
-    visitor.append(thisObject->m_algorithms.method1);
-    visitor.append(thisObject->m_algorithms.method2);
-    visitor.append(thisObject->m_algorithms.method3);
-    visitor.append(thisObject->m_algorithms.algorithmContext);
-    visitor.append(thisObject->m_strategySizeAlgorithm);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_abortController);
+    visitor.appendHidden(thisObject->m_algorithms.underlyingObject);
+    visitor.appendHidden(thisObject->m_algorithms.method1);
+    visitor.appendHidden(thisObject->m_algorithms.method2);
+    visitor.appendHidden(thisObject->m_algorithms.method3);
+    visitor.appendHidden(thisObject->m_algorithms.algorithmContext);
+    visitor.appendHidden(thisObject->m_strategySizeAlgorithm);
     // ONE non-recursive cellLock scope covers the barrier container (StreamQueue.h).
     WTF::Locker locker { thisObject->cellLock() };
     thisObject->m_queue.visit(locker, visitor);

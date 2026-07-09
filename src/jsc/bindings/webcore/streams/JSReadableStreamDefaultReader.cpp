@@ -657,12 +657,12 @@ void JSReadableStreamDefaultReader::visitChildrenImpl(JSCell* cell, Visitor& vis
     auto* thisObject = uncheckedDowncast<JSReadableStreamDefaultReader>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_closedPromise);
-    visitor.append(thisObject->m_pipeOperation);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_closedPromise);
+    visitor.appendHidden(thisObject->m_pipeOperation);
     WTF::Locker locker { thisObject->cellLock() };
     for (auto& request : thisObject->m_readRequests)
-        visitor.append(request);
+        visitor.appendHidden(request);
 }
 
 void JSReadableStreamDefaultReader::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

@@ -79,15 +79,15 @@ void JSStreamPipeToOperation::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSStreamPipeToOperation>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_source);
-    visitor.append(thisObject->m_destination);
-    visitor.append(thisObject->m_reader);
-    visitor.append(thisObject->m_writer);
-    visitor.append(thisObject->m_signal);
-    visitor.append(thisObject->m_promise);
-    visitor.append(thisObject->m_currentWrite);
-    visitor.append(thisObject->m_shutdownActionPromise);
-    visitor.append(thisObject->m_shutdownError);
+    visitor.appendHidden(thisObject->m_source);
+    visitor.appendHidden(thisObject->m_destination);
+    visitor.appendHidden(thisObject->m_reader);
+    visitor.appendHidden(thisObject->m_writer);
+    visitor.appendHidden(thisObject->m_signal);
+    visitor.appendHidden(thisObject->m_promise);
+    visitor.appendHidden(thisObject->m_currentWrite);
+    visitor.appendHidden(thisObject->m_shutdownActionPromise);
+    visitor.appendHidden(thisObject->m_shutdownError);
 }
 
 void JSStreamPipeToOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

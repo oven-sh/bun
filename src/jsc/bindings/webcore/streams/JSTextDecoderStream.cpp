@@ -258,8 +258,8 @@ void JSTextDecoderStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSTextDecoderStream>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_transform);
-    visitor.append(thisObject->m_decoder);
+    visitor.appendHidden(thisObject->m_transform);
+    visitor.appendHidden(thisObject->m_decoder);
 }
 
 void JSTextDecoderStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

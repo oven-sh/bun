@@ -141,7 +141,7 @@ void JSStreamsRuntime::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     {
         WTF::Locker locker { thisObject->cellLock() };
         for (auto& controller : thisObject->m_endOfTickFlushes)
-            visitor.append(controller);
+            visitor.appendHidden(controller);
     }
 }
 

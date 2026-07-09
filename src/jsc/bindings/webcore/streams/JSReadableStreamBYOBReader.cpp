@@ -350,11 +350,11 @@ void JSReadableStreamBYOBReader::visitChildrenImpl(JSCell* cell, Visitor& visito
     auto* thisObject = uncheckedDowncast<JSReadableStreamBYOBReader>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_closedPromise);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_closedPromise);
     WTF::Locker locker { thisObject->cellLock() };
     for (auto& request : thisObject->m_readIntoRequests)
-        visitor.append(request);
+        visitor.appendHidden(request);
 }
 
 void JSReadableStreamBYOBReader::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

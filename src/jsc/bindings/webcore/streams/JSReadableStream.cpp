@@ -482,13 +482,13 @@ void JSReadableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSReadableStream>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_reader);
-    visitor.append(thisObject->m_storedError);
-    visitor.append(thisObject->m_controller);
-    visitor.append(thisObject->m_nativePtr);
-    visitor.append(thisObject->m_directUnderlyingSource);
-    visitor.append(thisObject->m_asyncContext);
-    visitor.append(thisObject->m_closedPromise);
+    visitor.appendHidden(thisObject->m_reader);
+    visitor.appendHidden(thisObject->m_storedError);
+    visitor.appendHidden(thisObject->m_controller);
+    visitor.appendHidden(thisObject->m_nativePtr);
+    visitor.appendHidden(thisObject->m_directUnderlyingSource);
+    visitor.appendHidden(thisObject->m_asyncContext);
+    visitor.appendHidden(thisObject->m_closedPromise);
 }
 
 void JSReadableStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

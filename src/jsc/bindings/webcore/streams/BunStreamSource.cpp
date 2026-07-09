@@ -94,10 +94,10 @@ void JSNativeStreamSourceAdapter::visitChildrenImpl(JSCell* cell, Visitor& visit
     auto* thisObject = uncheckedDowncast<JSNativeStreamSourceAdapter>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_handle);
-    visitor.append(thisObject->m_pendingView);
-    visitor.append(thisObject->m_closer);
-    visitor.append(thisObject->m_drainValue);
+    visitor.appendHidden(thisObject->m_handle);
+    visitor.appendHidden(thisObject->m_pendingView);
+    visitor.appendHidden(thisObject->m_closer);
+    visitor.appendHidden(thisObject->m_drainValue);
 }
 
 DEFINE_VISIT_CHILDREN(JSNativeStreamSourceAdapter);
@@ -154,9 +154,9 @@ void JSDirectSinkCloseState::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSDirectSinkCloseState>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_underlyingSource);
-    visitor.append(thisObject->m_sinkController);
-    visitor.append(thisObject->m_closePromise);
+    visitor.appendHidden(thisObject->m_underlyingSource);
+    visitor.appendHidden(thisObject->m_sinkController);
+    visitor.appendHidden(thisObject->m_closePromise);
 }
 
 DEFINE_VISIT_CHILDREN(JSDirectSinkCloseState);
@@ -212,10 +212,10 @@ void JSReadStreamIntoSinkOperation::visitChildrenImpl(JSCell* cell, Visitor& vis
     auto* thisObject = uncheckedDowncast<JSReadStreamIntoSinkOperation>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_reader);
-    visitor.append(thisObject->m_sink);
-    visitor.append(thisObject->m_result);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_reader);
+    visitor.appendHidden(thisObject->m_sink);
+    visitor.appendHidden(thisObject->m_result);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadStreamIntoSinkOperation);
@@ -272,10 +272,10 @@ void JSResumableSinkPumpOperation::visitChildrenImpl(JSCell* cell, Visitor& visi
     auto* thisObject = uncheckedDowncast<JSResumableSinkPumpOperation>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_sink);
-    visitor.append(thisObject->m_reader);
-    visitor.append(thisObject->m_error);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_sink);
+    visitor.appendHidden(thisObject->m_reader);
+    visitor.appendHidden(thisObject->m_error);
 }
 
 DEFINE_VISIT_CHILDREN(JSResumableSinkPumpOperation);

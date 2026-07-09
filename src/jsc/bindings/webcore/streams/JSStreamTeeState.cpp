@@ -60,13 +60,13 @@ void JSStreamTeeState::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSStreamTeeState>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_reader);
-    visitor.append(thisObject->m_branch1);
-    visitor.append(thisObject->m_branch2);
-    visitor.append(thisObject->m_cancelPromise);
-    visitor.append(thisObject->m_reason1);
-    visitor.append(thisObject->m_reason2);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_reader);
+    visitor.appendHidden(thisObject->m_branch1);
+    visitor.appendHidden(thisObject->m_branch2);
+    visitor.appendHidden(thisObject->m_cancelPromise);
+    visitor.appendHidden(thisObject->m_reason1);
+    visitor.appendHidden(thisObject->m_reason2);
 }
 
 void JSStreamTeeState::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

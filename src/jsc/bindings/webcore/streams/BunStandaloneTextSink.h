@@ -59,7 +59,7 @@ struct BunTextAccumulator {
     void visit(const WTF::AbstractLocker&, Visitor& visitor)
     {
         for (auto& piece : pieces)
-            visitor.append(piece);
+            visitor.appendHidden(piece);
     }
 
     // Reports every barrier in `pieces` as an index edge for heap-snapshot retainers.

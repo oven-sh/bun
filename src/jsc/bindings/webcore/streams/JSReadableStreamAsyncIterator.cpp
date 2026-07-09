@@ -136,8 +136,8 @@ void JSReadableStreamAsyncIterator::visitChildrenImpl(JSCell* cell, Visitor& vis
     auto* thisObject = uncheckedDowncast<JSReadableStreamAsyncIterator>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_reader);
-    visitor.append(thisObject->m_ongoingPromise);
+    visitor.appendHidden(thisObject->m_reader);
+    visitor.appendHidden(thisObject->m_ongoingPromise);
 }
 
 void JSReadableStreamAsyncIterator::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

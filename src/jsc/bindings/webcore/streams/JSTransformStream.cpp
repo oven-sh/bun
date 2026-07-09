@@ -270,10 +270,10 @@ void JSTransformStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSTransformStream>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_readable);
-    visitor.append(thisObject->m_writable);
-    visitor.append(thisObject->m_controller);
-    visitor.append(thisObject->m_backpressureChangePromise);
+    visitor.appendHidden(thisObject->m_readable);
+    visitor.appendHidden(thisObject->m_writable);
+    visitor.appendHidden(thisObject->m_controller);
+    visitor.appendHidden(thisObject->m_backpressureChangePromise);
 }
 
 void JSTransformStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

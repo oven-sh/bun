@@ -155,10 +155,10 @@ void JSOneShotDirectSink::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSOneShotDirectSink>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_arrayBufferSink);
-    visitor.append(thisObject->m_capabilityPromise);
-    visitor.append(thisObject->m_closeFunction);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_arrayBufferSink);
+    visitor.appendHidden(thisObject->m_capabilityPromise);
+    visitor.appendHidden(thisObject->m_closeFunction);
 }
 
 void JSOneShotDirectSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -220,9 +220,9 @@ void JSReadableStreamIntoArrayOperation::visitChildrenImpl(JSCell* cell, Visitor
     auto* thisObject = uncheckedDowncast<JSReadableStreamIntoArrayOperation>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_reader);
-    visitor.append(thisObject->m_chunks);
-    visitor.append(thisObject->m_result);
+    visitor.appendHidden(thisObject->m_reader);
+    visitor.appendHidden(thisObject->m_chunks);
+    visitor.appendHidden(thisObject->m_result);
 }
 
 void JSReadableStreamIntoArrayOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

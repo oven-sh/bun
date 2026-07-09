@@ -47,12 +47,13 @@ export class AdvisoryStore {
   }
 
   handleBulk(body: Record<string, string[]>): Response {
-    const report: Record<string, Advisory[]> = {};
+    const report: Record<string, Omit<Advisory, "module_name">[]> = {};
     for (const [name, versions] of Object.entries(body)) {
       const advisories = this.#byPackage.get(name);
       if (advisories === undefined || !Array.isArray(versions)) continue;
       const matched = advisories.filter(a => versions.some(v => Bun.semver.satisfies(v, a.vulnerable_versions)));
-      if (matched.length > 0) report[name] = matched;
+      // registry.npmjs.org does not repeat the package name per entry.
+      if (matched.length > 0) report[name] = matched.map(({ module_name: _, ...rest }) => rest);
     }
     return json(report);
   }

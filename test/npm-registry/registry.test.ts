@@ -854,7 +854,7 @@ describe("fixtures", () => {
 describe("audit", () => {
   test("the bulk endpoint returns only advisories whose range matches a requested version", async () => {
     await using registry = await new NpmRegistry().start();
-    const advisory = registry.advisories.add({
+    const { module_name: _, ...advisory } = registry.advisories.add({
       module_name: "lodash",
       vulnerable_versions: "<4.17.21",
       severity: "high",
@@ -876,7 +876,7 @@ describe("audit", () => {
 
   test("a Content-Encoding: gzip body is decoded (what `bun audit` sends)", async () => {
     await using registry = await new NpmRegistry().start();
-    const advisory = registry.advisories.add({
+    const { module_name: _, ...advisory } = registry.advisories.add({
       module_name: "lodash",
       vulnerable_versions: "<4.17.21",
       severity: "high",

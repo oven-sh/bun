@@ -1172,9 +1172,12 @@ describe("Transactions", () => {
     // Macrotask barrier: drain the whole microtask chain so an unfixed build
     // (where the UPDATE runs immediately) would have flipped outerRan by now.
     await Bun.sleep(0);
-    expect(outerRan).toBe(false);
+    try {
+      expect(outerRan).toBe(false);
+    } finally {
+      releaseTxn.resolve();
+    }
 
-    releaseTxn.resolve();
     await txn;
     await outer;
 

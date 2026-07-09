@@ -299,11 +299,9 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   // read uncommitted state from the transaction.
   private reservedConnection: boolean = false;
   private connectQueue: Array<{ onConnected: OnConnected<BunSQLiteModule.Database>; reserved: boolean }> = [];
-  // Tracks the async context of the currently-running transaction callback so
-  // nested acquisitions from inside it participate in the transaction instead
-  // of queueing and deadlocking. A fresh token per transaction lets connect()
-  // distinguish "nested in the current transaction" from stale context leaked
-  // out of a prior one.
+  // Async context of the active transaction callback so nested acquisitions
+  // participate instead of deadlocking; a fresh token per transaction lets
+  // connect() tell "nested in current" apart from leaked stale context.
   #txnContext: import("node:async_hooks").AsyncLocalStorage<symbol> | undefined;
   #txnToken: symbol | undefined;
 
@@ -485,14 +483,16 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     const queue = this.connectQueue;
     // Hand the connection to queued acquisitions in FIFO order, stopping as
     // soon as a reserved acquisition takes exclusive ownership again.
-    while (queue.length > 0 && !this.reservedConnection) {
-      const pending = queue.shift()!;
+    let head = 0;
+    while (head < queue.length && !this.reservedConnection) {
+      const pending = queue[head++];
       if (this._closed) {
         pending.onConnected(this.connectionClosedError(), null);
         continue;
       }
       this.#handConnection(pending.onConnected, pending.reserved);
     }
+    if (head > 0) queue.splice(0, head);
   }
 
   release(_connection: BunSQLiteModule.Database, _connectingEvent?: boolean) {
@@ -555,10 +555,8 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   }
 
   supportsReservedConnections(): boolean {
-    // The public reserve() API hands out a connection from a pool for
-    // exclusive use while the pool keeps serving others. SQLite has a single
-    // connection, so a reserve() inside a transaction could never get a
-    // second one; keep it unsupported to avoid that deadlock.
+    // reserve() expects a second connection from a pool; SQLite has only one,
+    // so a nested reserve() would deadlock. Keep it unsupported.
     return false;
   }
 

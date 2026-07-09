@@ -2125,6 +2125,9 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   // Whether a transaction should acquire the connection exclusively even when
   // the public reserve() API is not supported (e.g. single-connection SQLite).
   supportsTransactionReservation?(): boolean;
+  // Run the user's transaction callback so the adapter can tell nested
+  // acquisitions (inside the callback) apart from concurrent ones.
+  runInTransactionContext?<T>(cb: () => T): T;
   getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
   attachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
   detachConnectionCloseHandler?(connection: Connection, handler: () => void): void;

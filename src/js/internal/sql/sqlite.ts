@@ -294,11 +294,15 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   public storedError: Error | null = null;
   private _closed: boolean = false;
   public queries: Set<Query<any, any>> = new Set();
-  // SQLite has a single underlying connection. While a transaction (or a
-  // reserved connection) holds it, other acquisitions wait here so they
-  // cannot interleave with or read uncommitted state from the transaction.
+  // SQLite has a single underlying connection. While a transaction holds it,
+  // acquisitions from other tasks wait here so they cannot interleave with or
+  // read uncommitted state from the transaction.
   private reservedConnection: boolean = false;
   private connectQueue: Array<{ onConnected: OnConnected<BunSQLiteModule.Database>; reserved: boolean }> = [];
+  // Tracks the async context of the currently-running transaction callback so
+  // nested acquisitions from inside it participate in the transaction instead
+  // of queueing and deadlocking.
+  #txnContext: import("node:async_hooks").AsyncLocalStorage<true> | undefined;
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions) {
     this.connectionInfo = connectionInfo;
@@ -425,14 +429,37 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       return onConnected(this.connectionClosedError(), null);
     }
 
-    // A transaction or reserved connection owns the single connection
-    // exclusively; queue this acquisition until it is released.
     if (this.reservedConnection) {
+      // Called from inside the active transaction callback's own async context
+      // (e.g. a helper closing over the outer sql handle). Queueing would
+      // deadlock, so let the query participate in the open transaction.
+      if (this.#txnContext?.getStore()) {
+        if (reserved) {
+          return onConnected(
+            this.invalidTransactionStateError(
+              "A transaction is already open on this connection. Use savepoint() for nested transactions.",
+            ),
+            null,
+          );
+        }
+        const db = this.db;
+        return db ? onConnected(null, db) : onConnected(this.connectionClosedError(), null);
+      }
+      // Concurrent work from another task: queue behind the transaction.
       this.connectQueue.push({ onConnected, reserved: !!reserved });
       return;
     }
 
     this.#handConnection(onConnected, !!reserved);
+  }
+
+  runInTransactionContext<T>(cb: () => T): T {
+    let store = this.#txnContext;
+    if (!store) {
+      const { AsyncLocalStorage } = require("node:async_hooks");
+      store = this.#txnContext = new AsyncLocalStorage();
+    }
+    return store.run(true, cb);
   }
 
   #handConnection(onConnected: OnConnected<BunSQLiteModule.Database>, reserved: boolean) {

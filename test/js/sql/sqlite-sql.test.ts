@@ -1223,6 +1223,48 @@ describe("Transactions", () => {
     const accounts = await sql`SELECT balance FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(900);
   });
+
+  test("outer-handle query from inside the transaction callback participates in it", async () => {
+    // A helper closing over the outer handle, called from inside begin(), runs
+    // on the single connection inside the open transaction instead of
+    // deadlocking.
+    const getBalance = async (id: number) =>
+      (await sql`SELECT balance FROM accounts WHERE id = ${id}`)[0].balance;
+
+    let seenInside: number | undefined;
+    await sql.begin(async tx => {
+      await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+      seenInside = await getBalance(1);
+    });
+
+    expect(seenInside).toBe(900);
+
+    const accounts = await sql`SELECT balance FROM accounts WHERE id = 1`;
+    expect(accounts[0].balance).toBe(900);
+  });
+
+  test("outer-handle begin() from inside the transaction callback rejects instead of hanging", async () => {
+    let innerError: Error | undefined;
+    await sql
+      .begin(async tx => {
+        await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+        await sql.begin(async tx2 => {
+          await tx2`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+        });
+      })
+      .catch(err => {
+        innerError = err as Error;
+      });
+
+    expect(innerError).toBeInstanceOf(Error);
+    expect(innerError?.message).toBe(
+      "A transaction is already open on this connection. Use savepoint() for nested transactions.",
+    );
+
+    // The outer transaction rolled back because of the rejection.
+    const accounts = await sql`SELECT balance FROM accounts WHERE id = 1`;
+    expect(accounts[0].balance).toBe(1000);
+  });
 });
 
 describe("SQLite-specific features", () => {

@@ -45,8 +45,11 @@ test("AsyncLocalStorage store survives .then() continuations after JIT tier-up",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({
+  // Surface stderr in the failure diff if the child crashed, without requiring
+  // it to be empty on success (debug/ASAN builds may emit benign warnings).
+  expect({ stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
     stdout: JSON.stringify({ badThen: 0, badCatch: 0 }),
+    stderr: "",
     exitCode: 0,
   });
 });

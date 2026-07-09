@@ -1938,6 +1938,13 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 // SAFETY: jsc_vm_ptr is the live thread VM.
                                 unsafe { &*jsc_vm_ptr },
                             );
+                            if !has_user_timespec {
+                                // No user deadline, and the bun:test timer is
+                                // now EPOCH: stop draining so the loop can
+                                // exit instead of blocking with no timeout.
+                                let _ = subprocess.try_kill(subprocess.kill_signal);
+                                subprocess.close_readable_pipes();
+                            }
                             // active_file_strong / taken_active_file drop here (was `defer .deinit()`).
                         }
                     }

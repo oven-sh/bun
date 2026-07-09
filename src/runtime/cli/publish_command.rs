@@ -1926,7 +1926,8 @@ impl PublishCommand {
             }
 
             if maybe_json_len.is_some() {
-                // not using `MimeType.json.value`, verdaccio will fail if it's anything other than `application/json`
+                // not using `MimeType.json.value`: the test registry (test/npm-registry) 415s
+                // on anything other than exactly `application/json`, matching verdaccio/Artifactory
                 headers.count(b"content-type", b"application/json");
             }
 
@@ -1978,7 +1979,8 @@ impl PublishCommand {
             }
 
             if maybe_json_len.is_some() {
-                // not using `MimeType.json.value`, verdaccio will fail if it's anything other than `application/json`
+                // not using `MimeType.json.value`: the test registry (test/npm-registry) 415s
+                // on anything other than exactly `application/json`, matching verdaccio/Artifactory
                 headers.append(b"content-type", b"application/json");
             }
 

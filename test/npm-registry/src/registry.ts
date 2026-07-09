@@ -23,7 +23,7 @@ import type { Server } from "bun";
 import { AdvisoryStore } from "./audit";
 import { UserStore, type AccessRules, type AuthContext, type OtpChallengeOptions } from "./auth";
 import { recordFromSpecs, type PackageOptions, type VersionSpec } from "./define";
-import { json, npmError, packageNotFound, readJsonObject } from "./errors";
+import { json, npmError, packageNotFound, readJsonObject, requireJsonContentType } from "./errors";
 import { FixtureTree } from "./fixtures";
 import { RequestObserver, simulateFailures, type Interceptor, type SimulatedFailure } from "./observe";
 import { cloneRecord, createRecord, effectiveDistTags, effectiveTime, type PackageRecord } from "./package-store";
@@ -561,6 +561,8 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
   }
 
   async #publish(req: RouteRequest, name: string): Promise<Response> {
+    const unsupported = requireJsonContentType(req);
+    if (unsupported !== undefined) return unsupported;
     const denied = this.#denyWrite(req, name);
     if (denied !== undefined) return denied;
 
@@ -583,6 +585,8 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
   }
 
   async #replaceVersions(req: RouteRequest, name: string): Promise<Response> {
+    const unsupported = requireJsonContentType(req);
+    if (unsupported !== undefined) return unsupported;
     const denied = this.#denyWrite(req, name);
     if (denied !== undefined) return denied;
     if (this.#resolve(name) === undefined) return packageNotFound(name);

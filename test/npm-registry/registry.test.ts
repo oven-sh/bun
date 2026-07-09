@@ -609,6 +609,28 @@ describe("publish", () => {
     expect(Object.keys((await registry.packument("@s/lit"))!.versions)).toEqual(["1.0.0"]);
   });
 
+  test("publish is 415 unless Content-Type is exactly application/json", async () => {
+    // verdaccio's media() middleware is a raw `!==` on the header; two
+    // comments in src/runtime/cli/publish_command.rs cite it. This gate
+    // is what keeps them enforced.
+    await using registry = await new NpmRegistry().start();
+    const body = JSON.stringify(publishBody("p", "1.0.0"));
+    const send = (headers: Record<string, string>) =>
+      getJson<{ error?: string }>(`${registry.url}p`, { method: "PUT", headers, body });
+    const expected = { status: 415, body: { error: expect.stringContaining("application/json") } };
+    expect(await send({ "content-type": "text/plain" })).toMatchObject(expected);
+    expect(await send({ "content-type": "application/json; charset=utf-8" })).toMatchObject(expected);
+    expect(await send({})).toMatchObject(expected);
+    expect((await send({ "content-type": "application/json" })).status).toBe(201);
+    // Not enforced where npm doesn't: adduser and the bulk advisories.
+    const adduser = await getJson(`${registry.url}-/user/org.couchdb.user:u`, {
+      method: "PUT",
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ name: "u", password: "p" }),
+    });
+    expect(adduser.status).toBe(201);
+  });
+
   test("a deprecate (a PUT with no attachments) updates the stored version", async () => {
     await using registry = await new NpmRegistry().start();
     registry.define("old", { "1.0.0": {}, "2.0.0": {} });
@@ -850,6 +872,22 @@ describe("audit", () => {
       lodash: [JSON.parse(JSON.stringify(advisory))],
     });
     expect((await audit({ lodash: ["4.17.21"] })).body).toEqual({});
+  });
+
+  test("a Content-Encoding: gzip body is decoded (what `bun audit` sends)", async () => {
+    await using registry = await new NpmRegistry().start();
+    const advisory = registry.advisories.add({
+      module_name: "lodash",
+      vulnerable_versions: "<4.17.21",
+      severity: "high",
+      title: "Prototype Pollution",
+    });
+    const response = await getJson(`${registry.url}-/npm/v1/security/advisories/bulk`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-encoding": "gzip" },
+      body: Bun.gzipSync(Buffer.from(JSON.stringify({ lodash: ["4.17.20"] }))),
+    });
+    expect(response).toMatchObject({ status: 200, body: { lodash: [JSON.parse(JSON.stringify(advisory))] } });
   });
 });
 

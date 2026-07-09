@@ -25,11 +25,20 @@ export function npmError(status: number, message: string, extraHeaders?: Headers
  * npm 400 envelope for anything else. `null` is valid JSON that the
  * try/catch around `req.json()` would let through, and every handler
  * immediately dereferences a property of the result.
+ *
+ * A `Content-Encoding: gzip` body is decoded first: `bun audit` sends
+ * one unconditionally, and `npm-registry-fetch` may for any body over
+ * its threshold.
  */
 export async function readJsonObject<T extends object>(req: Request): Promise<T | Response> {
   let body: unknown;
   try {
-    body = await req.json();
+    if (req.headers.get("content-encoding")?.toLowerCase() === "gzip") {
+      const decoded = Bun.gunzipSync(new Uint8Array(await req.arrayBuffer()));
+      body = JSON.parse(Buffer.from(decoded).toString("utf8"));
+    } else {
+      body = await req.json();
+    }
   } catch {
     return npmError(400, "invalid JSON body");
   }
@@ -37,6 +46,19 @@ export async function readJsonObject<T extends object>(req: Request): Promise<T 
     return npmError(400, "request body must be a JSON object");
   }
   return body as T;
+}
+
+/**
+ * verdaccio's `media(json)` gate, verbatim: a raw `!==` on the header,
+ * so even `application/json; charset=utf-8` is rejected. Two comments
+ * in `src/runtime/cli/publish_command.rs` cite this constraint; this is
+ * what keeps them enforced after verdaccio is gone.
+ */
+export function requireJsonContentType(req: Request): Response | undefined {
+  if (req.headers.get("content-type") !== "application/json") {
+    return npmError(415, "unsupported content type; must be application/json");
+  }
+  return undefined;
 }
 
 /**

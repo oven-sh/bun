@@ -254,6 +254,19 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
+/**
+ * A fatal SSL error the native layer reports after the handshake completed (a
+ * received fatal alert, a protocol violation) arrives as EPROTO carrying the
+ * OpenSSL error string. Node's TLSWrap onerror emits those on the socket rather
+ * than destroying it; the close that follows still delivers 'end' and 'close'.
+ * Returns true when the error was handled here.
+ */
+function emitPostHandshakeTLSError(self, error): boolean {
+  if (error?.code !== "EPROTO" || !self._secureEstablished) return false;
+  self.emit("error", tlsHandshakeError(error));
+  return true;
+}
+
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
     const self = socket.data;
@@ -329,6 +342,7 @@ const SocketHandlers: SocketHandler = {
       callback(error);
     }
 
+    if (emitPostHandshakeTLSError(self, error)) return;
     self.emit("error", error);
   },
   open(socket) {
@@ -829,6 +843,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     if (data._hadError) return;
     data._hadError = true;
+    if (emitPostHandshakeTLSError(data, error)) return;
     const bunTLS = this[bunTlsSymbol];
 
     if (typeof bunTLS === "function") {
@@ -1198,6 +1213,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       callback(error);
     }
 
+    if (emitPostHandshakeTLSError(self, error)) return;
     if (!self.destroyed) process.nextTick(destroyNT, self, error);
   },
   timeout(socket) {

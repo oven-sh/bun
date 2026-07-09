@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
+import { readFileSync } from "fs";
 import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN } from "harness";
 import https from "https";
 import net from "net";
@@ -746,4 +747,58 @@ it("https.request reports an impossible version window as a TLS error, not a cer
   response.on("data", (chunk: Buffer) => (body += chunk));
   await once(response, "end");
   expect(body).toBe("ok");
+});
+
+it("reports the server's fatal alert rejecting a missing client certificate", async () => {
+  // TLS1.3 finishes the client's handshake one flight before the server has
+  // validated the client certificate, so the server's fatal
+  // certificate_required alert arrives after 'secureConnect'. Node reports it
+  // through TLSWrap's onerror; swallowing it leaves an mTLS rejection
+  // indistinguishable from a clean end-of-connection.
+  const server = tls.createServer({
+    key: readFileSync(join(import.meta.dir, "fixtures", "agent1-key.pem")),
+    cert: readFileSync(join(import.meta.dir, "fixtures", "agent1-cert.pem")),
+    ca: readFileSync(join(import.meta.dir, "fixtures", "ca1-cert.pem")),
+    requestCert: true,
+    rejectUnauthorized: true,
+    minVersion: "TLSv1.3",
+  });
+  server.on("tlsClientError", () => {});
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  // The client holds no certificate to offer.
+  const client = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+  const events: string[] = [];
+  let error: any;
+  // `once(client, "close")` would reject on the 'error' this test is about.
+  const closed = Promise.withResolvers<boolean>();
+  client.on("secureConnect", () => events.push("secureConnect"));
+  client.on("error", e => {
+    events.push("error");
+    error = e;
+  });
+  client.on("end", () => events.push("end"));
+  client.on("close", hadError => closed.resolve(hadError));
+  const hadError = await closed.promise;
+
+  // BoringSSL names alert 116 TLSV1_ALERT_CERTIFICATE_REQUIRED; OpenSSL builds
+  // of Node spell the same alert TLSV13_ALERT_CERTIFICATE_REQUIRED.
+  expect({
+    events,
+    hadError,
+    code: error?.code,
+    library: error?.library,
+    reason: error?.reason,
+  }).toEqual({
+    events: ["secureConnect", "error", "end"],
+    hadError: false,
+    code: "ERR_SSL_TLSV1_ALERT_CERTIFICATE_REQUIRED",
+    library: "SSL routines",
+    reason: "TLSV1_ALERT_CERTIFICATE_REQUIRED",
+  });
+
+  server.close();
+  await once(server, "close");
 });

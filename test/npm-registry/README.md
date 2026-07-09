@@ -197,24 +197,20 @@ registries cannot see each other.
 
 ## HTTP caching
 
-Packument responses carry `ETag` and `Last-Modified` and answer a matching
-`If-None-Match` / `If-Modified-Since` with a 304. By default there is no
-`Cache-Control`, so a second `bun install` revalidates every manifest and
-stays visible in `registry.requests`.
+Packument responses carry `ETag`, `Last-Modified`, and `Vary: Accept`, and
+answer a matching `If-None-Match` / `If-Modified-Since` with a 304.
 
-registry.npmjs.org also sends `Cache-Control: public, max-age=300`, which
-lets bun skip the network entirely for five minutes and makes every
-manifest load complete _synchronously_ from the cache — a different,
-re-entrant path through the resolver. Opt into it per registry when that
-path is the thing under test:
+`cacheControl` lets the registry send a `Cache-Control` header the way
+registry.npmjs.org does (`public, max-age=300`). **bun does not read this
+header**: its warm-manifest gate is an on-disk cache entry younger than a
+hardcoded 300 s (`src/install/npm.rs`), independent of what the registry
+sent. The option exists so a test can assert bun tolerates what
+registry.npmjs.org sends, not to drive bun's cache behaviour. To actually
+drive warm vs cold, point two installs at the same vs a fresh
+`BUN_INSTALL_CACHE_DIR` inside the 300 s window.
 
-```ts
-new NpmRegistry({ cacheControl: "public, max-age=300" });
-```
-
-`test/cli/install/registry-resolver-matrix.test.ts` runs a set of resolver
-scenarios across both cache modes and both linkers and requires every cell
-to produce the same lockfile.
+`test/cli/install/registry-resolver-matrix.test.ts` does exactly that
+across both linkers and requires every cell to produce the same lockfile.
 
 ## Running it standalone
 

@@ -202,7 +202,8 @@ src/jsc/bindings/GeneratedBindings.zig
 # Kept locally for the ongoing work; not part of the source tree.
 /specs/
 
-# test/npm-registry serves this tree byte-for-byte; nothing under it may
-# be ignored. This rule is last so it re-includes anything a pattern
-# above happened to match (bundled node_modules, publish-pkg-*, ...).
+# test/npm-registry serves these trees byte-for-byte; nothing under them
+# may be ignored. Last so they re-include anything a pattern above
+# happened to match (bundled node_modules, publish-pkg-*, dist/, ...).
 !/test/cli/install/registry/packages/**
+!/test/npm-registry/goldens/**

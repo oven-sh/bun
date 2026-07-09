@@ -2210,6 +2210,9 @@ class Http2Stream extends Duplex {
       this.#sentTrailers = undefined;
       throw error;
     }
+    // node re-runs [kMaybeDestroy] once the trailers are out (finishSendTrailers): a server
+    // stream whose response is now complete and whose request was never read closes gracefully.
+    if (this instanceof ServerHttp2Stream) maybeCloseUnreadRespondedStream(this);
   }
 
   setTimeout(timeout, callback) {
@@ -3184,20 +3187,25 @@ function closeUnreadRespondedStreamNT(stream) {
 }
 // node's Http2Stream[kMaybeDestroy]: once a server stream's response has finished, if user code
 // never read the request (didRead false, flowing null) and no trailers are pending, node closes
-// the stream gracefully instead of leaving it open until the request side ends.
-function onServerStreamFinishMaybeClose(this: ServerHttp2Stream) {
+// the stream gracefully instead of leaving it open until the request side ends. Trailers defer
+// the close until they are sent (node re-runs the check from finishSendTrailers).
+function maybeCloseUnreadRespondedStream(stream) {
   if (
-    this.headersSent &&
-    !this.destroyed &&
-    !this.closed &&
-    (this[bunHTTP2StreamStatus] & StreamState.WantTrailer) === 0 &&
-    !this[kDidRead] &&
-    this.readableFlowing === null
+    stream.headersSent &&
+    stream.writableFinished &&
+    !stream.destroyed &&
+    !stream.closed &&
+    ((stream[bunHTTP2StreamStatus] & StreamState.WantTrailer) === 0 || stream.sentTrailers !== undefined) &&
+    !stream[kDidRead] &&
+    stream.readableFlowing === null
   ) {
     // node defers with setImmediate so pushStreams issued around the response finish still make
     // it out before the stream officially closes (core.js kMaybeDestroy).
-    setImmediate(closeUnreadRespondedStreamNT, this);
+    setImmediate(closeUnreadRespondedStreamNT, stream);
   }
+}
+function onServerStreamFinishMaybeClose(this: ServerHttp2Stream) {
+  maybeCloseUnreadRespondedStream(this);
 }
 function emitStreamErrorFromCodeNT(stream, rstCode) {
   stream.emit("error", streamErrorFromCode(rstCode));

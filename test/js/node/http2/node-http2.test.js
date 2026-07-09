@@ -3418,4 +3418,48 @@ describe.concurrent("http2 server: finished response with an unread request", ()
     expect(stdout).not.toContain("UNCAUGHT");
     expect(exitCode).toBe(0);
   });
+
+  // Same rule via the trailers path: node re-runs [kMaybeDestroy] from finishSendTrailers, so a
+  // response that ends with trailers (grpc-js status) also closes an unread stream.
+  it("closes the stream after trailers when the request was never read", async () => {
+    const fixture = `
+      const http2 = require("node:http2");
+      process.on("uncaughtException", e => {
+        console.log("UNCAUGHT " + e.code);
+        process.exit(42);
+      });
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        stream.on("close", () => {
+          console.log("server stream close rstCode=" + stream.rstCode);
+          process.exit(0);
+        });
+        stream.on("wantTrailers", () => {
+          stream.sendTrailers({ "grpc-status": "12", "grpc-message": "unimplemented" });
+        });
+        stream.respond({ ":status": 200, "content-type": "application/grpc" }, { waitForTrailers: true });
+        stream.end();
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("error", () => {});
+        const req = client.request({ ":path": "/Sum", ":method": "POST" }); // client half stays open
+        req.on("error", () => {});
+        req.resume();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining("server stream close rstCode=0"),
+      stderr: "",
+    });
+    expect(stdout).not.toContain("UNCAUGHT");
+    expect(exitCode).toBe(0);
+  });
 });

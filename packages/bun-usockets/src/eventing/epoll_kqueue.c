@@ -165,6 +165,10 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 
 #ifdef LIBUS_USE_EPOLL
     loop->fd = epoll_create1(EPOLL_CLOEXEC);
+    if (UNLIKELY(loop->fd == -1)) {
+        us_free(loop);
+        return NULL;
+    }
 
     if (has_epoll_pwait2 == -1) {
         if (Bun__isEpollPwait2SupportedOnLinuxKernel() == 0) {
@@ -174,9 +178,17 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 
 #else
     loop->fd = kqueue();
+    if (UNLIKELY(loop->fd == -1)) {
+        us_free(loop);
+        return NULL;
+    }
 #endif
 
-    us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
+    if (UNLIKELY(us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb) != 0)) {
+        close(loop->fd);
+        us_free(loop);
+        return NULL;
+    }
     return loop;
 }
 
@@ -611,10 +623,11 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
 
     int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (efd == -1) {
-        // eventfd only fails on EMFILE/ENFILE — the loop is unusable without
-        // wakeup_async, and the sole caller doesn't NULL-check. Crash loudly
-        // rather than NULL-deref or store -1 as a poll fd.
-        BUN_PANIC("eventfd() failed during loop init (out of file descriptors?)");
+        if (!fallthrough) {
+            loop->num_polls--;
+        }
+        us_free(p);
+        return NULL;
     }
     us_poll_init(p, efd, POLL_TYPE_CALLBACK);
 

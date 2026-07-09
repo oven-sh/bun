@@ -117,7 +117,9 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
 #endif
 
 
-void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
+/* Returns 0 on success, -1 on fd exhaustion (EMFILE/ENFILE from eventfd on
+ * Linux); on failure nothing is left allocated in loop->data. */
+int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.
 #ifdef LIBUS_USE_LIBUV
@@ -134,12 +136,21 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.pre_cb = pre_cb;
     loop->data.post_cb = post_cb;
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
+    if (!loop->data.wakeup_async) {
+        free(loop->data.recv_buf);
+        free(loop->data.send_buf);
+#ifdef LIBUS_USE_LIBUV
+        us_timer_close(loop->data.sweep_timer, 0);
+#endif
+        return -1;
+    }
     us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
 #if ASSERT_ENABLED
     if (Bun__lock__size != sizeof(loop->data.mutex)) {
         BUN_PANIC("The size of the mutex must match the size of the lock");
     }
 #endif
+    return 0;
 }
 
 void us_internal_loop_data_free(struct us_loop_t *loop) {

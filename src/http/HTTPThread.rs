@@ -1271,6 +1271,24 @@ mod _event_loop_draft {
             core::sync::atomic::Ordering::Relaxed,
         );
 
+        // Ensure this thread's uSockets loop exists before `init_global`
+        // derefs it. `uws::Loop::get()` returns null if epoll_create1 /
+        // timerfd_create / eventfd fail (EMFILE). Rather than aborting the
+        // process, reject every queued fetch with `FailedToOpenSocket` and
+        // retry once fds free up — the next `get()` re-attempts creation.
+        while uws::Loop::get().is_null() {
+            let thread = crate::http_thread_mut();
+            while let Some(http) = NonNull::new(thread.queued_tasks.pop()) {
+                // SAFETY: `http` was pushed by `HttpThread::schedule` and is
+                // live until its `result_callback` runs (the owner holds a
+                // ref for the in-flight callback).
+                unsafe {
+                    AsyncHttp::fail_before_start(http, bun_core::err!("FailedToOpenSocket"));
+                }
+            }
+            std::thread::sleep(core::time::Duration::from_millis(50));
+        }
+
         // Critical side effect: `init_global` calls
         // `internal_loop_data.set_parent_raw(2 /* mini */, mini_ptr)` on this
         // thread's uSockets loop. Without it, the macOS DNS cache-miss path

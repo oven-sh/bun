@@ -210,6 +210,7 @@ unsafe extern "C" {
     // `ctx`. `&JSGlobalObject` is the non-null handle proof; remaining args are
     // by-value scalars/`#[repr(C)]` PODs.
     safe fn WebWorker__dispatchExit(cpp_worker: *mut c_void, exit_code: i32);
+    safe fn WebWorker__dispatchErrorMessage(cpp_worker: *mut c_void, message: &mut BunString);
     // Re-declared here (also private in VM.rs) so `thread_main` can take the
     // API lock as a raw FFI call with NO RAII guard — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
@@ -780,10 +781,17 @@ impl WebWorker {
         let vm_ptr = match self.start_vm() {
             Ok(vm) => vm,
             Err(err) => {
-                bun_core::output::panic(format_args!(
-                    "An unhandled error occurred while starting a worker: {}\n",
-                    err.name()
-                ));
+                // VM init failed before a JSGlobalObject exists (e.g. EMFILE
+                // from the per-thread uSockets loop, or getcwd ENOENT from
+                // the transpiler hook). Surface it as a Worker `error` event
+                // on the parent and tear down this thread cleanly, matching
+                // Node's ERR_WORKER_INIT_FAILED behaviour.
+                let mut msg = BunString::clone_utf8(
+                    format!("Worker initialization failed: {}", err.name()).as_bytes(),
+                );
+                WebWorker__dispatchErrorMessage(self.cpp_worker, &mut msg);
+                self.shutdown();
+                return;
             }
         };
 

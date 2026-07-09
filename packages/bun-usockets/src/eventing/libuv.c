@@ -175,7 +175,7 @@ struct us_loop_t *us_create_loop(void *hint,
   loop->uv_check->data = loop;
 
   // here we create two unreffed handles - timer and async
-  us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
+  (void) us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
 
   // if we do not own this loop, we need to integrate and set up timer
   if (hint) {

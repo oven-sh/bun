@@ -681,6 +681,11 @@ extern "C" void WebWorker__dispatchExit(Worker* worker, int32_t exitCode)
     worker->dispatchExit(exitCode);
 }
 
+extern "C" void WebWorker__dispatchErrorMessage(Worker* worker, BunString* message)
+{
+    worker->dispatchErrorWithMessage(message->transferToWTFString());
+}
+
 // The entry module just finished (or failed) its top-level evaluation. Flush
 // the worker_threads hub's deferred cross-thread deliveries: node's bootstrap
 // runs the synchronous CJS main before any port delivery, so a routed message

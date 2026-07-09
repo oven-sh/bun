@@ -906,9 +906,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // f0325bddf2) made Windows servers reset FIN-terminated responses:
         // write_check_error's fatal detection interacts with Windows
         // would-block semantics, and a skipped drain stalls the response
-        // teardown into an RST. Until that detection is verified on Windows,
-        // keep the legacy contract (the close path still fails the pending
-        // write callback when the socket is torn down).
+        // teardown into an RST. The drain is how the failure reaches JS anyway:
+        // a flush that hit a fatal error leaves FATAL_WRITE_ERROR set, so the
+        // write the drain callback retries reports -1 and node:net fails it.
         let _ = this.internal_flush();
         log!(
             "onWritable buffered_data_for_node_net {}",
@@ -1262,6 +1262,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// not live in the ext slot so those are left for the caller's existing
     /// `debug_assert!` to catch.
     pub fn detach_for_reconnect(&self) {
+        // A fresh connection starts with a clean write state: the previous
+        // connection's send failure must not fail this one's writes.
+        self.update_flags(|f| f.remove(Flags::FATAL_WRITE_ERROR));
         let old = self.socket.get();
         let Some(ext) = old.ext::<*mut c_void>() else {
             return;
@@ -2302,14 +2305,15 @@ impl<const SSL: bool> NewSocket<SSL> {
             // inside the write call - a synchronous close dispatches the whole
             // JS teardown ('close' -> http2 session destroy -> ...) underneath
             // the caller that issued this write, which is how the x64-asan
-            // lane caught a stale read. Returning -1 makes the JS write fail,
-            // and node:net destroys the handle on a clean stack; the read side
-            // surfaces the reset for anyone who is only waiting.
+            // lane caught a stale read. Recording the failure makes every JS
+            // write report -1 from here on, and node:net destroys the handle on
+            // a clean stack.
             //
             // The undeliverable buffered data (if the input aliases it) is
             // dropped by the caller: clearing it here would create a `&mut` of
             // `buffered_data_for_node_net` while `buffer` may still borrow its
             // heap allocation.
+            self.update_flags(|f| f.insert(Flags::FATAL_WRITE_ERROR));
             return -1;
         }
         let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
@@ -2337,7 +2341,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             match this.write_or_end_buffered::<false>(global, args.ptr[0], args.ptr[1]) {
                 WriteResult::Fail => JSValue::ZERO,
                 WriteResult::Success { wrote, total } => {
-                    if usize::try_from(wrote.max(0)).expect("int cast") == total {
+                    if this.flags.get().contains(Flags::FATAL_WRITE_ERROR) {
+                        // The peer is gone. `false` would park the write on a
+                        // drain that can never complete, so report the failure
+                        // and let node:net fail the write callback.
+                        JSValue::js_number_from_int32(-1)
+                    } else if usize::try_from(wrote.max(0)).expect("int cast") == total {
                         JSValue::TRUE
                     } else {
                         JSValue::FALSE
@@ -2772,11 +2781,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// Returns `false` when a fatal send error dropped the buffered data.
-    /// NOTE: callers currently ignore this (the drain callback is dispatched
-    /// regardless) - skipping the drain on fatal made Windows servers reset
-    /// FIN-terminated responses (see a5e7ba5905). The return value stays so
-    /// the contract can be re-landed once the Windows fatal-write detection
-    /// is verified.
+    /// Callers ignore this: the drain callback is still dispatched (skipping it
+    /// on fatal made Windows servers reset FIN-terminated responses), and the
+    /// `FATAL_WRITE_ERROR` flag it sets is what makes the drained JS write
+    /// report the failure instead of completing successfully.
     fn internal_flush(&self) -> bool {
         // R-2: every mutated field is `Cell`/`JsCell`, so `&self` carries no
         // `noalias` for them and the previous `black_box` launder (which
@@ -2803,12 +2811,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if fatal {
                     // Same rule as write_maybe_corked: drop the undeliverable
                     // buffer and stop re-arming the writable retry, but do not
-                    // close from inside the drain dispatch - the peer reset is
-                    // delivered on the read side and tears the socket down on
-                    // a clean stack. Report the failure so callers do not
-                    // dispatch the JS drain callback (the write did NOT
-                    // complete; Node fails the callback instead of succeeding
-                    // it).
+                    // close from inside the drain dispatch. Recording the
+                    // failure makes the drained JS write report -1 instead of
+                    // completing, so node:net fails it (Node's afterWrite) and
+                    // destroys the socket on a clean stack. A half-open socket
+                    // has no read side left to surface the reset on.
+                    self.update_flags(|f| f.insert(Flags::FATAL_WRITE_ERROR));
                     self.buffered_data_for_node_net
                         .with_mut(|b| b.clear_and_free());
                     return false;
@@ -3832,6 +3840,13 @@ bitflags::bitflags! {
         /// pre-handshake bytes / read the underlying TCP stream.
         const BYPASS_TLS           = 1 << 9;
         const HOSTNAME_MISMATCH    = 1 << 11;
+        /// A `send()` failed with a non-retryable error (EPIPE/ECONNRESET): no
+        /// later byte can be delivered either. Sticky, so the drain dispatch
+        /// fails the pending JS write rather than completing it; cleared when
+        /// the wrapper is reused for a new connect. Only the plain-TCP arm sets
+        /// it (`write_check_error` signals no fatal for SSL/duplex/pipe), so
+        /// `writeBuffered`'s `-1` only ever reaches a node:net handle.
+        const FATAL_WRITE_ERROR    = 1 << 12;
     }
 }
 

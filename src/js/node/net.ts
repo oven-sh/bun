@@ -205,6 +205,14 @@ function writeAfterFIN(chunk, encoding, cb) {
 
   return false;
 }
+// The native write returns -1 once the kernel rejected the bytes outright
+// (EPIPE/ECONNRESET - the peer is gone). Nothing will ever drain, so the write
+// fails the way Node's afterWrite reports uv_write's error, which destroys the
+// socket. Node uses errnoException(UV_EPIPE, 'write').
+// https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L1026
+function writeFailedException() {
+  return new ErrnoException(process.platform === "win32" ? -4047 /* UV_EPIPE */ : -32 /* UV_EPIPE */, "write");
+}
 function onConnectEnd() {
   if (!this._hadError && this.secureConnecting) {
     const options = this[kConnectOptions];
@@ -281,14 +289,17 @@ const SocketHandlers: SocketHandler = {
     self.connecting = false;
     if (callback) {
       const writeChunk = self._pendingData;
-      if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
+      const wrote = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
+      self[kBytesWritten] = socket.bytesWritten;
+      if (wrote === -1) {
+        self._pendingData = self[kwriteCallback] = null;
+        callback(writeFailedException());
+      } else if (wrote) {
         self._pendingData = self[kwriteCallback] = null;
         callback(null);
       } else {
         self._pendingData = null;
       }
-
-      self[kBytesWritten] = socket.bytesWritten;
     }
   },
   end(socket) {
@@ -906,7 +917,10 @@ function onconnection(err, clientHandle) {
         remotePort: _socket.remotePort,
         remoteFamily: _socket.remoteFamily || "IPv4",
       };
-      clientHandle.end();
+      // Node closes the handle outright rather than half-closing it, so the
+      // refused connection is released whatever the peer does with the FIN:
+      // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L2338
+      clientHandle.close();
       self.emit("drop", data);
       return;
     }
@@ -921,7 +935,7 @@ function onconnection(err, clientHandle) {
       remoteFamily: _socket.remoteFamily || "IPv4",
     };
 
-    clientHandle.end();
+    clientHandle.close();
     self.emit("drop", data);
     return;
   }
@@ -1030,12 +1044,15 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.connecting = false;
     if (callback) {
       const writeChunk = self._pendingData;
-      if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
-        self[kBytesWritten] = socket.bytesWritten;
+      const wrote = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
+      self[kBytesWritten] = socket.bytesWritten;
+      if (wrote === -1) {
+        self._pendingData = self[kwriteCallback] = null;
+        callback(writeFailedException());
+      } else if (wrote) {
         self._pendingData = self[kwriteCallback] = null;
         callback(null);
       } else {
-        self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = null;
       }
     }
@@ -2415,6 +2432,12 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   }
   const success = socket.$write(chunk, encoding);
   this[kBytesWritten] = socket.bytesWritten;
+  if (success === -1) {
+    // The peer is gone, so there is no drain to wait for: fail the write and
+    // let the Writable tear the socket down, the way Node's afterWrite does.
+    process.nextTick(callback, writeFailedException());
+    return false;
+  }
   if (success) {
     if (this.encrypted) {
       // TLS batches writes through the SSL engine, so the bytes stay buffered

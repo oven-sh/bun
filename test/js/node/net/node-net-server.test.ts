@@ -1,5 +1,5 @@
 import { realpathSync } from "fs";
-import { AddressInfo, createServer, Server, Socket } from "net";
+import { AddressInfo, connect, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import { tmpdir } from "os";
@@ -459,6 +459,53 @@ describe("net.createServer events", () => {
         }
         await Promise.all(promises).catch(closeAndFail);
       });
+  });
+
+  // A connection refused by maxConnections has to learn it was refused. The
+  // server closes the accepted handle, so the peer's next write is rejected by
+  // the kernel and surfaces as `write EPIPE` the way Node's afterWrite reports
+  // it - not as a write that silently disappears into a half-open socket.
+  it("should fail the writes of a connection it dropped", async () => {
+    let held: Socket | undefined;
+    let accepted: Socket | undefined;
+    let dropped: Socket | undefined;
+    const server = createServer((socket: Socket) => {
+      held = socket;
+      socket.write("hi"); // holds the one allowed connection open
+    });
+    server.maxConnections = 1;
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      accepted = connect(port, "127.0.0.1");
+      accepted.on("error", () => {});
+      await once(accepted, "data"); // the single slot is taken
+
+      dropped = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+      const droppedError = once(dropped, "error");
+      const droppedEnd = once(dropped, "end");
+      const [dropData] = await once(server, "drop");
+      expect(dropData.remotePort).toBeGreaterThan(0);
+      await droppedEnd; // the server let go of its side
+
+      // The first chunk lands in the send buffer; the peer's reset comes back
+      // before the next one, and every byte after that is undeliverable.
+      const chunk = Buffer.alloc(64 * 1024, 0x41);
+      for (let i = 0; i < 8 && dropped.writable; i++) dropped.write(chunk);
+
+      const [err] = (await droppedError) as [NodeJS.ErrnoException];
+      expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EPIPE", syscall: "write" });
+      await once(dropped, "close");
+      expect(dropped.destroyed).toBe(true);
+    } finally {
+      held?.destroy();
+      accepted?.destroy();
+      dropped?.destroy();
+      server.close();
+    }
+    await once(server, "close");
   });
 
   it("should error on an invalid port", () => {

@@ -3369,6 +3369,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         let owned_ctx_taken = owned_ctx.map(|c| c.into_raw());
 
         let cfg = ssl_opts.as_ref();
+        // A bare `secureContext` leaves `ssl_opts` as None; clients still get
+        // the NODE_TLS_REJECT_UNAUTHORIZED-aware default instead of fail-open.
+        let reject_unauthorized = !is_server
+            && cfg.map_or_else(
+                || vm.get_tls_reject_unauthorized(),
+                |c| c.reject_unauthorized != 0,
+            );
         let tls: bun_ptr::ThisPtr<TLSSocket> = TLSSocket::new(TLSSocket {
             ref_count: bun_ptr::RefCount::init(),
             handlers: JsCell::new(Some(handlers)),
@@ -3380,13 +3387,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             server_name: JsCell::new(
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
-            flags: Cell::new(
-                if !is_server && cfg.is_some_and(|c| c.reject_unauthorized != 0) {
-                    Flags::default() | Flags::REJECT_UNAUTHORIZED
-                } else {
-                    Flags::default()
-                },
-            ),
+            flags: Cell::new(if reject_unauthorized {
+                Flags::default() | Flags::REJECT_UNAUTHORIZED
+            } else {
+                Flags::default()
+            }),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -4317,6 +4322,13 @@ pub fn js_upgrade_duplex_to_tls(
         default_data.ensure_still_alive();
     }
 
+    // A bare `secureContext` leaves `ssl_opts` as None; clients still get
+    // the NODE_TLS_REJECT_UNAUTHORIZED-aware default instead of fail-open.
+    let reject_unauthorized = !is_server
+        && socket_config.map_or_else(
+            || handlers.vm.get_tls_reject_unauthorized(),
+            |cfg| cfg.reject_unauthorized != 0,
+        );
     let tls = TLSSocket::new(TLSSocket {
         ref_count: bun_ptr::RefCount::init(),
         handlers: JsCell::new(Some(handlers)),
@@ -4330,13 +4342,11 @@ pub fn js_upgrade_duplex_to_tls(
         server_name: JsCell::new(
             socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         ),
-        flags: Cell::new(
-            if !is_server && socket_config.is_some_and(|cfg| cfg.reject_unauthorized != 0) {
-                Flags::default() | Flags::REJECT_UNAUTHORIZED
-            } else {
-                Flags::default()
-            },
-        ),
+        flags: Cell::new(if reject_unauthorized {
+            Flags::default() | Flags::REJECT_UNAUTHORIZED
+        } else {
+            Flags::default()
+        }),
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),
         ref_pollref_on_connect: Cell::new(true),

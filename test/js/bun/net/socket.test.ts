@@ -3,6 +3,7 @@ import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync } from "fs";
+import { createSecureContext } from "node:tls";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tempDir, tls } from "harness";
 describe.concurrent("socket", () => {
   it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
@@ -2160,6 +2161,60 @@ Reo=
     t.client.write("ping");
     await t.echoed.promise;
     expect(t.received.join("")).toContain("hello-from-server\n");
+  });
+
+  it("closes an untrusted connection upgraded with only a secureContext", async () => {
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+      socket: {
+        open() {},
+        handshake(socket) {
+          socket.write("hello-from-server\n");
+        },
+        data(socket, data) {
+          socket.write(data);
+        },
+        close() {},
+        error() {},
+      },
+    });
+
+    const received: string[] = [];
+    const handshake = Promise.withResolvers<{ authorized: boolean; error: string | null }>();
+    const closed = Promise.withResolvers<void>();
+
+    using tcp = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: { data() {}, close() {}, error() {} },
+    });
+    const { context } = createSecureContext({ ca: CA_CRT }) as any;
+    const [raw, secure] = tcp.upgradeTLS({
+      secureContext: context,
+      socket: {
+        handshake(socket: Socket, _success: boolean, authorizationError: Error | null) {
+          handshake.resolve({
+            authorized: socket.authorized,
+            error: authorizationError?.message ?? null,
+          });
+        },
+        data(_socket: Socket, data: Buffer) {
+          received.push(data.toString());
+        },
+        close() {
+          closed.resolve();
+        },
+        error() {},
+      },
+    } as any);
+    using _raw = raw;
+    using _secure = secure;
+
+    expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE });
+    await closed.promise;
+    expect(received).toEqual([]);
   });
 
   it("keeps a connection whose server certificate is trusted", async () => {

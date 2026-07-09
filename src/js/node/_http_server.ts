@@ -1518,6 +1518,7 @@ function _writeHead(statusCode, reason, obj, response) {
       (response.chunkedEncoding !== true || rawHasContentLength || response.hasHeader("content-length")) &&
       (response._trailer || rawHasTrailer || response.hasHeader("trailer"))
     ) {
+      response[kRawOutHeaders] = undefined;
       if (hasContentLength) {
         response.removeHeader("trailer");
       } else {

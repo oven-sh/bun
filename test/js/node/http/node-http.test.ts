@@ -2602,6 +2602,39 @@ it("an explicit Connection: close response header closes the server-side socket 
   }
 });
 
+it("a pipelined request behind Connection: close is never dispatched (clientError HPE_CLOSED_CONNECTION)", async () => {
+  // Node's parser accepts nothing after a message that forbade keep-alive: the
+  // pipelined request must not reach 'request' (request smuggling) and the extra
+  // bytes surface as a clientError. The async handler is the load-bearing case:
+  // the second head is parsed while the first response is still pending.
+  const requests: string[] = [];
+  const { promise: clientErrorPromise, resolve: resolveClientError } = Promise.withResolvers<any>();
+  const server = createServer((req, res) => {
+    requests.push(req.url!);
+    setTimeout(() => res.end("ok"), 10);
+  });
+  server.on("clientError", (err, socket) => {
+    resolveClientError(err);
+    socket.destroy();
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    socket.write("GET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n");
+
+    const err = await clientErrorPromise;
+    expect(err.code).toBe("HPE_CLOSED_CONNECTION");
+    expect(requests).toEqual(["/a"]);
+    socket.destroy();
+  } finally {
+    server.close();
+  }
+});
+
 it("requireHostHeader still rejects Upgrade-carrying requests that dispatch as normal requests", async () => {
   // The native parser exempts Upgrade requests from the Host check so genuine
   // upgrades can reach the 'upgrade' event, but a request that falls through

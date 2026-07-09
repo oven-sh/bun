@@ -1870,6 +1870,71 @@ describe("handler liveness across reload/stop", () => {
     expect(code).toBeGreaterThanOrEqual(1000);
   });
 
+  test("ws.close() with a reason whose toString() re-enters close() decrements the count once", async () => {
+    // ServerWebSocket.close coerces the reason arg via toString(), which can
+    // re-enter ws.close() before the outer call sets the closed flag. The
+    // re-check after coercion ensures only one on_websocket_closed() runs.
+    let openCount = 0;
+    const bothOpen = Promise.withResolvers<void>();
+    const firstClosed = Promise.withResolvers<void>();
+    let reentered = 0;
+    let serverSideFirst: unknown;
+
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response(null, { status: 404 });
+      },
+      websocket: {
+        open(ws) {
+          if (openCount === 0) serverSideFirst = ws;
+          if (++openCount === 2) bothOpen.resolve();
+        },
+        message(ws, m) {
+          if (m === "do-close") {
+            ws.close(1000, {
+              toString() {
+                reentered++;
+                ws.close(); // re-entrant close before outer sets closed=true
+                return "bye";
+              },
+            } as unknown as string);
+          }
+        },
+        close(ws) {
+          if (ws === serverSideFirst) firstClosed.resolve();
+        },
+      },
+    });
+
+    const c1 = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    const c2 = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    const c1Open = Promise.withResolvers<void>();
+    const c2Open = Promise.withResolvers<void>();
+    const c1Closed = Promise.withResolvers<void>();
+    c1.onopen = () => c1Open.resolve();
+    c2.onopen = () => c2Open.resolve();
+    c1.onerror = e => c1Open.reject(e);
+    c2.onerror = e => c2Open.reject(e);
+    c1.onclose = () => c1Closed.resolve();
+    await Promise.all([bothOpen.promise, c1Open.promise, c2Open.promise]);
+    expect(server.pendingWebSockets).toBe(2);
+
+    c1.send("do-close");
+    await firstClosed.promise;
+    await c1Closed.promise;
+
+    // Without the re-check, the outer close() would decrement again: 2→0.
+    expect({ reentered, pending: server.pendingWebSockets }).toEqual({ reentered: 1, pending: 1 });
+
+    const c2Closed = Promise.withResolvers<void>();
+    c2.onclose = () => c2Closed.resolve();
+    c2.close();
+    await c2Closed.promise;
+  });
+
   test("server.fetch() still dispatches to the handler after stop()", async () => {
     const server = Bun.serve({
       port: 0,

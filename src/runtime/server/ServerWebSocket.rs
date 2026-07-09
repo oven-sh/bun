@@ -1371,6 +1371,12 @@ impl ServerWebSocket {
             break 'brk args.ptr[1].to_slice_or_null(global_this)?;
         };
 
+        // `to_slice_or_null` can run user `toString()`, which may re-entrantly
+        // `ws.close()` and already decrement the count; re-check the guard.
+        if self.is_closed() {
+            return Ok(JSValue::UNDEFINED);
+        }
+
         // Copy the server backref BEFORE end(): on_close re-enters and the
         // user's close handler may call stop(true), which clears handler.server.
         let server = self.handler().server;

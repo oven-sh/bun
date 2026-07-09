@@ -666,9 +666,16 @@ function encodeRealpathResult(result, encoding) {
 }
 
 let assertEncodingForWindows: any = undefined;
+let insideAppContainer: boolean | undefined = undefined;
 function isPermissionDenied(err: any) {
   const code = err?.code;
   return code === "EPERM" || code === "EACCES";
+}
+// Defer a denied component to the native resolver only inside an AppContainer
+// (denied ancestors are the sandbox norm there and can hide links). Outside
+// one, Node parity: the walk's own error propagates unchanged.
+function shouldDeferDeniedComponent(err: any) {
+  return isPermissionDenied(err) && (insideAppContainer ??= fs.isInsideAppContainer());
 }
 // A denied component (e.g. drive roots when sandboxed) can hide a link, so
 // never assume it is a plain directory: resolve through the native path
@@ -729,7 +736,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
         try {
           lastStat = lstatSync(base, { throwIfNoEntry: true });
         } catch (err) {
-          if (!isPermissionDenied(err)) throw err;
+          if (!shouldDeferDeniedComponent(err)) throw err;
           return resolveDeniedComponentSync(p, encoding);
         }
         if (lastStat === undefined) return;
@@ -767,7 +774,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
           try {
             lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
           } catch (err) {
-            if (!isPermissionDenied(err)) throw err;
+            if (!shouldDeferDeniedComponent(err)) throw err;
             return resolveDeniedComponentSync(p, encoding);
           }
           if (lastStat === undefined) return;
@@ -793,7 +800,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
             try {
               lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
             } catch (err) {
-              if (!isPermissionDenied(err)) throw err;
+              if (!shouldDeferDeniedComponent(err)) throw err;
               return resolveDeniedComponentSync(p, encoding);
             }
             if (lastStat === undefined) return;
@@ -867,7 +874,7 @@ const realpath: typeof import("node:fs").realpath =
         if (!knownHard.has(base)) {
           lstat(base, (err, s) => {
             if (err) {
-              if (!isPermissionDenied(err)) return callback(err);
+              if (!shouldDeferDeniedComponent(err)) return callback(err);
               return resolveDeniedComponent(p, encoding, callback);
             }
             lastStat = s;
@@ -915,7 +922,7 @@ const realpath: typeof import("node:fs").realpath =
 
         function gotStat(err, stats) {
           if (err) {
-            if (!isPermissionDenied(err)) return callback(err);
+            if (!shouldDeferDeniedComponent(err)) return callback(err);
             return resolveDeniedComponent(p, encoding, callback);
           }
 
@@ -953,7 +960,7 @@ const realpath: typeof import("node:fs").realpath =
           if (!knownHard.has(base)) {
             lstat(base, err => {
               if (err) {
-                if (!isPermissionDenied(err)) return callback(err);
+                if (!shouldDeferDeniedComponent(err)) return callback(err);
                 return resolveDeniedComponent(p, encoding, callback);
               }
               knownHard.add(base);

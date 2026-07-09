@@ -4,11 +4,11 @@ import { lstatSync, mkdirSync, realpath, realpathSync, rmSync, symlinkSync } fro
 import { isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-// fs.realpath's JS walk must never report a permission-denied component as a
-// plain directory: a denied component can hide a junction, and the unresolved
-// spelling would defeat realpath-based containment checks. The walk defers to
-// the handle-based native resolution (true chain); if that also fails, the
-// native error propagates.
+// Outside an AppContainer, fs.realpath keeps Node's exact behavior: the JS
+// walk's EPERM on a denied component propagates unchanged (no deferral to the
+// native resolver). This pins that parity; the in-container fallback is
+// covered by the AppContainer suite's realpath probe. Intentionally passes on
+// system bun — it guards preserved behavior against the gate regressing.
 //
 // Setup: root/sub carries an INHERITED deny for the current user covering
 // read-data (list) and read-attributes. lstat of root/sub/j then fails even
@@ -23,7 +23,6 @@ import { join } from "path";
 // tests skip visibly when it cannot hold.
 let preconditionHolds = false;
 let linkedFile = "";
-let expected = "";
 let denied = "";
 let fixtureDir = "";
 
@@ -50,14 +49,14 @@ if (isWindows) {
     } catch {}
     if (junctionLive) {
       linkedFile = join(denied, "j", "secret.txt");
-      expected = realpathSync(join(target, "secret.txt"));
 
       execSync(`icacls "${denied}" /deny "%USERNAME%:(OI)(CI)(RA,RD,REA)"`, { shell: "cmd.exe" });
       try {
         lstatSync(join(denied, "j"));
         // Succeeded: the deny is bypassed (elevated) — skip below.
       } catch (e: any) {
-        preconditionHolds = e.code === "EPERM" || e.code === "EACCES";
+        // libuv maps ERROR_ACCESS_DENIED to EPERM; the assertions pin that.
+        preconditionHolds = e.code === "EPERM";
       }
     }
   } catch {
@@ -75,39 +74,39 @@ afterAll(() => {
   } catch {}
 });
 
-describe.skipIf(!isWindows)("realpath with a permission-denied component", () => {
-  test.skipIf(!preconditionHolds)("realpathSync resolves the true chain through the denied component", () => {
-    // The native resolution must succeed here (traverse is not denied), so
-    // anything but the true out-of-root path — including the old fail-open
-    // in-root spelling or a rethrown EPERM — is a regression.
-    expect(realpathSync(linkedFile)).toBe(expected);
+describe.skipIf(!isWindows)("realpath with a permission-denied component (outside AppContainer)", () => {
+  test.skipIf(!preconditionHolds)("realpathSync throws the walk's EPERM at the denied component", () => {
+    // Neither fail-open (in-root spelling) nor resolution through the hidden
+    // junction is acceptable outside a container: both would return instead
+    // of throwing, and any other code breaks Node parity.
+    let err: any;
+    try {
+      realpathSync(linkedFile);
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("EPERM");
   });
 
-  test.skipIf(!preconditionHolds)("callback realpath matches", async () => {
-    const result = await new Promise<string>((resolve, reject) =>
-      realpath(linkedFile, (err, p) => (err ? reject(err) : resolve(p as string))),
-    );
-    expect(result).toBe(expected);
+  test.skipIf(!preconditionHolds)("callback realpath reports the same EPERM", async () => {
+    const err = await new Promise<any>(resolve => realpath(linkedFile, e => resolve(e)));
+    expect(err?.code).toBe("EPERM");
   });
 
-  test.skipIf(!preconditionHolds)(
-    "realpathSync reports ENOENT when the tail behind the denied component is missing",
-    () => {
-      // Both resolutions fail here: the JS walk on the denied lstat, the native
-      // one on the missing tail beyond the junction. The native verdict (ENOENT)
-      // must propagate, not the walk's EPERM.
-      let err: any;
-      try {
-        realpathSync(join(denied, "j", "does-not-exist.txt"));
-      } catch (e) {
-        err = e;
-      }
-      expect(err?.code).toBe("ENOENT");
-    },
-  );
+  test.skipIf(!preconditionHolds)("realpathSync throws EPERM even when the tail is missing", () => {
+    // The walk stops at the denied component before any tail resolution, so
+    // the missing tail never turns this into ENOENT outside a container.
+    let err: any;
+    try {
+      realpathSync(join(denied, "j", "does-not-exist.txt"));
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("EPERM");
+  });
 
-  test.skipIf(!preconditionHolds)("callback realpath reports ENOENT for a missing tail", async () => {
+  test.skipIf(!preconditionHolds)("callback realpath throws EPERM for a missing tail", async () => {
     const err = await new Promise<any>(resolve => realpath(join(denied, "j", "does-not-exist.txt"), e => resolve(e)));
-    expect(err?.code).toBe("ENOENT");
+    expect(err?.code).toBe("EPERM");
   });
 });

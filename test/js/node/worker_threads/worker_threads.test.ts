@@ -866,6 +866,38 @@ test("MessagePort NodeEventTarget methods", () => {
   port1.close();
 });
 
+// jsRef() only gated on m_isDetached, so .ref()/onmessage= after the peer closed
+// re-took an event-loop ref that nothing releases and the process hung. Node no-ops
+// both. Spawned, because the symptom is "the process never exits".
+test("ref()/onmessage after the peer closes does not pin the loop", async () => {
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { MessageChannel } = require("worker_threads");
+       const { port1, port2 } = new MessageChannel();
+       port1.on("message", () => {});
+       port1.on("close", () => {
+         setImmediate(() => {
+           port1.ref();
+           port1.onmessage = () => {};
+           console.log("hasRef=" + port1.hasRef());
+         });
+       });
+       port2.close();`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // signalCode null ⇒ it exited on its own rather than being killed by a timeout.
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "hasRef=false",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 // EventTarget removes a {once:true} listener natively, so the JS-side registry
 // backing listenerCount()/eventNames() has to drop it too.
 test("a fired once() listener stops being counted", async () => {

@@ -524,8 +524,10 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
     // A closed or transferred-away port can never receive messages again, so
     // taking a self-ref (and an event-loop ref) here would only leak:
     // close()/disentangle() have already run and nothing will ever release a
-    // ref taken afterwards.
-    if (!isEntangled())
+    // ref taken afterwards. Same once the peer has closed: peerClosed() already
+    // ran jsUnref(), and nothing releases a ref re-taken after it, so `.ref()`
+    // or a late `onmessage =` would pin the loop forever. Node no-ops both.
+    if (!isEntangled() || !m_pipe->isOtherSideOpen(m_side))
         return;
 
     // Re-acquire the message-listener loop-ref (if a listener is present) that .unref() released.

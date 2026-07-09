@@ -1,5 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { checkPrime, checkPrimeSync, generatePrime, generatePrimeSync, randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
+import {
+  checkPrime,
+  checkPrimeSync,
+  generatePrime,
+  generatePrimeSync,
+  randomBytes,
+  randomFill,
+  randomFillSync,
+  randomInt,
+} from "crypto";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
 
@@ -232,11 +241,24 @@ describe("generatePrime with add/rem", () => {
   `;
 
   function checkResults(
-    results: Array<{ bits: number; add: string; rem?: string; p: string; numBits: number; mod: string; isPrime: boolean }>,
+    results: Array<{
+      bits: number;
+      add: string;
+      rem?: string;
+      p: string;
+      numBits: number;
+      mod: string;
+      isPrime: boolean;
+    }>,
   ) {
     expect(results).toHaveLength(cases.length);
     for (const r of results) {
-      expect({ case: `${r.bits} add=${r.add} rem=${r.rem}`, numBits: r.numBits, mod: r.mod, isPrime: r.isPrime }).toEqual({
+      expect({
+        case: `${r.bits} add=${r.add} rem=${r.rem}`,
+        numBits: r.numBits,
+        mod: r.mod,
+        isPrime: r.isPrime,
+      }).toEqual({
         case: `${r.bits} add=${r.add} rem=${r.rem}`,
         numBits: r.bits,
         mod: r.rem ?? "1",

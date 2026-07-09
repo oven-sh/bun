@@ -394,14 +394,14 @@ void Worker::dispatchEvent(Event& event)
     EventTargetWithInlineData::dispatchEvent(event);
 }
 
-bool Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task, Function<void()>&& abandon)
+bool Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
 {
     {
         Locker lock(m_pendingTasksMutex);
         switch (m_state.load()) {
         case State::Pending:
             // Worker VM not up yet; queue for fireEarlyMessages().
-            m_pendingTasks.append({ WTF::move(task), WTF::move(abandon) });
+            m_pendingTasks.append(WTF::move(task));
             return true;
         case State::Running:
             break;
@@ -504,13 +504,13 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 
     if (workerGlobalObject->globalEventScope->hasActiveEventListeners(eventNames().messageEvent)) {
         for (auto& task : tasks) {
-            task.run(*thisContext);
+            task(*thisContext);
         }
         workerScheduleInitialDrain(*this, m_toWorker, *thisContext);
     } else {
         thisContext->postTask([tasks = WTF::move(tasks), protectedThis = Ref { *this }](auto& ctx) mutable {
             for (auto& task : tasks) {
-                task.run(ctx);
+                task(ctx);
             }
             workerScheduleInitialDrain(protectedThis.get(), protectedThis->m_toWorker, ctx);
         });
@@ -608,22 +608,16 @@ bool Worker::dispatchExit(int32_t exitCode)
             // postMessage() (gated only on Closed) still accepts and drops the
             // message, matching browser/Node and pre-refactor behaviour.
             //
-            // Drain m_pendingTasks first when the worker never reached Running:
-            // each abandon callback rejects its parent-side promise and frees
-            // the Strong<JSPromise>* on the parent thread (the only thread that
-            // may touch the parent VM's HandleSet). Take the queue under the
-            // same lock that flips m_state so a racing
-            // postTaskToWorkerGlobalScope either lands in the drained queue or
+            // Drop any tasks queued while the worker was Pending and never
+            // reached Running (m_pendingCrossVMRequests / rejectAllCrossVMRequests
+            // settles the callers' promises + frees the parent-VM Strong<>).
+            // Take the queue under the same lock that flips m_state so a racing
+            // postTaskToWorkerGlobalScope either lands in the cleared queue or
             // sees Closing and returns false.
-            auto pending = [&]() {
+            {
                 Locker lock(protectedThis->m_pendingTasksMutex);
-                bool wasPending = protectedThis->m_state.load() == State::Pending;
                 protectedThis->m_state.store(State::Closing);
-                return wasPending ? std::exchange(protectedThis->m_pendingTasks, {}) : Deque<PendingTask> {};
-            }();
-            for (auto& task : pending) {
-                if (task.abandon)
-                    task.abandon();
+                protectedThis->m_pendingTasks.clear();
             }
             // Reject any introspection promises whose round-trip never completed.
             if (auto* ctx = protectedThis->scriptExecutionContext())
@@ -687,21 +681,36 @@ extern "C" void WebWorker__dispatchExit(Worker* worker, int32_t exitCode)
     worker->dispatchExit(exitCode);
 }
 
+// The entry module just finished (or failed) its top-level evaluation. Flush
+// the worker_threads hub's deferred cross-thread deliveries: node's bootstrap
+// runs the synchronous CJS main before any port delivery, so a routed message
+// must not observe "no listeners" while the entry that registers them is still
+// loading. Called from spin() on EVERY post-evaluation path (including entry
+// throw / TLA reject / TLA unsettled) so a buffered postMessageToThread never
+// leaves its sender's Atomics.waitAsync unresolved.
+extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
+{
+    auto* hook = globalObject->nodeWorkerEntryEvaluatedHook();
+    if (!hook)
+        return;
+    globalObject->setNodeWorkerEntryEvaluatedHook(nullptr);
+    auto& vm = JSC::getVM(globalObject);
+    // On failure paths (entry threw / TLA rejected) an exception may already be
+    // pending; the hook itself can't observe it and shutdown will report/discard
+    // it either way, so clear it here so JSC::call doesn't assert. On the success
+    // path scope.exception() is null and this is a no-op.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    CLEAR_IF_EXCEPTION(scope);
+    if (vm.hasPendingTerminationException())
+        return;
+    JSC::MarkedArgumentBuffer args;
+    JSC::call(globalObject, hook, args, "entryEvaluated hook"_s);
+    CLEAR_IF_EXCEPTION(scope);
+}
+
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
 {
-    // The entry module just finished its top-level evaluation. Flush the
-    // worker_threads hub's deferred cross-thread deliveries first: node's
-    // bootstrap runs the synchronous CJS main before any port delivery, so a
-    // routed message must not observe "no listeners" while the entry that
-    // registers them is still loading.
-    if (auto* hook = globalObject->nodeWorkerEntryEvaluatedHook()) {
-        auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSC::MarkedArgumentBuffer args;
-        JSC::call(globalObject, hook, args, "entryEvaluated hook"_s);
-        CLEAR_IF_EXCEPTION(scope);
-    }
-
+    WebWorker__entrySettled(globalObject);
     worker->dispatchOnline(globalObject);
 }
 

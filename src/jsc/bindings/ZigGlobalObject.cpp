@@ -3963,7 +3963,13 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 }
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
-void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook) { m_nodeWorkerEntryEvaluatedHook.set(vm(), this, hook); }
+void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
+{
+    if (hook)
+        m_nodeWorkerEntryEvaluatedHook.set(vm(), this, hook);
+    else
+        m_nodeWorkerEntryEvaluatedHook.clear();
+}
 
 extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*);
 

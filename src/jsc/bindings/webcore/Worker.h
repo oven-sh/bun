@@ -117,7 +117,7 @@ public:
     // Returns true if the task was accepted (queued to Pending or posted to
     // Running). Returns false if the worker is Closing/Closed or its context
     // is already gone — the caller must handle cleanup itself.
-    bool postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&, Function<void()>&& abandon = nullptr);
+    bool postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
 
     // -- State queries (safe from any thread; all loads are atomic) ----------
     bool wasTerminated() const { return m_state.load() >= State::Closing; }
@@ -180,15 +180,10 @@ private:
     // flushed by fireEarlyMessages(). The Pending→Running transition happens
     // under this lock so postTaskToWorkerGlobalScope never loses a task. If the
     // worker never reaches Running (entry threw / failed to load / unsettled
-    // TLA), dispatchExit drains the queue on the parent thread and runs each
-    // abandon callback so the caller can reject its promise + free the
-    // parent-VM Strong<> (which must not be touched from the worker thread).
-    struct PendingTask {
-        Function<void(ScriptExecutionContext&)> run;
-        Function<void()> abandon;
-    };
+    // TLA), dispatchExit clears the queue on the parent thread and
+    // rejectAllCrossVMRequests() settles the callers' promises.
     Lock m_pendingTasksMutex;
-    Deque<PendingTask> m_pendingTasks WTF_GUARDED_BY_LOCK(m_pendingTasksMutex);
+    Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks WTF_GUARDED_BY_LOCK(m_pendingTasksMutex);
     // Owned by the parent thread; guarded only for take() vs reject-all ordering.
     HashMap<uint64_t, JSC::Strong<JSC::JSPromise>> m_pendingCrossVMRequests WTF_GUARDED_BY_LOCK(m_pendingTasksMutex);
     std::atomic<uint64_t> m_nextRequestId { 1 };

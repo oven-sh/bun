@@ -1043,10 +1043,11 @@ impl Handlers {
         self.global_object
     }
 
-    /// A zero/empty arg means a value failed to materialize (e.g. the VM is
-    /// terminating); skip the callback rather than passing it to JS.
+    /// A zero/empty arg means a value failed to materialize (e.g. a header
+    /// materializer bailed); skip the callback rather than passing it to JS.
+    /// The pending-termination-exception guard lives in `run_callback`.
     fn should_skip_dispatch(&self, data: &[JSValue]) -> bool {
-        self.global().has_exception() || data.contains(&JSValue::ZERO)
+        data.contains(&JSValue::ZERO)
     }
 
     pub(crate) fn call_event_handler(
@@ -2723,10 +2724,7 @@ impl H2FrameParser {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return;
         };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context
-            .get(this_value)
-            .filter(|v| *v != JSValue::ZERO)
-        else {
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return;
         };
         let _dispatch = self.enter_dispatch();
@@ -2742,10 +2740,7 @@ impl H2FrameParser {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return JSValue::ZERO;
         };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context
-            .get(this_value)
-            .filter(|v| *v != JSValue::ZERO)
-        else {
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return JSValue::ZERO;
         };
         value.ensure_still_alive();
@@ -2769,10 +2764,7 @@ impl H2FrameParser {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return;
         };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context
-            .get(this_value)
-            .filter(|v| *v != JSValue::ZERO)
-        else {
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return;
         };
         value.ensure_still_alive();
@@ -2796,10 +2788,7 @@ impl H2FrameParser {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return;
         };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context
-            .get(this_value)
-            .filter(|v| *v != JSValue::ZERO)
-        else {
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return;
         };
         value.ensure_still_alive();
@@ -2825,10 +2814,7 @@ impl H2FrameParser {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return;
         };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context
-            .get(this_value)
-            .filter(|v| *v != JSValue::ZERO)
-        else {
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return;
         };
         value.ensure_still_alive();
@@ -5061,10 +5047,7 @@ impl H2FrameParser {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return Some(stream);
         };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context
-            .get(this_value)
-            .filter(|v| *v != JSValue::ZERO)
-        else {
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return Some(stream);
         };
         let Some(callback) = JSH2FrameParser::Gc::onStreamStart.get(this_value) else {
@@ -8092,9 +8075,6 @@ impl H2FrameParser {
             let Some(value) = (unsafe { (*stream).js_context.get() }) else {
                 continue;
             };
-            if value == JSValue::ZERO {
-                continue;
-            }
             this.handlers.get().vm.event_loop_mut().run_callback(
                 callback,
                 global_object,

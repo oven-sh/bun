@@ -290,14 +290,14 @@ const MessagePort = _MessagePort;
 // closedMessagePorts lets moveMessagePortToContext report ERR_CLOSED_MESSAGE_PORT.
 const closedMessagePorts = new WeakSet();
 const nativeMessagePortClose = MessagePort.prototype.close;
-const setImmediateGlobal = globalThis.setImmediate;
 Object.defineProperty(MessagePort.prototype, "close", {
   value: function close(cb) {
     closedMessagePorts.add(this);
-    // node fires the close callback from libuv's close-callbacks phase — after
-    // this iteration's setImmediate. A nested setImmediate lands in the next
-    // check pass, matching that ordering versus a caller's own setImmediate.
-    if (typeof cb === "function") setImmediateGlobal(() => setImmediateGlobal(cb));
+    // node's mechanism is literally `this.once('close', cb)`, so cb interleaves
+    // with other close listeners in registration order. The close event fires at
+    // task-queue timing (before setImmediate) rather than node's close-callbacks
+    // phase (after) — a known Bun divergence that would need a native fix.
+    if (typeof cb === "function") this.once("close", cb);
     return nativeMessagePortClose.$call(this);
   },
   writable: true,
@@ -720,7 +720,11 @@ const messaging = require("internal/worker/messaging");
 messaging.initThreadInfo(threadId, isMainThread);
 // Captured stdio + the messaging control port ride inside workerData (wrapped;
 // ports transferred). Unwrap and bind the worker's stdio / messaging hub.
+// Gate on _isNodeWorker so a raw `new globalThis.Worker` that loads this module
+// does NOT have process.stdio rebound / workerData unwrapped by a fabricated key.
 if (
+  !isMainThread &&
+  _isNodeWorker &&
   workerData &&
   typeof workerData === "object" &&
   (BUN_WORKER_STDIO_KEY in workerData || BUN_WORKER_MESSAGING_KEY in workerData)
@@ -1211,13 +1215,15 @@ class Worker extends EventEmitter {
       if (maxBufferSize !== undefined) validateInteger(maxBufferSize, "options.maxBufferSize", 1);
       if (sampleInterval !== undefined) validateNumber(sampleInterval, "options.sampleInterval");
     }
+    // JSC has one thread-local sampler; cache stop() on the WORKER so overlapping
+    // handles resolve to the same profile instead of empty JSON. Cleared on start
+    // so a fresh non-overlapping run gets a fresh profile.
+    this.#pendingCpuProfileStop = undefined;
     return this.#worker.startCpuProfileInternal().then(() => {
-      // Cache so a second stop() returns the first call's profile (node caches
-      // on the handle) instead of the canned empty profile.
-      let stopped;
-      return { stop: () => (stopped ??= this.#worker.stopCpuProfileInternal()) };
+      return { stop: () => (this.#pendingCpuProfileStop ??= this.#worker.stopCpuProfileInternal()) };
     });
   }
+  #pendingCpuProfileStop: Promise<string> | undefined;
 
   cpuUsage(prevValue?: { user: number; system: number }) {
     let prevUser = 0;

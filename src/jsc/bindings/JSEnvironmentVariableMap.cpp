@@ -168,6 +168,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
     return JSValue::encode(out);
 }
 
+// Shared parse-and-apply for TZ / NODE_TLS_REJECT_UNAUTHORIZED / BUN_CONFIG_VERBOSE_FETCH,
+// used by both the CustomSetters below and applySharedEnvSideEffects.
+static void applyTZFromString(JSGlobalObject*, const String&);
+static void applyTLSRejectFromString(JSGlobalObject*, const String&);
+static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
+
 // In Node.js, the "TZ" environment variable is special.
 // Setting it automatically updates the timezone.
 // We also expose an explicit setTimeZone function in bun:jsc
@@ -181,11 +187,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * 
     JSValue decodedValue = JSValue::decode(value);
     if (decodedValue.isString()) {
         auto timeZoneName = decodedValue.toWTFString(globalObject);
-        if (timeZoneName.length() < 32) {
-            if (WTF::setTimeZoneOverride(timeZoneName)) {
-                vm.dateCache.resetIfNecessarySlow();
-            }
-        }
+        applyTZFromString(globalObject, timeZoneName);
     }
 
     auto* clientData = WebCore::clientData(vm);
@@ -261,11 +263,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * gl
 
     // TODO: only check "0". Node doesn't check both. But we already did. So we
     // should wait to do that until Bun v1.2.0.
-    if (str == "0"_s || str == "false"_s) {
-        Bun__setTLSRejectUnauthorizedValue(0);
-    } else {
-        Bun__setTLSRejectUnauthorizedValue(1);
-    }
+    applyTLSRejectFromString(globalObject, str);
 
     const auto& privateName = NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(vm);
     object->putDirect(vm, privateName, JSValue::decode(value), 0);
@@ -313,13 +311,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
     WTF::String str = decodedValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    if (str == "1"_s || str == "true"_s) {
-        Bun__setVerboseFetchValue(1);
-    } else if (str == "curl"_s) {
-        Bun__setVerboseFetchValue(2);
-    } else {
-        Bun__setVerboseFetchValue(0);
-    }
+    applyVerboseFetchFromString(globalObject, str);
 
     const auto& privateName = BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);
     object->putDirect(vm, privateName, JSValue::decode(value), 0);
@@ -471,6 +463,28 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
     "no_proxy"_s,
 };
 
+// The parse-and-apply bodies for the three side-effecting env vars, shared by
+// the regular process.env CustomSetters and applySharedEnvSideEffects so a new
+// side-effecting var need only be added in one place.
+static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
+{
+    if (value.length() < 32 && WTF::setTimeZoneOverride(value))
+        JSC::getVM(globalObject).dateCache.resetIfNecessarySlow();
+}
+static void applyTLSRejectFromString(JSGlobalObject*, const String& value)
+{
+    Bun__setTLSRejectUnauthorizedValue((value == "0"_s || value == "false"_s) ? 0 : 1);
+}
+static void applyVerboseFetchFromString(JSGlobalObject*, const String& value)
+{
+    if (value == "1"_s || value == "true"_s)
+        Bun__setVerboseFetchValue(1);
+    else if (value == "curl"_s)
+        Bun__setVerboseFetchValue(2);
+    else
+        Bun__setVerboseFetchValue(0);
+}
+
 // Mirror the regular process.env CustomSetters' native side effects (TZ, TLS,
 // verbose-fetch, proxy vars); the shared store only updates strings, so without
 // this a SHARE_ENV worker's writes would silently skip them.
@@ -479,25 +493,18 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
 // keep the old native effect. Node does not propagate a shared-store TZ either.
 static void applySharedEnvSideEffects(JSGlobalObject* globalObject, const String& rawKey, const String& stringValue)
 {
-    VM& vm = JSC::getVM(globalObject);
     // Windows env keys are case-insensitive; normalize so process.env.tz hits TZ.
     String key = SharedEnvStore::normalizeKey(rawKey);
     if (key == "TZ"_s) {
-        if (stringValue.length() < 32 && WTF::setTimeZoneOverride(stringValue))
-            vm.dateCache.resetIfNecessarySlow();
+        applyTZFromString(globalObject, stringValue);
         return;
     }
     if (key == "NODE_TLS_REJECT_UNAUTHORIZED"_s) {
-        Bun__setTLSRejectUnauthorizedValue((stringValue == "0"_s || stringValue == "false"_s) ? 0 : 1);
+        applyTLSRejectFromString(globalObject, stringValue);
         return;
     }
     if (key == "BUN_CONFIG_VERBOSE_FETCH"_s) {
-        if (stringValue == "1"_s || stringValue == "true"_s)
-            Bun__setVerboseFetchValue(1);
-        else if (stringValue == "curl"_s)
-            Bun__setVerboseFetchValue(2);
-        else
-            Bun__setVerboseFetchValue(0);
+        applyVerboseFetchFromString(globalObject, stringValue);
         return;
     }
     // Proxy vars: fetch()'s getHttpProxyFor() reads the Zig env map, so sync.
@@ -536,6 +543,13 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
 
     String keyStr = String(uid);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
+#if OS(WINDOWS)
+    // Founding a SHARE_ENV tree swaps main's process.env off the windowsEnv Proxy
+    // that called SetEnvironmentVariableW; keep main's OS-env write-through (Node
+    // keeps main on its RealEnvStore and aliases it to the child).
+    if (defaultGlobalObject(globalObject)->scriptExecutionContext()->isMainThread())
+        Bun__Process__editWindowsEnvVar(Bun::toString(keyStr), Bun::toString(stringValue));
+#endif
     store->set(keyStr, stringValue);
     return true;
 }
@@ -553,6 +567,11 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
+#if OS(WINDOWS)
+    // See ::put — mirror the windowsEnv Proxy's deleteProperty write-through.
+    if (defaultGlobalObject(globalObject)->scriptExecutionContext()->isMainThread())
+        Bun__Process__editWindowsEnvVar(Bun::toString(String(uid)), { .tag = BunStringTag::Dead });
+#endif
     store->remove(String(uid));
     // Also drop any own property the Base fallback installed (accessor descriptors).
     return Base::deleteProperty(cell, globalObject, propertyName, slot);

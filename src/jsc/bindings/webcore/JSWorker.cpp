@@ -726,8 +726,8 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
     // Pending. postTaskToWorkerGlobalScope queues into m_pendingTasks for
     // Pending and returns false only for Closing/Closed, which the !accepted
     // reject below handles. If the worker never reaches Running (entry threw,
-    // failed to load, unsettled TLA), dispatchExit drains m_pendingTasks on
-    // the parent thread and runs each abandon callback to reject + free the
+    // failed to load, unsettled TLA), dispatchExit clears m_pendingTasks on
+    // the parent thread and rejectAllCrossVMRequests() rejects + frees the
     // Strong<>.
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
 

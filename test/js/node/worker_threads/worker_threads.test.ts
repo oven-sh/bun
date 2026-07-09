@@ -1259,18 +1259,25 @@ test("off() removes a pending once() listener", () => {
   port2.close();
 });
 
-test("close(cb) fires cb asynchronously after this tick's setImmediate", async () => {
+test("close(cb) interleaves with other close listeners in registration order", async () => {
+  // node's mechanism is `this.once('close', cb)`, so cb interleaves with other
+  // close listeners in the order they were registered (verified against node).
   const { port1 } = new MessageChannel();
   const order: string[] = [];
-  port1.close(() => order.push("cb"));
+  port1.on("close", () => order.push("A"));
+  port1.close(() => order.push("B"));
+  port1.on("close", () => order.push("C"));
   order.push("sync");
-  setImmediate(() => order.push("immediate1"));
-  await new Promise(r => setImmediate(() => setImmediate(() => setImmediate(r))));
-  // node fires the close callback from libuv's close-callbacks phase, i.e.
-  // after any setImmediate the caller queued in the same tick as close().
-  expect(order[0]).toBe("sync");
-  expect(order).toContain("cb");
-  expect(order.indexOf("immediate1")).toBeLessThan(order.indexOf("cb"));
+  await new Promise(r => setImmediate(() => setImmediate(r)));
+  expect(order).toEqual(["sync", "A", "B", "C"]);
+
+  // A listener added AFTER close(cb) fires after cb.
+  const { port1: p2 } = new MessageChannel();
+  const order2: string[] = [];
+  p2.close(() => order2.push("B"));
+  p2.on("close", () => order2.push("C"));
+  await new Promise(r => setImmediate(() => setImmediate(r)));
+  expect(order2).toEqual(["B", "C"]);
 });
 
 test("getHeapStatistics settles when terminated mid-request", async () => {
@@ -1416,3 +1423,164 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     expect(exitCode).toBe(0);
   });
 });
+
+test("postMessage with a non-object transfer element throws DataCloneError", () => {
+  // Both the array-form and options-bag paths converge on Node's
+  // DataCloneError, not TypeError / ERR_INVALID_ARG_TYPE.
+  const { port1 } = new MessageChannel();
+  for (const args of [
+    [{}, [5]],
+    [{}, { transfer: [5] }],
+  ] as const) {
+    let err: any;
+    try {
+      port1.postMessage(...args);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ name: "DataCloneError", code: 25 });
+    expect(err.message).toContain("Found invalid value in transferList");
+  }
+  port1.close();
+});
+
+test("MessageEvent ports validation walks the iterator once and gives a detailed error for any iterable", () => {
+  expect(() => new MessageEvent("message", { ports: new Set([{}]) })).toThrow(
+    /Expected eventInitDict\.ports\[0\] \("\{\}"\) to be an instance of MessagePort/,
+  );
+  expect(
+    () =>
+      new MessageEvent("message", {
+        ports: (function* () {
+          yield {};
+        })(),
+      }),
+  ).toThrow(/Expected eventInitDict\.ports\[0\]/);
+  const { port1 } = new MessageChannel();
+  const traps: string[] = [];
+  const proxy = new Proxy([port1], { get: (t, k) => (traps.push(String(k)), (t as any)[k]) });
+  expect(() => new MessageEvent("message", { ports: proxy })).not.toThrow();
+  // Symbol.iterator is read exactly once.
+  expect(traps.filter(k => k.includes("Symbol")).length).toBe(1);
+  port1.close();
+});
+
+test("MessagePort: transferring a port from inside its own close()'s flush window throws DataCloneError", async () => {
+  // Queue two messages. The first handler calls A.close(); close()'s flush
+  // (running because m_inMessageDispatch is true) delivers the second, whose
+  // handler tries to transfer A. A is m_isClosing at that point, so the
+  // transfer path rejects it with DataCloneError.
+  const { port1: A, port2: A2 } = new MessageChannel();
+  const { port1: B1, port2: B2 } = new MessageChannel();
+  let err: any;
+  let done!: () => void;
+  const p = new Promise<void>(r => (done = r));
+  let n = 0;
+  A.on("message", () => {
+    n++;
+    if (n === 1) {
+      A.close();
+      done();
+    } else {
+      try {
+        B1.postMessage(null, [A]);
+      } catch (e) {
+        err = e;
+      }
+    }
+  });
+  A2.postMessage("first");
+  A2.postMessage("second");
+  await p;
+  expect(err).toMatchObject({ name: "DataCloneError" });
+  let b2Got = false;
+  B2.on("message", () => (b2Got = true));
+  await new Promise(r => setImmediate(() => setImmediate(r)));
+  expect(b2Got).toBe(false);
+  B1.close();
+  B2.close();
+});
+
+test("MessagePort: peer closing while a port is in transit still delivers 'close' and doesn't hang", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const { port1, port2 } = new MessageChannel();
+       const w = new Worker(
+         \`require("worker_threads").parentPort.once("message", ({ port }) => {
+            port.on("message", () => {});
+            port.on("close", () => require("worker_threads").parentPort.postMessage("closed"));
+          });\`,
+         { eval: true },
+       );
+       w.on("message", m => { console.log(m); w.unref(); });
+       w.on("online", () => {
+         w.postMessage({ port: port2 }, [port2]);
+         // Peer closes while port2 is in transit (worker hasn't attached yet).
+         port1.close();
+       });`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "closed",
+    stderr,
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+test("workerData is not unwrapped for a non-node globalThis.Worker", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const src = 'const wt = require("worker_threads"); self.postMessage({ workerData: wt.workerData });';
+       const url = URL.createObjectURL(new Blob([src]));
+       const w = new globalThis.Worker(url, { workerData: { "@@bunWorkerThreadsMessaging": {}, data: 1 } });
+       w.onerror = e => { console.error(e.message || e); process.exit(1); };
+       w.onmessage = e => { console.log(JSON.stringify(e.data)); w.terminate(); };`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout);
+  // The unwrap block was skipped: workerData is the original object, not `.data`.
+  expect({ workerData: out.workerData, stderr, exitCode }).toEqual({
+    workerData: { "@@bunWorkerThreadsMessaging": {}, data: 1 },
+    stderr,
+    exitCode: 0,
+  });
+});
+
+test.skipIf(process.platform !== "win32")(
+  "SHARE_ENV founding thread on Windows still writes through to the OS environment",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, SHARE_ENV } = require("worker_threads");
+         const cp = require("child_process");
+         new Worker("1", { eval: true, env: SHARE_ENV }).on("exit", () => {
+           process.env.BUN_SHARE_ENV_WRITE_THROUGH = "yes";
+           // A spawned child sees the OS env, not the JS map.
+           const out = cp.execFileSync(process.execPath, [
+             "-e", "process.stdout.write(process.env.BUN_SHARE_ENV_WRITE_THROUGH || 'unset')",
+           ]).toString();
+           console.log(out);
+         });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("yes");
+    expect(exitCode).toBe(0);
+  },
+);

@@ -374,6 +374,13 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) {
+        // A prior callback's microtasks can tear the worker down
+        // (worker.terminate()), leaving the termination exception pending;
+        // entering JS then trips executeCallImpl's `assertNoException`. Same
+        // gate as `tick_with_count()`; guarding here covers all 50+ callers.
+        if global_object.has_exception() {
+            return;
+        }
         // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` carries LLVM
         // `noalias`, and `callback.call()` receives nothing derived from
@@ -406,6 +413,9 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JSValue {
+        if global_object.has_exception() {
+            return JSValue::ZERO;
+        }
         // R-2 noalias mitigation — see `run_callback` above.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.

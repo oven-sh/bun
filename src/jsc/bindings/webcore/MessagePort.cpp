@@ -85,7 +85,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
         if (auto* jsPort = dynamicDowncast<JSMessagePort>(obj)) {
             if (&jsPort->wrapped() == this)
                 return Exception { DataCloneError, "Transfer list contains source port"_s };
-            if (jsPort->wrapped().isDetached())
+            if (jsPort->wrapped().isDetached() || jsPort->wrapped().isClosing())
                 return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
         } else if (!obj->inherits<JSC::JSArrayBuffer>()) {
             // MessagePort and ArrayBuffer are the only transferables bun serializes;
@@ -444,7 +444,7 @@ ExceptionOr<Vector<TransferredMessagePort>> MessagePort::disentanglePorts(Vector
 
     HashSet<MessagePort*> seen;
     for (auto& port : ports) {
-        if (!port || !port->isEntangled() || !seen.add(port.get()).isNewEntry)
+        if (!port || !port->isEntangled() || port->isClosing() || !seen.add(port.get()).isNewEntry)
             return Exception { DataCloneError };
     }
 

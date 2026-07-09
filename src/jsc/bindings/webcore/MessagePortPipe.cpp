@@ -213,20 +213,31 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContextIdentifier ctxI
     }
     if (wakeCtx)
         scheduleDrain(side, wakeCtx);
+    // Peer already closed while this side was in transit (detach() cleared
+    // ContextKnown so notifyPeerClosed() early-returned): re-deliver to the new
+    // owner, or the receiving context's listener loop-ref is never released.
+    if (m_sides[1 - side].state.load(std::memory_order_acquire) & Closed)
+        notifyPeerClosed(side);
 }
 
 void MessagePortPipe::registerCloseContext(uint8_t side, ScriptExecutionContextIdentifier ctxId, ThreadSafeWeakPtr<MessagePort> port)
 {
     ASSERT(side < 2);
     auto& s = m_sides[side];
-    Locker locker { s.lock };
-    uint64_t st = s.state.load(std::memory_order_relaxed);
-    // Already closed, or context already known (started or previously registered).
-    if ((st & Closed) || (st & (Attached | ContextKnown)))
-        return;
-    s.ctxId = ctxId;
-    s.port = WTF::move(port);
-    s.state.store(st | ContextKnown, std::memory_order_release);
+    {
+        Locker locker { s.lock };
+        uint64_t st = s.state.load(std::memory_order_relaxed);
+        // Already closed, or context already known (started or previously registered).
+        if ((st & Closed) || (st & (Attached | ContextKnown)))
+            return;
+        s.ctxId = ctxId;
+        s.port = WTF::move(port);
+        s.state.store(st | ContextKnown, std::memory_order_release);
+    }
+    // See attach(): re-deliver a peer-close that fired while this side had no
+    // context (in transit or never registered).
+    if (m_sides[1 - side].state.load(std::memory_order_acquire) & Closed)
+        notifyPeerClosed(side);
 }
 
 void MessagePortPipe::detach(uint8_t side)

@@ -128,6 +128,13 @@ private:
 
     bool isEntangled() const { return !m_isDetached; }
 
+public:
+    // Checked by the transfer path so a closing-but-not-yet-detached port
+    // (inside close()'s flush window) is rejected the same as a detached one.
+    bool isClosing() const { return m_isClosing; }
+
+private:
+
     // Held for the port's entire lifetime — never nulled — so that the GC
     // thread's hasPendingActivity() can dereference it without racing the
     // mutator. close()/disentangle() flip pipe-side state bits instead.

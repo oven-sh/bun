@@ -215,6 +215,7 @@ unsafe extern "C" {
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
     safe fn WebWorker__dispatchOnline(cpp_worker: *mut c_void, global: &JSGlobalObject);
     safe fn WebWorker__fireEarlyMessages(cpp_worker: *mut c_void, global: &JSGlobalObject);
+    safe fn WebWorker__entrySettled(global: &JSGlobalObject);
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         cpp_worker: *mut c_void,
@@ -1097,9 +1098,15 @@ impl WebWorker {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
+                WebWorker__entrySettled(vm.global());
                 return self.shutdown();
             }
         };
+
+        // Fire (and clear) the entryEvaluated hook on EVERY post-evaluation path
+        // so buffered postMessageToThread deliveries drain and the sender's
+        // Atomics.waitAsync settles. dispatchOnline re-calls it as a no-op.
+        WebWorker__entrySettled(vm.global());
 
         // SAFETY: `promise` is a live JSC heap cell.
         unsafe {

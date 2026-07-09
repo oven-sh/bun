@@ -79,13 +79,13 @@ const dummyPort = new MessageChannel().port1;
     new MessageEvent('message', { ports: [ null ] });
   }, {
     name: 'TypeError',
-    message: /MessageEvent constructor: Expected eventInitDict\.ports(\[0\])? \("null"\) to be an instance of MessagePort\./,
+    message: /MessageEvent constructor: Expected eventInitDict\.ports\[0\] \("null"\) to be an instance of MessagePort\./,
   });
   assert.throws(() => {
     new MessageEvent('message', { ports: [ {} ] });
   }, {
     name: 'TypeError',
-    message: /MessageEvent constructor: Expected eventInitDict\.ports(\[0\])? \("\{\}"\) to be an instance of MessagePort\./,
+    message: /MessageEvent constructor: Expected eventInitDict\.ports\[0\] \("\{\}"\) to be an instance of MessagePort\./,
   });
 }
 

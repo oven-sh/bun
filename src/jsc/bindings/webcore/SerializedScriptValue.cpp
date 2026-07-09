@@ -6406,7 +6406,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             continue;
         }
         if (auto port = JSMessagePort::toWrapped(vm, transferable.get())) {
-            if (port->isDetached())
+            if (port->isDetached() || port->isClosing())
                 return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
             messagePorts.append(WTF::move(port));
             continue;

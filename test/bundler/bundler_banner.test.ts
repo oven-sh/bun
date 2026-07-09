@@ -141,6 +141,28 @@ module.exports = 1;`,
     run: { file: "/importer.js", stdout: "béta🚀 6" },
   });
 
+  itBundled("banner/NonAsciiBannerTargetBunBytecode", {
+    banner: 'globalThis.BNR = "béta🚀";',
+    target: "bun",
+    format: "cjs",
+    bytecode: true,
+    backend: "api",
+    outdir: "/out",
+    files: {
+      "/a.js": `console.log(globalThis.BNR, globalThis.BNR.length);`,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out/a.js")).toStartWith("// @bun @bytecode @bun-cjs\n");
+    },
+    run: {
+      stdout: "béta🚀 6",
+      env: { BUN_JSC_verboseDiskCache: "1" },
+      validate({ stderr }) {
+        expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+      },
+    },
+  });
+
   itBundled("banner/BannerWithESMAndTargetBun", {
     banner: "// Copyright 2024 Example Corp",
     format: "esm",

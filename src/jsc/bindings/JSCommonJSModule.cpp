@@ -109,6 +109,7 @@ static bool canPerformFastEnumeration(Structure* s)
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
+extern "C" bool Bun__VM__hasEvalEntryPoint(void*);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
@@ -158,8 +159,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         globalObject->putDirect(vm, builtinNames(vm).exportsPublicName(), exports, 0);
         globalObject->putDirect(vm, builtinNames(vm).requirePublicName(), requireFunction, 0);
         globalObject->putDirect(vm, Identifier::fromString(vm, "module"_s), moduleObject, 0);
-        globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
-        globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
+        // Node: __filename is "[eval]"/"[stdin]" (the module id), __dirname is ".".
+        globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), moduleObject->m_id.get(), 0);
+        globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), JSC::jsString(vm, WTF::String("."_s)), 0);
 
         // The 3-arg JSC::evaluate overload catches the exception into a
         // discarded NakedPtr (Completion.h), so a require() failure or any
@@ -372,6 +374,29 @@ JSC_DEFINE_CUSTOM_SETTER(jsRequireExtensionsSetter,
     return true;
 }
 
+// Shared by require.main and process.mainModule: the CJS main-module object,
+// or undefined for -e/-p/stdin entries (which have no main module in Node).
+JSValue resolveMainCommonJSModule(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Bun__VM__hasEvalEntryPoint(globalObject->bunVM())) {
+        return jsUndefined();
+    }
+    auto& builtinNames = Bun::builtinNames(vm);
+    JSValue mainValue = globalObject->bunObject()->get(globalObject, builtinNames.mainPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue mainModule = globalObject->requireMap()->get(globalObject, mainValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    return mainModule;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsRequireMainGetter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    return JSValue::encode(resolveMainCommonJSModule(globalObject));
+}
+
 static const HashTableValue RequireResolveFunctionPrototypeValues[] = {
     { "paths"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, requireResolvePathsFunction, 1 } },
 };
@@ -431,10 +456,7 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 
     reifyStaticProperties(vm, info(), RequireFunctionPrototypeValues, *this);
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
-        vm,
-        globalObject,
-        commonJSMainCodeGenerator(vm),
-        globalObject->globalScope());
+        vm, globalObject, 0, "main"_s, jsRequireMainGetter, ImplementationVisibility::Public);
 
     this->putDirectAccessor(
         globalObject,
@@ -1494,8 +1516,19 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         auto requireMap = globalObject->requireMap();
-        if (requireMap->size() == 0) {
-            requireMapKey = JSC::jsString(vm, WTF::String("."_s));
+        if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
+            // Node: module.id is "[eval]"/"[stdin]"; module.filename stays absolute.
+            if (index != WTF::notFound) {
+                requireMapKey = JSC::jsSubstring(globalObject, filename, index + 1, sourceURL.length() - index - 1);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        } else {
+            // id="." marks the Node main module. Compare against vm.main so -r
+            // preloads (which run first) do not steal the main identity.
+            BunString sourceURLBunStr = Bun::toString(sourceURL);
+            if (Bun__isBunMain(globalObject, &sourceURLBunStr)) {
+                requireMapKey = JSC::jsString(vm, WTF::String("."_s));
+            }
         }
 
         if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
@@ -1611,8 +1644,16 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         auto requireMap = globalObject->requireMap();
-        if (requireMap->size() == 0) {
-            requireMapKey = JSC::jsString(vm, WTF::String("."_s));
+        if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
+            if (index != WTF::notFound) {
+                requireMapKey = JSC::jsSubstring(globalObject, filename, index + 1, sourceURL.length() - index - 1);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        } else {
+            BunString sourceURLBunStr = Bun::toString(sourceURL);
+            if (Bun__isBunMain(globalObject, &sourceURLBunStr)) {
+                requireMapKey = JSC::jsString(vm, WTF::String("."_s));
+            }
         }
 
         moduleObject = JSCommonJSModule::create(

@@ -76,3 +76,35 @@ describe.each(["default", "bytes"] as const)("pull() sync fast path (%s controll
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 });
+
+// writableStreamDefaultControllerProcessWrite wrapped each sink write() return in a new
+// JSPromise + performPromiseThen. The sync fast path queues onWSSinkWriteFulfilled directly,
+// so only writer.write()'s own request promise remains per chunk.
+test("writer.write() with a sync sink does not allocate a wrapper promise per chunk", async () => {
+  const src = `
+    const { heapStats } = require("bun:jsc");
+    const WRITES = 4000;
+    async function drain() {
+      const ws = new WritableStream({ write() {} });
+      const writer = ws.getWriter();
+      for (let i = 0; i < WRITES; i++) await writer.write(i);
+      await writer.close();
+    }
+    await drain();
+    Bun.gc(true);
+    const before = heapStats().objectTypeCounts.Promise || 0;
+    await drain();
+    const after = heapStats().objectTypeCounts.Promise || 0;
+    console.log(JSON.stringify({ delta: after - before, writes: WRITES }));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { delta, writes } = JSON.parse(stdout.trim());
+  // writer.write()'s own request promise + backpressure's fresh readyPromise are one each per
+  // write and unavoidable; the old path additionally allocated a sink-write wrapper promise.
+  expect({ belowThreshold: delta < writes * 2.5, stderr, exitCode }).toEqual({
+    belowThreshold: true,
+    stderr: "",
+    exitCode: 0,
+  });
+});

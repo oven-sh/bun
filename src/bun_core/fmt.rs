@@ -1252,7 +1252,7 @@ impl Display for FormatValidIdentifier<'_> {
         if !needs_gap {
             // Are there any non-alphanumeric chars at all?
             while iterator.next(&mut cursor) {
-                if !js_lexer::is_identifier_continue(cursor.c) || cursor.width > 1 {
+                if !js_lexer::is_identifier_continue(cursor.c) {
                     needs_gap = true;
                     start_i = cursor.i as usize;
                     break;
@@ -1274,7 +1274,7 @@ impl Display for FormatValidIdentifier<'_> {
             cursor = strings::Cursor::default();
 
             while iterator.next(&mut cursor) {
-                if js_lexer::is_identifier_continue(cursor.c) && cursor.width == 1 {
+                if js_lexer::is_identifier_continue(cursor.c) {
                     if needs_gap {
                         f.write_str("_")?;
                         needs_gap = false;

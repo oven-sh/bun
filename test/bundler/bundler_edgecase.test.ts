@@ -2696,6 +2696,25 @@ describe("bundler", () => {
       expect(out).not.toContain("na_ve");
     },
   });
+  itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
+    files: {
+      "/entry.ts": /* js */ `
+        const m = require("./模块.cjs");
+        console.log(m.x);
+      `,
+      "/模块.cjs": /* js */ `
+        module.exports = { x: 42 };
+      `,
+    },
+    target: "node",
+    run: { stdout: "42" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("require_模块");
+      expect(out).not.toContain("require_模_");
+      expect(out).not.toContain("require___");
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

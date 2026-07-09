@@ -193,10 +193,11 @@ describe("Bun.serve error() returning a streaming Response", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ out: stdout, exitCode, stderr }).toEqual({
+    // stderr intentionally not asserted empty: debug/ASAN builds may emit
+    // benign warnings. A crash is observed via exitCode and the missing body.
+    expect({ out: stdout, exitCode }, stderr).toEqual({
       out: JSON.stringify({ status: 597, len: 64 * CHUNKS }),
       exitCode: 0,
-      stderr: "",
     });
   });
 });

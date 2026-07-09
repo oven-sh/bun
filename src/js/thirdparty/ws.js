@@ -168,8 +168,9 @@ class BunWebSocket extends EventEmitter {
         disableDeflate = true;
       }
       handshakeTimeout = options.handshakeTimeout;
-      if (options.maxPayload !== undefined) {
-        maxPayload = options.maxPayload;
+      const optMaxPayload = options.maxPayload;
+      if (optMaxPayload !== undefined) {
+        maxPayload = optMaxPayload;
       }
 
       // Extract from agent if provided (like HttpsProxyAgent)

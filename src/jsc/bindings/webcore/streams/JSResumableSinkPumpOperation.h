@@ -43,9 +43,9 @@ public:
     // the sticky error, if any (gated by m_closed / emptiness).
     JSC::WriteBarrier<JSC::Unknown> m_error;
     // a drain loop is running (re-entrancy guard).
-    bool m_reading { false };
+    bool m_reading : 1 { false };
     // terminal.
-    bool m_closed { false };
+    bool m_closed : 1 { false };
 
 private:
     JSResumableSinkPumpOperation(JSC::VM&, JSC::Structure*);

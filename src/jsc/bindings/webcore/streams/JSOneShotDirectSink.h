@@ -57,9 +57,9 @@ public:
     // The underlying source's optional close() method, invoked by end()/close().
     JSC::WriteBarrier<JSC::Unknown> m_closeFunction;
     // Set by end()/close(): later write()/end()/close()/flush() calls are no-ops.
-    bool m_closed { false };
+    bool m_closed : 1 { false };
     // true ⇒ resolve with a Uint8Array (toBytes); false ⇒ an ArrayBuffer (toArrayBuffer).
-    bool m_asUint8Array { false };
+    bool m_asUint8Array : 1 { false };
 
 private:
     JSOneShotDirectSink(JSC::VM&, JSC::Structure*);

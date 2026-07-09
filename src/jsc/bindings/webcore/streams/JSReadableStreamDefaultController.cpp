@@ -85,6 +85,11 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::J
             return nullptr;
         if (!result.isObject()) [[likely]]
             return nullptr;
+        // %Promise.resolve%(x) returns x unchanged when IsPromise(x) and x.constructor is
+        // %Promise%; a vanilla-structure JSPromise satisfies both, so skip the wrapper and the
+        // thenable .then chain. Subclassed/patched promises and other objects fall through.
+        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->structure() == globalObject->promiseStructure())
+            return resultPromise;
         RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
     }
     case SourceKind::Nothing:

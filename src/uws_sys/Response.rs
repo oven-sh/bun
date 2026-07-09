@@ -145,6 +145,14 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_is_connect_request(Self::ssl_flag(), self.as_raw())
     }
 
+    pub fn from_ancient_request(&self) -> bool {
+        // SAFETY: `Response<SSL>` and `c::uws_res` are layout-identical opaque
+        // ZSTs (both `UnsafeCell<[u8; 0]>`); the reborrow is a no-op cast.
+        c::uws_res_from_ancient_request(Self::ssl_flag(), unsafe {
+            &*std::ptr::from_ref::<Self>(self).cast::<c::uws_res>()
+        })
+    }
+
     pub fn flush_headers(&mut self, flush_immediately: bool) {
         c::uws_res_flush_headers(Self::ssl_flag(), self.as_raw(), flush_immediately)
     }
@@ -791,6 +799,10 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.should_close_connection())
     }
 
+    pub fn from_ancient_request(self) -> bool {
+        any_dispatch!(self, |r| r.from_ancient_request())
+    }
+
     pub fn try_end(self, data: &[u8], total_size: usize, close_connection: bool) -> bool {
         any_dispatch!(self, |r| r.try_end(data, total_size, close_connection))
     }
@@ -1036,6 +1048,7 @@ pub mod c {
         pub(crate) safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
         pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
         pub(crate) safe fn uws_res_is_connect_request(ssl: i32, res: &mut uws_res) -> bool;
+        pub(crate) safe fn uws_res_from_ancient_request(ssl: i32, res: &uws_res) -> bool;
         // Out-params are `&mut` (non-null, valid for write); the C shim only
         // stores into them and returns a length — no read-through precondition.
         pub(crate) safe fn uws_res_get_remote_address_info(

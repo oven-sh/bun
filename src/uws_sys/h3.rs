@@ -226,6 +226,9 @@ impl Response {
     pub fn is_connect_request(&self) -> bool {
         false
     }
+    pub fn from_ancient_request(&self) -> bool {
+        false
+    }
     pub fn prepare_for_sendfile(&mut self) {}
     pub fn mark_needs_more(&mut self) {}
     pub fn get_socket_data(&mut self) -> *mut c_void {

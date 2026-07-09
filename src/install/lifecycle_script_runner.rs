@@ -339,9 +339,14 @@ fn rewrite_npm_run_workspaces(out: &mut Vec<u8>, cmd: &[u8], prefix_len: usize) 
         } else if t == b"--workspaces" || t == b"--ws" {
             all_workspaces = true;
         } else if t == b"-w" || t == b"--workspace" {
-            if k + 1 < tokens.len() {
+            // The value must be the next token and must not itself be a flag;
+            // otherwise we would swallow a real flag (e.g. `--if-present`) as a
+            // bogus workspace name. Bail to the plain prefix swap instead.
+            if k + 1 < tokens.len() && !tokens[k + 1].starts_with(b"-") {
                 filters.push(tokens[k + 1]);
                 k += 1;
+            } else {
+                return 0;
             }
         } else if let Some(v) = t.strip_prefix(b"--workspace=") {
             filters.push(v);

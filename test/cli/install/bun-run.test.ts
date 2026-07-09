@@ -712,6 +712,24 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     });
 
+    it("does not consume a following flag as the -w value", async () => {
+      using dir = tempDir("npm-ws-flagvalue", rootScriptRepo("npm run greet -w --if-present"));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "start"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15_000,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toContain("greet-done");
+      expect(stderr).not.toContain("filter");
+      expect(exitCode).toBe(0);
+    });
+
     it.skipIf(isWindows)("does not mangle quoting for npm run -w inside a quoted string", async () => {
       using dir = tempDir("npm-ws-quoted", rootScriptRepo("sh -c 'npm run greet -w app'"));
       await using proc = Bun.spawn({

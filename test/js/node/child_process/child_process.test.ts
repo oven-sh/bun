@@ -440,9 +440,14 @@ describe("spawnSync()", () => {
     // Node.js documents spawnSync as not returning until the child process has
     // fully closed, i.e. every pipe has been read to EOF even when a grandchild
     // that inherited the pipe is still writing after the direct child exited.
-    const cmd = ["-c", `printf A; ( sleep 0.3; printf B ) & exit 0`];
-    const { stdout, status, signal } = spawnSync("/bin/sh", cmd, { stdio: ["ignore", "pipe", "ignore"] });
-    expect({ stdout: String(stdout), status, signal }).toEqual({ stdout: "AB", status: 0, signal: null });
+    const cmd = ["-c", `printf A; printf C >&2; ( sleep 0.3; printf B; printf D >&2 ) & exit 0`];
+    const { stdout, stderr, status, signal } = spawnSync("/bin/sh", cmd, { stdio: ["ignore", "pipe", "pipe"] });
+    expect({ stdout: String(stdout), stderr: String(stderr), status, signal }).toEqual({
+      stdout: "AB",
+      stderr: "CD",
+      status: 0,
+      signal: null,
+    });
   });
 });
 

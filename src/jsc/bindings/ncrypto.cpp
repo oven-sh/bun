@@ -4373,10 +4373,9 @@ bool Rsa::checkPrivateKey() const
     if (rsa_ == nullptr) return false;
     if (RSA_check_key(rsa_) == 1) return true;
 
-    // BoringSSL hard-fails sign/decrypt on inconsistent CRT parameters where
-    // OpenSSL would fall back to m^d mod n. Recompute dp, dq, qi from d, p, q
-    // so JWK imports with permuted or corrupt CRT hints still produce a working
-    // key when the core (n, e, d, p, q) material is valid.
+    // BoringSSL hard-fails on inconsistent CRT params where OpenSSL falls back
+    // to m^d mod n. Recompute dp/dq/qi from d,p,q so JWK imports with bad CRT
+    // hints still yield a working key when the core (n,e,d,p,q) is valid.
     ERR_clear_error();
 
     const BIGNUM* d;

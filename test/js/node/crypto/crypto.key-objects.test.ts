@@ -1801,12 +1801,9 @@ function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
 
-// Previously createPrivateKey({ format: "jwk" }) did no RSA key-material
-// validation, so inconsistent components produced a poisoned KeyObject whose
-// first sign()/privateDecrypt() threw an OpenSSL internal error instead of a
-// recoverable ERR_CRYPTO_INVALID_JWK at import time. Node.js (OpenSSL) rejects
-// n != p*q at import and otherwise falls back to m^d mod n, so it signs
-// correctly even when the supplied CRT hints are wrong.
+// Node.js (OpenSSL) rejects n != p*q at JWK import and otherwise falls back to
+// m^d mod n for bad CRT hints; BoringSSL hard-fails at sign() instead, so an
+// unvalidated import yielded a poisoned KeyObject.
 describe("createPrivateKey RSA JWK key-material validation", () => {
   const msg = Buffer.from("hello");
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });

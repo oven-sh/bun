@@ -671,6 +671,24 @@ describe("request.url falls back to the server's authority when Host is unusable
     const raw = await play(server.port, "GET /helloooo HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
     expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("http://example.com/helloooo");
   });
+
+  it.each([
+    ["http://[0:0:0:0:0:0:0:1]:3000/", "[::1]"],
+    ["http://example.com:0080/api/v1/", "example.com"],
+  ])("with a non-canonical baseURI %j (HTTP/1.0 no Host)", async (baseURI, expectedHost) => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      baseURI,
+      fetch: req => new Response(req.url),
+    });
+    const raw = await play(server.port, "GET /x HTTP/1.0\r\n\r\n");
+    const url = new URL(raw.slice(raw.indexOf("\r\n\r\n") + 4));
+    expect({ hostname: url.hostname, pathname: url.pathname }).toEqual({
+      hostname: expectedHost,
+      pathname: "/x",
+    });
+  });
 });
 
 describe("streaming", () => {

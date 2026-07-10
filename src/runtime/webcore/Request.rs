@@ -862,8 +862,7 @@ impl Request {
                     return self.get_protocol().len() + host.len() + req_url.len();
                 }
                 if let Some(base) = self.request_context.fallback_base_url() {
-                    return bun_url::origin_from_slice(base).map_or(base.len(), <[u8]>::len)
-                        + req_url.len();
+                    return Self::fallback_origin(base).len() + req_url.len();
                 }
             }
             return req_url.len();
@@ -1023,12 +1022,25 @@ impl Request {
     #[cold]
     fn set_url_from_fallback_authority(&self, req_url: &[u8]) {
         if let Some(base) = self.request_context.fallback_base_url() {
-            let origin = bun_url::origin_from_slice(base).unwrap_or(base);
-            if self.try_set_url(&[origin, req_url]) {
+            if self.try_set_url(&[Self::fallback_origin(base), req_url]) {
                 return;
             }
         }
         self.url.set(BunString::clone_utf8(req_url));
+    }
+
+    /// Origin prefix (`scheme://authority`) of `base_url_string_for_joining`.
+    /// ServerConfig validates `base` to have no userinfo/query/fragment, so the
+    /// origin is the prefix up to the first `/` past `://`. A byte scan avoids
+    /// `origin_from_slice`, whose `pathStart()` offset is computed on the
+    /// WHATWG-canonicalized form and would mis-slice a non-canonical authority
+    /// (uncompressed IPv6, leading-zero port) in the raw input.
+    fn fallback_origin(base: &[u8]) -> &[u8] {
+        let after_scheme = strings::index_of(base, b"://").map_or(0, |i| i + 3);
+        match strings::index_of_char_pos(base, b'/', after_scheme) {
+            Some(i) => &base[..i],
+            None => base,
+        }
     }
 }
 

@@ -92,7 +92,7 @@ declare module "bun:test" {
     function clearAllMocks(): void;
     function resetAllMocks(): void;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
-    function setSystemTime(now?: number | Date): void;
+    function setSystemTime(now?: number | Date): typeof jest;
     function setTimeout(milliseconds: number): void;
     function useFakeTimers(options?: { now?: number | Date }): typeof vi;
     function useRealTimers(): typeof vi;

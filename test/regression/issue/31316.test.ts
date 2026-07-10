@@ -572,4 +572,87 @@ describe.concurrent("mock.module per-file scoping", () => {
     expect(stderr + stdout).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
+
+  test("mocking a plain-CJS dep that was require-cached before the mock keeps pre-mock requirers cached", async () => {
+    // Same as above but the mocked dep is plain CJS, so the pre-mock
+    // requirer holds an m_children edge to the kept cache entry (not just
+    // the m_parent back-edge). Teardown must not poison the kept entry, or
+    // the transitive CJS walk evicts and re-runs the preload requirer.
+    using dir = tempDir("issue-31316-premock-cjs", {
+      "config.cjs": `module.exports = { key: "REAL" };`,
+      "service.cjs": `
+        const { key } = require("./config.cjs");
+        console.log("service evaluated");
+        module.exports = { key };
+      `,
+      "preload.ts": `require("./service.cjs");`,
+      "a.test.ts": `
+        import { mock, it, expect } from "bun:test";
+        mock.module("./config.cjs", () => ({ key: "MOCK" }));
+        it("a sees mock", () => {
+          expect(require("./config.cjs").key).toBe("MOCK");
+        });
+      `,
+      "b.test.ts": `
+        import { it, expect } from "bun:test";
+        it("b gets the cached service", () => {
+          expect(require("./service.cjs").key).toBe("REAL");
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--preload", "./preload.ts", "a.test.ts", "b.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.split("service evaluated").length - 1).toBe(1);
+    expect(stderr + stdout).toContain("2 pass");
+    expect(stderr + stdout).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a later file can re-mock a path a previous file mocked through a shared barrel", async () => {
+    // Teardown restores dep's env slots in place, so the registry entry is
+    // fully correct and must stay reachable: evicting it orphans the record
+    // that the cached barrel still binds through, so the next file's
+    // mock.module() finds no registry entry and never overrides the slots.
+    using dir = tempDir("issue-31316-remock-barrel", {
+      "dep.ts": `export const v = "REAL";`,
+      "consumer.ts": `export { v } from "./dep";`,
+      "a.test.ts": `
+        import { mock, it, expect } from "bun:test";
+        import { v } from "./consumer";
+        mock.module("./dep", () => ({ v: "A" }));
+        it("a sees its own mock", () => {
+          expect(v).toBe("A");
+        });
+      `,
+      "b.test.ts": `
+        import { mock, it, expect } from "bun:test";
+        import { v } from "./consumer";
+        mock.module("./dep", () => ({ v: "B" }));
+        it("b sees its own mock", () => {
+          expect(v).toBe("B");
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "a.test.ts", "b.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr + stdout).toContain("2 pass");
+    expect(stderr + stdout).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
 });

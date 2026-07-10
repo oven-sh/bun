@@ -1203,19 +1203,17 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
             mod = mod->m_parent.get();
         }
     };
-    // `walkParents` is false when the require-cache entry predates the mock
-    // install: its `m_parent` chain required the module before the mock and
-    // captured real values, so evicting it would only re-run pre-mock side
-    // effects (e.g. preload setup). Post-mock requirers of the kept entry
-    // still get evicted through their own `m_children` edges.
-    auto poisonRequireMapEntry = [&](JSC::JSString* pathString, bool walkParents) {
+    // Callers skip this entirely when the require-cache entry predates the
+    // mock install: pre-mock requirers captured real values, and both the
+    // `m_parent` back-edge and `m_children` edges point at the same kept
+    // cell for pre- and post-mock requirers alike, so poisoning it would
+    // re-run pre-mock side effects (e.g. preload setup) on every file.
+    auto poisonRequireMapEntry = [&](JSC::JSString* pathString) {
         JSC::JSValue cached = requireMap->get(global, pathString);
         if (scope.clearExceptionExceptTermination() && cached && cached.isCell()) {
             poisonedCJSModules.add(cached.asCell());
-            if (walkParents) {
-                if (auto* mod = dynamicDowncast<Bun::JSCommonJSModule>(cached)) {
-                    poisonModuleAndParents(mod->m_parent.get());
-                }
+            if (auto* mod = dynamicDowncast<Bun::JSCommonJSModule>(cached)) {
+                poisonModuleAndParents(mod->m_parent.get());
             }
         }
     };
@@ -1261,7 +1259,9 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
             // replay, so always drop the require-cache entry — the next
             // `require()` misses and re-runs the restored (preload) factory.
             auto* pathString = JSC::jsString(vm, path);
-            poisonRequireMapEntry(pathString, !record.cjsEntryPreExisted);
+            if (!record.cjsEntryPreExisted) {
+                poisonRequireMapEntry(pathString);
+            }
             requireMap->remove(global, pathString);
             if (!scope.clearExceptionExceptTermination()) {
                 break;
@@ -1281,12 +1281,15 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
             if (virtualModules) {
                 virtualModules->remove(path);
             }
-            // Evict caches only when there's no persistent replacement —
-            // otherwise the next import should go straight back to the
-            // (restored) preload mock.
-            auto ident = record.wasMockBorn ? collectMockBornRecord(path)
-                                            : JSC::Identifier::fromString(vm, path);
-            {
+            // Mock-born: the registry record was materialized from the mock
+            // factory — evict it so the next import re-executes the real
+            // source (its importers are evicted transitively below).
+            // Otherwise step 1 restored the record's env slots in place, so
+            // keep the entry: cached re-exporters bind through it, and a
+            // later file's mock.module() must find it to override those
+            // bindings again.
+            if (record.wasMockBorn) {
+                auto ident = collectMockBornRecord(path);
                 // JSModuleLoader::visitChildrenImpl iterates the registry maps
                 // on the GC thread under cellLock(); take the same lock so
                 // the removal can't race it.
@@ -1294,7 +1297,9 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
                 moduleLoader->removeEntry(ident);
             }
             auto* pathString = JSC::jsString(vm, path);
-            poisonRequireMapEntry(pathString, !record.cjsEntryPreExisted);
+            if (!record.cjsEntryPreExisted) {
+                poisonRequireMapEntry(pathString);
+            }
             requireMap->remove(global, pathString);
             if (!scope.clearExceptionExceptTermination()) {
                 break;
@@ -1344,7 +1349,7 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
                 // captured tainted values: walk their parent chains.
                 for (auto& ident : dependentKeys) {
                     auto* keyString = JSC::jsString(vm, ident.string());
-                    poisonRequireMapEntry(keyString, /*walkParents=*/true);
+                    poisonRequireMapEntry(keyString);
                     requireMap->remove(global, keyString);
                     if (!scope.clearExceptionExceptTermination()) {
                         break;

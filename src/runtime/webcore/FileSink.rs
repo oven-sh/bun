@@ -45,10 +45,9 @@ pub struct FileSink {
     pub started: Cell<bool>,
     pub must_be_kept_alive_until_eof: Cell<bool>,
 
-    /// Mirrors `JSFileSink::m_refCount > 0` (it starts at 1): cleared by
-    /// `FileSink.unref()`, restored by `FileSink.ref()`. While cleared, the
-    /// automatic keep-alive below must not re-arm the event loop ref.
-    pub keep_alive_allowed: Cell<bool>,
+    /// Keep-alive handle. `allowed` mirrors `JSFileSink::m_refCount > 0`
+    /// (`unref()`/`ref()` from JS), `wanted` is set while a write is in flight.
+    pub poll_ref: JsCell<bun_io::UserKeepAlive>,
 
     // TODO: these fields are duplicated on writer()
     // we should not duplicate these fields...
@@ -671,8 +670,9 @@ impl FileSink {
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
-                // Only keep the event loop ref'd while there's a pending write in progress.
-                // If there's no pending write, no need to keep the event loop ref'd.
+                // Only keep the event loop ref'd while there's a pending write
+                // in progress. If there's no pending write, no need to keep
+                // the event loop ref'd.
                 self.set_keep_alive(false);
                 #[cfg(unix)]
                 {
@@ -1131,24 +1131,26 @@ impl FileSink {
     }
 
     /// `JSFileSink::ref()` / `unref()`, called when their `m_refCount` crosses
-    /// 0↔1. Records the user's choice, then re-applies what the automatic
-    /// management wants right now — `ref()` restores it, it does not pin.
+    /// 0↔1. `ref()` restores the automatic management, it does not pin.
     pub fn update_ref(&self, value: bool) {
-        self.keep_alive_allowed.set(value);
-        self.set_keep_alive(!self.done.get() && self.writer.get().has_pending_data());
+        let active = self.poll_ref.with_mut(|k| k.set_allowed(value));
+        self.apply_keep_alive(active);
     }
 
-    /// The only place the event loop ref is armed or disarmed. `wants` is what
-    /// the automatic management asks for; an explicit `FileSink.unref()` from
-    /// JS vetoes it until `FileSink.ref()` is called.
+    /// Automatic management path (`on_write`, `on_auto_flush`, `end_from_js`,
+    /// `assign_to_stream`). `UserKeepAlive` ANDs this with what JS
+    /// `ref()`/`unref()` allows.
     fn set_keep_alive(&self, wants: bool) {
-        let enable = wants && self.keep_alive_allowed.get();
-        // Hoist `io_evtloop()` out of the closure so no raw deref appears inside
-        // it. `with_mut`: the Windows `BaseWindowsPipeWriter` impls take
-        // `&mut self` (the posix `PosixStreamingWriter` impls are `&self`); it
+        let active = self.poll_ref.with_mut(|k| k.set_wanted(wants));
+        self.apply_keep_alive(active);
+    }
+
+    fn apply_keep_alive(&self, active: bool) {
+        // `with_mut`: the Windows `BaseWindowsPipeWriter` impls take `&mut
+        // self` (the posix `PosixStreamingWriter` impls are `&self`); it
         // covers both. No JS re-entry — pure libuv/poll ref/unref.
         let evtloop = self.io_evtloop();
-        self.writer.with_mut(|w| w.update_ref(evtloop, enable));
+        self.writer.with_mut(|w| w.update_ref(evtloop, active));
     }
 }
 
@@ -1308,7 +1310,7 @@ impl FileSink {
             done: Cell::new(false),
             started: Cell::new(false),
             must_be_kept_alive_until_eof: Cell::new(false),
-            keep_alive_allowed: Cell::new(true),
+            poll_ref: JsCell::new(bun_io::UserKeepAlive::init()),
             pollable: Cell::new(false),
             nonblocking: Cell::new(false),
             force_sync: Cell::new(false),

@@ -6733,11 +6733,10 @@ pub fn normalize_path_windows_opts<'a>(
         path
     };
 
-    // Routing = any separator or `.`; clamp relevance = a whole `..`
-    // component. One pass via the shared classifier.
+    // Routing = any separator or `.`; clamp relevance = `..` resolving above
+    // the dirfd. One pass via the shared classifier.
     let facts = bun_paths::classify_rel_t(rel, bun_paths::PathFormat::Windows);
     let saw_sep_or_dot = facts.has_sep || facts.has_dot;
-    let has_dotdot = facts.has_dotdot_component;
 
     // Relative path with no separators or `.` can be passed straight through
     // to `NtCreateFile` against `RootDirectory`.
@@ -6783,11 +6782,11 @@ pub fn normalize_path_windows_opts<'a>(
         Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
     };
 
-    // The clamp boundary only matters when `..` can climb into the copied
-    // prefix (`base` is already normalized); without one, any split yields
-    // identical output, so skip the volume-relative query entirely.
+    // The volume boundary is only needed when `..` resolves above the dirfd:
+    // the base suffix is kernel-normalized (pure depth), so within-tree
+    // dotdots cannot reach any floor and any split yields identical output.
     let mut share_rooted = false;
-    let mut prefix_len = if !has_dotdot {
+    let mut prefix_len = if !facts.climbs_above_start {
         base.len()
     } else {
         // The generic normalizer's `..` clamp knows drive/UNC roots, not
@@ -6833,7 +6832,7 @@ pub fn normalize_path_windows_opts<'a>(
     // Unknown devices may multiplex namespaces (many mounts under one device
     // root); a `..` that would touch the clamp floor cannot be clamped safely
     // — fail loud. Allowlisted redirectors keep the silent share-root clamp.
-    if has_dotdot && !share_rooted {
+    if facts.climbs_above_start && !share_rooted {
         const DOT: u16 = b'.' as u16;
         let is_sep = |&c: &u16| bun_paths::is_sep_any_t(c);
         let mut depth = 0isize;

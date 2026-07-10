@@ -8667,9 +8667,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // When code splitting is enabled, always create wrapper_ref to match esbuild behavior.
-            // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
+            // CommonJS files are wrapped unconditionally in the linker (nothing is hoisted out
+            // of the __commonJS closure), so they always need the symbol. Otherwise, use
+            // needsWrapperRef() to optimize away unnecessary ESM wrappers.
             if self.options.bundle
-                && (self.options.code_splitting || self.needs_wrapper_ref(parts.as_slice()))
+                && (self.options.code_splitting
+                    || exports_kind == js_ast::ExportsKind::Cjs
+                    || self.needs_wrapper_ref(parts.as_slice()))
             {
                 use core::fmt::Write as _;
                 let mut buf = bun_alloc::ArenaString::new_in(arena);

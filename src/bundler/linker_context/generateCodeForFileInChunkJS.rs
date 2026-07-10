@@ -608,6 +608,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                 // "var require_foo = __commonJS(...);"
                 {
+                    debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser must allocate wrapper_ref for ExportsKind::Cjs
                     let decls = G::DeclList::from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             temp_arena,

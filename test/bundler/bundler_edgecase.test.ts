@@ -27,6 +27,75 @@ describe("bundler", () => {
       stdout: "object",
     },
   });
+  // A CommonJS module whose body parses to zero statements (or whose statements
+  // are all hoistable) must still get a valid `require_*` wrapper symbol. The
+  // parser previously skipped allocating one here, and the linker then printed
+  // `__INVALID__REF__` / `__toESM(, 1)` which is not valid JavaScript.
+  itBundled("edgecase/StatementlessCommonJSModuleNamedImport", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { B } from './b';
+        console.log(typeof B);
+      `,
+      "/b.tsx": `;`,
+      "/package.json": `{"name":"proj","type":"commonjs"}`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
+  itBundled("edgecase/StatementlessCommonJSModuleStarImport", {
+    files: {
+      "/entry.ts": /* js */ `
+        import * as b from './b.cjs';
+        console.log(typeof b);
+      `,
+      "/b.cjs": `// comment only\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+  itBundled("edgecase/StatementlessCommonJSModuleRequire", {
+    files: {
+      "/entry.ts": /* js */ `
+        const b = require('./b.cjs');
+        console.log(typeof b);
+      `,
+      "/b.cjs": `;`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+  itBundled("edgecase/HoistableOnlyCommonJSModule", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { B } from './b.cjs';
+        console.log(typeof B);
+      `,
+      "/b.cjs": `function foo() {}\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
   itBundled("edgecase/NestedRedirectToABuiltin", {
     files: {
       "/entry.js": /* js */ `

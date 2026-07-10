@@ -128,6 +128,42 @@ describe.concurrent("ES module syntax in a .cjs/.cts file is an error", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `import.meta` is a meta-property expression, not an import statement. Bun's
+  // CommonJS wrapper explicitly supports it in .cjs files.
+  test("import.meta in a .cjs is still allowed", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      { "ok.cjs": "console.log(typeof import.meta.dir, typeof module);\n" },
+      "ok.cjs",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("string object\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Type-only TypeScript imports/exports are erased and leave valid CommonJS.
+  for (const [label, src] of [
+    ["import type {X}", "import type { Readable } from 'node:stream';\nmodule.exports = 1;\n"],
+    ["import type * as X", "import type * as stream from 'node:stream';\nmodule.exports = 1;\n"],
+    ["import {type X}", "import { type Readable } from 'node:stream';\nmodule.exports = 1;\n"],
+    ["export type", "export type Foo = number;\nmodule.exports = 1;\n"],
+    ["export interface", "export interface Foo {}\nmodule.exports = 1;\n"],
+    ["export {type X}", "type Foo = number; export { type Foo };\nmodule.exports = 1;\n"],
+    ["export declare", "export declare const x: number;\nmodule.exports = 1;\n"],
+  ] as const) {
+    test(`.cts with ${label} is still allowed`, async () => {
+      const { stdout, stderr, exitCode } = await run(
+        {
+          "ok.cts": src,
+          "entry.mjs": "import m from './ok.cts'; console.log(m);\n",
+        },
+        "entry.mjs",
+      );
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1\n");
+      expect(exitCode).toBe(0);
+    });
+  }
+
   test("a .cjs with no ESM syntax still runs as CommonJS", async () => {
     const { stdout, stderr, exitCode } = await run(
       {

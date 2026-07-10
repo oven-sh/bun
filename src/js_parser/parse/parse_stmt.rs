@@ -865,6 +865,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.lexer.expect(T::TIdentifier)?;
                         p.lexer.expect_or_insert_semicolon()?;
 
+                        p.esm_export_keyword = previous_export_keyword; // This wasn't an ESM export statement after all
                         return Ok(p.s(S::TypeScript {}, loc));
                     }
                 }
@@ -907,21 +908,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     ..Default::default()
                                 };
                                 p.skip_type_script_type_stmt(&mut skipper)?;
+                                p.esm_export_keyword = previous_export_keyword; // This wasn't an ESM export statement after all
                                 return Ok(p.s(S::TypeScript {}, loc));
                             }
                             StmtIdentifier::SNamespace
                             | StmtIdentifier::SAbstract
-                            | StmtIdentifier::SModule
-                            | StmtIdentifier::SInterface => {
+                            | StmtIdentifier::SModule => {
                                 // "export namespace Foo {}"
                                 // "export abstract class Foo {}"
                                 // "export module Foo {}"
+                                opts.is_export = true;
+                                return p.parse_stmt(opts);
+                            }
+                            StmtIdentifier::SInterface => {
                                 // "export interface Foo {}"
+                                p.esm_export_keyword = previous_export_keyword; // This wasn't an ESM export statement after all
                                 opts.is_export = true;
                                 return p.parse_stmt(opts);
                             }
                             StmtIdentifier::SDeclare => {
                                 // "export declare class Foo {}"
+                                p.esm_export_keyword = previous_export_keyword; // This wasn't an ESM export statement after all
                                 opts.is_export = true;
                                 opts.lexical_decl = LexicalDecl::AllowAll;
                                 opts.is_typescript_declare = true;
@@ -969,6 +976,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let stmt = p.parse_fn_stmt(loc, &mut stmt_opts, Some(async_range))?;
                         if matches!(stmt.data, js_ast::StmtData::STypeScript(_)) {
                             // This was just a type annotation
+                            p.esm_export_keyword = previous_export_keyword;
                             return Ok(stmt);
                         }
 
@@ -1027,6 +1035,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         match &stmt.data {
                             // This was just a type annotation
                             js_ast::StmtData::STypeScript(_) => {
+                                p.esm_export_keyword = previous_export_keyword;
                                 return Ok(stmt);
                             }
 
@@ -1104,6 +1113,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         match &stmt.data {
                             // This was just a type annotation
                             js_ast::StmtData::STypeScript(_) => {
+                                p.esm_export_keyword = previous_export_keyword;
                                 return Ok(stmt);
                             }
 
@@ -1259,6 +1269,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // nothing
                         // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
                         if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
+                            p.esm_export_keyword = previous_export_keyword; // This wasn't an ESM export statement after all
                             return Ok(p.s(S::TypeScript {}, loc));
                         }
                     }
@@ -1320,6 +1331,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // nothing
                     // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
                     if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
+                        p.esm_export_keyword = previous_export_keyword; // This wasn't an ESM export statement after all
                         return Ok(p.s(S::TypeScript {}, loc));
                     }
                 }

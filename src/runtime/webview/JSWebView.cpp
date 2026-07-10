@@ -294,11 +294,11 @@ void JSWebView::doClose()
 #if OS(DARWIN)
 JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
     uint32_t width, uint32_t height, const WTF::String& persistDir,
-    bool stdoutInherit, bool stderrInherit)
+    bool stdoutInherit, bool stderrInherit, bool detached)
 {
     auto* zig = defaultGlobalObject(g);
     auto& c = WK::client();
-    if (!c.ensureSpawned(zig, stdoutInherit, stderrInherit)) return nullptr;
+    if (!c.ensureSpawned(zig, stdoutInherit, stderrInherit, detached)) return nullptr;
 
     auto impl = WebViewEventTarget::create(*zig->scriptExecutionContext());
     JSWebView* view = create(structure, zig, WTF::move(impl));
@@ -326,7 +326,7 @@ extern "C" size_t Bun__Chrome__autoDetect(char* out, size_t cap);
 JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     uint32_t width, uint32_t height, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
-    bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl, bool skipAutoDetect)
+    bool stdoutInherit, bool stderrInherit, bool detached, const WTF::String& wsUrl, bool skipAutoDetect)
 {
     auto* zig = defaultGlobalObject(g);
     auto& t = CDP::transport();
@@ -344,7 +344,7 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     if (!wsUrl.isEmpty()) {
         ok = t.ensureConnected(zig, wsUrl, /* autoDetected */ false);
     } else if (skipAutoDetect || !path.isEmpty() || !extraArgv.isEmpty()) {
-        ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
+        ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit, detached);
     } else {
         // Auto-detect. DevToolsActivePort URL caps at
         // ws://127.0.0.1:65535/devtools/browser/<36-char-uuid> ≈ 70B.
@@ -353,9 +353,9 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
         if (len > 0) {
             ok = t.ensureConnected(zig,
                 WTF::String::fromUTF8(std::span<const char>(buf, len)),
-                /* autoDetected */ true, userDataDir, stdoutInherit, stderrInherit);
+                /* autoDetected */ true, userDataDir, stdoutInherit, stderrInherit, detached);
         } else {
-            ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
+            ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit, detached);
         }
     }
     if (!ok) return nullptr;

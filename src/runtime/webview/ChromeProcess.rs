@@ -106,6 +106,7 @@ pub(crate) unsafe extern "C" fn Bun__Chrome__ensure(
     extra_argv_len: u32,
     stdout_inherit: bool,
     stderr_inherit: bool,
+    detached: bool,
 ) -> i32 {
     #[cfg(windows)]
     {
@@ -117,6 +118,7 @@ pub(crate) unsafe extern "C" fn Bun__Chrome__ensure(
             extra_argv_len,
             stdout_inherit,
             stderr_inherit,
+            detached,
         );
         return -1;
     }
@@ -155,6 +157,7 @@ pub(crate) unsafe extern "C" fn Bun__Chrome__ensure(
             extra,
             stdout_inherit,
             stderr_inherit,
+            detached,
         ) {
             Ok(fd) => fd,
             Err(err) => {
@@ -401,6 +404,7 @@ fn spawn(
     extra_argv: &[*const c_char],
     stdout_inherit: bool,
     stderr_inherit: bool,
+    detached: bool,
 ) -> Result<Fd, bun_core::Error> {
     {
         let chrome = find_chrome(explicit_path).ok_or_else(|| bun_core::err!("ChromeNotFound"))?;
@@ -524,6 +528,11 @@ fn spawn(
             // the same socket at both positions.
             extra_fds: vec![Stdio::Pipe(fds[1]), Stdio::Pipe(fds[1])].into_boxed_slice(),
             argv0: Some(chrome.as_ptr()),
+            // setsid() in the child — new session, no controlling TTY.
+            // Endpoint-protection hooks that intercept exec and write a
+            // rejection banner to /dev/tty (bypassing stdio redirection)
+            // can't reach the parent's terminal when Chrome has none.
+            detached,
             ..SpawnOptions::default()
         };
 

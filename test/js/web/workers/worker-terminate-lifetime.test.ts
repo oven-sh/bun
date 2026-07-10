@@ -146,16 +146,18 @@ test.skipIf(!isASAN)(
       // process alive for the whole window in which the racer's orphaned
       // pool-thread job reads the freed VM on broken builds.
       "ref-worker.js": `
-        import("./big.ts?ref").then(() => postMessage("done")).catch(() => {});
+        import("./big.ts?ref").then(() => postMessage("done"), err => postMessage("error: " + err));
       `,
       "main.js": `
         const racer = new Worker(new URL("./racer-worker.js", import.meta.url).href);
-        const terminated = new Promise(resolve => {
+        const terminated = new Promise((resolve, reject) => {
           racer.onmessage = e => { if (e.data === "started") { racer.terminate(); resolve(); } };
+          racer.onerror = e => reject(new Error("racer worker: " + e.message));
         });
         const ref = new Worker(new URL("./ref-worker.js", import.meta.url).href);
-        const refDone = new Promise(resolve => {
-          ref.onmessage = e => { if (e.data === "done") resolve(); };
+        const refDone = new Promise((resolve, reject) => {
+          ref.onmessage = e => { e.data === "done" ? resolve() : reject(new Error("ref worker: " + e.data)); };
+          ref.onerror = e => reject(new Error("ref worker: " + e.message));
         });
         await terminated;
         await refDone;
@@ -172,11 +174,9 @@ test.skipIf(!isASAN)(
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode, stderr: stderr.includes("AddressSanitizer") ? stderr : "" }).toEqual({
-      stdout: "ok\n",
-      exitCode: 0,
-      stderr: "",
-    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   },
   timeout,
 );

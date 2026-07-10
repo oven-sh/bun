@@ -74,13 +74,24 @@ pub mod auto_installer;
 #[path = "ConfigVersion.rs"]
 pub mod config_version;
 pub mod dependency;
-#[path = "ExternalSlice.rs"]
-pub mod external_slice;
 pub mod hosted_git_info;
 pub mod integrity;
 pub mod padding_checker;
 pub mod postinstall_optimizer;
-pub mod versioned_url;
+
+/// `ExternalSlice<T>` and `VersionedURLType<I>` live in `bun_install_types`
+/// so `bun_resolver` can name them without a `bun_install` dep. Re-exported
+/// here under the original `crate::external_slice` / `crate::versioned_url`
+/// paths.
+pub mod external_slice {
+    pub use bun_install_types::resolver_hooks::{
+        ExternalPackageNameHashList, ExternalSlice, ExternalStringList, ExternalStringMap,
+        VersionSlice,
+    };
+}
+pub mod versioned_url {
+    pub use bun_install_types::resolver_hooks::{OldV2VersionedURL, VersionedURL, VersionedURLType};
+}
 
 pub mod extract_tarball;
 #[path = "lockfile.rs"]

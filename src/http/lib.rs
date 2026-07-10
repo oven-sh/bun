@@ -43,8 +43,6 @@ pub mod signals;
 pub mod thread_safe_stream_buffer;
 #[path = "websocket.rs"]
 pub mod websocket;
-#[path = "websocket_http_client.rs"]
-pub mod websocket_http_client;
 #[path = "zlib.rs"]
 pub mod zlib;
 

@@ -1582,12 +1582,6 @@ impl JSValue {
         })
     }
 
-    /// `JSC__JSValue__parseJSON` (bindings.cpp / headers.h:279) — parse `self`
-    /// (a JS string value) as JSON. The C++ symbol takes an *EncodedJSValue*,
-    /// not a `*const ZigString`.
-    pub fn parse_json(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        host_fn::from_js_host_call(global, || JSC__JSValue__parseJSON(self, global))
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2099,7 +2093,6 @@ unsafe extern "C" {
         this: JSValue,
         global: &JSGlobalObject,
     ) -> f64;
-    safe fn JSC__JSValue__parseJSON(this: JSValue, global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__toZigString(
         this: JSValue,
         out: &mut bun_core::ZigString,

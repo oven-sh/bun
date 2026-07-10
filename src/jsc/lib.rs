@@ -207,8 +207,6 @@ pub mod js_array;
 pub mod js_big_int;
 #[path = "JSFunction.rs"]
 pub mod js_function;
-#[path = "JSInternalPromise.rs"]
-pub mod js_internal_promise;
 #[path = "JSModuleLoader.rs"]
 pub mod js_module_loader;
 #[path = "JSPromise.rs"]
@@ -261,6 +259,9 @@ pub use self::console_object::formatter::Tag as FormatTag;
 pub use self::console_object::formatter::Tag as FormatAs;
 pub use self::js_array_iterator::JSArrayIterator;
 pub use self::js_promise::JSPromise;
+/// `JSInternalPromise` was removed upstream; the module loader uses `JSPromise`
+/// everywhere now. Alias kept for existing call sites.
+pub use self::js_promise::JSPromise as JSInternalPromise;
 pub use self::rare_data as RareData;
 pub use self::system_error::SystemError;
 pub use self::task::Taskable;
@@ -405,7 +406,6 @@ pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
 pub use self::deprecated_strong::DeprecatedStrong;
 pub use self::js_array::JSArray;
-pub use self::js_internal_promise::JSInternalPromise;
 pub use self::js_ref::JsRef;
 pub use self::string_builder::StringBuilder;
 pub use self::uuid::{UUID, UUID5, UUID7};
@@ -1490,7 +1490,7 @@ pub use self::js_string::JSString;
 pub mod ref_string;
 pub use self::ref_string as RefString;
 
-pub mod ffi_imports;
+pub mod jsc_abi;
 
 #[path = "Debugger.rs"]
 pub mod debugger;

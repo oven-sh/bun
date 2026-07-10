@@ -561,6 +561,39 @@ describe("bundler", () => {
       stdout: "this should be kept\nunused import",
     },
   });
+  // Same as PackageJsonSideEffectsArrayKeepModuleImplicitModule but with a "name" field,
+  // which previously routed finalize_result through a branch that re-evaluated the
+  // sideEffects array against the secondary ("main") path and overwrote the primary's
+  // classification.
+  itBundled("dce/PackageJsonSideEffectsArrayKeepModuleNamedPackage", {
+    todo: isWindows,
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import {foo} from "demo-pkg"
+        console.log('unused import')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
+        export const foo = 123
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
+        export const foo = 123
+        console.log('this should be kept')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "name": "demo-pkg",
+          "main": "index-main.js",
+          "module": "index-module.js",
+          "sideEffects": ["./index-module.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nunused import",
+    },
+  });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitMain", {
     todo: true,
     files: {

@@ -154,6 +154,8 @@ const LSXPACK_QPACK_IDX: u8 = 2;
 const LLTS_HHMMSSUS: c_int = 4;
 
 /// `struct lsxpack_header` — mirrors `vendor/lsquic/include/lsxpack_header.h`.
+/// `flags` is `enum lsxpack_flag flags:8` in C; MSVC allocates an int-sized
+/// bitfield storage unit for enum bitfields, so Windows layout differs.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct lsxpack_header {
@@ -168,10 +170,16 @@ struct lsxpack_header {
     hpack_index: u8,
     qpack_index: u8,
     app_index: u8,
+    #[cfg(windows)]
+    _msvc_bitfield_pad: [u8; 3],
     flags: u8,
+    #[cfg(windows)]
+    _msvc_bitfield_tail: [u8; 3],
     indexed_type: u8,
     dec_overhead: u8,
 }
+
+const _: () = assert!(size_of::<lsxpack_header>() == if cfg!(windows) { 48 } else { 40 });
 
 #[repr(C)]
 struct lsquic_http_headers {
@@ -347,6 +355,19 @@ struct lsquic_engine_api {
         Option<unsafe extern "C" fn(*mut c_void, *mut lsquic_conn_t, *mut u8, c_uint)>,
     ea_gen_scid_ctx: *mut c_void,
 }
+
+// Layout asserts against vendor/lsquic/include/lsquic.h. `es_handshake_to` /
+// `es_idle_conn_to` are `unsigned long`, so settings is 8 bytes smaller on LLP64.
+const _: () = {
+    assert!(
+        size_of::<lsquic_engine_settings>()
+            == if cfg!(windows) { 328 } else { 336 }
+    );
+    assert!(size_of::<lsquic_engine_api>() == 192);
+    assert!(size_of::<lsquic_out_spec>() == 56);
+    assert!(size_of::<lsquic_stream_if>() == 112);
+    assert!(size_of::<lsquic_hset_if>() == 40);
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // lsquic externs

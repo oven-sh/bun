@@ -71,15 +71,15 @@ mod kq {
     use libc::timespec;
 
     /// FreeBSD has plain `kevent(2)` only — alias it so the body stays shared.
-    pub type kevent64_s = libc::kevent;
+    pub(super) type kevent64_s = libc::kevent;
 
     /// Darwin-only kevent64 flags, translated by the shim below.
-    pub const KEVENT_FLAG_ERROR_EVENTS: c_uint = 0x1;
-    pub const KEVENT_FLAG_IMMEDIATE: c_uint = 0x2;
+    pub(super) const KEVENT_FLAG_ERROR_EVENTS: c_uint = 0x1;
+    pub(super) const KEVENT_FLAG_IMMEDIATE: c_uint = 0x2;
 
     /// Translate Darwin `kevent64` semantics onto FreeBSD `kevent`.
     #[inline]
-    pub unsafe fn kevent64(
+    pub(super) unsafe fn kevent64(
         kq: c_int,
         changelist: *const kevent64_s,
         nchanges: c_int,

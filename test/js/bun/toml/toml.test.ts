@@ -29,7 +29,7 @@ describe("input types", () => {
   });
 
   test("Uint8Array subarray respects byteOffset and length", () => {
-    const padded = Buffer.from("xxx" + doc + "yyy");
+    const padded = Buffer.from("<<<" + doc + ">>>");
     expect(TOML.parse(padded.subarray(3, 3 + doc.length))).toEqual(expected);
   });
 

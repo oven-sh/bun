@@ -46,7 +46,7 @@ extern const size_t Bun__lock__size;
 
 extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop);
 
-#ifdef LIBUS_USE_LIBUV
+#ifdef LIBUS_USE_BUN_IOCP
 
 void sweep_timer_cb(struct us_internal_callback_t *cb);
 
@@ -120,7 +120,7 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.
-#ifdef LIBUS_USE_LIBUV
+#ifdef LIBUS_USE_BUN_IOCP
     loop->data.sweep_timer = us_create_timer(loop, 1, 0);
 #else
     loop->data.sweep_next_tick_ns = -1;
@@ -150,8 +150,8 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
     free(loop->data.recv_buf);
     free(loop->data.send_buf);
 
-    us_timer_close(loop->data.sweep_timer, 0);
 #ifdef LIBUS_USE_BUN_IOCP
+    us_timer_close(loop->data.sweep_timer, 0);
     if (loop->data.quic_timer)
         us_timer_close(loop->data.quic_timer, 0);
 #endif
@@ -381,7 +381,7 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     loop->data.closed_connecting_head = NULL;
 }
 
-#ifdef LIBUS_USE_LIBUV
+#ifdef LIBUS_USE_BUN_IOCP
 void sweep_timer_cb(struct us_internal_callback_t *cb) {
     us_internal_timer_sweep(cb->loop);
 }

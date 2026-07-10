@@ -1581,7 +1581,6 @@ impl JSValue {
             JSC__JSValue__jsonStringifyFast(self, global, out)
         })
     }
-
 }
 
 // ──────────────────────────────────────────────────────────────────────────

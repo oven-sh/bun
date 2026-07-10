@@ -834,6 +834,7 @@ impl Error {
             Self::StandaloneGraph(e) => e.name(),
             Self::TerminalInit(e) => <&'static str>::from(e),
             Self::DirIterator(e) => <&'static str>::from(e),
+            Self::Js(bun_jsc::JsError::OutOfMemory) => "OutOfMemory",
             Self::Js(_) => "JSError",
         }
     }

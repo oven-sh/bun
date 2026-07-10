@@ -609,11 +609,21 @@ registry=https://somehost.com/org1/npm/registry/
       expect(result.default_registry_password).toBe("verysecure");
     });
 
-    test("a deeper empty email does not clobber a shallower email", () => {
+    // `email` is not part of npm's auth (`npm-registry-fetch`'s `getAuth` never reads
+    // it), so it does not walk: only a line naming the registry's own path applies.
+    test("an ancestor's email does not apply to a deeper registry", () => {
       const result = loadNpmrc(`
 registry=https://somehost.com/org1/npm/registry/
 //somehost.com/:email=bilbo@example.com
-//somehost.com/org1/:email=
+`);
+      expect(result.default_registry_email).toBe("");
+    });
+
+    test("the registry's own email applies", () => {
+      const result = loadNpmrc(`
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/:email=gandalf@example.com
+//somehost.com/org1/npm/registry/:email=bilbo@example.com
 `);
       expect(result.default_registry_email).toBe("bilbo@example.com");
     });

@@ -702,8 +702,6 @@ describe.concurrent("bun-install", () => {
   describe(".npmrc auth resolves by path-segment ancestor", () => {
     const scope = "myorg";
     const registryPath = "/api/v4/projects/123/packages/npm/";
-    const scopedManifestPath = `${registryPath}@${scope}%2fpkg`;
-    const defaultManifestPath = `${registryPath}pkg`;
 
     type ProbeOptions = {
       /** `@myorg:registry=` (the default) or the unscoped `registry=` line. */
@@ -714,17 +712,28 @@ describe.concurrent("bun-install", () => {
       bunfigToken?: string;
       /** Declare the registry in `bunfig.toml` with these credentials instead of in `.npmrc`. */
       bunfigBasic?: { username: string; password: string };
+      /** Lines for `$HOME/.npmrc`, which npm/Bun read before the project's `.npmrc`. */
+      homeNpmrc?: (host: string) => string;
+      /** The registry's path. Both the registry line and the manifest request use it. */
+      path?: string;
     };
 
     // Runs `bun install` against a local registry mounted at `registryPath` and
     // returns the `Authorization` header it received (or null).
     async function probeAuthorization(
       authLines: (host: string) => string,
-      { registry: registryKind = "scoped", userinfo = "", bunfigToken, bunfigBasic }: ProbeOptions = {},
+      {
+        registry: registryKind = "scoped",
+        userinfo = "",
+        bunfigToken,
+        bunfigBasic,
+        homeNpmrc,
+        path: regPath = registryPath,
+      }: ProbeOptions = {},
     ): Promise<string | null> {
       const scoped = registryKind === "scoped";
       const depName = scoped ? `@${scope}/pkg` : "pkg";
-      const manifestPath = scoped ? scopedManifestPath : defaultManifestPath;
+      const manifestPath = `${regPath}${scoped ? `@${scope}%2fpkg` : "pkg"}`;
       const authorizations: (string | null)[] = [];
       const paths: string[] = [];
 
@@ -739,7 +748,7 @@ describe.concurrent("bun-install", () => {
       });
 
       const host = `127.0.0.1:${registry.port}`;
-      const registryUrl = `http://${userinfo}${host}${registryPath}`;
+      const registryUrl = `http://${userinfo}${host}${regPath}`;
       const registryLine = scoped ? `@${scope}:registry=${registryUrl}` : `registry=${registryUrl}`;
 
       // A `registry=` line in `.npmrc` replaces the registry it names, discarding the
@@ -754,7 +763,7 @@ describe.concurrent("bun-install", () => {
         }),
         // `HOME` points here, not at the project dir: pointing it at the project would
         // load the same `.npmrc` twice and hide cross-file resolution bugs.
-        "home/.gitkeep": "",
+        ...(homeNpmrc ? { "home/.npmrc": `${homeNpmrc(host)}\n` } : { "home/.gitkeep": "" }),
       };
       if (inBunfig) {
         const creds =
@@ -1064,6 +1073,128 @@ describe.concurrent("bun-install", () => {
       it("a bunfig.toml token with no matching .npmrc line is sent", async () => {
         const auth = await probeAuthorization(() => `//other.example.com/:_authToken=OTHER`, { bunfigToken: token });
         expect(auth).toBe(`Bearer ${token}`);
+      });
+    });
+
+    // npm merges every `.npmrc` into ONE flat config map before it resolves anything,
+    // so a key repeated across files collapses last-write-wins *before* `hasAuth` runs.
+    // Resolving per-file instead makes the home file's `_authToken` win and the
+    // project's `_auth` unreachable.
+    describe("keys collapse across .npmrc files before resolution", () => {
+      const path = "/api/v4/";
+      const basic = Buffer.from("alice:s3cret").toString("base64");
+
+      // Measured against npm 10.9.3: `Basic <alice:s3cret>`.
+      it("the project's empty _authToken falsifies the home file's token, so _auth wins", async () => {
+        const auth = await probeAuthorization(host => `//${host}${path}:_authToken=\n//${host}${path}:_auth=${basic}`, {
+          path,
+          homeNpmrc: host => `//${host}${path}:_authToken=HOMETOKEN`,
+        });
+        expect(auth).toBe(`Basic ${basic}`);
+      });
+
+      it("a project token overrides the home file's token at the same key", async () => {
+        const auth = await probeAuthorization(host => `//${host}${path}:_authToken=PROJECT`, {
+          path,
+          homeNpmrc: host => `//${host}${path}:_authToken=HOMETOKEN`,
+        });
+        expect(auth).toBe("Bearer PROJECT");
+      });
+
+      it("the home file's token applies when the project declares nothing", async () => {
+        const auth = await probeAuthorization(() => "", {
+          path,
+          homeNpmrc: host => `//${host}${path}:_authToken=HOMETOKEN`,
+        });
+        expect(auth).toBe("Bearer HOMETOKEN");
+      });
+
+      // The home file's key is a strict ancestor, so it is never even consulted:
+      // `hasAuth` stops at the deeper key the project file supplies.
+      it("a deeper project token beats a shallower home token", async () => {
+        const auth = await probeAuthorization(host => `//${host}${path}:_authToken=PROJECT`, {
+          path,
+          homeNpmrc: host => `//${host}/:_authToken=HOMETOKEN`,
+        });
+        expect(auth).toBe("Bearer PROJECT");
+      });
+
+      // The emptiness test happens AFTER the collapse, so a later empty value clears an
+      // earlier one instead of losing to it. npm 10.9.3 sends no header for both.
+      const homeBasic = (host: string) =>
+        `//${host}${path}:username=alice\n//${host}${path}:_password=${Buffer.from("s3cret").toString("base64")}`;
+
+      it("the project's empty username clears the home file's username and password pair", async () => {
+        const auth = await probeAuthorization(host => `//${host}${path}:username=`, { path, homeNpmrc: homeBasic });
+        expect(auth).toBe(null);
+      });
+
+      it("the project's empty _password clears the home file's username and password pair", async () => {
+        const auth = await probeAuthorization(host => `//${host}${path}:_password=`, { path, homeNpmrc: homeBasic });
+        expect(auth).toBe(null);
+      });
+
+      it("a project username overrides the home file's at the same key", async () => {
+        const auth = await probeAuthorization(host => `//${host}${path}:username=bob`, { path, homeNpmrc: homeBasic });
+        expect(auth).toBe(`Basic ${Buffer.from("bob:s3cret").toString("base64")}`);
+      });
+    });
+
+    // A yarn-style credential inside the registry URL is stripped from the path before
+    // the request goes out, whether or not `.npmrc` also supplies one. Otherwise the
+    // secret ships in the request path, where proxies and logs can see it.
+    describe("credentials embedded in the registry URL", () => {
+      // Returns the Authorization header and the request path the registry saw.
+      async function probeEmbedded(registryPath: string, authLines: (host: string) => string) {
+        const seen: Array<{ path: string; auth: string | null }> = [];
+        await using registry = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch(req) {
+            seen.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+            return new Response("not found", { status: 404 });
+          },
+        });
+        const host = `127.0.0.1:${registry.port}`;
+        using dir = tempDir("npmrc-embedded-auth", {
+          ".npmrc": `@myorg:registry=http://${host}${registryPath}\n${authLines(host)}\n`,
+          "package.json": JSON.stringify({ name: "probe", version: "0.0.0", dependencies: { "@myorg/pkg": "1.0.0" } }),
+          "home/.gitkeep": "",
+        });
+        const home = join(String(dir), "home");
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--no-cache"],
+          cwd: String(dir),
+          env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+        });
+        const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ requests: seen.length, exitCode }).toEqual({ requests: 1, exitCode: 1 });
+        return seen[0]!;
+      }
+
+      it("strips an embedded _authToken from the path and uses it when .npmrc has none", async () => {
+        const seen = await probeEmbedded("/api/:_authToken=EMBEDDED", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer EMBEDDED" });
+      });
+
+      it("strips an embedded _authToken from the path even when an .npmrc ancestor wins", async () => {
+        const seen = await probeEmbedded("/api/:_authToken=EMBEDDED", host => `//${host}/:_authToken=FROM_NPMRC`);
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer FROM_NPMRC" });
+      });
+
+      // A bare `:` belongs to the path. Only `name=value` segments naming a credential
+      // are stripped, so a registry mounted under `/a:b/c/` keeps its path.
+      it("leaves a plain colon in the registry path alone", async () => {
+        const seen = await probeEmbedded("/a:b/c/", host => `//${host}/a:b/c/:_authToken=TOK`);
+        expect(seen).toEqual({ path: "/a:b/c/@myorg%2fpkg", auth: "Bearer TOK" });
+      });
+
+      it("leaves a plain colon in the registry path alone when no credential is configured", async () => {
+        const seen = await probeEmbedded("/a:b/c/", () => "");
+        expect(seen).toEqual({ path: "/a:b/c/@myorg%2fpkg", auth: null });
       });
     });
 

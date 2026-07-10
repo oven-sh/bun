@@ -310,6 +310,95 @@ pub mod registry {
         pub user: Box<[u8]>,
     }
 
+    /// yarn-style credentials embedded in a registry URL's pathname, e.g.
+    /// `https://host/api/:_authToken=TOKEN`.
+    #[derive(Default)]
+    struct EmbeddedAuth<'a> {
+        token: Option<&'a [u8]>,
+        auth: Option<&'a [u8]>,
+        username: Option<&'a [u8]>,
+        password: Option<&'a [u8]>,
+        /// The scan hit a credential that ends it; nothing after it is read.
+        terminal: bool,
+        /// `url.pathname` was rewritten, so the href must be rebuilt from the parts.
+        needs_normalize: bool,
+    }
+
+    /// Strip trailing yarn-style credential segments out of `url.pathname`. Runs before
+    /// the registry's own credentials are consulted: the pathname must be sanitized
+    /// whether or not the credential is adopted, or the secret ships in the request path.
+    ///
+    /// <https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364>
+    fn parse_embedded_auth<'a>(url: &mut URL<'a>) -> EmbeddedAuth<'a> {
+        let mut out = EmbeddedAuth::default();
+        let mut pathname: &'a [u8] = url.pathname;
+        let mut needs_to_check_slash = true;
+
+        // Right to left: the credentials are appended after the path. A segment that is
+        // not one of them ends the scan — a bare `:` belongs to the path and must not be
+        // truncated away.
+        while let Some(colon) = strings::last_index_of_char(pathname, b':') {
+            let segment = &pathname[colon + 1..];
+
+            let Some(eql_i) = strings::index_of_char(segment, b'=') else {
+                break;
+            };
+            let value = &segment[eql_i as usize + 1..];
+            let name = &segment[..eql_i as usize];
+
+            let field = match name {
+                b"_authToken" => &mut out.token,
+                b"_auth" => &mut out.auth,
+                b"username" => &mut out.username,
+                b"_password" => &mut out.password,
+                _ => break,
+            };
+            *field = Some(value);
+
+            pathname = &pathname[..colon];
+            needs_to_check_slash = false;
+            out.needs_normalize = true;
+            if pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
+                pathname = &pathname[..pathname.len() - 1];
+            }
+
+            if matches!(name, b"_authToken" | b"_auth") {
+                out.terminal = true;
+                break;
+            }
+        }
+
+        // In this case, there is only one.
+        if needs_to_check_slash {
+            if let Some(last_slash) = strings::last_index_of_char(pathname, b'/') {
+                let remain = &pathname[last_slash + 1..];
+                if let Some(eql_i) = strings::index_of_char(remain, b'=') {
+                    let segment = &remain[..eql_i as usize];
+                    let value = &remain[eql_i as usize + 1..];
+
+                    let field = match segment {
+                        b"_authToken" => Some(&mut out.token),
+                        b"_auth" => Some(&mut out.auth),
+                        b"username" => Some(&mut out.username),
+                        b"_password" => Some(&mut out.password),
+                        _ => None,
+                    };
+
+                    if let Some(field) = field {
+                        *field = Some(value);
+                        out.terminal = true;
+                        out.needs_normalize = true;
+                        pathname = &pathname[..last_slash + 1];
+                    }
+                }
+            }
+        }
+
+        url.pathname = pathname;
+        url.path = pathname;
+        out
+    }
+
     impl Scope {
         pub fn hash(str: &[u8]) -> u64 {
             bun_semver::semver_string::Builder::string_hash(str)
@@ -351,113 +440,35 @@ pub mod registry {
             let mut url = URL::parse(&registry_url);
             let mut auth: &[u8] = b"";
             let mut user: &mut [u8] = &mut [];
-            let mut needs_normalize = false;
 
             // Backing storage for `user`/`auth` when synthesized from
             // username:password.
             let mut output_buf_owned: Box<[u8]> = Box::default();
 
+            // Unconditional: the scan both strips the credential from the pathname and
+            // reports it. Gating it on credential state would leave `:_authToken=SECRET`
+            // in the request path whenever an `.npmrc` line already supplied a token.
+            let embedded = parse_embedded_auth(&mut url);
+            let needs_normalize = embedded.needs_normalize;
+
             if registry.token.is_empty() {
                 'outer: {
                     if registry.password.is_empty() {
-                        let mut pathname: &[u8] = url.pathname;
-                        // defer { url.pathname = pathname; url.path = pathname; } — applied below
-                        let mut needs_to_check_slash = true;
-                        while let Some(colon) = strings::last_index_of_char(pathname, b':') {
-                            let mut segment = &pathname[colon + 1..];
-                            pathname = &pathname[..colon];
-                            needs_to_check_slash = false;
-                            needs_normalize = true;
-                            if pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
-                                pathname = &pathname[..pathname.len() - 1];
-                            }
-
-                            let Some(eql_i) = strings::index_of_char(segment, b'=') else {
-                                continue;
-                            };
-                            let value = &segment[eql_i as usize + 1..];
-                            segment = &segment[..eql_i as usize];
-
-                            // https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364
-                            // Bearer Token
-                            if segment == b"_authToken" {
-                                registry.token = value.into();
-                                url.pathname = pathname;
-                                url.path = pathname;
-                                break 'outer;
-                            }
-
-                            if segment == b"_auth" {
-                                auth = value;
-                                url.pathname = pathname;
-                                url.path = pathname;
-                                break 'outer;
-                            }
-
-                            if segment == b"username" {
-                                registry.username = value.into();
-                                continue;
-                            }
-
-                            if segment == b"_password" {
-                                registry.password = value.into();
-                                continue;
-                            }
+                        if let Some(token) = embedded.token {
+                            registry.token = token.into();
                         }
-
-                        // In this case, there is only one.
-                        if needs_to_check_slash {
-                            if let Some(last_slash) = strings::last_index_of_char(pathname, b'/') {
-                                let remain = &pathname[last_slash + 1..];
-                                if let Some(eql_i) = strings::index_of_char(remain, b'=') {
-                                    let segment = &remain[..eql_i as usize];
-                                    let value = &remain[eql_i as usize + 1..];
-
-                                    // https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364
-                                    // Bearer Token
-                                    if segment == b"_authToken" {
-                                        registry.token = value.into();
-                                        pathname = &pathname[..last_slash + 1];
-                                        needs_normalize = true;
-                                        url.pathname = pathname;
-                                        url.path = pathname;
-                                        break 'outer;
-                                    }
-
-                                    if segment == b"_auth" {
-                                        auth = value;
-                                        pathname = &pathname[..last_slash + 1];
-                                        needs_normalize = true;
-                                        url.pathname = pathname;
-                                        url.path = pathname;
-                                        break 'outer;
-                                    }
-
-                                    if segment == b"username" {
-                                        registry.username = value.into();
-                                        pathname = &pathname[..last_slash + 1];
-                                        needs_normalize = true;
-                                        url.pathname = pathname;
-                                        url.path = pathname;
-                                        break 'outer;
-                                    }
-
-                                    if segment == b"_password" {
-                                        registry.password = value.into();
-                                        pathname = &pathname[..last_slash + 1];
-                                        needs_normalize = true;
-                                        url.pathname = pathname;
-                                        url.path = pathname;
-                                        break 'outer;
-                                    }
-                                }
-                            }
+                        if let Some(embedded_auth) = embedded.auth {
+                            auth = embedded_auth;
                         }
-
-                        // The pathname write-back is applied at every `break 'outer`
-                        // above and once more here at fallthrough.
-                        url.pathname = pathname;
-                        url.path = pathname;
+                        if let Some(username) = embedded.username {
+                            registry.username = username.into();
+                        }
+                        if let Some(password) = embedded.password {
+                            registry.password = password.into();
+                        }
+                        if embedded.terminal {
+                            break 'outer;
+                        }
                     }
 
                     registry.username = env.get_auto(&registry.username).into();

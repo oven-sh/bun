@@ -49,6 +49,11 @@ public:
         /// originals to restore and must be evicted transitively — even if a
         /// later re-mock found a loaded (mock-born) namespace to snapshot.
         bool wasMockBorn { false };
+        /// True when the path already had a require-cache entry at the first
+        /// transient install (install replaced its exports object in place).
+        /// That entry's `m_parent` chain required the module *before* the
+        /// mock and captured real values, so teardown must not evict it.
+        bool cjsEntryPreExisted { false };
     };
     using InstalledMocksMap = WTF::UncheckedKeyHashMap<String, InstalledMockRecord>;
 
@@ -119,7 +124,7 @@ public:
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
-        void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock, bool persistent, bool mockBorn);
+        void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock, bool persistent, bool mockBorn, bool cjsEntryPreExisted);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 

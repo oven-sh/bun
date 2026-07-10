@@ -527,4 +527,49 @@ describe.concurrent("mock.module per-file scoping", () => {
     expect(stderr + stdout).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
+
+  test("mocking a dep that was require-cached before the mock keeps pre-mock requirers cached", async () => {
+    // service.cjs required ./config during --preload and captured the real
+    // value; a later transient mock of ./config replaces the cache entry's
+    // exports object in place, so service's captured values stay correct.
+    // Teardown must not evict service (and its ancestors) through config's
+    // m_parent back-edge — that re-runs preload side effects every file.
+    using dir = tempDir("issue-31316-premock-parent", {
+      "config.ts": `export const key = "REAL";`,
+      "service.cjs": `
+        const { key } = require("./config");
+        console.log("service evaluated");
+        module.exports = { key };
+      `,
+      "preload.ts": `require("./service.cjs");`,
+      "a.test.ts": `
+        import { mock, it, expect } from "bun:test";
+        import { key } from "./config";
+        mock.module("./config", () => ({ key: "MOCK" }));
+        it("a sees mock", () => {
+          expect(key).toBe("MOCK");
+        });
+      `,
+      "b.test.ts": `
+        import { it, expect } from "bun:test";
+        it("b gets the cached service", () => {
+          expect(require("./service.cjs").key).toBe("REAL");
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--preload", "./preload.ts", "a.test.ts", "b.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.split("service evaluated").length - 1).toBe(1);
+    expect(stderr + stdout).toContain("2 pass");
+    expect(stderr + stdout).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
 });

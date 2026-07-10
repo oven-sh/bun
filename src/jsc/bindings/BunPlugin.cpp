@@ -150,7 +150,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     // `Bun.plugin({ module })` virtual modules persist across per-file
     // `bun test` teardown — they're process-level plugin registrations,
     // not test-local mocks.
-    global->onLoadPlugins.addModuleMock(vm, moduleId, uncheckedDowncast<JSC::JSObject>(functionValue), /*persistent=*/true, /*mockBorn=*/false);
+    global->onLoadPlugins.addModuleMock(vm, moduleId, uncheckedDowncast<JSC::JSObject>(functionValue), /*persistent=*/true, /*mockBorn=*/false, /*cjsEntryPreExisted=*/false);
 
     auto* requireMap = global->requireMap();
     RETURN_IF_EXCEPTION(scope, {});
@@ -396,7 +396,7 @@ JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String&
     return nullptr;
 }
 
-void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject, bool persistent, bool mockBorn)
+void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject, bool persistent, bool mockBorn, bool cjsEntryPreExisted)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
     auto& onLoad = globalObject->onLoadPlugins;
@@ -453,6 +453,7 @@ void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSOb
             record.displacedEntry = std::move(displacedEntry);
             record.displacedWasPersistent = displacedWasPersistent;
             record.wasMockBorn = mockBorn;
+            record.cjsEntryPreExisted = cjsEntryPreExisted;
             onLoad.transientMockRecords->set(path, std::move(record));
         }
     }
@@ -795,7 +796,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     // No loaded-and-linked namespace at install time means any module record
     // this path acquires afterwards was materialized from the mock factory.
-    globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock, persistent, /*mockBorn=*/!mockedNamespace);
+    // A require-cache entry kept in place (exports replaced above) means its
+    // first requirer predates the mock and captured real values.
+    globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock, persistent,
+        /*mockBorn=*/!mockedNamespace,
+        /*cjsEntryPreExisted=*/entryValue && !removeFromCJS);
 
     // Attach the ESM teardown snapshot (if any) to the freshly-created
     // transient record. `addModuleMock` already set up the record slot;
@@ -1198,12 +1203,19 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
             mod = mod->m_parent.get();
         }
     };
-    auto poisonRequireMapEntry = [&](JSC::JSString* pathString) {
+    // `walkParents` is false when the require-cache entry predates the mock
+    // install: its `m_parent` chain required the module before the mock and
+    // captured real values, so evicting it would only re-run pre-mock side
+    // effects (e.g. preload setup). Post-mock requirers of the kept entry
+    // still get evicted through their own `m_children` edges.
+    auto poisonRequireMapEntry = [&](JSC::JSString* pathString, bool walkParents) {
         JSC::JSValue cached = requireMap->get(global, pathString);
         if (scope.clearExceptionExceptTermination() && cached && cached.isCell()) {
             poisonedCJSModules.add(cached.asCell());
-            if (auto* mod = dynamicDowncast<Bun::JSCommonJSModule>(cached)) {
-                poisonModuleAndParents(mod->m_parent.get());
+            if (walkParents) {
+                if (auto* mod = dynamicDowncast<Bun::JSCommonJSModule>(cached)) {
+                    poisonModuleAndParents(mod->m_parent.get());
+                }
             }
         }
     };
@@ -1249,7 +1261,7 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
             // replay, so always drop the require-cache entry — the next
             // `require()` misses and re-runs the restored (preload) factory.
             auto* pathString = JSC::jsString(vm, path);
-            poisonRequireMapEntry(pathString);
+            poisonRequireMapEntry(pathString, !record.cjsEntryPreExisted);
             requireMap->remove(global, pathString);
             if (!scope.clearExceptionExceptTermination()) {
                 break;
@@ -1282,7 +1294,7 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
                 moduleLoader->removeEntry(ident);
             }
             auto* pathString = JSC::jsString(vm, path);
-            poisonRequireMapEntry(pathString);
+            poisonRequireMapEntry(pathString, !record.cjsEntryPreExisted);
             requireMap->remove(global, pathString);
             if (!scope.clearExceptionExceptTermination()) {
                 break;
@@ -1328,9 +1340,11 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
                 // A dependent that was also `require()`d has a require-map
                 // entry wrapping the same (now-evicted) module; drop and
                 // poison it so the CJS walk below catches its own consumers.
+                // Dependents were loaded under the mock, so their requirers
+                // captured tainted values: walk their parent chains.
                 for (auto& ident : dependentKeys) {
                     auto* keyString = JSC::jsString(vm, ident.string());
-                    poisonRequireMapEntry(keyString);
+                    poisonRequireMapEntry(keyString, /*walkParents=*/true);
                     requireMap->remove(global, keyString);
                     if (!scope.clearExceptionExceptTermination()) {
                         break;

@@ -65,7 +65,18 @@ namespace uWS
         HTTP_PARSER_ERROR_INVALID_EOF = 8,
         HTTP_PARSER_ERROR_INVALID_METHOD = 9,
         HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN = 10,
+        /* Not a parse error: a node:http headersTimeout/requestTimeout receive
+         * deadline expired before the message was fully received. */
+        HTTP_PARSER_ERROR_REQUEST_TIMEOUT = 11,
     };
+
+    /* node:http receive phase of a socket (only meaningful when
+     * hasNodeReceiveTimeouts is set): Headers from connection (or the first
+     * byte of the next keep-alive message) until a message's header section
+     * is fully parsed, Body until its body is fully received, None while a
+     * handler/response is in flight or the keep-alive socket is idle after a
+     * completed exchange. CONNECT tunnels stream forever and have no phase. */
+    enum class NodeReceivePhase : unsigned char { None, Headers, Body };
 
 
     enum HTTPHeaderParserError: uint8_t {
@@ -868,6 +879,15 @@ namespace uWS
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
+            /* node:http: a message whose request line begins here arrived in the
+             * packet onData is delivering, so its receive deadlines are measured
+             * from that packet's arrival. ConsumeMinimally only ever resumes a
+             * message buffered from an earlier packet, which keeps its own start. */
+            if constexpr (!ConsumeMinimally) {
+                if (nodePacketTimestampMs) {
+                    nodeMessageStartMs = nodePacketTimestampMs;
+                }
+            }
             auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, maxHeaderSize);
             if(result.isError()) {
                 return result;
@@ -1039,6 +1059,26 @@ namespace uWS
     }
 
 public:
+    /* True while a dispatched message still has body bytes outstanding
+     * (Content-Length not yet satisfied, or chunked body not terminated). */
+    bool isReceivingHttpBody() const {
+        return remainingStreamingBytes != 0;
+    }
+
+    /* True when incomplete request bytes are buffered, i.e. a message started
+     * arriving but its header section has not been fully parsed yet. */
+    bool hasPartialRequest() const {
+        return fallback.length() > 0;
+    }
+
+    /* node:http receive deadlines are absolute per message, measured from the
+     * message's first received byte. HttpContext::onData stamps the packet's
+     * arrival time here before parsing (0 = those deadlines are off), and the
+     * parser copies it into nodeMessageStartMs as each message's request line
+     * begins. See HttpContext::tryArmNodeReceiveTimeout. */
+    uint64_t nodePacketTimestampMs = 0;
+    uint64_t nodeMessageStartMs = 0;
+
     HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */

@@ -60,11 +60,27 @@ public:
     void setTimeout(uint8_t seconds) {
         auto* data = getHttpResponseData();
         data->idleTimeout = seconds;
+
+        /* node:http receive deadlines (headersTimeout/requestTimeout) own the
+         * per-socket timer while a message is being received — Node enforces
+         * them independently of a user socket timeout. The new idle timeout
+         * takes over once the message has been fully received. */
+        if (data->hasNodeReceiveTimeouts && HttpContext<SSL>::tryArmNodeReceiveTimeout((us_socket_t *) this, data)) {
+            return;
+        }
+
         Super::timeout(data->idleTimeout);
     }
 
     void resetTimeout() {
         auto* data = getHttpResponseData();
+
+        /* node:http receive deadlines (headersTimeout/requestTimeout) own the
+         * timer while a message is being received; they must not be replaced
+         * by the generic idle timeout. */
+        if (data->hasNodeReceiveTimeouts && HttpContext<SSL>::tryArmNodeReceiveTimeout((us_socket_t *) this, data)) {
+            return;
+        }
 
         Super::timeout(data->idleTimeout);
     }
@@ -212,13 +228,20 @@ public:
 
             /* Success is when we wrote the entire thing without any failures */
             bool success = written == data.length() && !failed;
-            /* Reset the timeout on each tryEnd */
-            this->resetTimeout();
 
             /* Remove onAborted function if we reach the end */
-            if (httpResponseData->offset == totalSize) {
+            bool reachedEnd = httpResponseData->offset == totalSize;
+            if (reachedEnd) {
                 httpResponseData->markDone(this);
+            }
 
+            /* Reset the timeout on each tryEnd. This runs after markDone() (as
+             * the chunked path above does) so that completing the response arms
+             * the receive deadline of a next message whose partial bytes are
+             * already buffered, instead of seeing a still-pending response. */
+            this->resetTimeout();
+
+            if (reachedEnd) {
                 /* We need to check if we should close this socket here now */
                 if (!Super::isCorked()) {
                     if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
@@ -399,6 +422,12 @@ public:
     /* Throttle reads and writes */
     HttpResponse *pause() {
         Super::pause();
+        /* A paused node:http socket is still subject to its receive deadline:
+         * the message bytes the peer owes us have not arrived yet. */
+        auto* data = getHttpResponseData();
+        if (data->hasNodeReceiveTimeouts && HttpContext<SSL>::tryArmNodeReceiveTimeout((us_socket_t *) this, data)) {
+            return this;
+        }
         Super::timeout(0);
         return this;
     }

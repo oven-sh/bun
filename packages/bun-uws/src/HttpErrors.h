@@ -24,7 +24,8 @@ namespace uWS {
 enum HttpError {
     HTTP_ERROR_505_HTTP_VERSION_NOT_SUPPORTED = 1,
     HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE = 2,
-    HTTP_ERROR_400_BAD_REQUEST = 3
+    HTTP_ERROR_400_BAD_REQUEST = 3,
+    HTTP_ERROR_408_REQUEST_TIMEOUT = 4
 };
 
 
@@ -33,7 +34,8 @@ static const std::string_view httpErrorResponses[] = {
     "", /* Zeroth place is no error so don't use it */
     "HTTP/1.1 505 HTTP Version Not Supported\r\nConnection: close\r\n\r\n",
     "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n",
-    "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+    "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+    "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n"
 };
 
 

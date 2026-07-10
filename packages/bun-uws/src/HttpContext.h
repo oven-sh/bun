@@ -36,6 +36,7 @@
 #include <span>
 #include <array>
 #include <mutex>
+#include <chrono>
 
 
 namespace uWS {
@@ -124,6 +125,87 @@ private:
     /* Minimum allowed receive throughput per second (clients uploading less than 16kB/sec get dropped) */
     static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
 
+public:
+    /* The configured node:http deadline (whole seconds) governing a receive
+     * phase, 0 = disabled. requestTimeout spans the whole message including
+     * its header section, so the headers phase uses the tighter of the two. */
+    static unsigned int nodeConfiguredReceiveSeconds(us_socket_t *s, NodeReceivePhase phase) {
+        HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+        unsigned int headersSeconds = httpContextData->nodeHeadersTimeoutSeconds;
+        unsigned int requestSeconds = httpContextData->nodeRequestTimeoutSeconds;
+        if (phase == NodeReceivePhase::Headers && headersSeconds && (!requestSeconds || headersSeconds < requestSeconds)) {
+            return headersSeconds;
+        }
+        return requestSeconds;
+    }
+
+    /* See NodeReceivePhase in HttpParser.h. Returns None — meaning the legacy
+     * idle timeout owns the per-socket timer — both outside the receive phases
+     * and when the current phase's configured deadline is 0 (disabled). */
+    static NodeReceivePhase nodeReceivePhase(us_socket_t *s, HttpResponseData<SSL> *httpResponseData) {
+        NodeReceivePhase phase;
+        /* isConnectRequest is set as soon as the CONNECT request line parses;
+         * until its header section is complete (partial bytes buffered) it is
+         * still subject to headersTimeout. Only an established tunnel has no phase. */
+        if (httpResponseData->isConnectRequest && !httpResponseData->hasPartialRequest()) {
+            return NodeReceivePhase::None;
+        }
+        /* requestTimeout applies until the message is fully received, even if
+         * the handler already responded (Node keeps enforcing it on the
+         * outstanding body, then dumps it). */
+        if (httpResponseData->isReceivingHttpBody()) {
+            phase = NodeReceivePhase::Body;
+        } else if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
+            return NodeReceivePhase::None;
+        } else if (httpResponseData->hasPartialRequest() || !httpResponseData->hasCompletedResponse) {
+            phase = NodeReceivePhase::Headers;
+        } else {
+            return NodeReceivePhase::None;
+        }
+        /* A phase whose deadline is disabled never claims the timer: a user
+         * req.setTimeout()/server idle timeout must keep working through it. */
+        return nodeConfiguredReceiveSeconds(s, phase) ? phase : NodeReceivePhase::None;
+    }
+
+    static uint64_t nodeNowMs() {
+        return (uint64_t) std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
+    /* Seconds left until the current message's deadline, measured from the
+     * message start like Node: the headers deadline is additionally capped by
+     * requestTimeout (which spans the whole message including its header
+     * section), and the body deadline is whatever remains of requestTimeout.
+     * Only called for the phase nodeReceivePhase() returned, whose configured
+     * deadline is therefore non-zero. */
+    static unsigned int nodeRemainingReceiveSeconds(us_socket_t *s, HttpResponseData<SSL> *httpResponseData, NodeReceivePhase phase) {
+        unsigned int total = nodeConfiguredReceiveSeconds(s, phase);
+        uint64_t elapsedSeconds = (nodeNowMs() - httpResponseData->nodeMessageStartMs) / 1000;
+        /* Already past the deadline: fire at the next timer sweep */
+        return elapsedSeconds >= total ? 1 : (unsigned int) (total - elapsedSeconds);
+    }
+
+    /* While a receive phase is active its deadline owns the per-socket timer;
+     * every legacy resetTimeout()/pause() routes back through here so it
+     * cannot be disarmed early. Returns false outside the receive phases, in
+     * which case the caller falls back to the legacy idle timeout. */
+    static bool tryArmNodeReceiveTimeout(us_socket_t *s, HttpResponseData<SSL> *httpResponseData) {
+        NodeReceivePhase phase = nodeReceivePhase(s, httpResponseData);
+        if (phase == NodeReceivePhase::None) {
+            return false;
+        }
+        /* Like Node (last_message_start_), the clock is the message's first
+         * received byte (or connection open before any byte arrives). onData
+         * and the parser own nodeMessageStartMs; this only reads it, so nothing
+         * a handler reaches synchronously can re-base a message's deadlines.
+         * Both deadlines are absolute from that start: received bytes never
+         * extend them, so a client trickling data slowly cannot hold the
+         * socket past them. */
+        us_socket_timeout(s, nodeRemainingReceiveSeconds(s, httpResponseData, phase));
+        return true;
+    }
+
+private:
+
     /* Not constexpr — the ordinals are linked from `src/uws_sys/SocketKind.rs`
      * so a reorder there can't silently mis-route us. Only ever read
      * at runtime (listen/adopt). */
@@ -172,6 +254,13 @@ private:
              * surfaced separately (rejectUnauthorized above / tls.authorized). */
             httpResponseData->isAuthorized = success;
 
+            if (httpResponseData->hasNodeReceiveTimeouts) {
+                /* Like Node ('secureConnection' → parser.initialize →
+                 * last_message_start_), the first message's receive deadlines
+                 * start after the TLS handshake, not at TCP accept. */
+                httpResponseData->nodeMessageStartMs = nodeNowMs();
+            }
+
             /* Any connected socket should timeout until it has a request */
             ((HttpResponse<SSL> *) s)->resetTimeout();
 
@@ -184,13 +273,22 @@ private:
 
     static us_socket_t *onOpen(us_socket_t *s, int /*is_client*/, char * /*ip*/, int /*ip_length*/) {
         /* Init socket ext */
-        new (us_socket_ext(s)) HttpResponseData<SSL>;
-          /* Any connected socket should timeout until it has a request */
+        auto *httpResponseData = new (us_socket_ext(s)) HttpResponseData<SSL>;
+        HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+        /* Any connected socket should timeout until it has a request */
+        if (httpContextData->flags.hasNodeReceiveTimeouts) {
+            /* node:http: no implicit idle timeout; the headersTimeout receive
+             * deadline owns the socket timer until a complete request arrives. */
+            httpResponseData->hasNodeReceiveTimeouts = true;
+            httpResponseData->idleTimeout = 0;
+            /* The first message's receive deadlines are measured from
+             * connection open until its first byte arrives and re-bases them. */
+            httpResponseData->nodeMessageStartMs = nodeNowMs();
+        }
         ((HttpResponse<SSL> *) s)->resetTimeout();
 
         if(!SSL) {
             /* Call filter */
-            HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -267,6 +365,13 @@ private:
         /* Mark that we are inside the parser now */
         httpContextData->flags.isParsingHttp = true;
         httpResponseData->isIdle = false;
+
+        if (httpResponseData->hasNodeReceiveTimeouts) {
+            /* Every message whose request line begins in this packet starts its
+             * receive deadlines here; the parser stamps nodeMessageStartMs with
+             * this as it reaches each one (see HttpParser). */
+            httpResponseData->nodePacketTimestampMs = nodeNowMs();
+        }
 
         // clients need to know the cursor after http parse, not servers!
         // how far did we read then? we need to know to continue with websocket parsing data? or?
@@ -365,7 +470,6 @@ private:
 
         }, [httpResponseData, httpContextData](void *user, std::string_view data, bool fin) -> void * {
 
-
             if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketData) {
                 httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
             }
@@ -434,6 +538,12 @@ private:
             auto [written, failed] = ((AsyncSocket<SSL> *) returnedData)->uncork();
             if (written > 0 || failed) {
                 /* All Http sockets timeout by this, and this behavior match the one in HttpResponse::cork */
+                ((HttpResponse<SSL> *) s)->resetTimeout();
+            }
+
+            if (httpContextData->flags.hasNodeReceiveTimeouts) {
+                /* Receive-phase deadline, or restore the idle timeout (which
+                 * disarms a body deadline once the message is complete). */
                 ((HttpResponse<SSL> *) s)->resetTimeout();
             }
 
@@ -514,8 +624,13 @@ private:
         }
         /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
         if (httpResponseData->onWritable) {
-            /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */
-            us_socket_timeout(s, 0);
+            /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout.
+             * node:http receive deadlines own the timer while a message is being
+             * received and tryArmNodeReceiveTimeout assumes it stays armed, so
+             * never suspend it here. */
+            if (!httpResponseData->hasNodeReceiveTimeouts || nodeReceivePhase(s, httpResponseData) == NodeReceivePhase::None) {
+                us_socket_timeout(s, 0);
+            }
 
             /* We expect the developer to return whether or not write was successful (true).
              * If write was never called, the developer should still return true so that we may drain. */
@@ -565,6 +680,37 @@ private:
         AsyncSocket<SSL> *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
         // Node.js by default closes the connection but they emit the timeout event before that
         HttpResponseData<SSL> *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
+        HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+
+        /* node:http headersTimeout/requestTimeout expiry: like Node, always
+         * emit 'clientError' (ERR_HTTP_REQUEST_TIMEOUT) and close; the canned
+         * 408 is only written when nothing was written for the current message
+         * (Node: socketOnError's bytesWritten check). No 'timeout' events are
+         * emitted for these deadlines. The write-state bits are only meaningful
+         * for the dispatched (Body phase) message; in the Headers phase they
+         * are leftovers from the previous keep-alive response.
+         * For SSL, Node's HTTP layer only attaches after the handshake: a stalled
+         * handshake (isAuthorized still false, set only by onHandshake) must not be
+         * reported as an HTTP request timeout — it falls through to a plain close,
+         * still bounded by the deadline onOpen armed. */
+        auto nodePhase = httpResponseData->hasNodeReceiveTimeouts && (!SSL || httpResponseData->isAuthorized)
+            ? nodeReceivePhase(s, httpResponseData) : NodeReceivePhase::None;
+        if (nodePhase != NodeReceivePhase::None) {
+            if (httpContextData->onClientError) {
+                httpContextData->onClientError(SSL, s, HTTP_PARSER_ERROR_REQUEST_TIMEOUT, nullptr, 0);
+            }
+            /* The 'clientError' listener may have closed the socket already */
+            if (us_socket_is_closed(s)) {
+                return s;
+            }
+            bool wroteSomething = nodePhase == NodeReceivePhase::Body
+                && (httpResponseData->state & (HttpResponseData<SSL>::HTTP_STATUS_CALLED | HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_END_CALLED));
+            if (!wroteSomething && !us_socket_is_shut_down(s)) {
+                us_socket_write(s, httpErrorResponses[HTTP_ERROR_408_REQUEST_TIMEOUT].data(), (int) httpErrorResponses[HTTP_ERROR_408_REQUEST_TIMEOUT].length());
+                us_socket_shutdown(s);
+            }
+            return asyncSocket->close();
+        }
 
         if (httpResponseData->onTimeout) {
             httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);

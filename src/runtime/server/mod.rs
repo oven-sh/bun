@@ -1475,6 +1475,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
+    /// node:http only: enforce `Server.headersTimeout` / `Server.requestTimeout`
+    /// (seconds, 0 disables) as per-socket receive deadlines in uWS.
+    pub fn set_node_receive_timeouts(
+        &mut self,
+        headers_timeout_seconds: u32,
+        request_timeout_seconds: u32,
+    ) {
+        if let Some(app) = self.app {
+            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+            bun_opaque::opaque_deref_mut(app)
+                .set_node_receive_timeouts(headers_timeout_seconds, request_timeout_seconds);
+        }
+    }
+
     pub fn ref_(&mut self) {
         if self.poll_ref.is_active() {
             return;

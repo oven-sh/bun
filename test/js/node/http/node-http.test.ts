@@ -28,6 +28,7 @@ import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { PassThrough, Writable } from "node:stream";
+import { connect as tlsConnect } from "node:tls";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -3748,4 +3749,970 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   const d = new OutgoingMessage();
   c.outputData.push({ data: "y", encoding: "utf8", callback: null });
   expect(d.outputData.length).toBe(0);
+});
+
+// node:http Server.headersTimeout / Server.requestTimeout enforcement.
+// Node answers an expired receive deadline with a canned
+// "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n" (only when no
+// 'clientError' listener is installed) and emits 'clientError' with
+// ERR_HTTP_REQUEST_TIMEOUT. The deadline check granularity is
+// connectionsCheckingInterval in Node and ~4s in Bun, so these use small
+// configured values and only await events.
+describe("server headersTimeout/requestTimeout enforcement", () => {
+  const REQUEST_TIMEOUT_408_RESPONSE = "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
+  const timeoutOptions = {
+    headersTimeout: 500,
+    requestTimeout: 1000,
+    connectionsCheckingInterval: 100,
+  };
+
+  it.each([["http"], ["https"]] as const)(
+    "%s: stalled request headers are answered with a 408 and the socket is closed",
+    async protocol => {
+      const isHttps = protocol === "https";
+      const server = isHttps
+        ? createHttpsServer({ ...timeoutOptions, key: tlsCert.key, cert: tlsCert.cert }, () => {})
+        : createServer(timeoutOptions, () => {});
+      try {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const { port } = server.address() as AddressInfo;
+        const socket = isHttps
+          ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+          : connect(port, "127.0.0.1");
+        const received: Buffer[] = [];
+        const closed = new Promise<void>((resolve, reject) => {
+          socket.on("close", () => resolve());
+          socket.on("error", err => reject(err));
+        });
+        socket.on("data", chunk => received.push(chunk));
+        await once(socket, isHttps ? "secureConnect" : "connect");
+        socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+        await closed;
+        expect(Buffer.concat(received).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    },
+    20_000,
+  );
+
+  it("emits 'clientError' with ERR_HTTP_REQUEST_TIMEOUT when the headers stall", async () => {
+    const server = createServer(timeoutOptions, () => {});
+    const { promise: clientError, resolve: onClientError } = Promise.withResolvers<Error>();
+    server.on("clientError", (err, socket) => {
+      onClientError(err);
+      socket.destroy();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+      const err: any = await clientError;
+      expect(err.code).toBe("ERR_HTTP_REQUEST_TIMEOUT");
+      expect(err.message).toBe("Request timeout");
+      expect(err.name).toBe("Error");
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("a dispatched request whose body stalls is aborted with a 408", async () => {
+    const { promise: handlerCalled, resolve: onHandler } = Promise.withResolvers<void>();
+    const { promise: aborted, resolve: onAborted } = Promise.withResolvers<void>();
+    const server = createServer(timeoutOptions, (req, res) => {
+      onHandler();
+      req.on("aborted", () => onAborted());
+      req.on("error", () => {});
+      res.on("error", () => {});
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nab");
+      await handlerCalled;
+      await aborted;
+      await closed;
+      expect(Buffer.concat(received).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("stalled headers of a second keep-alive request are answered with a 408", async () => {
+    const server = createServer(timeoutOptions, (req, res) => {
+      res.end("first-response");
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      const chunks: Buffer[] = [];
+      let firstResponse: ((value: void) => void) | undefined;
+      const receivedFirstResponse = new Promise<void>(resolve => (firstResponse = resolve));
+      socket.on("data", chunk => {
+        chunks.push(chunk);
+        if (Buffer.concat(chunks).toString().endsWith("first-response")) {
+          firstResponse!();
+        }
+      });
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await receivedFirstResponse;
+      expect(Buffer.concat(chunks).toString()).toStartWith("HTTP/1.1 200 OK\r\n");
+      chunks.length = 0;
+      socket.write("GET /second HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+      await closed;
+      expect(Buffer.concat(chunks).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("stalled headers of a pipelined second request behind an async handler are answered with a 408", async () => {
+    // The next request's partial header bytes are already buffered when the
+    // handler later completes via a one-shot res.end(); finishing the response
+    // must still arm the buffered message's headersTimeout.
+    const server = createServer(timeoutOptions, (req, res) => {
+      setImmediate(() => res.end("first-response"));
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      const chunks: Buffer[] = [];
+      let firstResponse: ((value: void) => void) | undefined;
+      const receivedFirstResponse = new Promise<void>(resolve => (firstResponse = resolve));
+      socket.on("data", chunk => {
+        chunks.push(chunk);
+        if (Buffer.concat(chunks).toString().endsWith("first-response")) {
+          firstResponse!();
+        }
+      });
+      // The complete first request and the partial start of the second share one packet.
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: ");
+      await receivedFirstResponse;
+      expect(Buffer.concat(chunks).toString()).toStartWith("HTTP/1.1 200 OK\r\n");
+      chunks.length = 0;
+      await closed;
+      expect(Buffer.concat(chunks).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("requestTimeout does not apply to a fully received request with a slow handler", async () => {
+    // The receive deadlines stop once the message is fully received. The
+    // handler holds the response until a sibling stalled connection on the same
+    // server (opened after the request was fully received) is 408-closed,
+    // proving a whole deadline window elapsed while the slow handler survived.
+    const { promise: handlerCalled, resolve: onHandler } = Promise.withResolvers<void>();
+    const { promise: release, resolve: releaseHandler } = Promise.withResolvers<void>();
+    const server = createServer(
+      { headersTimeout: 500, requestTimeout: 500, connectionsCheckingInterval: 100 },
+      (req, res) => {
+        onHandler();
+        release.then(() => res.end("slow-but-fine"));
+      },
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      await handlerCalled;
+
+      const stalled = connect(port, "127.0.0.1");
+      stalled.on("error", () => {});
+      const stalledChunks: Buffer[] = [];
+      stalled.on("data", chunk => stalledChunks.push(chunk));
+      const stalledClosed = new Promise<void>(resolve => stalled.on("close", () => resolve()));
+      stalled.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+      await stalledClosed;
+      expect(Buffer.concat(stalledChunks).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+
+      releaseHandler();
+      await closed;
+      const response = Buffer.concat(received).toString();
+      expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(response).toEndWith("slow-but-fine");
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("requestTimeout still applies after the handler responds before the body is received", async () => {
+    // Node keeps enforcing requestTimeout on the outstanding request body even
+    // after the response completed: 'clientError' (ERR_HTTP_REQUEST_TIMEOUT)
+    // and the socket is destroyed; the 408 is not written (a response was).
+    const { promise: clientError, resolve: onClientError } = Promise.withResolvers<Error>();
+    const server = createServer(timeoutOptions, (req, res) => {
+      req.on("error", () => {});
+      res.end("early-response");
+    });
+    server.on("clientError", (err, socket) => {
+      onClientError(err);
+      socket.destroy();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\nab");
+      const err: any = await clientError;
+      expect(err.code).toBe("ERR_HTTP_REQUEST_TIMEOUT");
+      await closed;
+      const response = Buffer.concat(received).toString();
+      expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(response).toEndWith("early-response");
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("requestTimeout expiry after the response started still emits 'clientError' without a 408", async () => {
+    // Like Node, only the canned 408 is suppressed once response bytes were
+    // written; the deadline itself (clientError + destroy) still applies.
+    const { promise: clientError, resolve: onClientError } = Promise.withResolvers<Error>();
+    const server = createServer(timeoutOptions, (req, res) => {
+      req.on("error", () => {});
+      res.on("error", () => {});
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.write("partial-");
+    });
+    server.on("clientError", (err, socket) => {
+      onClientError(err);
+      socket.destroy();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\nab");
+      const err: any = await clientError;
+      expect(err.code).toBe("ERR_HTTP_REQUEST_TIMEOUT");
+      await closed;
+      const response = Buffer.concat(received).toString();
+      expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(response).not.toContain("408 Request Timeout");
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it.each([["auto"], ["checkContinue"]] as const)(
+    "an Expect: 100-continue request whose body stalls still gets the canned 408 after the 100 (%s)",
+    async mode => {
+      // Node v26 writes the interim "100 Continue" and then, on requestTimeout
+      // expiry, still appends the canned 408: socketOnError only suppresses it
+      // once the in-flight response's own header was sent (_headerSent), and an
+      // interim 1xx does not set it.
+      const { promise: aborted, resolve: onAborted } = Promise.withResolvers<void>();
+      const server = createServer(timeoutOptions, (req, res) => {
+        req.on("aborted", () => onAborted());
+        req.on("error", () => {});
+        res.on("error", () => {});
+      });
+      if (mode === "checkContinue") {
+        server.on("checkContinue", (req, res) => {
+          res.writeContinue();
+          server.emit("request", req, res);
+        });
+      }
+      try {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const { port } = server.address() as AddressInfo;
+        const socket = connect(port, "127.0.0.1");
+        socket.on("error", () => {});
+        const received: Buffer[] = [];
+        socket.on("data", chunk => received.push(chunk));
+        const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+        socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nExpect: 100-continue\r\nContent-Length: 100\r\n\r\n");
+        await aborted;
+        await closed;
+        expect(Buffer.concat(received).toString()).toBe(`HTTP/1.1 100 Continue\r\n\r\n${REQUEST_TIMEOUT_408_RESPONSE}`);
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    },
+    20_000,
+  );
+
+  it("req.setTimeout() does not replace the requestTimeout deadline", async () => {
+    // In Node the receive deadlines are enforced independently of any user
+    // socket timeout; arming a much longer one must not disarm requestTimeout.
+    const { promise: clientError, resolve: onClientError } = Promise.withResolvers<Error>();
+    const userTimeout = mock(() => {});
+    const server = createServer(timeoutOptions, (req, res) => {
+      req.on("error", () => {});
+      res.on("error", () => {});
+      req.setTimeout(60_000, userTimeout);
+    });
+    server.on("clientError", (err, socket) => {
+      onClientError(err);
+      socket.destroy();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\nab");
+      const err: any = await clientError;
+      expect(err.code).toBe("ERR_HTTP_REQUEST_TIMEOUT");
+      await closed;
+      expect(userTimeout).not.toHaveBeenCalled();
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("requestTimeout: 0 (disabled) does not swallow a req.setTimeout() armed during a stalled body", async () => {
+    // With the body deadline disabled there is nothing for the receive phase
+    // to enforce, so the user idle timeout must keep owning the socket timer;
+    // a disabled deadline claiming (and disarming) it leaves no timer at all.
+    const { promise: userTimedOut, resolve: onUserTimeout } = Promise.withResolvers<void>();
+    const clientError = mock(() => {});
+    const server = createServer({ headersTimeout: 0, requestTimeout: 0, connectionsCheckingInterval: 100 }, req => {
+      req.on("error", () => {});
+      req.resume();
+      req.setTimeout(1000, () => onUserTimeout());
+    });
+    server.on("clientError", clientError);
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\nab");
+      await userTimedOut;
+      // The expiry is the user idle timeout, not a receive deadline: no
+      // canned 408 and no 'clientError' (ERR_HTTP_REQUEST_TIMEOUT).
+      expect(Buffer.concat(received).toString()).toBe("");
+      expect(clientError).not.toHaveBeenCalled();
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("an enabled headersTimeout with requestTimeout: 0 hands the timer to req.setTimeout() for the body", async () => {
+    // The Headers phase deadline (headersTimeout) is enforced, but once the
+    // message moves into its (deadline-less) body the user idle timeout owns
+    // the socket timer again.
+    const { promise: userTimedOut, resolve: onUserTimeout } = Promise.withResolvers<void>();
+    const clientError = mock(() => {});
+    const server = createServer({ headersTimeout: 8000, requestTimeout: 0, connectionsCheckingInterval: 100 }, req => {
+      req.on("error", () => {});
+      req.resume();
+      req.setTimeout(1000, () => onUserTimeout());
+    });
+    server.on("clientError", clientError);
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\nab");
+      await userTimedOut;
+      expect(Buffer.concat(received).toString()).toBe("");
+      expect(clientError).not.toHaveBeenCalled();
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("headersTimeout: 0 with an enabled requestTimeout still bounds a stalled header section", async () => {
+    // requestTimeout spans the whole message including its header section, so
+    // disabling only headersTimeout must not leave the Headers phase unbounded.
+    const server = createServer(
+      { headersTimeout: 0, requestTimeout: 1000, connectionsCheckingInterval: 100 },
+      () => {},
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+      await closed;
+      expect(Buffer.concat(received).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("the requestTimeout deadline survives a drain event during the body", async () => {
+    // A response large enough to hit backpressure registers the native
+    // writable (drain) handler; the deadline on the still-incomplete request
+    // body must stay armed across it.
+    const { promise: clientError, resolve: onClientError } = Promise.withResolvers<Error>();
+    const server = createServer(timeoutOptions, (req, res) => {
+      req.on("error", () => {});
+      res.on("error", () => {});
+      res.writeHead(200);
+      res.write(Buffer.alloc(8 * 1024 * 1024, "x"));
+    });
+    server.on("clientError", (err, socket) => {
+      onClientError(err);
+      socket.destroy();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      // Keep reading so the server-side backpressure drains.
+      socket.on("data", () => {});
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\n\r\nab");
+      const err: any = await clientError;
+      expect(err.code).toBe("ERR_HTTP_REQUEST_TIMEOUT");
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("headersTimeout applies to a CONNECT request whose header section stalls", async () => {
+    // isConnectRequest is set as soon as the request line parses; the header
+    // section is still subject to headersTimeout (only an established tunnel
+    // is exempt from the receive deadlines).
+    const server = createServer(timeoutOptions, () => {});
+    server.on("connect", (req, socket) => socket.destroy());
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nX-Partial: ");
+      await closed;
+      expect(Buffer.concat(received).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("headersTimeout is an absolute deadline: trickling header bytes does not extend it", async () => {
+    // A slowloris client sending one header byte at a time keeps the socket
+    // active forever under an inactivity timer; Node measures headersTimeout
+    // from the start of the message regardless of activity. The deadline must
+    // exceed uWS's 4s timer-sweep granularity for re-arming to be observable.
+    const server = createServer(
+      { headersTimeout: 5000, requestTimeout: 30000, connectionsCheckingInterval: 100 },
+      () => {},
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Slow: ");
+      const trickle = setInterval(() => {
+        if (!socket.destroyed && !socket.writableEnded) socket.write("a");
+      }, 500);
+      try {
+        await closed;
+      } finally {
+        clearInterval(trickle);
+      }
+      expect(Buffer.concat(received).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 30_000);
+
+  it("requestTimeout is an absolute deadline: trickling body bytes does not extend it", async () => {
+    const { promise: handlerCalled, resolve: onHandler } = Promise.withResolvers<void>();
+    const server = createServer(
+      { headersTimeout: 5000, requestTimeout: 6000, connectionsCheckingInterval: 100 },
+      (req, res) => {
+        onHandler();
+        // Keep the request flowing so every trickled chunk reaches the server.
+        req.resume();
+        req.on("error", () => {});
+        res.on("error", () => {});
+      },
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\n\r\n");
+      await handlerCalled;
+      const trickle = setInterval(() => {
+        if (!socket.destroyed && !socket.writableEnded) socket.write("b");
+      }, 500);
+      try {
+        await closed;
+      } finally {
+        clearInterval(trickle);
+      }
+      expect(Buffer.concat(received).toString()).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 30_000);
+
+  it("requestTimeout for a chunked request is measured from the message's first byte, not from header completion", async () => {
+    // Chunked framing is only known after the request is dispatched, so the
+    // receive phase passes through None inside the handler; the message-start
+    // time must survive that. The headers take 10s of the 13s requestTimeout,
+    // so the absolute deadline expires 3s into the stalled body — long before
+    // the client finishes the body at +16s. A deadline re-based at header
+    // completion would instead let the request complete with a 200.
+    const server = createServer(
+      { headersTimeout: 13000, requestTimeout: 13000, connectionsCheckingInterval: 100 },
+      (req, res) => {
+        req.on("error", () => {});
+        res.on("error", () => {});
+        req.on("data", () => {});
+        req.on("end", () => res.end("chunked-done"));
+      },
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      let received = "";
+      const { promise: respondedTo, resolve: onRespondedTo } = Promise.withResolvers<void>();
+      socket.on("data", chunk => {
+        received += chunk.toString();
+        if (received.includes("chunked-done")) onRespondedTo();
+      });
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nX-Slow: ");
+      // Deliberate fixed waits: they are inputs (when bytes reach the socket relative to the
+      // per-message deadline, which has no observable event), not waits for a condition.
+      await Bun.sleep(10_000);
+      socket.write("a\r\n\r\n5\r\nhello\r\n");
+      await Bun.sleep(6_000);
+      if (!socket.destroyed && !socket.writableEnded) socket.write("0\r\n\r\n");
+      await Promise.race([closed, respondedTo]);
+      expect(received).toBe(REQUEST_TIMEOUT_408_RESPONSE);
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 40_000);
+
+  it("a second keep-alive request coalesced with the first request's body tail gets its own headersTimeout", async () => {
+    // The first message's last body bytes and the second message's partial
+    // headers arrive in one packet, so the receive phase moves straight from
+    // Body to Headers without passing through None. The second message's
+    // headersTimeout must restart at its own first byte: a deadline inherited
+    // from the first message (whose body held the socket for ~5s of its 9s
+    // headersTimeout) expires within one 4s uWS timer sweep and 408-closes the
+    // socket long before the second headers complete at +6s.
+    const { promise: firstResponse, resolve: onFirstResponse } = Promise.withResolvers<void>();
+    const { promise: secondResponse, resolve: onSecondResponse } = Promise.withResolvers<void>();
+    const server = createServer(
+      { headersTimeout: 9000, requestTimeout: 30000, connectionsCheckingInterval: 100, keepAliveTimeout: 0 },
+      (req, res) => {
+        req.on("error", () => {});
+        res.on("error", () => {});
+        // Respond before the request body completes so the connection is still
+        // in the Body receive phase when the coalesced packet arrives.
+        res.end(`resp:${req.url};`);
+      },
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      let received = "";
+      socket.on("data", chunk => {
+        received += chunk.toString();
+        if (received.includes("resp:/first;")) onFirstResponse();
+        if (received.includes("resp:/second;")) onSecondResponse();
+      });
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      // Message 1: a POST whose 4-byte body is withheld.
+      socket.write("POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\n");
+      await firstResponse;
+      // Deliberate fixed waits: they are inputs (when bytes reach the socket relative to the
+      // per-message deadline, which has no observable event), not waits for a condition.
+      await Bun.sleep(5200);
+      received = "";
+      // One packet: message 1's body tail + message 2's partial headers.
+      socket.write("abcdGET /second HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+      // Complete the headers after an inherited deadline would have fired, but
+      // well within this message's own headersTimeout.
+      await Bun.sleep(6000);
+      socket.write("1\r\n\r\n");
+      await Promise.race([secondResponse, closed]);
+      expect(received).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(received).toEndWith("resp:/second;");
+      socket.end();
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 30_000);
+
+  it("a second keep-alive request coalesced with the first request's body tail gets its own requestTimeout", async () => {
+    // Same coalesced boundary, but the second message's complete headers and a
+    // partial body arrive in the packet, so the receive phase stays Body across
+    // the message boundary. The deadline must be re-armed for the new message;
+    // the stale same-phase state otherwise leaves the second message's stalled
+    // body with no requestTimeout at all.
+    const { promise: firstResponse, resolve: onFirstResponse } = Promise.withResolvers<void>();
+    const { promise: clientError, resolve: onClientError } = Promise.withResolvers<Error>();
+    const server = createServer(
+      { headersTimeout: 5000, requestTimeout: 5000, connectionsCheckingInterval: 100, keepAliveTimeout: 0 },
+      (req, res) => {
+        req.on("error", () => {});
+        res.on("error", () => {});
+        if (req.url === "/second") {
+          // Only respond once the (stalled) body completes.
+          req.on("data", () => {});
+          req.on("end", () => res.end("resp:/second;"));
+          return;
+        }
+        // Respond before the first request's body completes.
+        res.end("resp:/first;");
+      },
+    );
+    server.on("clientError", (err, socket) => {
+      onClientError(err);
+      socket.destroy();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      let received = "";
+      socket.on("data", chunk => {
+        received += chunk.toString();
+        if (received.includes("resp:/first;")) onFirstResponse();
+      });
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\n");
+      await firstResponse;
+      // One packet: message 1's body tail + message 2's complete headers and partial body.
+      socket.write("abcdPOST /second HTTP/1.1\r\nHost: localhost\r\nContent-Length: 8\r\n\r\nxy");
+      const err: any = await clientError;
+      expect(err.code).toBe("ERR_HTTP_REQUEST_TIMEOUT");
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
+
+  it("a Content-Length: 0 request whose headers complete on the buffered fallback path does not leak its start time into the next keep-alive request", async () => {
+    // The parser's buffered (ConsumeMinimally) header path never delivers the
+    // empty fin body chunk for an explicit Content-Length: 0 request, so the
+    // message boundary must not depend on it. The second request's
+    // headersTimeout must restart at its own first byte: a deadline inherited
+    // from the first message (begun ~7s earlier) expires within one 4s uWS
+    // timer sweep, long before the second headers complete at +6.5s.
+    const { promise: firstResponse, resolve: onFirstResponse } = Promise.withResolvers<void>();
+    const { promise: secondResponse, resolve: onSecondResponse } = Promise.withResolvers<void>();
+    const server = createServer(
+      { headersTimeout: 9000, requestTimeout: 30000, connectionsCheckingInterval: 100, keepAliveTimeout: 0 },
+      (req, res) => {
+        req.on("error", () => {});
+        res.on("error", () => {});
+        res.end(`resp:${req.url};`);
+      },
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      let received = "";
+      socket.on("data", chunk => {
+        received += chunk.toString();
+        if (received.includes("resp:/first;")) onFirstResponse();
+        if (received.includes("resp:/second;")) onSecondResponse();
+      });
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      // Message 1's headers span two packets so they complete on the parser's
+      // buffered fallback path.
+      socket.write("DELETE /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nX-Split: ");
+      // Deliberate fixed waits: they are inputs (when bytes reach the socket relative to the
+      // per-message deadline, which has no observable event), not waits for a condition.
+      await Bun.sleep(200);
+      socket.write("a\r\n\r\n");
+      await firstResponse;
+      await Bun.sleep(7000);
+      received = "";
+      socket.write("GET /second HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+      // Complete the headers after an inherited deadline would have fired, but
+      // well within this message's own headersTimeout.
+      await Bun.sleep(6500);
+      socket.write("1\r\n\r\n");
+      await Promise.race([secondResponse, closed]);
+      expect(received).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(received).toEndWith("resp:/second;");
+      socket.end();
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 30_000);
+
+  it("a synchronous res.write() from a 'data' listener does not re-base the next keep-alive request's deadline", async () => {
+    // The echo handler's res.write() runs while the parser is still delivering
+    // the request body's final chunk, so the resetTimeout() it triggers
+    // observes the Body receive phase across the message boundary; it must not
+    // restore a message start the boundary already retired. The second
+    // request's headersTimeout must restart at its own first byte, exactly as
+    // in the test above.
+    const { promise: firstResponse, resolve: onFirstResponse } = Promise.withResolvers<void>();
+    const { promise: secondResponse, resolve: onSecondResponse } = Promise.withResolvers<void>();
+    const server = createServer(
+      { headersTimeout: 9000, requestTimeout: 30000, connectionsCheckingInterval: 100, keepAliveTimeout: 0 },
+      (req, res) => {
+        req.on("error", () => {});
+        res.on("error", () => {});
+        if (req.url === "/first") {
+          req.on("data", chunk => res.write(chunk));
+          req.on("end", () => res.end("resp:/first;"));
+          return;
+        }
+        res.end("resp:/second;");
+      },
+    );
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      let received = "";
+      socket.on("data", chunk => {
+        received += chunk.toString();
+        if (received.includes("resp:/first;")) onFirstResponse();
+        if (received.includes("resp:/second;")) onSecondResponse();
+      });
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      socket.write("POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 8\r\n\r\nabcd");
+      // Deliberate fixed waits: they are inputs (when bytes reach the socket relative to the
+      // per-message deadline, which has no observable event), not waits for a condition.
+      await Bun.sleep(200);
+      // The body's final chunk: the 'data' listener echoes it synchronously.
+      socket.write("efgh");
+      await firstResponse;
+      await Bun.sleep(7000);
+      received = "";
+      socket.write("GET /second HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+      // Complete the headers after an inherited deadline would have fired, but
+      // well within this message's own headersTimeout.
+      await Bun.sleep(6500);
+      socket.write("1\r\n\r\n");
+      await Promise.race([secondResponse, closed]);
+      expect(received).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(received).toEndWith("resp:/second;");
+      socket.end();
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 30_000);
+
+  it("disabled timeouts (0) do not close a stalled connection", async () => {
+    // Negative contract bounded by an awaited condition: a sibling server with
+    // the timeouts enabled answers its own stalled request with a 408 first,
+    // proving more than enough time elapsed for the disabled one to be reaped.
+    const disabledServer = createServer(
+      { headersTimeout: 0, requestTimeout: 0, connectionsCheckingInterval: 100 },
+      () => {},
+    );
+    const enabledServer = createServer(timeoutOptions, () => {});
+    try {
+      disabledServer.listen(0, "127.0.0.1");
+      enabledServer.listen(0, "127.0.0.1");
+      await Promise.all([once(disabledServer, "listening"), once(enabledServer, "listening")]);
+
+      const disabledSocket = connect((disabledServer.address() as AddressInfo).port, "127.0.0.1");
+      disabledSocket.on("error", () => {});
+      let disabledClosed = false;
+      disabledSocket.on("close", () => (disabledClosed = true));
+      disabledSocket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+
+      const enabledSocket = connect((enabledServer.address() as AddressInfo).port, "127.0.0.1");
+      enabledSocket.on("error", () => {});
+      const enabledClosed = new Promise<void>(resolve => enabledSocket.on("close", () => resolve()));
+      enabledSocket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+
+      await enabledClosed;
+      expect(disabledClosed).toBe(false);
+      expect(disabledSocket.destroyed).toBe(false);
+    } finally {
+      disabledServer.closeAllConnections();
+      disabledServer.close();
+      enabledServer.closeAllConnections();
+      enabledServer.close();
+    }
+  }, 20_000);
+
+  it("a headersTimeout of more than 2**32 seconds does not become a short deadline", async () => {
+    // 4_294_967_297_000 ms is 2**32 + 1 seconds; narrowed naively to a 32-bit
+    // count of seconds it wraps to a 1-second deadline. Negative contract
+    // bounded by an awaited condition: a sibling server whose 6s headersTimeout
+    // 408-closes first proves a wrapped 1s deadline (plus a full 4s timer
+    // sweep) would already have reaped the huge-timeout connection.
+    const hugeServer = createServer(
+      { headersTimeout: 4_294_967_297_000, requestTimeout: 4_294_967_297_000, connectionsCheckingInterval: 100 },
+      (req, res) => {
+        res.end("late-but-fine");
+      },
+    );
+    const siblingServer = createServer(
+      { headersTimeout: 6000, requestTimeout: 30000, connectionsCheckingInterval: 100 },
+      () => {},
+    );
+    try {
+      hugeServer.listen(0, "127.0.0.1");
+      siblingServer.listen(0, "127.0.0.1");
+      await Promise.all([once(hugeServer, "listening"), once(siblingServer, "listening")]);
+
+      const hugeSocket = connect((hugeServer.address() as AddressInfo).port, "127.0.0.1");
+      hugeSocket.on("error", () => {});
+      let hugeClosed = false;
+      hugeSocket.on("close", () => (hugeClosed = true));
+      let hugeReceived = "";
+      hugeSocket.on("data", chunk => (hugeReceived += chunk.toString()));
+      const hugeClosedPromise = new Promise<void>(resolve => hugeSocket.on("close", () => resolve()));
+      hugeSocket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nX-Partial: ");
+
+      const siblingSocket = connect((siblingServer.address() as AddressInfo).port, "127.0.0.1");
+      siblingSocket.on("error", () => {});
+      const siblingClosed = new Promise<void>(resolve => siblingSocket.on("close", () => resolve()));
+      siblingSocket.write("GET / HTTP/1.1\r\nHost: localhost\r\nX-Partial: ");
+
+      await siblingClosed;
+      expect(hugeClosed).toBe(false);
+      expect(hugeReceived).toBe("");
+
+      // The connection is still alive: finishing the headers gets a normal 200.
+      hugeSocket.write("1\r\n\r\n");
+      await hugeClosedPromise;
+      expect(hugeReceived).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(hugeReceived).toEndWith("late-but-fine");
+    } finally {
+      hugeServer.closeAllConnections();
+      hugeServer.close();
+      siblingServer.closeAllConnections();
+      siblingServer.close();
+    }
+  }, 30_000);
+
+  it("https: a stalled TLS handshake is not reported as an HTTP request timeout", async () => {
+    // Node only attaches the HTTP parser (and starts headersTimeout) after the
+    // TLS handshake completes. A raw TCP client that never sends a ClientHello
+    // must not get 'clientError' (ERR_HTTP_REQUEST_TIMEOUT) or any 408 bytes;
+    // the socket is just closed.
+    const server = createHttpsServer({ ...timeoutOptions, key: tlsCert.key, cert: tlsCert.cert }, () => {});
+    const clientError = jest.fn();
+    server.on("clientError", (err, socket) => {
+      clientError(err);
+      socket.destroy();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      // Plain TCP: connect and never start the TLS handshake.
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      const received: Buffer[] = [];
+      socket.on("data", chunk => received.push(chunk));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      await closed;
+      expect(Buffer.concat(received).length).toBe(0);
+      expect(clientError).not.toHaveBeenCalled();
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 20_000);
 });

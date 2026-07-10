@@ -778,6 +778,19 @@ public:
         return std::move(*this);
     }
 
+    /* node:http only: enable per-socket headersTimeout/requestTimeout receive
+     * deadlines (seconds; 0 disables that phase's deadline). */
+    TemplatedApp &&setNodeReceiveTimeouts(unsigned int headersTimeoutSeconds, unsigned int requestTimeoutSeconds) {
+        /* us_socket_timeout's slot ring wraps past 240 4-second ticks; larger
+         * values would alias to a much earlier expiry. */
+        constexpr unsigned int maxTimeoutSeconds = 940;
+        HttpContextData<SSL> *data = httpContext->getSocketContextData();
+        data->nodeHeadersTimeoutSeconds = headersTimeoutSeconds < maxTimeoutSeconds ? headersTimeoutSeconds : maxTimeoutSeconds;
+        data->nodeRequestTimeoutSeconds = requestTimeoutSeconds < maxTimeoutSeconds ? requestTimeoutSeconds : maxTimeoutSeconds;
+        data->flags.hasNodeReceiveTimeouts = true;
+        return std::move(*this);
+    }
+
 };
 
 typedef TemplatedApp<false> App;

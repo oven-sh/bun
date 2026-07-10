@@ -25,6 +25,7 @@ members = [
   "src/sourcemap",
   "src/sql",
   "src/sys",
+  "src/test_native_link",
   "src/threading",
   "src/valkey",
   "src/watcher",

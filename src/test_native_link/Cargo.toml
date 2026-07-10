@@ -1,0 +1,15 @@
+[package]
+name = "bun_test_native_link"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+path = "lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_simdutf_sys.workspace = true

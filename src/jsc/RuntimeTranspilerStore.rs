@@ -26,9 +26,9 @@ use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
 use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
-use bun_threading::{Futex, Guarded};
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+use bun_threading::{Futex, Guarded};
 use bun_watcher::Watcher;
 
 use crate::async_module::AsyncModule;
@@ -622,7 +622,12 @@ impl TranspilerJob {
         // joins on it via `wait_for_inflight_jobs` before freeing what `run()`
         // reads. SAFETY: `vm` is the live owning VM (caller is the JS thread);
         // leaf atomic field only, no `&VirtualMachine` formed.
-        let _ = unsafe { (*vm).transpiler_store.in_flight.fetch_add(1, Ordering::Relaxed) };
+        let _ = unsafe {
+            (*vm)
+                .transpiler_store
+                .in_flight
+                .fetch_add(1, Ordering::Relaxed)
+        };
         WorkPool::schedule(&raw mut self.work_task);
     }
 
@@ -639,7 +644,12 @@ impl TranspilerJob {
         // SAFETY: the VM stays alive until `wait_for_inflight_jobs` observes
         // this decrement (its Acquire load pairs with this Release), and this
         // `fetch_sub` is the pool thread's final access to the VM allocation.
-        let _ = unsafe { (*vm).transpiler_store.in_flight.fetch_sub(1, Ordering::Release) };
+        let _ = unsafe {
+            (*vm)
+                .transpiler_store
+                .in_flight
+                .fetch_sub(1, Ordering::Release)
+        };
     }
 
     pub(crate) fn run(&mut self) {

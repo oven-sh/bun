@@ -5,6 +5,9 @@ pub enum Error {
 
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
+
+    #[error(transparent)]
+    Parse(#[from] bun_parsers::Error),
 }
 
 impl Error {
@@ -12,7 +15,14 @@ impl Error {
         match self {
             Self::InvalidBunfig => "Invalid Bunfig",
             Self::Alloc(_) => "OutOfMemory",
+            Self::Parse(e) => e.name(),
         }
+    }
+}
+
+impl bun_core::output::ErrName for Error {
+    fn name(&self) -> &[u8] {
+        (*self).name().as_bytes()
     }
 }
 

@@ -166,6 +166,12 @@ impl Error {
     }
 }
 
+impl bun_core::output::ErrName for Error {
+    fn name(&self) -> &[u8] {
+        (*self).name().as_bytes()
+    }
+}
+
 impl From<bun_zlib::ZlibError> for Error {
     fn from(e: bun_zlib::ZlibError) -> Self {
         match e {

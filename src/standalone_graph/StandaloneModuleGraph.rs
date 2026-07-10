@@ -1536,7 +1536,7 @@ pub(crate) fn download_to_path(
             Ok(s) => s,
             Err(err) => {
                 // Return error without printing - let caller decide how to handle
-                return Err(err);
+                return Err(err.into());
             }
         };
         let url_str_copy: Box<[u8]> = Box::from(url_str);
@@ -1936,7 +1936,7 @@ pub fn to_executable(
 
             let _ = Syscall::unlink(temp_posix);
 
-            if e == crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
+            if e.get_errno() == bun_errno::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "{} is a directory. Please choose a different --outfile or delete the directory",
                     bstr::BStr::new(outfile)

@@ -1138,7 +1138,7 @@ impl Bunfig {
                             },
                         );
                     }
-                    return Err(e);
+                    return Err(e.into());
                 }
             }
         } else {
@@ -1155,7 +1155,7 @@ impl Bunfig {
                             },
                         );
                     }
-                    return Err(e);
+                    return Err(e.into());
                 }
             }
         };

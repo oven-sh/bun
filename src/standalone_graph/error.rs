@@ -18,6 +18,20 @@ pub enum Error {
     SourceMapTooLarge,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
+    #[error(transparent)]
+    Alloc(#[from] bun_alloc::AllocError),
+    #[error(transparent)]
+    Http(#[from] bun_http::Error),
+    #[error(transparent)]
+    Paths(#[from] bun_paths::Error),
+    #[error(transparent)]
+    Options(#[from] bun_options_types::Error),
+}
+
+impl From<bun_sys::Error> for Error {
+    fn from(e: bun_sys::Error) -> Self {
+        Self::Sys(e.into())
+    }
 }
 
 impl Error {
@@ -34,7 +48,17 @@ impl Error {
             Self::InvalidSourceMap => "InvalidSourceMap",
             Self::SourceMapTooLarge => "SourceMapTooLarge",
             Self::Sys(e) => <&'static str>::from(e),
+            Self::Alloc(_) => "OutOfMemory",
+            Self::Http(e) => e.name(),
+            Self::Paths(e) => e.name(),
+            Self::Options(e) => e.name(),
         }
+    }
+}
+
+impl bun_core::output::ErrName for Error {
+    fn name(&self) -> &[u8] {
+        (*self).name().as_bytes()
     }
 }
 

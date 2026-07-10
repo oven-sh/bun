@@ -30,6 +30,12 @@ impl Error {
     }
 }
 
+impl bun_core::output::ErrName for Error {
+    fn name(&self) -> &[u8] {
+        (*self).name().as_bytes()
+    }
+}
+
 impl From<crate::toml::lexer::Error> for Error {
     fn from(e: crate::toml::lexer::Error) -> Self {
         use crate::toml::lexer::Error as LexErr;

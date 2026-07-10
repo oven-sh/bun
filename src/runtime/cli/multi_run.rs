@@ -891,7 +891,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 bun_sys::Fd::INVALID,
                 None,
                 IncludeScripts::IncludeScripts,
-            ) else {
+            )
+            .filter(|p| !p.invalid) else {
                 continue;
             };
 

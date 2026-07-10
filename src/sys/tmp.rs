@@ -80,7 +80,7 @@ impl<'a> Tmpfile<'a> {
                         let _ = crate::unlinkat(self.destination_dir, basename);
                         retry = false;
                     }
-                    Err(err) => return Err(err.into()),
+                    Err(err) => return Err(err),
                 }
             }
         }

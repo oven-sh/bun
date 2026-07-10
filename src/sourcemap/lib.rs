@@ -967,7 +967,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<Pars
 
     let sources_content = match json
         .get(b"sourcesContent")
-        .ok_or_else(|| crate::Error::InvalidSourceMap)?
+        .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
         bun_ast::ExprData::EArrayJSON(arr) => arr,
@@ -977,7 +977,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<Pars
 
     let sources_paths = match json
         .get(b"sources")
-        .ok_or_else(|| crate::Error::InvalidSourceMap)?
+        .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
         bun_ast::ExprData::EArrayJSON(arr) => arr,

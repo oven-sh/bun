@@ -427,7 +427,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             let pkg_name: &[u8] = if let Some(set_name) = pkg.get(b"name") {
                 set_name
                     .as_str()
-                    .ok_or_else(|| crate::Error::InvalidNPMLockfile)?
+                    .ok_or(crate::Error::InvalidNPMLockfile)?
             } else {
                 package_name_from_path(pkg_path)
             };
@@ -644,7 +644,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     let script_value = prop
                         .value
                         .as_str()
-                        .ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
+                        .ok_or(crate::Error::InvalidNPMLockfile)?;
 
                     if strings::eql(key, pkg_name) {
                         break 'bin Bin {
@@ -672,7 +672,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     let script_value = bin_entry
                         .value
                         .as_str()
-                        .ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
+                        .ok_or(crate::Error::InvalidNPMLockfile)?;
                     let ek = sb.append_external(key)?;
                     let ev = sb.append_external(script_value)?;
                     this.buffers.extern_strings.push(ek);
@@ -769,7 +769,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 Integrity::parse(
                     integrity
                         .as_str()
-                        .ok_or_else(|| crate::Error::InvalidNPMLockfile)?,
+                        .ok_or(crate::Error::InvalidNPMLockfile)?,
                 )
             } else {
                 Integrity::default()
@@ -912,7 +912,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 for item in items {
                     let s = item
                         .as_str()
-                        .ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
+                        .ok_or(crate::Error::InvalidNPMLockfile)?;
                     map.put_assume_capacity(s, ());
                 }
                 break 'deps Some(map);
@@ -929,7 +929,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     let entry1 = id_map
                         .get(key.as_ref())
                         .copied()
-                        .ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
+                        .ok_or(crate::Error::InvalidNPMLockfile)?;
                     let name_hash = string_hash(&value.name);
                     let mut sb = this.string_buf();
                     let wksp_name = sb.append(&value.name)?;
@@ -983,7 +983,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     let version_bytes = prop
                         .value
                         .as_str()
-                        .ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
+                        .ok_or(crate::Error::InvalidNPMLockfile)?;
                     let name_hash = string_hash(name_bytes);
                     let mut sb = this.string_buf();
                     let dep_name = sb.append_with_hash(name_bytes, name_hash)?;
@@ -1052,16 +1052,16 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                     unreachable!()
                                 };
                                 // the `else` here is technically possible to hit
-                                let resolved_v = ref_pkg.get(b"resolved").ok_or_else(|| {
+                                let resolved_v = ref_pkg.get(b"resolved").ok_or({
                                     crate::Error::LockfileWorkspaceMissingResolved
                                 })?;
                                 let resolved = resolved_v
                                     .as_str()
-                                    .ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
+                                    .ok_or(crate::Error::InvalidNPMLockfile)?;
                                 found = id_map
                                     .get(resolved)
                                     .copied()
-                                    .ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
+                                    .ok_or(crate::Error::InvalidNPMLockfile)?;
                             } else if found.new_package_id == PACKAGE_ID_IS_BUNDLED {
                                 debug!(
                                     "skipping bundled dependency {}",
@@ -1116,7 +1116,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                         if let Some(resolved) = dep_pkg.get(b"resolved") {
                                             let dep_resolved = resolved
                                                 .as_str()
-                                                .ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
+                                                .ok_or(crate::Error::InvalidNPMLockfile)?;
                                             match DepTag::infer(dep_resolved) {
                                                 tag @ (DepTag::Git | DepTag::Github) => {
                                                     let mut sb = this.string_buf();
@@ -1132,7 +1132,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                                         &dep_resolved_sliced,
                                                         Some(&mut *log),
                                                         Some(&mut *manager as &mut dyn dependency::NpmAliasRegistry),
-                                                    ).ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
+                                                    ).ok_or(crate::Error::InvalidNPMLockfile)?;
                                                     res_version_tag = parsed.tag;
                                                     res_version_git_owner =
                                                         if parsed.tag == DepTag::Git {
@@ -1188,9 +1188,9 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                             // If it is a workspace package, then this branch will not be hit as the resolution was already set earlier.
                                             let dep_actual_version = dep_pkg
                                                 .get(b"version")
-                                                .ok_or_else(|| crate::Error::InvalidNPMLockfile)?
+                                                .ok_or(crate::Error::InvalidNPMLockfile)?
                                                 .as_str()
-                                                .ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
+                                                .ok_or(crate::Error::InvalidNPMLockfile)?;
 
                                             let dep_actual_version_str =
                                                 sb.append(dep_actual_version)?;
@@ -1246,7 +1246,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
                                             let hash_index =
                                                 strings::last_index_of_char(str.slice, b'#')
-                                                    .ok_or_else(|| {
+                                                    .ok_or({
                                                         crate::Error::InvalidNPMLockfile
                                                     })?;
 
@@ -1276,7 +1276,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
                                             let hash_index =
                                                 strings::last_index_of_char(str.slice, b'#')
-                                                    .ok_or_else(|| {
+                                                    .ok_or({
                                                         crate::Error::InvalidNPMLockfile
                                                     })?;
 

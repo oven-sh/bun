@@ -888,7 +888,7 @@ pub(crate) fn run_scripts_with_filter(
                 unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
                 fsinstance.top_level_dir,
             )
-            .ok_or_else(|| crate::Error::MissingShell)?
+            .ok_or(crate::Error::MissingShell)?
         }
         #[cfg(not(unix))]
         {

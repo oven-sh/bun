@@ -365,13 +365,13 @@ mod _impl {
                 let scale: u64 = 10;
 
                 let times = CPUTimes {
-                    user: scale * parse_u64(toks.next().ok_or_else(|| crate::Error::eol)?)?,
-                    nice: scale * parse_u64(toks.next().ok_or_else(|| crate::Error::eol)?)?,
-                    sys: scale * parse_u64(toks.next().ok_or_else(|| crate::Error::eol)?)?,
-                    idle: scale * parse_u64(toks.next().ok_or_else(|| crate::Error::eol)?)?,
+                    user: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
+                    nice: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
+                    sys: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
+                    idle: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
                     irq: {
-                        let _ = toks.next().ok_or_else(|| crate::Error::eol)?; // skip iowait
-                        scale * parse_u64(toks.next().ok_or_else(|| crate::Error::eol)?)?
+                        let _ = toks.next().ok_or(crate::Error::eol)?; // skip iowait
+                        scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?
                     },
                 };
 

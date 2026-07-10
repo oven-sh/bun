@@ -1147,7 +1147,7 @@ impl UpgradeCommand {
                 )
             };
             let target_dir_ = bun_core::dirname(destination_executable)
-                .ok_or_else(|| crate::Error::UpgradeFailedBecauseOfMissingExecutableDir)?;
+                .ok_or(crate::Error::UpgradeFailedBecauseOfMissingExecutableDir)?;
             // safe because the slash will no longer be in use
             let target_dir_len = target_dir_.len();
             // SAFETY: in-bounds; write is at the separator byte between dirname

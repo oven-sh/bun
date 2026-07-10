@@ -129,7 +129,7 @@ impl<'a> Snapshots<'a> {
     ) -> Result<Option<&[u8]>, Error> {
         let buntest_strong = expect
             .bun_test()
-            .ok_or_else(|| crate::Error::SnapshotFailed)?;
+            .ok_or(crate::Error::SnapshotFailed)?;
         let bun_test = buntest_strong.get();
         match self.get_snapshot_file(bun_test.file_id)? {
             bun_sys::Result::Ok(()) => {}

@@ -403,7 +403,7 @@ fn spawn(
     stderr_inherit: bool,
 ) -> crate::Result<Fd> {
     {
-        let chrome = find_chrome(explicit_path).ok_or_else(|| crate::Error::ChromeNotFound)?;
+        let chrome = find_chrome(explicit_path).ok_or(crate::Error::ChromeNotFound)?;
         scoped_log!(
             Chrome,
             "using chrome: {}",

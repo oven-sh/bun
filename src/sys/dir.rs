@@ -103,8 +103,7 @@ impl Dir {
     /// `mkdir -p` relative to this dir.
     #[inline]
     pub fn make_path(&self, sub_path: &[u8]) -> Maybe<()> {
-        mkdir_recursive_at(self.fd, sub_path).map_err(Into::into)
-    }
+        mkdir_recursive_at(self.fd, sub_path)}
     /// Try opening the directory first; on ENOENT, `make_path`
     /// then open it.
     pub fn make_open_path(&self, sub_path: &[u8], _opts: OpenDirOptions) -> Maybe<Dir> {
@@ -113,10 +112,8 @@ impl Dir {
             Err(e) if e.get_errno() == E::ENOENT => {
                 mkdir_recursive_at(self.fd, sub_path)?;
                 open_dir_at(self.fd, sub_path)
-                    .map(Dir::from_fd)
-                    .map_err(Into::into)
-            }
-            Err(e) => Err(e.into()),
+                    .map(Dir::from_fd)}
+            Err(e) => Err(e),
         }
     }
     /// Recursive `rm -rf`
@@ -165,7 +162,7 @@ impl Dir {
                                 }
                                 // That's fine, we were trying to remove this directory anyway.
                                 E::ENOENT => break 'handle_entry,
-                                _ => return Err(e.into()),
+                                _ => return Err(e),
                             },
                         };
                         let parent = top.iter.dir();
@@ -186,7 +183,7 @@ impl Dir {
                                     treat_as_dir = true;
                                     continue 'handle_entry;
                                 }
-                                _ => return Err(e.into()),
+                                _ => return Err(e),
                             },
                         }
                     }
@@ -209,7 +206,7 @@ impl Dir {
                 Err(e) => match e.get_errno() {
                     E::ENOENT => {}
                     E::ENOTEMPTY => need_to_retry = true,
-                    _ => return Err(e.into()),
+                    _ => return Err(e),
                 },
             }
 
@@ -230,12 +227,12 @@ impl Dir {
                                 Ok(()) => continue 'process_stack,
                                 Err(e2) => match e2.get_errno() {
                                     E::ENOENT => continue 'process_stack,
-                                    _ => return Err(e2.into()),
+                                    _ => return Err(e2),
                                 },
                             }
                         }
                         E::ENOENT => continue 'process_stack,
-                        _ => return Err(e.into()),
+                        _ => return Err(e),
                     },
                 };
                 stack.push(StackItem {
@@ -264,7 +261,7 @@ impl Dir {
                         E::ENOENT => return Ok(None),
                         // Linux: EISDIR. POSIX: EPERM when target is a directory.
                         E::EISDIR | E::EPERM => treat_as_dir = true,
-                        _ => return Err(e.into()),
+                        _ => return Err(e),
                     },
                 }
             } else {
@@ -281,7 +278,7 @@ impl Dir {
                             treat_as_dir = false;
                             continue;
                         }
-                        _ => Err(e.into()),
+                        _ => Err(e),
                     },
                 };
             }
@@ -358,8 +355,7 @@ impl Dir {
         // SAFETY: NUL-terminated above.
         let lz = ZStr::from_buf(&lbuf.0[..], llen);
 
-        symlinkat(tz, self.fd, lz).map_err(Into::into)
-    }
+        symlinkat(tz, self.fd, lz)}
 
     /// Create (or truncate) `sub_path` relative to
     /// this dir and return a `File` handle: `O_CREAT`,
@@ -377,8 +373,7 @@ impl Dir {
     /// `unlinkat(self.fd, sub_path, 0)`.
     #[inline]
     pub fn delete_file_z(&self, sub_path: &ZStr) -> Maybe<()> {
-        unlinkat(self.fd, sub_path).map_err(Into::into)
-    }
+        unlinkat(self.fd, sub_path)}
 
     /// Open `source_path` (relative to `self`), create
     /// `dest_path` (relative to `dest_dir`) with `O_CREAT|O_TRUNC`, then stream
@@ -400,7 +395,7 @@ impl Dir {
                 Ok(st) => st.st_mode as Mode,
                 Err(e) => {
                     let _ = close(in_fd);
-                    return Err(e.into());
+                    return Err(e);
                 }
             },
         };
@@ -413,14 +408,13 @@ impl Dir {
             Ok(fd) => fd,
             Err(e) => {
                 let _ = close(in_fd);
-                return Err(e.into());
+                return Err(e);
             }
         };
         let r = copy_file(in_fd, out_fd);
         let _ = close(in_fd);
         let _ = close(out_fd);
-        r.map_err(Into::into)
-    }
+        r}
 
     /// Open `sub_path` (NUL-terminated) relative to
     /// this dir as a `Dir` handle: `O_DIRECTORY |
@@ -428,9 +422,7 @@ impl Dir {
     #[inline]
     pub fn open_dir_z(&self, sub_path: &ZStr) -> Maybe<Dir> {
         open_dir_at(self.fd, sub_path.as_bytes())
-            .map(Dir::from_fd)
-            .map_err(Into::into)
-    }
+            .map(Dir::from_fd)}
 
     /// Open `sub_path` as an iterable, no-follow `Dir` handle with sub-path
     /// access.
@@ -461,9 +453,7 @@ impl Dir {
         {
             let _ = opts;
             open_dir_at(self.fd, sub_path)
-                .map(Dir::from_fd)
-                .map_err(Into::into)
-        }
+                .map(Dir::from_fd)}
     }
 }
 
@@ -478,8 +468,7 @@ pub trait FdDirExt: Copy {
 impl FdDirExt for Fd {
     #[inline]
     fn make_path(self, sub_path: &[u8]) -> Maybe<()> {
-        mkdir_recursive_at(self, sub_path).map_err(Into::into)
-    }
+        mkdir_recursive_at(self, sub_path)}
     #[inline]
     fn make_open_path(self, sub_path: &[u8]) -> Maybe<Dir> {
         Dir::borrow(&self).make_open_path(sub_path, OpenDirOptions::default())

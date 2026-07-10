@@ -1342,7 +1342,7 @@ impl VirtualMachine {
             // SAFETY: per-thread VM; the API lock guarantees JSC is held.
             VirtualMachine::get().as_mut()._load_macro_entry_point(path)
         });
-        promise.ok_or_else(|| crate::CrateError::JSError)
+        promise.ok_or(crate::CrateError::JSError)
     }
 
     pub fn is_watcher_enabled(&self) -> bool {
@@ -2391,7 +2391,7 @@ impl VirtualMachine {
                 let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
                 jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&name))
                     .map(NonNull::as_ptr)
-                    .ok_or_else(|| crate::CrateError::JSError)?
+                    .ok_or(crate::CrateError::JSError)?
             } else {
                 let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
                     Bun__loadHTMLEntryPoint(global_ref)
@@ -2413,7 +2413,7 @@ impl VirtualMachine {
             let promise =
                 jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
                     .map(NonNull::as_ptr)
-                    .ok_or_else(|| crate::CrateError::JSError)?;
+                    .ok_or(crate::CrateError::JSError)?;
             self.pending_internal_promise = Some(promise);
             self.pending_internal_promise_is_protected = false;
             JSValue::from_cell(promise).ensure_still_alive();
@@ -4213,7 +4213,7 @@ impl VirtualMachine {
         ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };
         let result_path = result
             .path_const()
-            .ok_or_else(|| crate::CrateError::ModuleNotFound)?;
+            .ok_or(crate::CrateError::ModuleNotFound)?;
         // SAFETY: `result_path.text` borrows the resolver's arena, which
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
@@ -4587,7 +4587,7 @@ impl VirtualMachine {
         let main_str = bun_core::String::from_bytes(self.main());
         let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
             .map(NonNull::as_ptr)
-            .ok_or_else(|| crate::CrateError::JSError)?;
+            .ok_or(crate::CrateError::JSError)?;
         self.pending_internal_promise = Some(promise);
         self.pending_internal_promise_is_protected = false;
         JSValue::from_cell(promise).ensure_still_alive();

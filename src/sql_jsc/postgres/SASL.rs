@@ -115,9 +115,9 @@ impl SASL {
         debug_assert!(self.server_signature_len == 0);
 
         let server_key = hmac(self.salted_password(), b"Server Key")
-            .ok_or_else(|| crate::Error::InvalidServerKey)?;
+            .ok_or(crate::Error::InvalidServerKey)?;
         let server_signature_bytes =
-            hmac(&server_key, auth_string).ok_or_else(|| crate::Error::InvalidServerSignature)?;
+            hmac(&server_key, auth_string).ok_or(crate::Error::InvalidServerSignature)?;
         self.server_signature_len = u8::try_from(bun_base64::encode(
             &mut self.server_signature_base64_bytes,
             &server_signature_bytes,

@@ -591,6 +591,7 @@ impl From<Error> for bun_uws_sys::Error {
 }
 
 impl Error {
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
             Self::SnapshotFailed => "SnapshotFailed",

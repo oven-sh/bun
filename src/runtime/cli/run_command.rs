@@ -270,7 +270,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> crate::Result<()> {
         let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
         let shell_bin =
-            Self::find_shell(shell_search_path, cwd).ok_or_else(|| crate::Error::MissingShell)?;
+            Self::find_shell(shell_search_path, cwd).ok_or(crate::Error::MissingShell)?;
         env.map
             .put(b"npm_lifecycle_event", name)
             .expect("unreachable");
@@ -1953,7 +1953,7 @@ impl RunCommand {
 
         let bun_node_exe = Self::bun_node_file_utf8()?;
         let bun_node_dir_win = bun_paths::dirname(bun_node_exe.as_bytes())
-            .ok_or_else(|| crate::Error::FailedToGetTempPath)?;
+            .ok_or(crate::Error::FailedToGetTempPath)?;
         let found_node = env_loader
             .load_node_js_config(
                 bun_paths::fs::FileSystem::instance(),

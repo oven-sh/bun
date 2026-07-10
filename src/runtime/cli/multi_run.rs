@@ -820,7 +820,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
         Box::from(
             RunCommand::find_shell(path_env, cwd)
-                .ok_or_else(|| crate::Error::MissingShell)?
+                .ok_or(crate::Error::MissingShell)?
                 .as_bytes_with_nul(),
         )
     } else {

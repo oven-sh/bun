@@ -370,9 +370,7 @@ impl File {
     #[inline]
     pub fn get_path<'a>(&self, buf: &'a mut bun_paths::PathBuffer) -> Maybe<&'a [u8]> {
         get_fd_path(self.handle, buf)
-            .map(|s| &*s)
-            .map_err(Into::into)
-    }
+            .map(|s| &*s)}
 
     // ── one-shot path helpers (open + io + close) ───────────────────────
     /// Open + read + close. Accepts `&[u8]`; `&ZStr` callers deref-coerce.
@@ -391,7 +389,7 @@ impl File {
         match f.read_to_end() {
             Ok(bytes) => Ok((f, bytes)),
             // The fd escapes only on success; `Drop` closes it here.
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e),
         }
     }
     /// Normalize a

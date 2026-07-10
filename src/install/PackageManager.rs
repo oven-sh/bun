@@ -2290,13 +2290,13 @@ pub(crate) fn init_with_runtime(
     // null on failure, so later callers have to see the error instead of a
     // null singleton.
     static ONCE: std::sync::Once = std::sync::Once::new();
-    static INIT_ERROR: std::sync::Mutex<Option<crate::Error>> = std::sync::Mutex::new(None);
+    static INIT_ERROR: bun_core::Mutex<Option<crate::Error>> = bun_core::Mutex::new(None);
     ONCE.call_once(|| {
         if let Err(err) = init_with_runtime_once(log, bun_install, cli, env) {
-            *INIT_ERROR.lock().unwrap() = Some(err);
+            *INIT_ERROR.lock() = Some(err);
         }
     });
-    match *INIT_ERROR.lock().unwrap() {
+    match *INIT_ERROR.lock() {
         None => Ok(get()),
         Some(code) => Err(code),
     }

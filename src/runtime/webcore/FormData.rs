@@ -330,7 +330,7 @@ pub fn for_each_multipart_entry<C>(
     while let Some(chunk) = splitter.next() {
         let mut remain = chunk;
         let header_end = strings::index_of(remain, b"\r\n\r\n")
-            .ok_or_else(|| crate::Error::IsMissingHeaderEnd)?;
+            .ok_or(crate::Error::IsMissingHeaderEnd)?;
         let header = &remain[..header_end + 2];
         remain = &remain[header_end + 4..];
 
@@ -341,11 +341,11 @@ pub fn for_each_multipart_entry<C>(
         let mut is_file = false;
         while !header_chunk.is_empty() && (filename.is_none() || name.len() == 0) {
             let line_end = strings::index_of(header_chunk, b"\r\n")
-                .ok_or_else(|| crate::Error::IsMissingHeaderLineEnd)?;
+                .ok_or(crate::Error::IsMissingHeaderLineEnd)?;
             let line = &header_chunk[..line_end];
             header_chunk = &header_chunk[line_end + 2..];
             let colon = strings::index_of(line, b":")
-                .ok_or_else(|| crate::Error::IsMissingHeaderColonSeparator)?;
+                .ok_or(crate::Error::IsMissingHeaderColonSeparator)?;
 
             let key = &line[..colon];
             let mut value: &[u8] = if line.len() > colon + 1 {

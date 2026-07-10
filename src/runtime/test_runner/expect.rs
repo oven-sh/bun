@@ -547,13 +547,13 @@ impl Expect {
     }
 
     pub fn get_snapshot_name(&self, hint: &[u8]) -> crate::Result<Vec<u8>> {
-        let parent = self.parent.as_ref().ok_or_else(|| crate::Error::NoTest)?;
-        let buntest_strong = parent.bun_test().ok_or_else(|| crate::Error::TestNotActive)?;
+        let parent = self.parent.as_ref().ok_or(crate::Error::NoTest)?;
+        let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
         let buntest = buntest_strong.get();
         let execution_entry = parent
             .phase
             .entry(buntest)
-            .ok_or_else(|| crate::Error::SnapshotInConcurrentGroup)?;
+            .ok_or(crate::Error::SnapshotInConcurrentGroup)?;
 
         let test_name: &[u8] = execution_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 

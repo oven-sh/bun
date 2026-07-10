@@ -508,13 +508,13 @@ impl PmPkgCommand {
                     }
                     current = current
                         .get(prop_name)
-                        .ok_or_else(|| crate::Error::NotFound)?;
+                        .ok_or(crate::Error::NotFound)?;
                     remaining_part = &part[first_bracket..];
                 }
 
                 while let Some(bracket_start) = strings::index_of(remaining_part, b"[") {
                     let bracket_end = strings::index_of(&remaining_part[bracket_start..], b"]")
-                        .ok_or_else(|| crate::Error::InvalidPath)?;
+                        .ok_or(crate::Error::InvalidPath)?;
                     let actual_bracket_end = bracket_start + bracket_end;
                     let index_str = &remaining_part[bracket_start + 1..actual_bracket_end];
 
@@ -538,7 +538,7 @@ impl PmPkgCommand {
                         }
                         current = current
                             .get(index_str)
-                            .ok_or_else(|| crate::Error::NotFound)?;
+                            .ok_or(crate::Error::NotFound)?;
                     }
 
                     remaining_part = &remaining_part[actual_bracket_end + 1..];
@@ -556,7 +556,7 @@ impl PmPkgCommand {
                             current = arr.items.slice()[index];
                         }
                         ExprData::EObject(_) => {
-                            current = current.get(part).ok_or_else(|| crate::Error::NotFound)?;
+                            current = current.get(part).ok_or(crate::Error::NotFound)?;
                         }
                         _ => return Err(crate::Error::NotFound),
                     }
@@ -564,7 +564,7 @@ impl PmPkgCommand {
                     if !matches!(current.data, ExprData::EObject(_)) {
                         return Err(crate::Error::NotFound);
                     }
-                    current = current.get(part).ok_or_else(|| crate::Error::NotFound)?;
+                    current = current.get(part).ok_or(crate::Error::NotFound)?;
                 }
             }
         }

@@ -137,7 +137,7 @@ impl MacroContext {
                 bun_ast::ImportKind::Stmt,
             ) {
                 Ok(r) => r,
-                Err(e) if e == bun_resolver::Error::ModuleNotFound => {
+                Err(bun_resolver::Error::ModuleNotFound) => {
                     log.add_resolve_error(
                         Some(source),
                         import_range,

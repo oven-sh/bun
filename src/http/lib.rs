@@ -3408,7 +3408,7 @@ impl<'a> HTTPClient<'a> {
                                 return;
                             }
                             crate::send_file::Status::Err(err) => {
-                                self.close_and_fail::<IS_SSL>(err.into(), socket);
+                                self.close_and_fail::<IS_SSL>(err, socket);
                                 return;
                             }
                             crate::send_file::Status::Again => {

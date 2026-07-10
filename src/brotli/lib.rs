@@ -123,7 +123,7 @@ impl<'a> BrotliReaderArrayList<'a> {
                 ptr::null_mut(),
             )
         }
-        .ok_or_else(|| crate::Error::BrotliFailedToCreateInstance)?;
+        .ok_or(crate::Error::BrotliFailedToCreateInstance)?;
 
         if options.params.large_window {
             let _ =
@@ -288,7 +288,7 @@ impl StreamingDecoder {
                 ptr::null_mut(),
             )
         }
-        .ok_or_else(|| crate::Error::BrotliFailedToCreateInstance)?;
+        .ok_or(crate::Error::BrotliFailedToCreateInstance)?;
 
         if options.params.large_window {
             let _ =
@@ -471,7 +471,7 @@ impl BrotliCompressionStream {
                 ptr::null_mut(),
             )
         }
-        .ok_or_else(|| crate::Error::BrotliFailedToCreateInstance)?;
+        .ok_or(crate::Error::BrotliFailedToCreateInstance)?;
 
         Ok(Self {
             brotli: instance,

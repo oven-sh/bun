@@ -13,6 +13,7 @@ impl From<bun_sys::Error> for Error {
 }
 
 impl Error {
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
             Self::Sys(e) => <&'static str>::from(e),

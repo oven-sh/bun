@@ -449,11 +449,11 @@ impl Interpreter {
         let jsobjs_len = jsobjs.len() as u32;
         let lex_result = if bun_core::is_all_ascii(src) {
             let mut lexer = LexerAscii::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            lexer.lex().map_err(|e| crate::Error::from(e))?;
+            lexer.lex().map_err(crate::Error::from)?;
             lexer.get_result()
         } else {
             let mut lexer = LexerUnicode::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            lexer.lex().map_err(|e| crate::Error::from(e))?;
+            lexer.lex().map_err(crate::Error::from)?;
             lexer.get_result()
         };
         if !lex_result.errors.is_empty() {

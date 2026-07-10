@@ -4190,7 +4190,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     let content_type_was_set: bool = reader.read_int_le::<u8>()? != 0;
 
     let store_tag = store::SerializeTag::from_raw(reader.read_int_le::<u8>()?)
-        .ok_or_else(|| crate::Error::InvalidValue)?;
+        .ok_or(crate::Error::InvalidValue)?;
 
     let blob: *mut Blob = match store_tag {
         store::SerializeTag::Bytes => 'bytes: {
@@ -4233,7 +4233,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
             use crate::node::types::PathOrFileDescriptorSerializeTag;
             let pathlike_tag =
                 PathOrFileDescriptorSerializeTag::from_raw(reader.read_int_le::<u8>()?)
-                    .ok_or_else(|| crate::Error::InvalidValue)?;
+                    .ok_or(crate::Error::InvalidValue)?;
 
             match pathlike_tag {
                 PathOrFileDescriptorSerializeTag::Fd => {

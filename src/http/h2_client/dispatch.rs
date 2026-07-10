@@ -440,7 +440,7 @@ pub(crate) fn dispatch_frame(
             if stream.remote_closed() {
                 stream
                     .fatal_error
-                    .get_or_insert_with(|| crate::Error::HTTP2ProtocolError);
+                    .get_or_insert(crate::Error::HTTP2ProtocolError);
                 return;
             }
             stream.unacked_bytes = stream.unacked_bytes.saturating_add(length);

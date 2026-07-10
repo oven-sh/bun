@@ -2395,6 +2395,12 @@ void JSStatementSync::finalizeStatement()
 
 JSStatementSync::~JSStatementSync()
 {
+    // A live SteppingScope here means process.exit() from inside a
+    // UDF/aggregate under BUN_DESTRUCT_VM_ON_EXIT=1. sqlite3_finalize on a
+    // running VDBE fires xFinal, which JSC::call()s raw pointers into a heap
+    // that lastChanceToFinalize is sweeping — same skip as ~JSDatabaseSync.
+    if (isStepping())
+        return;
     // Do NOT dereference m_database here: GC may have already destroyed
     // the JSDatabaseSync, leaving the WriteBarrier pointing at freed
     // memory. sqlite3_finalize is safe even if the owning connection has

@@ -1664,6 +1664,34 @@ test.skipIf(!sqliteHasSession)(
   },
 );
 
+// Sibling of the above for ~JSStatementSync: process.exit() inside an
+// aggregate step reaches the destructor with a SteppingScope on the stack;
+// sqlite3_finalize on the running VDBE would fire xFinal into the swept heap.
+test("teardown with a stepping statement and a running aggregate does not use-after-free", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { DatabaseSync } = require('node:sqlite');
+       const db = new DatabaseSync(':memory:');
+       db.exec('CREATE TABLE t(x); INSERT INTO t VALUES (1),(2)');
+       db.aggregate('agg', {
+         start: 0,
+         step: (acc, x) => { if (x === 2) process.exit(0); return acc + x; },
+         result: acc => acc,
+       });
+       db.prepare('SELECT agg(x) FROM t').get();`,
+    ],
+    env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("heap-use-after-free");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 // The process-exit handler must close (or at least WAL-checkpoint) unclosed
 // file-backed databases the way Node and bun:sqlite do; see
 // Bun__closeAllNodeSqliteDatabasesForTermination in NodeSqlite.cpp.

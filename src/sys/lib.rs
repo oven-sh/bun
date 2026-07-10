@@ -6717,32 +6717,11 @@ pub fn normalize_path_windows_opts<'a>(
         path
     };
 
-    // One pass over `rel` answers both routing (any separator or `.` → fd
-    // resolution) and clamp relevance (a whole `..` component); exit early
-    // only once both answers are known.
-    let mut saw_sep_or_dot = false;
-    let mut has_dotdot = false;
-    let mut dots = 0usize; // `.` count in the current component
-    let mut other = false; // non-dot chars in the current component
-    for &c in rel {
-        if c == b'\\' as u16 || c == b'/' as u16 {
-            saw_sep_or_dot = true;
-            if dots == 2 && !other {
-                has_dotdot = true;
-                break;
-            }
-            dots = 0;
-            other = false;
-        } else if c == b'.' as u16 {
-            saw_sep_or_dot = true;
-            dots += 1;
-        } else {
-            other = true;
-        }
-    }
-    if dots == 2 && !other {
-        has_dotdot = true; // trailing `..` component
-    }
+    // Routing = any separator or `.`; clamp relevance = a whole `..`
+    // component. One pass via the shared classifier.
+    let facts = bun_paths::classify_rel_t(rel, bun_paths::PathFormat::Windows);
+    let saw_sep_or_dot = facts.has_sep || facts.has_dot;
+    let has_dotdot = facts.has_dotdot_component;
 
     // Relative path with no separators or `.` can be passed straight through
     // to `NtCreateFile` against `RootDirectory`.

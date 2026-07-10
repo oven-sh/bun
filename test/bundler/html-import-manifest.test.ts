@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, rmScope, tempDirWithFiles } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
@@ -110,7 +110,7 @@ console.log(favicon);
                 "loader": "js",
                 "isEntry": true,
                 "headers": {
-                  "etag": "efKwB-6QGwk",
+                  "etag": "\\"091b90ee07b0f279\\"",
                   "content-type": "text/javascript;charset=utf-8"
                 }
               },
@@ -120,7 +120,7 @@ console.log(favicon);
                 "loader": "html",
                 "isEntry": true,
                 "headers": {
-                  "etag": "sJJm55rxM4I",
+                  "etag": "\\"8233f19ae76692b0\\"",
                   "content-type": "text/html;charset=utf-8"
                 }
               },
@@ -130,7 +130,7 @@ console.log(favicon);
                 "loader": "css",
                 "isEntry": true,
                 "headers": {
-                  "etag": "4B9l6JnTRAU",
+                  "etag": "\\"0544d399e8651fe0\\"",
                   "content-type": "text/css;charset=utf-8"
                 }
               },
@@ -140,7 +140,7 @@ console.log(favicon);
                 "loader": "file",
                 "isEntry": false,
                 "headers": {
-                  "etag": "fFLOVvPDEZc",
+                  "etag": "\\"9711c3f356ce527c\\"",
                   "content-type": "image/png"
                 }
               }
@@ -290,7 +290,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "xAZoSOIIQJ8",
+                  "etag": ""9f4008e2486806c4"",
                 },
                 "input": "home.html",
                 "isEntry": true,
@@ -300,7 +300,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "uIE6dXgvM-4",
+                  "etag": ""ee332f78753a81b8"",
                 },
                 "input": "home.html",
                 "isEntry": true,
@@ -310,7 +310,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/css;charset=utf-8",
-                  "etag": "ZTZtbLd3364",
+                  "etag": ""aedf77b76c6d3665"",
                 },
                 "input": "home.html",
                 "isEntry": true,
@@ -325,7 +325,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "INLwcb4oxw8",
+                  "etag": ""0fc728be71f0d220"",
                 },
                 "input": "about.html",
                 "isEntry": true,
@@ -335,7 +335,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "ZpqlG2wo2xo",
+                  "etag": ""1adb286c1ba59a66"",
                 },
                 "input": "about.html",
                 "isEntry": true,
@@ -345,7 +345,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/css;charset=utf-8",
-                  "etag": "x6pW8hAzxGI",
+                  "etag": ""62c43310f256aac7"",
                 },
                 "input": "about.html",
                 "isEntry": true,
@@ -393,6 +393,87 @@ console.log("About manifest:", aboutHtml);
     expect(jsA.path).not.toBe(jsB.path);
     expect(htmlA.path).toBe(htmlB.path);
     expect(htmlA.headers.etag).not.toBe(htmlB.headers.etag);
+  });
+
+  // RFC 9110 §8.8.3: an entity-tag is a quoted-string. The manifest's
+  // `headers` object carries the literal response header values that
+  // `Bun.serve` emits verbatim, so the ETag must already be quoted.
+  test("html-import/manifest-etag-is-a-quoted-entity-tag", async () => {
+    const dir = tempDirWithFiles("html-etag-quoted", {
+      "server.ts": /*js*/ `
+        import index from "./index.html";
+        const server = Bun.serve({ port: 0, development: false, routes: { "/": index } });
+        const base = server.url.href;
+        const htmlRes = await fetch(base);
+        const html = await htmlRes.text();
+        const jsPath = html.match(/src="([^"]+\\.js)"/)[1];
+        const jsRes = await fetch(new URL(jsPath, base));
+        const jsETag = jsRes.headers.get("etag");
+        const conditional = await fetch(new URL(jsPath, base), {
+          headers: { "If-None-Match": jsETag ?? "missing" },
+        });
+        const conditionalHead = await fetch(new URL(jsPath, base), {
+          method: "HEAD",
+          headers: { "If-None-Match": jsETag ?? "missing" },
+        });
+        const conditionalMiss = await fetch(new URL(jsPath, base), {
+          headers: { "If-None-Match": '"0000000000000000"' },
+        });
+        await conditionalMiss.text();
+        console.log(JSON.stringify({
+          manifestETags: index.files.map(f => f.headers.etag),
+          htmlETag: htmlRes.headers.get("etag"),
+          jsETag,
+          conditionalStatus: conditional.status,
+          conditionalHeadStatus: conditionalHead.status,
+          conditionalMissStatus: conditionalMiss.status,
+        }));
+        await server.stop(true);
+      `,
+      "index.html": `<!doctype html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+      "app.ts": `console.log("app");`,
+    });
+    using cleanup = rmScope(dir);
+
+    const out = join(dir, "out");
+    const build = await Bun.build({ entrypoints: [join(dir, "server.ts")], outdir: out, target: "bun" });
+    expect(build.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(out, "server.js")],
+      env: bunEnv,
+      cwd: out,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) {
+      throw new Error("built server failed:\n" + stdout + "\n" + stderr);
+    }
+    const result = JSON.parse(stdout) as {
+      manifestETags: string[];
+      htmlETag: string | null;
+      jsETag: string | null;
+      conditionalStatus: number;
+      conditionalHeadStatus: number;
+      conditionalMissStatus: number;
+    };
+
+    const quotedEntityTag = /^"[0-9a-f]{16}"$/;
+    expect(result.manifestETags.length).toBeGreaterThan(0);
+    for (const etag of result.manifestETags) {
+      expect(etag).toMatch(quotedEntityTag);
+    }
+    // The on-the-wire response headers are the manifest values verbatim.
+    expect(result.htmlETag).toMatch(quotedEntityTag);
+    expect(result.jsETag).toMatch(quotedEntityTag);
+    expect(result.manifestETags).toContain(result.jsETag);
+    // Round-tripping the served ETag through If-None-Match revalidates.
+    expect({
+      get: result.conditionalStatus,
+      head: result.conditionalHeadStatus,
+      miss: result.conditionalMissStatus,
+    }).toEqual({ get: 304, head: 304, miss: 200 });
   });
 
   // Test that import with {type: 'file'} still works as a file import

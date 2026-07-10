@@ -455,7 +455,7 @@ public:
         BignumPointer&& dp,
         BignumPointer&& dq,
         BignumPointer&& qi);
-    bool checkPrivateKey() const;
+    bool validateOrRepairPrivateKey();
 
     using CipherParams = Cipher::CipherParams;
 

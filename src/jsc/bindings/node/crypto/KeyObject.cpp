@@ -988,7 +988,7 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
                 return {};
             }
 
-            if (!rsaView.checkPrivateKey()) {
+            if (!rsaView.validateOrRepairPrivateKey()) {
                 ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK RSA key"_s);
                 return {};
             }

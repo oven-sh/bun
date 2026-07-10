@@ -4368,7 +4368,7 @@ bool Rsa::setPrivateKey(BignumPointer&& d,
     return true;
 }
 
-bool Rsa::checkPrivateKey() const
+bool Rsa::validateOrRepairPrivateKey()
 {
     if (rsa_ == nullptr) return false;
     if (RSA_check_key(rsa_) == 1) return true;

@@ -83,9 +83,12 @@ impl BuildMessage {
     /// `BuildMessageClass__finalize` on lazy sweep.
     pub fn create(
         global: &JSGlobalObject,
-        msg: bun_ast::Msg,
+        mut msg: bun_ast::Msg,
         // resolve_result: *const Resolver.Result,
     ) -> JsResult<JSValue> {
+        // This JS-visible object outlives the `Log`/`Source` that backed the
+        // message's borrowed string views.
+        msg.make_owned();
         let build_error = BuildMessage {
             msg,
             // resolve_result: resolve_result.*,
@@ -155,7 +158,7 @@ impl BuildMessage {
         object.put(
             global,
             b"namespace",
-            ZigString::init(location.namespace).to_js(global),
+            ZigString::init(&location.namespace).to_js(global),
         );
         object.put(global, b"line", JSValue::from(location.line));
         object.put(global, b"column", JSValue::from(location.column));

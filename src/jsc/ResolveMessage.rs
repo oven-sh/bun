@@ -304,8 +304,12 @@ impl ResolveMessage {
         msg: &bun_ast::Msg,
         referrer: &[u8],
     ) -> JsResult<JSValue> {
+        // This JS-visible object outlives the `Log`/`Source` that backed the
+        // message's borrowed string views.
+        let mut msg = msg.clone();
+        msg.make_owned();
         let resolve_error = ResolveMessage {
-            msg: msg.clone(),
+            msg,
             referrer: Some(Box::<[u8]>::from(referrer)),
             logged: Cell::new(false),
         };

@@ -199,7 +199,7 @@ impl ErrorLocation {
             .map(|lines| unsafe { &*std::ptr::from_ref::<[u8]>(lines.as_slice()[0]) });
         Ok(bun_ast::Location {
             file: std::borrow::Cow::Borrowed(source.path.text),
-            namespace: source.path.namespace,
+            namespace: std::borrow::Cow::Borrowed(source.path.namespace),
             line: i32::try_from(self.line + 1).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
             line_text: line_text.map(std::borrow::Cow::Borrowed),

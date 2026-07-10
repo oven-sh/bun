@@ -42,9 +42,16 @@ function runTest(
 
   const files: Record<string, string> = {};
   if (jsFile) {
-    files[asDir ? "node_modules/abc/dir/index.js" : "node_modules/abc/index.js"] =
-      "export * from './sibling'; export const foo = 1;";
-    files[asDir ? "node_modules/abc/dir/sibling.js" : "node_modules/abc/sibling.js"] = "export const sibling = 1;";
+    // ESM `export` in a .js file under "type":"commonjs" is a SyntaxError in
+    // Node (and now in Bun), so write CJS-shaped sources for that case. The
+    // resolution behaviour under test is the same either way.
+    const isCjs = type === "commonjs";
+    files[asDir ? "node_modules/abc/dir/index.js" : "node_modules/abc/index.js"] = isCjs
+      ? "Object.assign(exports, require('./sibling')); exports.foo = 1;"
+      : "export * from './sibling'; export const foo = 1;";
+    files[asDir ? "node_modules/abc/dir/sibling.js" : "node_modules/abc/sibling.js"] = isCjs
+      ? "exports.sibling = 1;"
+      : "export const sibling = 1;";
   }
 
   if (withPackageJSON) {

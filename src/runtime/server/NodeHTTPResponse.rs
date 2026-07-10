@@ -200,12 +200,12 @@ unsafe extern "C" {
         length: usize,
         use_insecure_http_parser: bool,
     ) -> JSValue;
+    // Scope-free exception read: satisfies the exception-check verifier
+    // after a callee ThrowScope destructor simulated a throw for this
+    // (scope-less native) caller. A single traps check in release builds.
+    safe fn Bun__NodeHTTP__acknowledgeThrowScope(global_object: &JSGlobalObject);
     // Builds req.rawHeaders' flat [name, value, ...] JSArray from the header
     // bytes captured at dispatch ([u32 nameLen][u32 valueLen][name][value]...).
-    // Scope-free VM::exception() read: satisfies the exception-check
-    // verifier after a callee ThrowScope destructor simulated a throw for
-    // this (scope-less native) caller. A single load in release builds.
-    safe fn Bun__NodeHTTP__acknowledgeThrowScope(global_object: &JSGlobalObject);
     safe fn Bun__NodeHTTP__buildRawHeadersArray(
         global_object: &JSGlobalObject,
         data: *const u8,

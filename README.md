@@ -1,7 +1,7 @@
 <p align="center">
   <a href="https://bun.com"><img src="https://github.com/user-attachments/assets/50282090-adfd-4ddb-9e27-c30753c6b161" alt="Logo" height=170></a>
 </p>
-<h1 align="center">Bun</h1>
+<h1 align="center">built it all from an empty room</h1>
 
 <p align="center">
 <a href="https://bun.com/discord" target="_blank"><img height=20 src="https://img.shields.io/discord/876711213126520882" /></a>

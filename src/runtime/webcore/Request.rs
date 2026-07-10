@@ -1030,15 +1030,18 @@ impl Request {
     }
 
     /// Origin prefix (`scheme://authority`) of `base_url_string_for_joining`.
-    /// ServerConfig validates `base` to have no userinfo/query/fragment, so the
-    /// origin is the prefix up to the first `/` past `://`. A byte scan avoids
+    /// ServerConfig validates `base` to have no userinfo, so the origin is the
+    /// prefix up to the first `/`, `?`, or `#` past `://`. A byte scan avoids
     /// `origin_from_slice`, whose `pathStart()` offset is computed on the
     /// WHATWG-canonicalized form and would mis-slice a non-canonical authority
     /// (uncompressed IPv6, leading-zero port) in the raw input.
     fn fallback_origin(base: &[u8]) -> &[u8] {
         let after_scheme = strings::index_of(base, b"://").map_or(0, |i| i + 3);
-        match strings::index_of_char_pos(base, b'/', after_scheme) {
-            Some(i) => &base[..i],
+        match base[after_scheme..]
+            .iter()
+            .position(|&c| matches!(c, b'/' | b'?' | b'#'))
+        {
+            Some(i) => &base[..after_scheme + i],
             None => base,
         }
     }

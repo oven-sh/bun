@@ -675,6 +675,8 @@ describe("request.url falls back to the server's authority when Host is unusable
   it.each([
     ["http://[0:0:0:0:0:0:0:1]:3000/", "[::1]"],
     ["http://example.com:0080/api/v1/", "example.com"],
+    ["http://example.com?tenant=a", "example.com"],
+    ["http://example.com#frag", "example.com"],
   ])("with a non-canonical baseURI %j (HTTP/1.0 no Host)", async (baseURI, expectedHost) => {
     using server = Bun.serve({
       port: 0,

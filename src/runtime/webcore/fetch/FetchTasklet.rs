@@ -1899,51 +1899,31 @@ impl FetchTasklet {
         // pre-existing bug (paused ResumableFetchSink ref-cycle when the server
         // never reads the body).
 
-        let mut url = fetch_options.url;
-        let mut proxy: Option<ZigURL> = None;
+        let url = fetch_options.url;
         let env = global_this.bun_vm().as_mut().transpiler.env_mut();
-        if let Some(proxy_opt) = &fetch_options.proxy {
-            if !proxy_opt.is_empty() {
-                //if is empty just ignore proxy
-                // Check NO_PROXY even for explicitly-provided proxies
-                if !env.is_no_proxy(Some(url.hostname), Some(url.host)) {
-                    proxy = Some(proxy_opt.clone());
-                }
-            }
-            // else: proxy: "" means explicitly no proxy (direct connection)
-        } else {
-            // no proxy provided, use default proxy resolution
-            if let Some(env_proxy) = env.get_http_proxy_for(&url) {
-                // env_proxy.href may be a slice into a RefCountedEnvValue's bytes which can
-                // be freed by a subsequent `process.env.HTTP_PROXY = "..."` assignment while
-                // this fetch is in flight on the HTTP thread. Clone it into url_proxy_buffer
-                // alongside the request URL — the same pattern used for the explicit
-                // `fetch(url, { proxy: "..." })` option.
-                if !env_proxy.href.is_empty() {
-                    let old_url_len = url.href.len();
-                    let mut new_buffer = Vec::with_capacity(
-                        fetch_tasklet.url_proxy_buffer.len() + env_proxy.href.len(),
-                    );
-                    new_buffer.extend_from_slice(&fetch_tasklet.url_proxy_buffer);
-                    new_buffer.extend_from_slice(env_proxy.href.as_ref());
-                    let new_buffer = new_buffer.into_boxed_slice();
-                    fetch_tasklet.url_proxy_buffer = new_buffer;
-                    // SAFETY: url_proxy_buffer is heap-owned by the boxed FetchTasklet and
-                    // outlives `url`/`proxy` (consumed by AsyncHTTP::init below before the
-                    // tasklet is dropped). Erase the borrow to a raw slice so borrowck
-                    // doesn't tie `url`'s lifetime to the `fetch_tasklet` stack binding,
-                    // which is moved into `heap::alloc` below.
-                    let buf_ptr: *const [u8] = &raw const *fetch_tasklet.url_proxy_buffer;
-                    // SAFETY: `buf_ptr` was just taken from the heap-owned `url_proxy_buffer`
-                    // assigned above; see lifetime argument in the preceding block comment.
-                    let buf = unsafe { &*buf_ptr };
-                    url = ZigURL::parse(&buf[0..old_url_len]);
-                    proxy = Some(ZigURL::parse(&buf[old_url_len..]));
+        // Capture the proxy env so the HTTP thread can re-resolve per redirect
+        // hop (`HTTPClient::reevaluate_proxy_for_redirect`). `ProxySettings`
+        // owns copies of the env values, so a later `process.env.HTTP_PROXY =
+        // ...` on the JS thread cannot invalidate them mid-request.
+        let proxy_settings: Option<Box<http::ProxySettings>> =
+            if let Some(proxy_opt) = &fetch_options.proxy {
+                if !proxy_opt.is_empty() {
+                    http::ProxySettings::from_explicit(proxy_opt.href, env)
                 } else {
-                    proxy = Some(env_proxy);
+                    // proxy: "" means explicitly no proxy (direct connection)
+                    None
                 }
-            }
-        }
+            } else {
+                http::ProxySettings::from_env(env)
+            };
+        // Hop-0 proxy borrows the boxed `ProxySettings` heap storage, which is
+        // moved into `AsyncHTTP::init` below and lives on `client` for the
+        // lifetime of the request.
+        let proxy: Option<ZigURL> = proxy_settings.as_deref().and_then(|s| {
+            let href: *const [u8] = s.resolve(&url)?;
+            // SAFETY: see block comment above.
+            Some(ZigURL::parse(unsafe { &*href }))
+        });
 
         if fetch_tasklet.check_server_identity.has() && fetch_tasklet.reject_unauthorized {
             fetch_tasklet
@@ -2013,6 +1993,7 @@ impl FetchTasklet {
             fetch_options.redirect_type,
             http::async_http::Options {
                 http_proxy: proxy,
+                proxy_settings,
                 proxy_headers: fetch_options.proxy_headers,
                 hostname,
                 signals: Some(fetch_tasklet.signals),

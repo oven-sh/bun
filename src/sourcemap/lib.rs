@@ -829,8 +829,11 @@ impl SourceMapPieces {
                 current += 1;
             }
 
+            // A single mapping can cross multiple shift boundaries when two
+            // placeholder substitutions have no mapping between them, so
+            // advance to the latest applicable shift before re-encoding.
             let mut did_cross_boundary = false;
-            if shifts.len() > 1 && LineColumnOffset::comes_before(shifts[1].before, generated) {
+            while shifts.len() > 1 && LineColumnOffset::comes_before(shifts[1].before, generated) {
                 shifts = &shifts[1..];
                 did_cross_boundary = true;
             }

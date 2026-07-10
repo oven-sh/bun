@@ -6,6 +6,7 @@ import { builtinModules, isBuiltin } from "node:module";
 import path from "node:path";
 import { DatabaseSync, Session, StatementSync, backup, constants } from "node:sqlite";
 import { pathToFileURL } from "node:url";
+import { Worker } from "node:worker_threads";
 
 // On macOS bun dlopens the system libsqlite3.dylib, which Apple builds
 // without SQLITE_ENABLE_SESSION. createSession()/applyChangeset() throw
@@ -39,6 +40,38 @@ test("node:sqlite is a built-in module", () => {
 test("process.versions.sqlite is set", () => {
   expect(typeof process.versions.sqlite).toBe("string");
   expect(process.versions.sqlite).toMatch(/^3\.\d+\.\d+$/);
+});
+
+test("process.versions.sqlite read before the first open matches the library that runs", async () => {
+  // On the dlopen path, reading process.versions before any database is
+  // opened must still report the version of the library that WOULD be
+  // loaded (via a throwaway dlopen probe), not a bundled constant that
+  // isn't linked into the binary. The versions object is cached on first
+  // access, so this must run in a fresh process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const v = process.versions.sqlite;
+        const { DatabaseSync } = require("node:sqlite");
+        const db = new DatabaseSync(":memory:");
+        const actual = db.prepare("SELECT sqlite_version() AS v").get().v;
+        db.close();
+        console.log(JSON.stringify({ reported: v, actual }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { reported, actual } = JSON.parse(stdout.trim());
+  expect({ reported, actual, stderr, exitCode }).toEqual({
+    reported: actual,
+    actual,
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
 });
 
 describe("DatabaseSync", () => {
@@ -187,6 +220,22 @@ describe("DatabaseSync", () => {
 
   test("StatementSync cannot be constructed directly", () => {
     expect(() => new StatementSync()).toThrow(/Illegal constructor/);
+  });
+
+  test("DatabaseSync can be subclassed", () => {
+    class X extends DatabaseSync {
+      myMethod() {
+        return this.isOpen;
+      }
+    }
+    const x = new X(":memory:");
+    expect(x instanceof X).toBe(true);
+    expect(x instanceof DatabaseSync).toBe(true);
+    expect(Object.getPrototypeOf(x)).toBe(X.prototype);
+    expect(x.myMethod()).toBe(true);
+    x.exec("CREATE TABLE t (x)");
+    expect(x.prepare("SELECT 1 AS v").get()).toEqual({ v: 1 });
+    x.close();
   });
 
   test("isOpen/isTransaction/limits/sourceSQL/expandedSQL are own accessor properties", () => {
@@ -1090,6 +1139,44 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
 // Each backup_step with rate=1 fsyncs the destination once per page; keep
 // the page count tiny so the test stays fast on slow-fsync CI filesystems.
 describe("backup()", () => {
+  test("Worker.terminate() interrupts a backup() spinning on a locked destination", async () => {
+    // With no progress callback the BUSY loop never re-enters JS, so
+    // terminate() can only land if the loop polls vm.hasTerminationRequest().
+    using dir = tempDir("node-sqlite-backup-terminate", {
+      "worker.mjs": `
+        import { DatabaseSync, backup } from "node:sqlite";
+        import { parentPort, workerData } from "node:worker_threads";
+        const src = new DatabaseSync(":memory:");
+        src.exec("CREATE TABLE t (x); INSERT INTO t VALUES (1)");
+        parentPort.postMessage("spinning");
+        // destination is held write-locked by the parent: this spins on
+        // SQLITE_BUSY until terminated.
+        await backup(src, workerData.dest);
+        parentPort.postMessage("done");
+      `,
+    });
+    const destPath = path.join(String(dir), "locked.db");
+    const holder = new DatabaseSync(destPath);
+    // BEGIN IMMEDIATE takes a RESERVED lock so a writer from another
+    // connection sees SQLITE_BUSY.
+    holder.exec("BEGIN IMMEDIATE");
+
+    const worker = new Worker(path.join(String(dir), "worker.mjs"), { workerData: { dest: destPath } });
+    const spinning = new Promise<void>((resolve, reject) => {
+      worker.on("message", m => (m === "spinning" ? resolve() : reject(new Error(`unexpected: ${m}`))));
+      worker.on("error", reject);
+    });
+    await spinning;
+
+    const exitCode = await worker.terminate();
+    // The observable invariant is that terminate() returns at all — without
+    // the poll the worker's JS thread is stuck in sqlite3_sleep and the
+    // await never resolves (the test times out).
+    expect(typeof exitCode).toBe("number");
+    holder.exec("ROLLBACK");
+    holder.close();
+  });
+
   test("re-checks the source is open after reading options", () => {
     // sqlite3_backup_init dereferences pSrcDb->mutex with no API-armor
     // guard; a hostile getter that closes the source would hand it a
@@ -1295,6 +1382,22 @@ describe("db.limits", () => {
     expect(() => (db.limits.column = "no" as any)).toThrow(TypeError);
     db.close();
     expect(() => db.limits.column).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+  });
+
+  test("`in`/Reflect.has on a closed database report presence without touching sqlite3_limit", () => {
+    // Node's LimitsQuery never checks IsOpen — only LimitsGetter does. A
+    // getOwnPropertySlot that throws-and-returns-true also violates JSC's
+    // `!scope.exception() || !result` contract (debug ASSERT).
+    const db = new DatabaseSync(":memory:");
+    const l = db.limits;
+    db.close();
+    expect("sqlLength" in l).toBe(true);
+    expect(Reflect.has(l, "sqlLength")).toBe(true);
+    expect("nope" in l).toBe(false);
+    expect(() => Object.getOwnPropertyDescriptor(l, "sqlLength")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_STATE" }),
+    );
+    expect(() => l.sqlLength).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
   });
 
   test("constructor {limits} option seeds sqlite3_limit on open", () => {

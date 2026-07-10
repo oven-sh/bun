@@ -104,13 +104,36 @@ extern "C" void Bun__initializeSQLite();
 extern "C" void Bun__sqliteCheckpointForTermination(sqlite3*);
 
 // process.versions.sqlite — the loaded library's version if a library has
-// been loaded, else the bundled amalgamation's constant. Never triggers a
-// dlopen: reading process.versions must not defeat Database.setCustomSQLite().
+// been loaded. Otherwise probe the library that WOULD be loaded via a
+// throwaway dlopen and cache the result, WITHOUT assigning the global
+// sqlite3_handle — so reading process.versions still doesn't defeat
+// Database.setCustomSQLite(), and callers who read it before the first
+// open see the version the runtime actually uses (not the bundled
+// constant, which on macOS isn't linked into the binary at all).
 extern "C" const char* Bun__sqlite3_version()
 {
 #if LAZY_LOAD_SQLITE
     if (sqlite3_handle && lazy_sqlite3_libversion)
         return lazy_sqlite3_libversion();
+#if !OS(WINDOWS)
+    static const char* probed = []() -> const char* {
+        void* h = dlopen(sqlite3_lib_path, RTLD_LAZY | RTLD_LOCAL);
+        if (!h) return nullptr;
+        auto fn = reinterpret_cast<const char* (*)()>(dlsym(h, "sqlite3_libversion"));
+        const char* out = nullptr;
+        if (fn) {
+            static char buf[24];
+            const char* v = fn();
+            size_t n = v ? strnlen(v, sizeof(buf) - 1) : 0;
+            memcpy(buf, v, n);
+            buf[n] = '\0';
+            out = buf;
+        }
+        dlclose(h);
+        return out;
+    }();
+    if (probed) return probed;
+#endif
 #endif
     return BUN_SQLITE_BUNDLED_VERSION;
 }
@@ -2322,7 +2345,14 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSDatabaseSyncConstructor::construct(JSG
         }
     }
 
-    auto* structure = zigGlobal->m_JSDatabaseSyncClassStructure.get(zigGlobal);
+    Structure* structure = zigGlobal->m_JSDatabaseSyncClassStructure.get(zigGlobal);
+    JSValue newTarget = callFrame->newTarget();
+    if (zigGlobal->m_JSDatabaseSyncClassStructure.constructor(zigGlobal) != newTarget) [[unlikely]] {
+        auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSDatabaseSyncClassStructure.get(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     auto* db = JSDatabaseSync::create(vm, structure, std::move(location), std::move(config));
 
     // Node attaches Symbol.for('sqlite-type') → 'node:sqlite' to every
@@ -3371,12 +3401,21 @@ bool JSNodeSqliteLimits::getOwnPropertySlot(JSObject* object, JSGlobalObject* gl
     if (!propertyName.isSymbol()) {
         int id = findLimitId(propertyName.publicName());
         if (id >= 0) {
+            // `in` / Reflect.has / VM inquiry: the property always exists;
+            // Node's LimitsQuery never checks IsOpen().
+            if (slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty
+                || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) {
+                slot.setValue(self, static_cast<unsigned>(PropertyAttribute::DontDelete), jsUndefined());
+                return true;
+            }
             auto& vm = getVM(globalObject);
             auto scope = DECLARE_THROW_SCOPE(vm);
             auto* db = self->database();
             if (!db || !db->isOpen()) {
+                // JSC asserts `!scope.exception() || !result`; the exception
+                // propagates to the caller (Node throws from LimitsGetter).
                 throwNodeState(globalObject, scope, "database is not open"_s);
-                return true;
+                return false;
             }
             int current = sqlite3_limit(db->connection(), id, -1);
             slot.setValue(self, static_cast<unsigned>(PropertyAttribute::DontDelete), jsNumber(current));
@@ -3945,6 +3984,20 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
         }
 
         if (r == SQLITE_DONE) break;
+        // Without a progress callback the loop never re-enters JS, so
+        // Worker.terminate() / the watchdog cannot land at a safepoint and
+        // hasTerminationRequest() is never set. Poll the trap bit directly
+        // (written atomically by notifyNeedTermination from the parent
+        // thread) so termination breaks a BUSY spin or a very large copy;
+        // Node's retry-forever semantics are preserved otherwise. The VM is
+        // being torn down, so just clean up and let the unwind happen — no
+        // JS allocation on a terminating VM.
+        if (vm.traps().needHandling(VMTraps::NeedTermination) || vm.hasPendingTerminationException()) [[unlikely]] {
+            sqlite3_backup_finish(backup);
+            sqlite3_close_v2(dest);
+            scope.release();
+            return JSValue::encode(jsUndefined());
+        }
         if (r == SQLITE_OK) continue;
         if (r == SQLITE_BUSY || r == SQLITE_LOCKED) {
             sqlite3_sleep(kBusyRetrySleepMs);

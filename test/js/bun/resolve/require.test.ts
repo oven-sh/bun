@@ -120,6 +120,36 @@ describe("require(specifier)", () => {
       expect(exitCode).toBe(0);
     });
 
+    it("throws ERR_REQUIRE_ASYNC_MODULE for an intermediate module whose TLA dependency was pre-imported", async () => {
+      // An Evaluated parent whose TLA leaf completed in an earlier pass has
+      // [[AsyncEvaluationOrder]] Unset (the leaf's order is DONE, not an
+      // integer, so PendingAsyncDependencies stays 0); the graph walk must
+      // still reach the leaf's [[HasTLA]].
+      using dir = tempDir("require-tla-preimported-leaf", {
+        "leaf.mjs": `await Promise.resolve(0);\nexport const v = 1;\n`,
+        "middle.mjs": `export { v } from "./leaf.mjs";\n`,
+        "entry.cjs": `(async () => {
+          await import("./leaf.mjs");
+          try {
+            require("./middle.mjs");
+            console.log("returned");
+          } catch (e) {
+            console.log("threw", e.code ?? e.name);
+          }
+        })();`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("threw ERR_REQUIRE_ASYNC_MODULE");
+      expect(exitCode).toBe(0);
+    });
+
     it("evaluates the graph exactly once across a rejected require() and a subsequent import()", async () => {
       using dir = tempDir("require-tla-eval-once", {
         "leaf.mjs": `globalThis.__ticks.push("leaf");\nawait Promise.resolve(0);\nexport const y = 1;\n`,

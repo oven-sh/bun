@@ -701,11 +701,11 @@ static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
 
 // Node.js refuses require(esm) for any graph that contains top-level await
 // (v8::Module::IsGraphAsync), regardless of whether the awaited value would
-// settle on microtasks alone. [[AsyncEvaluationOrder]] is the transitive
-// summary: InnerModuleEvaluation sets it when [[HasTLA]] is true OR any
-// dependency went async, and leaves it Unset otherwise. For a record that has
-// not yet started evaluation (Linked, or Evaluating in an outer SCC) walk its
-// loaded dependencies and check [[HasTLA]] directly.
+// settle on microtasks alone. This is a structural walk over [[HasTLA]]:
+// [[AsyncEvaluationOrder]] is a fast "yes" (set implies this subtree went
+// async) but not a valid "no" for an Evaluated record, because a parent whose
+// TLA dependency already completed in an earlier evaluation pass sees that
+// dependency's order as DONE (not an integer) and keeps its own order Unset.
 static bool moduleGraphHasTLA(JSC::AbstractModuleRecord* root)
 {
     if (!root)
@@ -722,7 +722,7 @@ static bool moduleGraphHasTLA(JSC::AbstractModuleRecord* root)
         if (!module->asyncEvaluationOrder().isUnset())
             return true;
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(module);
-        if (!cyclic || cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated)
+        if (!cyclic)
             continue;
         for (const auto& [key, loaded] : cyclic->loadedModules()) {
             if (auto* dep = loaded.m_module.get())

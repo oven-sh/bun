@@ -1370,9 +1370,15 @@ impl FetchTasklet {
             http::Error::Cert(http::CertError::CERT_NOT_YET_VALID) => {
                 BunString::static_("certificate is not yet valid")
             }
-            http::Error::Cert(http::CertError::CRL_NOT_YET_VALID) => BunString::static_("CRL is not yet valid"),
-            http::Error::Cert(http::CertError::CERT_HAS_EXPIRED) => BunString::static_("certificate has expired"),
-            http::Error::Cert(http::CertError::CRL_HAS_EXPIRED) => BunString::static_("CRL has expired"),
+            http::Error::Cert(http::CertError::CRL_NOT_YET_VALID) => {
+                BunString::static_("CRL is not yet valid")
+            }
+            http::Error::Cert(http::CertError::CERT_HAS_EXPIRED) => {
+                BunString::static_("certificate has expired")
+            }
+            http::Error::Cert(http::CertError::CRL_HAS_EXPIRED) => {
+                BunString::static_("CRL has expired")
+            }
             http::Error::Cert(http::CertError::ERROR_IN_CERT_NOT_BEFORE_FIELD) => {
                 BunString::static_("format error in certificate's notBefore field")
             }
@@ -1401,8 +1407,12 @@ impl FetchTasklet {
             http::Error::Cert(http::CertError::CERT_CHAIN_TOO_LONG) => {
                 BunString::static_("certificate chain too long")
             }
-            http::Error::Cert(http::CertError::CERT_REVOKED) => BunString::static_("certificate revoked"),
-            http::Error::Cert(http::CertError::INVALID_CA) => BunString::static_("invalid CA certificate"),
+            http::Error::Cert(http::CertError::CERT_REVOKED) => {
+                BunString::static_("certificate revoked")
+            }
+            http::Error::Cert(http::CertError::INVALID_CA) => {
+                BunString::static_("invalid CA certificate")
+            }
             http::Error::Cert(http::CertError::INVALID_NON_CA) => {
                 BunString::static_("invalid non-CA certificate (has CA markings)")
             }
@@ -1412,14 +1422,20 @@ impl FetchTasklet {
             http::Error::Cert(http::CertError::PROXY_PATH_LENGTH_EXCEEDED) => {
                 BunString::static_("proxy path length constraint exceeded")
             }
-            http::Error::Cert(http::CertError::PROXY_CERTIFICATES_NOT_ALLOWED) => BunString::static_(
-                "proxy certificates not allowed, please set the appropriate flag",
-            ),
+            http::Error::Cert(http::CertError::PROXY_CERTIFICATES_NOT_ALLOWED) => {
+                BunString::static_(
+                    "proxy certificates not allowed, please set the appropriate flag",
+                )
+            }
             http::Error::Cert(http::CertError::INVALID_PURPOSE) => {
                 BunString::static_("unsupported certificate purpose")
             }
-            http::Error::Cert(http::CertError::CERT_UNTRUSTED) => BunString::static_("certificate not trusted"),
-            http::Error::Cert(http::CertError::CERT_REJECTED) => BunString::static_("certificate rejected"),
+            http::Error::Cert(http::CertError::CERT_UNTRUSTED) => {
+                BunString::static_("certificate not trusted")
+            }
+            http::Error::Cert(http::CertError::CERT_REJECTED) => {
+                BunString::static_("certificate rejected")
+            }
             http::Error::Cert(http::CertError::APPLICATION_VERIFICATION) => {
                 BunString::static_("application verification failure")
             }
@@ -1456,8 +1472,12 @@ impl FetchTasklet {
             http::Error::Cert(http::CertError::INVALID_POLICY_EXTENSION) => {
                 BunString::static_("invalid or inconsistent certificate policy extension")
             }
-            http::Error::Cert(http::CertError::NO_EXPLICIT_POLICY) => BunString::static_("no explicit policy"),
-            http::Error::Cert(http::CertError::DIFFERENT_CRL_SCOPE) => BunString::static_("Different CRL scope"),
+            http::Error::Cert(http::CertError::NO_EXPLICIT_POLICY) => {
+                BunString::static_("no explicit policy")
+            }
+            http::Error::Cert(http::CertError::DIFFERENT_CRL_SCOPE) => {
+                BunString::static_("Different CRL scope")
+            }
             http::Error::Cert(http::CertError::UNSUPPORTED_EXTENSION_FEATURE) => {
                 BunString::static_("Unsupported extension feature")
             }
@@ -1503,9 +1523,15 @@ impl FetchTasklet {
             http::Error::Cert(http::CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256) => {
                 BunString::static_("Suite B: cannot sign P-384 with P-256")
             }
-            http::Error::Cert(http::CertError::HOSTNAME_MISMATCH) => BunString::static_("Hostname mismatch"),
-            http::Error::Cert(http::CertError::EMAIL_MISMATCH) => BunString::static_("Email address mismatch"),
-            http::Error::Cert(http::CertError::IP_ADDRESS_MISMATCH) => BunString::static_("IP address mismatch"),
+            http::Error::Cert(http::CertError::HOSTNAME_MISMATCH) => {
+                BunString::static_("Hostname mismatch")
+            }
+            http::Error::Cert(http::CertError::EMAIL_MISMATCH) => {
+                BunString::static_("Email address mismatch")
+            }
+            http::Error::Cert(http::CertError::IP_ADDRESS_MISMATCH) => {
+                BunString::static_("IP address mismatch")
+            }
             http::Error::Cert(http::CertError::INVALID_CALL) => {
                 BunString::static_("Invalid certificate verification context")
             }

@@ -2215,11 +2215,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     Ok(r) => r,
                     Err(_) => {
                         if p.log().msgs.len() == start_error_count {
-                            p.log().add_error(
-                                Some(p.source),
-                                expr.loc,
-                                b"macro threw exception",
-                            );
+                            p.log()
+                                .add_error(Some(p.source), expr.loc, b"macro threw exception");
                         }
                         return;
                     }

@@ -3,7 +3,7 @@
 // These pin the exact strings the runtime hands to JS; any drift in a
 // crate's `Error::name()` / `#[error("...")]` / errno routing surfaces here.
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { readFileSync, readdirSync } from "node:fs";
 

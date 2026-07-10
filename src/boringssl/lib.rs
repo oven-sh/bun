@@ -326,7 +326,7 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
     strings::eql_case_insensitive_ascii(pattern, hostname, true)
 }
 
-pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
+pub fn check_x509_server_identity(x509: &mut boring::sys::X509, hostname: &[u8]) -> bool {
     let host_is_ip = strings::is_ip_address(hostname);
     // Node.js: CN is consulted only when the certificate carries no
     // DNS / IP / URI subjectAltName entries. Track whether any were seen.
@@ -336,7 +336,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
     // SAFETY: x509 is a valid &mut so non-null/aligned; all boring:: fns are
     // null-safe where documented.
     unsafe {
-        let x509: *mut boring::X509 = x509;
+        let x509: *mut boring::sys::X509 = x509;
         let index = boring::X509_get_ext_by_NID(x509, boring::NID_subject_alt_name, -1);
         if index >= 0 {
             // we can check hostname

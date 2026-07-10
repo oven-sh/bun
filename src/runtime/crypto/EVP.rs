@@ -170,7 +170,7 @@ impl EVP {
     pub fn init(
         algorithm: Algorithm,
         md: *const boringssl::EVP_MD,
-        engine: *mut boringssl::ENGINE,
+        engine: *mut boringssl::sys::ENGINE,
     ) -> EVP {
         bun_boringssl::load();
 
@@ -188,7 +188,7 @@ impl EVP {
     /// `engine` must be either null or a valid `ENGINE` pointer.
     // Forwards `engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn reset(&mut self, engine: *mut boringssl::ENGINE) {
+    pub fn reset(&mut self, engine: *mut boringssl::sys::ENGINE) {
         // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions. self.ctx was
         // initialized in init() and remains valid for the lifetime of EVP; self.md is a
         // static singleton.
@@ -204,7 +204,7 @@ impl EVP {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn hash(
         &mut self,
-        engine: *mut boringssl::ENGINE,
+        engine: *mut boringssl::sys::ENGINE,
         input: &[u8],
         output: &mut [u8],
     ) -> Option<u32> {
@@ -232,7 +232,7 @@ impl EVP {
     /// `engine` must be either null or a valid `ENGINE` pointer.
     pub fn r#final<'a>(
         &mut self,
-        engine: *mut boringssl::ENGINE,
+        engine: *mut boringssl::sys::ENGINE,
         output: &'a mut [u8],
     ) -> &'a mut [u8] {
         boringssl::ERR_clear_error();
@@ -268,7 +268,7 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub fn copy(&self, engine: *mut boringssl::ENGINE) -> Result<EVP, AllocError> {
+    pub fn copy(&self, engine: *mut boringssl::sys::ENGINE) -> Result<EVP, AllocError> {
         boringssl::ERR_clear_error();
         // SAFETY: self.md is a static singleton; caller upholds `engine`.
         let mut new = EVP::init(self.algorithm, self.md, engine);
@@ -282,7 +282,7 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
+    pub fn by_name_and_engine(engine: *mut boringssl::sys::ENGINE, name: &[u8]) -> Option<EVP> {
         if let Some(algorithm) = lookup_ignore_case(name) {
             if let Some(md) = algorithm.md() {
                 // `Algorithm::md()` lives in `bun_sha_hmac`
@@ -308,17 +308,12 @@ impl EVP {
 
     pub fn by_name(name: &ZigString, global: &JSGlobalObject) -> Option<EVP> {
         let name_str = name.to_slice();
-        // `RareData::boring_engine()` returns `*mut` to bun_jsc's local opaque `ENGINE`
-        // stub (bun_jsc has no bun_boringssl_sys dep). Both name the same C `ENGINE`
-        // struct, so cast to the real bindgen type for the FFI call.
+        // `RareData::boring_engine()` borrows the VM-owned `ENGINE` out of the
+        // owning `bun_boringssl_sys::ENGINE` handle stored on `RareData`, so it
+        // already returns `*mut boringssl::sys::ENGINE` — no cast needed.
         // SAFETY: `bun_vm()` returns the raw `*mut VirtualMachine` for a Bun-owned
         // global (never null, single-threaded JS heap), so deref-to-&mut is sound here.
-        let engine = global
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .boring_engine()
-            .cast::<boringssl::ENGINE>();
+        let engine = global.bun_vm().as_mut().rare_data().boring_engine();
         // SAFETY: `boring_engine()` returns the VM's lazily-initialized ENGINE (valid or null).
         Self::by_name_and_engine(engine, name_str.slice())
     }

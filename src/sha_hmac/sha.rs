@@ -14,8 +14,14 @@ use bun_boringssl_sys as boringssl_sys;
 // identity across crates (eliminating the cross-crate opaque-pointer casts).
 // ──────────────────────────────────────────────────────────────────────────
 pub mod ffi {
+    /// The C `ENGINE` object, **not** `bun_boringssl_sys`'s owning `ENGINE`
+    /// handle: `hash(.., engine)` below only borrows the VM-owned engine pointer
+    /// (`s3_signing::credentials` passes null), so nothing here releases a unit.
+    /// Kept under the name `ENGINE` so `bun_sha_hmac::sha::ffi::ENGINE` path
+    /// consumers need no edit.
+    pub use bun_boringssl_sys::sys::ENGINE;
     pub use bun_boringssl_sys::{
-        ENGINE, EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate, EVP_MD, EVP_MD_CTX,
+        EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate, EVP_MD, EVP_MD_CTX,
         EVP_MD_CTX_cleanup, EVP_MD_CTX_init, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5,
         EVP_md5_sha1, EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384,
         EVP_sha3_512, EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha512, EVP_sha512_224,

@@ -154,9 +154,12 @@ pub mod ssl_wrapper {
     // Re-export the canonical BoringSSL FFI surface; the lower-tier crate now
     // declares every symbol SSLWrapper needs, so the old local shim is gone.
     mod boring_sys {
-        // The C object, not the owning handle: `SSLWrapper` stores the pointer
-        // and releases it in `deinit`.
-        pub(super) use bun_boringssl::c::sys::SSL_CTX;
+        // The C objects, not the owning handles: `SSLWrapper` stores the raw
+        // `SSL_CTX*` and releases it in `deinit`; the trust store returned by
+        // `us_get_shared_default_ca_store` is handed straight to the
+        // `SSL_set0_verify_cert_store` sink (a transfer, not a release), and the
+        // `X509_STORE_CTX*` in the verify callback is owned by BoringSSL.
+        pub(super) use bun_boringssl::c::sys::{SSL_CTX, X509_STORE, X509_STORE_CTX};
         pub(super) use bun_boringssl::c::{
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_s_mem, BIO_set_mem_eof_return,
             BIO_write, ERR_clear_error, SSL, SSL_CTX_free, SSL_CTX_get_verify_mode, SSL_ERROR_SSL,
@@ -166,7 +169,7 @@ pub mod ssl_wrapper {
             SSL_get_shutdown, SSL_get_wbio, SSL_is_init_finished, SSL_new, SSL_pending, SSL_read,
             SSL_renegotiate, SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state,
             SSL_set_renegotiate_mode, SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown,
-            SSL_write, X509_STORE, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
+            SSL_write, ssl_renegotiate_explicit, ssl_renegotiate_never,
         };
     }
 

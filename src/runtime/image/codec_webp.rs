@@ -82,9 +82,51 @@ struct WebPChunkIterator {
     private_: *mut c_void,
 }
 
-bun_opaque::opaque_ffi! {
-    pub(crate) struct WebPDemuxer;
-    pub(crate) struct WebPMux;
+/// The C objects themselves. Only the extern declarations below name these
+/// types; all Rust code uses the owning [`WebPDemuxer`] / [`WebPMux`] handles.
+pub(crate) mod sys {
+    bun_opaque::opaque_ffi! {
+        /// `struct WebPDemuxer` — libwebpdemux's parsed view of a RIFF file.
+        pub struct WebPDemuxer;
+        /// `struct WebPMux` — libwebpmux's in-progress RIFF container.
+        pub struct WebPMux;
+    }
+}
+
+bun_opaque::foreign_handle! {
+    /// Owned handle to a libwebpdemux `WebPDemuxer`.
+    ///
+    /// `WebPDemuxInternal` hands back the sole owner of a freshly parsed
+    /// demuxer; `Drop` gives it back with `WebPDemuxDelete`. Not refcounted, so
+    /// "one ownership unit" is the object itself.
+    pub(crate) struct WebPDemuxer(sys::WebPDemuxer) via webp_demux_delete;
+}
+
+bun_opaque::foreign_handle! {
+    /// Owned handle to a libwebpmux `WebPMux`.
+    ///
+    /// `WebPNewInternal` hands back the sole owner of a fresh, empty mux; `Drop`
+    /// gives it back with `WebPMuxDelete`. The assembled output of
+    /// [`WebPMuxAssemble`] is a separate `WebPMalloc` buffer that outlives the
+    /// mux, so dropping this handle does not invalidate it.
+    pub(crate) struct WebPMux(sys::WebPMux) via webp_mux_delete;
+}
+
+/// `ForeignOwned::release` hands us `&sys::WebPDemuxer`; libwebp's destructor
+/// takes `WebPDemuxer*`. `&` to an [`bun_opaque::opaque_ffi!`] ZST is
+/// ABI-identical to that non-null pointer, and `as_mut_ptr` is the sanctioned
+/// interior-mutability route to it.
+fn webp_demux_delete(dmux: &sys::WebPDemuxer) {
+    // SAFETY: reached only from `ForeignRef::drop`, which owns the sole unit
+    // adopted from `WebPDemuxInternal` and gives it back exactly once.
+    unsafe { WebPDemuxDelete(dmux.as_mut_ptr()) }
+}
+
+/// Same shape as [`webp_demux_delete`], for `WebPMuxDelete`.
+fn webp_mux_delete(mux: &sys::WebPMux) {
+    // SAFETY: reached only from `ForeignRef::drop`, which owns the sole unit
+    // adopted from `WebPNewInternal` and gives it back exactly once.
+    unsafe { WebPMuxDelete(mux.as_mut_ptr()) }
 }
 
 // `WebPDemux()` and `WebPMuxNew()` are `static inline` in the headers and
@@ -95,27 +137,31 @@ unsafe extern "C" {
         allow_partial: c_int,
         state: *mut c_int,
         version: c_int,
-    ) -> *mut WebPDemuxer;
-    fn WebPDemuxDelete(dmux: *mut WebPDemuxer);
-    fn WebPDemuxGetI(dmux: *const WebPDemuxer, feature: c_int) -> u32;
+    ) -> *mut sys::WebPDemuxer;
+    fn WebPDemuxDelete(dmux: *mut sys::WebPDemuxer);
+    fn WebPDemuxGetI(dmux: *const sys::WebPDemuxer, feature: c_int) -> u32;
     fn WebPDemuxGetChunk(
-        dmux: *const WebPDemuxer,
+        dmux: *const sys::WebPDemuxer,
         fourcc: *const u8,
         chunk_number: c_int,
         iter: *mut WebPChunkIterator,
     ) -> c_int;
     fn WebPDemuxReleaseChunkIterator(iter: *mut WebPChunkIterator);
 
-    fn WebPNewInternal(version: c_int) -> *mut WebPMux;
-    fn WebPMuxDelete(mux: *mut WebPMux);
-    fn WebPMuxSetImage(mux: *mut WebPMux, bitstream: *const WebPData, copy_data: c_int) -> c_int;
+    fn WebPNewInternal(version: c_int) -> *mut sys::WebPMux;
+    fn WebPMuxDelete(mux: *mut sys::WebPMux);
+    fn WebPMuxSetImage(
+        mux: *mut sys::WebPMux,
+        bitstream: *const WebPData,
+        copy_data: c_int,
+    ) -> c_int;
     fn WebPMuxSetChunk(
-        mux: *mut WebPMux,
+        mux: *mut sys::WebPMux,
         fourcc: *const u8,
         chunk_data: *const WebPData,
         copy_data: c_int,
     ) -> c_int;
-    fn WebPMuxAssemble(mux: *mut WebPMux, assembled_data: *mut WebPData) -> c_int;
+    fn WebPMuxAssemble(mux: *mut sys::WebPMux, assembled_data: *mut WebPData) -> c_int;
 }
 
 pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
@@ -182,22 +228,23 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
                 WEBP_DEMUX_ABI_VERSION,
             )
         };
-        if dmux.is_null() {
+        // SAFETY: `WebPDemuxInternal` is the producer: on success it transfers
+        // the sole ownership unit of a freshly parsed demuxer (nothing else
+        // holds it; `WebPDemuxDelete` is its only deallocator). On failure it
+        // returns null having already freed whatever it allocated, so there is
+        // no unit to adopt — `adopt_ptr` yields `None` and releases nothing.
+        let Some(dmux) = (unsafe { WebPDemuxer::adopt_ptr(dmux) }) else {
             break 'blk None;
-        }
-        let _free_dmux = scopeguard::guard(dmux, |d| {
-            // SAFETY: d was returned by WebPDemuxInternal above and is non-null; matching destructor.
-            unsafe { WebPDemuxDelete(d) }
-        });
+        };
         // SAFETY: dmux is a live demuxer handle.
-        if unsafe { WebPDemuxGetI(dmux, WEBP_FF_FORMAT_FLAGS) } & ICCP_FLAG == 0 {
+        if unsafe { WebPDemuxGetI(dmux.as_ptr(), WEBP_FF_FORMAT_FLAGS) } & ICCP_FLAG == 0 {
             break 'blk None;
         }
         // SAFETY: all-zero is a valid WebPChunkIterator (#[repr(C)] POD, raw ptr + ints).
         let mut iter: WebPChunkIterator =
             unsafe { core::mem::MaybeUninit::<WebPChunkIterator>::zeroed().assume_init() };
         // SAFETY: dmux is live; fourcc reads exactly 4 bytes; iter is a valid out-param.
-        if unsafe { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &raw mut iter) } == 0 {
+        if unsafe { WebPDemuxGetChunk(dmux.as_ptr(), b"ICCP".as_ptr(), 1, &raw mut iter) } == 0 {
             break 'blk None;
         }
         let iter = scopeguard::guard(iter, |mut it| {
@@ -292,19 +339,20 @@ pub(crate) fn encode(
     });
     // SAFETY: WebPNewInternal has no preconditions.
     let mux = unsafe { WebPNewInternal(WEBP_MUX_ABI_VERSION) };
-    if mux.is_null() {
+    // SAFETY: `WebPNewInternal` is the producer: on success it transfers the
+    // sole ownership unit of a fresh, empty mux (`WebPMuxDelete` is its only
+    // deallocator). On ABI mismatch or allocation failure it returns null
+    // having allocated nothing, so `adopt_ptr` yields `None` and releases
+    // nothing. The handle's `Drop` deletes the mux on every path below.
+    let Some(mux) = (unsafe { WebPMux::adopt_ptr(mux) }) else {
         return Err(codecs::Error::OutOfMemory);
-    }
-    let _free_mux = scopeguard::guard(mux, |m| {
-        // SAFETY: m was returned by WebPNewInternal above and is non-null; matching destructor.
-        unsafe { WebPMuxDelete(m) }
-    });
+    };
     let img = WebPData {
         bytes: bitstream.as_ptr(),
         size: bitstream.len(),
     };
     // SAFETY: mux is live; img points to valid borrowed data.
-    if unsafe { WebPMuxSetImage(mux, &raw const img, 0) } != WEBP_MUX_OK {
+    if unsafe { WebPMuxSetImage(mux.as_ptr(), &raw const img, 0) } != WEBP_MUX_OK {
         return Err(codecs::Error::EncodeFailed);
     }
     let icc = WebPData {
@@ -312,12 +360,13 @@ pub(crate) fn encode(
         size: profile.len(),
     };
     // SAFETY: mux is live; fourcc reads exactly 4 bytes; icc points to valid borrowed data.
-    if unsafe { WebPMuxSetChunk(mux, b"ICCP".as_ptr(), &raw const icc, 0) } != WEBP_MUX_OK {
+    if unsafe { WebPMuxSetChunk(mux.as_ptr(), b"ICCP".as_ptr(), &raw const icc, 0) } != WEBP_MUX_OK
+    {
         return Err(codecs::Error::EncodeFailed);
     }
     let mut assembled = WebPData::default();
     // SAFETY: mux is live; assembled is a valid out-param.
-    if unsafe { WebPMuxAssemble(mux, &raw mut assembled) } != WEBP_MUX_OK {
+    if unsafe { WebPMuxAssemble(mux.as_ptr(), &raw mut assembled) } != WEBP_MUX_OK {
         // `WebPMuxAssemble` writes a half-built buffer into `assembled` even
         // on failure; its contract says `WebPDataClear` (i.e. `WebPFree`) is
         // safe to call on any return.

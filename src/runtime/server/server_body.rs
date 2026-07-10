@@ -2051,7 +2051,7 @@ where
 
         // `CookieMapRef` releases the moved-out ref on every exit path of this
         // scope (including the `?` below) once `cookies_to_write` drops.
-        let mut cookies_to_write = upgrader.cookies.take();
+        let cookies_to_write = upgrader.cookies.take();
 
         // Write status, custom headers, and cookies in one place
         if fetch_headers_to_use.is_some() || cookies_to_write.is_some() {
@@ -2066,7 +2066,7 @@ where
                     );
                 }
             }
-            if let Some(c) = cookies_to_write.as_mut() {
+            if let Some(c) = cookies_to_write.as_ref() {
                 c.write(
                     global,
                     ResponseKind::from(SSL, false),

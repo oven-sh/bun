@@ -62,10 +62,6 @@ pub(crate) type ASN1_IA5STRING = asn1_string_st;
 // ═══════════════════════════════════════════════════════════════════════════
 
 opaque!(
-    /// `struct engine_st` (`typedef ... ENGINE`).
-    ENGINE
-);
-opaque!(
     /// `struct env_md_st` (`typedef ... EVP_MD`).
     EVP_MD
 );
@@ -74,8 +70,9 @@ opaque!(
     SSL
 );
 /// The C objects themselves. Only the extern declarations name these types;
-/// all Rust code uses the owning handles ([`SSL_CTX`],
-/// [`struct_stack_st_GENERAL_NAME`]) that wrap them.
+/// all Rust code uses the owning handles ([`SSL_CTX`], [`ENGINE`], [`X509`],
+/// [`X509_STORE`], [`X509_STORE_CTX`], [`struct_stack_st_GENERAL_NAME`]) that
+/// wrap them.
 pub mod sys {
     ::bun_opaque::opaque_ffi! {
         /// `struct ssl_ctx_st` (`typedef ... SSL_CTX`). `&Self` is ABI-identical
@@ -89,14 +86,27 @@ pub mod sys {
         /// mutates the stack's bookkeeping through it.
         pub struct struct_stack_st_GENERAL_NAME;
     }
+    ::bun_opaque::opaque_ffi! {
+        /// `struct engine_st` (`typedef ... ENGINE`). `&Self` is ABI-identical
+        /// to a non-null `ENGINE*` and carries no `noalias`/`readonly`.
+        pub struct ENGINE;
+        /// `struct x509_st` (`typedef ... X509`). `&Self` is ABI-identical to a
+        /// non-null `X509*` and carries no `noalias`/`readonly` — BoringSSL
+        /// mutates the refcount and the cached extension fields through it.
+        pub struct X509;
+        /// `struct x509_store_st` (`typedef ... X509_STORE`). `&Self` is
+        /// ABI-identical to a non-null `X509_STORE*` and carries no
+        /// `noalias`/`readonly` — BoringSSL mutates the refcount through it.
+        pub struct X509_STORE;
+        /// `struct x509_store_ctx_st` (`typedef ... X509_STORE_CTX`). `&Self` is
+        /// ABI-identical to a non-null `X509_STORE_CTX*` and carries no
+        /// `noalias`/`readonly` — BoringSSL mutates the lookup state through it.
+        pub struct X509_STORE_CTX;
+    }
 }
 opaque!(
     /// `struct crypto_buffer_pool_st` (`typedef ... CRYPTO_BUFFER_POOL`).
     CRYPTO_BUFFER_POOL
-);
-opaque!(
-    /// `struct x509_st` (`typedef ... X509`).
-    X509
 );
 opaque!(
     /// `struct X509_name_st` (`typedef ... X509_NAME`).
@@ -326,6 +336,104 @@ impl SSL_CTX {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Owned handles — ENGINE / X509 / X509_STORE / X509_STORE_CTX
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// `ENGINE_free` takes `*mut ENGINE` and returns `int`; `foreign_handle!` needs
+/// a `fn(&sys::ENGINE)`.
+fn engine_free_release(engine: &sys::ENGINE) {
+    // SAFETY: the handle owns the sole allocation `ENGINE_new` returned;
+    // `as_mut_ptr` derives write provenance from the `UnsafeCell` body. The
+    // `int` result is BoringSSL's OpenSSL-compat "always 1".
+    let _ = unsafe { ENGINE_free(engine.as_mut_ptr()) };
+}
+
+// `ENGINE_new` allocates and hands back the sole owner (no refcount).
+bun_opaque::foreign_handle! {
+    /// Owned handle to a BoringSSL `ENGINE`.
+    ///
+    /// Holds the one allocation `ENGINE_new` returned; `Drop` frees it. Every
+    /// method takes `&self`: BoringSSL mutates the engine through the same
+    /// pointer, so there is no `&mut self` to have.
+    ///
+    /// Every consumer (`EVP_DigestInit_ex`, `EVP_Digest`, `HMAC_Init_ex`) only
+    /// *borrows* the engine and takes a bare `*mut sys::ENGINE`, so
+    /// [`Self::as_ptr`] is the accessor those call sites want.
+    pub struct ENGINE(sys::ENGINE) via engine_free_release;
+}
+
+impl ENGINE {
+    /// `ENGINE_new` allocates a fresh engine; `None` on allocation failure.
+    pub fn new() -> Option<Self> {
+        // SAFETY: `ENGINE_new` returns a fresh, solely-owned `ENGINE*`, or null
+        // on OOM (having allocated nothing). No other handle gives that unit back.
+        unsafe { Self::adopt_ptr(ENGINE_new()) }
+    }
+}
+
+/// `X509_free` takes `*mut X509`; `foreign_handle!` needs a `fn(&sys::X509)`.
+fn x509_free_release(x509: &sys::X509) {
+    // SAFETY: the handle owns one ref on the certificate's `CRYPTO_refcount_t`;
+    // `X509_free` gives back exactly that one.
+    unsafe { X509_free(x509.as_mut_ptr()) }
+}
+
+// `d2i_X509`, `SSL_get_peer_certificate`, `X509_up_ref` and
+// `X509_STORE_CTX_get1_issuer` each hand back a `+1` on the certificate's
+// refcount. One `X509` handle owns exactly that one ref.
+bun_opaque::foreign_handle! {
+    /// Owned handle to a BoringSSL `X509` certificate.
+    ///
+    /// Holds one ref on the C refcount; `Drop` gives it back. Every method takes
+    /// `&self`: a refcount is shared by definition, and BoringSSL mutates the
+    /// certificate's cached fields through the same pointer.
+    ///
+    /// A certificate *borrowed* from a chain (`sk_X509_value`) or from the local
+    /// connection (`SSL_get_certificate`) took no ref and stays a raw
+    /// `*mut sys::X509`.
+    pub struct X509(sys::X509) via x509_free_release;
+}
+
+/// `X509_STORE_free` takes `*mut X509_STORE`.
+fn x509_store_free_release(store: &sys::X509_STORE) {
+    // SAFETY: the handle owns one ref on the store's refcount; `X509_STORE_free`
+    // gives back exactly that one.
+    unsafe { X509_STORE_free(store.as_mut_ptr()) }
+}
+
+// `us_get_shared_default_ca_store` up-refs the process-wide store before
+// returning; one handle owns exactly that one ref.
+bun_opaque::foreign_handle! {
+    /// Owned handle to a BoringSSL `X509_STORE`.
+    ///
+    /// Holds one ref on the C refcount; `Drop` gives it back. Every method takes
+    /// `&self`: the store is shared with every context that references it.
+    ///
+    /// A store *borrowed* from a context (`SSL_CTX_get_cert_store`) took no ref
+    /// and stays a raw `*mut sys::X509_STORE`. A store handed to a `set0` sink
+    /// (`SSL_set0_verify_cert_store`) is transferred, not released.
+    pub struct X509_STORE(sys::X509_STORE) via x509_store_free_release;
+}
+
+/// `X509_STORE_CTX_free` takes `*mut X509_STORE_CTX`.
+fn x509_store_ctx_free_release(ctx: &sys::X509_STORE_CTX) {
+    // SAFETY: the handle owns the sole allocation `X509_STORE_CTX_new` returned.
+    unsafe { X509_STORE_CTX_free(ctx.as_mut_ptr()) }
+}
+
+// `X509_STORE_CTX_new` allocates and hands back the sole owner (no refcount).
+bun_opaque::foreign_handle! {
+    /// Owned handle to a BoringSSL `X509_STORE_CTX`.
+    ///
+    /// Holds the one allocation `X509_STORE_CTX_new` returned; `Drop` frees it.
+    /// Every method takes `&self`: BoringSSL mutates the lookup state through
+    /// the same pointer, so there is no `&mut self` to have.
+    ///
+    /// `X509_STORE_CTX_init` only *borrows* the store and the leaf it is given.
+    pub struct X509_STORE_CTX(sys::X509_STORE_CTX) via x509_store_ctx_free_release;
+}
+
 // `X509V3_EXT_d2i` allocates the stack and every `GENERAL_NAME` in it, then
 // hands back the sole owner. One handle owns exactly that one allocation.
 // The `foreign_owned!` impl is emitted by the `foreign_handle!` invocation below.
@@ -472,7 +580,7 @@ unsafe extern "C" {
     pub fn EVP_DigestInit_ex(
         ctx: *mut EVP_MD_CTX,
         type_: *const EVP_MD,
-        engine: *mut ENGINE,
+        engine: *mut sys::ENGINE,
     ) -> c_int;
     pub fn EVP_DigestUpdate(ctx: *mut EVP_MD_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn EVP_DigestFinal(ctx: *mut EVP_MD_CTX, md_out: *mut u8, out_size: *mut c_uint) -> c_int;
@@ -492,7 +600,7 @@ unsafe extern "C" {
         md_out: *mut u8,
         md_out_size: *mut c_uint,
         type_: *const EVP_MD,
-        impl_: *mut ENGINE,
+        impl_: *mut sys::ENGINE,
     ) -> c_int;
 
     // ── HMAC ─────────────────────────────────────────────────────────────
@@ -552,12 +660,20 @@ unsafe extern "C" {
     pub fn SSL_get_peer_cert_chain(ssl: *const SSL) -> *mut struct_stack_st_X509;
 
     // ── X509 ─────────────────────────────────────────────────────────────
-    pub fn d2i_X509(out: *mut *mut X509, inp: *mut *const u8, len: c_long) -> *mut X509;
-    pub fn i2d_X509(x: *mut X509, outp: *mut *mut u8) -> c_int;
-    pub fn X509_free(x509: *mut X509);
-    pub fn X509_get_subject_name(x509: *const X509) -> *mut X509_NAME;
-    pub fn X509_get_ext_by_NID(x: *const X509, nid: c_int, lastpos: c_int) -> c_int;
-    pub fn X509_get_ext(x: *const X509, loc: c_int) -> *mut X509_EXTENSION;
+    pub fn d2i_X509(out: *mut *mut sys::X509, inp: *mut *const u8, len: c_long) -> *mut sys::X509;
+    pub fn i2d_X509(x: *mut sys::X509, outp: *mut *mut u8) -> c_int;
+    /// Decrements the certificate's refcount; frees it at zero. Backs the
+    /// [`X509`] handle's `Drop`.
+    pub fn X509_free(x509: *mut sys::X509);
+    /// Decrements the store's refcount; frees it at zero. Backs the
+    /// [`X509_STORE`] handle's `Drop`.
+    pub fn X509_STORE_free(store: *mut sys::X509_STORE);
+    /// Frees the lookup context `X509_STORE_CTX_new` allocated. Backs the
+    /// [`X509_STORE_CTX`] handle's `Drop`.
+    pub fn X509_STORE_CTX_free(ctx: *mut sys::X509_STORE_CTX);
+    pub fn X509_get_subject_name(x509: *const sys::X509) -> *mut X509_NAME;
+    pub fn X509_get_ext_by_NID(x: *const sys::X509, nid: c_int, lastpos: c_int) -> c_int;
+    pub fn X509_get_ext(x: *const sys::X509, loc: c_int) -> *mut X509_EXTENSION;
     pub fn X509_NAME_get_index_by_NID(name: *const X509_NAME, nid: c_int, lastpos: c_int) -> c_int;
     pub fn X509_NAME_get_entry(name: *const X509_NAME, loc: c_int) -> *mut X509_NAME_ENTRY;
     pub fn X509_NAME_ENTRY_get_data(entry: *const X509_NAME_ENTRY) -> *mut ASN1_STRING;
@@ -573,14 +689,16 @@ unsafe extern "C" {
 // symbol — they bottom out on the untyped `sk_*` ABI above.
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Borrows the `i`th element; the stack keeps the ref, so the result names the
+/// C object (`sys::X509`), never the owning [`X509`] handle.
 #[inline]
-pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X509 {
+pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut sys::X509 {
     // SAFETY: Two independent type casts, not a const→mut provenance laundering:
     //   - `sk` is reinterpreted `*const opaque -> *const OPENSSL_STACK` (const→const).
     //   - `sk_value` returns `*mut c_void` from the C heap; we narrow that to
-    //     `*mut X509` (mut→mut). Mutability originates from BoringSSL's ABI
+    //     `*mut sys::X509` (mut→mut). Mutability originates from BoringSSL's ABI
     //     (`void *sk_value(const _STACK *, size_t)`), not from `sk`.
-    unsafe { sk_value(sk.cast::<OPENSSL_STACK>(), i).cast::<X509>() }
+    unsafe { sk_value(sk.cast::<OPENSSL_STACK>(), i).cast::<sys::X509>() }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -680,21 +798,14 @@ opaque!(
     SSL_METHOD
 );
 opaque!(
-    /// `struct x509_store_st` (`typedef ... X509_STORE`).
-    X509_STORE
-);
-opaque!(
-    /// `struct x509_store_ctx_st` (`typedef ... X509_STORE_CTX`).
-    X509_STORE_CTX
-);
-opaque!(
     /// `struct rsa_st` (`typedef ... RSA`).
     RSA
 );
 
 /// `int (*SSL_verify_cb)(int preverify_ok, X509_STORE_CTX *ctx)` — verify
-/// callback type for `SSL_set_verify` / `SSL_CTX_set_verify`.
-pub type SSL_verify_cb = Option<unsafe extern "C" fn(c_int, *mut X509_STORE_CTX) -> c_int>;
+/// callback type for `SSL_set_verify` / `SSL_CTX_set_verify`. BoringSSL owns the
+/// context it passes, so the callback sees the C object, not the owning handle.
+pub type SSL_verify_cb = Option<unsafe extern "C" fn(c_int, *mut sys::X509_STORE_CTX) -> c_int>;
 
 /// `int pem_password_cb(char *buf, int size, int rwflag, void *userdata)`.
 pub(crate) type pem_password_cb =
@@ -709,8 +820,10 @@ unsafe extern "C" {
     pub safe fn TLS_with_buffers_method() -> *const SSL_METHOD;
 
     // ── ENGINE ───────────────────────────────────────────────────────────
-    pub safe fn ENGINE_new() -> *mut ENGINE;
-    pub fn ENGINE_free(engine: *mut ENGINE) -> c_int;
+    /// Allocates a fresh engine; wrapped by [`ENGINE::new`].
+    pub safe fn ENGINE_new() -> *mut sys::ENGINE;
+    /// Frees the engine. Backs the [`ENGINE`] handle's `Drop`.
+    pub fn ENGINE_free(engine: *mut sys::ENGINE) -> c_int;
 
     // ── SSL_CTX ──────────────────────────────────────────────────────────
     // `&sys::SSL_CTX` is a non-null `SSL_CTX*` carrying no `noalias`/`readonly`,
@@ -748,7 +861,9 @@ unsafe extern "C" {
     pub fn SSL_get_shutdown(ssl: *const SSL) -> c_int;
     pub fn SSL_is_init_finished(ssl: *const SSL) -> c_int;
     pub fn SSL_set_verify(ssl: *mut SSL, mode: c_int, callback: SSL_verify_cb);
-    pub fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut X509_STORE) -> c_int;
+    // `set0`: takes ownership of `store`. Callers hand over the unit (a leaked
+    // `X509_STORE` handle, or a raw `+1` from `us_get_shared_default_ca_store`).
+    pub fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut sys::X509_STORE) -> c_int;
     pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
     pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
     pub fn SSL_get_servername(ssl: *const SSL, ty: c_int) -> *const c_char;
@@ -823,7 +938,7 @@ unsafe extern "C" {
         key: *const c_void,
         key_len: usize,
         md: *const EVP_MD,
-        impl_: *mut ENGINE,
+        impl_: *mut sys::ENGINE,
     ) -> c_int;
     pub fn HMAC_Update(ctx: *mut HMAC_CTX, data: *const u8, data_len: usize) -> c_int;
     pub fn HMAC_Final(ctx: *mut HMAC_CTX, out: *mut u8, out_len: *mut c_uint) -> c_int;

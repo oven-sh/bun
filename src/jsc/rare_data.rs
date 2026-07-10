@@ -197,7 +197,9 @@ impl CleanupHook {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RareData {
-    pub boring_ssl_engine: Option<*mut boring::ENGINE>,
+    /// Owning handle to the VM's lazily-created BoringSSL `ENGINE`; field `Drop`
+    /// calls `ENGINE_free`. Consumers borrow it via [`RareData::boring_engine`].
+    pub boring_ssl_engine: Option<boring::ENGINE>,
 
     /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
     /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
@@ -667,14 +669,20 @@ impl RareData {
             .get_or_insert_with(|| Box::new(FilePollStore::init()))
     }
 
-    pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
-        // The raw `ENGINE_new()` result is cached without a null check:
-        // `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here degrades to
-        // "no engine" rather than crashing. Debug-assert to surface it without
-        // altering release behavior.
-        let ptr = *self
+    /// Borrows the VM-owned `ENGINE` as a raw pointer. Every consumer
+    /// (`EVP_DigestInit_ex`, `EVP_Digest`, `HMAC_Init_ex`, `SHA256::hash`) only
+    /// reads it; the `boring_ssl_engine` handle stays the owner.
+    pub fn boring_engine(&mut self) -> *mut boring::sys::ENGINE {
+        // A failed `ENGINE_new()` is not cached: `EVP_DigestInit_ex` tolerates a
+        // NULL engine, so OOM here degrades to "no engine" rather than crashing.
+        // Debug-assert to surface it without altering release behavior.
+        if self.boring_ssl_engine.is_none() {
+            self.boring_ssl_engine = boring::ENGINE::new();
+        }
+        let ptr = self
             .boring_ssl_engine
-            .get_or_insert_with(|| boring::ENGINE_new());
+            .as_ref()
+            .map_or(core::ptr::null_mut(), |engine| engine.as_ptr());
         debug_assert!(!ptr.is_null(), "ENGINE_new returned null");
         ptr
     }
@@ -1048,13 +1056,10 @@ impl Drop for RareData {
     fn drop(&mut self) {
         // temp_pipe_read_buffer / spawn_sync_event_loop_ / s3_default_client /
         // default_csrf_secret / cleanup_hooks / cron_jobs / path_buf /
-        // tls_default_ciphers:
+        // tls_default_ciphers / boring_ssl_engine (an owning `ENGINE` handle,
+        // whose Drop calls ENGINE_free):
         // all dropped automatically via field Drop.
 
-        if let Some(engine) = self.boring_ssl_engine.take() {
-            // SAFETY: engine was created by ENGINE_new.
-            unsafe { boring::ENGINE_free(engine) };
-        }
         debug_assert!(self.cron_jobs.is_empty());
 
         if let Some(s) = self.default_client_ssl_ctx.take() {

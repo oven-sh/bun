@@ -3632,7 +3632,7 @@ where
             self.do_write_status(status);
         }
 
-        if let Some(mut cookies) = self.cookies.take() {
+        if let Some(cookies) = self.cookies.take() {
             // SAFETY: BACKREF
             let global_this = self.server().global_this();
             let r = cookies.write(

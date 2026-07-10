@@ -6,8 +6,8 @@
  * whether it re-requested a cached manifest, which headers it sent,
  * whether it retried after a 5xx. The registry records every request it
  * sees so tests can assert on that directly instead of asserting inside
- * the server handler (where a failed expectation turns into a confusing
- * 500 rather than a test failure).
+ * the server handler (where a failed expectation answers the install
+ * with a 500 and only reaches the test when `stop()` rethrows it).
  *
  * Interceptors run before routing and can replace any response. They are
  * the escape hatch for scenarios a spec-compliant registry would never

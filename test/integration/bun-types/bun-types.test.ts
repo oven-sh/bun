@@ -1,12 +1,14 @@
 import { $ as Shell, fileURLToPath } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, makeTree } from "harness";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, makeTree } from "harness";
 import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import ts from "typescript";
+
+setDefaultTimeout(isDebug ? 60_000 : 30_000);
 
 const BUN_REPO_ROOT = fileURLToPath(import.meta.resolve("../../../"));
 const BUN_TYPES_PACKAGE_ROOT = join(BUN_REPO_ROOT, "packages", "bun-types");
@@ -50,9 +52,9 @@ beforeAll(async () => {
 
     await $`
       cd ${BUN_TYPES_PACKAGE_ROOT}
-      bun run build
+      BUN_VERSION=${BUN_VERSION} bun run build
       bun pm pack --destination ${BASE_FIXTURE_DIR}
-      rm CLAUDE.md
+      rm -f CLAUDE.md
       mv package.json.backup package.json
 
       cd ${BASE_FIXTURE_DIR}
@@ -113,7 +115,9 @@ async function createIsolatedFixture(packages?: string[]): Promise<string> {
 }
 
 function typeTest(name: string, config: TypeTestConfig) {
-  test(name, async () => {
+  // Driving the TypeScript LanguageService in-process is ~40x slower under a debug build;
+  // CI runs this file with a release bun, so skip the in-process checker here.
+  test.skipIf(isDebug)(name, async () => {
     const fixtureDir = await createIsolatedFixture(config.packages);
     const { diagnostics, emptyInterfaces } = await diagnose(fixtureDir, {
       options: config.options,

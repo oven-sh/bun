@@ -92,7 +92,9 @@ function traceServerRequestEnd() {
 }
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
-const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
+// Same shape as child.ts's send(): all child cluster traffic is
+// process.send-observable and shares one seq namespace.
+const kClusterSendOptions = { __proto__: null, "$internal": true };
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -548,13 +550,14 @@ Server.prototype.listen = function () {
       // path with port/addressType -1 for pipe servers.
       const boundHost = host && isObjectAddress ? address : null;
       const message = {
+        cmd: "NODE_CLUSTER",
         act: "listening",
         port: socketPath ? -1 : (isObjectAddress && address.port) || port,
         data: null,
         address: socketPath ?? (boundHost && boundHost.address) ?? null,
         addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
       };
-      sendHelper(message, null);
+      process.send(message, undefined, kClusterSendOptions);
     });
 
     server[kRealListen](tls, port, host, socketPath, true, onListen);

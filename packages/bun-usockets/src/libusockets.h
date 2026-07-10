@@ -193,8 +193,10 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int), const char *host, unsigned short port, int flags, int *err, void *user);
 
-/* Adopt an existing bound UDP fd (cluster shared dgram handle). POSIX only. */
-struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int), LIBUS_SOCKET_DESCRIPTOR fd, int *err, void *user);
+/* Adopt an existing bound UDP fd (cluster shared dgram handle). POSIX only.
+ * `shared` throttles recvmmsg to 1 packet/syscall (cluster: fd is duped into
+ * every worker); pass 0 for standalone fd-adopts to keep the batch. */
+struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int), LIBUS_SOCKET_DESCRIPTOR fd, int shared, int *err, void *user);
 
 LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s);
 

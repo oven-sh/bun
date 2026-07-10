@@ -244,12 +244,22 @@ function queryServer(worker, message) {
   let handle;
   if (cachedHandle && !cachedHandle.has(worker)) handle = cachedHandle;
 
+  // The TLS↔plain collision has no Node analogue (Node layers TLS post-accept),
+  // so a bare EINVAL is indistinguishable from a real bind(2) failure; carry
+  // the actual cause on the reply for the worker's error message.
+  const kSharedOnlyHint =
+    "TLS and non-TLS cluster workers cannot share the same address:port under SCHED_RR " +
+    "(Bun's TLS accept is native and cannot adopt round-robin connection fds)";
   if (handle !== undefined && message.sharedOnly === true && handle instanceof RoundRobinHandle) {
     // A TLS worker cannot adopt round-robin connection fds (the native
     // listener owns the TLS accept lifecycle), but another worker already
     // claimed this key as round-robin. Fail this listen loudly instead of
     // handing plaintext connections to the TLS server.
-    send(worker, { errno: einvalErrorCode(), key, ack: message.seq, data: handle.data }, null);
+    send(
+      worker,
+      { errno: einvalErrorCode(), key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint },
+      null,
+    );
     return;
   }
   if (
@@ -265,7 +275,11 @@ function queryServer(worker, message) {
     // claimed as shared-only would silently downgrade to SCHED_NONE. Refuse
     // the same way so mixed-TLS/plain behavior does not depend on listen()
     // order.
-    send(worker, { errno: einvalErrorCode(), key, ack: message.seq, data: handle.data }, null);
+    send(
+      worker,
+      { errno: einvalErrorCode(), key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint },
+      null,
+    );
     return;
   }
 
@@ -299,14 +313,14 @@ function queryServer(worker, message) {
   if (!handle.data) handle.data = message.data;
 
   // Set custom server data
-  handle.add(worker, (errno, reply, handle) => {
+  handle.add(worker, (errno, reply, serverHandle) => {
     // A bind error can fan out to several queued workers; the first callback
     // deletes the key, so guard the second lookup.
     const data = handles.get(key)?.data;
 
     // Gives other workers a chance to retry. Don't drop the cached (shared)
     // handle when the fresh one fails — nodejs/node#60141.
-    if (!cachedHandle && errno) handles.delete(key);
+    if (errno && !cachedHandle) handles.delete(key);
 
     const sent = send(
       worker,
@@ -317,16 +331,21 @@ function queryServer(worker, message) {
         data,
         ...reply,
       },
-      handle,
+      serverHandle,
     );
-    if (sent === null && handle !== null && handle !== undefined) {
-      // The shared handle could not be exported to this worker (Windows,
-      // e.g. WSAENOBUFS on a live peer) so the reply was never emitted.
-      // Deliver a bind error instead of leaving the worker's listen()
-      // hanging forever. The handle itself stays registered: other workers
-      // may be using it, and this worker's removal cleans up its slot.
+    if (sent === null && serverHandle !== null && serverHandle !== undefined) {
+      // The shared handle could not be exported to this worker (Windows) so
+      // the reply was never emitted. Deliver a bind error instead of leaving
+      // the worker's listen() hanging forever. The errno is a placeholder:
+      // the real WSA error is dropped in attach_windows_socket_payload today,
+      // and dead-peer / peer_pid==0 cases can't observe this reply anyway.
+      // The handle itself stays registered: other workers may be using it.
       send(worker, { errno: enobufsErrorCode(), key, ack: message.seq, data }, null);
     }
+    // A worker re-asked for a key it already holds and the fresh bind
+    // SUCCEEDED (UDP + reuseAddr): the worker got a dup via SCM_RIGHTS, so
+    // release the fresh handle now — it's not in `handles` and would leak.
+    if (cachedHandle && handle !== cachedHandle && !errno) handle.remove(worker);
   });
 }
 

@@ -92,12 +92,16 @@ cluster._setupWorker = function () {
     if (message.act === "newconn" && handle == null && typeof message["$fd"] === "number" && message["$fd"] >= 0) {
       handle = makeConnectionHandle(message["$fd"]);
     }
-    // node's child_process emits cluster-internal messages on the process
-    // object before the cluster machinery consumes them (node's own cluster
-    // child is wired through this event); tests and tooling tap it - e.g.
-    // test-cluster-worker-handle-close closes its server from a prepended
-    // listener so the connection below is dropped.
-    process.emit("internalMessage", message, handle);
+    // node emits cluster-internal messages on `process` before consuming them
+    // (test-cluster-worker-handle-close taps this). A throwing listener must
+    // not skip onconnection below; rethrow next tick as uncaughtException.
+    try {
+      process.emit("internalMessage", message, handle);
+    } catch (e) {
+      process.nextTick(() => {
+        throw e;
+      });
+    }
     if (message.act === "newconn") {
       onconnection(message, handle);
     } else if (message.act === "disconnect") {
@@ -303,12 +307,14 @@ function onconnection(message, handle) {
   else handle.close();
 }
 
+// node's utils.js sendHelper: fresh object (never mutate the caller's) with
+// `cmd:'NODE_CLUSTER'` so a monkey-patched process.send sees node's body shape.
 function send(message, cb?) {
   if (!process.connected) return false;
-  message.seq = seq;
+  const wire = { __proto__: null, cmd: "NODE_CLUSTER", ...message, seq };
   if (typeof cb === "function") callbacks.$set(seq, cb);
   seq += 1;
-  return process.send(message, undefined, kInternalSendOptions);
+  return process.send(wire, undefined, kInternalSendOptions);
 }
 
 // Extend generic Worker with methods specific to worker processes.

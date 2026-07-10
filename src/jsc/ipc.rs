@@ -98,29 +98,9 @@ impl InternalMsgHolder {
 
         let event_loop = global.bun_vm().event_loop_mut();
 
-        if let Some(p) = message.get(global, "ack")? {
-            if !p.is_undefined() {
-                let ack = p.to_int32();
-                // Note: peek the JSValue first (ending the immutable borrow),
-                // then swap_remove (which drops the Strong).
-                let entry = self.callbacks.get(&ack).map(|s| s.get());
-                if let Some(callback_opt) = entry {
-                    if let Some(callback) = callback_opt {
-                        self.callbacks.swap_remove(&ack);
-                        event_loop.run_callback(
-                            callback,
-                            global,
-                            self.worker.get().unwrap(),
-                            &[
-                                message,
-                                JSValue::NULL, // handle
-                            ],
-                        );
-                    }
-                    return Ok(());
-                }
-            }
-        }
+        // Child seq/ack bookkeeping lives in JS (child.ts send()/onmessage) now
+        // that all child cluster traffic routes through process.send; the child
+        // singleton's `callbacks` map is never written, so no ack-lookup here.
         event_loop.run_callback(
             cb,
             global,
@@ -679,6 +659,17 @@ pub struct Handle {
     /// user destroying the socket meanwhile invalidates - or worse, recycles -
     /// the descriptor that sendmsg(SCM_RIGHTS) ships.
     pub owns_fd: bool,
+    /// Cluster's seq for this message: on NACK-giveup, `on_ack_nack` reclaims
+    /// the seq-level reply callback with `{accepted:false}`.
+    pub cluster_seq: Option<i32>,
+    /// Windows: the hex-encoded WSAPROTOCOL_INFOW as embedded in the
+    /// serialized bytes; on NACK retransmit, a fresh export overwrites this
+    /// exact byte range in `SendHandle.data` (the info can be used only once).
+    #[cfg(windows)]
+    pub win_export_hex: Option<Box<[u8]>>,
+    /// Windows: target pid for `WSADuplicateSocketW` on retransmit.
+    #[cfg(windows)]
+    pub peer_pid: u32,
 }
 
 impl Handle {
@@ -688,6 +679,11 @@ impl Handle {
             js: js.protected(),
             close_on_complete: false,
             owns_fd: false,
+            cluster_seq: None,
+            #[cfg(windows)]
+            win_export_hex: None,
+            #[cfg(windows)]
+            peer_pid: 0,
         }
     }
 
@@ -697,20 +693,32 @@ impl Handle {
             js: js.protected(),
             close_on_complete: true,
             owns_fd: false,
+            cluster_seq: None,
+            #[cfg(windows)]
+            win_export_hex: None,
+            #[cfg(windows)]
+            peer_pid: 0,
         }
     }
 
     /// Capture a Handle-owned dup of `fd` for the wire (see `owns_fd`).
-    /// `None` when `dup` fails; callers fall back to sending the bare message.
-    pub fn init_dup(fd: Fd, js: JSValue, close_on_complete: bool) -> Option<Self> {
-        let Ok(wire_fd) = bun_sys::dup(fd) else {
-            return None;
-        };
-        Some(Self {
+    /// `Err` carries the `dup(2)` errno so the caller can surface it.
+    pub fn init_dup(
+        fd: Fd,
+        js: JSValue,
+        close_on_complete: bool,
+    ) -> Result<Self, bun_sys::Error> {
+        let wire_fd = bun_sys::dup(fd)?;
+        Ok(Self {
             fd: wire_fd,
             js: js.protected(),
             close_on_complete,
             owns_fd: true,
+            cluster_seq: None,
+            #[cfg(windows)]
+            win_export_hex: None,
+            #[cfg(windows)]
+            peer_pid: 0,
         })
     }
 }
@@ -844,12 +852,12 @@ impl SendHandle {
 #[bun_jsc::host_fn]
 fn close_sent_handle(global: &JSGlobalObject, callframe: &crate::CallFrame) -> JsResult<JSValue> {
     let [js] = callframe.arguments_as_array::<1>();
+    // Runs from processTicksAndRejections's `try/catch → reportUncaughtException`,
+    // so straight `?` propagation is the correct sink now that this is deferred.
     if js.is_object() {
-        if let Ok(Some(f)) = js.get(global, "close") {
+        if let Some(f) = js.get(global, "close")? {
             if f.is_callable() {
-                if f.call(global, js, &[]).is_err() {
-                    global.clear_exception();
-                }
+                f.call(global, js, &[])?;
             }
         }
     }
@@ -1290,10 +1298,47 @@ impl SendQueue {
             if self.retry_count < MAX_HANDLE_RETRANSMISSIONS {
                 // retry sending the message
                 item.data.cursor = 0;
+                // Windows: WSAPROTOCOL_INFOW is single-use; re-export and
+                // overwrite the old hex in place (same length).
+                #[cfg(windows)]
+                {
+                    let handle = item.handle.as_mut().unwrap();
+                    if handle.peer_pid != 0 {
+                        if let Some(old_hex) = handle.win_export_hex.take() {
+                            if let Some(new_hex) =
+                                windows_export_socket_hex(handle.fd, handle.peer_pid)
+                            {
+                                if let Some(pos) = bun_core::memmem(&item.data.list, &old_hex) {
+                                    item.data.list[pos..pos + new_hex.len()]
+                                        .copy_from_slice(&new_hex);
+                                }
+                                handle.win_export_hex = Some(new_hex);
+                            } else {
+                                handle.win_export_hex = Some(old_hex);
+                            }
+                        }
+                    }
+                }
                 let item = self.waiting_for_ack.take().unwrap();
                 self.insert_message(item);
                 log!("IPC call continueSend() from onAckNack retry");
                 return self.continue_send(global, ContinueSendReason::NewMessageAppended);
+            }
+            // Give-up: if cluster stashed a seq-level reply callback, reclaim
+            // it and synthesize `{accepted:false}` so RoundRobinHandle can
+            // redistribute and return the worker to rotation.
+            if let Some(seq) = item.handle.as_ref().and_then(|h| h.cluster_seq) {
+                let entry = self.internal_msg_queue.callbacks.get(&seq).map(|s| s.get());
+                if let Some(Some(cb)) = entry {
+                    // Allocate the reply BEFORE dropping the Strong so `cb`
+                    // stays rooted across the JS-heap allocations.
+                    let reply = JSValue::create_empty_object(global, 1);
+                    reply.put(global, b"accepted", JSValue::FALSE);
+                    let _ = JSValue::call_next_tick_1(cb, global, reply);
+                    self.internal_msg_queue.callbacks.swap_remove(&seq);
+                } else if entry.is_some() {
+                    self.internal_msg_queue.callbacks.swap_remove(&seq);
+                }
             }
             // too many retries; give up - emit warning if possible
             let mut warning =
@@ -1895,6 +1940,30 @@ impl Drop for SendQueue {
 }
 
 const MAX_HANDLE_RETRANSMISSIONS: u32 = 3;
+
+/// Windows: `WSADuplicateSocketW(fd, peer_pid)` → hex-encoded
+/// `WSAPROTOCOL_INFOW` (as embedded in the serialized message).
+#[cfg(windows)]
+pub fn windows_export_socket_hex(fd: Fd, peer_pid: u32) -> Option<Box<[u8]>> {
+    let size = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
+    let mut info = vec![0u8; size];
+    // SAFETY: `info` is `size` bytes as required; `fd.native()` is the SOCKET.
+    let rc = unsafe {
+        bun_uws::socket_transfer::bsd_socket_export(
+            fd.native() as bun_uws::LIBUS_SOCKET_DESCRIPTOR,
+            peer_pid,
+            info.as_mut_ptr().cast::<core::ffi::c_void>(),
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    let mut hex = vec![0u8; size * 2];
+    let n = bun_core::strings::encode_bytes_to_hex(&mut hex, &info);
+    debug_assert!(n == size * 2);
+    hex.truncate(n);
+    Some(hex.into_boxed_slice())
+}
 
 /// Key under which a Windows in-band socket transfer rides on a handle
 /// message: hex-encoded `WSAPROTOCOL_INFOW` produced by `bsd_socket_export`

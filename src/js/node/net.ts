@@ -1628,7 +1628,9 @@ Socket.prototype.connect = function connect(...args) {
         // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1649
         if (!this.isPaused()) this.resume();
       });
-      this.connecting = true;
+      // The fd path fires onOpen synchronously above (connecting=false); only
+      // the async host/path connect below should mark connecting=true.
+      if (!fd) this.connecting = true;
     }
     if (fd) {
       return this;
@@ -3752,7 +3754,12 @@ function listenInCluster(
       // The primary sends a uv-domain errno (translated at source via
       // uv_translate_sys_error), so ExceptionWithHostPort renders the right
       // code on every platform — same shape as node's net.js:2022.
-      server.emit("error", new ExceptionWithHostPort(err, "bind", address, port));
+      const ex = new ExceptionWithHostPort(err, "bind", address, port);
+      // Bun-invented failure modes (e.g. TLS/plain SCHED_RR key collision)
+      // carry the actual cause on the reply; append it so the user isn't left
+      // with a bare EINVAL that names a bind(2) that never ran.
+      if (typeof _reply?.bunHint === "string") ex.message += `\n  note: ${_reply.bunHint}`;
+      server.emit("error", ex);
       return;
     }
     const sharedFd = handle?.sharedFd;
@@ -3874,17 +3881,33 @@ function onClusterConnection(err, clientHandle) {
     socket[kSetKeepAlive] = true;
     socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay;
   }
+  socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
+  // Mirror node's onconnection blockList gate (lib/net.js): the fd is adopted
+  // now so remoteAddress is populated.
+  const blockList = self.blockList;
+  if (blockList) {
+    const remote = socket.remoteAddress;
+    const t = isIP(remote);
+    if (t && blockList.check(remote, `ipv${t}`)) {
+      const data = {
+        localAddress: socket.localAddress,
+        localPort: socket.localPort,
+        localFamily: socket.localFamily,
+        remoteAddress: remote,
+        remotePort: socket.remotePort,
+        remoteFamily: socket.remoteFamily,
+      };
+      socket.destroy();
+      self.emit("drop", data);
+      return;
+    }
+  }
   // Socket.prototype._destroy decrements self._connections and calls
   // _emitCloseIfDrained because socket.server is set; no close listener
   // needed here.
   socket.server = self;
+  socket._server = self;
   self._connections++;
-  socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
-  // The fd path fires onOpen synchronously (setting connecting=false), then
-  // Socket.prototype.connect's non-pauseOnConnect branch stamps
-  // connecting=true after doConnect returns. Clear it so remoteAddress/_write
-  // and readyState observe the accepted-socket state node's onconnection does.
-  socket.connecting = false;
   // Mirror ServerHandlers.open(): the constructor-supplied connection
   // listener is invoked via a once-listener per accepted connection.
   const connectionListener = self[bunSocketServerOptions]?.connectionListener;

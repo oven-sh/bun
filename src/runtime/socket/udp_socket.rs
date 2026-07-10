@@ -285,9 +285,12 @@ pub struct UDPSocketConfig {
     pub port: u16,
     pub flags: i32,
     pub binary_type: BinaryType,
-    /// Adopt an existing bound UDP fd (cluster shared dgram handle) instead
-    /// of creating + binding a new socket.
+    /// Adopt an existing bound UDP fd instead of creating + binding a new one.
     pub fd: Option<i32>,
+    /// The adopted fd is a cluster shared handle (duped into every worker):
+    /// throttle recvmmsg to 1 packet/syscall. Standalone `bind({fd})` and
+    /// `Bun.udpSocket({fd})` leave this false so they keep the batch.
+    pub shared_fd: bool,
 }
 
 impl Default for UDPSocketConfig {
@@ -299,6 +302,7 @@ impl Default for UDPSocketConfig {
             flags: 0,
             binary_type: BinaryType::Buffer,
             fd: None,
+            shared_fd: false,
         }
     }
 }
@@ -352,12 +356,19 @@ impl UDPSocketConfig {
         } else {
             None
         };
+        // Internal (dgram.ts cluster path only): the caller knows whether the
+        // fd is shared with other processes; not part of the public options
+        // shape, so read as a plain truthy without validation.
+        let shared_fd = options
+            .get_truthy(global_this, "$sharedFd")?
+            .is_some_and(|v| v.to_boolean());
 
         let mut config = Self {
             hostname,
             port,
             flags,
             fd,
+            shared_fd,
             ..Default::default()
         };
 
@@ -594,6 +605,7 @@ impl UDPSocket {
                 on_close,
                 on_recv_error,
                 fd as uws::LIBUS_SOCKET_DESCRIPTOR,
+                config.shared_fd,
                 Some(&mut err),
                 this_ptr.cast::<c_void>(),
             )

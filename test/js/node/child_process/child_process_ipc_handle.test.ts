@@ -345,4 +345,88 @@ process.on('message', (m, socket) => {
       hasChild: true,
     });
   });
+
+  // parseHandle net.Socket must not leave connecting=true (fd-adopt fires
+  // onOpen synchronously; the connecting=true stamp used to overwrite it).
+  test.concurrent("received net.Socket has connecting=false and remoteAddress synchronously", async () => {
+    using dir = tempDir("ipc-handle-connecting", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+const server = net.createServer(sock => child.send('sock', sock));
+server.listen(0, '127.0.0.1', () => {
+  const c = net.connect(server.address().port, '127.0.0.1');
+  c.on('error', () => {});
+});
+child.on('message', m => { console.log(JSON.stringify(m)); child.kill(); server.close(); process.exit(0); });
+`,
+      "child.js": `
+process.on('message', (m, sock) => {
+  process.send({ connecting: sock.connecting, readyState: sock.readyState, hasRemote: typeof sock.remoteAddress === 'string' });
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+      out: { connecting: false, readyState: "open", hasRemote: true },
+      stderr: expect.any(String),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // _on_after_ipc_closed: A's bytes went out (waiting_for_ack) → cbA(null);
+  // B was queued behind A with cursor==0 → abort_unsent, cbB never fires.
+  test.concurrent(
+    "channel close: written handle callback fires null; unsent queued handle callback never fires",
+    async () => {
+      using dir = tempDir("ipc-handle-abort-unsent", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+const server = net.createServer();
+server.listen(0, '127.0.0.1', () => {
+  let a = null, bCalled = false;
+  net.connect(server.address().port, '127.0.0.1', function () {
+    const sockA = this;
+    net.connect(server.address().port, '127.0.0.1', function () {
+      const sockB = this;
+      // A goes out and lands in waiting_for_ack; B is queued behind it (cursor==0).
+      child.send('A', sockA, err => { a = err; });
+      child.send('B', sockB, () => { bCalled = true; });
+      child.kill('SIGKILL');
+      child.on('close', () => setImmediate(() => {
+        console.log(JSON.stringify({ aWasNull: a === null, bCalled }));
+        server.close();
+        process.exit(0);
+      }));
+    }).on('error', () => {});
+  }).on('error', () => {});
+});
+`,
+        "child.js": `process.on('message', () => {}); setInterval(() => {}, 1e6);`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+        out: { aWasNull: true, bCalled: false },
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });

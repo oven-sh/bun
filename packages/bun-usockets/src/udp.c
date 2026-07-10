@@ -159,6 +159,7 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
     void (*close_cb)(struct us_udp_socket_t *),
     void (*recv_error_cb)(struct us_udp_socket_t *, int),
     LIBUS_SOCKET_DESCRIPTOR fd,
+    int shared,
     int *err,
     void *user
 ) {
@@ -186,7 +187,7 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
     udp->user = user;
 
     udp->closed = 0;
-    udp->shared_fd = 1;
+    udp->shared_fd = shared ? 1 : 0;
     udp->connected = 0;
     udp->on_data = data_cb;
     udp->on_drain = drain_cb;

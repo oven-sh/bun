@@ -284,7 +284,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
           // Bun socket actually closes (the wrapper alone only drops the
           // primary-side refcount).
           handle[kClusterOwner] = this;
-          bunBindSocket(this, state, { fd: handle.sharedFd });
+          bunBindSocket(this, state, { fd: handle.sharedFd, "$sharedFd": true });
         },
       );
       return this;
@@ -350,7 +350,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
           state.clusterHandle = handle;
           handle.adopted = true;
           handle[kClusterOwner] = this;
-          bunBindSocket(this, state, { fd: handle.sharedFd });
+          bunBindSocket(this, state, { fd: handle.sharedFd, "$sharedFd": true });
         },
       );
       return;

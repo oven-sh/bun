@@ -38,44 +38,29 @@ pub(crate) enum FromEnum {
 /// `message` under `$winSocketInfo`, where the receiving process imports it
 /// (see `import_windows_socket_payload` in ipc.rs). The source socket must
 /// stay open until the receiver acks - the existing handle ACK protocol
-/// guarantees that. Returns false when the export failed (dead peer, WSA
-/// error); the caller falls back to sending without the handle.
+/// guarantees that. Returns the hex bytes on success (retained on the Handle
+/// so a NACK retransmit can re-export and overwrite them in place), or `None`
+/// when the export failed (dead peer, WSA error).
 #[cfg(windows)]
 pub(crate) fn attach_windows_socket_payload(
     global: &JSGlobalObject,
     message: JSValue,
     fd: bun_sys::Fd,
     peer_pid: u32,
-) -> bool {
+) -> Option<Box<[u8]>> {
     if peer_pid == 0 {
-        return false;
+        return None;
     }
-    let size = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
-    let mut info = vec![0u8; size];
-    // SAFETY: `info` is `size` bytes as required; `fd.native()` is the SOCKET.
-    let rc = unsafe {
-        bun_uws::socket_transfer::bsd_socket_export(
-            fd.native() as bun_uws::LIBUS_SOCKET_DESCRIPTOR,
-            peer_pid,
-            info.as_mut_ptr().cast::<core::ffi::c_void>(),
-        )
+    let Some(hex) = bun_jsc::ipc::windows_export_socket_hex(fd, peer_pid) else {
+        log!("attachWindowsSocketPayload: WSADuplicateSocketW failed");
+        return None;
     };
-    if rc != 0 {
-        log!(
-            "attachWindowsSocketPayload: WSADuplicateSocketW failed: {}",
-            rc
-        );
-        return false;
-    }
-    let mut hex = vec![0u8; size * 2];
-    let n = bun_core::strings::encode_bytes_to_hex(&mut hex, &info);
-    debug_assert!(n == size * 2);
-    let Ok(str_js) = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex[..n]) else {
+    let Ok(str_js) = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex) else {
         global.clear_exception();
-        return false;
+        return None;
     };
     message.put(global, bun_jsc::ipc::WIN_SOCKET_INFO_KEY, str_js);
-    true
+    Some(hex)
 }
 
 #[bun_jsc::host_fn]
@@ -198,6 +183,10 @@ pub(crate) fn do_send(
     // Native socket whose reads must stop once the transfer is confirmed
     // (the receiver owns the bytes from here; node detaches the handle).
     let mut pause_target = JSValue::UNDEFINED;
+    // POSIX dup(2) failure (EMFILE/ENFILE) — a Bun-created failure mode; must
+    // surface as a send error, not silently downgrade to a bare message.
+    #[cfg_attr(windows, allow(unused_mut, unused_variables))]
+    let mut dup_err: Option<bun_sys::Error> = None;
     if !handle.is_undefined_or_null() {
         if let Some(listener) = Listener::from_js(handle) {
             log!("got listener");
@@ -214,8 +203,9 @@ pub(crate) fn do_send(
                     // this message waits behind an ack cannot invalidate the
                     // fd sendmsg ships. Windows exports the SOCKET below.
                     #[cfg(not(windows))]
-                    {
-                        zig_handle = Handle::init_dup(fd, handle, false);
+                    match Handle::init_dup(fd, handle, false) {
+                        Ok(h) => zig_handle = Some(h),
+                        Err(e) => dup_err = Some(e),
                     }
                     #[cfg(windows)]
                     {
@@ -250,8 +240,9 @@ pub(crate) fn do_send(
                 // same effect by detaching `_handle`; Windows exports the
                 // SOCKET synchronously below instead.
                 #[cfg(not(windows))]
-                {
-                    zig_handle = Handle::init_dup(fd, handle, !keep_open);
+                match Handle::init_dup(fd, handle, !keep_open) {
+                    Ok(h) => zig_handle = Some(h),
+                    Err(e) => dup_err = Some(e),
                 }
                 #[cfg(windows)]
                 {
@@ -264,13 +255,22 @@ pub(crate) fn do_send(
             }
         }
     }
+    #[cfg(not(windows))]
+    if let Some(e) = dup_err {
+        use bun_jsc::SysErrorJsc as _;
+        return do_send_err(global_object, callback, e.to_js(global_object), from);
+    }
 
     // Windows: the fd cannot ride the pipe as ancillary data; serialize the
     // socket for the peer process and attach it to the NODE_HANDLE message.
     #[cfg(windows)]
-    if let Some(h) = &zig_handle {
-        if !attach_windows_socket_payload(global_object, message, h.fd, peer_pid) {
-            zig_handle = None;
+    if let Some(h) = &mut zig_handle {
+        match attach_windows_socket_payload(global_object, message, h.fd, peer_pid) {
+            Some(hex) => {
+                h.win_export_hex = Some(hex);
+                h.peer_pid = peer_pid;
+            }
+            None => zig_handle = None,
         }
     }
     // No transferable native socket (handle without a live fd, a named-pipe
@@ -288,20 +288,17 @@ pub(crate) fn do_send(
         && !pause_target.is_undefined()
         && pause_target.is_object()
     {
-        // Only now — with the handle enqueued and the payload serialized — stop
-        // reading on the sender's copy. Earlier (in Ipc.ts serialize() or
-        // before serialize_and_send) left the socket paused forever when the
-        // send was reverted or serialization threw.
+        // Only now — with the handle enqueued — stop reading on the sender's
+        // copy. A throw here must NOT surface as a send failure (the message
+        // is already committed): report as unhandled instead.
         match pause_target.get(global_object, "pause") {
             Ok(Some(f)) if f.is_callable() => {
-                if f.call(global_object, pause_target, &[]).is_err() {
-                    global_object.clear_exception();
+                if let Err(e) = f.call(global_object, pause_target, &[]) {
+                    global_object.report_active_exception_as_unhandled(e);
                 }
             }
             Ok(_) => {}
-            Err(_) => {
-                global_object.clear_exception();
-            }
+            Err(e) => global_object.report_active_exception_as_unhandled(e),
         }
     }
 

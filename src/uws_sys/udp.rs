@@ -47,7 +47,9 @@ impl Socket {
         }
     }
 
-    /// Adopt an existing bound UDP fd (cluster shared dgram handle).
+    /// Adopt an existing bound UDP fd. `shared` throttles recvmmsg to
+    /// 1 packet/syscall for cluster shared handles (fd is duped into every
+    /// worker); standalone fd-adopts pass `false` to keep the batch.
     /// POSIX only — returns null on Windows builds.
     pub fn create_from_fd(
         loop_: *mut Loop,
@@ -56,6 +58,7 @@ impl Socket {
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int),
         fd: crate::LIBUS_SOCKET_DESCRIPTOR,
+        shared: bool,
         err: Option<&mut c_int>,
         user_data: *mut c_void,
     ) -> *mut Socket {
@@ -69,6 +72,7 @@ impl Socket {
                 close_cb,
                 recv_error_cb,
                 fd,
+                shared as c_int,
                 err.map_or(core::ptr::null_mut(), core::ptr::from_mut),
                 user_data,
             )
@@ -191,6 +195,7 @@ unsafe extern "C" {
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int),
         fd: crate::LIBUS_SOCKET_DESCRIPTOR,
+        shared: c_int,
         err: *mut c_int,
         user_data: *mut c_void,
     ) -> *mut Socket;

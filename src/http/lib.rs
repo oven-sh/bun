@@ -43,8 +43,6 @@ pub mod signals;
 pub mod thread_safe_stream_buffer;
 #[path = "websocket.rs"]
 pub mod websocket;
-#[path = "websocket_http_client.rs"]
-pub mod websocket_http_client;
 #[path = "zlib.rs"]
 pub mod zlib;
 
@@ -5490,6 +5488,13 @@ impl<'a> HTTPClient<'a> {
                 || self.state.transfer_encoding == Encoding::Chunked
                 || is_server_sent_events)
         {
+            if self.state.flags.is_redirect_pending {
+                // WHATWG HTTP-redirect fetch runs on the response head; the 3xx
+                // body is discarded, not awaited. The socket still carries
+                // undrained body bytes so it must be closed, not pooled.
+                self.state.flags.allow_keepalive = false;
+                return Ok(ShouldContinue::Finished);
+            }
             Ok(ShouldContinue::ContinueStreaming)
         } else {
             Ok(ShouldContinue::Finished)

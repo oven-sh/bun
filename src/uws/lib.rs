@@ -17,9 +17,11 @@ use bun_core::ZStr;
 // `SocketAddress`) stay defined here; `bun_uws_sys::socket` has lifetime-
 // bearing variants of the same names that are not yet reconciled.
 
+#[cfg(windows)]
+pub use bun_uws_sys::Timer;
 pub use bun_uws_sys::{
     AnyWebSocket, BodyReaderMixin, ConnectingSocket, ListenSocket, NewApp, RawWebSocket, Request,
-    Timer, WebSocketBehavior, us_socket_stream_buffer_t, us_socket_t, uws_res,
+    WebSocketBehavior, us_socket_stream_buffer_t, us_socket_t, uws_res,
 };
 
 /// `#[uws_callback]` — wraps a `&self`/`&mut self` method in an `extern "C"`

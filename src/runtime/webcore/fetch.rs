@@ -8,30 +8,25 @@ pub(crate) const FETCH_ERROR_UNEXPECTED_BODY: &str =
     "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
 pub(crate) const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
 
-// by the C `kJSType*` ordinal until a typed key is available.
-pub const FETCH_TYPE_ERROR_NAMES: [&str; 8] = [
-    /* kJSTypeUndefined */ "Undefined",
-    /* kJSTypeNull      */ "Null",
-    /* kJSTypeBoolean   */ "Boolean",
-    /* kJSTypeNumber    */ "Number",
-    /* kJSTypeString    */ "String",
-    /* kJSTypeObject    */ "Object",
-    /* kJSTypeSymbol    */ "Symbol",
-    /* kJSTypeBigInt    */ "BigInt",
-];
-
-pub(crate) const FETCH_TYPE_ERROR_STRING_VALUES: [&str; 8] = [
-    concat!("fetch() expects a string, but received ", "Undefined"),
-    concat!("fetch() expects a string, but received ", "Null"),
-    concat!("fetch() expects a string, but received ", "Boolean"),
-    concat!("fetch() expects a string, but received ", "Number"),
-    concat!("fetch() expects a string, but received ", "String"),
-    concat!("fetch() expects a string, but received ", "Object"),
-    concat!("fetch() expects a string, but received ", "Symbol"),
-    concat!("fetch() expects a string, but received ", "BigInt"),
-];
-
-pub(crate) const FETCH_TYPE_ERROR_STRINGS: [&str; 8] = FETCH_TYPE_ERROR_STRING_VALUES;
+pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
+    if value.is_undefined() {
+        "fetch() expects a string, but received Undefined"
+    } else if value.is_null() {
+        "fetch() expects a string, but received Null"
+    } else if value.is_boolean() {
+        "fetch() expects a string, but received Boolean"
+    } else if value.is_number() {
+        "fetch() expects a string, but received Number"
+    } else if value.is_symbol() {
+        "fetch() expects a string, but received Symbol"
+    } else if value.is_big_int() {
+        "fetch() expects a string, but received BigInt"
+    } else if value.is_string_literal() {
+        "fetch() expects a string, but received String"
+    } else {
+        "fetch() expects a string, but received Object"
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export: FetchTasklet lives in ./fetch/FetchTasklet.rs

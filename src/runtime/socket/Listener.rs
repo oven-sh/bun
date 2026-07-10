@@ -84,11 +84,16 @@ pub struct Listener {
     pub group: JsCell<uws::SocketGroup>,
     /// `SSL_CTX*` for accepted sockets. One owned ref; `SSL_CTX_free` on close.
     /// `SSL_new()` per-accept takes its own ref, so accepted sockets outlive a
-    /// stopped listener safely.
-    pub secure_ctx: Option<NonNull<boring_sys::SSL_CTX>>,
+    /// stopped listener safely. `set_secure_context` replaces it.
+    pub secure_ctx: Cell<Option<NonNull<boring_sys::SSL_CTX>>>,
     pub ssl: bool,
     pub protos: Option<Box<[u8]>>,
     pub reject_unauthorized: bool,
+    /// NUL-terminated name `secure_ctx` was registered under in the listen
+    /// socket's SNI tree, so `set_secure_context` can move that entry to the
+    /// rebuilt context. Written once in `listen()`.
+    pub server_name: Option<Box<[u8]>>,
+
     pub strong_data: JsCell<Strong>,
     /// Reference to this listener's JS wrapper. Strong while it is listening or
     /// has connections, downgraded to weak once idle so GC can reclaim it.
@@ -232,7 +237,8 @@ impl Listener {
                     ),
                     poll_ref: JsCell::new(KeepAlive::init()),
                     group: JsCell::new(uws::SocketGroup::default()),
-                    secure_ctx: None,
+                    secure_ctx: Cell::new(None),
+                    server_name: None,
                     strong_data: JsCell::new(Strong::empty()),
                     this_value: JsCell::new(JsRef::empty()),
                 }));
@@ -317,7 +323,8 @@ impl Listener {
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
             group: JsCell::new(uws::SocketGroup::default()),
-            secure_ctx: None,
+            secure_ctx: Cell::new(None),
+            server_name: None,
             strong_data: JsCell::new(Strong::empty()),
             this_value: JsCell::new(JsRef::empty()),
         }));
@@ -340,7 +347,7 @@ impl Listener {
         let cleanup = scopeguard::guard(this, |this| {
             // SAFETY: this is still the sole owner on the error path
             let this_ref = unsafe { &mut *this };
-            if let Some(c) = this_ref.secure_ctx {
+            if let Some(c) = this_ref.secure_ctx.get() {
                 // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref from create_ssl_context
                 unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
             }
@@ -358,7 +365,9 @@ impl Listener {
         if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
             let mut create_err = uws::create_bun_socket_error_t::none;
             match ssl_cfg.as_usockets().create_ssl_context(&mut create_err) {
-                Some(ctx) => this_ref.secure_ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
+                Some(ctx) => this_ref
+                    .secure_ctx
+                    .set(NonNull::new(ctx.cast::<boring_sys::SSL_CTX>())),
                 None => {
                     return Err(global.throw_value(
                         crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
@@ -387,6 +396,7 @@ impl Listener {
 
         let secure_ctx_ptr: Option<*mut uws::SslCtx> = this_ref
             .secure_ctx
+            .get()
             .map(|p| p.as_ptr().cast::<uws::SslCtx>());
 
         let mut errno: c_int = 0;
@@ -493,7 +503,7 @@ impl Listener {
 
         if let Some(ssl_config) = ssl_cfg_taken.as_ref() {
             // `ssl_enabled` ⇒ `createSSLContext` succeeded above ⇒ `secure_ctx` set.
-            let secure = this_ref.secure_ctx.expect("unreachable");
+            let secure = this_ref.secure_ctx.get().expect("unreachable");
             if let Some(server_name) = ssl_config.server_name_cstr() {
                 if !server_name.to_bytes().is_empty() {
                     // Registering the default cert under its own server_name is a
@@ -505,6 +515,7 @@ impl Listener {
                         secure.as_ptr().cast(),
                         core::ptr::null_mut(),
                     );
+                    this_ref.server_name = Some(server_name.to_bytes_with_nul().into());
                 }
             }
             // Register the dynamic SNI dispatch when the JS config provided a
@@ -733,6 +744,68 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// Rebuild the listening socket's default `SSL_CTX` from a fresh TLS options
+    /// object (`node:tls`'s `server.setSecureContext()`). Sockets already
+    /// accepted keep the certificate they handshook with; every subsequent
+    /// handshake uses the new one.
+    pub fn set_secure_context(
+        this: &Self,
+        global: &JSGlobalObject,
+        tls: JSValue,
+    ) -> JsResult<JSValue> {
+        // Not a listening TLS socket (a named pipe, or `listen()` hasn't run
+        // yet): the JS-side options stay the source of truth and the next
+        // `listen()` builds the context from them.
+        if !this.ssl || !matches!(this.listener.get(), ListenerType::Uws(_)) {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        // Parsing reads the options object, which can run user JS and close the
+        // server out from under us — re-read the listener afterwards.
+        let Some(ssl_config) = ({
+            // SAFETY: per-thread VM; valid for program lifetime.
+            let vm = VirtualMachine::get().as_mut();
+            SSLConfig::from_js(vm, global, tls)?
+        }) else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let ListenerType::Uws(ls) = this.listener.get() else {
+            return Ok(JSValue::UNDEFINED);
+        };
+
+        let mut create_err = uws::create_bun_socket_error_t::none;
+        let Some(ctx) = ssl_config.as_usockets().create_ssl_context(&mut create_err) else {
+            return Err(
+                global.throw_value(crate::socket::uws_jsc::create_bun_socket_error_to_js(
+                    create_err, global,
+                )),
+            );
+        };
+        // One owned ref, which becomes the listener's once the swap lands.
+        let ctx = ctx.cast::<boring_sys::SSL_CTX>();
+
+        // `server_name` is the entry the listen-time context was registered
+        // under in the SNI tree; the C side moves it across so a ClientHello
+        // carrying that name stops resolving to the retired certificate.
+        let server_name = this.server_name.as_deref().map(|bytes| {
+            // SAFETY: stored NUL-terminated by `listen()`.
+            unsafe { core::ffi::CStr::from_ptr(bytes.as_ptr().cast()) }
+        });
+        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+        if !bun_opaque::opaque_deref_mut(ls).set_ssl_ctx(ctx.cast(), server_name) {
+            // SAFETY: FFI — release the ref create_ssl_context handed us.
+            unsafe { boring_sys::SSL_CTX_free(ctx) };
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        if let Some(old) = this.secure_ctx.replace(NonNull::new(ctx)) {
+            // SAFETY: FFI — drop the listener's ref on the retired context. Any
+            // live socket still holds its own via `SSL_new`.
+            unsafe { boring_sys::SSL_CTX_free(old.as_ptr()) };
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn dispose(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Self::do_stop(this, true);
@@ -854,7 +927,7 @@ impl Listener {
         );
         // SAFETY: group was init'd in listen(); not concurrently walked.
         unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
-        if let Some(ctx) = this_ref.secure_ctx {
+        if let Some(ctx) = this_ref.secure_ctx.get() {
             // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref; release it
             unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
         }
@@ -1555,6 +1628,23 @@ pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> 
     let listener = arguments.ptr[0];
     if let Some(this) = listener.as_class_ref::<Listener>() {
         return Listener::add_server_name(this, global, arguments.ptr[1], arguments.ptr[2]);
+    }
+    Err(global.throw(format_args!("Expected a Listener instance")))
+}
+
+#[bun_jsc::host_fn]
+pub(crate) fn js_set_secure_context(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+
+    let arguments = frame.arguments_old::<2>();
+    if arguments.len < 2 {
+        return Err(global.throw_not_enough_arguments("setSecureContext", 2, arguments.len));
+    }
+    if let Some(this) = arguments.ptr[0].as_class_ref::<Listener>() {
+        return Listener::set_secure_context(this, global, arguments.ptr[1]);
     }
     Err(global.throw(format_args!("Expected a Listener instance")))
 }

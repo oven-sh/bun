@@ -80,6 +80,37 @@ describe("bundler", () => {
       stdout: "object",
     },
   });
+  itBundled("edgecase/StatementlessCommonJSModuleDynamicImport", {
+    files: {
+      "/entry.ts": /* js */ `
+        import('./b.cjs').then(m => console.log(typeof m));
+      `,
+      "/b.cjs": `;`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+  itBundled("edgecase/DirectiveOnlyCommonJSModule", {
+    files: {
+      "/entry.ts": /* js */ `
+        import * as b from './b.cjs';
+        console.log(typeof b);
+      `,
+      "/b.cjs": `"use strict";\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
   itBundled("edgecase/HoistableOnlyCommonJSModule", {
     files: {
       "/entry.ts": /* js */ `

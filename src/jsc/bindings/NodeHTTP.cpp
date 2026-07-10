@@ -213,11 +213,11 @@ static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
     return false;
 }
 
-// One pass over the request: append url, method, jsNumber(dispatch bitfield)
-// and jsUndefined() (the legacy rawHeaders slot) to `args`, and capture the
-// raw header bytes into `flatHeaders` as [u16 nameLen][u16 valueLen][name]
-// [value]... so req.rawHeaders / req.headers can be materialized lazily
-// (Bun__NodeHTTP__buildRawHeadersArray) only when user code reads them.
+// One pass over the request: append url, method and jsNumber(dispatch
+// bitfield) to `args`, and capture the raw header bytes into `flatHeaders`
+// as [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
+// req.headers can be materialized lazily (Bun__NodeHTTP__buildRawHeadersArray)
+// only when user code reads them.
 static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, WTF::Vector<uint8_t, 1024>& flatHeaders, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     {

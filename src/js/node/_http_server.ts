@@ -2355,11 +2355,12 @@ function stopServerResponsePerf(this: any) {
   }
 }
 
-// `once("finish", fn.bind(server, socket, ...))` allocated a bound closure
-// per request. Inside a "finish" listener `this` is the response, and the
-// connection socket is `this.req.socket` (which carries its owning server) —
-// NOT `this.socket`, which is the response's own transport facade and has no
-// `.server`. So a single shared function needs no per-request state at all.
+// `on("finish", fn.bind(server, socket, ...))` allocated a bound closure per
+// request. Inside a "finish" listener `this` is the response; the connection
+// socket is `this.req.socket`, with `this.socket` (assigned by assignSocket,
+// cleared only by detachSocket) as the fallback for requests the stream
+// destroyer already detached. A single shared function needs no per-request
+// state at all.
 function emitResponseFinishHandleSocket() {
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup
   // does `stream.socket = null` for server requests); the response's own

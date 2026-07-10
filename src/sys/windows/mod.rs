@@ -3982,6 +3982,7 @@ pub fn GetFinalPathNameByHandle(
     let flags = match fmt.volume_name {
         win32::VolumeName::Dos => win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_DOS,
         win32::VolumeName::Nt => win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NT,
+        win32::VolumeName::None => win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NONE,
     };
     // SAFETY: out_buffer valid for out_buffer.len()
     let return_length = unsafe {

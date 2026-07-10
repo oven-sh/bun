@@ -1145,10 +1145,6 @@ pub fn normalize_string_generic_tz<
 
     let result = &mut buf[0..buf_i];
 
-    if cfg!(debug_assertions) && is_windows {
-        debug_assert!(!strings::has_prefix_t::<T>(result, T::lit(b"\\:\\")));
-    }
-
     result
 }
 

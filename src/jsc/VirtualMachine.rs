@@ -58,7 +58,7 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
-pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, jsc::C::JSObjectRef>;
+pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
 /// `api::JsException` lives in
 /// [`crate::schema_api`] (not `bun_options_types::schema::api`) because its
 /// `stack: StackTrace` field transitively names `ZigStackFramePosition` from
@@ -1517,10 +1517,11 @@ impl VirtualMachine {
         // self.event_loop().tick();
 
         if self.should_destruct_main_thread_on_exit() {
+            #[cfg(windows)]
             if let Some(t) = self.event_loop_mut().forever_timer.take() {
                 // SAFETY: `t` is the live usockets timer created in
-                // `EventLoop::auto_tick`; `close::<true>()` (fallthrough)
-                // frees it without re-entering the loop.
+                // `EventLoop::tick_possibly_forever`; `close::<true>()`
+                // (fallthrough) frees it without re-entering the loop.
                 unsafe { uws::Timer::close::<true>(t.as_ptr()) };
             }
             // Drain `TimeoutObject`s / `ImmediateObject`s from `All.timers`
@@ -1536,6 +1537,8 @@ impl VirtualMachine {
                 // `destroy()`, well after `global_exit`).
                 unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
             }
+            // Same reason: the GC timers are heap nodes too.
+            self.gc_controller.deinit();
             // Detached worker threads may still be in startVM()/spin() using
             // the process-global resolver BSSMap singletons. transpiler.deinit()
             // below frees those singletons, so request termination of every
@@ -1595,7 +1598,6 @@ impl VirtualMachine {
             // loop, which is live for the process lifetime.
             unsafe { (*uws::Loop::get()).drain_closed_sockets() };
 
-            self.gc_controller.deinit();
             self.destroy();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))

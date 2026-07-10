@@ -11,6 +11,7 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamsRuntime.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 
@@ -98,17 +99,35 @@ void JSDirectStreamController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSDirectStreamController>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_underlyingSource);
-    visitor.append(thisObject->m_pull);
-    visitor.append(thisObject->m_pendingRead);
-    visitor.append(thisObject->m_deferCloseReason);
-    visitor.append(thisObject->m_arrayBufferSink);
-    visitor.append(thisObject->m_array);
-    visitor.append(thisObject->m_closingPromise);
-    visitor.append(thisObject->m_finalChunk);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_underlyingSource);
+    visitor.appendHidden(thisObject->m_pull);
+    visitor.appendHidden(thisObject->m_pendingRead);
+    visitor.appendHidden(thisObject->m_deferCloseReason);
+    visitor.appendHidden(thisObject->m_arrayBufferSink);
+    visitor.appendHidden(thisObject->m_array);
+    visitor.appendHidden(thisObject->m_closingPromise);
+    visitor.appendHidden(thisObject->m_finalChunk);
     Locker locker { thisObject->cellLock() };
     thisObject->m_textAccumulator.visit(locker, visitor);
+}
+
+void JSDirectStreamController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSDirectStreamController>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_underlyingSource, "underlyingSource"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pull, "pull"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingRead, "pendingRead"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_deferCloseReason, "deferCloseReason"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_arrayBufferSink, "arrayBufferSink"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_array, "array"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closingPromise, "closingPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_finalChunk, "finalChunk"_s);
+    WTF::Locker locker { thisObject->cellLock() };
+    thisObject->m_textAccumulator.analyzeHeap(locker, cell, analyzer);
 }
 
 static size_t byteLengthOf(JSValue value)
@@ -167,9 +186,10 @@ static JSValue writeToTextSink(JSGlobalObject* globalObject, JSDirectStreamContr
     size_t byteLength = 0;
     if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk))
         byteLength = view->isDetached() ? 0 : view->byteLength();
-    else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(chunk))
-        byteLength = (!buffer->impl() || buffer->impl()->isDetached()) ? 0 : buffer->impl()->byteLength();
-    else {
+    else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(chunk)) {
+        auto* impl = buffer->impl();
+        byteLength = (!impl || impl->isDetached()) ? 0 : impl->byteLength();
+    } else {
         throwTypeError(globalObject, scope, "Expected text, ArrayBuffer or ArrayBufferView"_s);
         return {};
     }
@@ -226,12 +246,14 @@ static JSValue writeToDirectSink(JSGlobalObject* globalObject, JSDirectStreamCon
 static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
     auto& accumulator = controller->m_textAccumulator;
-    if (!accumulator.hasString && !accumulator.hasBuffer)
+    const bool hasString = accumulator.hasString;
+    const bool hasBuffer = accumulator.hasBuffer;
+    if (!hasString && !hasBuffer)
         return emptyString();
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Pure-string rope: the ONLY arm of the direct Text sink that strips a leading BOM.
-    if (accumulator.hasString && !accumulator.hasBuffer) {
+    if (hasString && !hasBuffer) {
         if (Bun::WebStreams::exceedsStringLimit(accumulator.rope.length())) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return String();
@@ -254,8 +276,9 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
             if (!view->isDetached())
                 bytes.append(view->span());
         } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value)) {
-            if (buffer->impl() && !buffer->impl()->isDetached())
-                bytes.append(buffer->impl()->span());
+            auto* impl = buffer->impl();
+            if (impl && !impl->isDetached())
+                bytes.append(impl->span());
         }
     }
     if (!accumulator.rope.isEmpty()) {

@@ -506,9 +506,10 @@ impl PackageJSON {
         // On the success path it is *moved* (not leaked) into
         // `package_json.source_contents` at the bottom of this fn, so the heap
         // allocation lives for the life of the returned `PackageJSON`. On every
-        // early `return None` below `entry_contents` drops and frees normally, after
-        // `json_source` is already dead. `Box<[u8]>` heap address is stable
-        // across the move.
+        // early return below (the `invalid(...)` paths) `entry_contents` drops and
+        // frees normally after `json_source` is already dead; the poisoned entry's
+        // `source` uses `b""` and does not reference these bytes. `Box<[u8]>` heap
+        // address is stable across the move.
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
         let json_source = bun_ast::Source::init_path_string(package_json_path, contents_static);
 

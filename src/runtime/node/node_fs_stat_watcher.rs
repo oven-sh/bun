@@ -284,10 +284,11 @@ impl StatWatcherScheduler {
             return;
         }
 
-        // reschedule the timer
+        // reschedule the timer — this tag opts out of fake timers, so the
+        // deadline lives in the real heap and must be in real-clock units.
         timer_all.update(
             elt,
-            &Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(interval)),
+            &Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(interval)),
         );
     }
 

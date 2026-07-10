@@ -405,8 +405,8 @@ impl Lookup {
 
                 // SAFETY: `standalone_module_graph_data` returns a pointer
                 // owned by the standalone module graph trailer; lifetime is
-                // process-static (mmapped). `source_file_contents` mutates the
-                // decompression cache in-place.
+                // process-static (mmapped). `source_file_contents` fills the
+                // per-index decompression cache through a `OnceLock`.
                 let code = unsafe { (*serialized).source_file_contents(index) };
 
                 return Some(ZigStringSlice::from_utf8_never_free(code?));

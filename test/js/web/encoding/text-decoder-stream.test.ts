@@ -180,3 +180,62 @@ import { readableStreamFromArray } from "harness";
     }).toThrow(Error);
   });
 }
+
+// Web IDL: `new TextDecoderStream(label, options)` treats undefined/null options as {}.
+test("TextDecoderStream accepts undefined and null options", () => {
+  for (const options of [undefined, null]) {
+    const stream = new TextDecoderStream("utf-8", options);
+    expect(stream.fatal).toBe(false);
+    expect(stream.ignoreBOM).toBe(false);
+  }
+  expect(new TextDecoderStream("utf-8", { fatal: true }).fatal).toBe(true);
+});
+
+// https://github.com/oven-sh/bun/pull/33193 — a transform/flush failure must reject the
+// write/close promise, not throw synchronously or leave the in-flight op unsettled.
+test("cancelling the readable inside a patched decode() rejects the write instead of throwing", async () => {
+  const original = TextDecoder.prototype.decode;
+  try {
+    const stream = new TextDecoderStream();
+    const reader = stream.readable.getReader();
+    const writer = stream.writable.getWriter();
+    reader.read();
+    (await null, await null, await null); // open the synchronous-transform window (backpressure cleared, write runs the transform inline)
+
+    TextDecoder.prototype.decode = function (...args) {
+      TextDecoder.prototype.decode = original;
+      reader.cancel();
+      return "x";
+    };
+    const writePromise = writer.write(new Uint8Array([120])); // must NOT throw synchronously
+    expect(writePromise).toBeInstanceOf(Promise);
+    await expect(writePromise).rejects.toBeInstanceOf(TypeError);
+    await writer.abort("bye"); // must settle
+  } finally {
+    TextDecoder.prototype.decode = original;
+  }
+});
+
+test("cancelling the readable inside a patched decode() during flush rejects close()", async () => {
+  const original = TextDecoder.prototype.decode;
+  try {
+    const stream = new TextDecoderStream();
+    const reader = stream.readable.getReader();
+    const writer = stream.writable.getWriter();
+    reader.read();
+    (await null, await null, await null); // open the synchronous-transform window (backpressure cleared, write runs the transform inline)
+
+    TextDecoder.prototype.decode = function (...args) {
+      TextDecoder.prototype.decode = original;
+      // cancel() during an in-flight close returns the finish promise, which rejects
+      // together with the flush — handle it so it isn't an unhandled rejection.
+      reader.cancel().catch(() => {});
+      return "tail";
+    };
+    const closePromise = writer.close(); // flush runs the patched decode; must NOT throw synchronously
+    expect(closePromise).toBeInstanceOf(Promise);
+    await expect(closePromise).rejects.toBeInstanceOf(TypeError);
+  } finally {
+    TextDecoder.prototype.decode = original;
+  }
+});

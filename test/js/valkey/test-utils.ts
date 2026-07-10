@@ -7,24 +7,29 @@ import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
 
 const dockerCLI = dockerExe() as string;
+// A running coordinator or an explicit service mapping already proves a working
+// docker daemon (test/harness.ts describeWithContainer treats them the same
+// way), so only pay the ~2s-per-file `docker info` probe when neither is set.
 export const isEnabled =
   !!dockerCLI &&
-  (() => {
-    try {
-      const info = Bun.spawnSync({
-        cmd: [dockerCLI, "info"],
-        stdout: "pipe",
-        stderr: "inherit",
-        env: bunEnv,
-        timeout: 5_000,
-      });
-      if (info.exitCode !== 0) return false;
-      if (info.signalCode) return false;
-      return info.stdout.toString().indexOf("Server Version:") !== -1;
-    } catch (error) {
-      return false;
-    }
-  })();
+  (!!process.env.BUN_DOCKER_COORDINATOR ||
+    !!process.env.BUN_TEST_SERVICE_redis_unified ||
+    (() => {
+      try {
+        const info = Bun.spawnSync({
+          cmd: [dockerCLI, "info"],
+          stdout: "pipe",
+          stderr: "inherit",
+          env: bunEnv,
+          timeout: 5_000,
+        });
+        if (info.exitCode !== 0) return false;
+        if (info.signalCode) return false;
+        return info.stdout.toString().indexOf("Server Version:") !== -1;
+      } catch (error) {
+        return false;
+      }
+    })());
 
 /**
  * Test utilities for Valkey/Redis tests
@@ -436,10 +441,10 @@ if (isEnabled) {
     // if (!context.initialized) {
     //   console.warn("Test initialization failed - tests may be skipped");
     // }
-    // Cold container start is bounded by `compose up --wait-timeout 60` plus
+    // Cold container start is bounded by `compose up --wait-timeout 180` plus
     // a `compose build` step; the default 5s hook timeout fires long before
     // that on a cold cache.
-  }, 120_000);
+  }, 240_000);
 }
 
 if (isEnabled) {

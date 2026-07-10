@@ -192,20 +192,20 @@ describe("Bun.Cookie.parse security fuzz tests", () => {
     ];
 
     for (const maliciousCase of maliciousCases) {
-      try {
-        const cookie = Bun.Cookie.parse(maliciousCase);
-        expect(cookie).toBeDefined();
-        if (cookie.maxAge !== undefined) {
-          // Max-Age should be a reasonable number, not NaN or Infinity
-          expect(Number.isFinite(cookie.maxAge)).toBe(true);
-        }
-        if (cookie.expires !== undefined) {
-          // Expires should be a reasonable timestamp, not NaN
-          expect(Number.isFinite(cookie.expires)).toBe(true);
-        }
-      } catch (error) {
-        // Some cases might be rejected, which is fine
-        expect(error).toBeDefined();
+      const cookie = Bun.Cookie.parse(maliciousCase);
+      expect(cookie).toBeDefined();
+
+      // Every attribute the header names survives parsing, whichever order it came in.
+      expect(cookie.maxAge !== undefined).toBe(maliciousCase.includes("Max-Age="));
+      expect(cookie.expires !== undefined).toBe(maliciousCase.includes("Expires="));
+
+      if (cookie.maxAge !== undefined) {
+        // Max-Age should be a reasonable number, not NaN or Infinity
+        expect(Number.isFinite(cookie.maxAge)).toBe(true);
+      }
+      if (cookie.expires !== undefined) {
+        // Expires should be a reasonable timestamp, not NaN
+        expect(Number.isFinite(cookie.expires.getTime())).toBe(true);
       }
     }
   });

@@ -309,21 +309,19 @@ where
 // downcast through the codegen stub so the call sites type-check; the stub
 // returns `None` until codegen lands.
 //
-/// # Safety
-/// `from_js` returns the C++-owned cell pointer for `value`. The caller must
-/// guarantee that:
-/// - no other Rust `&mut Response` aliasing this cell is live for the
-///   lifetime of the returned reference, and
-/// - `value` is kept GC-rooted (ensure_still_alive / protect()) for as long
-///   as the returned reference is used, so the JSC-owned allocation outlives
-///   the borrow.
+/// The C++-owned cell pointer for `value`, or `None` if it is not a `Response`.
+///
+/// Returns a raw pointer rather than `&mut Response` so it keeps the wrapper
+/// allocation's provenance: `RequestContext::set_response` stores it in a
+/// `WeakPtr<Response>`, which outlives any reborrow and is read again after
+/// the Response has been written through other pointers.
+///
+/// Callers must keep `value` GC-rooted (ensure_still_alive / protect()) for as
+/// long as they use the pointer, so the JSC-owned allocation outlives it, and
+/// must not form two overlapping `&mut Response` from it.
 #[inline]
-unsafe fn as_response(value: JSValue) -> Option<&'static mut Response> {
-    response::from_js(value).map(|p| {
-        // SAFETY: see the fn-level safety doc — caller guarantees no live
-        // aliasing `&mut Response` and keeps `value` GC-rooted for the borrow.
-        unsafe { &mut *p.cast::<Response>() }
-    })
+fn as_response(value: JSValue) -> Option<*mut Response> {
+    response::from_js(value).map(|p| p.cast::<Response>())
 }
 
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
@@ -750,12 +748,15 @@ where
             return;
         }
 
-        // SAFETY: sole `&mut Response` for this cell in scope; `value` is
-        // protect()'d immediately below and stored in `response_jsvalue`.
-        let Some(response) = (unsafe { as_response(value) }) else {
+        let Some(response) = as_response(value) else {
             ctx.render_missing_invalid_response(value);
             return;
         };
+        // SAFETY: `response` is the live cell pointer; `value` is rooted by the
+        // caller's frame and protect()'d below.
+        if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
+            return;
+        }
         ctx.response_jsvalue = value;
         debug_assert!(!ctx.flags.response_protected());
         ctx.flags.set_response_protected(true);
@@ -772,7 +773,8 @@ where
             return;
         }
 
-        ctx.render(response);
+        // SAFETY: `response` is the live, protect()'d cell pointer.
+        unsafe { ctx.render(response) };
     }
 
     pub fn should_render_missing(&self) -> bool {
@@ -867,6 +869,24 @@ where
             debug_assert!(self.flags.has_finalized());
         }
 
+        // A response body stream suspended inside its `pull()` never settles the promise
+        // whose reactions consume the sink (`handleResolveStream` / `handleRejectStream`),
+        // so a client abort in that state reaches deinit with the sink still owned here.
+        // This is the owner's last exit: release it exactly like the settle paths do.
+        if let Some(wrapper_ptr) = self.sink.take() {
+            // SAFETY: deinit runs once, after `detach_response()` removed the uWS callbacks;
+            // the context is the sink's sole owner (see the `sink` field's doc comment).
+            let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
+            wrapper.sink.finalize();
+            if let Some(sink_global) = wrapper.sink.global_this {
+                ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
+                    &mut wrapper.sink.signal,
+                    &sink_global,
+                );
+            }
+            Self::destroy_sink(wrapper_ptr);
+        }
+
         self.request_body_buf = Vec::new();
         self.response_buf_owned = Vec::new();
         self.response_weakref.deref();
@@ -915,12 +935,15 @@ where
         let _ref = RequestContextRef(std::ptr::from_mut::<Self>(ctx));
 
         let err = arguments.ptr[0];
+        // Pass the rejection reason through verbatim (including `null` and
+        // `undefined`) so `error()` sees the same value the already-settled
+        // path delivers. Only an empty JSValue is normalized.
         Self::handle_reject(
             ctx,
-            if !err.is_empty_or_undefined_or_null() {
-                err
-            } else {
+            if err.is_empty() {
                 JSValue::UNDEFINED
+            } else {
+                err
             },
         );
         Ok(JSValue::UNDEFINED)
@@ -934,6 +957,32 @@ where
         let resp = ctx.resp.expect("infallible: resp bound");
         // SAFETY: FFI handle, just checked Some
         let has_responded = resp.has_responded();
+
+        // The status line is already committed (a direct ReadableStream's
+        // pull() threw synchronously after do_render_stream wrote headers).
+        // error() cannot replace a response whose status is on the wire;
+        // report the failure and terminate the body so the client observes an
+        // incomplete message instead of a second header block spliced into
+        // the chunked body.
+        if !has_responded && ctx.flags.has_written_status() {
+            if !value.is_empty_or_undefined_or_null()
+                && let Some(server) = ctx.server
+            {
+                // SAFETY: BACKREF; see drain_microtasks() re: the const→mut cast.
+                unsafe {
+                    (*std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut())
+                        .run_error_handler(value, None);
+                }
+            }
+            let state = resp.state();
+            if state.is_http_write_called() && state.is_response_pending() {
+                ctx.force_close();
+            } else {
+                ctx.end_stream(ctx.should_close_connection());
+            }
+            return;
+        }
+
         if !has_responded {
             let original_state = ctx.defer_deinit_until_callback_completes;
             let should_deinit_context = core::cell::Cell::new(match original_state {
@@ -2116,6 +2165,11 @@ where
                 match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                     jsc::PromiseResult::Pending => {
                         stream_log!("promise still Pending");
+                        // The sink now owns a raw `resp` pointer and the pump
+                        // promise holds a ref on this context. Marking pending
+                        // keeps `handle_reject` from ending the response out
+                        // from under the sink while the stream is in flight.
+                        this.flags.set_has_marked_pending(true);
                         if !this.flags.has_written_status() {
                             response_stream.sink.on_first_write = None;
                             response_stream.sink.ctx = None;
@@ -2426,7 +2480,7 @@ where
         // SAFETY: pair is a stack local threaded through cork user-data.
         let pair = unsafe { &mut *pair };
         let this = &mut *pair.this;
-        let response = &mut *pair.response;
+        let response_ptr = pair.response;
         if this.resp.is_none() {
             return;
         }
@@ -2435,7 +2489,11 @@ where
         // Always this.renderMetadata() before sending the content-length or transfer-encoding header so status is sent first
 
         let resp = this.resp.expect("infallible: resp bound");
-        this.set_response(response);
+        // SAFETY: `response_ptr` is the live, GC-rooted cell pointer the
+        // constructing frame put in the pair; it carries the cell's provenance.
+        unsafe { this.set_response(response_ptr) };
+        // SAFETY: sole `&mut Response` for this cell in this frame.
+        let response = unsafe { &mut *response_ptr };
 
         // `render` drops the body for a null-body status on GET, so HEAD must
         // not derive framing from that body (or the user headers) either
@@ -2554,13 +2612,18 @@ where
                     ); // TODO: properly propagate exception upwards
                     return;
                 }
+                // Size the blob *before* `render_metadata()`: it re-fetches the
+                // Response from `response_weakref`, so no borrow of the Response
+                // (here, `blob`) may still be live across it. Nothing is written
+                // to the socket in between, so the wire output is unchanged.
+                blob.resolve_size();
+                let blob_size = blob.size.get();
                 this.render_metadata();
 
-                blob.resolve_size();
-                if blob.size.get() == crate::webcore::blob::MAX_SIZE {
+                if blob_size == crate::webcore::blob::MAX_SIZE {
                     resp.write_header_int(b"content-length", 0);
                 } else {
-                    resp.write_header_int(b"content-length", blob.size.get() as u64);
+                    resp.write_header_int(b"content-length", blob_size as u64);
                 }
                 this.end_without_body(this.should_close_connection());
             }
@@ -2570,6 +2633,17 @@ where
                     // SAFETY: FFI handle
                     resp.write_header(b"transfer-encoding", b"chunked");
                 }
+                // HEAD never transmits the body: cancel the stream so the
+                // source's cancel() runs and its resources are released.
+                // SAFETY: sole `&mut Response`; render_metadata's reborrow ended.
+                let response = unsafe { &mut *response_ptr };
+                if let Some(stream) = response.get_body_readable_stream(global_this) {
+                    let _keep = jsc::EnsureStillAlive(stream.value);
+                    response.detach_readable_stream(global_this);
+                    // Unread stream has no reader; `cancel()` would no-op.
+                    stream.cancel_with_reason(global_this, JSValue::UNDEFINED);
+                }
+                *response.get_body_value() = Body::Value::Used;
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
@@ -2623,10 +2697,13 @@ where
             return;
         }
 
-        // SAFETY: sole `&mut Response` for this cell in scope;
-        // `response_value` is rooted via ensure_still_alive() / protect()
-        // below for the duration of the borrow.
-        if let Some(response) = unsafe { as_response(response_value) } {
+        // `response_value` is rooted via ensure_still_alive() / protect() below
+        // for as long as `response` is used.
+        if let Some(response) = as_response(response_value) {
+            // SAFETY: `response` is the live, rooted cell pointer.
+            if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
+                return;
+            }
             ctx.response_jsvalue = response_value;
             ctx.response_jsvalue.ensure_still_alive();
             ctx.flags.set_response_protected(false);
@@ -2640,7 +2717,9 @@ where
                 }
                 return;
             } else {
-                let body_value = response.get_body_value();
+                // SAFETY: sole `&mut Response` for this cell in scope; the
+                // borrow ends before `render` reborrows the same pointer.
+                let body_value = unsafe { (*response).get_body_value() };
                 body_value.to_blob_if_possible();
 
                 match body_value {
@@ -2656,7 +2735,8 @@ where
                     }
                     _ => {}
                 }
-                ctx.render(response);
+                // SAFETY: `response` is the live, rooted cell pointer.
+                unsafe { ctx.render(response) };
             }
             return;
         }
@@ -2690,13 +2770,17 @@ where
                         ctx.render_missing_invalid_response(fulfilled_value);
                         return;
                     }
-                    // SAFETY: sole `&mut Response` for this cell in scope;
                     // `fulfilled_value` is rooted via ensure_still_alive() /
-                    // protect() below for the duration of the borrow.
-                    let Some(response) = (unsafe { as_response(fulfilled_value) }) else {
+                    // protect() below for as long as `response` is used.
+                    let Some(response) = as_response(fulfilled_value) else {
                         ctx.render_missing_invalid_response(fulfilled_value);
                         return;
                     };
+
+                    // SAFETY: `response` is the live, rooted cell pointer.
+                    if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
+                        return;
+                    }
 
                     ctx.response_jsvalue = fulfilled_value;
                     ctx.response_jsvalue.ensure_still_alive();
@@ -2711,7 +2795,9 @@ where
                         }
                         return;
                     }
-                    let body_value = response.get_body_value();
+                    // SAFETY: sole `&mut Response` for this cell in scope; the
+                    // borrow ends before `render` reborrows the same pointer.
+                    let body_value = unsafe { (*response).get_body_value() };
                     body_value.to_blob_if_possible();
                     match body_value {
                         Body::Value::Blob(blob) => {
@@ -2726,7 +2812,8 @@ where
                         }
                         _ => {}
                     }
-                    ctx.render(response);
+                    // SAFETY: `response` is the live, rooted cell pointer.
+                    unsafe { ctx.render(response) };
                     return;
                 }
                 jsc::PromiseResult::Rejected(err) => {
@@ -3152,6 +3239,10 @@ where
                                 return;
                             }
                             this.ref_();
+                            // Same as do_render_stream's Pending branch: the
+                            // body is in flight, so `handle_reject` must not
+                            // fall through to render_missing() and end it.
+                            this.flags.set_has_marked_pending(true);
                             byte_stream.pipe.set(WebCore::Wrap::<Self>::init(this));
                             // Deinit the old Strong reference before creating a new one
                             // to avoid leaking the Strong.Impl memory
@@ -3320,6 +3411,29 @@ where
         self.run_error_handler_with_status_code(value, 500);
     }
 
+    /// `false` when the Response can be written. A status outside `100..=999`
+    /// has no HTTP status line, so the Response can never reach the client:
+    /// report it like a thrown error rather than writing an unparseable one.
+    ///
+    /// Takes the status, not the Response: `run_error_handler` below runs user
+    /// JS, which may write through the cell pointer the caller holds.
+    fn reject_unsendable_response(&mut self, status: u16) -> bool {
+        if HTTPStatusText::is_sendable(status) {
+            return false;
+        }
+        let Some(server) = self.server else {
+            self.render_production_error(500);
+            return true;
+        };
+        // SAFETY: BACKREF
+        let global_this = (*server).global_this();
+        let err = global_this.create_error_instance(format_args!(
+            "Cannot send a Response with status {status}. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
+        ));
+        self.run_error_handler(err);
+        true
+    }
+
     fn ensure_pathname(&self) -> PathnameFormatter<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3> {
         PathnameFormatter { ctx: self }
     }
@@ -3405,12 +3519,17 @@ where
                     } else if let Some(promise) = result.as_any_promise() {
                         Self::process_on_error_promise(self, result, promise, value, status);
                         return;
-                    // SAFETY: sole `&mut Response` for this cell in scope;
                     // `result` is GC-rooted by `_keep` (EnsureStillAlive)
                     // across the render() call.
-                    } else if let Some(response) = unsafe { as_response(result) } {
-                        self.render(response);
-                        return;
+                    } else if let Some(response) = as_response(result) {
+                        // An unsendable Response from the error handler itself
+                        // falls through to the default error page below.
+                        // SAFETY: `response` is the live, rooted cell pointer.
+                        if HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                            // SAFETY: as above.
+                            unsafe { self.render(response) };
+                            return;
+                        }
                     }
                 }
             }
@@ -3452,19 +3571,26 @@ where
                     return;
                 }
 
-                // SAFETY: sole `&mut Response` for this cell in scope;
-                // `fulfilled_value` is rooted via ensure_still_alive() below
-                // for the duration of the borrow.
-                let Some(response) = (unsafe { as_response(fulfilled_value) }) else {
+                // `fulfilled_value` is rooted via ensure_still_alive() below for
+                // as long as `response` is used.
+                let Some(response) = as_response(fulfilled_value) else {
                     ctx.finish_running_error_handler(value, status);
                     return;
                 };
+
+                // SAFETY: `response` is the live, rooted cell pointer.
+                if !HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                    ctx.finish_running_error_handler(value, status);
+                    return;
+                }
 
                 ctx.response_jsvalue = fulfilled_value;
                 ctx.response_jsvalue.ensure_still_alive();
                 ctx.flags.set_response_protected(false);
 
-                let body_value = response.get_body_value();
+                // SAFETY: sole `&mut Response` for this cell in scope; the
+                // borrow ends before `render` reborrows the same pointer.
+                let body_value = unsafe { (*response).get_body_value() };
                 body_value.to_blob_if_possible();
                 match body_value {
                     Body::Value::Blob(blob) => {
@@ -3479,7 +3605,8 @@ where
                     }
                     _ => {}
                 }
-                ctx.render(response);
+                // SAFETY: `response` is the live, rooted cell pointer.
+                unsafe { ctx.render(response) };
                 return;
             }
             jsc::PromiseResult::Rejected(err) => {
@@ -3711,24 +3838,34 @@ where
     /// Replace the tracked Response. Drops the previous weak ref (if any)
     /// before taking a new one so the old Response's allocation can be
     /// freed once its own strong refs go to zero.
-    fn set_response(&mut self, response: &mut Response) {
+    ///
+    /// # Safety
+    /// `response` must be the live JS wrapper's cell pointer (as returned by
+    /// [`as_response`]), carrying the allocation's provenance — `WeakPtr` keeps
+    /// it past any reborrow.
+    unsafe fn set_response(&mut self, response: *mut Response) {
         if self
             .response_weakref
             .get()
             .map(std::ptr::from_mut::<Response>)
-            == Some(std::ptr::from_mut(response))
+            == Some(response)
         {
             return;
         }
         self.response_weakref.deref();
-        self.response_weakref = response::WeakRef::init_ref(response);
+        // SAFETY: caller contract — `response` is live and root-provenanced.
+        self.response_weakref = unsafe { response::WeakRef::init_ref(response) };
     }
 
-    pub fn render(&mut self, response: &mut Response) {
+    /// # Safety
+    /// Same contract as [`Self::set_response`].
+    pub unsafe fn render(&mut self, response: *mut Response) {
         ctx_log!("render");
-        self.set_response(response);
+        // SAFETY: caller contract.
+        unsafe { self.set_response(response) };
 
-        if HTTPStatusText::is_null_body(response.status_code()) {
+        // SAFETY: caller contract — `response` is live.
+        if HTTPStatusText::is_null_body(unsafe { (*response).status_code() }) {
             self.do_render_blob();
             return;
         }
@@ -4194,7 +4331,10 @@ pub struct HeaderResponseSizePair<'a, ThisServer, const SSL: bool, const DBG: bo
 
 pub struct HeaderResponsePair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
     pub this: &'a mut RequestContext<ThisServer, SSL, DBG, H3>,
-    pub response: &'a mut Response,
+    /// The JS wrapper's cell pointer, not a `&mut Response`: the receiving
+    /// frame hands it to `set_response`, which stores it in a `WeakPtr` that
+    /// outlives any reborrow. The cell is GC-rooted by the constructing frame.
+    pub response: *mut Response,
 }
 
 pub struct PathnameFormatter<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {

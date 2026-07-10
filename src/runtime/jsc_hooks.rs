@@ -5190,9 +5190,9 @@ pub(crate) fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoop
 
 /// `dateForHeader`: wrap the header bytes in a
 /// `bun.String`, call `String.parseDate(&s, vm.global)`, return the integer
-/// value if finite and non-negative, else `None`. Lives in this crate (sole
-/// caller is `server::FileRoute::on`) so `bun_uws_sys` (T0) has no upward
-/// hook into `bun_jsc`.
+/// value if finite and non-negative, else `None`. Lives in this crate (callers
+/// are `server::FileRoute` / `server::StaticRoute`) so `bun_uws_sys` (T0) has
+/// no upward hook into `bun_jsc`.
 pub fn parse_http_date(value: &[u8]) -> Option<u64> {
     let vm = bun_jsc::virtual_machine::VirtualMachine::get();
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives

@@ -27,9 +27,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         ctx.redis = createClient(connectionType);
       }
       // setupDockerContainer() may cold-start the redis_unified container
-      // (compose up --wait-timeout 60); shielded by the file-level beforeAll's
+      // (compose up --wait-timeout 180); shielded by the file-level beforeAll's
       // cached promise once that has run, but match its timeout for safety.
-    }, 120_000);
+    }, 240_000);
 
     beforeEach(async () => {
       if (!ctx.redis) {

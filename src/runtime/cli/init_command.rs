@@ -769,7 +769,7 @@ impl InitCommand {
                 peer_dependencies.data.e_object_mut().unwrap().put_string(
                     &bump,
                     b"typescript",
-                    b"^5",
+                    b"^6",
                 )?;
                 object.put(&bump, b"peerDependencies", peer_dependencies)?;
             }

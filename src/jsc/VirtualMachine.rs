@@ -58,7 +58,7 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
-pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, jsc::C::JSObjectRef>;
+pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
 /// `api::JsException` lives in
 /// [`crate::schema_api`] (not `bun_options_types::schema::api`) because its
 /// `stack: StackTrace` field transitively names `ZigStackFramePosition` from
@@ -1672,12 +1672,6 @@ impl VirtualMachine {
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
             panic!("Uncaught exception while handling uncaught exception");
         }
-        if self.exit_on_uncaught_exception {
-            self.run_error_handler(err, None);
-            // SAFETY: see above.
-            unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
-            panic!("made it past process.exit()");
-        }
         self.is_handling_uncaught_exception = true;
         let handled = Bun__handleUncaughtException(
             global_object,
@@ -1685,6 +1679,19 @@ impl VirtualMachine {
             if is_rejection { 1 } else { 0 },
         ) > 0;
         if !handled {
+            // `beforeExit` has already been dispatched, so the run is winding
+            // down and there is no loop turn left to defer to: print the error
+            // and exit, like node's fatal-exception path.
+            if self.exit_on_uncaught_exception {
+                self.run_error_handler(err, None);
+                // `process_exit` emits `exit`, re-entering here if a listener
+                // throws. No handler is running, so drop the recursion guard or
+                // that re-entry exits 7 ("handler threw") instead of 1.
+                self.is_handling_uncaught_exception = false;
+                // SAFETY: see above.
+                unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+                panic!("made it past process.exit()");
+            }
             // TODO maybe we want a separate code path for uncaught exceptions
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
@@ -1783,10 +1790,11 @@ impl VirtualMachine {
         // self.event_loop().tick();
 
         if self.should_destruct_main_thread_on_exit() {
+            #[cfg(windows)]
             if let Some(t) = self.event_loop_mut().forever_timer.take() {
                 // SAFETY: `t` is the live usockets timer created in
-                // `EventLoop::auto_tick`; `close::<true>()` (fallthrough)
-                // frees it without re-entering the loop.
+                // `EventLoop::tick_possibly_forever`; `close::<true>()`
+                // (fallthrough) frees it without re-entering the loop.
                 unsafe { uws::Timer::close::<true>(t.as_ptr()) };
             }
             // Drain `TimeoutObject`s / `ImmediateObject`s from `All.timers`
@@ -1802,6 +1810,8 @@ impl VirtualMachine {
                 // `destroy()`, well after `global_exit`).
                 unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
             }
+            // Same reason: the GC timers are heap nodes too.
+            self.gc_controller.deinit();
             // Detached worker threads may still be in startVM()/spin() using
             // the process-global resolver BSSMap singletons. transpiler.deinit()
             // below frees those singletons, so request termination of every
@@ -1861,7 +1871,6 @@ impl VirtualMachine {
             // loop, which is live for the process lifetime.
             unsafe { (*uws::Loop::get()).drain_closed_sockets() };
 
-            self.gc_controller.deinit();
             self.destroy();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
@@ -7113,6 +7122,13 @@ pub fn plugin_runner_on_resolve_jsc(
     // is `Copy` (no `Drop`), so guard the WTF refcount across the remaining
     // early-return paths.
     let user_namespace = scopeguard::guard(user_namespace, |s| s.deref());
+
+    // A `file`-namespace result (the default) is a filesystem path, not a new
+    // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
+    // form the module loader dispatches on.
+    if user_namespace.eql_comptime(b"file") {
+        return Ok(Some(ErrorableString::ok(file_path.into_inner())));
+    }
 
     // Our slow way of cloning the string into memory owned by JSC.
     use std::io::Write as _;

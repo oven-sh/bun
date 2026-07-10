@@ -4133,6 +4133,8 @@ private:
         CryptoAlgorithmIdentifier algorithm;
         if (!read(algorithm))
             return false;
+        if (!CryptoKeyRSA::isValidRSAAlgorithm(algorithm))
+            return false;
 
         int32_t isRestrictedToHash;
         CryptoAlgorithmIdentifier hash = CryptoAlgorithmIdentifier::SHA_1;
@@ -4253,6 +4255,16 @@ private:
         CryptoKeyOKP::NamedCurve namedCurve;
         if (!read(namedCurve))
             return false;
+        switch (namedCurve) {
+        case CryptoKeyOKP::NamedCurve::Ed25519:
+            if (algorithm != CryptoAlgorithmIdentifier::Ed25519)
+                return false;
+            break;
+        case CryptoKeyOKP::NamedCurve::X25519:
+            if (algorithm != CryptoAlgorithmIdentifier::X25519)
+                return false;
+            break;
+        }
         Vector<uint8_t> keyData;
         if (!read(keyData))
             return false;
@@ -4265,6 +4277,8 @@ private:
     {
         CryptoAlgorithmIdentifier algorithm;
         if (!read(algorithm))
+            return false;
+        if (!CryptoKeyRaw::isValidRawAlgorithm(algorithm))
             return false;
         Vector<uint8_t> keyData;
         if (!read(keyData))
@@ -5304,7 +5318,7 @@ private:
 #if ENABLE(WEB_CRYPTO)
         case CryptoKeyTag: {
             Vector<uint8_t> serializedKey;
-            if (!read(serializedKey)) {
+            if (!read(serializedKey) || serializedKey.isEmpty()) {
                 fail();
                 return JSValue();
             }
@@ -5463,6 +5477,8 @@ DeserializationResult CloneDeserializer::deserialize()
         switch (state) {
         arrayStartState:
         case ArrayStartState: {
+            if (outputObjectStack.size() > maximumFilterRecursion)
+                return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             uint32_t length;
             if (!read(length)) {
                 goto error;

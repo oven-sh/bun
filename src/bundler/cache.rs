@@ -300,7 +300,6 @@ impl Fs {
         Ok(Entry {
             contents,
             fd: if publish_fd { fd } else { Fd::INVALID },
-            external_free_function: ExternalFreeFunction::NONE,
         })
     }
 
@@ -453,7 +452,6 @@ impl Fs {
         Ok(Entry {
             contents,
             fd: if publish_fd { fd } else { Fd::INVALID },
-            external_free_function: ExternalFreeFunction::NONE,
         })
     }
 }

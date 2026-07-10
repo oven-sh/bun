@@ -1031,17 +1031,25 @@ impl TranspilerJob {
         }
 
         if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
-            let bytecode_slice = parse_result.already_bundled.bytecode_slice();
+            let already_bundled = core::mem::take(&mut parse_result.already_bundled);
+            let is_commonjs_module = already_bundled.is_common_js();
+            let (bytecode_cache, bytecode_cache_size) = match already_bundled {
+                AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => {
+                    let len = bytes.len();
+                    if len == 0 {
+                        (ptr::null_mut(), 0)
+                    } else {
+                        (bun_core::heap::into_raw(bytes).cast::<u8>(), len)
+                    }
+                }
+                _ => (ptr::null_mut(), 0),
+            };
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
                 source_code: String::clone_latin1(&parse_result.source.contents),
                 already_bundled: true,
-                bytecode_cache: if !bytecode_slice.is_empty() {
-                    bytecode_slice.as_ptr().cast_mut()
-                } else {
-                    ptr::null_mut()
-                },
-                bytecode_cache_size: bytecode_slice.len(),
-                is_commonjs_module: parse_result.already_bundled.is_common_js(),
+                bytecode_cache,
+                bytecode_cache_size,
+                is_commonjs_module,
                 tag: this_tag,
                 ..Default::default()
             });

@@ -1549,6 +1549,72 @@ export default class {
       expect(output.includes("localVarToReplace")).toBe(true);
       expect(output.includes("localVarToRemove")).toBe(false);
     });
+
+    it("async transform() applies exports.eliminate across concurrent calls with a large map", async () => {
+      // The configured eliminate list is borrowed by each off-thread
+      // TransformTask rather than deep-cloned per call; stress that with a
+      // large map and overlapping tasks to confirm the borrow stays valid
+      // and the output is stable.
+      const eliminate = ["keepMeOut"];
+      for (let i = 0; i < 2000; i++) eliminate.push("unused" + i);
+      const t = new Bun.Transpiler({ loader: "ts", exports: { eliminate } });
+
+      const expected = t.transformSync("export const survivor = 1;\nexport const keepMeOut = 2;\n");
+      expect(expected).toContain("survivor");
+      expect(expected).not.toContain("keepMeOut");
+
+      const results = await Promise.all(
+        Array.from({ length: 64 }, () => t.transform("export const survivor = 1;\nexport const keepMeOut = 2;\n")),
+      );
+      for (const out of results) {
+        expect(out).toBe(expected);
+      }
+    });
+
+    it("transformSync() per-call cost does not scale with exports.eliminate size", () => {
+      // Regression: the Rust port deep-cloned the configured replace_exports
+      // map on every transform()/transformSync() call, so per-call latency
+      // grew linearly with the eliminate-list length. The single-export
+      // source means the parser does one O(1) map lookup regardless of map
+      // size; any remaining scaling is clone overhead. Measured on
+      // transformSync() (no work-pool / event-loop hops), with base and big
+      // windows interleaved so transient CI load affects both sides.
+      const src = "export const a = 1;\n";
+      const ITERS = 100;
+      const make = n =>
+        new Bun.Transpiler({
+          loader: "ts",
+          exports: n > 0 ? { eliminate: Array.from({ length: n }, (_, i) => "e" + i) } : undefined,
+        });
+      const tBase = make(0);
+      const tBig = make(4000);
+      const expected = tBase.transformSync(src);
+      expect(tBig.transformSync(src)).toBe(expected);
+      const time = t => {
+        const start = Bun.nanoseconds();
+        for (let i = 0; i < ITERS; i++) t.transformSync(src);
+        return Bun.nanoseconds() - start;
+      };
+      // Warm both.
+      time(tBase);
+      time(tBig);
+      let base = Infinity;
+      let big = Infinity;
+      for (let run = 0; run < 5; run++) {
+        base = Math.min(base, time(tBase));
+        big = Math.min(big, time(tBig));
+      }
+      const ratio = big / base;
+      // Without the fix the ratio is >7x in debug+ASAN and >15x in release;
+      // with it the ratio sits around 1.0x-1.2x.
+      if (ratio >= 3) {
+        throw new Error(
+          `transformSync() with 4000-entry exports.eliminate is ${ratio.toFixed(2)}x slower than ` +
+            `with an empty map (base=${(base / ITERS / 1e3).toFixed(1)}us/call, ` +
+            `big=${(big / ITERS / 1e3).toFixed(1)}us/call); expected <3x`,
+        );
+      }
+    });
   });
 
   const bunTranspiler = new Bun.Transpiler({

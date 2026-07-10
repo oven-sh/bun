@@ -611,9 +611,7 @@ describe("crypto.KeyObjects", () => {
   });
 
   test("createPrivateKey accepts SEC1 DER ECPrivateKey without optional publicKey", () => {
-    // RFC 5915 ECPrivateKey with the optional [1] publicKey field omitted, as
-    // emitted by `openssl ec -no_public` and many HSM/PKCS#11 exporters.
-    // SEQUENCE { version 1, privateKey OCTET STRING(32), [0] parameters prime256v1 }
+    // RFC 5915 ECPrivateKey: SEQUENCE { version, privateKey, [0] prime256v1 } with optional [1] publicKey omitted.
     const sec1NoPub = Buffer.from(
       "30310201010420" +
         "a91e18c61cd48b5f98a776c88c281346cd71730fe2a271b95eaef207d64bf5b4" +
@@ -632,8 +630,6 @@ describe("crypto.KeyObjects", () => {
       namedCurve: "prime256v1",
     });
 
-    // The same bytes wrapped in PKCS#8 and PEM already worked; verify all three
-    // faces yield the same key material.
     const pkcs8 = Buffer.concat([
       Buffer.from("304d020100301306072a8648ce3d020106082a8648ce3d0301070433", "hex"),
       sec1NoPub,
@@ -647,7 +643,6 @@ describe("crypto.KeyObjects", () => {
     expect(jwkSec1.d).toBe(fromDerPkcs8.export({ format: "jwk" }).d);
     expect(jwkSec1.d).toBe(fromPem.export({ format: "jwk" }).d);
 
-    // SEC1 DER with the optional publicKey present must still work.
     const full = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
       format: "der",
       type: "sec1",

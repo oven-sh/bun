@@ -341,6 +341,14 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
 }
 
 impl PackageJSON {
+    /// Poisoned (unparseable / non-object) placeholder returned by `parse()`.
+    /// Distinct from a parseable object whose `"type"` is not a string, which
+    /// also sets `invalid` but retains `source_contents`.
+    #[inline]
+    pub fn is_poisoned(&self) -> bool {
+        self.invalid && self.source_contents.is_empty()
+    }
+
     pub fn parse_macros_json(
         macros: js_ast::Expr,
         log: &mut bun_ast::Log,

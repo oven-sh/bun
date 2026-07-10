@@ -892,7 +892,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 None,
                 IncludeScripts::IncludeScripts,
             )
-            .filter(|p| !p.invalid || !p.source_contents.is_empty()) else {
+            .filter(|p| !p.is_poisoned()) else {
                 continue;
             };
 

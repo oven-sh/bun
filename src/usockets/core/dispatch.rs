@@ -456,7 +456,7 @@ fn dispatch_stream(
 fn recv_loop<'l>(
     tick: LoopTick<'l>,
     mut s: Socket<'l>,
-    error: bool,
+    #[cfg_attr(windows, allow(unused_variables))] error: bool,
     eof: &mut bool,
 ) -> Option<Socket<'l>> {
     // SAFETY: `recv_buf` is a `RECV_BUF_LEN`-byte allocation; `PADDING` is in-bounds.
@@ -715,6 +715,7 @@ fn udp_closed(u: NonNull<UdpSocket>) -> bool {
 }
 
 #[allow(unused_mut, unused_assignments)]
+#[cfg_attr(not(target_os = "linux"), allow(unused_variables, unused_mut))]
 fn dispatch_udp(tick: LoopTick<'_>, u: NonNull<UdpSocket>, mut error: bool, events: PollEvents) {
     if udp_closed(u) {
         return;
@@ -723,7 +724,7 @@ fn dispatch_udp(tick: LoopTick<'_>, u: NonNull<UdpSocket>, mut error: bool, even
     // SAFETY: `u` is live; `p` is its first field.
     let poll = unsafe { ptr::addr_of_mut!((*p).p) };
     // SAFETY: field reads only.
-    let (fd, u_loop) = unsafe { (Fd((*p).p.fd()), (*p).loop_) };
+    let (fd, u_loop) = unsafe { (Fd(crate::eventing::us_poll_fd(poll)), (*p).loop_) };
 
     #[cfg(target_os = "linux")]
     let mut recv_error_surfaced = false;

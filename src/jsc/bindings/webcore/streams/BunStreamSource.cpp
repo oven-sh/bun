@@ -493,28 +493,34 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         double written = result.asNumber();
         if (!isClosed)
             nativeAdjustChunkSize(adapter, written > 0 ? static_cast<size_t>(written) : 0);
+        if (adapter->m_textMode) {
+            if (written > 0 && view) {
+                size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
+                nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, view->span().first(count), /* flush */ false);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+            if (isClosed) {
+                scheduleNativeSourceCallClose(globalObject, adapter);
+                return jsUndefined();
+            }
+            // The whole view is free to reuse next pull (bytes were copied out).
+            return view ? JSValue(view) : jsUndefined();
+        }
         JSValue newView = view ? JSValue(view) : jsUndefined();
         if (written > 0 && view) {
             size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
-            if (adapter->m_textMode) {
-                nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, view->span().first(count), /* flush */ false);
+            JSC::JSArrayBufferView* toEnqueue = view;
+            if (view->length() - count > 0) {
+                toEnqueue = uint8Subarray(globalObject, view, 0, count);
                 RETURN_IF_EXCEPTION(scope, {});
-                // The whole view is free to reuse next pull (bytes were copied out).
-                newView = view;
-            } else {
-                JSC::JSArrayBufferView* toEnqueue = view;
-                if (view->length() - count > 0) {
-                    toEnqueue = uint8Subarray(globalObject, view, 0, count);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    auto* tail = uint8Subarray(globalObject, view, count, view->length() - count);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    newView = tail;
-                } else
-                    newView = jsUndefined();
-                if (controller) {
-                    readableStreamDefaultControllerEnqueue(globalObject, controller, toEnqueue);
-                    RETURN_IF_EXCEPTION(scope, {});
-                }
+                auto* tail = uint8Subarray(globalObject, view, count, view->length() - count);
+                RETURN_IF_EXCEPTION(scope, {});
+                newView = tail;
+            } else
+                newView = jsUndefined();
+            if (controller) {
+                readableStreamDefaultControllerEnqueue(globalObject, controller, toEnqueue);
+                RETURN_IF_EXCEPTION(scope, {});
             }
         }
         if (isClosed) {

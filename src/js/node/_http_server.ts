@@ -2522,6 +2522,10 @@ function advanceResponsePipeline(server, socket) {
   }
 }
 
+function markResponseEndedNT(res) {
+  res._ended = true;
+}
+
 function emitPipelinedDrainNT(res) {
   if (!res.destroyed && !res.finished) {
     res.emit("drain");
@@ -3056,9 +3060,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   // right after a synchronously-finished handler returns, or via its 'finish'
   // listener otherwise), so handlers can still reach res.socket after end().
   this.finished = true;
-  process.nextTick(self => {
-    self._ended = true;
-  }, this);
+  process.nextTick(markResponseEndedNT, this);
   this.emit("prefinish");
   this._callPendingCallbacks();
 

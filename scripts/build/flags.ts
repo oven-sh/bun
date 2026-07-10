@@ -1506,6 +1506,16 @@ export const linkerFlags: Flag[] = [
   },
 ];
 
+/** Whether the GNU linker order file feature is active (Linux glibc release, no ASAN). */
+export function usesOrderFile(cfg: Pick<Config, "linux" | "abi" | "release" | "asan" | "valgrind">): boolean {
+  return cfg.linux && cfg.abi === "gnu" && cfg.release && !cfg.asan && !cfg.valgrind;
+}
+
+/** The order file lives in the build directory — it is generated, never committed. */
+export function orderFilePath(cfg: Pick<Config, "buildDir">): string {
+  return join(cfg.buildDir, "linker.order");
+}
+
 /**
  * Files the linker reads via flags above. Return as implicit inputs so
  * ninja relinks when exported symbols / version script change.

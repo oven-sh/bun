@@ -212,6 +212,7 @@ jobs:
           echo "OHOS_SYSROOT=${{ env.OHOS_SYSROOT }}" >> $GITHUB_ENV
           echo "OHOS_CROSS_LIBS=${{ env.OHOS_CROSS_LIBS }}" >> $GITHUB_ENV
           echo "OHOS_ICU_DIR=${{ env.OHOS_ICU_DIR }}" >> $GITHUB_ENV
+          echo "OHOS_WEBKIT_ROOT=bun/build/release-ohos/deps/WebKit" >> $GITHUB_ENV
           test -d "$OHOS_SDK_ROOT" || { echo "OHOS SDK not found"; exit 1; }
           mkdir -p bun/build
           [ -L bun/build/ohos-cross-libs ] && [ "$(readlink bun/build/ohos-cross-libs)" = "$OHOS_CROSS_LIBS" ] || ln -sfn "$OHOS_CROSS_LIBS" bun/build/ohos-cross-libs

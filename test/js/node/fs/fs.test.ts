@@ -1,4 +1,4 @@
-import { describe, expect, it, spyOn } from "bun:test";
+import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -428,6 +428,78 @@ describe("FileHandle", () => {
 
     expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
   });
+
+  // Node.js closes a FileHandle's fd in its native finalizer and raises
+  // ERR_INVALID_STATE (DEP0137 end-of-life) when the handle is collected
+  // without close(). Bun must reclaim the fd and surface the same diagnostic.
+  it.concurrent.skipIf(isWindows)(
+    "FileHandle collected without close() closes the fd and raises ERR_INVALID_STATE",
+    async () => {
+      const fixture = /* js */ `
+        const fsp = require("node:fs/promises");
+        const fs = require("node:fs");
+        const os = require("node:os");
+        const path = require("node:path");
+        const fdDir = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
+        const nfds = () => fs.readdirSync(fdDir).length;
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fh-gc-"));
+        const N = 50;
+        const diags = [];
+        process.on("uncaughtException", e => diags.push({ code: e.code, message: e.message }));
+
+        (async () => {
+          const before = nfds();
+          await (async () => {
+            for (let i = 0; i < N; i++) await fsp.open(path.join(dir, "f" + i), "w");
+          })();
+          // force GC until every leaked fd is reclaimed and every diagnostic lands
+          for (let i = 0; i < 40 && (nfds() - before > 0 || diags.length < N); i++) {
+            Bun.gc(true);
+            await new Promise(r => setTimeout(r, 25));
+          }
+          const afterGC = nfds();
+          const sample = diags[0] ?? {};
+
+          // properly closed handles must not trip the finalizer
+          const marker = diags.length;
+          await (async () => {
+            for (let i = 0; i < N; i++) await (await fsp.open(path.join(dir, "g" + i), "w")).close();
+          })();
+          for (let i = 0; i < 10; i++) {
+            Bun.gc(true);
+            await new Promise(r => setTimeout(r, 25));
+          }
+
+          console.log(JSON.stringify({
+            leakedAfterGC: afterGC - before,
+            diagCount: diags.length,
+            sampleCode: sample.code,
+            sampleHasFd: typeof sample.message === "string" && sample.message.includes("File descriptor: "),
+            falsePositives: diags.length - marker,
+          }));
+          fs.rmSync(dir, { recursive: true, force: true });
+        })();
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ result: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+        result: {
+          leakedAfterGC: 0,
+          diagCount: 50,
+          sampleCode: "ERR_INVALID_STATE",
+          sampleHasFd: true,
+          falsePositives: 0,
+        },
+        stderr: expect.not.stringContaining("error"),
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 it("fdatasyncSync", () => {
@@ -1334,6 +1406,63 @@ it("mkdtemp() non-exist dir #2568", done => {
     } catch (e) {
       done(e);
     }
+  });
+});
+
+describe("mkdtemp encoding option", () => {
+  const base = tmpdirSync();
+  const prefix = join(base, "mkenc-dé-");
+  const prefixBytes = Buffer.from(prefix, "utf8");
+
+  it("sync: 'buffer' returns a Buffer of the path bytes", () => {
+    const result = mkdtempSync(prefix, { encoding: "buffer" });
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(result.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
+    expect(result.length).toBe(prefixBytes.length + 6);
+    expect(existsSync(result)).toBe(true);
+  });
+
+  it("sync: string shorthand 'buffer'", () => {
+    const result = mkdtempSync(prefix, "buffer");
+    expect(Buffer.isBuffer(result)).toBe(true);
+  });
+
+  it.each(["hex", "base64", "base64url", "latin1"] as const)("sync: '%s' re-encodes the path", encoding => {
+    const result = mkdtempSync(prefix, { encoding });
+    expect(typeof result).toBe("string");
+    const decoded = Buffer.from(result, encoding);
+    expect(decoded.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
+    expect(decoded.length).toBe(prefixBytes.length + 6);
+    expect(existsSync(decoded)).toBe(true);
+  });
+
+  it("sync: default utf8 still returns a string", () => {
+    const result = mkdtempSync(prefix);
+    expect(typeof result).toBe("string");
+    expect(result.startsWith(prefix)).toBe(true);
+    expect(existsSync(result)).toBe(true);
+  });
+
+  it("callback: 'buffer' returns a Buffer", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    mkdtemp(prefix, { encoding: "buffer" }, (err, folder) => (err ? reject(err) : resolve(folder)));
+    const result = await promise;
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(existsSync(result)).toBe(true);
+  });
+
+  it("promises: 'hex' re-encodes the path", async () => {
+    const result = await promises.mkdtemp(prefix, "hex");
+    expect(typeof result).toBe("string");
+    const decoded = Buffer.from(result, "hex");
+    expect(decoded.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
+    expect(existsSync(decoded)).toBe(true);
+  });
+
+  it("promises: 'buffer' returns a Buffer", async () => {
+    const result = await promises.mkdtemp(prefix, { encoding: "buffer" });
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(existsSync(result)).toBe(true);
   });
 });
 
@@ -2291,6 +2420,33 @@ it("readlink", () => {
   symlinkSync(import.meta.path, actual);
 
   expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+describe("readlink encoding option", () => {
+  const base = tmpdirSync();
+  const link = join(base, "lnk");
+  let targetBytes: Buffer;
+  beforeAll(() => {
+    symlinkSync(join(base, "tgt-dé"), link);
+    targetBytes = readlinkSync(link, { encoding: "buffer" }) as Buffer;
+  });
+
+  it("'buffer' returns a Buffer", () => {
+    expect(Buffer.isBuffer(targetBytes)).toBe(true);
+    expect(targetBytes.includes(Buffer.from("tgt-dé", "utf8"))).toBe(true);
+  });
+
+  it.each(["hex", "base64", "base64url", "latin1"] as const)("'%s' re-encodes the target", encoding => {
+    const result = readlinkSync(link, { encoding });
+    expect(typeof result).toBe("string");
+    expect(result).toBe(targetBytes.toString(encoding));
+  });
+
+  it("default utf8 still returns a string", () => {
+    const result = readlinkSync(link);
+    expect(typeof result).toBe("string");
+    expect(result).toBe(targetBytes.toString("utf8"));
+  });
 });
 
 // On FUSE / some network filesystems a symlink target can exceed PATH_MAX,

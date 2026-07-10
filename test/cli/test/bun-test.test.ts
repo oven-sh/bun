@@ -181,12 +181,15 @@ describe("bun test", () => {
     expect(stderr).toContain("test #1");
   });
   test("works with cjs dynamic import", () => {
+    // Top-level `await` is not valid in CommonJS; use `.then()` so the
+    // `.cjs` fixture actually is CommonJS.
     const cwd = createTest(
       `
-        const { test, expect } = await import("bun:test");
-        test("test #1", () => {
-          expect().pass();
-        })
+        import("bun:test").then(({ test, expect }) => {
+          test("test #1", () => {
+            expect().pass();
+          });
+        });
       `,
       "test.test.cjs",
     );

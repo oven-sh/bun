@@ -1051,6 +1051,31 @@ test("a collected port in a worker does not strand its peer", async () => {
   });
 });
 
+// A peer that sends then closes before this side has any listener: node delivers the
+// queued messages first and 'close' last, whichever listener was registered first.
+// registerCloseContext()'s retroactive peer-Closed notify used to jump the queue.
+test.each([
+  ["close listener first", true],
+  ["message listener first", false],
+])("queued messages arrive before the peer's close (%s)", async (_name, closeFirst) => {
+  const { port1, port2 } = new MessageChannel();
+  port2.postMessage("m1");
+  port2.postMessage("m2");
+  port2.close();
+
+  const events: string[] = [];
+  if (closeFirst) {
+    port1.on("close", () => events.push("close"));
+    port1.on("message", m => events.push("msg:" + m));
+  } else {
+    port1.on("message", m => events.push("msg:" + m));
+    port1.on("close", () => events.push("close"));
+  }
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  expect(events).toEqual(["msg:m1", "msg:m2", "close"]);
+  port1.close();
+});
+
 // An orphaned transferred endpoint IS a real close -- node fires 'close' on its peer.
 test("dropping a transferred port notifies its peer", async () => {
   const { port1, port2 } = new MessageChannel();
@@ -1592,11 +1617,6 @@ test("workerData is not unwrapped for a non-node globalThis.Worker", async () =>
   });
 });
 
-// Founding a SHARE_ENV tree replaces the founding thread's process.env object. If the
-// replacement were orphaned, the founder's later writes would go nowhere. child_process
-// enumerates the JS process.env (a var deleted from the map is invisible to the child),
-// so this guards the swap -- it cannot observe Windows' SetEnvironmentVariableW, which
-// has no JS-visible reader.
 // process.debugPort defaults to 9229 on the main thread (node parity). Lives here, not
 // in the vendored test/js/node/test/parallel/test-set-process-debug-port.js, which should
 // stay byte-identical to upstream.
@@ -1610,6 +1630,12 @@ test("process.debugPort defaults to 9229 on the main thread", async () => {
   expect(stdout.trim()).toBe("9229");
   expect(exitCode).toBe(0);
 });
+
+// Founding a SHARE_ENV tree replaces the founding thread's process.env object. If the
+// replacement were orphaned, the founder's later writes would go nowhere. child_process
+// enumerates the JS process.env (a var deleted from the map is invisible to the child),
+// so this guards the swap -- it cannot observe Windows' SetEnvironmentVariableW, which
+// has no JS-visible reader.
 
 test("the SHARE_ENV founding thread's process.env stays live after the swap", async () => {
   await using proc = Bun.spawn({

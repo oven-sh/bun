@@ -271,8 +271,13 @@ void MessagePort::peerClosed()
     if (!context || !context->globalObject())
         return;
     Ref protectedThis { *this };
-    // Peer closed: no more messages can arrive. Fire 'close' (guarded against a double
-    // dispatch) and release this side's loop refs so the loop can idle, matching node.
+    // Deliver whatever the peer sent before it closed, then fire 'close'. Node orders
+    // them that way, and registerCloseContext()'s retroactive notify can land before any
+    // drain is scheduled -- e.g. on('close') registered before on('message').
+    if (m_started && m_hasMessageEventListener)
+        flushQueuedMessagesBeforeClose();
+    // Fire 'close' (guarded against a double dispatch) and release this side's loop refs
+    // so the loop can idle, matching node.
     dispatchCloseEvent();
     // jsUnref() clears both the listener loop-ref (m_isRefd) and the onmessage/ref()
     // keepalive (m_hasRef), so a listening transferred port stops pinning the loop.

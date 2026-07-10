@@ -209,6 +209,9 @@ ObjectDefineProperty(IncomingMessage.prototype, "aborted", {
 // short-circuits materialization through the setter.
 ObjectDefineProperty(IncomingMessage.prototype, "rawHeaders", {
   __proto__: null,
+  // Node exposes rawHeaders as an enumerable own data property; a prototype
+  // accessor can at least stay visible to for-in.
+  enumerable: true,
   get: function () {
     let raw = this[kRawHeaders];
     if (raw === null) {

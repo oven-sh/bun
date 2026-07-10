@@ -1487,6 +1487,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   parser = null;
   [kStreamingEnabled] = false;
   [kBoundOnAbort] = null;
+  [kKeepAliveIdleStart] = undefined;
   [kBytesWritten] = 0;
   [kHandle];
   [kUpgradeIncoming] = undefined;

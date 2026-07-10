@@ -5,26 +5,27 @@
 //! Port of `packages/bun-usockets/src/quic.{c,h}`.
 
 use core::ffi::{c_char, c_int, c_uint, c_ulong, c_ushort, c_void};
-use core::mem::{size_of, zeroed, MaybeUninit};
+use core::mem::{MaybeUninit, size_of, zeroed};
 use core::ptr;
 
 use bun_boringssl_sys::{
-    struct_stack_st_X509, SSL, SSL_CTX, SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_alpn_select_cb,
-    SSL_METHOD, SSL_TLSEXT_ERR_ALERT_FATAL, SSL_TLSEXT_ERR_OK, SSL_VERIFY_PEER, SSL_get_SSL_CTX,
-    X509, X509_STORE, X509_STORE_CTX,
+    SSL, SSL_CTX, SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_alpn_select_cb, SSL_METHOD,
+    SSL_TLSEXT_ERR_ALERT_FATAL, SSL_TLSEXT_ERR_OK, SSL_VERIFY_PEER, SSL_get_SSL_CTX, X509,
+    X509_STORE, X509_STORE_CTX, struct_stack_st_X509,
 };
 
-use crate::bsd::{bsd_close_socket, bsd_create_socket, LIBUS_SOCKET_ERROR};
-use crate::eventing::{us_poll_change, us_poll_fd, LIBUS_SOCKET_READABLE, LIBUS_SOCKET_WRITABLE};
+use crate::bsd::{LIBUS_SOCKET_ERROR, bsd_close_socket, bsd_create_socket};
+use crate::eventing::{LIBUS_SOCKET_READABLE, LIBUS_SOCKET_WRITABLE, us_poll_change, us_poll_fd};
 #[cfg(windows)]
 use crate::eventing::{us_create_timer, us_timer_loop, us_timer_set, us_timer_t};
-use crate::types::{
-    addrinfo, addrinfo_request, addrinfo_result, ext_of, sockaddr_storage, socklen_t,
-    us_bun_socket_context_options_t, us_loop_t, us_poll_t, us_quic_socket_context_s,
-    us_udp_socket_t, Bun__addrinfo_freeRequest, Bun__addrinfo_get, Bun__addrinfo_getRequestResult,
-};
 #[cfg(not(target_os = "linux"))]
 use crate::types::LIBUS_SOCKET_DESCRIPTOR;
+use crate::types::{
+    Bun__addrinfo_freeRequest, Bun__addrinfo_get, Bun__addrinfo_getRequestResult, addrinfo,
+    addrinfo_request, addrinfo_result, ext_of, sockaddr_storage, socklen_t,
+    us_bun_socket_context_options_t, us_loop_t, us_poll_t, us_quic_socket_context_s,
+    us_udp_socket_t,
+};
 use crate::udp::{
     us_create_udp_socket, us_udp_packet_buffer_payload, us_udp_packet_buffer_payload_length,
     us_udp_packet_buffer_peer, us_udp_packet_buffer_t, us_udp_socket_close, us_udp_socket_user,
@@ -35,7 +36,7 @@ use crate::udp::{
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(not(windows))]
-use libc::{sockaddr, sockaddr_in, sockaddr_in6, AF_INET, AF_INET6, SOCK_DGRAM};
+use libc::{AF_INET, AF_INET6, SOCK_DGRAM, sockaddr, sockaddr_in, sockaddr_in6};
 
 #[cfg(windows)]
 use bun_windows_sys::ws2_32::{sockaddr, sockaddr_in, sockaddr_in6};
@@ -212,8 +213,9 @@ unsafe impl Sync for lsquic_stream_if {}
 struct lsquic_hset_if {
     hsi_create_header_set:
         Option<unsafe extern "C" fn(*mut c_void, *mut lsquic_stream_t, c_int) -> *mut c_void>,
-    hsi_prepare_decode:
-        Option<unsafe extern "C" fn(*mut c_void, *mut lsxpack_header, usize) -> *mut lsxpack_header>,
+    hsi_prepare_decode: Option<
+        unsafe extern "C" fn(*mut c_void, *mut lsxpack_header, usize) -> *mut lsxpack_header,
+    >,
     hsi_process_header: Option<unsafe extern "C" fn(*mut c_void, *mut lsxpack_header) -> c_int>,
     hsi_discard_header_set: Option<unsafe extern "C" fn(*mut c_void)>,
     hsi_flags: c_uint,
@@ -327,10 +329,12 @@ struct lsquic_engine_api {
     ea_shi_ctx: *mut c_void,
     ea_pmi: *const c_void,
     ea_pmi_ctx: *mut c_void,
-    ea_new_scids: Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void, *const c_void, c_uint)>,
+    ea_new_scids:
+        Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void, *const c_void, c_uint)>,
     ea_live_scids:
         Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void, *const c_void, c_uint)>,
-    ea_old_scids: Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void, *const c_void, c_uint)>,
+    ea_old_scids:
+        Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void, *const c_void, c_uint)>,
     ea_cids_update_ctx: *mut c_void,
     ea_verify_cert: Option<unsafe extern "C" fn(*mut c_void, *mut struct_stack_st_X509) -> c_int>,
     ea_verify_ctx: *mut c_void,
@@ -338,7 +342,8 @@ struct lsquic_engine_api {
     ea_hsi_ctx: *mut c_void,
     ea_stats_fh: *mut c_void,
     ea_alpn: *const c_char,
-    ea_generate_scid: Option<unsafe extern "C" fn(*mut c_void, *mut lsquic_conn_t, *mut u8, c_uint)>,
+    ea_generate_scid:
+        Option<unsafe extern "C" fn(*mut c_void, *mut lsquic_conn_t, *mut u8, c_uint)>,
     ea_gen_scid_ctx: *mut c_void,
 }
 
@@ -474,8 +479,13 @@ unsafe extern "C" {
 unsafe extern "C" {
     fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
     fn getsockname(fd: c_int, addr: *mut sockaddr, len: *mut socklen_t) -> c_int;
-    fn setsockopt(fd: c_int, level: c_int, name: c_int, val: *const c_void, len: socklen_t)
-        -> c_int;
+    fn setsockopt(
+        fd: c_int,
+        level: c_int,
+        name: c_int,
+        val: *const c_void,
+        len: socklen_t,
+    ) -> c_int;
     fn connect(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int;
 }
 #[cfg(windows)]
@@ -692,7 +702,11 @@ pub unsafe extern "C" fn us_quic_loop_process(loop_: *mut us_loop_t) {
             if (*loop_).data.quic_timer.is_null() {
                 (*loop_).data.quic_timer = us_create_timer(loop_, 1, 0);
             }
-            let ms = if min_diff <= 0 { 1 } else { (min_diff + 999) / 1000 };
+            let ms = if min_diff <= 0 {
+                1
+            } else {
+                (min_diff + 999) / 1000
+            };
             us_timer_set((*loop_).data.quic_timer, Some(us_quic_on_timer), ms, 0);
         }
     }
@@ -762,7 +776,11 @@ unsafe fn us_quic_send_one(fd: LIBUS_SOCKET_DESCRIPTOR, spec: *const lsquic_out_
         let r = sendto(fd, buf, len, 0, (*spec).dest_sa, sa_len((*spec).dest_sa));
         if r < 0 {
             const WSAEWOULDBLOCK: c_int = 10035;
-            set_errno(if WSAGetLastError() == WSAEWOULDBLOCK { libc::EAGAIN } else { libc::EIO });
+            set_errno(if WSAGetLastError() == WSAEWOULDBLOCK {
+                libc::EAGAIN
+            } else {
+                libc::EIO
+            });
             return -1;
         }
         1
@@ -844,8 +862,10 @@ unsafe extern "C" fn us_quic_packets_out(
                 set_errno(libc::EBADF);
                 break;
             }
-            if us_quic_send_one(us_poll_fd((*ls).udp.cast::<us_poll_t>()), specs.add(sent as usize))
-                < 0
+            if us_quic_send_one(
+                us_poll_fd((*ls).udp.cast::<us_poll_t>()),
+                specs.add(sent as usize),
+            ) < 0
             {
                 break;
             }
@@ -942,7 +962,10 @@ unsafe extern "C" fn us_quic_udp_on_close(u: *mut us_udp_socket_t) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Exact match, then `*.tail` wildcards (matches "a.tail" but not "tail").
-unsafe fn us_quic_match_sni(ctx: *mut us_quic_socket_context_t, sni: *const c_char) -> *mut SSL_CTX {
+unsafe fn us_quic_match_sni(
+    ctx: *mut us_quic_socket_context_t,
+    sni: *const c_char,
+) -> *mut SSL_CTX {
     // SAFETY: ctx->sni[0..sni_count] are valid strdup'd C strings.
     unsafe {
         if sni.is_null() {
@@ -1058,7 +1081,11 @@ unsafe extern "C" fn us_quic_hsi_prepare(
             *hdr = zeroed();
             (*hdr).buf = (*h).buf;
             (*hdr).name_offset = (*h).len as i32;
-            (*hdr).val_len = if space > u16::MAX as usize { u16::MAX } else { space as u16 };
+            (*hdr).val_len = if space > u16::MAX as usize {
+                u16::MAX
+            } else {
+                space as u16
+            };
         } else {
             // Resize: lsqpack already wrote part of name/value into the previous
             // buffer; only the storage may move.
@@ -1097,7 +1124,8 @@ unsafe extern "C" fn us_quic_hsi_process(hset_p: *mut c_void, hdr: *mut lsxpack_
         (*e).value_len = (*hdr).val_len as c_uint;
         (*e).qpack_index = -1;
         (*h).count += 1;
-        (*h).len = (*hdr).val_offset as c_uint + (*hdr).val_len as c_uint + (*hdr).dec_overhead as c_uint;
+        (*h).len =
+            (*hdr).val_offset as c_uint + (*hdr).val_len as c_uint + (*hdr).dec_overhead as c_uint;
         0
     }
 }
@@ -1144,8 +1172,10 @@ unsafe extern "C" fn us_quic_on_new_conn(
             lsquic_conn_close(conn);
             return ptr::null_mut();
         }
-        let qs = libc::calloc(1, size_of::<us_quic_socket_t>() + (*ctx).conn_ext_size as usize)
-            as *mut us_quic_socket_t;
+        let qs = libc::calloc(
+            1,
+            size_of::<us_quic_socket_t>() + (*ctx).conn_ext_size as usize,
+        ) as *mut us_quic_socket_t;
         if qs.is_null() {
             return ptr::null_mut();
         }
@@ -1238,8 +1268,10 @@ unsafe extern "C" fn us_quic_on_new_stream(
         if stream.is_null() {
             return ptr::null_mut(); // going-away
         }
-        let s = libc::calloc(1, size_of::<us_quic_stream_t>() + (*ctx).stream_ext_size as usize)
-            as *mut us_quic_stream_t;
+        let s = libc::calloc(
+            1,
+            size_of::<us_quic_stream_t>() + (*ctx).stream_ext_size as usize,
+        ) as *mut us_quic_stream_t;
         if s.is_null() {
             lsquic_stream_close(stream);
             return ptr::null_mut();
@@ -1374,7 +1406,9 @@ unsafe extern "C" fn us_quic_log_buf(_ctx: *mut c_void, buf: *const c_char, len:
     0
 }
 #[cfg(debug_assertions)]
-static US_QUIC_LOGGER: lsquic_logger_if = lsquic_logger_if { log_buf: Some(us_quic_log_buf) };
+static US_QUIC_LOGGER: lsquic_logger_if = lsquic_logger_if {
+    log_buf: Some(us_quic_log_buf),
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Public API
@@ -1439,7 +1473,11 @@ pub unsafe extern "C" fn us_create_quic_socket_context(
         (*ctx).settings.es_qpack_enc_max_blocked = 0;
         (*ctx).settings.es_ext_http_prio = 0;
         if idle_timeout_s != 0 {
-            (*ctx).settings.es_idle_timeout = if idle_timeout_s > 600 { 600 } else { idle_timeout_s };
+            (*ctx).settings.es_idle_timeout = if idle_timeout_s > 600 {
+                600
+            } else {
+                idle_timeout_s
+            };
         }
 
         let mut api: lsquic_engine_api = zeroed();
@@ -1481,7 +1519,11 @@ pub unsafe extern "C" fn us_quic_socket_context_add_server_name(
         }
         us_quic_prepare_ssl_ctx(ssl);
         if (*ctx).sni_count == (*ctx).sni_cap {
-            let ncap = if (*ctx).sni_cap != 0 { (*ctx).sni_cap * 2 } else { 4 };
+            let ncap = if (*ctx).sni_cap != 0 {
+                (*ctx).sni_cap * 2
+            } else {
+                4
+            };
             let n = libc::realloc((*ctx).sni.cast(), ncap as usize * size_of::<us_quic_sni>())
                 as *mut us_quic_sni;
             if n.is_null() {
@@ -1532,7 +1574,8 @@ pub unsafe extern "C" fn us_quic_socket_context_free(ctx: *mut us_quic_socket_co
         }
         (*ctx).closing = 1;
         let loop_ = (*ctx).loop_;
-        let mut pp = ptr::addr_of_mut!((*loop_).data.quic_head) as *mut *mut us_quic_socket_context_t;
+        let mut pp =
+            ptr::addr_of_mut!((*loop_).data.quic_head) as *mut *mut us_quic_socket_context_t;
         while !(*pp).is_null() {
             if *pp == ctx {
                 *pp = (*ctx).next;
@@ -1599,8 +1642,20 @@ unsafe fn us_quic_set_dontfrag(udp: *mut us_udp_socket_t) {
             const IPV6_DONTFRAG: c_int = 14;
             let on: c_int = 1;
             let p = (&raw const on).cast::<c_char>();
-            setsockopt(fd, IPPROTO_IP, IP_DONTFRAGMENT, p, size_of::<c_int>() as c_int);
-            setsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, p, size_of::<c_int>() as c_int);
+            setsockopt(
+                fd,
+                IPPROTO_IP,
+                IP_DONTFRAGMENT,
+                p,
+                size_of::<c_int>() as c_int,
+            );
+            setsockopt(
+                fd,
+                IPPROTO_IPV6,
+                IPV6_DONTFRAG,
+                p,
+                size_of::<c_int>() as c_int,
+            );
         }
         #[cfg(target_os = "linux")]
         {
@@ -1633,7 +1688,8 @@ pub unsafe extern "C" fn us_quic_socket_context_listen(
     unsafe {
         (*ctx).stream_ext_size = stream_ext_size;
 
-        let ls = libc::calloc(1, size_of::<us_quic_listen_socket_t>()) as *mut us_quic_listen_socket_t;
+        let ls =
+            libc::calloc(1, size_of::<us_quic_listen_socket_t>()) as *mut us_quic_listen_socket_t;
         if ls.is_null() {
             return ptr::null_mut();
         }
@@ -1751,14 +1807,38 @@ macro_rules! def_cb {
     };
 }
 def_cb!(us_quic_socket_context_on_open, on_open, on_open_cb);
-def_cb!(us_quic_socket_context_on_hsk_done, on_hsk_done, on_hsk_done_cb);
+def_cb!(
+    us_quic_socket_context_on_hsk_done,
+    on_hsk_done,
+    on_hsk_done_cb
+);
 def_cb!(us_quic_socket_context_on_goaway, on_goaway, on_open_cb);
 def_cb!(us_quic_socket_context_on_close, on_close, on_open_cb);
-def_cb!(us_quic_socket_context_on_stream_open, on_stream_open, on_stream_open_cb);
-def_cb!(us_quic_socket_context_on_stream_headers, on_stream_headers, on_stream_hdr_cb);
-def_cb!(us_quic_socket_context_on_stream_data, on_stream_data, on_stream_data_cb);
-def_cb!(us_quic_socket_context_on_stream_writable, on_stream_writable, on_stream_hdr_cb);
-def_cb!(us_quic_socket_context_on_stream_close, on_stream_close, on_stream_hdr_cb);
+def_cb!(
+    us_quic_socket_context_on_stream_open,
+    on_stream_open,
+    on_stream_open_cb
+);
+def_cb!(
+    us_quic_socket_context_on_stream_headers,
+    on_stream_headers,
+    on_stream_hdr_cb
+);
+def_cb!(
+    us_quic_socket_context_on_stream_data,
+    on_stream_data,
+    on_stream_data_cb
+);
+def_cb!(
+    us_quic_socket_context_on_stream_writable,
+    on_stream_writable,
+    on_stream_hdr_cb
+);
+def_cb!(
+    us_quic_socket_context_on_stream_close,
+    on_stream_close,
+    on_stream_hdr_cb
+);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Stream I/O
@@ -1824,7 +1904,10 @@ pub unsafe extern "C" fn us_quic_stream_send_informational(
         xh.name_len = 7;
         xh.val_offset = 7;
         xh.val_len = 3;
-        let lh = lsquic_http_headers { count: 1, headers: &mut xh };
+        let lh = lsquic_http_headers {
+            count: 1,
+            headers: &mut xh,
+        };
         lsquic_stream_send_headers((*s).stream, &lh, 0)
     }
 }
@@ -1858,7 +1941,10 @@ pub unsafe extern "C" fn us_quic_stream_send_headers(
         let (xh, xh_heap): (*mut lsxpack_header, bool) = if count <= 32 {
             (stackh.as_mut_ptr().cast(), false)
         } else {
-            (libc::calloc(count as usize, size_of::<lsxpack_header>()).cast(), true)
+            (
+                libc::calloc(count as usize, size_of::<lsxpack_header>()).cast(),
+                true,
+            )
         };
         if buf.is_null() || xh.is_null() {
             if buf_heap {
@@ -1891,7 +1977,10 @@ pub unsafe extern "C" fn us_quic_stream_send_headers(
             off += nl + vl;
         }
 
-        let lh = lsquic_http_headers { count: count as c_int, headers: xh };
+        let lh = lsquic_http_headers {
+            count: count as c_int,
+            headers: xh,
+        };
         let r = lsquic_stream_send_headers((*s).stream, &lh, end_stream);
         if buf_heap {
             libc::free(buf.cast());
@@ -1960,7 +2049,11 @@ pub unsafe extern "C" fn us_quic_stream_reset(s: *mut us_quic_stream_t) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_quic_stream_has_unacked(s: *mut us_quic_stream_t) -> c_int {
     unsafe {
-        if (*s).stream.is_null() { 0 } else { lsquic_stream_has_unacked_data((*s).stream) }
+        if (*s).stream.is_null() {
+            0
+        } else {
+            lsquic_stream_has_unacked_data((*s).stream)
+        }
     }
 }
 
@@ -1988,7 +2081,13 @@ pub unsafe extern "C" fn us_quic_stream_context(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_quic_stream_header_count(s: *mut us_quic_stream_t) -> c_uint {
-    unsafe { if (*s).hset.is_null() { 0 } else { (*(*s).hset).count } }
+    unsafe {
+        if (*s).hset.is_null() {
+            0
+        } else {
+            (*(*s).hset).count
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -2076,7 +2175,10 @@ pub unsafe extern "C" fn us_quic_socket_close(s: *mut us_quic_socket_t) {
 // on it — a custom_verify that consults per-connection reject_unauthorized.
 // ═══════════════════════════════════════════════════════════════════════════
 
-unsafe extern "C" fn us_quic_client_verify(ssl: *mut SSL, _out_alert: *mut u8) -> ssl_verify_result_t {
+unsafe extern "C" fn us_quic_client_verify(
+    ssl: *mut SSL,
+    _out_alert: *mut u8,
+) -> ssl_verify_result_t {
     // SAFETY: called during the TLS handshake with a live SSL.
     unsafe {
         let conn = lsquic_ssl_to_conn(ssl);
@@ -2223,7 +2325,8 @@ unsafe fn us_quic_client_endpoint(
         if !(*ctx).client_udp.is_null() {
             return (*ctx).client_udp;
         }
-        let ls = libc::calloc(1, size_of::<us_quic_listen_socket_t>()) as *mut us_quic_listen_socket_t;
+        let ls =
+            libc::calloc(1, size_of::<us_quic_listen_socket_t>()) as *mut us_quic_listen_socket_t;
         if ls.is_null() {
             return ptr::null_mut();
         }
@@ -2420,12 +2523,8 @@ pub unsafe extern "C" fn us_quic_socket_context_connect(
 
         let mut peer_ss: sockaddr_storage = zeroed();
         if us_quic_resolve(host, port, &mut peer_ss) == 0 {
-            *out_qs = us_quic_connect_addr(
-                ctx,
-                ptr::addr_of!(peer_ss).cast(),
-                sni,
-                reject_unauthorized,
-            );
+            *out_qs =
+                us_quic_connect_addr(ctx, ptr::addr_of!(peer_ss).cast(), sni, reject_unauthorized);
             return if (*out_qs).is_null() { -1 } else { 1 };
         }
 
@@ -2449,7 +2548,11 @@ pub unsafe extern "C" fn us_quic_socket_context_connect(
             return -1;
         }
         (*pc).ctx = ctx;
-        (*pc).sni = if sni.is_null() { ptr::null_mut() } else { libc::strdup(sni) };
+        (*pc).sni = if sni.is_null() {
+            ptr::null_mut()
+        } else {
+            libc::strdup(sni)
+        };
         if !sni.is_null() && (*pc).sni.is_null() {
             Bun__addrinfo_freeRequest(ai_req, 1);
             libc::free(pc.cast());
@@ -2546,9 +2649,3 @@ pub unsafe extern "C" fn us_quic_socket_status(
         lsquic_conn_status((*s).conn, buf, len as usize)
     }
 }
-
-
-
-
-
-

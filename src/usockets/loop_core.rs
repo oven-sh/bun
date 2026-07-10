@@ -2,23 +2,24 @@
 //! Port of `packages/bun-usockets/src/loop.c`.
 
 use core::ffi::{c_char, c_int, c_longlong, c_uint, c_void};
-use core::mem::{size_of, transmute, MaybeUninit};
+use core::mem::{MaybeUninit, size_of, transmute};
 use core::ptr;
 
-use crate::bsd::{
-    bsd_accept_socket, bsd_addr_get_ip, bsd_addr_get_ip_length, bsd_close_socket, bsd_recv,
-    bsd_recvmmsg, bsd_socket_nodelay, bsd_udp_setup_recvbuf, bsd_would_block, udp_recvbuf,
-    LIBUS_SOCKET_ERROR,
-};
 #[cfg(not(windows))]
 use crate::bsd::bsd_recvmsg;
-use crate::eventing::{
-    us_create_poll, us_internal_async_close, us_internal_async_set, us_internal_async_wakeup,
-    us_internal_create_async, us_internal_poll_type, us_poll_change, us_poll_events, us_poll_fd,
-    us_poll_free, us_poll_init, us_poll_start_rc, LIBUS_SOCKET_READABLE, LIBUS_SOCKET_WRITABLE,
+use crate::bsd::{
+    LIBUS_SOCKET_ERROR, bsd_accept_socket, bsd_addr_get_ip, bsd_addr_get_ip_length,
+    bsd_close_socket, bsd_recv, bsd_recvmmsg, bsd_socket_nodelay, bsd_udp_setup_recvbuf,
+    bsd_would_block, udp_recvbuf,
 };
 #[cfg(not(windows))]
 use crate::eventing::us_internal_accept_poll_event;
+use crate::eventing::{
+    LIBUS_SOCKET_READABLE, LIBUS_SOCKET_WRITABLE, us_create_poll, us_internal_async_close,
+    us_internal_async_set, us_internal_async_wakeup, us_internal_create_async,
+    us_internal_poll_type, us_poll_change, us_poll_events, us_poll_fd, us_poll_free, us_poll_init,
+    us_poll_start_rc,
+};
 #[cfg(windows)]
 use crate::eventing::{us_create_timer, us_timer_close, us_timer_set};
 use crate::types::*;
@@ -866,12 +867,7 @@ unsafe fn dispatch_listen_socket(p: *mut us_poll_t) {
 }
 
 #[inline]
-unsafe fn dispatch_stream_socket(
-    p: *mut us_poll_t,
-    error: c_int,
-    mut eof: c_int,
-    events: c_int,
-) {
+unsafe fn dispatch_stream_socket(p: *mut us_poll_t, error: c_int, mut eof: c_int, events: c_int) {
     // SAFETY: `p` is a live established/shut-down socket; we only use `s` past
     // this point (the poll may be relocated by adoption).
     unsafe {
@@ -969,7 +965,8 @@ unsafe fn dispatch_stream_socket(
                         let mut msg: libc::msghdr = core::mem::zeroed();
                         let mut iov: libc::iovec = core::mem::zeroed();
                         let mut cmsg_buf =
-                            [0u8; unsafe { libc::CMSG_SPACE(size_of::<c_int>() as c_uint) } as usize];
+                            [0u8; unsafe { libc::CMSG_SPACE(size_of::<c_int>() as c_uint) }
+                                as usize];
 
                         iov.iov_base = recv_buf as *mut c_void;
                         iov.iov_len = LIBUS_RECV_BUFFER_LENGTH;
@@ -979,8 +976,7 @@ unsafe fn dispatch_stream_socket(
                         msg.msg_iovlen = 1;
                         msg.msg_name = ptr::null_mut();
                         msg.msg_namelen = 0;
-                        msg.msg_controllen =
-                            libc::CMSG_LEN(size_of::<c_int>() as c_uint) as _;
+                        msg.msg_controllen = libc::CMSG_LEN(size_of::<c_int>() as c_uint) as _;
                         msg.msg_control = cmsg_buf.as_mut_ptr() as *mut c_void;
 
                         length = bsd_recvmsg(
@@ -995,8 +991,7 @@ unsafe fn dispatch_stream_socket(
                                 && (*cm).cmsg_level == libc::SOL_SOCKET
                                 && (*cm).cmsg_type == libc::SCM_RIGHTS
                             {
-                                let fd =
-                                    ptr::read_unaligned(libc::CMSG_DATA(cm) as *const c_int);
+                                let fd = ptr::read_unaligned(libc::CMSG_DATA(cm) as *const c_int);
                                 s = us_dispatch_fd(s, fd);
                                 if s.is_null() || us_socket_is_closed(s) != 0 {
                                     break 'recv;
@@ -1123,7 +1118,11 @@ unsafe fn dispatch_stream_socket(
             let socket_error = us_socket_get_error(s);
             us_internal_socket_close_raw(
                 s,
-                if socket_error > 2 { socket_error } else { ECONNRESET },
+                if socket_error > 2 {
+                    socket_error
+                } else {
+                    ECONNRESET
+                },
                 ptr::null_mut(),
             );
         }
@@ -1209,11 +1208,7 @@ unsafe fn dispatch_udp_socket(
         }
 
         #[cfg(target_os = "linux")]
-        if error != 0
-            && recv_error_surfaced == 0
-            && recv_would_block_only == 0
-            && !(*u).closed()
-        {
+        if error != 0 && recv_error_surfaced == 0 && recv_would_block_only == 0 && !(*u).closed() {
             us_udp_socket_close(u);
         }
         #[cfg(not(target_os = "linux"))]
@@ -1253,8 +1248,7 @@ unsafe fn drain_udp_errqueue(
                 let mut ee: c_int = 0;
                 let mut cm = libc::CMSG_FIRSTHDR(&eh);
                 while !cm.is_null() {
-                    if ((*cm).cmsg_level == libc::IPPROTO_IP
-                        && (*cm).cmsg_type == libc::IP_RECVERR)
+                    if ((*cm).cmsg_level == libc::IPPROTO_IP && (*cm).cmsg_type == libc::IP_RECVERR)
                         || ((*cm).cmsg_level == libc::IPPROTO_IPV6
                             && (*cm).cmsg_type == libc::IPV6_RECVERR)
                     {

@@ -43,10 +43,22 @@ impl UdpSocket {
     const CLOSED: u16 = 1 << 0;
     const CONNECTED: u16 = 1 << 1;
 
-    #[inline] pub fn is_closed(&self) -> bool { self.bits.get() & Self::CLOSED != 0 }
-    #[inline] pub fn set_closed(&self, v: bool) { self.set_bit(Self::CLOSED, v) }
-    #[inline] pub fn is_connected(&self) -> bool { self.bits.get() & Self::CONNECTED != 0 }
-    #[inline] pub fn set_connected(&self, v: bool) { self.set_bit(Self::CONNECTED, v) }
+    #[inline]
+    pub fn is_closed(&self) -> bool {
+        self.bits.get() & Self::CLOSED != 0
+    }
+    #[inline]
+    pub fn set_closed(&self, v: bool) {
+        self.set_bit(Self::CLOSED, v)
+    }
+    #[inline]
+    pub fn is_connected(&self) -> bool {
+        self.bits.get() & Self::CONNECTED != 0
+    }
+    #[inline]
+    pub fn set_connected(&self, v: bool) {
+        self.set_bit(Self::CONNECTED, v)
+    }
 
     #[inline(always)]
     fn set_bit(&self, mask: u16, v: bool) {

@@ -56,7 +56,8 @@ impl Poll {
     /// Overwrite all 5 `poll_type` bits; fd is preserved.
     #[inline(always)]
     pub fn set_poll_type(&self, t: c_int) {
-        self.state.set((self.state.get() & !0x1F) | (t as u32 & 0x1F));
+        self.state
+            .set((self.state.get() & !0x1F) | (t as u32 & 0x1F));
     }
 }
 

@@ -3,7 +3,7 @@
 //! No allocations on the `sni_find` fast path; lookup is O(log n) per label.
 
 use core::cell::Cell;
-use core::ffi::{c_char, c_int, c_void, CStr};
+use core::ffi::{CStr, c_char, c_int, c_void};
 use core::ptr;
 use std::collections::BTreeMap;
 
@@ -30,7 +30,10 @@ struct SniNode {
 impl Default for SniNode {
     #[inline]
     fn default() -> Self {
-        Self { user: ptr::null_mut(), children: BTreeMap::new() }
+        Self {
+            user: ptr::null_mut(),
+            children: BTreeMap::new(),
+        }
     }
 }
 
@@ -64,7 +67,11 @@ impl<'a> Iterator for Labels<'a> {
         if self.0.is_empty() {
             return None;
         }
-        let dot = self.0.iter().position(|&b| b == b'.').unwrap_or(self.0.len());
+        let dot = self
+            .0
+            .iter()
+            .position(|&b| b == b'.')
+            .unwrap_or(self.0.len());
         let label = &self.0[..dot];
         let skip = core::cmp::min(self.0.len(), label.len() + 1);
         self.0 = &self.0[skip..];

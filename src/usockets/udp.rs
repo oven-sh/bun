@@ -8,23 +8,22 @@ use core::mem::MaybeUninit;
 use core::ptr;
 
 use crate::bsd::{
-    bsd_addr_get_ip, bsd_addr_get_ip_length, bsd_addr_get_port, bsd_close_socket,
-    bsd_connect_udp_socket, bsd_create_udp_socket, bsd_disconnect_udp_socket, bsd_local_addr,
-    bsd_remote_addr, bsd_sendmmsg, bsd_socket_broadcast, bsd_socket_multicast_interface,
-    bsd_socket_multicast_loopback, bsd_socket_set_membership,
+    LIBUS_SOCKET_ERROR, bsd_addr_get_ip, bsd_addr_get_ip_length, bsd_addr_get_port,
+    bsd_close_socket, bsd_connect_udp_socket, bsd_create_udp_socket, bsd_disconnect_udp_socket,
+    bsd_local_addr, bsd_remote_addr, bsd_sendmmsg, bsd_socket_broadcast,
+    bsd_socket_multicast_interface, bsd_socket_multicast_loopback, bsd_socket_set_membership,
     bsd_socket_set_source_specific_membership, bsd_socket_ttl_multicast, bsd_socket_ttl_unicast,
     bsd_udp_packet_buffer_local_ip, bsd_udp_packet_buffer_payload,
     bsd_udp_packet_buffer_payload_length, bsd_udp_packet_buffer_peer,
     bsd_udp_packet_buffer_truncated, bsd_udp_setup_sendbuf, udp_recvbuf, udp_sendbuf,
-    LIBUS_SOCKET_ERROR,
 };
 use crate::eventing::{
-    us_create_poll, us_poll_change, us_poll_fd, us_poll_free, us_poll_init, us_poll_start_rc,
-    us_poll_stop, LIBUS_SOCKET_READABLE, LIBUS_SOCKET_WRITABLE,
+    LIBUS_SOCKET_READABLE, LIBUS_SOCKET_WRITABLE, us_create_poll, us_poll_change, us_poll_fd,
+    us_poll_free, us_poll_init, us_poll_start_rc, us_poll_stop,
 };
 use crate::types::{
-    bsd_addr_t, sockaddr_storage, us_loop_t, us_poll_t, us_udp_socket_t,
-    LIBUS_SEND_BUFFER_LENGTH, LIBUS_SOCKET_DESCRIPTOR, POLL_TYPE_UDP,
+    LIBUS_SEND_BUFFER_LENGTH, LIBUS_SOCKET_DESCRIPTOR, POLL_TYPE_UDP, bsd_addr_t, sockaddr_storage,
+    us_loop_t, us_poll_t, us_udp_socket_t,
 };
 
 /// Public handle to a UDP receive buffer — opaque in `libusockets.h`, in
@@ -152,7 +151,14 @@ pub unsafe extern "C" fn us_udp_socket_send(
         // SAFETY: `buf` is the loop's owned LIBUS_SEND_BUFFER_LENGTH-byte scratch;
         // the three parallel arrays have at least `num` remaining entries.
         let count = unsafe {
-            bsd_udp_setup_sendbuf(buf, LIBUS_SEND_BUFFER_LENGTH, payloads, lengths, addresses, num)
+            bsd_udp_setup_sendbuf(
+                buf,
+                LIBUS_SEND_BUFFER_LENGTH,
+                payloads,
+                lengths,
+                addresses,
+                num,
+            )
         };
         // SAFETY: `count <= num`; advance the parallel-array cursors in step.
         unsafe {
@@ -171,7 +177,11 @@ pub unsafe extern "C" fn us_udp_socket_send(
             // Not all packets sent — re-arm WRITABLE so the drain callback fires.
             // SAFETY: `s` casts to its leading poll; `loop_` owns it.
             unsafe {
-                us_poll_change(as_poll(s), loop_, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+                us_poll_change(
+                    as_poll(s),
+                    loop_,
+                    LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE,
+                );
             }
         }
     }
@@ -338,7 +348,13 @@ pub unsafe extern "C" fn us_udp_socket_set_source_specific_membership(
 ) -> c_int {
     // SAFETY: `s` is live; all address pointers are borrowed by the bsd layer.
     unsafe {
-        bsd_socket_set_source_specific_membership(us_poll_fd(as_poll(s)), source, group, iface, drop)
+        bsd_socket_set_source_specific_membership(
+            us_poll_fd(as_poll(s)),
+            source,
+            group,
+            iface,
+            drop,
+        )
     }
 }
 

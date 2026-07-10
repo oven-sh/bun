@@ -7,30 +7,30 @@
 #![allow(dead_code, unused_imports)]
 
 use core::ffi::{c_char, c_int, c_uchar, c_uint, c_void};
-use core::mem::{size_of, zeroed, MaybeUninit};
+use core::mem::{MaybeUninit, size_of, zeroed};
 use core::ptr;
 
-use crate::bsd::{
-    apple_no_sigpipe, bsd_addr_get_ip, bsd_addr_get_ip_length, bsd_addr_get_port,
-    bsd_close_socket, bsd_local_addr, bsd_remote_addr, bsd_send, bsd_send_is_transient_error,
-    bsd_set_nonblocking, bsd_shutdown_socket, bsd_shutdown_socket_read, bsd_socket_flush,
-    bsd_socket_get_tos, bsd_socket_keepalive, bsd_socket_nodelay, bsd_socket_set_tos,
-    bsd_would_block, bsd_write2, bsd_writev, ssize_t,
-};
 #[cfg(not(windows))]
 use crate::bsd::bsd_sendmsg;
-use crate::eventing::{
-    us_create_poll, us_internal_poll_set_type, us_internal_poll_type, us_loop_t, us_poll_change,
-    us_poll_events, us_poll_fd, us_poll_free, us_poll_init, us_poll_start_rc, us_poll_stop,
-    us_poll_t, LIBUS_SOCKET_READABLE, LIBUS_SOCKET_WRITABLE,
+use crate::bsd::{
+    apple_no_sigpipe, bsd_addr_get_ip, bsd_addr_get_ip_length, bsd_addr_get_port, bsd_close_socket,
+    bsd_local_addr, bsd_remote_addr, bsd_send, bsd_send_is_transient_error, bsd_set_nonblocking,
+    bsd_shutdown_socket, bsd_shutdown_socket_read, bsd_socket_flush, bsd_socket_get_tos,
+    bsd_socket_keepalive, bsd_socket_nodelay, bsd_socket_set_tos, bsd_would_block, bsd_write2,
+    bsd_writev, ssize_t,
 };
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
 use crate::eventing::us_internal_loop_update_pending_ready_polls;
+use crate::eventing::{
+    LIBUS_SOCKET_READABLE, LIBUS_SOCKET_WRITABLE, us_create_poll, us_internal_poll_set_type,
+    us_internal_poll_type, us_loop_t, us_poll_change, us_poll_events, us_poll_fd, us_poll_free,
+    us_poll_init, us_poll_start_rc, us_poll_stop, us_poll_t,
+};
 use crate::types::{
-    bsd_addr_t, us_connecting_socket_t, us_iovec_t, us_listen_socket_t, us_socket_group_t,
-    us_socket_t, Bun__addrinfo_cancel, Bun__addrinfo_freeRequest, us_dispatch_close,
-    us_dispatch_connecting_error, us_dispatch_open, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET,
+    Bun__addrinfo_cancel, Bun__addrinfo_freeRequest, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET,
     LIBUS_SOCKET_DESCRIPTOR, POLL_TYPE_SEMI_SOCKET, POLL_TYPE_SOCKET, POLL_TYPE_SOCKET_SHUT_DOWN,
+    bsd_addr_t, us_connecting_socket_t, us_dispatch_close, us_dispatch_connecting_error,
+    us_dispatch_open, us_iovec_t, us_listen_socket_t, us_socket_group_t, us_socket_t,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -48,8 +48,11 @@ unsafe extern "C" {
 
     fn us_internal_ssl_is_handshake_finished(s: *mut us_socket_t) -> c_int;
     fn us_internal_ssl_handshake_callback_has_fired(s: *mut us_socket_t) -> c_int;
-    fn us_internal_ssl_close(s: *mut us_socket_t, code: c_int, reason: *mut c_void)
-        -> *mut us_socket_t;
+    fn us_internal_ssl_close(
+        s: *mut us_socket_t,
+        code: c_int,
+        reason: *mut c_void,
+    ) -> *mut us_socket_t;
     fn us_internal_ssl_on_close(
         s: *mut us_socket_t,
         code: c_int,
@@ -137,7 +140,10 @@ unsafe fn unlink_from_low_prio_queue(s: *mut us_socket_t, loop_: *mut us_loop_t)
 unsafe fn set_linger_reset(fd: LIBUS_SOCKET_DESCRIPTOR) {
     #[cfg(not(windows))]
     unsafe {
-        let l = libc::linger { l_onoff: 1, l_linger: 0 };
+        let l = libc::linger {
+            l_onoff: 1,
+            l_linger: 0,
+        };
         libc::setsockopt(
             fd,
             libc::SOL_SOCKET,
@@ -165,7 +171,10 @@ unsafe fn set_linger_reset(fd: LIBUS_SOCKET_DESCRIPTOR) {
                 optlen: c_int,
             ) -> c_int;
         }
-        let l = linger { l_onoff: 1, l_linger: 0 };
+        let l = linger {
+            l_onoff: 1,
+            l_linger: 0,
+        };
         setsockopt(
             fd,
             SOL_SOCKET,
@@ -250,11 +259,7 @@ pub unsafe extern "C" fn us_socket_remote_address(
             *length = 0;
         } else {
             *length = bsd_addr_get_ip_length(addr.as_mut_ptr());
-            ptr::copy_nonoverlapping(
-                bsd_addr_get_ip(addr.as_mut_ptr()),
-                buf,
-                *length as usize,
-            );
+            ptr::copy_nonoverlapping(bsd_addr_get_ip(addr.as_mut_ptr()), buf, *length as usize);
         }
     }
 }
@@ -274,11 +279,7 @@ pub unsafe extern "C" fn us_socket_local_address(
             *length = 0;
         } else {
             *length = bsd_addr_get_ip_length(addr.as_mut_ptr());
-            ptr::copy_nonoverlapping(
-                bsd_addr_get_ip(addr.as_mut_ptr()),
-                buf,
-                *length as usize,
-            );
+            ptr::copy_nonoverlapping(bsd_addr_get_ip(addr.as_mut_ptr()), buf, *length as usize);
         }
     }
 }
@@ -451,7 +452,10 @@ pub unsafe extern "C" fn us_socket_is_established(s: *mut us_socket_t) -> c_int 
 /// Detach `c` from its group + drop the borrowed SSL_CTX ref, but leave `c`
 /// allocated. After this `c->group` is null; the only remaining link is into a
 /// loop-owned list.
-unsafe fn us_internal_connecting_socket_detach(c: *mut us_connecting_socket_t, _loop: *mut us_loop_t) {
+unsafe fn us_internal_connecting_socket_detach(
+    c: *mut us_connecting_socket_t,
+    _loop: *mut us_loop_t,
+) {
     // SAFETY: `c` is live; group/ssl_ctx may be null (idempotent).
     unsafe {
         if !(*c).group.is_null() {
@@ -717,7 +721,11 @@ pub unsafe extern "C" fn us_socket_from_fd(
             (size_of::<us_socket_t>() + socket_ext_size as usize) as c_uint,
         );
         us_poll_init(p1, fd, POLL_TYPE_SOCKET);
-        let rc = us_poll_start_rc(p1, (*group).loop_, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        let rc = us_poll_start_rc(
+            p1,
+            (*group).loop_,
+            LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE,
+        );
         if rc != 0 {
             us_poll_free(p1, (*group).loop_);
             return ptr::null_mut();
@@ -770,9 +778,19 @@ pub unsafe extern "C" fn us_socket_write2(
         if us_socket_is_closed(s) != 0 || us_socket_is_shut_down(s) != 0 {
             return 0;
         }
-        let written = bsd_write2(us_poll_fd(poll_of(s)), header, header_length, payload, payload_length);
+        let written = bsd_write2(
+            us_poll_fd(poll_of(s)),
+            header,
+            header_length,
+            payload,
+            payload_length,
+        );
         if written != (header_length + payload_length) as ssize_t {
-            us_poll_change(poll_of(s), group_loop(s), LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            us_poll_change(
+                poll_of(s),
+                group_loop(s),
+                LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE,
+            );
         }
         if written < 0 { 0 } else { written as c_int }
     }
@@ -813,7 +831,11 @@ pub unsafe extern "C" fn us_socket_write(
         let written = bsd_send(us_poll_fd(poll_of(s)), data, length);
         if written != length as ssize_t {
             (*s).flags.set_last_write_failed(true);
-            us_poll_change(poll_of(s), group_loop(s), LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            us_poll_change(
+                poll_of(s),
+                group_loop(s),
+                LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE,
+            );
         }
         if written < 0 { 0 } else { written as c_int }
     }
@@ -845,7 +867,11 @@ pub unsafe extern "C" fn us_socket_write_check_error(
             // healthy connection — not fatal.
             if bsd_would_block() != 0 || bsd_send_is_transient_error() != 0 {
                 (*s).flags.set_last_write_failed(true);
-                us_poll_change(poll_of(s), group_loop(s), LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+                us_poll_change(
+                    poll_of(s),
+                    group_loop(s),
+                    LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE,
+                );
                 return 0;
             }
             // Fatal send error (EPIPE/ECONNRESET): report to opted-in callers
@@ -857,7 +883,11 @@ pub unsafe extern "C" fn us_socket_write_check_error(
         }
         if written != length as ssize_t {
             (*s).flags.set_last_write_failed(true);
-            us_poll_change(poll_of(s), group_loop(s), LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            us_poll_change(
+                poll_of(s),
+                group_loop(s),
+                LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE,
+            );
         }
         written as c_int
     }
@@ -871,7 +901,9 @@ pub unsafe extern "C" fn us_socket_raw_writev(
 ) -> c_int {
     // SAFETY: `s` is a live socket; `iov` is an array of `count` entries.
     unsafe {
-        if us_socket_is_closed(s) != 0 || us_internal_poll_type(poll_of(s)) == POLL_TYPE_SOCKET_SHUT_DOWN {
+        if us_socket_is_closed(s) != 0
+            || us_internal_poll_type(poll_of(s)) == POLL_TYPE_SOCKET_SHUT_DOWN
+        {
             return 0;
         }
 
@@ -883,7 +915,11 @@ pub unsafe extern "C" fn us_socket_raw_writev(
         let written = bsd_writev(us_poll_fd(poll_of(s)), iov, count);
         if written != total as ssize_t {
             (*s).flags.set_last_write_failed(true);
-            us_poll_change(poll_of(s), group_loop(s), LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            us_poll_change(
+                poll_of(s),
+                group_loop(s),
+                LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE,
+            );
         }
         if written < 0 { 0 } else { written as c_int }
     }
@@ -899,13 +935,19 @@ pub unsafe extern "C" fn us_socket_raw_write(
 ) -> c_int {
     // SAFETY: `s` is a live socket; `data` is valid for `length` bytes.
     unsafe {
-        if us_socket_is_closed(s) != 0 || us_internal_poll_type(poll_of(s)) == POLL_TYPE_SOCKET_SHUT_DOWN {
+        if us_socket_is_closed(s) != 0
+            || us_internal_poll_type(poll_of(s)) == POLL_TYPE_SOCKET_SHUT_DOWN
+        {
             return 0;
         }
         let written = bsd_send(us_poll_fd(poll_of(s)), data, length);
         if written != length as ssize_t {
             (*s).flags.set_last_write_failed(true);
-            us_poll_change(poll_of(s), group_loop(s), LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            us_poll_change(
+                poll_of(s),
+                group_loop(s),
+                LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE,
+            );
         }
         if written < 0 { 0 } else { written as c_int }
     }
@@ -957,7 +999,11 @@ pub unsafe extern "C" fn us_socket_ipc_write_fd(
         let sent = bsd_sendmsg(us_poll_fd(poll_of(s)), &msg, 0);
         if sent != length as ssize_t {
             (*s).flags.set_last_write_failed(true);
-            us_poll_change(poll_of(s), group_loop(s), LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            us_poll_change(
+                poll_of(s),
+                group_loop(s),
+                LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE,
+            );
         }
         if sent < 0 { 0 } else { sent as c_int }
     }
@@ -995,7 +1041,9 @@ pub unsafe extern "C" fn us_socket_is_shut_down(s: *mut us_socket_t) -> c_int {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_connecting_socket_is_shut_down(c: *mut us_connecting_socket_t) -> c_int {
+pub unsafe extern "C" fn us_connecting_socket_is_shut_down(
+    c: *mut us_connecting_socket_t,
+) -> c_int {
     // SAFETY: `c` is a live connecting socket.
     unsafe { (*c).shutdown() as c_int }
 }
@@ -1004,7 +1052,8 @@ pub unsafe extern "C" fn us_connecting_socket_is_shut_down(c: *mut us_connecting
 pub unsafe extern "C" fn us_internal_socket_raw_shutdown(s: *mut us_socket_t) {
     // SAFETY: `s` is a live socket; group/loop are valid while not is_closed.
     unsafe {
-        if us_socket_is_closed(s) == 0 && us_internal_poll_type(poll_of(s)) != POLL_TYPE_SOCKET_SHUT_DOWN
+        if us_socket_is_closed(s) == 0
+            && us_internal_poll_type(poll_of(s)) != POLL_TYPE_SOCKET_SHUT_DOWN
         {
             us_internal_poll_set_type(poll_of(s), POLL_TYPE_SOCKET_SHUT_DOWN);
             us_poll_change(
@@ -1240,6 +1289,10 @@ pub unsafe extern "C" fn us_socket_resume(s: *mut us_socket_t) {
             us_poll_change(poll_of(s), group_loop(s), LIBUS_SOCKET_READABLE);
             return;
         }
-        us_poll_change(poll_of(s), group_loop(s), LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        us_poll_change(
+            poll_of(s),
+            group_loop(s),
+            LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE,
+        );
     }
 }

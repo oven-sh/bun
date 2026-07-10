@@ -24,7 +24,10 @@ pub struct ListLinks<T> {
 impl<T> ListLinks<T> {
     #[inline]
     pub const fn new() -> Self {
-        Self { prev: Cell::new(None), next: Cell::new(None) }
+        Self {
+            prev: Cell::new(None),
+            next: Cell::new(None),
+        }
     }
 }
 
@@ -58,7 +61,9 @@ pub struct IntrusiveList<T: Linked> {
 impl<T: Linked> IntrusiveList<T> {
     #[inline]
     pub const fn new() -> Self {
-        Self { head: Cell::new(None) }
+        Self {
+            head: Cell::new(None),
+        }
     }
 
     #[inline]

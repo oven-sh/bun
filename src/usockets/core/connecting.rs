@@ -37,17 +37,47 @@ impl ConnectingBits {
         Self(Cell::new(0))
     }
 
-    #[inline] pub fn closed(&self) -> bool { self.0.get() & Self::CLOSED != 0 }
-    #[inline] pub fn set_closed(&self, v: bool) { self.set_bit(Self::CLOSED, v) }
-    #[inline] pub fn shutdown(&self) -> bool { self.0.get() & Self::SHUTDOWN != 0 }
-    #[inline] pub fn set_shutdown(&self, v: bool) { self.set_bit(Self::SHUTDOWN, v) }
-    #[inline] pub fn shutdown_read(&self) -> bool { self.0.get() & Self::SHUTDOWN_READ != 0 }
-    #[inline] pub fn set_shutdown_read(&self, v: bool) { self.set_bit(Self::SHUTDOWN_READ, v) }
-    #[inline] pub fn pending_resolve_callback(&self) -> bool { self.0.get() & Self::PENDING_RESOLVE_CALLBACK != 0 }
-    #[inline] pub fn set_pending_resolve_callback(&self, v: bool) { self.set_bit(Self::PENDING_RESOLVE_CALLBACK, v) }
+    #[inline]
+    pub fn closed(&self) -> bool {
+        self.0.get() & Self::CLOSED != 0
+    }
+    #[inline]
+    pub fn set_closed(&self, v: bool) {
+        self.set_bit(Self::CLOSED, v)
+    }
+    #[inline]
+    pub fn shutdown(&self) -> bool {
+        self.0.get() & Self::SHUTDOWN != 0
+    }
+    #[inline]
+    pub fn set_shutdown(&self, v: bool) {
+        self.set_bit(Self::SHUTDOWN, v)
+    }
+    #[inline]
+    pub fn shutdown_read(&self) -> bool {
+        self.0.get() & Self::SHUTDOWN_READ != 0
+    }
+    #[inline]
+    pub fn set_shutdown_read(&self, v: bool) {
+        self.set_bit(Self::SHUTDOWN_READ, v)
+    }
+    #[inline]
+    pub fn pending_resolve_callback(&self) -> bool {
+        self.0.get() & Self::PENDING_RESOLVE_CALLBACK != 0
+    }
+    #[inline]
+    pub fn set_pending_resolve_callback(&self, v: bool) {
+        self.set_bit(Self::PENDING_RESOLVE_CALLBACK, v)
+    }
     /// `error` holds a `getaddrinfo(3)` return code, not an errno.
-    #[inline] pub fn error_is_dns(&self) -> bool { self.0.get() & Self::ERROR_IS_DNS != 0 }
-    #[inline] pub fn set_error_is_dns(&self, v: bool) { self.set_bit(Self::ERROR_IS_DNS, v) }
+    #[inline]
+    pub fn error_is_dns(&self) -> bool {
+        self.0.get() & Self::ERROR_IS_DNS != 0
+    }
+    #[inline]
+    pub fn set_error_is_dns(&self, v: bool) {
+        self.set_bit(Self::ERROR_IS_DNS, v)
+    }
 
     #[inline(always)]
     fn set_bit(&self, mask: u8, v: bool) {
@@ -185,6 +215,8 @@ const _: () = {
     assert!(offset_of!(ConnectingSocket, group) == offset_of!(us_connecting_socket_t, group));
     assert!(offset_of!(ConnectingSocket, bits) == offset_of!(us_connecting_socket_t, bits));
     assert!(offset_of!(ConnectingSocket, error) == offset_of!(us_connecting_socket_t, error));
-    assert!(offset_of!(ConnectingSocket, links) == offset_of!(us_connecting_socket_t, next_pending));
+    assert!(
+        offset_of!(ConnectingSocket, links) == offset_of!(us_connecting_socket_t, next_pending)
+    );
     assert!(size_of::<ConnectingBits>() == 1);
 };

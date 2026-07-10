@@ -86,7 +86,11 @@ mod enabled {
     }
 
     impl UsFaultSlot {
-        const ZERO: Self = Self { rule: us_fault_rule::DISARMED, calls_seen: 0, fired: 0 };
+        const ZERO: Self = Self {
+            rule: us_fault_rule::DISARMED,
+            calls_seen: 0,
+            fired: 0,
+        };
     }
 
     /// `Sync` wrapper over `UnsafeCell` for process-global mutable state.

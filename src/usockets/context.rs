@@ -9,16 +9,16 @@ use core::mem::{size_of, zeroed};
 use core::ptr;
 
 use crate::bsd::LIBUS_SOCKET_ERROR;
-use crate::eventing::{us_loop_t, us_poll_t, LIBUS_SOCKET_READABLE, LIBUS_SOCKET_WRITABLE};
+use crate::eventing::{LIBUS_SOCKET_READABLE, LIBUS_SOCKET_WRITABLE, us_loop_t, us_poll_t};
 use crate::types::{
-    addrinfo, addrinfo_request, addrinfo_result, ext_of, sockaddr_storage, us_bun_verify_error_t,
-    us_calloc, us_cert_string_t, us_connecting_socket_t, us_internal_raw_root_certs,
-    us_listen_socket_t, us_socket_group_t, us_socket_t, us_socket_vtable_t,
     Bun__addrinfo_freeRequest, Bun__addrinfo_get, Bun__addrinfo_getRequestResult,
-    Bun__addrinfo_set, Bun__outOfMemory, us_dispatch_connect_error, us_dispatch_open,
-    LIBUS_SOCKET_DESCRIPTOR, LIBUS_LISTEN_DEFER_ACCEPT, LIBUS_SOCKET_ALLOW_HALF_OPEN,
+    Bun__addrinfo_set, Bun__outOfMemory, LIBUS_LISTEN_DEFER_ACCEPT, LIBUS_SOCKET_ALLOW_HALF_OPEN,
     LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET,
-    POLL_TYPE_SEMI_SOCKET, POLL_TYPE_SOCKET,
+    LIBUS_SOCKET_DESCRIPTOR, POLL_TYPE_SEMI_SOCKET, POLL_TYPE_SOCKET, addrinfo, addrinfo_request,
+    addrinfo_result, ext_of, sockaddr_storage, us_bun_verify_error_t, us_calloc, us_cert_string_t,
+    us_connecting_socket_t, us_dispatch_connect_error, us_dispatch_open,
+    us_internal_raw_root_certs, us_listen_socket_t, us_socket_group_t, us_socket_t,
+    us_socket_vtable_t,
 };
 
 use bun_boringssl_sys::SSL_CTX;
@@ -88,7 +88,7 @@ const fn htons(n: u16) -> u16 {
 #[cfg(not(windows))]
 mod plat {
     use core::ffi::{c_char, c_int, c_void};
-    pub(super) use libc::{sockaddr_in, sockaddr_in6, AF_INET, AF_INET6};
+    pub(super) use libc::{AF_INET, AF_INET6, sockaddr_in, sockaddr_in6};
 
     unsafe extern "C" {
         pub(super) fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
@@ -97,8 +97,8 @@ mod plat {
 
 #[cfg(windows)]
 mod plat {
-    use core::ffi::{c_char, c_int, c_void};
     pub(super) use bun_windows_sys::ws2_32::{sockaddr_in, sockaddr_in6};
+    use core::ffi::{c_char, c_int, c_void};
 
     pub(super) const AF_INET: c_int = 2;
     pub(super) const AF_INET6: c_int = 23;
@@ -142,7 +142,11 @@ unsafe extern "C" {
     fn us_socket_timeout(s: *mut us_socket_t, seconds: c_uint);
 
     // eventing/*.rs
-    fn us_create_poll(loop_: *mut us_loop_t, fallthrough: c_int, ext_size: c_uint) -> *mut us_poll_t;
+    fn us_create_poll(
+        loop_: *mut us_loop_t,
+        fallthrough: c_int,
+        ext_size: c_uint,
+    ) -> *mut us_poll_t;
     fn us_poll_init(p: *mut us_poll_t, fd: LIBUS_SOCKET_DESCRIPTOR, poll_type: c_int);
     fn us_poll_start_rc(p: *mut us_poll_t, loop_: *mut us_loop_t, events: c_int) -> c_int;
     fn us_poll_stop(p: *mut us_poll_t, loop_: *mut us_loop_t);
@@ -1194,8 +1198,12 @@ pub unsafe extern "C" fn us_internal_socket_after_open(s: *mut us_socket_t, erro
         let mut error = error;
         #[cfg(windows)]
         if error == 0 {
-            if plat::recv(us_poll_fd(s.cast()), ptr::null_mut(), 0, plat::MSG_PUSH_IMMEDIATE)
-                == plat::SOCKET_ERROR
+            if plat::recv(
+                us_poll_fd(s.cast()),
+                ptr::null_mut(),
+                0,
+                plat::MSG_PUSH_IMMEDIATE,
+            ) == plat::SOCKET_ERROR
             {
                 error = plat::WSAGetLastError();
                 match error {

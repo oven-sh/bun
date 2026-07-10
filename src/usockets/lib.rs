@@ -17,10 +17,10 @@ pub use eventing::{us_loop_t, us_poll_t};
 
 pub mod bsd;
 pub mod context;
+pub mod core;
 pub mod fault_inject;
 pub mod loop_core;
 pub mod quic;
 pub mod socket;
 pub mod ssl;
 pub mod udp;
-pub mod core;

@@ -17,12 +17,12 @@ use core::ffi::{c_char, c_int, c_longlong, c_void};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use crate::types::{
-    us_connecting_socket_t, us_internal_async, us_internal_loop_data_t, us_quic_socket_context_s,
-    us_udp_socket_t, zig_mutex_t, LIBUS_RECV_BUFFER_LENGTH, LIBUS_RECV_BUFFER_PADDING,
-};
 #[cfg(windows)]
 use crate::types::us_timer_t;
+use crate::types::{
+    LIBUS_RECV_BUFFER_LENGTH, LIBUS_RECV_BUFFER_PADDING, us_connecting_socket_t, us_internal_async,
+    us_internal_loop_data_t, us_quic_socket_context_s, us_udp_socket_t, zig_mutex_t,
+};
 
 use super::group::SocketGroup;
 use super::list::IntrusiveList;
@@ -116,7 +116,10 @@ impl<'a> LoopTick<'a> {
     /// call must be on the loop's own thread.
     #[inline]
     pub unsafe fn new(loop_: NonNull<Loop>) -> Self {
-        Self { loop_, _marker: PhantomData }
+        Self {
+            loop_,
+            _marker: PhantomData,
+        }
     }
 
     /// The per-loop state block. Every backend's `us_loop_t` places `data` at
@@ -138,7 +141,13 @@ impl<'a> LoopTick<'a> {
         // by `us_internal_loop_data_init` (OOM aborts there) and freed only in
         // `us_internal_loop_data_free`, which cannot run while a `LoopTick`
         // exists. `Cell` is `repr(transparent)` over `[u8; N]`.
-        unsafe { &*self.data().recv_buf.get().cast::<Cell<[u8; RECV_BUF_LEN]>>() }
+        unsafe {
+            &*self
+                .data()
+                .recv_buf
+                .get()
+                .cast::<Cell<[u8; RECV_BUF_LEN]>>()
+        }
     }
 
     /// Raw `*mut us_loop_t` for calling into the still-`extern "C"` helpers.

@@ -5,15 +5,15 @@
 //! struct here is field-for-field layout-identical to its C counterpart so the
 //! exported `us_*` ABI is unchanged.
 
-use core::ffi::{c_char, c_int, c_uint, c_longlong, c_void};
+use core::ffi::{c_char, c_int, c_longlong, c_uint, c_void};
 
 pub use crate::eventing::{us_loop_t, us_poll_t, us_timer_t};
 
 // ── libc / winsock glue ─────────────────────────────────────────────────────
-#[cfg(not(windows))]
-pub use libc::{addrinfo, sockaddr_storage, socklen_t};
 #[cfg(windows)]
 pub use bun_windows_sys::ws2_32::{addrinfo, sockaddr_storage};
+#[cfg(not(windows))]
+pub use libc::{addrinfo, sockaddr_storage, socklen_t};
 #[cfg(windows)]
 pub type socklen_t = c_int;
 
@@ -103,7 +103,11 @@ pub struct us_bun_verify_error_t {
 }
 impl Default for us_bun_verify_error_t {
     fn default() -> Self {
-        Self { error_no: 0, code: core::ptr::null(), reason: core::ptr::null() }
+        Self {
+            error_no: 0,
+            code: core::ptr::null(),
+            reason: core::ptr::null(),
+        }
     }
 }
 
@@ -141,24 +145,66 @@ impl us_socket_flags {
     pub const ADOPTED: u8 = 1 << 6;
     pub const LAST_WRITE_FAILED: u8 = 1 << 7;
 
-    #[inline] pub const fn is_paused(self) -> bool { self.0 & Self::IS_PAUSED != 0 }
-    #[inline] pub fn set_is_paused(&mut self, v: bool) { self.set_bit(Self::IS_PAUSED, v) }
-    #[inline] pub const fn allow_half_open(self) -> bool { self.0 & Self::ALLOW_HALF_OPEN != 0 }
-    #[inline] pub fn set_allow_half_open(&mut self, v: bool) { self.set_bit(Self::ALLOW_HALF_OPEN, v) }
-    #[inline] pub const fn low_prio_state(self) -> u8 { (self.0 & Self::LOW_PRIO_STATE_MASK) >> Self::LOW_PRIO_STATE_SHIFT }
-    #[inline] pub fn set_low_prio_state(&mut self, v: u8) {
-        self.0 = (self.0 & !Self::LOW_PRIO_STATE_MASK) | ((v << Self::LOW_PRIO_STATE_SHIFT) & Self::LOW_PRIO_STATE_MASK);
+    #[inline]
+    pub const fn is_paused(self) -> bool {
+        self.0 & Self::IS_PAUSED != 0
     }
-    #[inline] pub const fn is_ipc(self) -> bool { self.0 & Self::IS_IPC != 0 }
-    #[inline] pub fn set_is_ipc(&mut self, v: bool) { self.set_bit(Self::IS_IPC, v) }
-    #[inline] pub const fn is_closed(self) -> bool { self.0 & Self::IS_CLOSED != 0 }
-    #[inline] pub fn set_is_closed(&mut self, v: bool) { self.set_bit(Self::IS_CLOSED, v) }
-    #[inline] pub const fn adopted(self) -> bool { self.0 & Self::ADOPTED != 0 }
-    #[inline] pub fn set_adopted(&mut self, v: bool) { self.set_bit(Self::ADOPTED, v) }
-    #[inline] pub const fn last_write_failed(self) -> bool { self.0 & Self::LAST_WRITE_FAILED != 0 }
-    #[inline] pub fn set_last_write_failed(&mut self, v: bool) { self.set_bit(Self::LAST_WRITE_FAILED, v) }
+    #[inline]
+    pub fn set_is_paused(&mut self, v: bool) {
+        self.set_bit(Self::IS_PAUSED, v)
+    }
+    #[inline]
+    pub const fn allow_half_open(self) -> bool {
+        self.0 & Self::ALLOW_HALF_OPEN != 0
+    }
+    #[inline]
+    pub fn set_allow_half_open(&mut self, v: bool) {
+        self.set_bit(Self::ALLOW_HALF_OPEN, v)
+    }
+    #[inline]
+    pub const fn low_prio_state(self) -> u8 {
+        (self.0 & Self::LOW_PRIO_STATE_MASK) >> Self::LOW_PRIO_STATE_SHIFT
+    }
+    #[inline]
+    pub fn set_low_prio_state(&mut self, v: u8) {
+        self.0 = (self.0 & !Self::LOW_PRIO_STATE_MASK)
+            | ((v << Self::LOW_PRIO_STATE_SHIFT) & Self::LOW_PRIO_STATE_MASK);
+    }
+    #[inline]
+    pub const fn is_ipc(self) -> bool {
+        self.0 & Self::IS_IPC != 0
+    }
+    #[inline]
+    pub fn set_is_ipc(&mut self, v: bool) {
+        self.set_bit(Self::IS_IPC, v)
+    }
+    #[inline]
+    pub const fn is_closed(self) -> bool {
+        self.0 & Self::IS_CLOSED != 0
+    }
+    #[inline]
+    pub fn set_is_closed(&mut self, v: bool) {
+        self.set_bit(Self::IS_CLOSED, v)
+    }
+    #[inline]
+    pub const fn adopted(self) -> bool {
+        self.0 & Self::ADOPTED != 0
+    }
+    #[inline]
+    pub fn set_adopted(&mut self, v: bool) {
+        self.set_bit(Self::ADOPTED, v)
+    }
+    #[inline]
+    pub const fn last_write_failed(self) -> bool {
+        self.0 & Self::LAST_WRITE_FAILED != 0
+    }
+    #[inline]
+    pub fn set_last_write_failed(&mut self, v: bool) {
+        self.set_bit(Self::LAST_WRITE_FAILED, v)
+    }
 
-    #[inline] fn set_bit(&mut self, mask: u8, v: bool) {
+    #[inline]
+    fn set_bit(&mut self, mask: u8, v: bool) {
         if v { self.0 |= mask } else { self.0 &= !mask }
     }
 }
@@ -201,31 +247,95 @@ impl us_socket_t {
     const SSL_IN_USE: u16 = 1 << 9;
     const SSL_PENDING_DETACH: u16 = 1 << 10;
 
-    #[inline] pub const fn ssl_handshake_state(&self) -> u8 { (self.ssl_bits & Self::SSL_HANDSHAKE_STATE_MASK) as u8 }
-    #[inline] pub fn set_ssl_handshake_state(&mut self, v: u8) {
-        self.ssl_bits = (self.ssl_bits & !Self::SSL_HANDSHAKE_STATE_MASK) | (v as u16 & Self::SSL_HANDSHAKE_STATE_MASK);
+    #[inline]
+    pub const fn ssl_handshake_state(&self) -> u8 {
+        (self.ssl_bits & Self::SSL_HANDSHAKE_STATE_MASK) as u8
     }
-    #[inline] pub const fn ssl_write_wants_read(&self) -> bool { self.ssl_bits & Self::SSL_WRITE_WANTS_READ != 0 }
-    #[inline] pub fn set_ssl_write_wants_read(&mut self, v: bool) { self.set_ssl_bit(Self::SSL_WRITE_WANTS_READ, v) }
-    #[inline] pub const fn ssl_read_wants_write(&self) -> bool { self.ssl_bits & Self::SSL_READ_WANTS_WRITE != 0 }
-    #[inline] pub fn set_ssl_read_wants_write(&mut self, v: bool) { self.set_ssl_bit(Self::SSL_READ_WANTS_WRITE, v) }
-    #[inline] pub const fn ssl_fatal_error(&self) -> bool { self.ssl_bits & Self::SSL_FATAL_ERROR != 0 }
-    #[inline] pub fn set_ssl_fatal_error(&mut self, v: bool) { self.set_ssl_bit(Self::SSL_FATAL_ERROR, v) }
-    #[inline] pub const fn ssl_is_server(&self) -> bool { self.ssl_bits & Self::SSL_IS_SERVER != 0 }
-    #[inline] pub fn set_ssl_is_server(&mut self, v: bool) { self.set_ssl_bit(Self::SSL_IS_SERVER, v) }
-    #[inline] pub const fn ssl_raw_tap(&self) -> bool { self.ssl_bits & Self::SSL_RAW_TAP != 0 }
-    #[inline] pub fn set_ssl_raw_tap(&mut self, v: bool) { self.set_ssl_bit(Self::SSL_RAW_TAP, v) }
-    #[inline] pub const fn ssl_shutdown_after_spill(&self) -> bool { self.ssl_bits & Self::SSL_SHUTDOWN_AFTER_SPILL != 0 }
-    #[inline] pub fn set_ssl_shutdown_after_spill(&mut self, v: bool) { self.set_ssl_bit(Self::SSL_SHUTDOWN_AFTER_SPILL, v) }
-    #[inline] pub const fn ssl_close_after_spill(&self) -> bool { self.ssl_bits & Self::SSL_CLOSE_AFTER_SPILL != 0 }
-    #[inline] pub fn set_ssl_close_after_spill(&mut self, v: bool) { self.set_ssl_bit(Self::SSL_CLOSE_AFTER_SPILL, v) }
-    #[inline] pub const fn ssl_in_use(&self) -> bool { self.ssl_bits & Self::SSL_IN_USE != 0 }
-    #[inline] pub fn set_ssl_in_use(&mut self, v: bool) { self.set_ssl_bit(Self::SSL_IN_USE, v) }
-    #[inline] pub const fn ssl_pending_detach(&self) -> bool { self.ssl_bits & Self::SSL_PENDING_DETACH != 0 }
-    #[inline] pub fn set_ssl_pending_detach(&mut self, v: bool) { self.set_ssl_bit(Self::SSL_PENDING_DETACH, v) }
+    #[inline]
+    pub fn set_ssl_handshake_state(&mut self, v: u8) {
+        self.ssl_bits = (self.ssl_bits & !Self::SSL_HANDSHAKE_STATE_MASK)
+            | (v as u16 & Self::SSL_HANDSHAKE_STATE_MASK);
+    }
+    #[inline]
+    pub const fn ssl_write_wants_read(&self) -> bool {
+        self.ssl_bits & Self::SSL_WRITE_WANTS_READ != 0
+    }
+    #[inline]
+    pub fn set_ssl_write_wants_read(&mut self, v: bool) {
+        self.set_ssl_bit(Self::SSL_WRITE_WANTS_READ, v)
+    }
+    #[inline]
+    pub const fn ssl_read_wants_write(&self) -> bool {
+        self.ssl_bits & Self::SSL_READ_WANTS_WRITE != 0
+    }
+    #[inline]
+    pub fn set_ssl_read_wants_write(&mut self, v: bool) {
+        self.set_ssl_bit(Self::SSL_READ_WANTS_WRITE, v)
+    }
+    #[inline]
+    pub const fn ssl_fatal_error(&self) -> bool {
+        self.ssl_bits & Self::SSL_FATAL_ERROR != 0
+    }
+    #[inline]
+    pub fn set_ssl_fatal_error(&mut self, v: bool) {
+        self.set_ssl_bit(Self::SSL_FATAL_ERROR, v)
+    }
+    #[inline]
+    pub const fn ssl_is_server(&self) -> bool {
+        self.ssl_bits & Self::SSL_IS_SERVER != 0
+    }
+    #[inline]
+    pub fn set_ssl_is_server(&mut self, v: bool) {
+        self.set_ssl_bit(Self::SSL_IS_SERVER, v)
+    }
+    #[inline]
+    pub const fn ssl_raw_tap(&self) -> bool {
+        self.ssl_bits & Self::SSL_RAW_TAP != 0
+    }
+    #[inline]
+    pub fn set_ssl_raw_tap(&mut self, v: bool) {
+        self.set_ssl_bit(Self::SSL_RAW_TAP, v)
+    }
+    #[inline]
+    pub const fn ssl_shutdown_after_spill(&self) -> bool {
+        self.ssl_bits & Self::SSL_SHUTDOWN_AFTER_SPILL != 0
+    }
+    #[inline]
+    pub fn set_ssl_shutdown_after_spill(&mut self, v: bool) {
+        self.set_ssl_bit(Self::SSL_SHUTDOWN_AFTER_SPILL, v)
+    }
+    #[inline]
+    pub const fn ssl_close_after_spill(&self) -> bool {
+        self.ssl_bits & Self::SSL_CLOSE_AFTER_SPILL != 0
+    }
+    #[inline]
+    pub fn set_ssl_close_after_spill(&mut self, v: bool) {
+        self.set_ssl_bit(Self::SSL_CLOSE_AFTER_SPILL, v)
+    }
+    #[inline]
+    pub const fn ssl_in_use(&self) -> bool {
+        self.ssl_bits & Self::SSL_IN_USE != 0
+    }
+    #[inline]
+    pub fn set_ssl_in_use(&mut self, v: bool) {
+        self.set_ssl_bit(Self::SSL_IN_USE, v)
+    }
+    #[inline]
+    pub const fn ssl_pending_detach(&self) -> bool {
+        self.ssl_bits & Self::SSL_PENDING_DETACH != 0
+    }
+    #[inline]
+    pub fn set_ssl_pending_detach(&mut self, v: bool) {
+        self.set_ssl_bit(Self::SSL_PENDING_DETACH, v)
+    }
 
-    #[inline] fn set_ssl_bit(&mut self, mask: u16, v: bool) {
-        if v { self.ssl_bits |= mask } else { self.ssl_bits &= !mask }
+    #[inline]
+    fn set_ssl_bit(&mut self, mask: u16, v: bool) {
+        if v {
+            self.ssl_bits |= mask
+        } else {
+            self.ssl_bits &= !mask
+        }
     }
 }
 
@@ -262,19 +372,54 @@ impl us_connecting_socket_t {
     pub const PENDING_RESOLVE_CALLBACK: u8 = 1 << 3;
     pub const ERROR_IS_DNS: u8 = 1 << 4;
 
-    #[inline] pub const fn closed(&self) -> bool { self.bits & Self::CLOSED != 0 }
-    #[inline] pub fn set_closed(&mut self, v: bool) { self.set_bit(Self::CLOSED, v) }
-    #[inline] pub const fn shutdown(&self) -> bool { self.bits & Self::SHUTDOWN != 0 }
-    #[inline] pub fn set_shutdown(&mut self, v: bool) { self.set_bit(Self::SHUTDOWN, v) }
-    #[inline] pub const fn shutdown_read(&self) -> bool { self.bits & Self::SHUTDOWN_READ != 0 }
-    #[inline] pub fn set_shutdown_read(&mut self, v: bool) { self.set_bit(Self::SHUTDOWN_READ, v) }
-    #[inline] pub const fn pending_resolve_callback(&self) -> bool { self.bits & Self::PENDING_RESOLVE_CALLBACK != 0 }
-    #[inline] pub fn set_pending_resolve_callback(&mut self, v: bool) { self.set_bit(Self::PENDING_RESOLVE_CALLBACK, v) }
-    #[inline] pub const fn error_is_dns(&self) -> bool { self.bits & Self::ERROR_IS_DNS != 0 }
-    #[inline] pub fn set_error_is_dns(&mut self, v: bool) { self.set_bit(Self::ERROR_IS_DNS, v) }
+    #[inline]
+    pub const fn closed(&self) -> bool {
+        self.bits & Self::CLOSED != 0
+    }
+    #[inline]
+    pub fn set_closed(&mut self, v: bool) {
+        self.set_bit(Self::CLOSED, v)
+    }
+    #[inline]
+    pub const fn shutdown(&self) -> bool {
+        self.bits & Self::SHUTDOWN != 0
+    }
+    #[inline]
+    pub fn set_shutdown(&mut self, v: bool) {
+        self.set_bit(Self::SHUTDOWN, v)
+    }
+    #[inline]
+    pub const fn shutdown_read(&self) -> bool {
+        self.bits & Self::SHUTDOWN_READ != 0
+    }
+    #[inline]
+    pub fn set_shutdown_read(&mut self, v: bool) {
+        self.set_bit(Self::SHUTDOWN_READ, v)
+    }
+    #[inline]
+    pub const fn pending_resolve_callback(&self) -> bool {
+        self.bits & Self::PENDING_RESOLVE_CALLBACK != 0
+    }
+    #[inline]
+    pub fn set_pending_resolve_callback(&mut self, v: bool) {
+        self.set_bit(Self::PENDING_RESOLVE_CALLBACK, v)
+    }
+    #[inline]
+    pub const fn error_is_dns(&self) -> bool {
+        self.bits & Self::ERROR_IS_DNS != 0
+    }
+    #[inline]
+    pub fn set_error_is_dns(&mut self, v: bool) {
+        self.set_bit(Self::ERROR_IS_DNS, v)
+    }
 
-    #[inline] fn set_bit(&mut self, mask: u8, v: bool) {
-        if v { self.bits |= mask } else { self.bits &= !mask }
+    #[inline]
+    fn set_bit(&mut self, mask: u8, v: bool) {
+        if v {
+            self.bits |= mask
+        } else {
+            self.bits &= !mask
+        }
     }
 }
 
@@ -301,13 +446,29 @@ impl us_udp_socket_t {
     pub const CLOSED: u16 = 1 << 0;
     pub const CONNECTED: u16 = 1 << 1;
 
-    #[inline] pub const fn closed(&self) -> bool { self.bits & Self::CLOSED != 0 }
-    #[inline] pub fn set_closed(&mut self, v: bool) {
-        if v { self.bits |= Self::CLOSED } else { self.bits &= !Self::CLOSED }
+    #[inline]
+    pub const fn closed(&self) -> bool {
+        self.bits & Self::CLOSED != 0
     }
-    #[inline] pub const fn connected(&self) -> bool { self.bits & Self::CONNECTED != 0 }
-    #[inline] pub fn set_connected(&mut self, v: bool) {
-        if v { self.bits |= Self::CONNECTED } else { self.bits &= !Self::CONNECTED }
+    #[inline]
+    pub fn set_closed(&mut self, v: bool) {
+        if v {
+            self.bits |= Self::CLOSED
+        } else {
+            self.bits &= !Self::CLOSED
+        }
+    }
+    #[inline]
+    pub const fn connected(&self) -> bool {
+        self.bits & Self::CONNECTED != 0
+    }
+    #[inline]
+    pub fn set_connected(&mut self, v: bool) {
+        if v {
+            self.bits |= Self::CONNECTED
+        } else {
+            self.bits &= !Self::CONNECTED
+        }
     }
 }
 
@@ -366,17 +527,22 @@ pub struct us_listen_socket_t {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct us_socket_vtable_t {
-    pub on_open: Option<unsafe extern "C" fn(*mut us_socket_t, c_int, *mut c_char, c_int) -> *mut us_socket_t>,
-    pub on_data: Option<unsafe extern "C" fn(*mut us_socket_t, *mut c_char, c_int) -> *mut us_socket_t>,
+    pub on_open: Option<
+        unsafe extern "C" fn(*mut us_socket_t, c_int, *mut c_char, c_int) -> *mut us_socket_t,
+    >,
+    pub on_data:
+        Option<unsafe extern "C" fn(*mut us_socket_t, *mut c_char, c_int) -> *mut us_socket_t>,
     pub on_fd: Option<unsafe extern "C" fn(*mut us_socket_t, c_int) -> *mut us_socket_t>,
     pub on_writable: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
-    pub on_close: Option<unsafe extern "C" fn(*mut us_socket_t, c_int, *mut c_void) -> *mut us_socket_t>,
+    pub on_close:
+        Option<unsafe extern "C" fn(*mut us_socket_t, c_int, *mut c_void) -> *mut us_socket_t>,
     pub on_timeout: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
     pub on_long_timeout: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
     pub on_end: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
     pub on_connect_error: Option<unsafe extern "C" fn(*mut us_socket_t, c_int) -> *mut us_socket_t>,
-    pub on_connecting_error:
-        Option<unsafe extern "C" fn(*mut us_connecting_socket_t, c_int) -> *mut us_connecting_socket_t>,
+    pub on_connecting_error: Option<
+        unsafe extern "C" fn(*mut us_connecting_socket_t, c_int) -> *mut us_connecting_socket_t,
+    >,
     pub on_handshake:
         Option<unsafe extern "C" fn(*mut us_socket_t, c_int, us_bun_verify_error_t, *mut c_void)>,
 }
@@ -521,25 +687,53 @@ unsafe extern "C" {
         port: u16,
         ptr: *mut *mut addrinfo_request,
     ) -> c_int;
-    pub fn Bun__addrinfo_set(ptr: *mut addrinfo_request, socket: *mut us_connecting_socket_t) -> c_int;
-    pub fn Bun__addrinfo_cancel(ptr: *mut addrinfo_request, socket: *mut us_connecting_socket_t) -> c_int;
+    pub fn Bun__addrinfo_set(
+        ptr: *mut addrinfo_request,
+        socket: *mut us_connecting_socket_t,
+    ) -> c_int;
+    pub fn Bun__addrinfo_cancel(
+        ptr: *mut addrinfo_request,
+        socket: *mut us_connecting_socket_t,
+    ) -> c_int;
     pub fn Bun__addrinfo_freeRequest(addrinfo_req: *mut addrinfo_request, error: c_int);
-    pub fn Bun__addrinfo_getRequestResult(addrinfo_req: *mut addrinfo_request) -> *mut addrinfo_result;
+    pub fn Bun__addrinfo_getRequestResult(
+        addrinfo_req: *mut addrinfo_request,
+    ) -> *mut addrinfo_result;
 
-    pub fn us_dispatch_open(s: *mut us_socket_t, is_client: c_int, ip: *mut c_char, ip_length: c_int) -> *mut us_socket_t;
-    pub fn us_dispatch_data(s: *mut us_socket_t, data: *mut c_char, length: c_int) -> *mut us_socket_t;
+    pub fn us_dispatch_open(
+        s: *mut us_socket_t,
+        is_client: c_int,
+        ip: *mut c_char,
+        ip_length: c_int,
+    ) -> *mut us_socket_t;
+    pub fn us_dispatch_data(
+        s: *mut us_socket_t,
+        data: *mut c_char,
+        length: c_int,
+    ) -> *mut us_socket_t;
     pub fn us_dispatch_fd(s: *mut us_socket_t, fd: c_int) -> *mut us_socket_t;
     pub fn us_dispatch_writable(s: *mut us_socket_t) -> *mut us_socket_t;
-    pub fn us_dispatch_close(s: *mut us_socket_t, code: c_int, reason: *mut c_void) -> *mut us_socket_t;
+    pub fn us_dispatch_close(
+        s: *mut us_socket_t,
+        code: c_int,
+        reason: *mut c_void,
+    ) -> *mut us_socket_t;
     pub fn us_dispatch_timeout(s: *mut us_socket_t) -> *mut us_socket_t;
     pub fn us_dispatch_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t;
     pub fn us_dispatch_end(s: *mut us_socket_t) -> *mut us_socket_t;
     pub fn us_dispatch_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t;
-    pub fn us_dispatch_connecting_error(c: *mut us_connecting_socket_t, code: c_int) -> *mut us_connecting_socket_t;
+    pub fn us_dispatch_connecting_error(
+        c: *mut us_connecting_socket_t,
+        code: c_int,
+    ) -> *mut us_connecting_socket_t;
     pub fn us_dispatch_handshake(s: *mut us_socket_t, success: c_int, err: us_bun_verify_error_t);
     pub fn us_dispatch_session(s: *mut us_socket_t, data: *const u8, length: c_int);
     pub fn us_dispatch_keylog(s: *mut us_socket_t, data: *const u8, length: c_int);
-    pub fn us_dispatch_ssl_raw_tap(s: *mut us_socket_t, data: *mut c_char, length: c_int) -> *mut us_socket_t;
+    pub fn us_dispatch_ssl_raw_tap(
+        s: *mut us_socket_t,
+        data: *mut c_char,
+        length: c_int,
+    ) -> *mut us_socket_t;
 
     pub fn us_internal_raw_root_certs(out: *mut *mut us_cert_string_t) -> c_int;
 }

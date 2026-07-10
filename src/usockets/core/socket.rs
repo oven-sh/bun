@@ -43,28 +43,66 @@ impl SocketFlags {
         Self(Cell::new(0))
     }
 
-    #[inline] pub fn is_paused(&self) -> bool { self.0.get() & Self::IS_PAUSED != 0 }
-    #[inline] pub fn set_is_paused(&self, v: bool) { self.set_bit(Self::IS_PAUSED, v) }
-    #[inline] pub fn allow_half_open(&self) -> bool { self.0.get() & Self::ALLOW_HALF_OPEN != 0 }
-    #[inline] pub fn set_allow_half_open(&self, v: bool) { self.set_bit(Self::ALLOW_HALF_OPEN, v) }
+    #[inline]
+    pub fn is_paused(&self) -> bool {
+        self.0.get() & Self::IS_PAUSED != 0
+    }
+    #[inline]
+    pub fn set_is_paused(&self, v: bool) {
+        self.set_bit(Self::IS_PAUSED, v)
+    }
+    #[inline]
+    pub fn allow_half_open(&self) -> bool {
+        self.0.get() & Self::ALLOW_HALF_OPEN != 0
+    }
+    #[inline]
+    pub fn set_allow_half_open(&self, v: bool) {
+        self.set_bit(Self::ALLOW_HALF_OPEN, v)
+    }
     /// 0 = not queued, 1 = queued, 2 = was queued this iteration.
-    #[inline] pub fn low_prio_state(&self) -> u8 {
+    #[inline]
+    pub fn low_prio_state(&self) -> u8 {
         (self.0.get() & Self::LOW_PRIO_STATE_MASK) >> Self::LOW_PRIO_STATE_SHIFT
     }
-    #[inline] pub fn set_low_prio_state(&self, v: u8) {
+    #[inline]
+    pub fn set_low_prio_state(&self, v: u8) {
         self.0.set(
             (self.0.get() & !Self::LOW_PRIO_STATE_MASK)
                 | ((v << Self::LOW_PRIO_STATE_SHIFT) & Self::LOW_PRIO_STATE_MASK),
         );
     }
-    #[inline] pub fn is_ipc(&self) -> bool { self.0.get() & Self::IS_IPC != 0 }
-    #[inline] pub fn set_is_ipc(&self, v: bool) { self.set_bit(Self::IS_IPC, v) }
-    #[inline] pub fn is_closed(&self) -> bool { self.0.get() & Self::IS_CLOSED != 0 }
-    #[inline] pub fn set_is_closed(&self, v: bool) { self.set_bit(Self::IS_CLOSED, v) }
-    #[inline] pub fn adopted(&self) -> bool { self.0.get() & Self::ADOPTED != 0 }
-    #[inline] pub fn set_adopted(&self, v: bool) { self.set_bit(Self::ADOPTED, v) }
-    #[inline] pub fn last_write_failed(&self) -> bool { self.0.get() & Self::LAST_WRITE_FAILED != 0 }
-    #[inline] pub fn set_last_write_failed(&self, v: bool) { self.set_bit(Self::LAST_WRITE_FAILED, v) }
+    #[inline]
+    pub fn is_ipc(&self) -> bool {
+        self.0.get() & Self::IS_IPC != 0
+    }
+    #[inline]
+    pub fn set_is_ipc(&self, v: bool) {
+        self.set_bit(Self::IS_IPC, v)
+    }
+    #[inline]
+    pub fn is_closed(&self) -> bool {
+        self.0.get() & Self::IS_CLOSED != 0
+    }
+    #[inline]
+    pub fn set_is_closed(&self, v: bool) {
+        self.set_bit(Self::IS_CLOSED, v)
+    }
+    #[inline]
+    pub fn adopted(&self) -> bool {
+        self.0.get() & Self::ADOPTED != 0
+    }
+    #[inline]
+    pub fn set_adopted(&self, v: bool) {
+        self.set_bit(Self::ADOPTED, v)
+    }
+    #[inline]
+    pub fn last_write_failed(&self) -> bool {
+        self.0.get() & Self::LAST_WRITE_FAILED != 0
+    }
+    #[inline]
+    pub fn set_last_write_failed(&self, v: bool) {
+        self.set_bit(Self::LAST_WRITE_FAILED, v)
+    }
 
     #[inline(always)]
     fn set_bit(&self, mask: u8, v: bool) {
@@ -106,28 +144,89 @@ impl SslBits {
         Self(Cell::new(0))
     }
 
-    #[inline] pub fn handshake_state(&self) -> u8 { (self.0.get() & Self::HANDSHAKE_STATE_MASK) as u8 }
-    #[inline] pub fn set_handshake_state(&self, v: u8) {
-        self.0.set((self.0.get() & !Self::HANDSHAKE_STATE_MASK) | (u16::from(v) & Self::HANDSHAKE_STATE_MASK));
+    #[inline]
+    pub fn handshake_state(&self) -> u8 {
+        (self.0.get() & Self::HANDSHAKE_STATE_MASK) as u8
     }
-    #[inline] pub fn write_wants_read(&self) -> bool { self.0.get() & Self::WRITE_WANTS_READ != 0 }
-    #[inline] pub fn set_write_wants_read(&self, v: bool) { self.set_bit(Self::WRITE_WANTS_READ, v) }
-    #[inline] pub fn read_wants_write(&self) -> bool { self.0.get() & Self::READ_WANTS_WRITE != 0 }
-    #[inline] pub fn set_read_wants_write(&self, v: bool) { self.set_bit(Self::READ_WANTS_WRITE, v) }
-    #[inline] pub fn fatal_error(&self) -> bool { self.0.get() & Self::FATAL_ERROR != 0 }
-    #[inline] pub fn set_fatal_error(&self, v: bool) { self.set_bit(Self::FATAL_ERROR, v) }
-    #[inline] pub fn is_server(&self) -> bool { self.0.get() & Self::IS_SERVER != 0 }
-    #[inline] pub fn set_is_server(&self, v: bool) { self.set_bit(Self::IS_SERVER, v) }
-    #[inline] pub fn raw_tap(&self) -> bool { self.0.get() & Self::RAW_TAP != 0 }
-    #[inline] pub fn set_raw_tap(&self, v: bool) { self.set_bit(Self::RAW_TAP, v) }
-    #[inline] pub fn shutdown_after_spill(&self) -> bool { self.0.get() & Self::SHUTDOWN_AFTER_SPILL != 0 }
-    #[inline] pub fn set_shutdown_after_spill(&self, v: bool) { self.set_bit(Self::SHUTDOWN_AFTER_SPILL, v) }
-    #[inline] pub fn close_after_spill(&self) -> bool { self.0.get() & Self::CLOSE_AFTER_SPILL != 0 }
-    #[inline] pub fn set_close_after_spill(&self, v: bool) { self.set_bit(Self::CLOSE_AFTER_SPILL, v) }
-    #[inline] pub fn in_use(&self) -> bool { self.0.get() & Self::IN_USE != 0 }
-    #[inline] pub fn set_in_use(&self, v: bool) { self.set_bit(Self::IN_USE, v) }
-    #[inline] pub fn pending_detach(&self) -> bool { self.0.get() & Self::PENDING_DETACH != 0 }
-    #[inline] pub fn set_pending_detach(&self, v: bool) { self.set_bit(Self::PENDING_DETACH, v) }
+    #[inline]
+    pub fn set_handshake_state(&self, v: u8) {
+        self.0.set(
+            (self.0.get() & !Self::HANDSHAKE_STATE_MASK)
+                | (u16::from(v) & Self::HANDSHAKE_STATE_MASK),
+        );
+    }
+    #[inline]
+    pub fn write_wants_read(&self) -> bool {
+        self.0.get() & Self::WRITE_WANTS_READ != 0
+    }
+    #[inline]
+    pub fn set_write_wants_read(&self, v: bool) {
+        self.set_bit(Self::WRITE_WANTS_READ, v)
+    }
+    #[inline]
+    pub fn read_wants_write(&self) -> bool {
+        self.0.get() & Self::READ_WANTS_WRITE != 0
+    }
+    #[inline]
+    pub fn set_read_wants_write(&self, v: bool) {
+        self.set_bit(Self::READ_WANTS_WRITE, v)
+    }
+    #[inline]
+    pub fn fatal_error(&self) -> bool {
+        self.0.get() & Self::FATAL_ERROR != 0
+    }
+    #[inline]
+    pub fn set_fatal_error(&self, v: bool) {
+        self.set_bit(Self::FATAL_ERROR, v)
+    }
+    #[inline]
+    pub fn is_server(&self) -> bool {
+        self.0.get() & Self::IS_SERVER != 0
+    }
+    #[inline]
+    pub fn set_is_server(&self, v: bool) {
+        self.set_bit(Self::IS_SERVER, v)
+    }
+    #[inline]
+    pub fn raw_tap(&self) -> bool {
+        self.0.get() & Self::RAW_TAP != 0
+    }
+    #[inline]
+    pub fn set_raw_tap(&self, v: bool) {
+        self.set_bit(Self::RAW_TAP, v)
+    }
+    #[inline]
+    pub fn shutdown_after_spill(&self) -> bool {
+        self.0.get() & Self::SHUTDOWN_AFTER_SPILL != 0
+    }
+    #[inline]
+    pub fn set_shutdown_after_spill(&self, v: bool) {
+        self.set_bit(Self::SHUTDOWN_AFTER_SPILL, v)
+    }
+    #[inline]
+    pub fn close_after_spill(&self) -> bool {
+        self.0.get() & Self::CLOSE_AFTER_SPILL != 0
+    }
+    #[inline]
+    pub fn set_close_after_spill(&self, v: bool) {
+        self.set_bit(Self::CLOSE_AFTER_SPILL, v)
+    }
+    #[inline]
+    pub fn in_use(&self) -> bool {
+        self.0.get() & Self::IN_USE != 0
+    }
+    #[inline]
+    pub fn set_in_use(&self, v: bool) {
+        self.set_bit(Self::IN_USE, v)
+    }
+    #[inline]
+    pub fn pending_detach(&self) -> bool {
+        self.0.get() & Self::PENDING_DETACH != 0
+    }
+    #[inline]
+    pub fn set_pending_detach(&self, v: bool) {
+        self.set_bit(Self::PENDING_DETACH, v)
+    }
 
     #[inline(always)]
     fn set_bit(&self, mask: u16, v: bool) {
@@ -279,10 +378,22 @@ impl<'l> Socket<'l> {
 
     // ── Safe delegating accessors ───────────────────────────────────────────
 
-    #[inline] pub fn is_closed(self) -> bool { self.header().flags.is_closed() }
-    #[inline] pub fn fd(self) -> Fd { self.header().poll.fd() }
-    #[inline] pub fn kind(self) -> u8 { self.header().kind.get() }
-    #[inline] pub fn group(self) -> Option<NonNull<SocketGroup>> { self.header().group.get() }
+    #[inline]
+    pub fn is_closed(self) -> bool {
+        self.header().flags.is_closed()
+    }
+    #[inline]
+    pub fn fd(self) -> Fd {
+        self.header().poll.fd()
+    }
+    #[inline]
+    pub fn kind(self) -> u8 {
+        self.header().kind.get()
+    }
+    #[inline]
+    pub fn group(self) -> Option<NonNull<SocketGroup>> {
+        self.header().group.get()
+    }
 
     /// Seconds are bucketed to `LIBUS_TIMEOUT_GRANULARITY` (4s); 0 disables.
     #[inline]

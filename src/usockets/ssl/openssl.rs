@@ -16,33 +16,33 @@ use core::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Once;
 
 use bun_boringssl_sys::{
-    ssl_renegotiate_explicit, ssl_renegotiate_never, BIO_free, BIO_new, BIO_new_mem_buf, BIO_s_mem,
-    ERR_clear_error, ERR_error_string_n, ERR_peek_error, ERR_peek_last_error, SSL_CTX_free,
-    SSL_CTX_get_ex_data, SSL_CTX_get_verify_mode, SSL_CTX_new, SSL_CTX_set_cipher_list,
-    SSL_CTX_set_ex_data, SSL_CTX_up_ref, SSL_do_handshake, SSL_free, SSL_get_SSL_CTX,
-    SSL_get_error, SSL_get_ex_data, SSL_get_servername, SSL_get_shutdown, SSL_get_wbio,
-    SSL_is_init_finished, SSL_new, SSL_read, SSL_renegotiate, SSL_set0_verify_cert_store,
-    SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state, SSL_set_ex_data,
-    SSL_set_renegotiate_mode, SSL_set_tlsext_host_name, SSL_set_verify, SSL_shutdown, SSL_write,
-    SSL_verify_cb, X509_free, BIO, BIO_METHOD, CRYPTO_EX_DATA, SSL, SSL_CTX, X509, X509_STORE,
-    X509_STORE_CTX, SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ,
-    SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN,
-    SSL_RECEIVED_SHUTDOWN, SSL_TLSEXT_ERR_NOACK, SSL_TLSEXT_ERR_OK, SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-    SSL_VERIFY_NONE, SSL_VERIFY_PEER,
+    BIO, BIO_METHOD, BIO_free, BIO_new, BIO_new_mem_buf, BIO_s_mem, CRYPTO_EX_DATA,
+    ERR_clear_error, ERR_error_string_n, ERR_peek_error, ERR_peek_last_error, SSL, SSL_CTX,
+    SSL_CTX_free, SSL_CTX_get_ex_data, SSL_CTX_get_verify_mode, SSL_CTX_new,
+    SSL_CTX_set_cipher_list, SSL_CTX_set_ex_data, SSL_CTX_up_ref, SSL_ERROR_SSL, SSL_ERROR_SYSCALL,
+    SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN,
+    SSL_RECEIVED_SHUTDOWN, SSL_TLSEXT_ERR_NOACK, SSL_TLSEXT_ERR_OK,
+    SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake, SSL_free,
+    SSL_get_SSL_CTX, SSL_get_error, SSL_get_ex_data, SSL_get_servername, SSL_get_shutdown,
+    SSL_get_wbio, SSL_is_init_finished, SSL_new, SSL_read, SSL_renegotiate, SSL_set_accept_state,
+    SSL_set_bio, SSL_set_connect_state, SSL_set_ex_data, SSL_set_renegotiate_mode,
+    SSL_set_tlsext_host_name, SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown,
+    SSL_verify_cb, SSL_write, X509, X509_STORE, X509_STORE_CTX, X509_free,
+    ssl_renegotiate_explicit, ssl_renegotiate_never,
 };
 
 use crate::eventing::{us_internal_poll_type, us_loop_t, us_poll_t};
 use crate::ssl::sni_tree::{sni_add, sni_find, sni_free, sni_new, sni_remove};
 use crate::types::{
-    us_bun_socket_context_options_t, us_bun_verify_error_t, us_calloc, us_dispatch_close,
-    us_dispatch_data, us_dispatch_handshake, us_dispatch_keylog, us_dispatch_open,
-    us_dispatch_session, us_dispatch_ssl_raw_tap, us_dispatch_writable, us_free,
+    Bun__outOfMemory, CREATE_BUN_SOCKET_ERROR_INVALID_CA, CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE,
+    CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS, CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE,
+    LIBUS_RECV_BUFFER_LENGTH, LIBUS_RECV_BUFFER_PADDING, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN,
+    LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, POLL_TYPE_KIND_MASK, POLL_TYPE_SEMI_SOCKET,
+    POLL_TYPE_SOCKET_SHUT_DOWN, us_bun_socket_context_options_t, us_bun_verify_error_t, us_calloc,
+    us_dispatch_close, us_dispatch_data, us_dispatch_handshake, us_dispatch_keylog,
+    us_dispatch_open, us_dispatch_session, us_dispatch_ssl_raw_tap, us_dispatch_writable, us_free,
     us_listen_socket_t, us_malloc, us_on_server_name_cb, us_realloc, us_socket_group_t,
-    us_socket_t, Bun__outOfMemory, CREATE_BUN_SOCKET_ERROR_INVALID_CA,
-    CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE, CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS,
-    CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE, LIBUS_RECV_BUFFER_LENGTH, LIBUS_RECV_BUFFER_PADDING,
-    LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN,
-    POLL_TYPE_KIND_MASK, POLL_TYPE_SEMI_SOCKET, POLL_TYPE_SOCKET_SHUT_DOWN,
+    us_socket_t,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -203,7 +203,13 @@ type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_vo
 unsafe extern "C" {
     fn TLS_method() -> *const SSL_METHOD;
     fn OPENSSL_init_ssl(opts: u64, settings: *const c_void) -> c_int;
-    fn ERR_put_error(library: c_int, unused: c_int, reason: c_int, file: *const c_char, line: c_uint);
+    fn ERR_put_error(
+        library: c_int,
+        unused: c_int,
+        reason: c_int,
+        file: *const c_char,
+        line: c_uint,
+    );
 
     fn SSL_CTX_get_ex_new_index(
         argl: c_long,
@@ -686,8 +692,8 @@ unsafe fn ssl_flush_pending_keylog(s: *mut us_socket_t) {
         if (*s).ssl.is_null() || us_socket_is_closed(s) != 0 {
             return;
         }
-        let mut pending = SSL_get_ex_data((*s).ssl, us_ssl_pending_keylog_idx)
-            .cast::<us_ssl_pending_session_t>();
+        let mut pending =
+            SSL_get_ex_data((*s).ssl, us_ssl_pending_keylog_idx).cast::<us_ssl_pending_session_t>();
         if pending.is_null() {
             return;
         }
@@ -903,8 +909,16 @@ unsafe fn us_reneg_policy(ssl: *mut SSL, limit: &mut u32, window: &mut u32) {
             ptr::null_mut()
         }
     };
-    *limit = if !packed.is_null() { US_RENEG_LIMIT(packed) } else { 3 };
-    *window = if !packed.is_null() { US_RENEG_WINDOW(packed) } else { 600 };
+    *limit = if !packed.is_null() {
+        US_RENEG_LIMIT(packed)
+    } else {
+        3
+    };
+    *window = if !packed.is_null() {
+        US_RENEG_WINDOW(packed)
+    } else {
+        600
+    };
 }
 
 #[inline]
@@ -912,8 +926,7 @@ unsafe fn us_reneg_state(ssl: *mut SSL) -> *mut us_ssl_reneg_state_t {
     us_ex_idx_ensure();
     // SAFETY: `ssl` is live; lazily allocate the per-connection reneg counter.
     unsafe {
-        let mut st =
-            SSL_get_ex_data(ssl, us_ssl_reneg_state_idx).cast::<us_ssl_reneg_state_t>();
+        let mut st = SSL_get_ex_data(ssl, us_ssl_reneg_state_idx).cast::<us_ssl_reneg_state_t>();
         if st.is_null() {
             st = us_calloc(1, size_of::<us_ssl_reneg_state_t>()).cast();
             SSL_set_ex_data(ssl, us_ssl_reneg_state_idx, st.cast());
@@ -966,7 +979,10 @@ unsafe extern "C" fn BIO_s_custom_ctrl(
 /// Save the per-loop BIO routing state around a JS callback that runs from
 /// inside `SSL_do_handshake`/`SSL_read`. `out` must be a `void*[5]`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_internal_ssl_loop_state_save(ssl_ptr: *mut c_void, out: *mut *mut c_void) {
+pub unsafe extern "C" fn us_internal_ssl_loop_state_save(
+    ssl_ptr: *mut c_void,
+    out: *mut *mut c_void,
+) {
     // SAFETY: `ssl_ptr` is an `SSL*`; its wbio's data is our `loop_ssl_data`.
     unsafe {
         let ssl = ssl_ptr.cast::<SSL>();
@@ -1001,7 +1017,11 @@ pub unsafe extern "C" fn us_internal_ssl_loop_state_restore(saved: *mut *mut c_v
     }
 }
 
-unsafe extern "C" fn BIO_s_custom_write(bio: *mut BIO, data: *const c_char, length: c_int) -> c_int {
+unsafe extern "C" fn BIO_s_custom_write(
+    bio: *mut BIO,
+    data: *const c_char,
+    length: c_int,
+) -> c_int {
     // SAFETY: `bio`'s data slot is our per-loop `loop_ssl_data`.
     unsafe {
         let lsd = BIO_get_data(bio).cast::<loop_ssl_data>();
@@ -1017,8 +1037,11 @@ unsafe extern "C" fn BIO_s_custom_write(bio: *mut BIO, data: *const c_char, leng
         if (*lsd).ssl_write_batching != 0 {
             let needed = (*lsd).ssl_write_batch_len + length as c_uint;
             if needed > (*lsd).ssl_write_batch_cap {
-                let mut new_cap =
-                    if (*lsd).ssl_write_batch_cap != 0 { (*lsd).ssl_write_batch_cap } else { 65536 };
+                let mut new_cap = if (*lsd).ssl_write_batch_cap != 0 {
+                    (*lsd).ssl_write_batch_cap
+                } else {
+                    65536
+                };
                 while new_cap < needed {
                     new_cap *= 2;
                 }
@@ -1037,7 +1060,9 @@ unsafe extern "C" fn BIO_s_custom_write(bio: *mut BIO, data: *const c_char, leng
             }
             ptr::copy_nonoverlapping(
                 data,
-                (*lsd).ssl_write_batch.add((*lsd).ssl_write_batch_len as usize),
+                (*lsd)
+                    .ssl_write_batch
+                    .add((*lsd).ssl_write_batch_len as usize),
                 length as usize,
             );
             (*lsd).ssl_write_batch_len = needed;
@@ -1102,8 +1127,11 @@ unsafe fn ssl_drain_spill(lsd: *mut loop_ssl_data, s: *mut us_socket_t) -> c_int
             return 1;
         }
         let pending = (*lsd).ssl_spill_len - (*lsd).ssl_spill_off;
-        let mut written =
-            us_socket_raw_write(s, (*lsd).ssl_spill.add((*lsd).ssl_spill_off as usize), pending as c_int);
+        let mut written = us_socket_raw_write(
+            s,
+            (*lsd).ssl_spill.add((*lsd).ssl_spill_off as usize),
+            pending as c_int,
+        );
         if written < 0 {
             written = 0;
         }
@@ -1160,7 +1188,11 @@ pub unsafe extern "C" fn us_internal_ssl_socket_relocated(
     }
 }
 
-unsafe extern "C" fn BIO_s_custom_read(bio: *mut BIO, dst: *mut c_char, mut length: c_int) -> c_int {
+unsafe extern "C" fn BIO_s_custom_read(
+    bio: *mut BIO,
+    dst: *mut c_char,
+    mut length: c_int,
+) -> c_int {
     // SAFETY: `bio`'s data slot is our per-loop `loop_ssl_data`.
     unsafe {
         let lsd = BIO_get_data(bio).cast::<loop_ssl_data>();
@@ -1174,7 +1206,9 @@ unsafe extern "C" fn BIO_s_custom_read(bio: *mut BIO, dst: *mut c_char, mut leng
             length = (*lsd).ssl_read_input_length as c_int;
         }
         ptr::copy_nonoverlapping(
-            (*lsd).ssl_read_input.add((*lsd).ssl_read_input_offset as usize),
+            (*lsd)
+                .ssl_read_input
+                .add((*lsd).ssl_read_input_offset as usize),
             dst,
             length as usize,
         );
@@ -1501,7 +1535,11 @@ pub unsafe extern "C" fn us_ssl_ctx_build_raw(
         SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
         SSL_CTX_set_min_proto_version(
             ssl_context,
-            if options.ssl_min_version != 0 { options.ssl_min_version as u16 } else { TLS1_2_VERSION },
+            if options.ssl_min_version != 0 {
+                options.ssl_min_version as u16
+            } else {
+                TLS1_2_VERSION
+            },
         );
         if options.ssl_max_version != 0 {
             SSL_CTX_set_max_proto_version(ssl_context, options.ssl_max_version as u16);
@@ -1511,7 +1549,10 @@ pub unsafe extern "C" fn us_ssl_ctx_build_raw(
         }
 
         if !options.passphrase.is_null() {
-            SSL_CTX_set_default_passwd_cb_userdata(ssl_context, c_strdup(options.passphrase).cast());
+            SSL_CTX_set_default_passwd_cb_userdata(
+                ssl_context,
+                c_strdup(options.passphrase).cast(),
+            );
             SSL_CTX_set_default_passwd_cb(ssl_context, Some(passphrase_cb));
         }
 
@@ -1676,7 +1717,10 @@ pub unsafe extern "C" fn us_ssl_ctx_build_raw(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_ssl_ctx_add_ca_cert(ctx: *mut SSL_CTX, content: *const c_char) -> c_int {
+pub unsafe extern "C" fn us_ssl_ctx_add_ca_cert(
+    ctx: *mut SSL_CTX,
+    content: *const c_char,
+) -> c_int {
     if ctx.is_null() || content.is_null() {
         return 0;
     }
@@ -2074,7 +2118,9 @@ unsafe fn us_internal_verify_peer_certificate(ssl: *const SSL, def: c_long) -> c
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_ssl_socket_verify_error_from_ssl(ssl: *mut SSL) -> us_bun_verify_error_t {
+pub unsafe extern "C" fn us_ssl_socket_verify_error_from_ssl(
+    ssl: *mut SSL,
+) -> us_bun_verify_error_t {
     // SAFETY: `ssl` is live (or null, handled inside).
     unsafe {
         let x509_verify_error =
@@ -2084,12 +2130,18 @@ pub unsafe extern "C" fn us_ssl_socket_verify_error_from_ssl(ssl: *mut SSL) -> u
         }
         let reason = X509_verify_cert_error_string(x509_verify_error);
         let code = us_X509_error_code(x509_verify_error);
-        us_bun_verify_error_t { error_no: x509_verify_error as c_int, code, reason }
+        us_bun_verify_error_t {
+            error_no: x509_verify_error as c_int,
+            code,
+            reason,
+        }
     }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_internal_ssl_verify_error(s: *mut us_socket_t) -> us_bun_verify_error_t {
+pub unsafe extern "C" fn us_internal_ssl_verify_error(
+    s: *mut us_socket_t,
+) -> us_bun_verify_error_t {
     // SAFETY: `s` is live.
     unsafe {
         if (*s).ssl.is_null()
@@ -2463,7 +2515,11 @@ pub unsafe extern "C" fn us_internal_ssl_on_writable(s: *mut us_socket_t) -> *mu
         }
         if (*s).ssl_close_after_spill() {
             (*s).set_ssl_close_after_spill(false);
-            return us_internal_ssl_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, ptr::null_mut());
+            return us_internal_ssl_close(
+                s,
+                LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN,
+                ptr::null_mut(),
+            );
         }
 
         ssl_update_handshake(s);
@@ -2544,7 +2600,11 @@ pub unsafe extern "C" fn us_internal_ssl_on_data(
                 (*s).set_ssl_in_use(ssl_was_in_use);
                 if !ssl_was_in_use && (*s).ssl_pending_detach() {
                     (*s).set_ssl_pending_detach(false);
-                    return us_socket_close(s, (*s).ssl_pending_close_code as c_int, ptr::null_mut());
+                    return us_socket_close(
+                        s,
+                        (*s).ssl_pending_close_code as c_int,
+                        ptr::null_mut(),
+                    );
                 }
 
                 if just_read <= 0 {
@@ -2726,7 +2786,9 @@ pub unsafe extern "C" fn us_internal_ssl_is_handshake_finished(s: *mut us_socket
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_internal_ssl_handshake_callback_has_fired(s: *mut us_socket_t) -> c_int {
+pub unsafe extern "C" fn us_internal_ssl_handshake_callback_has_fired(
+    s: *mut us_socket_t,
+) -> c_int {
     // SAFETY: `s` is live.
     unsafe { (!(*s).ssl.is_null() && (*s).ssl_handshake_state() == HANDSHAKE_COMPLETED) as c_int }
 }
@@ -2734,7 +2796,13 @@ pub unsafe extern "C" fn us_internal_ssl_handshake_callback_has_fired(s: *mut us
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_ssl_get_native_handle(s: *mut us_socket_t) -> *mut c_void {
     // SAFETY: `s` is live.
-    unsafe { if (*s).ssl.is_null() { ptr::null_mut() } else { s_ssl(s).cast() } }
+    unsafe {
+        if (*s).ssl.is_null() {
+            ptr::null_mut()
+        } else {
+            s_ssl(s).cast()
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -2829,9 +2897,7 @@ pub unsafe extern "C" fn us_internal_ssl_shutdown(s: *mut us_socket_t) {
         // BoringSSL has no TLS half-close: once close_notify is sent, SSL_read
         // refuses further app data. Only send it when the peer's close_notify
         // already arrived; otherwise TCP half-close (FIN, keep reading).
-        if SSL_in_init(s_ssl(s)) == 0
-            && (SSL_get_shutdown(s_ssl(s)) & SSL_RECEIVED_SHUTDOWN) == 0
-        {
+        if SSL_in_init(s_ssl(s)) == 0 && (SSL_get_shutdown(s_ssl(s)) & SSL_RECEIVED_SHUTDOWN) == 0 {
             let fl = loop_lsd(group_loop(s));
             (*fl).ssl_read_input_length = 0;
             (*fl).ssl_socket = s;
@@ -3014,8 +3080,12 @@ unsafe fn us_client_hello_servername(
     unsafe {
         let mut ext: *const u8 = ptr::null();
         let mut ext_len: usize = 0;
-        if SSL_early_callback_ctx_extension_get(hello, TLSEXT_TYPE_server_name, &mut ext, &mut ext_len)
-            == 0
+        if SSL_early_callback_ctx_extension_get(
+            hello,
+            TLSEXT_TYPE_server_name,
+            &mut ext,
+            &mut ext_len,
+        ) == 0
         {
             return 0;
         }
@@ -3107,7 +3177,11 @@ unsafe extern "C" fn us_select_cert_cb(hello: *const SSL_CLIENT_HELLO) -> ssl_se
         }
 
         let cb_lsd = BIO_get_data(SSL_get_wbio(ssl)).cast::<loop_ssl_data>();
-        let cb_socket = if cb_lsd.is_null() { ptr::null_mut() } else { (*cb_lsd).ssl_socket };
+        let cb_socket = if cb_lsd.is_null() {
+            ptr::null_mut()
+        } else {
+            (*cb_lsd).ssl_socket
+        };
 
         let mut saved: [*mut c_void; 5] = [ptr::null_mut(); 5];
         us_internal_ssl_loop_state_save(ssl.cast(), saved.as_mut_ptr());
@@ -3233,7 +3307,11 @@ pub unsafe extern "C" fn us_listen_socket_find_server_name_userdata(
             return ptr::null_mut();
         }
         let node = sni_find((*ls).sni, hostname_pattern).cast::<sni_node_t>();
-        if node.is_null() { ptr::null_mut() } else { (*node).user }
+        if node.is_null() {
+            ptr::null_mut()
+        } else {
+            (*node).user
+        }
     }
 }
 

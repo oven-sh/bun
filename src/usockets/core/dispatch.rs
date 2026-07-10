@@ -7,28 +7,28 @@
 //! outlive the tick (freeing is deferred to `free_closed_sockets`).
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
-use core::mem::{size_of, MaybeUninit};
+use core::mem::{MaybeUninit, size_of};
 use core::ptr::{self, NonNull};
 
+#[cfg(not(windows))]
+use crate::bsd::bsd_recvmsg;
 use crate::bsd::{
     bsd_accept_socket, bsd_addr_get_ip, bsd_addr_get_ip_length, bsd_close_socket, bsd_recv,
     bsd_recvmmsg, bsd_socket_nodelay, bsd_udp_setup_recvbuf, udp_recvbuf,
 };
 #[cfg(not(windows))]
-use crate::bsd::bsd_recvmsg;
-use crate::eventing::{
-    us_create_poll, us_poll_change, us_poll_free, us_poll_init, us_poll_start_rc,
-    us_socket_get_error, LIBUS_SOCKET_READABLE, LIBUS_SOCKET_WRITABLE,
-};
-#[cfg(not(windows))]
 use crate::eventing::us_internal_accept_poll_event;
-use crate::types::{
-    bsd_addr_t, us_dispatch_data, us_dispatch_end, us_dispatch_open, us_dispatch_writable,
-    us_listen_socket_t, us_socket_group_t, us_socket_t, LIBUS_RECV_BUFFER_LENGTH,
-    LIBUS_RECV_BUFFER_PADDING, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, POLL_TYPE_SOCKET,
+use crate::eventing::{
+    LIBUS_SOCKET_READABLE, LIBUS_SOCKET_WRITABLE, us_create_poll, us_poll_change, us_poll_free,
+    us_poll_init, us_poll_start_rc, us_socket_get_error,
 };
 #[cfg(not(windows))]
 use crate::types::us_dispatch_fd;
+use crate::types::{
+    LIBUS_RECV_BUFFER_LENGTH, LIBUS_RECV_BUFFER_PADDING, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN,
+    POLL_TYPE_SOCKET, bsd_addr_t, us_dispatch_data, us_dispatch_end, us_dispatch_open,
+    us_dispatch_writable, us_listen_socket_t, us_socket_group_t, us_socket_t,
+};
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
 use crate::types::{POLL_TYPE_KIND_MASK, POLL_TYPE_POLLING_IN};
 
@@ -36,7 +36,7 @@ use super::group::SocketGroup;
 use super::loop_::{Loop, LoopTick};
 use super::poll::{Poll, PollEvents, PollKind};
 use super::socket::{Socket, SocketHeader};
-use super::sys::{last_error, would_block, Fd};
+use super::sys::{Fd, last_error, would_block};
 
 // Safe-core wrappers for these are not written yet; borrow the C types.
 pub use crate::types::us_internal_callback_t as InternalCallback;
@@ -60,12 +60,20 @@ unsafe extern "C" {
         ip: *mut c_char,
         ip_length: c_int,
     ) -> *mut us_socket_t;
-    fn us_internal_ssl_on_data(s: *mut us_socket_t, data: *mut c_char, len: c_int) -> *mut us_socket_t;
+    fn us_internal_ssl_on_data(
+        s: *mut us_socket_t,
+        data: *mut c_char,
+        len: c_int,
+    ) -> *mut us_socket_t;
     fn us_internal_ssl_on_writable(s: *mut us_socket_t) -> *mut us_socket_t;
     fn us_internal_ssl_on_end(s: *mut us_socket_t) -> *mut us_socket_t;
     fn us_internal_ssl_is_low_prio(s: *mut us_socket_t) -> c_int;
 
-    fn us_internal_socket_close_raw(s: *mut us_socket_t, code: c_int, reason: *mut c_void) -> *mut us_socket_t;
+    fn us_internal_socket_close_raw(
+        s: *mut us_socket_t,
+        code: c_int,
+        reason: *mut c_void,
+    ) -> *mut us_socket_t;
     fn us_internal_socket_after_open(s: *mut us_socket_t, error: c_int);
     fn us_internal_socket_group_link_socket(g: *mut us_socket_group_t, s: *mut us_socket_t);
     fn us_internal_socket_group_unlink_socket(g: *mut us_socket_group_t, s: *mut us_socket_t);
@@ -368,12 +376,20 @@ fn dispatch_stream(
 
         // No failed write or we shut down → stop polling writable.
         if !cur.header().flags.last_write_failed() || is_shut_down(cur) {
-            poll_change(cur, tick, PollEvents(cur.header().poll.events().raw() & LIBUS_SOCKET_READABLE));
+            poll_change(
+                cur,
+                tick,
+                PollEvents(cur.header().poll.events().raw() & LIBUS_SOCKET_READABLE),
+            );
         } else {
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
             {
                 // Kqueue one-shot writable needs re-registration.
-                poll_change(cur, tick, PollEvents(cur.header().poll.events().raw() | LIBUS_SOCKET_WRITABLE));
+                poll_change(
+                    cur,
+                    tick,
+                    PollEvents(cur.header().poll.events().raw() | LIBUS_SOCKET_WRITABLE),
+                );
             }
         }
     }
@@ -391,7 +407,11 @@ fn dispatch_stream(
                     data.low_prio_budget.set(data.low_prio_budget.get() - 1);
                 }
                 state => {
-                    poll_change(cur, tick, PollEvents(cur.header().poll.events().raw() & LIBUS_SOCKET_WRITABLE));
+                    poll_change(
+                        cur,
+                        tick,
+                        PollEvents(cur.header().poll.events().raw() & LIBUS_SOCKET_WRITABLE),
+                    );
                     // Already parked: a writable dispatch re-enabled READABLE.
                     // It sits in `low_prio_head`, not `head_sockets` — the
                     // unlink below would cross-wire the two lists. Leave it.
@@ -565,8 +585,7 @@ fn recv_ipc(s: Socket<'_>, recv_buf: *mut u8) -> c_int {
     // walks `CMSG_*` only on success. `recv_buf` has `LIBUS_RECV_BUFFER_LENGTH`
     // writable bytes.
     // CMSG_SPACE is a const-eval-safe macro wrapper; the value is fixed at compile time.
-    const CMSG_BUF_LEN: usize =
-        unsafe { libc::CMSG_SPACE(size_of::<c_int>() as c_uint) as usize };
+    const CMSG_BUF_LEN: usize = unsafe { libc::CMSG_SPACE(size_of::<c_int>() as c_uint) as usize };
     unsafe {
         let mut cmsg_buf = [0u8; CMSG_BUF_LEN];
         let mut iov = libc::iovec {
@@ -604,8 +623,9 @@ fn dispatch_listen(tick: LoopTick<'_>, ls: Socket<'_>) {
     // stays allocated for the tick even if `on_open` closes it.
     let listen = unsafe { &*(ls.as_raw().as_ptr() as *const us_listen_socket_t) };
     let listen_p = ls.as_raw().as_ptr() as *mut us_listen_socket_t;
-    let accept_group: NonNull<SocketGroup> =
-        NonNull::new(listen.accept_group).expect("listen socket has accept_group").cast();
+    let accept_group: NonNull<SocketGroup> = NonNull::new(listen.accept_group)
+        .expect("listen socket has accept_group")
+        .cast();
     let loop_ = tick.as_ptr();
     let mut addr = MaybeUninit::<bsd_addr_t>::uninit();
 
@@ -652,7 +672,8 @@ fn dispatch_listen(tick: LoopTick<'_>, ls: Socket<'_>) {
             h.timeout.set(255);
             h.long_timeout.set(255);
             h.flags.set_low_prio_state(0);
-            h.flags.set_allow_half_open(ls.header().flags.allow_half_open());
+            h.flags
+                .set_allow_half_open(ls.header().flags.allow_half_open());
             h.flags.set_is_paused(false);
             h.flags.set_is_ipc(false);
             h.flags.set_is_closed(false);
@@ -667,7 +688,10 @@ fn dispatch_listen(tick: LoopTick<'_>, ls: Socket<'_>) {
 
             // SAFETY: `addr` was written by `bsd_accept_socket`.
             let (ip, ip_len) = unsafe {
-                (bsd_addr_get_ip(addr.as_mut_ptr()), bsd_addr_get_ip_length(addr.as_mut_ptr()))
+                (
+                    bsd_addr_get_ip(addr.as_mut_ptr()),
+                    bsd_addr_get_ip_length(addr.as_mut_ptr()),
+                )
             };
             let after = if !listen.ssl_ctx.is_null() {
                 // SAFETY: `s` is live; `listen_p` and its `ssl_ctx` outlive the call.
@@ -687,7 +711,13 @@ fn dispatch_listen(tick: LoopTick<'_>, ls: Socket<'_>) {
                 && let Some(cur) = after
                 && !cur.is_closed()
             {
-                dispatch_ready(tick, ReadyPoll::Stream(cur), false, false, PollEvents::READABLE);
+                dispatch_ready(
+                    tick,
+                    ReadyPoll::Stream(cur),
+                    false,
+                    false,
+                    PollEvents::READABLE,
+                );
             }
 
             // Exit accept loop if listen socket was closed in on_open / handler.
@@ -825,7 +855,10 @@ fn drain_udp_errqueue(fd: Fd, u: NonNull<UdpSocket>, surfaced: &mut bool) {
     let mut ectrl = [0u8; 512];
     let mut ebuf = [0u8; 1];
     while !udp_closed(u) {
-        let mut eiov = libc::iovec { iov_base: ebuf.as_mut_ptr().cast(), iov_len: ebuf.len() };
+        let mut eiov = libc::iovec {
+            iov_base: ebuf.as_mut_ptr().cast(),
+            iov_len: ebuf.len(),
+        };
         // SAFETY: zeroed is a valid `msghdr`.
         let mut eh: libc::msghdr = unsafe { core::mem::zeroed() };
         eh.msg_iov = &mut eiov;

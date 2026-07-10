@@ -8,18 +8,17 @@ use core::mem::size_of;
 use core::ptr;
 
 use bun_libuv_sys::{
-    uv_async_t, uv_check_t, uv_handle_t, uv_loop_t, uv_poll_t, uv_prepare_t, uv_timer_t,
-    RunMode, UV_EOF, UV_READABLE, UV_WRITABLE,
-    uv_async_init, uv_async_send, uv_check_init, uv_check_start, uv_check_stop, uv_close,
-    uv_is_closing, uv_loop_delete, uv_loop_new, uv_poll_init_socket, uv_poll_start, uv_poll_stop,
-    uv_prepare_init, uv_prepare_start, uv_prepare_stop, uv_ref, uv_run, uv_timer_init,
-    uv_timer_start, uv_timer_stop, uv_unref, uv_update_time,
+    RunMode, UV_EOF, UV_READABLE, UV_WRITABLE, uv_async_init, uv_async_send, uv_async_t,
+    uv_check_init, uv_check_start, uv_check_stop, uv_check_t, uv_close, uv_handle_t, uv_is_closing,
+    uv_loop_delete, uv_loop_new, uv_loop_t, uv_poll_init_socket, uv_poll_start, uv_poll_stop,
+    uv_poll_t, uv_prepare_init, uv_prepare_start, uv_prepare_stop, uv_prepare_t, uv_ref, uv_run,
+    uv_timer_init, uv_timer_start, uv_timer_stop, uv_timer_t, uv_unref, uv_update_time,
 };
 
 use crate::types::{
-    us_calloc, us_free, us_internal_async, us_internal_callback_t, us_internal_loop_data_t,
-    us_malloc, us_socket_t, Bun__outOfMemory, LIBUS_SOCKET_DESCRIPTOR, POLL_TYPE_KIND_MASK,
-    POLL_TYPE_POLLING_IN, POLL_TYPE_POLLING_MASK, POLL_TYPE_POLLING_OUT,
+    Bun__outOfMemory, LIBUS_SOCKET_DESCRIPTOR, POLL_TYPE_KIND_MASK, POLL_TYPE_POLLING_IN,
+    POLL_TYPE_POLLING_MASK, POLL_TYPE_POLLING_OUT, us_calloc, us_free, us_internal_async,
+    us_internal_callback_t, us_internal_loop_data_t, us_malloc, us_socket_t,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -246,9 +245,16 @@ pub unsafe extern "C" fn us_poll_start(p: *mut us_poll_t, loop_: *mut us_loop_t,
             return;
         }
         (*p).poll_type = (us_internal_poll_type(p)
-            | if events & LIBUS_SOCKET_READABLE != 0 { POLL_TYPE_POLLING_IN } else { 0 }
-            | if events & LIBUS_SOCKET_WRITABLE != 0 { POLL_TYPE_POLLING_OUT } else { 0 })
-            as u8;
+            | if events & LIBUS_SOCKET_READABLE != 0 {
+                POLL_TYPE_POLLING_IN
+            } else {
+                0
+            }
+            | if events & LIBUS_SOCKET_WRITABLE != 0 {
+                POLL_TYPE_POLLING_OUT
+            } else {
+                0
+            }) as u8;
 
         uv_poll_init_socket((*loop_).uv_loop, uv_p, (*p).fd);
         // Bun's event loop keeps sockets alive via Async.KeepAlive, so unref
@@ -279,9 +285,16 @@ pub unsafe extern "C" fn us_poll_change(p: *mut us_poll_t, _loop: *mut us_loop_t
         }
         if us_poll_events(p) != events {
             (*p).poll_type = (us_internal_poll_type(p)
-                | if events & LIBUS_SOCKET_READABLE != 0 { POLL_TYPE_POLLING_IN } else { 0 }
-                | if events & LIBUS_SOCKET_WRITABLE != 0 { POLL_TYPE_POLLING_OUT } else { 0 })
-                as u8;
+                | if events & LIBUS_SOCKET_READABLE != 0 {
+                    POLL_TYPE_POLLING_IN
+                } else {
+                    0
+                }
+                | if events & LIBUS_SOCKET_WRITABLE != 0 {
+                    POLL_TYPE_POLLING_OUT
+                } else {
+                    0
+                }) as u8;
             uv_poll_start(uv_p, events, Some(poll_cb));
         }
     }
@@ -307,8 +320,15 @@ pub unsafe extern "C" fn us_poll_stop(p: *mut us_poll_t, _loop: *mut us_loop_t) 
 pub unsafe extern "C" fn us_poll_events(p: *mut us_poll_t) -> c_int {
     // SAFETY: caller owns `p`.
     let pt = unsafe { (*p).poll_type } as c_int;
-    (if pt & POLL_TYPE_POLLING_IN != 0 { LIBUS_SOCKET_READABLE } else { 0 })
-        | (if pt & POLL_TYPE_POLLING_OUT != 0 { LIBUS_SOCKET_WRITABLE } else { 0 })
+    (if pt & POLL_TYPE_POLLING_IN != 0 {
+        LIBUS_SOCKET_READABLE
+    } else {
+        0
+    }) | (if pt & POLL_TYPE_POLLING_OUT != 0 {
+        LIBUS_SOCKET_WRITABLE
+    } else {
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -405,7 +425,11 @@ pub unsafe extern "C" fn us_create_loop(
         let loop_ =
             calloc_or_oom(1, size_of::<us_loop_t>() + ext_size as usize).cast::<us_loop_t>();
 
-        (*loop_).uv_loop = if hint.is_null() { uv_loop_new() } else { hint.cast() };
+        (*loop_).uv_loop = if hint.is_null() {
+            uv_loop_new()
+        } else {
+            hint.cast()
+        };
         (*loop_).is_default = (!hint.is_null()) as c_int;
 
         let uv_pre = alloc_or_oom(size_of::<uv_prepare_t>()).cast::<uv_prepare_t>();

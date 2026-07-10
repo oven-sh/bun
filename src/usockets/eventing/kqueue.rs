@@ -3,17 +3,17 @@
 //! (the `LIBUS_USE_KQUEUE` half) and `internal/eventing/epoll_kqueue.h`.
 
 use core::ffi::{c_int, c_longlong, c_uint, c_void};
-use core::mem::{size_of, MaybeUninit};
+use core::mem::{MaybeUninit, size_of};
 use core::ptr;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use libc::timespec;
 
 use crate::types::{
+    Bun__outOfMemory, LIBUS_MAX_READY_POLLS, LIBUS_SOCKET_DESCRIPTOR, POLL_TYPE_CALLBACK,
+    POLL_TYPE_KIND_MASK, POLL_TYPE_POLLING_IN, POLL_TYPE_POLLING_MASK, POLL_TYPE_POLLING_OUT,
     us_calloc, us_free, us_internal_async, us_internal_callback_t, us_internal_loop_data_t,
-    us_malloc, us_socket_t, Bun__outOfMemory, LIBUS_MAX_READY_POLLS, LIBUS_SOCKET_DESCRIPTOR,
-    POLL_TYPE_CALLBACK, POLL_TYPE_KIND_MASK, POLL_TYPE_POLLING_IN, POLL_TYPE_POLLING_MASK,
-    POLL_TYPE_POLLING_OUT,
+    us_malloc, us_socket_t,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -61,7 +61,7 @@ unsafe fn is_eintr(rc: c_int) -> bool {
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod kq {
-    pub(super) use libc::{kevent64, kevent64_s, KEVENT_FLAG_ERROR_EVENTS, KEVENT_FLAG_IMMEDIATE};
+    pub(super) use libc::{KEVENT_FLAG_ERROR_EVENTS, KEVENT_FLAG_IMMEDIATE, kevent64, kevent64_s};
 }
 
 #[cfg(target_os = "freebsd")]
@@ -94,7 +94,10 @@ mod kq {
             eventlist = ptr::null_mut();
             nevents = 0;
         }
-        static ZERO_TS: timespec = timespec { tv_sec: 0, tv_nsec: 0 };
+        static ZERO_TS: timespec = timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
         if flags & KEVENT_FLAG_IMMEDIATE != 0 && timeout.is_null() {
             timeout = &raw const ZERO_TS;
         }
@@ -103,7 +106,7 @@ mod kq {
     }
 }
 
-use kq::{kevent64, kevent64_s, KEVENT_FLAG_ERROR_EVENTS, KEVENT_FLAG_IMMEDIATE};
+use kq::{KEVENT_FLAG_ERROR_EVENTS, KEVENT_FLAG_IMMEDIATE, kevent64, kevent64_s};
 
 /// `EV_SET64` — fill a `kevent64_s`. ext[] is zeroed (matches FreeBSD `EV_SET`).
 #[inline(always)]
@@ -144,9 +147,15 @@ unsafe fn get_ready_poll(loop_: *mut us_loop_t, index: c_int) -> *mut us_poll_t 
     // SAFETY: caller guarantees `index < num_ready_polls` within `ready_polls`.
     unsafe {
         #[cfg(any(target_os = "macos", target_os = "ios"))]
-        { (*loop_).ready_polls[index as usize].udata as *mut us_poll_t }
+        {
+            (*loop_).ready_polls[index as usize].udata as *mut us_poll_t
+        }
         #[cfg(target_os = "freebsd")]
-        { (*loop_).ready_polls[index as usize].udata.cast::<us_poll_t>() }
+        {
+            (*loop_).ready_polls[index as usize]
+                .udata
+                .cast::<us_poll_t>()
+        }
     }
 }
 
@@ -321,7 +330,11 @@ pub unsafe extern "C" fn us_poll_ext(p: *mut us_poll_t) -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_poll_init(p: *mut us_poll_t, fd: LIBUS_SOCKET_DESCRIPTOR, poll_type: c_int) {
+pub unsafe extern "C" fn us_poll_init(
+    p: *mut us_poll_t,
+    fd: LIBUS_SOCKET_DESCRIPTOR,
+    poll_type: c_int,
+) {
     // SAFETY: `p` points at a live us_poll_t.
     unsafe {
         (*p).set_fd(fd);
@@ -333,8 +346,15 @@ pub unsafe extern "C" fn us_poll_init(p: *mut us_poll_t, fd: LIBUS_SOCKET_DESCRI
 pub unsafe extern "C" fn us_poll_events(p: *mut us_poll_t) -> c_int {
     // SAFETY: `p` points at a live us_poll_t.
     let pt = unsafe { (*p).poll_type() };
-    (if pt & POLL_TYPE_POLLING_IN != 0 { LIBUS_SOCKET_READABLE } else { 0 })
-        | (if pt & POLL_TYPE_POLLING_OUT != 0 { LIBUS_SOCKET_WRITABLE } else { 0 })
+    (if pt & POLL_TYPE_POLLING_IN != 0 {
+        LIBUS_SOCKET_READABLE
+    } else {
+        0
+    }) | (if pt & POLL_TYPE_POLLING_OUT != 0 {
+        LIBUS_SOCKET_WRITABLE
+    } else {
+        0
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -375,11 +395,26 @@ impl KeventFlags {
     const EOF: u8 = 1 << 3;
     const SKIP: u8 = 1 << 4;
 
-    #[inline] const fn readable(self) -> bool { self.0 & Self::READABLE != 0 }
-    #[inline] const fn writable(self) -> bool { self.0 & Self::WRITABLE != 0 }
-    #[inline] const fn error(self) -> bool { self.0 & Self::ERROR != 0 }
-    #[inline] const fn eof(self) -> bool { self.0 & Self::EOF != 0 }
-    #[inline] const fn skip(self) -> bool { self.0 & Self::SKIP != 0 }
+    #[inline]
+    const fn readable(self) -> bool {
+        self.0 & Self::READABLE != 0
+    }
+    #[inline]
+    const fn writable(self) -> bool {
+        self.0 & Self::WRITABLE != 0
+    }
+    #[inline]
+    const fn error(self) -> bool {
+        self.0 & Self::ERROR != 0
+    }
+    #[inline]
+    const fn eof(self) -> bool {
+        self.0 & Self::EOF != 0
+    }
+    #[inline]
+    const fn skip(self) -> bool {
+        self.0 & Self::SKIP != 0
+    }
 }
 const _: () = assert!(size_of::<KeventFlags>() == 1);
 
@@ -452,12 +487,22 @@ unsafe fn us_internal_dispatch_ready_polls(loop_: *mut us_loop_t) {
             if !poll.is_null() {
                 // Tagged pointers (FilePoll) go through Bun's own dispatch.
                 if clear_pointer_tag(poll) != poll {
-                    Bun__internal_dispatch_ready_poll(loop_.cast::<c_void>(), poll.cast::<c_void>());
+                    Bun__internal_dispatch_ready_poll(
+                        loop_.cast::<c_void>(),
+                        poll.cast::<c_void>(),
+                    );
                 } else {
                     let bits = coalesced[idx as usize];
                     if !bits.skip() {
-                        let mut events = (if bits.readable() { LIBUS_SOCKET_READABLE } else { 0 })
-                            | (if bits.writable() { LIBUS_SOCKET_WRITABLE } else { 0 });
+                        let mut events = (if bits.readable() {
+                            LIBUS_SOCKET_READABLE
+                        } else {
+                            0
+                        }) | (if bits.writable() {
+                            LIBUS_SOCKET_WRITABLE
+                        } else {
+                            0
+                        });
                         events &= us_poll_events(poll);
                         if events != 0 || bits.error() || bits.eof() {
                             us_internal_dispatch_ready_poll(
@@ -688,7 +733,11 @@ pub(crate) unsafe fn kqueue_change(
                 change_list.as_mut_ptr().add(change_len as usize),
                 fd as u64,
                 libc::EVFILT_READ,
-                if is_readable != 0 { libc::EV_ADD } else { libc::EV_DELETE },
+                if is_readable != 0 {
+                    libc::EV_ADD
+                } else {
+                    libc::EV_DELETE
+                },
                 0,
                 0,
                 user_data,
@@ -807,8 +856,15 @@ pub unsafe extern "C" fn us_poll_start_rc(
     unsafe {
         let kind = us_internal_poll_type(p);
         (*p).set_poll_type(
-            kind | (if events & LIBUS_SOCKET_READABLE != 0 { POLL_TYPE_POLLING_IN } else { 0 })
-                | (if events & LIBUS_SOCKET_WRITABLE != 0 { POLL_TYPE_POLLING_OUT } else { 0 }),
+            kind | (if events & LIBUS_SOCKET_READABLE != 0 {
+                POLL_TYPE_POLLING_IN
+            } else {
+                0
+            }) | (if events & LIBUS_SOCKET_WRITABLE != 0 {
+                POLL_TYPE_POLLING_OUT
+            } else {
+                0
+            }),
         );
         kqueue_change((*loop_).fd, (*p).fd(), 0, events, p.cast::<c_void>())
     }
@@ -830,10 +886,23 @@ pub unsafe extern "C" fn us_poll_change(p: *mut us_poll_t, loop_: *mut us_loop_t
         if old_events != events {
             let kind = us_internal_poll_type(p);
             (*p).set_poll_type(
-                kind | (if events & LIBUS_SOCKET_READABLE != 0 { POLL_TYPE_POLLING_IN } else { 0 })
-                    | (if events & LIBUS_SOCKET_WRITABLE != 0 { POLL_TYPE_POLLING_OUT } else { 0 }),
+                kind | (if events & LIBUS_SOCKET_READABLE != 0 {
+                    POLL_TYPE_POLLING_IN
+                } else {
+                    0
+                }) | (if events & LIBUS_SOCKET_WRITABLE != 0 {
+                    POLL_TYPE_POLLING_OUT
+                } else {
+                    0
+                }),
             );
-            kqueue_change((*loop_).fd, (*p).fd(), old_events, events, p.cast::<c_void>());
+            kqueue_change(
+                (*loop_).fd,
+                (*p).fd(),
+                old_events,
+                events,
+                p.cast::<c_void>(),
+            );
             us_internal_loop_update_pending_ready_polls(loop_, p, p, old_events, events);
         }
     }
@@ -846,10 +915,22 @@ pub unsafe extern "C" fn us_poll_stop(p: *mut us_poll_t, loop_: *mut us_loop_t) 
         let old_events = us_poll_events(p);
         let new_events = 0;
         if old_events != 0 {
-            kqueue_change((*loop_).fd, (*p).fd(), old_events, new_events, ptr::null_mut());
+            kqueue_change(
+                (*loop_).fd,
+                (*p).fd(),
+                old_events,
+                new_events,
+                ptr::null_mut(),
+            );
         }
         // Disable any instance of us in the pending ready poll list.
-        us_internal_loop_update_pending_ready_polls(loop_, p, ptr::null_mut(), old_events, new_events);
+        us_internal_loop_update_pending_ready_polls(
+            loop_,
+            p,
+            ptr::null_mut(),
+            old_events,
+            new_events,
+        );
     }
 }
 

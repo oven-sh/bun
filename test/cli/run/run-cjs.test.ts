@@ -69,6 +69,7 @@ describe.concurrent("explicit CommonJS module type rejects ESM-only syntax", () 
     });
     const { stdout, stderr, exitCode } = await run(String(dir), "t.js");
     expect(stderr).toContain("Cannot use top-level 'await' in a CommonJS module");
+    expect(stderr).toContain('the nearest package.json sets "type": "commonjs"');
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
   });
 

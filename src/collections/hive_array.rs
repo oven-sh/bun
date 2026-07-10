@@ -388,16 +388,20 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     /// claimed via the deprecated [`get`](Self::get) but never written
     /// violates this and makes the `drop_in_place` UB.
     pub unsafe fn drop_all(&mut self) {
-        if !core::mem::needs_drop::<T>() {
-            return;
-        }
-        let mut iter = self.used.iter_set();
-        while let Some(index) = iter.next() {
-            let slot = self.ptr_at(index);
-            // SAFETY: caller contract — `used` bit set ⇒ slot is a fully
-            // initialized `T` (see fn doc).
-            unsafe { core::ptr::drop_in_place(slot) };
-            asan::poison(slot.cast(), size_of::<T>());
+        if core::mem::needs_drop::<T>() {
+            // `iter_set` snapshots the bitset, so `unset` inside the loop is
+            // invisible to it. Unsetting before `drop_in_place` means a later
+            // `drop_all` (e.g. from `Drop` after an explicit call) never
+            // revisits an already-dropped slot.
+            let mut iter = self.used.iter_set();
+            while let Some(index) = iter.next() {
+                let slot = self.ptr_at(index);
+                self.used.unset(index);
+                // SAFETY: caller contract — `used` bit set ⇒ slot is a fully
+                // initialized `T` (see fn doc).
+                unsafe { core::ptr::drop_in_place(slot) };
+                asan::poison(slot.cast(), size_of::<T>());
+            }
         }
         self.used = HiveBitSet::init_empty();
     }

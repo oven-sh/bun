@@ -260,6 +260,57 @@ describe("RedisClient TLS hostname verification", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("subscribe() re-entered from on_data does not dead-store the refcount", async () => {
+    // NsHandler dispatched socket events with a `&mut Owner` held across the
+    // body. Resolving the HELLO promise inside on_data drains microtasks,
+    // which re-enters host fns that re-derive a borrow of the same owner.
+    // Under overflow-checks the extra panic edge in RefCount::ref_ pushed
+    // LLVM into dead-storing the increment, so the deref_guard at the end of
+    // on_data drove the count to 0 with the socket still open.
+    // https://github.com/oven-sh/bun/pull/33726
+    const server = tls.createServer({ key: localhostTls.key, cert: localhostTls.cert }, sock => {
+      let buf = Buffer.alloc(0);
+      let subs = 0;
+      const bulk = (s: string) => `$${Buffer.byteLength(s)}\r\n${s}\r\n`;
+      const push = (kind: string, ch: string, n: number) => `>3\r\n${bulk(kind)}${bulk(ch)}:${n}\r\n`;
+      sock.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        let consumed: number;
+        while ((consumed = consumeRespArray(buf)) > 0) {
+          const head = buf.subarray(0, consumed).toString("latin1");
+          buf = buf.subarray(consumed);
+          if (/\bHELLO\b/.test(head)) sock.write("%1\r\n+proto\r\n:3\r\n");
+          else if (/\bSUBSCRIBE\b/.test(head))
+            for (const ch of head.match(/\$\d+\r\n([^\r]+)\r\n/g)!.slice(1)) sock.write(push("subscribe", ch, ++subs));
+          else if (/\bUNSUBSCRIBE\b/.test(head))
+            for (const ch of head.match(/\$\d+\r\n([^\r]+)\r\n/g)!.slice(1))
+              sock.write(push("unsubscribe", ch, (subs = Math.max(0, subs - 1))));
+          else sock.write("+OK\r\n");
+        }
+      });
+      sock.on("error", () => {});
+    });
+    server.on("tlsClientError", () => {});
+    server.listen(0);
+    await once(server, "listening");
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const sub = new RedisClient(`rediss://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+        tls: { ca: localhostTls.cert, rejectUnauthorized: true },
+      });
+      await sub.connect();
+      await sub.subscribe(["a", "b", "c"], () => {});
+      await sub.unsubscribe("b");
+      await sub.unsubscribe(["a", "c"]);
+      expect(sub.connected).toBe(true);
+      sub.close();
+    } finally {
+      server.close();
+    }
+  });
+
   test.skipIf(isWindows)("skips hostname verification for redis+tls+unix:// sockets", async () => {
     // Unix-domain sockets have no hostname; a CA-trusted cert for the wrong
     // CN must still be accepted as long as the chain validates.

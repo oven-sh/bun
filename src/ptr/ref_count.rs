@@ -297,7 +297,10 @@ impl<T: RefCounted> RefCount<T> {
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
-        count.raw_count.set(count.raw_count.get() + 1);
+        // wrapping: keep codegen identical under overflow-checks (the panic
+        // branch here perturbs inlining enough to miscompile under noalias
+        // UB in re-entrant callers); `debug.assert_valid()` catches misuse.
+        count.raw_count.set(count.raw_count.get().wrapping_add(1));
     }
 
     /// # Safety
@@ -324,13 +327,14 @@ impl<T: RefCounted> RefCount<T> {
             "0x{:x} deref {} -> {}:",
             self_ as usize,
             count.raw_count.get(),
-            count.raw_count.get() - 1,
+            count.raw_count.get().wrapping_sub(1),
         );
         if DEBUG_STACK_TRACE {
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
-        count.raw_count.set(count.raw_count.get() - 1);
+        // wrapping: see `ref_` above.
+        count.raw_count.set(count.raw_count.get().wrapping_sub(1));
         if count.raw_count.get() == 0 {
             #[cfg(debug_assertions)]
             {

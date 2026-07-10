@@ -1622,15 +1622,17 @@ impl<'a> Resolver<'a> {
         // dual-package-hazard rewrite and gets its own resolve result when it is
         // reached via `require()`. Evaluating the sideEffects map against the
         // secondary path here would overwrite the primary's classification.
-        let mut side_effects_done = false;
+        let mut is_primary = true;
         while let Some(path) = iter.next() {
+            let compute_side_effects = is_primary;
+            is_primary = false;
             let name = path.name();
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
                 continue;
             };
-            let mut needs_side_effects = !side_effects_done;
+            let mut needs_side_effects = compute_side_effects;
             if let Some(existing) = Result::deref_package_json(result.package_json)
-                && !side_effects_done
+                && compute_side_effects
             {
                 // if we don't have it here, they might put it in a sideEfffects
                 // map of the parent package.json
@@ -1710,7 +1712,6 @@ impl<'a> Resolver<'a> {
                     };
                 }
             }
-            side_effects_done = true;
 
             if let Some(tsconfig) = dir.enclosing_tsconfig_json {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));

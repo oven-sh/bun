@@ -753,10 +753,9 @@ impl Listener {
         global: &JSGlobalObject,
         tls: JSValue,
     ) -> JsResult<JSValue> {
-        // Not a listening TLS socket (a named pipe, or `listen()` hasn't run
-        // yet): the JS-side options stay the source of truth and the next
-        // `listen()` builds the context from them.
-        if !this.ssl || !matches!(this.listener.get(), ListenerType::Uws(_)) {
+        // `listen()` hasn't run yet (or failed): the JS-side options stay the
+        // source of truth and the next `listen()` builds the context from them.
+        if !this.ssl || matches!(this.listener.get(), ListenerType::None) {
             return Ok(JSValue::UNDEFINED);
         }
 
@@ -765,9 +764,6 @@ impl Listener {
         // SAFETY: per-thread VM; valid for program lifetime.
         let vm = VirtualMachine::get().as_mut();
         let Some(ssl_config) = SSLConfig::from_js(vm, global, tls)? else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        let ListenerType::Uws(ls) = this.listener.get() else {
             return Ok(JSValue::UNDEFINED);
         };
 
@@ -782,24 +778,50 @@ impl Listener {
         // One owned ref, which becomes the listener's once the swap lands.
         let ctx = ctx.cast::<boring_sys::SSL_CTX>();
 
-        // `server_name` is the entry the listen-time context was registered
-        // under in the SNI tree; the C side moves it across so a ClientHello
-        // carrying that name stops resolving to the retired certificate.
-        let server_name = this.server_name.as_deref().map(|bytes| {
-            // SAFETY: stored NUL-terminated by `listen()`.
-            unsafe { core::ffi::CStr::from_ptr(bytes.as_ptr().cast()) }
-        });
-        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-        if !bun_opaque::opaque_deref_mut(ls).set_ssl_ctx(ctx.cast(), server_name) {
-            // SAFETY: FFI — release the ref create_ssl_context handed us.
-            unsafe { boring_sys::SSL_CTX_free(ctx) };
-            return Ok(JSValue::UNDEFINED);
-        }
-
-        if let Some(old) = this.secure_ctx.replace(NonNull::new(ctx)) {
-            // SAFETY: FFI — drop the listener's ref on the retired context. Any
-            // live socket still holds its own via `SSL_new`.
-            unsafe { boring_sys::SSL_CTX_free(old.as_ptr()) };
+        match this.listener.get() {
+            ListenerType::Uws(ls) => {
+                // `server_name` is the entry the listen-time context was
+                // registered under in the SNI tree; the C side moves it across
+                // so a ClientHello carrying that name stops resolving to the
+                // retired certificate.
+                let server_name = this.server_name.as_deref().map(|bytes| {
+                    // SAFETY: stored NUL-terminated by `listen()`.
+                    unsafe { core::ffi::CStr::from_ptr(bytes.as_ptr().cast()) }
+                });
+                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                let swapped = bun_opaque::opaque_deref_mut(ls).set_ssl_ctx(ctx.cast(), server_name);
+                // `this.ssl` ⇒ `listen()` stored a non-null `ls->ssl_ctx`; the
+                // only path that clears it is `us_listen_socket_close`, after
+                // which `this.listener` is `None` and we returned above.
+                debug_assert!(swapped, "TLS listener with no ls->ssl_ctx");
+                if !swapped {
+                    // SAFETY: FFI — release the ref create_ssl_context handed us.
+                    unsafe { boring_sys::SSL_CTX_free(ctx) };
+                    return Ok(JSValue::UNDEFINED);
+                }
+                if let Some(old) = this.secure_ctx.replace(NonNull::new(ctx)) {
+                    // SAFETY: FFI — drop the listener's ref on the retired
+                    // context. Any live socket still holds its own via `SSL_new`.
+                    unsafe { boring_sys::SSL_CTX_free(old.as_ptr()) };
+                }
+            }
+            #[cfg(windows)]
+            ListenerType::NamedPipe(named_pipe) => {
+                // SAFETY: `named_pipe` is live while `this.listener` holds it.
+                let old = unsafe { &*named_pipe.as_ptr() }
+                    .ctx
+                    .replace(NonNull::new(ctx));
+                if let Some(old) = old {
+                    // SAFETY: FFI — `get_accepted_by` up_ref'd per connection.
+                    unsafe { boring_sys::SSL_CTX_free(old.as_ptr()) };
+                }
+            }
+            #[cfg(not(windows))]
+            ListenerType::NamedPipe(_) => unreachable!(),
+            ListenerType::None => {
+                // SAFETY: FFI — release the ref create_ssl_context handed us.
+                unsafe { boring_sys::SSL_CTX_free(ctx) };
+            }
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -1687,7 +1709,9 @@ pub struct WindowsNamedPipeListeningContext {
     /// JSC_BORROW: process-lifetime singleton; `&'static` so call sites read
     /// `self.vm.is_shutting_down()` without a raw-pointer deref.
     pub vm: &'static VirtualMachine,
-    pub ctx: Option<NonNull<boring_sys::SSL_CTX>>, // server reuses the same ctx
+    /// Server accepts every connection with this context; `set_secure_context`
+    /// swaps it.
+    pub ctx: Cell<Option<NonNull<boring_sys::SSL_CTX>>>,
 }
 
 #[cfg(not(windows))]
@@ -1710,7 +1734,8 @@ impl WindowsNamedPipeListeningContext {
         let listener_ref = this_ref.listener.unwrap();
         let listener: &Listener = listener_ref.get();
         use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
-        let socket: PipeSocketType = if this_ref.ctx.is_some() {
+        let ssl_ctx = this_ref.ctx.get();
+        let socket: PipeSocketType = if ssl_ctx.is_some() {
             PipeSocketType::Tls(Listener::on_name_pipe_created::<true>(listener))
         } else {
             PipeSocketType::Tcp(Listener::on_name_pipe_created::<false>(listener))
@@ -1722,7 +1747,7 @@ impl WindowsNamedPipeListeningContext {
         let result = unsafe {
             (*client)
                 .named_pipe
-                .get_accepted_by(&mut this_ref.uv_pipe, this_ref.ctx.map(|p| p.as_ptr()))
+                .get_accepted_by(&mut this_ref.uv_pipe, ssl_ctx.map(|p| p.as_ptr()))
         };
         if result.is_err() {
             // connection dropped
@@ -1783,7 +1808,7 @@ impl WindowsNamedPipeListeningContext {
             listener: NonNull::new(listener).map(bun_ptr::BackRef::from),
             global_this: GlobalRef::from(global_this),
             vm: global_this.bun_vm(),
-            ctx: None,
+            ctx: Cell::new(None),
         }));
         // SAFETY: just allocated, non-null, exclusive.
         let this_ref = unsafe { &mut *this };
@@ -1808,7 +1833,9 @@ impl WindowsNamedPipeListeningContext {
             let mut err = uws::create_bun_socket_error_t::none;
             // Create SSL context using uSockets to match behavior of node.js
             match ctx_opts.create_ssl_context(&mut err) {
-                Some(ctx) => this_ref.ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
+                Some(ctx) => this_ref
+                    .ctx
+                    .set(NonNull::new(ctx.cast::<boring_sys::SSL_CTX>())),
                 None => return Err(crate::Error::InvalidOptions),
             }
         }

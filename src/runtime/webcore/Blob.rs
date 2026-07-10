@@ -5690,10 +5690,13 @@ pub fn jsdom_file_construct_(
                 }
             }
 
-            if let Some(last_modified) = options.get_truthy(global_this, "lastModified")? {
+            // WebIDL dictionary member: only `undefined` / not-present falls
+            // through to the Date.now() default. Any present value (including
+            // `null`) goes through ToNumber, with NaN normalized to 0.
+            if let Some(last_modified) = options.get(global_this, "lastModified")? {
                 set_last_modified = true;
-                blob.last_modified
-                    .set(last_modified.to_number(global_this)?);
+                let n = last_modified.to_number(global_this)?;
+                blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
             }
         }
     }
@@ -5776,9 +5779,9 @@ pub fn construct_bun_file(
                     }
                 }
             }
-            if let Some(last_modified) = opts.get_truthy(global_object, "lastModified")? {
-                blob.last_modified
-                    .set(last_modified.to_number(global_object)?);
+            if let Some(last_modified) = opts.get(global_object, "lastModified")? {
+                let n = last_modified.to_number(global_object)?;
+                blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
             }
         }
     }

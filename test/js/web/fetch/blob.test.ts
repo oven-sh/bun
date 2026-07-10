@@ -202,6 +202,55 @@ test("new File('123', '123') is NOT supported", async () => {
   expect(() => new File("123", "123")).toThrow();
 });
 
+describe("new File() lastModified option", () => {
+  const lm = (o: any) => new File([], "n", o).lastModified;
+
+  test.each([
+    // [input, expected] — present member goes through ToNumber; NaN → 0
+    [NaN, 0],
+    ["not a number", 0],
+    [{}, 0],
+    [{ valueOf: () => NaN }, 0],
+    [null, 0],
+    ["", 0],
+    [false, 0],
+    [true, 1],
+    ["123", 123],
+    [1234, 1234],
+    [-1, -1],
+  ] as const)("lastModified: %p -> %p", (input, expected) => {
+    expect(lm({ lastModified: input })).toBe(expected);
+  });
+
+  test("lastModified: undefined defaults to Date.now()", () => {
+    const before = Date.now();
+    const value = lm({ lastModified: undefined });
+    const after = Date.now();
+    expect(value).toBeGreaterThanOrEqual(before);
+    expect(value).toBeLessThanOrEqual(after);
+  });
+
+  test("missing lastModified defaults to Date.now()", () => {
+    const before = Date.now();
+    const value = lm({});
+    const after = Date.now();
+    expect(value).toBeGreaterThanOrEqual(before);
+    expect(value).toBeLessThanOrEqual(after);
+  });
+
+  test("valueOf throwing propagates", () => {
+    expect(() =>
+      lm({
+        lastModified: {
+          valueOf() {
+            throw new Error("boom");
+          },
+        },
+      }),
+    ).toThrow("boom");
+  });
+});
+
 test("new Blob('123') is NOT supported", async () => {
   expect(() => new Blob("123")).toThrow();
 });

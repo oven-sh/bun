@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import * as ArrowNS from "./cjs-arrow-exports-fixture.cjs";
+import * as ClassNS from "./cjs-class-exports-fixture.cjs";
 import * as CJSArrayLike from "./cjs-defineProperty-arraylike.cjs";
 import * as CJS from "./cjs-defineProperty-fixture.cjs";
-import * as Self from "./esm-defineProperty.test.ts";
 import * as FnNS from "./cjs-function-exports-fixture.cjs";
-import * as ClassNS from "./cjs-class-exports-fixture.cjs";
-import * as ArrowNS from "./cjs-arrow-exports-fixture.cjs";
+import * as Self from "./esm-defineProperty.test.ts";
 // https://github.com/oven-sh/bun/issues/4432
 test("defineProperty", () => {
   expect(CJS.a).toBe(1);

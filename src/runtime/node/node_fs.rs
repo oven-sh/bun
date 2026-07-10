@@ -4845,11 +4845,14 @@ impl NodeFS {
         // buf_to_free dropped at scope exit
 
         let mut remain = stat_size as u64;
-        // VERIFY-FIX(round1): the
-        // `if remain == 0` check below was wrong: `break 'toplevel` after
-        // `remain` had already saturated to 0 would still enter the else. Track
-        // an explicit `broke` flag instead.
-        let mut broke = false;
+        // The "read until EOF" fallback below is only correct when the caller
+        // did not specify a size (stat_size == 0 is the explicit "unknown"
+        // sentinel used by every call site — see copy_file.rs and the fs.copyFile
+        // paths). When stat_size > 0 it is a hard limit (e.g. a sliced
+        // destination in `Bun.write(Bun.file(p).slice(0, N), ...)`), and falling
+        // through to the EOF loop just because the first loop happened to hit
+        // the limit without EOF would copy past the requested boundary.
+        let unknown_size = stat_size == 0;
         'toplevel: while remain > 0 {
             let read_len = (buf.len() as u64).min(remain) as usize;
             let amt = match Syscall::read(src_fd, &mut buf[..read_len]) {
@@ -4864,7 +4867,6 @@ impl NodeFS {
             };
             // 0 == EOF
             if amt == 0 {
-                broke = true;
                 break 'toplevel;
             }
             *wrote += amt as u64;
@@ -4883,13 +4885,12 @@ impl NodeFS {
                     }
                 };
                 if written == 0 {
-                    broke = true;
                     break 'toplevel;
                 }
                 slice = &slice[written..];
             }
         }
-        if !broke {
+        if unknown_size {
             'outer: loop {
                 let amt = match Syscall::read(src_fd, buf) {
                     Ok(result) => result,

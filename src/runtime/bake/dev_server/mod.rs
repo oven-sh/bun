@@ -984,6 +984,11 @@ impl WatcherAtomics {
 /// so that when a matching file is created, the dependencies can be rebuilt.
 /// This handles HMR cases where a user writes an import before creating the
 /// file, or moves files around. Not thread-safe.
+///
+/// Known gap: when the importing file fixes its resolution (the failing
+/// import is removed or renamed), nothing walks this store to release the
+/// now-unneeded watcher; it stays until the directory changes or the file
+/// is evicted from the incremental graph.
 #[derive(Default)]
 pub struct DirectoryWatchStore {
     pub watches: StringArrayHashMap<directory_watch_store::Entry>,

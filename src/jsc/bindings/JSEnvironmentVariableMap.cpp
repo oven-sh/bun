@@ -345,6 +345,26 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 }
 #endif
 
+// Founding a SHARE_ENV tree swaps main's process.env off the windowsEnv Proxy that
+// called SetEnvironmentVariableW, so every mutation of a main-rooted shared store has
+// to re-apply that write-through. `value == nullptr` deletes.
+static ALWAYS_INLINE void syncWindowsEnv(JSGlobalObject* globalObject, const String& key, const String* value)
+{
+#if OS(WINDOWS)
+    auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
+    if (!context || !context->isMainThread())
+        return;
+    if (value)
+        Bun__Process__editWindowsEnvVar(Bun::toString(key), Bun::toString(*value));
+    else
+        Bun__Process__editWindowsEnvVar(Bun::toString(key), { .tag = BunStringTag::Dead });
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(key);
+    UNUSED_PARAM(value);
+#endif
+}
+
 // ============================================================================
 // worker_threads SHARE_ENV
 //
@@ -543,13 +563,7 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
 
     String keyStr = String(uid);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
-#if OS(WINDOWS)
-    // Founding a SHARE_ENV tree swaps main's process.env off the windowsEnv Proxy
-    // that called SetEnvironmentVariableW; keep main's OS-env write-through (Node
-    // keeps main on its RealEnvStore and aliases it to the child).
-    if (defaultGlobalObject(globalObject)->scriptExecutionContext()->isMainThread())
-        Bun__Process__editWindowsEnvVar(Bun::toString(keyStr), Bun::toString(stringValue));
-#endif
+    syncWindowsEnv(globalObject, keyStr, &stringValue);
     store->set(keyStr, stringValue);
     return true;
 }
@@ -567,11 +581,7 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
-#if OS(WINDOWS)
-    // See ::put — mirror the windowsEnv Proxy's deleteProperty write-through.
-    if (defaultGlobalObject(globalObject)->scriptExecutionContext()->isMainThread())
-        Bun__Process__editWindowsEnvVar(Bun::toString(String(uid)), { .tag = BunStringTag::Dead });
-#endif
+    syncWindowsEnv(globalObject, String(uid), nullptr);
     store->remove(String(uid));
     // Also drop any own property the Base fallback installed (accessor descriptors).
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
@@ -603,6 +613,7 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
             if (auto* store = sharedEnvStoreFor(object)) {
                 String existing = store->get(String(uid));
                 if (!existing.isNull()) {
+                    syncWindowsEnv(globalObject, String(uid), nullptr);
                     store->remove(String(uid));
                     object->putDirect(vm, propertyName, jsString(vm, existing), 0);
                 }
@@ -622,6 +633,7 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
 
     String keyStr = String(uid);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
+    syncWindowsEnv(globalObject, keyStr, &stringValue);
     store->set(keyStr, stringValue);
     return true;
 }
@@ -649,7 +661,9 @@ bool JSSharedEnvMap::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalO
         return Base::deletePropertyByIndex(cell, globalObject, index);
     }
 
-    store->remove(String::number(index));
+    String keyStr = String::number(index);
+    syncWindowsEnv(globalObject, keyStr, nullptr);
+    store->remove(keyStr);
     return Base::deletePropertyByIndex(cell, globalObject, index);
 }
 

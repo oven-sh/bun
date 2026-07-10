@@ -329,8 +329,8 @@ pub fn for_each_multipart_entry<C>(
 
     while let Some(chunk) = splitter.next() {
         let mut remain = chunk;
-        let header_end = strings::index_of(remain, b"\r\n\r\n")
-            .ok_or(crate::Error::IsMissingHeaderEnd)?;
+        let header_end =
+            strings::index_of(remain, b"\r\n\r\n").ok_or(crate::Error::IsMissingHeaderEnd)?;
         let header = &remain[..header_end + 2];
         remain = &remain[header_end + 4..];
 
@@ -344,8 +344,8 @@ pub fn for_each_multipart_entry<C>(
                 .ok_or(crate::Error::IsMissingHeaderLineEnd)?;
             let line = &header_chunk[..line_end];
             header_chunk = &header_chunk[line_end + 2..];
-            let colon = strings::index_of(line, b":")
-                .ok_or(crate::Error::IsMissingHeaderColonSeparator)?;
+            let colon =
+                strings::index_of(line, b":").ok_or(crate::Error::IsMissingHeaderColonSeparator)?;
 
             let key = &line[..colon];
             let mut value: &[u8] = if line.len() > colon + 1 {

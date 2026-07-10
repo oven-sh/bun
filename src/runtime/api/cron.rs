@@ -2414,9 +2414,7 @@ fn resolve_path(
         .resolver
         .resolve(source_dir, path_, bun_ast::ImportKind::EntryPointRun)
         .map_err(|_| crate::Error::ModuleNotFound)?;
-    let entry_path = resolved
-        .path()
-        .ok_or(crate::Error::ModuleNotFound)?;
+    let entry_path = resolved.path().ok_or(crate::Error::ModuleNotFound)?;
     Ok(ZString::from_bytes(entry_path.text))
 }
 

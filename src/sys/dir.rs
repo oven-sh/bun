@@ -103,7 +103,8 @@ impl Dir {
     /// `mkdir -p` relative to this dir.
     #[inline]
     pub fn make_path(&self, sub_path: &[u8]) -> Maybe<()> {
-        mkdir_recursive_at(self.fd, sub_path)}
+        mkdir_recursive_at(self.fd, sub_path)
+    }
     /// Try opening the directory first; on ENOENT, `make_path`
     /// then open it.
     pub fn make_open_path(&self, sub_path: &[u8], _opts: OpenDirOptions) -> Maybe<Dir> {
@@ -111,8 +112,8 @@ impl Dir {
             Ok(fd) => Ok(Dir::from_fd(fd)),
             Err(e) if e.get_errno() == E::ENOENT => {
                 mkdir_recursive_at(self.fd, sub_path)?;
-                open_dir_at(self.fd, sub_path)
-                    .map(Dir::from_fd)}
+                open_dir_at(self.fd, sub_path).map(Dir::from_fd)
+            }
             Err(e) => Err(e),
         }
     }
@@ -355,7 +356,8 @@ impl Dir {
         // SAFETY: NUL-terminated above.
         let lz = ZStr::from_buf(&lbuf.0[..], llen);
 
-        symlinkat(tz, self.fd, lz)}
+        symlinkat(tz, self.fd, lz)
+    }
 
     /// Create (or truncate) `sub_path` relative to
     /// this dir and return a `File` handle: `O_CREAT`,
@@ -373,7 +375,8 @@ impl Dir {
     /// `unlinkat(self.fd, sub_path, 0)`.
     #[inline]
     pub fn delete_file_z(&self, sub_path: &ZStr) -> Maybe<()> {
-        unlinkat(self.fd, sub_path)}
+        unlinkat(self.fd, sub_path)
+    }
 
     /// Open `source_path` (relative to `self`), create
     /// `dest_path` (relative to `dest_dir`) with `O_CREAT|O_TRUNC`, then stream
@@ -414,15 +417,16 @@ impl Dir {
         let r = copy_file(in_fd, out_fd);
         let _ = close(in_fd);
         let _ = close(out_fd);
-        r}
+        r
+    }
 
     /// Open `sub_path` (NUL-terminated) relative to
     /// this dir as a `Dir` handle: `O_DIRECTORY |
     /// O_RDONLY | O_CLOEXEC` (handled by `open_dir_at`).
     #[inline]
     pub fn open_dir_z(&self, sub_path: &ZStr) -> Maybe<Dir> {
-        open_dir_at(self.fd, sub_path.as_bytes())
-            .map(Dir::from_fd)}
+        open_dir_at(self.fd, sub_path.as_bytes()).map(Dir::from_fd)
+    }
 
     /// Open `sub_path` as an iterable, no-follow `Dir` handle with sub-path
     /// access.
@@ -452,8 +456,8 @@ impl Dir {
         #[cfg(not(windows))]
         {
             let _ = opts;
-            open_dir_at(self.fd, sub_path)
-                .map(Dir::from_fd)}
+            open_dir_at(self.fd, sub_path).map(Dir::from_fd)
+        }
     }
 }
 
@@ -468,7 +472,8 @@ pub trait FdDirExt: Copy {
 impl FdDirExt for Fd {
     #[inline]
     fn make_path(self, sub_path: &[u8]) -> Maybe<()> {
-        mkdir_recursive_at(self, sub_path)}
+        mkdir_recursive_at(self, sub_path)
+    }
     #[inline]
     fn make_open_path(self, sub_path: &[u8]) -> Maybe<Dir> {
         Dir::borrow(&self).make_open_path(sub_path, OpenDirOptions::default())

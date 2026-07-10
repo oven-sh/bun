@@ -425,9 +425,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             // writes it whenever it differs from the name its folder path implies,
             // e.g. a package named `admin` living at `@admin` or `packages/@admin`.
             let pkg_name: &[u8] = if let Some(set_name) = pkg.get(b"name") {
-                set_name
-                    .as_str()
-                    .ok_or(crate::Error::InvalidNPMLockfile)?
+                set_name.as_str().ok_or(crate::Error::InvalidNPMLockfile)?
             } else {
                 package_name_from_path(pkg_path)
             };
@@ -766,11 +764,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             },
 
             integrity: if let Some(integrity) = pkg.get(b"integrity") {
-                Integrity::parse(
-                    integrity
-                        .as_str()
-                        .ok_or(crate::Error::InvalidNPMLockfile)?,
-                )
+                Integrity::parse(integrity.as_str().ok_or(crate::Error::InvalidNPMLockfile)?)
             } else {
                 Integrity::default()
             },
@@ -910,9 +904,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 let items = arr.items();
                 let mut map = StringArrayHashMap::<()>::with_capacity(items.len());
                 for item in items {
-                    let s = item
-                        .as_str()
-                        .ok_or(crate::Error::InvalidNPMLockfile)?;
+                    let s = item.as_str().ok_or(crate::Error::InvalidNPMLockfile)?;
                     map.put_assume_capacity(s, ());
                 }
                 break 'deps Some(map);
@@ -1052,9 +1044,9 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                     unreachable!()
                                 };
                                 // the `else` here is technically possible to hit
-                                let resolved_v = ref_pkg.get(b"resolved").ok_or({
-                                    crate::Error::LockfileWorkspaceMissingResolved
-                                })?;
+                                let resolved_v = ref_pkg
+                                    .get(b"resolved")
+                                    .ok_or({ crate::Error::LockfileWorkspaceMissingResolved })?;
                                 let resolved = resolved_v
                                     .as_str()
                                     .ok_or(crate::Error::InvalidNPMLockfile)?;
@@ -1246,9 +1238,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
                                             let hash_index =
                                                 strings::last_index_of_char(str.slice, b'#')
-                                                    .ok_or({
-                                                        crate::Error::InvalidNPMLockfile
-                                                    })?;
+                                                    .ok_or({ crate::Error::InvalidNPMLockfile })?;
 
                                             if !crate::repository::is_safe_resolved_tag(
                                                 &str.slice[hash_index + 1..],
@@ -1276,9 +1266,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
                                             let hash_index =
                                                 strings::last_index_of_char(str.slice, b'#')
-                                                    .ok_or({
-                                                        crate::Error::InvalidNPMLockfile
-                                                    })?;
+                                                    .ok_or({ crate::Error::InvalidNPMLockfile })?;
 
                                             if !crate::repository::is_safe_resolved_tag(
                                                 &str.slice[hash_index + 1..],

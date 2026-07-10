@@ -506,9 +506,7 @@ impl PmPkgCommand {
                     if !matches!(current.data, ExprData::EObject(_)) {
                         return Err(crate::Error::NotFound);
                     }
-                    current = current
-                        .get(prop_name)
-                        .ok_or(crate::Error::NotFound)?;
+                    current = current.get(prop_name).ok_or(crate::Error::NotFound)?;
                     remaining_part = &part[first_bracket..];
                 }
 
@@ -536,9 +534,7 @@ impl PmPkgCommand {
                         if !matches!(current.data, ExprData::EObject(_)) {
                             return Err(crate::Error::NotFound);
                         }
-                        current = current
-                            .get(index_str)
-                            .ok_or(crate::Error::NotFound)?;
+                        current = current.get(index_str).ok_or(crate::Error::NotFound)?;
                     }
 
                     remaining_part = &remaining_part[actual_bracket_end + 1..];

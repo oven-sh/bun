@@ -93,6 +93,21 @@ for (const info of [
   });
 }
 
+// `Blob::resolve_size()` must not widen a file-backed slice's concrete `size`
+// to `fileSize - offset`. `Response(slice).body` resolves the blob size to
+// build the stream, and the widened size made it read past the end of the
+// slice (156 of the 256 bytes below instead of the 100-byte window).
+test("Response(Bun.file().slice()).body streams exactly the slice", async () => {
+  // byte[i] === i, so an out-of-window read is distinguishable from a length bug.
+  using dir = tempDir("blob-file-slice-body", {
+    "f.bin": Buffer.from(Array.from({ length: 256 }, (_, i) => i)),
+  });
+  const slice = Bun.file(path.join(String(dir), "f.bin")).slice(100, 200);
+  expect(await new Response(slice).body!.bytes()).toEqual(
+    new Uint8Array(Array.from({ length: 100 }, (_, i) => 100 + i)),
+  );
+});
+
 test("new Blob", () => {
   var blob = new Blob(["Bun", "Foo"], { type: "text/foo" });
   expect(blob.size).toBe(6);

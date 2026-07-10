@@ -114,7 +114,11 @@ pub type Ref = bun_ptr::ExternalShared<Blob>;
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
 ///    and f64 for `last_modified`.
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
-const SERIALIZATION_VERSION: u8 = 3;
+/// 4: Added the blob's `size` (u64). `offset` alone cannot reconstruct a
+///    file-backed `.slice(start, end)`: without the length the clone widens
+///    to the rest of the file. `MAX_SIZE` on the wire means "unresolved": the
+///    receiver resolves it lazily against its own path / fd.
+const SERIALIZATION_VERSION: u8 = 4;
 
 pub use bun_jsc::generated::JSBlob as js;
 
@@ -734,6 +738,15 @@ impl BlobExt for Blob {
         } else {
             false
         };
+        // Version 4: the blob's `size`, written at the very end. Capture it
+        // before the `resolve_size()` below mutates it: a slice's concrete
+        // length must survive the round-trip (`offset` alone widens the clone
+        // to the rest of the file), but an unresolved file blob must keep the
+        // `MAX_SIZE` unknown-size sentinel so the receiving side resolves it
+        // lazily against its own path / fd. Resolving here and pinning the
+        // result would serialize e.g. the 0 that `resolve_size()` reports for
+        // an fd that does not stat in *this* process.
+        let size = self.size.get();
 
         writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
         writer.write_int_le::<u64>(if is_memory_backed {
@@ -788,6 +801,8 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(0)?;
             }
         }
+
+        writer.write_int_le::<u64>(size)?;
         Ok(())
     }
 
@@ -2340,20 +2355,12 @@ impl BlobExt for Blob {
         // the raw-ptr deref so each read here is a fresh, safe borrow.
         match store.data_mut().tag() {
             store::DataTag::Bytes => {
-                let offset = self.offset.get();
                 let store_size = store.size();
                 if store_size != MAX_SIZE {
-                    self.offset.set(store_size.min(offset));
-                    let available = store_size - self.offset.get();
-                    // Only resolve an unknown size. A slice already has a concrete
-                    // `size`; overwriting it with `store_size - offset` would widen
-                    // the view to the end of the backing store. Clamp a known size
-                    // to `available` so a bogus size can't report past the store end.
-                    if self.size.get() == MAX_SIZE {
-                        self.size.set(available);
-                    } else {
-                        self.size.set(self.size.get().min(available));
-                    }
+                    let (offset, size) =
+                        clamp_view_to_store(self.offset.get(), self.size.get(), store_size);
+                    self.offset.set(offset);
+                    self.size.set(size);
                 }
             }
             store::DataTag::File => {
@@ -2364,10 +2371,10 @@ impl BlobExt for Blob {
                 let file = store.data_mut().as_file();
 
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
-                    let store_size = file.max_size;
-                    let offset = self.offset.get();
-                    self.offset.set(store_size.min(offset));
-                    self.size.set(store_size.saturating_sub(offset));
+                    let (offset, size) =
+                        clamp_view_to_store(self.offset.get(), self.size.get(), file.max_size);
+                    self.offset.set(offset);
+                    self.size.set(size);
                     return;
                 }
 
@@ -2396,21 +2403,9 @@ impl BlobExt for Blob {
         // `Deref`-produced `&Data`/`&File` is live across the mutating call.
         match store.data_mut().tag() {
             store::DataTag::Bytes => {
-                let offset = self.offset.get();
                 let store_size = store.size();
                 if store_size != MAX_SIZE {
-                    let offset = store_size.min(offset);
-                    let available = store_size - offset;
-                    // Matches `resolve_size`: a known size (e.g. a slice) is
-                    // authoritative; only an unknown size falls back to the
-                    // remainder of the backing store. Clamp to `available` so a
-                    // bogus size can't report past the store end.
-                    let size = if self.size.get() == MAX_SIZE {
-                        available
-                    } else {
-                        self.size.get().min(available)
-                    };
-                    return (offset, size);
+                    return clamp_view_to_store(self.offset.get(), self.size.get(), store_size);
                 }
                 (self.offset.get(), self.size.get())
             }
@@ -2421,9 +2416,7 @@ impl BlobExt for Blob {
                 // Fresh borrow after possible mutation by `resolve_file_stat`.
                 let file = store.data_mut().as_file();
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
-                    let store_size = file.max_size;
-                    let offset = self.offset.get();
-                    return (store_size.min(offset), store_size.saturating_sub(offset));
+                    return clamp_view_to_store(self.offset.get(), self.size.get(), file.max_size);
                 }
                 if file.seekable == Some(false) {
                     return (self.offset.get(), self.size.get());
@@ -4305,6 +4298,18 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
         if version == 3 {
             break 'versions;
         }
+
+        // Version 4: the blob's `size`. Required to reconstruct a file-backed
+        // `.slice(start, end)`: `offset` alone widens the view to the rest of
+        // the file. `MAX_SIZE` means the sender never resolved it (an unsliced
+        // `Bun.file(p)` / `Bun.file(fd)`), so it stays lazy and resolves here
+        // against this process's own path / fd. Version 3 payloads fall back
+        // to the older (size-less, always lazy) behavior.
+        blob.size.set(reader.read_int_le::<u64>()? as SizeType);
+
+        if version == 4 {
+            break 'versions;
+        }
     }
 
     debug_assert!(
@@ -4312,8 +4317,9 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
         "expected blob to be heap-allocated"
     );
 
-    // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
-    // make shared_view() slice past the end of the backing store (OOB heap read).
+    // `offset` and `size` come from untrusted bytes. Clamp them so a crafted
+    // payload cannot make shared_view() slice past the end of the backing
+    // store (OOB heap read).
     blob.offset.set(offset as SizeType); // intentional truncate
     if let Some(store) = blob.store.get() {
         let store_size = store.size();
@@ -4324,6 +4330,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
     } else {
         blob.offset.set(0);
+        blob.size.set(0);
     }
 
     if !content_type.is_empty() {
@@ -6221,6 +6228,26 @@ fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
 }
 
 /// resolve file stat like size, last_modified
+/// Clamp a blob's `(offset, size)` view to a backing store whose size is now
+/// known. Only the `MAX_SIZE` unknown-size sentinel resolves to the remainder
+/// of the store: a slice already has a concrete `size`, and overwriting it
+/// with `store_size - offset` would widen the view to the end of the backing
+/// store. Both results are capped to the bytes the store actually has.
+fn clamp_view_to_store(
+    offset: SizeType,
+    size: SizeType,
+    store_size: SizeType,
+) -> (SizeType, SizeType) {
+    let offset = store_size.min(offset);
+    let available = store_size - offset;
+    let size = if size == MAX_SIZE {
+        available
+    } else {
+        size.min(available)
+    };
+    (offset, size)
+}
+
 fn resolve_file_stat(store: &StoreRef) {
     // `StoreRef::data_mut` encapsulates the raw-pointer deref under the
     // `StoreRef` liveness invariant; the caller holds the only ref across

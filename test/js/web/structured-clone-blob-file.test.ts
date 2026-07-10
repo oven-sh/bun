@@ -1,6 +1,7 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import path from "node:path";
 import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
@@ -145,6 +146,46 @@ describe("structuredClone with Blob and File", () => {
       const roundTripped = deserialize(serialize(slice));
       expect(roundTripped.size).toBe(7);
       expect(await roundTripped.text()).toBe("PAYLOAD");
+    });
+
+    // File-backed sibling of the test above. The wire format carries the
+    // file path and the slice's offset; without the slice's length the clone
+    // widens to the rest of the file (156 of the 256 bytes below).
+    test("sliced Bun.file() round-trips its offset and length", async () => {
+      // byte[i] === i, so an out-of-window read is distinguishable from a length bug.
+      using dir = tempDir("structured-clone-file-slice", {
+        "f.bin": Buffer.from(Array.from({ length: 256 }, (_, i) => i)),
+      });
+      const expected = new Uint8Array(Array.from({ length: 100 }, (_, i) => 100 + i));
+      const slice = Bun.file(path.join(String(dir), "f.bin")).slice(100, 200);
+
+      const cloned = structuredClone(slice);
+      expect(cloned.size).toBe(100);
+      expect(new Uint8Array(await cloned.arrayBuffer())).toEqual(expected);
+
+      const roundTripped = deserialize(serialize(slice));
+      expect(roundTripped.size).toBe(100);
+      expect(new Uint8Array(await roundTripped.arrayBuffer())).toEqual(expected);
+
+      // Serializing must not mutate the live source slice.
+      expect(slice.size).toBe(100);
+      expect(new Uint8Array(await slice.arrayBuffer())).toEqual(expected);
+    });
+
+    // Only a slice's *concrete* length is carried on the wire. An unresolved
+    // `Bun.file(p)` keeps its unknown-size sentinel: the receiving side must
+    // resolve it lazily against its own path (or fd, which can refer to a
+    // different file or nothing at all in another process). Pinning the
+    // serialize-time stat would freeze a stale size into the clone.
+    test("serializing an unresolved Bun.file() does not pin its size", async () => {
+      using dir = tempDir("structured-clone-lazy-size", { "f.bin": Buffer.alloc(4, 1) });
+      const p = path.join(String(dir), "f.bin");
+      // The blob's size is never read before serializing, so it is unresolved.
+      const wire = serialize(Bun.file(p));
+      await Bun.write(p, Buffer.alloc(10, 2));
+      // The clone reflects the file as it is now, not as it was at serialize time.
+      expect(deserialize(wire).size).toBe(10);
+      expect(structuredClone(Bun.file(p)).size).toBe(10);
     });
   });
 
@@ -542,7 +583,7 @@ describe("structuredClone with Blob and File", () => {
         afterContentType + 2, // store_tag + bytes_len partially read
         afterBytes, // bytes + Store allocated, stored_name len read fails
         afterStoredName, // heap *Blob allocated, is_jsdom_file read fails
-        full.length - 1, // v3 File name read fails (last byte missing)
+        full.length - 1, // v4 size (u64) read fails (last byte missing)
       ];
       const payloads = cuts.map(n => full.slice(0, n));
       // All of these must hit the error path; if one accidentally succeeds

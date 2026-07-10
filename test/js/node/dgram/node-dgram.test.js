@@ -1,8 +1,8 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isIPv6, isMacOS, isWindows } from "harness";
 import * as dgram from "node:dgram";
-import * as net from "node:net";
 import { once } from "node:events";
+import * as net from "node:net";
 
 // close() from inside a 'message' handler must stop delivery of the remaining
 // datagrams in the current recvmmsg batch. Node guarantees no 'message' fires

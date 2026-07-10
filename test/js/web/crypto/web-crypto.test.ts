@@ -621,9 +621,13 @@ describe("JWK key_ops duplicate values", () => {
         ),
       ),
       hmac: await outcome(
-        crypto.subtle.importKey("jwk", { ...octHmac, key_ops: ["sign", "sign"] }, { name: "HMAC", hash: "SHA-256" }, true, [
-          "sign",
-        ]),
+        crypto.subtle.importKey(
+          "jwk",
+          { ...octHmac, key_ops: ["sign", "sign"] },
+          { name: "HMAC", hash: "SHA-256" },
+          true,
+          ["sign"],
+        ),
       ),
       ec: await outcome(
         crypto.subtle.importKey(
@@ -635,7 +639,9 @@ describe("JWK key_ops duplicate values", () => {
         ),
       ),
       okp: await outcome(
-        crypto.subtle.importKey("jwk", { ...edPub, key_ops: ["verify", "verify"] }, { name: "Ed25519" }, true, ["verify"]),
+        crypto.subtle.importKey("jwk", { ...edPub, key_ops: ["verify", "verify"] }, { name: "Ed25519" }, true, [
+          "verify",
+        ]),
       ),
       rsa: await outcome(
         crypto.subtle.importKey(
@@ -653,9 +659,13 @@ describe("JWK key_ops duplicate values", () => {
         ]),
       ),
       ecNoDup: await outcome(
-        crypto.subtle.importKey("jwk", { ...ecPub, key_ops: ["verify"] }, { name: "ECDSA", namedCurve: "P-256" }, true, [
-          "verify",
-        ]),
+        crypto.subtle.importKey(
+          "jwk",
+          { ...ecPub, key_ops: ["verify"] },
+          { name: "ECDSA", namedCurve: "P-256" },
+          true,
+          ["verify"],
+        ),
       ),
       // The usages argument itself is allowed to contain duplicates; only JWK key_ops is constrained.
       usagesDup: await outcome(

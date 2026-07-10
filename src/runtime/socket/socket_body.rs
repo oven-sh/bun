@@ -3447,8 +3447,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         let vm = handlers.vm;
 
         let cfg = ssl_opts.as_ref();
-        let reject_unauthorized =
-            upgrade_reject_policy(vm, cfg, is_server, owned_ctx.as_ref().map(|c| c.as_ptr()));
+        let ctx_ptr = owned_ctx.as_ref().map(|c| c.as_ptr());
+        let reject_unauthorized = upgrade_reject_policy(vm, cfg, is_server, ctx_ptr);
+        // The per-socket verify mode `adopt_tls` installs has to reproduce the
+        // policy `upgrade_reject_policy` just read. A parsed config supplies
+        // those bits directly; a bare `secureContext` has none, so they come
+        // from the ctx, otherwise the override would clear the
+        // `FAIL_IF_NO_PEER_CERT` the context was built with.
+        let (adopt_request_cert, adopt_reject_unauthorized) = match cfg {
+            Some(c) => (c.request_cert != 0, c.reject_unauthorized != 0),
+            None => (
+                server_ctx_requests_cert(ctx_ptr),
+                server_ctx_rejects_unauthorized(ctx_ptr),
+            ),
+        };
         let mut initial_flags = Flags::initial(reject_unauthorized);
         initial_flags.set(Flags::DEFERS_SERVER_IDENTITY, defers_server_identity);
         initial_flags.set(Flags::TLS_SERVER_ROLE, is_server);
@@ -3495,10 +3507,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &mut *(tls.owned_ssl_ctx.get().unwrap()),
                 sni,
                 !is_server,
-                // A server-side upgrade applies these per socket: the
-                // SecureContext's SSL_CTX is mode-neutral on purpose.
-                cfg.is_some_and(|c| c.request_cert != 0),
-                cfg.is_some_and(|c| c.reject_unauthorized != 0),
+                // A server-side upgrade applies these per socket: a shared
+                // SecureContext's SSL_CTX is mode-neutral for the config path.
+                adopt_request_cert,
+                adopt_reject_unauthorized,
                 core::mem::size_of::<*mut c_void>() as i32,
                 core::mem::size_of::<*mut c_void>() as i32,
             )
@@ -4024,6 +4036,14 @@ fn server_ctx_rejects_unauthorized(ctx: Option<*mut SSL_CTX>) -> bool {
         boringssl_sys::SSL_VERIFY_PEER | boringssl_sys::SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
     // SAFETY: `ctx` is the +1 `SSL_CTX` ref held for this socket; read-only.
     unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & MODE == MODE }
+}
+
+/// The `requestCert` half of the same ctx-derived policy: `SSL_VERIFY_PEER` is
+/// what makes a server send a CertificateRequest.
+fn server_ctx_requests_cert(ctx: Option<*mut SSL_CTX>) -> bool {
+    let Some(ctx) = ctx else { return false };
+    // SAFETY: `ctx` is the +1 `SSL_CTX` ref held for this socket; read-only.
+    unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & boringssl_sys::SSL_VERIFY_PEER != 0 }
 }
 
 impl Default for Flags {

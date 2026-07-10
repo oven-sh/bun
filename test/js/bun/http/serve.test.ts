@@ -628,12 +628,18 @@ describe("non-persistent connection never dispatches a pipelined follow-up", () 
       chunks.push(chunk);
       onData();
     });
-    socket.on("error", () => {});
     socket.on("close", () => onClose());
-    await new Promise<void>(resolve => socket.on("connect", resolve));
+    // The sequential second write goes into a socket the server has already
+    // closed, so EPIPE/ECONNRESET there is expected; `close` always follows
+    // `error`, so the awaits below still settle.
+    socket.on("error", () => {});
+    await new Promise<void>((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("close", () => reject(new Error("socket closed before connect")));
+    });
     if (secondWriteAfterFirstResponse) {
       socket.write(payload);
-      await gotData;
+      await Promise.race([gotData, closed]);
       socket.write(payload);
     } else {
       socket.write(payload + payload);
@@ -682,29 +688,23 @@ describe("non-persistent connection never dispatches a pipelined follow-up", () 
     });
     const payload = "GET / HTTP/1.1\r\nHost: a\r\n\r\n";
     const chunks: Buffer[] = [];
-    const { promise, resolve } = Promise.withResolvers<void>();
-    const socket = net.connect(server.port, "127.0.0.1", () => socket.write(payload + payload));
-    socket.on("data", chunk => {
-      chunks.push(chunk);
-      if (
-        (
-          Buffer.concat(chunks)
-            .toString("latin1")
-            .match(/HTTP\/1\.1 200/g) ?? []
-        ).length === 2
-      )
-        resolve();
-    });
-    socket.on("error", () => {});
-    await promise;
-    socket.destroy();
-    expect(
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const responses = () =>
       (
         Buffer.concat(chunks)
           .toString("latin1")
           .match(/HTTP\/1\.1 200/g) ?? []
-      ).length,
-    ).toBe(2);
+      ).length;
+    const socket = net.connect(server.port, "127.0.0.1", () => socket.write(payload + payload));
+    socket.on("data", chunk => {
+      chunks.push(chunk);
+      if (responses() === 2) resolve();
+    });
+    socket.on("error", reject);
+    socket.on("close", resolve);
+    await promise;
+    socket.destroy();
+    expect(responses()).toBe(2);
   });
 });
 

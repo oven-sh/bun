@@ -93,6 +93,10 @@ impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
         unsafe { (*this).on_close_io(kind) }
     }
+    unsafe fn on_stdin_write_error(this: *mut Self, err: &bun_sys::Error) {
+        // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
+        unsafe { (*this).stdin_write_err.set(Some(err.clone())) };
+    }
 }
 
 #[derive(EnumSetType, strum::IntoStaticStr)]
@@ -166,6 +170,9 @@ pub struct Subprocess<'a> {
     pub stdout_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub stderr_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
+    /// Set when writing a buffered stdin (`Writable::Buffer`) fails, so
+    /// `Bun.spawnSync` can report it like Node.js does (`result.error`).
+    pub stdin_write_err: JsCell<Option<bun_sys::Error>>,
 }
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);

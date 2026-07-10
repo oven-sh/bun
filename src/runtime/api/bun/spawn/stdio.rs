@@ -114,19 +114,28 @@ impl Stdio {
         }
     }
 
-    pub fn can_use_memfd(&self) -> bool {
+    pub fn can_use_memfd(&self, is_sync: bool, is_stdin: bool) -> bool {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
+            let _ = (is_sync, is_stdin);
             return false;
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        match self {
-            Self::Blob(blob) => !blob.needs_to_read_file(),
-            Self::Memfd(_) | Self::ArrayBuffer(_) => true,
-            // `Self::Pipe` is never memfd: a memfd has no EOF signal, so a
-            // grandchild still writing after the child exits would be lost.
-            _ => false,
+        {
+            // spawnSync stdin must be a real pipe so a partial consumer
+            // surfaces EPIPE via `result.error` (Node.js behavior). A memfd
+            // is pre-written before fork so the parent would never see that.
+            if is_sync && is_stdin {
+                return false;
+            }
+            match self {
+                Self::Blob(blob) => !blob.needs_to_read_file(),
+                Self::Memfd(_) | Self::ArrayBuffer(_) => true,
+                // `Self::Pipe` is never memfd: a memfd has no EOF signal, so a
+                // grandchild still writing after the child exits would be lost.
+                _ => false,
+            }
         }
     }
 

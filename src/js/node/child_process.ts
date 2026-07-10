@@ -550,6 +550,7 @@ function spawnSync(file, args, options) {
       signalCode,
       exitedDueToTimeout,
       exitedDueToMaxBuffer,
+      stdinWriteError,
       pid,
     } = Bun.spawnSync({
       // normalizeSpawnargs has already prepended argv0 to the spawnargs array
@@ -622,6 +623,15 @@ function spawnSync(file, args, options) {
       "spawnSync " + options.file,
       enobufsErrorCode(),
       "ENOBUFS",
+    );
+  }
+  if (stdinWriteError != null && result.error == null) {
+    result.error = new SystemError(
+      "spawnSync " + options.file + " " + stdinWriteError.code,
+      options.file,
+      "spawnSync " + options.file,
+      stdinWriteError.errno,
+      stdinWriteError.code,
     );
   }
 

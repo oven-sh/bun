@@ -2794,7 +2794,11 @@ Reo=
         },
       });
       void client;
-      expect(await handshake.promise).toEqual({ authorized: false, error: REJECTED_CLIENT_CERT_MESSAGE, writeResult: -1 });
+      expect(await handshake.promise).toEqual({
+        authorized: false,
+        error: REJECTED_CLIENT_CERT_MESSAGE,
+        writeResult: -1,
+      });
       await serverClosed.promise;
       expect(serverReceived).toEqual([]);
       await clientClosed.promise;
@@ -2863,7 +2867,11 @@ Reo=
           },
         },
       });
-      expect(await handshake.promise).toEqual({ authorized: false, error: REJECTED_CLIENT_CERT_MESSAGE, writeResult: -1 });
+      expect(await handshake.promise).toEqual({
+        authorized: false,
+        error: REJECTED_CLIENT_CERT_MESSAGE,
+        writeResult: -1,
+      });
       await serverClosed.promise;
       expect(serverReceived).toEqual([]);
       await clientClosed.promise;

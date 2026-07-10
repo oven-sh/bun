@@ -765,8 +765,16 @@ impl NodeHTTPResponse {
         // path. The borrowed `arguments()` slice (ptr+len, 16 bytes) carries the
         // same information; missing / `null` slots are padded to `undefined`
         // inline below exactly as the `Arguments<3>` form did.
-        let arguments = callframe.arguments();
+        self.write_head_impl(global_object, callframe.arguments())
+    }
 
+    /// Shared body of `writeHead` (also the write-head phase of
+    /// `writeHeadAndEnd`): args are (statusCode, statusMessage, headersArray).
+    fn write_head_impl(
+        &self,
+        global_object: &JSGlobalObject,
+        arguments: &[JSValue],
+    ) -> JsResult<JSValue> {
         if self.is_requested_completed_or_ended() {
             return err_throw(
                 global_object,
@@ -904,6 +912,72 @@ impl NodeHTTPResponse {
         }
 
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// `handle.writeHeadAndEnd(status, statusMessage, headersArray, chunk,
+    /// encoding, strictContentLength)` — the writeHead + end pair under one
+    /// native cork and one JS->native crossing, replacing
+    /// `handle.cork(() => { handle.writeHead(...); handle.end(...) })` (three
+    /// crossings and a per-request closure) on the node:http response path.
+    pub(crate) fn write_head_and_end(
+        &self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
+
+        // Same gate as cork(): the old flow threw ERR_STREAM_ALREADY_FINISHED
+        // from cork() before either phase ran.
+        let flags = self.flags.get();
+        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
+            || flags.contains(Flags::SOCKET_CLOSED)
+            || flags.contains(Flags::UPGRADED)
+        {
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_STREAM_ALREADY_FINISHED,
+                "Stream is already ended",
+            );
+        }
+
+        let head_len = arguments.len().min(3);
+        // write_or_end::<true> reads (chunk, encoding, _, strictContentLength).
+        let end_args = [
+            arguments.get(3).copied().unwrap_or(JSValue::UNDEFINED),
+            arguments.get(4).copied().unwrap_or(JSValue::UNDEFINED),
+            JSValue::UNDEFINED,
+            arguments.get(5).copied().unwrap_or(JSValue::UNDEFINED),
+        ];
+        let this_value = callframe.this();
+
+        // BACKREF: same keep-alive pattern as cork() — either phase can reach
+        // JS (string coercions, drain callbacks), which could drop the last
+        // reference to this response mid-call.
+        let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
+        this.ref_();
+
+        let raw_response = this.raw_response.get();
+        let mut result: JsResult<JSValue> = Ok(JSValue::UNDEFINED);
+        {
+            let run = || -> JsResult<JSValue> {
+                this.write_head_impl(global_object, &arguments[..head_len])?;
+                this.resume_socket();
+                this.write_or_end::<true>(global_object, &end_args, this_value)
+            };
+            if let Some(raw_response) = raw_response {
+                raw_response.corked(|| {
+                    // Capture `this` so a `self`-derived pointer reaches the
+                    // FFI closure-data slot (see cork()'s R-2 note).
+                    let _escape = this;
+                    result = run();
+                });
+            } else {
+                result = run();
+            }
+        }
+
+        this.deref();
+        result
     }
 }
 

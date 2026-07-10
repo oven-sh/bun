@@ -846,7 +846,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (!http_req[kReqShouldKeepAlive]) {
           http_res[kMustCloseConnection] = true;
         }
-        http_res.once("finish", emitResponseFinishHandleSocket);
+        // on(), not once(): "finish" fires at most once per response and once()
+        // allocates a wrapper closure per request.
+        http_res.on("finish", emitResponseFinishHandleSocket);
 
         if (hasObserver("http")) {
           startPerf(http_res, kServerResponseStatistics, {
@@ -1076,7 +1078,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // the connection it was on (the same order as the two listeners
           // this replaces). One shared function instead of two per-request
           // bind() closures.
-          http_res.once("finish", emitAsyncResponseFinish);
+          http_res.on("finish", emitAsyncResponseFinish);
         }
 
         const { resolve, promise } = $newPromiseCapability(Promise);
@@ -2473,7 +2475,7 @@ function advanceResponsePipeline(server, socket) {
     res.assignSocket(socket);
   }
   socket[kRequest] = res.req;
-  res.once("finish", emitAsyncResponseFinish);
+  res.on("finish", emitAsyncResponseFinish);
 
   // Replay the writes buffered while the response was queued.
   // The buffered bytes are handed to the native handle below, so they no
@@ -3001,22 +3003,40 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     return true;
   }
   if (headerState !== NodeHTTPHeaderState.sent) {
-    handle.cork(() => {
+    {
       const renderedHeaders = renderNativeHeaders(this);
-      handle.writeHead(
-        this[kSnapshotStatusCode] ?? this.statusCode,
-        this[kSnapshotStatusMessage] ?? this.statusMessage,
-        renderedHeaders,
-      );
+      try {
+        // One native crossing for cork + writeHead + end (writeHeadAndEnd
+        // corks natively around both phases).
+        this._contentLength = handle.writeHeadAndEnd(
+          this[kSnapshotStatusCode] ?? this.statusCode,
+          this[kSnapshotStatusMessage] ?? this.statusMessage,
+          renderedHeaders,
+          chunk,
+          encoding,
+          strictContentLength(this),
+        );
+      } catch (e) {
+        releaseRenderedHeaders(renderedHeaders);
+        // Mirror the old two-call flow's headersSent semantics: errors from
+        // the write-head phase (the batch's upfront gate, status validation,
+        // headers-already-sent) leave the state unset; anything after that
+        // point threw with headers already on the wire, exactly like
+        // handle.end throwing after handle.writeHead succeeded.
+        const code = e?.code;
+        if (
+          code !== "ERR_STREAM_ALREADY_FINISHED" &&
+          code !== "ERR_HTTP_HEADERS_SENT" &&
+          code !== "ERR_INVALID_CHAR" &&
+          !(e instanceof RangeError)
+        ) {
+          this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+        }
+        throw e;
+      }
       releaseRenderedHeaders(renderedHeaders);
-
-      // If handle.writeHead throws, we don't want headersSent to be set to true.
-      // So we set it here.
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-
-      // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/_http_outgoing.js#L987
-      this._contentLength = handle.end(chunk, encoding, undefined, strictContentLength(this));
-    });
+    }
   } else {
     // If there's no data but you already called end, then you're done.
     // We can ignore it in that case. `flags` was read above in the same tick

@@ -163,6 +163,10 @@ export default [
         fn: "takeRawHeaders",
         length: 0,
       },
+      writeHeadAndEnd: {
+        fn: "writeHeadAndEnd",
+        length: 6,
+      },
       dumpRequestBody: {
         fn: "dumpRequestBody",
         length: 0,

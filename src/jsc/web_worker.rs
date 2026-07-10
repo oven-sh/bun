@@ -1237,9 +1237,7 @@ impl WebWorker {
                 // worker thread is still installed (torn down in `destroy()`).
                 unsafe { (hooks.cancel_all_timers)(vm_ptr) };
             }
-            // Same window, same reason: the GC timers are heap nodes too, and
-            // `WebWorker__teardownJSCVM` below frees the `WTFTimer` nodes they
-            // share the heap with.
+            // Same reason: the GC timers are heap nodes too.
             vm.gc_controller.deinit();
             // Embedded socket groups must drain while JSC is still alive —
             // closeAll() fires on_close → JS callbacks. RareData.deinit() runs

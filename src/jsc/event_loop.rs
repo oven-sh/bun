@@ -75,10 +75,7 @@ pub struct EventLoop {
     // BACKREF — owning `*VirtualMachine` (EventLoop is a value field of it).
     pub virtual_machine: Option<NonNull<VirtualMachine>>,
     pub waker: Option<Waker>,
-    /// `tick_possibly_forever()` has to park the loop even when nothing is
-    /// registered with it. libuv needs a live ref'd handle for that; epoll and
-    /// kqueue just need `num_polls != 0`, which is all this (no-op) timer ever
-    /// did for them.
+    // see `hold_forever_poll`
     #[cfg(windows)]
     pub forever_timer: Option<NonNull<uws::Timer>>,
     #[cfg(not(windows))]
@@ -1060,15 +1057,11 @@ impl EventLoop {
         Ok(result)
     }
 
-    /// Keep one poll registered with the loop so the upcoming
-    /// `us_loop_run_bun_tick` actually parks instead of returning immediately
-    /// (it bails out on `num_polls == 0`). Idempotent.
+    /// Keep one poll registered with the loop so `us_loop_run_bun_tick` parks
+    /// instead of returning immediately on `num_polls == 0`.
     #[cfg(not(windows))]
     fn hold_forever_poll(&mut self, loop_: &mut uws::Loop) {
         if !self.holds_forever_poll {
-            // Mirrors the non-fallthrough `us_create_timer` this replaced:
-            // `num_polls += 1`, never released (the timer was only closed at
-            // `global_exit`).
             loop_.inc();
             self.holds_forever_poll = true;
         }
@@ -1113,12 +1106,9 @@ impl EventLoop {
 
         self.process_gc_timer();
         self.process_gc_timer();
-        // The trailing `tick()` can start work — a `--hot` reload kicks off a
-        // transpile on a worker thread and waits for the result — whose only
-        // wake source is a cross-thread `wakeup()`. Parking forever on that one
-        // source is brittle; `main` never did: a 1s GC `timerfd` woke this loop
-        // periodically. Keep the bound, lose the file descriptor. libuv never
-        // blocked here (`tick_with_timeout` ignores its argument).
+        // `tick()` below can start work (e.g. a --hot reload) whose only wake
+        // source is a cross-thread `wakeup()`; bound the park, same as the GC
+        // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
         loop_.tick_with_timeout(Some(&bun_core::Timespec { sec: 1, nsec: 0 }));
 
         self.vm_ref().as_mut().on_after_event_loop();

@@ -308,16 +308,12 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     }
 }
 
-/* The socket-timeout sweep has no timerfd/EVFILT_TIMER behind it: bound the
- * poll by its deadline when it is sooner than `timeout` (NULL == forever).
- * `storage` is the caller's stack slot for the clamped value. */
+/* Bound `timeout` by the socket-timeout sweep deadline (NULL == forever). */
 static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage) {
     long long ns = us_internal_sweep_timeout_ns(loop);
     if (ns < 0) {
         return timeout;
     }
-    /* Field-wise, not widened to nanoseconds: tv_sec is a 64-bit second count
-     * and a far-future timeout would overflow the multiply. */
     long long sweep_sec = ns / 1000000000LL;
     long long sweep_nsec = ns % 1000000000LL;
     if (timeout && (timeout->tv_sec < sweep_sec ||
@@ -384,8 +380,6 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         }
     }
 
-    /* Same story for the socket-timeout sweep: Bun's timer heap doesn't know
-     * about it (the HTTP thread has no heap at all), so bound the poll here. */
     struct timespec sweep_ts;
     timeout = us_internal_clamp_to_sweep(loop, timeout, &sweep_ts);
 
@@ -608,11 +602,6 @@ size_t us_internal_accept_poll_event(struct us_poll_t *p) {
     return 0;
 #endif
 }
-
-/* There is no us_timer_t here: it cost a timerfd (one fd each) or an
- * EVFILT_TIMER registration (several syscalls per arm). Callers schedule on
- * bun.JSC.EventLoopTimer instead, and the socket-timeout sweep is a deadline in
- * us_internal_loop_data_t folded into the poll timeout. */
 
 /* Async (internal helper for loop's wakeup feature) */
 #ifdef LIBUS_USE_EPOLL

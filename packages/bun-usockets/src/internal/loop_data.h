@@ -39,9 +39,8 @@ struct us_internal_loop_data_t {
 #ifdef LIBUS_USE_LIBUV
     struct us_timer_t *sweep_timer;
 #else
-    /* Absolute CLOCK_MONOTONIC nanoseconds of the next socket-timeout sweep,
-     * or -1 when no sockets are linked. Folded into the epoll/kqueue timeout
-     * and checked after the poll — no timerfd, no EVFILT_TIMER. */
+    /* Absolute monotonic ns of the next sweep, or -1. Folded into the poll
+     * timeout — no timerfd, no EVFILT_TIMER. */
     long long sweep_next_tick_ns;
 #endif
     int sweep_timer_count;

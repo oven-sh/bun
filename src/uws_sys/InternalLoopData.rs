@@ -24,12 +24,8 @@ bun_opaque::opaque_ffi! {
 
 #[repr(C)]
 pub struct InternalLoopData {
-    /// libuv only: the `us_timer_t` driving the 4s socket-timeout sweep.
     #[cfg(windows)]
     pub sweep_timer: *mut Timer,
-    /// Absolute `CLOCK_MONOTONIC` nanoseconds of the next socket-timeout
-    /// sweep, or `-1` when no sockets are linked. epoll/kqueue has no
-    /// `us_timer_t`: C folds this straight into the poll timeout.
     #[cfg(not(windows))]
     pub sweep_next_tick_ns: i64,
     pub sweep_timer_count: i32,
@@ -37,7 +33,6 @@ pub struct InternalLoopData {
     pub head: *mut SocketGroup,
     pub quic_head: *mut c_void,
     pub quic_next_tick_us: i64,
-    /// libuv only: see `quic_next_tick_us`.
     #[cfg(windows)]
     pub quic_timer: *mut Timer,
     pub iterator: *mut SocketGroup,

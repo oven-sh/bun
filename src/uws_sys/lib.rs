@@ -379,9 +379,7 @@ pub mod socket_group;
 pub mod socket_kind;
 #[path = "thunk.rs"]
 pub mod thunk;
-// `us_timer_t` only exists on the libuv backend: on epoll/kqueue it cost an
-// entire file descriptor (timerfd) or a pair of kevent64 syscalls per arm, so
-// it is gone. Schedule on `bun_event_loop::EventLoopTimer` instead.
+// libuv only — use `bun_event_loop::EventLoopTimer` elsewhere.
 #[cfg(windows)]
 #[path = "Timer.rs"]
 pub mod timer;

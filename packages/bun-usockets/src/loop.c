@@ -70,10 +70,6 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
 
 #else
 
-/* POSIX has no us_timer_t: the sweep is a plain deadline folded into the
- * epoll/kqueue timeout (us_internal_sweep_timeout_ns) and dispatched from the
- * same tick (us_internal_sweep_if_due). */
-
 #define LIBUS_TIMEOUT_GRANULARITY_NS ((long long) LIBUS_TIMEOUT_GRANULARITY * 1000000000LL)
 
 static long long us_internal_monotonic_ns(void) {
@@ -97,8 +93,6 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     }
 }
 
-/* Nanoseconds until the next sweep, or -1 when disarmed. Clamped at 0 for an
- * already-overdue deadline so the caller polls without blocking. */
 long long us_internal_sweep_timeout_ns(struct us_loop_t *loop) {
     if (loop->data.sweep_next_tick_ns < 0) {
         return -1;
@@ -115,18 +109,14 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
     if (now < loop->data.sweep_next_tick_ns) {
         return;
     }
-    /* Re-arm before dispatching: a timeout handler may unlink the last socket
-     * and us_internal_disable_sweep_timer would then disarm us — writing the
-     * next deadline afterwards would resurrect a dead timer. */
+    /* Re-arm first: a timeout handler may unlink the last socket and disarm. */
     loop->data.sweep_next_tick_ns = now + LIBUS_TIMEOUT_GRANULARITY_NS;
     us_internal_timer_sweep(loop);
 }
 
 #endif
 
-/* Creates the loop's fallthrough polls (the ones that don't keep it alive):
- * wakeup_async, plus sweep_timer under libuv. epoll/kqueue has no timer poll —
- * the sweep is a deadline folded into the poll timeout. */
+
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.

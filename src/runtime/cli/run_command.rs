@@ -1518,10 +1518,7 @@ impl Run {
                     // When --hot/--watch is on (or a user
                     // `uncaughtException` handler swallowed the error), keep the
                     // process alive instead of hard-exiting on a rejected entry.
-                    // The core run-loop below does the waiting: its watcher arm
-                    // parks in `tick_possibly_forever`, and without a watcher it
-                    // drains until the loop goes quiet and the process exits.
-                    // Parking here too would block on nothing in the latter case.
+                    // The core run-loop below does the actual waiting.
                     if vm.hot_reload != 0 || handled {
                         vm.add_main_to_watcher_if_needed();
                         // SAFETY: `event_loop` is a self-pointer into this VM;

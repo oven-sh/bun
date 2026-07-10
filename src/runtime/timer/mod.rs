@@ -744,7 +744,13 @@ impl All {
             // https://github.com/nodejs/node/blob/f552c86fecd6c2ba9e832ea129b731dd63abdbe2/src/env.cc#L1512
             let wait_ms = core::cmp::max(1, wait.ms_unsigned());
 
-            self.uv_timer.start(wait_ms, 0, Some(Self::on_uv_timer));
+            // SAFETY: `uv_timer_init` ran above; the handle is live.
+            let due_in = unsafe { uv::uv_timer_get_due_in(&self.uv_timer) };
+            // Restarting an overdue handle shifts the wakeup out by 1ms. Done
+            // on every insert, the already-due callback never runs.
+            if !(self.uv_timer.is_active() && due_in <= wait_ms) {
+                self.uv_timer.start(wait_ms, 0, Some(Self::on_uv_timer));
+            }
 
             if self.active_timer_count > 0 {
                 self.uv_timer.ref_();

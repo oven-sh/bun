@@ -164,8 +164,6 @@ use bun_sql_jsc::postgres::PostgresSQLConnection;
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
-// libuv keeps the GC timers as `us_timer_t`s, so the heap never sees them there.
-#[cfg(not(windows))]
 use bun_jsc::garbage_collection_controller::GarbageCollectionController;
 
 #[cfg(not(windows))]
@@ -978,29 +976,17 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
                 AbortSignalTimeout::run(c, vm)
             })
         }
-        // libuv keeps the GC timers as `us_timer_t`s, so these tags never reach
-        // the heap there.
         EventLoopTimerTag::GcOneShot => {
-            #[cfg(not(windows))]
             timer_arm!(GarbageCollectionController, gc_timer, |c, _now, _vm| {
                 GarbageCollectionController::on_gc_timer(c)
-            });
-            #[cfg(windows)]
-            if cfg!(debug_assertions) {
-                unreachable!("GcOneShot timer on Windows");
-            }
+            })
         }
         EventLoopTimerTag::GcRepeating => {
-            #[cfg(not(windows))]
             timer_arm!(
                 GarbageCollectionController,
                 gc_repeating_timer,
                 |c, _now, vm| GarbageCollectionController::on_gc_repeating_timer(c, vm)
-            );
-            #[cfg(windows)]
-            if cfg!(debug_assertions) {
-                unreachable!("GcRepeating timer on Windows");
-            }
+            )
         }
         EventLoopTimerTag::DateHeaderTimer => {
             timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c)

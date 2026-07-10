@@ -18,7 +18,7 @@ bun bd --version   # builds ./build/debug/bun-debug and prints its version
 For any JS-visible change, run the debug binary with `-e` and observe stdout:
 
 ```sh
-BUN_DEBUG_QUIET_LOGS=1 ./build/debug/bun-debug -e '<repro>'
+bun bd -e '<repro>'   # builds, then runs; sets BUN_DEBUG_QUIET_LOGS for you
 ```
 
 For worker/subprocess-shaped changes, spawn a subprocess (still `-e`) so worker teardown / event-loop-idle paths are exercised. Cross-check against `node -e '<same repro>'` for Node-compat changes.

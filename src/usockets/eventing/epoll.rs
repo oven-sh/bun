@@ -31,8 +31,13 @@ fn clear_pointer_tag<T>(p: *mut T) -> *mut T {
 
 #[inline(always)]
 unsafe fn errno() -> c_int {
-    // SAFETY: __errno_location() always returns a valid thread-local pointer.
-    unsafe { *libc::__errno_location() }
+    unsafe extern "C" {
+        #[cfg_attr(target_os = "linux", link_name = "__errno_location")]
+        #[cfg_attr(target_os = "android", link_name = "__errno")]
+        fn __errno() -> *mut c_int;
+    }
+    // SAFETY: __errno_location()/__errno() always returns a valid thread-local pointer.
+    unsafe { *__errno() }
 }
 
 #[inline(always)]
@@ -308,9 +313,18 @@ unsafe fn bun_epoll_pwait2(
             ((*timeout).tv_sec * 1000 + (*timeout).tv_nsec / 1_000_000) as c_int
         };
 
+        unsafe extern "C" {
+            fn epoll_pwait(
+                epfd: c_int,
+                events: *mut libc::epoll_event,
+                maxevents: c_int,
+                timeout: c_int,
+                sigmask: *const libc::sigset_t,
+            ) -> c_int;
+        }
         let mut ret: c_int;
         loop {
-            ret = libc::epoll_pwait(epfd, events, maxevents, timeout_ms, mask);
+            ret = epoll_pwait(epfd, events, maxevents, timeout_ms, mask);
             if !is_eintr(ret as isize) {
                 break;
             }

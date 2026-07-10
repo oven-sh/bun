@@ -594,7 +594,7 @@ fn recv_ipc(s: Socket<'_>, recv_buf: *mut u8) -> c_int {
         };
         let mut msg: libc::msghdr = core::mem::zeroed();
         msg.msg_iov = &mut iov;
-        msg.msg_iovlen = 1;
+        msg.msg_iovlen = 1 as _;
         msg.msg_controllen = libc::CMSG_LEN(size_of::<c_int>() as c_uint) as _;
         msg.msg_control = cmsg_buf.as_mut_ptr().cast();
 
@@ -745,7 +745,10 @@ fn udp_closed(u: NonNull<UdpSocket>) -> bool {
 }
 
 #[allow(unused_mut, unused_assignments)]
-#[cfg_attr(not(target_os = "linux"), allow(unused_variables, unused_mut))]
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "android")),
+    allow(unused_variables, unused_mut)
+)]
 fn dispatch_udp(tick: LoopTick<'_>, u: NonNull<UdpSocket>, mut error: bool, events: PollEvents) {
     if udp_closed(u) {
         return;
@@ -756,12 +759,12 @@ fn dispatch_udp(tick: LoopTick<'_>, u: NonNull<UdpSocket>, mut error: bool, even
     // SAFETY: field reads only.
     let (fd, u_loop) = unsafe { (Fd(crate::eventing::us_poll_fd(poll)), (*p).loop_) };
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let mut recv_error_surfaced = false;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let mut recv_would_block_only = false;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     if error {
         // IP_RECVERR: EPOLLERR stays level-triggered until MSG_ERRQUEUE is
         // drained; surface each queued ICMP error via `on_recv_error`.
@@ -792,7 +795,7 @@ fn dispatch_udp(tick: LoopTick<'_>, u: NonNull<UdpSocket>, mut error: bool, even
                 if npackets < 0 {
                     let err = last_error();
                     if !would_block(err) {
-                        #[cfg(target_os = "linux")]
+                        #[cfg(any(target_os = "linux", target_os = "android"))]
                         {
                             recv_error_surfaced = true;
                             // SAFETY: `u` is live; optional callback.
@@ -802,12 +805,12 @@ fn dispatch_udp(tick: LoopTick<'_>, u: NonNull<UdpSocket>, mut error: bool, even
                                 }
                             }
                         }
-                        #[cfg(not(target_os = "linux"))]
+                        #[cfg(not(any(target_os = "linux", target_os = "android")))]
                         {
                             error = true;
                         }
                     } else {
-                        #[cfg(target_os = "linux")]
+                        #[cfg(any(target_os = "linux", target_os = "android"))]
                         {
                             recv_would_block_only = true;
                         }
@@ -837,19 +840,19 @@ fn dispatch_udp(tick: LoopTick<'_>, u: NonNull<UdpSocket>, mut error: bool, even
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     if error && !recv_error_surfaced && !recv_would_block_only && !udp_closed(u) {
         // SAFETY: `u` is live.
         unsafe { us_udp_socket_close(p) };
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     if error && !udp_closed(u) {
         // SAFETY: `u` is live.
         unsafe { us_udp_socket_close(p) };
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
 fn drain_udp_errqueue(fd: Fd, u: NonNull<UdpSocket>, surfaced: &mut bool) {
     let mut ectrl = [0u8; 512];
@@ -862,7 +865,7 @@ fn drain_udp_errqueue(fd: Fd, u: NonNull<UdpSocket>, surfaced: &mut bool) {
         // SAFETY: zeroed is a valid `msghdr`.
         let mut eh: libc::msghdr = unsafe { core::mem::zeroed() };
         eh.msg_iov = &mut eiov;
-        eh.msg_iovlen = 1;
+        eh.msg_iovlen = 1 as _;
         eh.msg_control = ectrl.as_mut_ptr().cast();
         eh.msg_controllen = ectrl.len() as _;
         // SAFETY: reads the socket's error queue.

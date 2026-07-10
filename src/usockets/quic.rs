@@ -18,7 +18,7 @@ use crate::bsd::{LIBUS_SOCKET_ERROR, bsd_close_socket, bsd_create_socket};
 use crate::eventing::{LIBUS_SOCKET_READABLE, LIBUS_SOCKET_WRITABLE, us_poll_change, us_poll_fd};
 #[cfg(windows)]
 use crate::eventing::{us_create_timer, us_timer_loop, us_timer_set, us_timer_t};
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 use crate::types::LIBUS_SOCKET_DESCRIPTOR;
 use crate::types::{
     Bun__addrinfo_freeRequest, Bun__addrinfo_get, Bun__addrinfo_getRequestResult, addrinfo,
@@ -67,6 +67,7 @@ unsafe fn errno_ptr() -> *mut c_int {
             link_name = "__error"
         )]
         #[cfg_attr(target_os = "linux", link_name = "__errno_location")]
+        #[cfg_attr(target_os = "android", link_name = "__errno")]
         #[cfg_attr(windows, link_name = "_errno")]
         fn __errno() -> *mut c_int;
     }
@@ -787,7 +788,7 @@ unsafe fn us_quic_send_one(fd: LIBUS_SOCKET_DESCRIPTOR, spec: *const lsquic_out_
     }
 }
 
-#[cfg(all(not(windows), not(target_os = "linux")))]
+#[cfg(all(not(windows), not(any(target_os = "linux", target_os = "android"))))]
 unsafe fn us_quic_send_one(fd: LIBUS_SOCKET_DESCRIPTOR, spec: *const lsquic_out_spec) -> c_int {
     // SAFETY: `spec` valid for call; retry on EINTR.
     unsafe {
@@ -817,7 +818,7 @@ unsafe extern "C" fn us_quic_packets_out(
     unsafe {
         let mut sent: c_uint = 0;
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             const BATCH: usize = 64;
             let mut mm: [libc::mmsghdr; BATCH] = [zeroed(); BATCH];
@@ -838,7 +839,7 @@ unsafe extern "C" fn us_quic_packets_out(
                     mm[k as usize].msg_hdr.msg_name = (*sp).dest_sa as *mut c_void;
                     mm[k as usize].msg_hdr.msg_namelen = sa_len((*sp).dest_sa);
                     mm[k as usize].msg_hdr.msg_iov = (*sp).iov.cast();
-                    mm[k as usize].msg_hdr.msg_iovlen = (*sp).iovlen;
+                    mm[k as usize].msg_hdr.msg_iovlen = (*sp).iovlen as _;
                     k += 1;
                 }
                 let r = loop {
@@ -855,7 +856,7 @@ unsafe extern "C" fn us_quic_packets_out(
                 // retry's first message consumes any stale ICMP error or succeeds.
             }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         while sent < n {
             let ls = (*specs.add(sent as usize)).peer_ctx as *mut us_quic_listen_socket_t;
             if (*ls).udp.is_null() {
@@ -1657,7 +1658,7 @@ unsafe fn us_quic_set_dontfrag(udp: *mut us_udp_socket_t) {
                 size_of::<c_int>() as c_int,
             );
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let on: c_int = libc::IP_PMTUDISC_PROBE;
             let p = (&raw const on).cast::<c_void>();

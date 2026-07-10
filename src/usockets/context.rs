@@ -52,6 +52,7 @@ unsafe fn errno_ptr() -> *mut c_int {
             link_name = "__error"
         )]
         #[cfg_attr(target_os = "linux", link_name = "__errno_location")]
+        #[cfg_attr(target_os = "android", link_name = "__errno")]
         fn __errno() -> *mut c_int;
     }
     // SAFETY: returns a valid thread-local int* for the calling thread.

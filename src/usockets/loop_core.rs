@@ -102,11 +102,15 @@ unsafe fn errno() -> c_int {
     // SAFETY: thread-local errno slot.
     unsafe { *libc::__error() }
 }
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline(always)]
 unsafe fn errno() -> c_int {
+    unsafe extern "C" {
+        #[cfg_attr(target_os = "linux", link_name = "__errno_location")]
+        fn __errno() -> *mut c_int;
+    }
     // SAFETY: thread-local errno slot.
-    unsafe { *libc::__errno_location() }
+    unsafe { *__errno() }
 }
 
 /// C `LIBUS_ERR` — `errno` on POSIX, `WSAGetLastError()` on Windows.
@@ -973,7 +977,7 @@ unsafe fn dispatch_stream_socket(p: *mut us_poll_t, error: c_int, mut eof: c_int
 
                         msg.msg_flags = 0;
                         msg.msg_iov = &mut iov;
-                        msg.msg_iovlen = 1;
+                        msg.msg_iovlen = 1 as _;
                         msg.msg_name = ptr::null_mut();
                         msg.msg_namelen = 0;
                         msg.msg_controllen = libc::CMSG_LEN(size_of::<c_int>() as c_uint) as _;
@@ -1139,12 +1143,12 @@ unsafe fn dispatch_udp_socket(
 ) {
     // SAFETY: `u` is a live UDP socket; callbacks may close it (checked each step).
     unsafe {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         let mut recv_error_surfaced: c_int = 0;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         let mut recv_would_block_only: c_int = 0;
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         if error != 0 {
             // IP_RECVERR: EPOLLERR stays level-triggered until MSG_ERRQUEUE is
             // drained; surface each queued ICMP error via on_recv_error.
@@ -1169,7 +1173,7 @@ unsafe fn dispatch_udp_socket(
                 } else {
                     if npackets as LIBUS_SOCKET_DESCRIPTOR == LIBUS_SOCKET_ERROR {
                         if bsd_would_block() == 0 {
-                            #[cfg(target_os = "linux")]
+                            #[cfg(any(target_os = "linux", target_os = "android"))]
                             {
                                 let recv_err = errno();
                                 recv_error_surfaced = 1;
@@ -1177,12 +1181,12 @@ unsafe fn dispatch_udp_socket(
                                     cb(u, recv_err);
                                 }
                             }
-                            #[cfg(not(target_os = "linux"))]
+                            #[cfg(not(any(target_os = "linux", target_os = "android")))]
                             {
                                 error = 1;
                             }
                         } else {
-                            #[cfg(target_os = "linux")]
+                            #[cfg(any(target_os = "linux", target_os = "android"))]
                             {
                                 recv_would_block_only = 1;
                             }
@@ -1207,18 +1211,18 @@ unsafe fn dispatch_udp_socket(
             }
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         if error != 0 && recv_error_surfaced == 0 && recv_would_block_only == 0 && !(*u).closed() {
             us_udp_socket_close(u);
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         if error != 0 && !(*u).closed() {
             us_udp_socket_close(u);
         }
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
 unsafe fn drain_udp_errqueue(
     p: *mut us_poll_t,
@@ -1236,7 +1240,7 @@ unsafe fn drain_udp_errqueue(
             };
             let mut eh: libc::msghdr = core::mem::zeroed();
             eh.msg_iov = &mut eiov;
-            eh.msg_iovlen = 1;
+            eh.msg_iovlen = 1 as _;
             eh.msg_control = ectrl.as_mut_ptr() as *mut c_void;
             eh.msg_controllen = ectrl.len() as _;
             if libc::recvmsg(us_poll_fd(p), &mut eh, libc::MSG_ERRQUEUE) < 0 {

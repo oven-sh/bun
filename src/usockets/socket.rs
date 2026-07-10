@@ -986,7 +986,7 @@ pub unsafe extern "C" fn us_socket_ipc_write_fd(
         iov.iov_len = length as usize;
 
         msg.msg_iov = &mut iov;
-        msg.msg_iovlen = 1;
+        msg.msg_iovlen = 1 as _;
         msg.msg_control = cmsgbuf.buf.as_mut_ptr().cast();
         msg.msg_controllen = cmsg_space as _;
 

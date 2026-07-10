@@ -82,7 +82,7 @@ pub type LIBUS_SOCKET_DESCRIPTOR = c_int;
 pub type LIBUS_SOCKET_DESCRIPTOR = usize;
 
 /// `zig_mutex_t` — layout-only placeholder for `bun_threading::ReleaseImpl`.
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 pub type zig_mutex_t = u32;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub type zig_mutex_t = libc::os_unfair_lock;

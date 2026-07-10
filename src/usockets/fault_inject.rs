@@ -110,7 +110,7 @@ mod enabled {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     const ZIG_MUTEX_INIT: zig_mutex_t = 0;
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     const ZIG_MUTEX_INIT: zig_mutex_t = libc::OS_UNFAIR_LOCK_INIT;

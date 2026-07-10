@@ -50,6 +50,7 @@ unsafe fn errno_ptr() -> *mut c_int {
             link_name = "__error"
         )]
         #[cfg_attr(target_os = "linux", link_name = "__errno_location")]
+        #[cfg_attr(target_os = "android", link_name = "__errno")]
         fn __errno() -> *mut c_int;
     }
     // SAFETY: returns a valid thread-local int* for the calling thread.
@@ -158,25 +159,30 @@ mod plat {
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub(super) use libc::O_RDONLY;
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
     pub(super) use libc::accept;
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    ))]
     pub(super) use libc::{O_CLOEXEC, O_DIRECTORY, open};
 
     pub(super) use libc::{IP_ADD_SOURCE_MEMBERSHIP, IP_DROP_SOURCE_MEMBERSHIP, ip_mreq_source};
     pub(super) use libc::{IP_RECVTOS, IPV6_RECVPKTINFO};
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) use libc::{
         IPV6_ADD_MEMBERSHIP as IPV6_JOIN_GROUP, IPV6_DROP_MEMBERSHIP as IPV6_LEAVE_GROUP,
     };
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub(super) use libc::{IPV6_JOIN_GROUP, IPV6_LEAVE_GROUP};
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     pub(super) use libc::{SOCK_CLOEXEC, SOCK_NONBLOCK, accept4};
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) use libc::{
         IP_PKTINFO, IP_RECVERR, IPV6_PKTINFO, IPV6_RECVERR, MCAST_JOIN_SOURCE_GROUP,
         MCAST_LEAVE_SOURCE_GROUP, MSG_NOSIGNAL, O_PATH, TCP_CORK, TCP_DEFER_ACCEPT, TCP_KEEPCNT,
@@ -232,7 +238,7 @@ mod plat {
     }
 
     // Linux sendmmsg/recvmmsg — declared locally so musl links too.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe extern "C" {
         pub(super) fn sendmmsg(
             sockfd: c_int,
@@ -751,7 +757,7 @@ pub unsafe extern "C" fn bsd_sendmmsg(
         return sb.num as c_int;
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     // SAFETY: FFI; caller guarantees `sendbuf` is a valid udp_sendbuf with `num` initialized entries.
     unsafe {
         let sb = &mut *sendbuf;
@@ -839,7 +845,7 @@ pub unsafe extern "C" fn bsd_recvmmsg(
         return LIBUS_UDP_RECV_COUNT as c_int;
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     // SAFETY: FFI; caller guarantees `recvbuf` is a valid udp_recvbuf set up via bsd_udp_setup_recvbuf.
     unsafe {
         loop {
@@ -880,7 +886,7 @@ pub unsafe extern "C" fn bsd_udp_setup_recvbuf(
             mh.msg_name = (&raw mut rb.addr[i]).cast();
             mh.msg_namelen = size_of::<sockaddr_storage>() as _;
             mh.msg_iov = &raw mut rb.iov[i];
-            mh.msg_iovlen = 1;
+            mh.msg_iovlen = 1 as _;
             mh.msg_control = rb.control[i].as_mut_ptr().cast();
             mh.msg_controllen = 256 as _;
             rb.msgvec[i].msg_hdr = mh;
@@ -944,7 +950,7 @@ pub unsafe extern "C" fn bsd_udp_setup_sendbuf(
             mh.msg_control = ptr::null_mut();
             mh.msg_controllen = 0;
             mh.msg_iov = iov.add(i);
-            mh.msg_iovlen = 1;
+            mh.msg_iovlen = 1 as _;
             mh.msg_flags = 0;
             (*msgvec.add(i)).msg_len = 0;
 
@@ -980,7 +986,7 @@ pub unsafe extern "C" fn bsd_udp_packet_buffer_local_ip(
         let mut cmsg = libc::CMSG_FIRSTHDR(mh);
         while !cmsg.is_null() {
             if (*cmsg).cmsg_level == plat::IPPROTO_IP {
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 if (*cmsg).cmsg_type == plat::IP_PKTINFO {
                     // CMSG_DATA is aligned for the declared level/type payload.
                     #[allow(clippy::cast_ptr_alignment)]
@@ -1524,7 +1530,7 @@ pub unsafe extern "C" fn bsd_socket_keepalive(
         if delay == 0 {
             return -1;
         }
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         if plat::sso(
             fd,
             plat::IPPROTO_TCP,
@@ -1682,7 +1688,7 @@ pub unsafe extern "C" fn bsd_socket_get_tos(fd: LIBUS_SOCKET_DESCRIPTOR) -> c_in
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_flush(fd: LIBUS_SOCKET_DESCRIPTOR) {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     // SAFETY: optval is a live c_int.
     unsafe {
         let enabled: c_int = 0;
@@ -1694,7 +1700,7 @@ pub unsafe extern "C" fn bsd_socket_flush(fd: LIBUS_SOCKET_DESCRIPTOR) {
             size_of::<c_int>() as _,
         );
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     let _ = fd;
 }
 
@@ -1715,7 +1721,7 @@ pub unsafe extern "C" fn bsd_create_socket(
             *err = 0;
         }
         let mut created_fd: LIBUS_SOCKET_DESCRIPTOR;
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             let flags = plat::SOCK_CLOEXEC | plat::SOCK_NONBLOCK;
             loop {
@@ -1732,7 +1738,7 @@ pub unsafe extern "C" fn bsd_create_socket(
             }
             return apple_no_sigpipe(created_fd);
         }
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
         {
             loop {
                 created_fd = plat::socket(domain, type_, protocol);
@@ -1891,14 +1897,14 @@ pub unsafe extern "C" fn bsd_accept_socket(
         let accepted_fd: LIBUS_SOCKET_DESCRIPTOR;
         loop {
             (*addr).len = size_of::<sockaddr_storage>() as _;
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
             let afd = plat::accept4(
                 fd,
                 addr.cast::<plat::sockaddr>(),
                 &raw mut (*addr).len,
                 plat::SOCK_CLOEXEC | plat::SOCK_NONBLOCK,
             );
-            #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+            #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
             let afd = plat::accept(fd, addr.cast::<plat::sockaddr>(), &raw mut (*addr).len);
 
             if is_eintr_fd(afd) {
@@ -1930,11 +1936,11 @@ pub unsafe extern "C" fn bsd_accept_socket(
 
         internal_finalize_bsd_addr(addr);
 
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             accepted_fd
         }
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
         {
             bsd_set_nonblocking(apple_no_sigpipe(accepted_fd))
         }
@@ -2129,7 +2135,7 @@ pub unsafe extern "C" fn bsd_send(
         ) {
             return injected;
         }
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         let sflags = plat::MSG_NOSIGNAL | plat::MSG_DONTWAIT;
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         let sflags = plat::MSG_DONTWAIT;
@@ -2276,6 +2282,7 @@ unsafe fn bsd_set_reuseport(listen_fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int {
         not(windows),
         any(
             target_os = "linux",
+            target_os = "android",
             target_os = "macos",
             target_os = "ios",
             target_os = "freebsd"
@@ -2396,7 +2403,7 @@ unsafe fn bsd_bind_listen_fd(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_set_defer_accept(listen_fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     // SAFETY: optval is a live c_int.
     unsafe {
         let timeout: c_int = 1;
@@ -2421,7 +2428,7 @@ pub unsafe extern "C" fn bsd_set_defer_accept(listen_fd: LIBUS_SOCKET_DESCRIPTOR
             size_of::<plat::accept_filter_arg>() as _,
         ) == 0) as c_int
     }
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
     {
         let _ = listen_fd;
         0
@@ -2518,7 +2525,7 @@ unsafe fn bsd_create_unix_socket_address(
         let sun_path_cap = (*server_address).sun_path.len();
         let sun_path = (*server_address).sun_path.as_mut_ptr();
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // Use /proc/self/fd/N/ to shorten paths that exceed sun_path.
             if path_len >= sun_path_cap && *path != 0 {
@@ -2701,7 +2708,7 @@ pub unsafe extern "C" fn bsd_create_listen_socket_unix(
             plat::close(dirfd);
             set_errno(saved);
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         if dirfd != -1 {
             plat::close(dirfd);
         }
@@ -2802,7 +2809,13 @@ pub unsafe extern "C" fn bsd_create_udp_socket(
         {
             let e = errno();
             if e == libc::ENOPROTOOPT || e == libc::EINVAL {
-                #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios", windows))]
+                #[cfg(any(
+                    target_os = "linux",
+                    target_os = "android",
+                    target_os = "macos",
+                    target_os = "ios",
+                    windows
+                ))]
                 {
                     plat::sso(
                         listen_fd,
@@ -2876,7 +2889,7 @@ pub unsafe extern "C" fn bsd_create_udp_socket(
             );
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // Surface ICMP errors on unconnected sockets as errno on the next
             // send/recv instead of silently dropping them. Matches libuv.
@@ -3243,7 +3256,7 @@ pub unsafe extern "C" fn bsd_create_connect_socket_unix(
             plat::close(dirfd);
             set_errno(saved);
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         if dirfd != -1 {
             plat::close(dirfd);
         }

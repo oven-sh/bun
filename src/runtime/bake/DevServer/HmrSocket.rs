@@ -1,6 +1,6 @@
 use bun_collections::HashMap;
+use bun_core::Output;
 use bun_core::strings;
-use bun_core::{Output, feature_flags};
 use bun_uws::AnyWebSocket;
 use bun_uws_sys::{Opcode, SendStatus};
 
@@ -126,8 +126,10 @@ impl HmrSocket {
                     if new_bits.contains(bit) && !self.subscriptions.contains(bit) {
                         let _ = ws.subscribe(&field.uws_topic());
 
-                        // on-subscribe hooks
-                        if feature_flags::BAKE_DEBUGGING_FEATURES {
+                        // on-subscribe hooks. These drive code that is compiled
+                        // out without this cargo feature (the visualizer routes,
+                        // emit fns, and timer body), so gate on the same cfg.
+                        if cfg!(feature = "bake_debugging_features") {
                             // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                             let dev = unsafe { self.dev() };
                             match field {
@@ -177,6 +179,11 @@ impl HmrSocket {
             }
             x if x == IncomingMessageId::SetUrl as u8 => {
                 let pattern = &msg[1..];
+                // `pattern` is peer bytes; `FrameworkRouter::match_slow` requires
+                // an absolute path (`debug_assert!(path[0] == b'/')`).
+                if pattern.first() != Some(&b'/') {
+                    return ws.close();
+                }
                 // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 let dev = unsafe { self.dev() };
                 let maybe_rbi = dev.route_to_bundle_index_slow(pattern);
@@ -225,8 +232,8 @@ impl HmrSocket {
                         }
                     }
                     super::TestingBatchEvents::EnableAfterBundle => {
-                        // do not expose a websocket event that panics a release build
-                        debug_assert!(false);
+                        // A duplicate `H` before the pending batch activates is a
+                        // peer protocol violation; never assert on websocket input.
                         ws.close();
                     }
                     super::TestingBatchEvents::Enabled(_event_const) => {
@@ -321,7 +328,8 @@ impl HmrSocket {
     }
 
     fn on_unsubscribe(&mut self, field: HmrTopicBits) {
-        if feature_flags::BAKE_DEBUGGING_FEATURES {
+        // Mirrors `on_message`'s on-subscribe gate.
+        if cfg!(feature = "bake_debugging_features") {
             // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
             let dev = unsafe { self.dev() };
             if field.contains(HmrTopic::IncrementalVisualizer.as_bit()) {
@@ -329,7 +337,7 @@ impl HmrSocket {
             }
             if field.contains(HmrTopic::MemoryVisualizer.as_bit()) {
                 dev.emit_memory_visualizer_events -= 1;
-                if dev.emit_incremental_visualizer_events == 0
+                if dev.emit_memory_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
                     // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier

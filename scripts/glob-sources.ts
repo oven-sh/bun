@@ -104,16 +104,15 @@ const patterns = {
       "src/uws_sys/*.cpp",
       "src/simdutf_sys/*.cpp",
       "src/jsc/bindings/vm/*.cpp",
-      "packages/bun-usockets/src/crypto/*.cpp",
+      "packages/bun-usockets/src/crypto/root_certs.cpp",
+      "packages/bun-usockets/src/crypto/root_certs_linux.cpp",
+      "packages/bun-usockets/src/crypto/root_certs_darwin.cpp",
+      "packages/bun-usockets/src/crypto/root_certs_windows.cpp",
     ],
   },
-  /** all `*.c` compiled into bun (usockets, llhttp, uv polyfills) */
+  /** all `*.c` compiled into bun (llhttp, uv polyfills) */
   c: {
     paths: [
-      "packages/bun-usockets/src/*.c",
-      "packages/bun-usockets/src/eventing/*.c",
-      "packages/bun-usockets/src/internal/*.c",
-      "packages/bun-usockets/src/crypto/*.c",
       "src/jsc/bindings/uv-posix-polyfills.c",
       "src/jsc/bindings/uv-posix-stubs.c",
       "src/*.c",

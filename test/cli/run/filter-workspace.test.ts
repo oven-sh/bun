@@ -662,7 +662,7 @@ describe("bun", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("non-string \"type\" does not stop --filter from running scripts", async () => {
+  test('non-string "type" does not stop --filter from running scripts', async () => {
     // "type" is a module-loader concern; a non-string value must not make
     // `bun run --filter` skip the package (npm/pnpm/yarn all run it).
     const dir = tempDirWithFiles("filter-bad-type", {

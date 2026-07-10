@@ -4247,11 +4247,9 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
             match pathlike_tag {
                 PathOrFileDescriptorSerializeTag::Fd => {
                     let fd: Fd = reader.read_struct()?;
-                    // Wire bytes are untrusted: enforce the same range as
-                    // `Bun.file(fd)` (`FdJsc::from_js_validated`) so a crafted
-                    // record cannot materialize an fd that no JS could
-                    // construct. On posix fd == -1 reaches
-                    // `Fd::as_borrowed_fd`'s `raw != -1` assert and aborts.
+                    // Wire bytes are untrusted: enforce the same range as `FdJsc::from_js_validated`
+                    // so a crafted record cannot materialize an fd no JS could construct (fd == -1
+                    // hits `Fd::as_borrowed_fd`'s `raw != -1` assert on posix and aborts).
                     #[cfg(not(windows))]
                     if fd.0 < 0 {
                         return Err(bun_core::err!("InvalidValue"));

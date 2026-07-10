@@ -178,6 +178,11 @@ void MessagePort::flushQueuedMessagesBeforeClose()
     // into this closing port (via its entangled peer) can't starve the loop.
     size_t limit = std::max<size_t>(MessagePortPipe::queuedCount(m_pipe->state(m_side)), 1000);
     for (size_t i = 0; i < limit; ++i) {
+        // A handler (or a microtask it queued) may have transferred this port; the
+        // remaining inbox now belongs to the new owner. drainAndDispatch()'s
+        // per-iteration ctxId/port re-check guards the same case.
+        if (m_isDetached)
+            break;
         auto message = m_pipe->takeOne(m_side);
         if (!message)
             break;

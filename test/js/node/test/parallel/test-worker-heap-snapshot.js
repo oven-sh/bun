@@ -10,8 +10,7 @@ const { once } = require('events');
   const worker = new Worker('setInterval(() => {}, 1000);', { eval: true });
   await once(worker, 'online');
   const stream = await worker.getHeapSnapshot();
-  stream.read(0); // Trigger the stream to start flowing
-  assert.ok(JSON.parse(stream.read(stream.readableLength)));
+  assert.ok(JSON.parse(stream.read()));
 
   await worker.terminate();
 })().then(common.mustCall());

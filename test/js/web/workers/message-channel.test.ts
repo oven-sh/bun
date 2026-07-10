@@ -370,3 +370,86 @@ test("a close event from the peer survives GC of the unreachable port", async ()
   for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
   expect(fired).toBe(20);
 });
+
+// A 'close'-listener-only pair pins both ports until the context dies (same as Node,
+// which never collects an entangled port). Bound the retention: explicitly-closed pairs
+// must still be swept, so a regression that leaks closed ports too would show as growth.
+test("explicitly-closed close-listener ports are collected; open ones are pinned like Node", async () => {
+  const { heapStats } = require("bun:jsc");
+  const count = () => heapStats().objectTypeCounts.MessagePort ?? 0;
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  Bun.gc(true);
+  const base = count();
+  (() => {
+    for (let i = 0; i < 20; i++) {
+      const { port1, port2 } = new MessageChannel();
+      port1.addEventListener("close", () => {});
+      port2.addEventListener("close", () => {});
+      port1.close();
+      port2.close();
+    }
+  })();
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  Bun.gc(true);
+  Bun.gc(true);
+  // All 20 closed pairs must be swept (allow small slack for GC nondeterminism).
+  expect(count() - base).toBeLessThanOrEqual(4);
+  (() => {
+    for (let i = 0; i < 20; i++) {
+      const { port1, port2 } = new MessageChannel();
+      port1.addEventListener("close", () => {});
+      port2.addEventListener("close", () => {});
+    }
+  })();
+  Bun.gc(true);
+  Bun.gc(true);
+  // Node parity: still-open close-listener pairs survive GC (>= 40 ports pinned).
+  expect(count() - base).toBeGreaterThanOrEqual(40);
+});
+
+// registerCloseContext()'s retroactive peer-Closed check posts a peerClosed task before
+// attach()'s drain when on('close') precedes on('message'); peerClosed() must still flush
+// the queued messages first so 'close' stays terminal.
+test("on('close') before on('message') still delivers queued messages before 'close'", async () => {
+  require("worker_threads"); // installs .on/.off on MessagePort
+  const { port1, port2 } = new MessageChannel();
+  port2.postMessage("m1");
+  port2.postMessage("m2");
+  port2.close();
+  const order: string[] = [];
+  const done = Promise.withResolvers<void>();
+  port1.on("close", () => {
+    order.push("close");
+    done.resolve();
+  });
+  port1.on("message", (m: string) => order.push(m));
+  await done.promise;
+  expect(order).toEqual(["m1", "m2", "close"]);
+});
+
+// A 'message' handler running inside peerClosed()'s flush can transfer this port; the
+// remaining inbox belongs to the new owner and must not be popped-and-dropped by the
+// stale port. flushQueuedMessagesBeforeClose() breaks on m_isDetached to guard this.
+test("transferring a port from inside peerClosed()'s flush preserves the remaining inbox", async () => {
+  require("worker_threads");
+  const { port1, port2 } = new MessageChannel();
+  const carrier = new MessageChannel();
+  port2.postMessage("m1");
+  port2.postMessage("m2");
+  port2.postMessage("m3");
+  port2.close();
+  const seen: string[] = [];
+  const done = Promise.withResolvers<void>();
+  carrier.port2.on("message", (received: MessagePort) => {
+    received.on("message", (m: string) => seen.push("new:" + m));
+    received.on("close", () => done.resolve());
+  });
+  port1.on("close", () => {});
+  port1.on("message", (m: string) => {
+    seen.push("old:" + m);
+    if (m === "m1") carrier.port1.postMessage(port1, [port1]);
+  });
+  await done.promise;
+  // m1 delivered to the old owner; m2/m3 buffered for the new owner.
+  expect(seen).toEqual(["old:m1", "new:m2", "new:m3"]);
+});

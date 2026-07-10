@@ -881,19 +881,9 @@ unsafe extern "C" {
         agent: &mut LifecycleHandle,
         exception: &mut ZigException,
     );
-    safe fn Bun__LifecycleAgentPreventExit(agent: &mut LifecycleHandle);
-    safe fn Bun__LifecycleAgentStopPreventingExit(agent: &mut LifecycleHandle);
 }
 
 impl LifecycleHandle {
-    pub fn prevent_exit(&mut self) {
-        Bun__LifecycleAgentPreventExit(self)
-    }
-
-    pub fn stop_preventing_exit(&mut self) {
-        Bun__LifecycleAgentStopPreventingExit(self)
-    }
-
     pub fn report_reload(&mut self) {
         bun_core::scoped_log!(LifecycleAgent, "reportReload");
         Bun__LifecycleAgentReportReload(self)

@@ -127,7 +127,7 @@ impl DependencyExt for Dependency {
             return name;
         }
         let name_ = &name[1..];
-        match bun_core::index_of_char(name_, b'/') {
+        match bun_core::strings::index_of_char_usize(name_, b'/') {
             Some(i) => &name_[i + 1..],
             None => name,
         }

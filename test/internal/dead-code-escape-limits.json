@@ -21,7 +21,7 @@
   "src/runtime/dns_jsc/dns.rs": 5,
   "src/runtime/image/backend_coregraphics.rs": 14,
   "src/runtime/image/codecs.rs": 1,
-  "src/runtime/node/path_watcher.rs": 2,
+  "src/runtime/node/fs_events.rs": 3,
   "src/runtime/server/NodeHTTPResponse.rs": 1,
   "src/runtime/shell/IOWriter.rs": 1,
   "src/runtime/test_runner/expect.rs": 1,

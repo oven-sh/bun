@@ -299,6 +299,9 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
             s->flags.adopted = 1;
             /* Tell the event loop what is the new socket so we can route subsequent events */
             s->prev = new_s;
+            if (s->ssl) {
+                us_internal_ssl_socket_relocated(loop, s, new_s);
+            }
         }
         if (c) {
             c->connecting_head = new_s;
@@ -734,6 +737,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     int opened = start_connections(c, CONCURRENT_CONNECTIONS);
     if (opened == 0) {
+        /* Same as the exhausted path in us_internal_socket_after_open: a
+         * real connect failure must not be reported as a caller abort. */
+        c->error = ECONNREFUSED;
         us_connecting_socket_close(c);
     }
 }
@@ -770,6 +776,11 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             if (c->connecting_head == NULL || c->connecting_head->connect_next == NULL) {
                 int opened = start_connections(c, c->connecting_head == NULL ? CONCURRENT_CONNECTIONS : 1);
                 if (opened == 0 && c->connecting_head == NULL) {
+                    /* Every resolved address failed to connect. Without this,
+                     * us_connecting_socket_close defaults c->error to
+                     * ECONNABORTED (caller abort) and never invalidates the
+                     * DNS cache entry for the dead host. */
+                    c->error = ECONNREFUSED;
                     us_connecting_socket_close(c);
                 }
             }

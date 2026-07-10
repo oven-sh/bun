@@ -1,4 +1,5 @@
-use crate::string::{ZStr, strings};
+use crate::string::ZStr;
+use crate::strings;
 use bun_alloc::AllocError;
 
 /// VTable surface for `bun.ast.E.String` (CYCLEBREAK b0: GENUINE upward dep on
@@ -554,7 +555,6 @@ impl<'a> BufferedWriter<'a> {
         while !items.is_empty() {
             // index_of_any_char dispatches to highway SIMD for n>=2.
             if let Some(j) = strings::index_of_any(items, b"\"<>") {
-                let j = j as usize;
                 let _ = self.write_all(&items[0..j])?;
                 // needle b"\"<>" ⇒ Some, &/' never reached
                 let _ = self.write_all(strings::html_escape_entity(items[j]).unwrap())?;
@@ -574,9 +574,6 @@ impl<'a> BufferedWriter<'a> {
         while !items.is_empty() {
             const NEEDLES: &[u16] = &[b'"' as u16, b'<' as u16, b'>' as u16];
             if let Some(j) = strings::index_of_any16(items, NEEDLES) {
-                // this won't handle strings larger than 4 GB
-                // that's fine though, 4 GB of SSR'd HTML is quite a lot...
-                let j = j as usize;
                 let _ = self.write_all16(&items[0..j])?;
                 // needle ∈ {0x22,0x3C,0x3E} so `as u8` is lossless
                 let _ = self.write_all(strings::html_escape_entity(items[j] as u8).unwrap())?;

@@ -1,7 +1,13 @@
 import { describe, expect } from "bun:test";
 import { isBroken, isWindows } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { itBundled } from "./expectBundled";
+import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
+
+// A public path composes with the referenced file's path relative to the output
+// directory, never relative to the importing chunk (esbuild's semantics).
+const CDN_PUBLIC_PATH = "https://cdn.example/app/";
+const cdnUrls = (source: string) => [...source.matchAll(/"(https:\/\/cdn\.example\/[^"]+)"/g)].map(match => match[1]);
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -861,6 +867,94 @@ describe("bundler", () => {
     publicPath: "/www",
     run: {},
   });
+  itBundled("edgecase/PublicPathNestedChunkReferences", {
+    files: {
+      "/src/pages/a/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        import logo from "../../logo.svg";
+        console.log(shared(), logo);
+      `,
+      "/src/pages/b/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        console.log(shared());
+      `,
+      "/src/shared.ts": /* ts */ `
+        import icon from "./icon.svg";
+        export const shared = () => icon;
+      `,
+      "/src/icon.svg": `<svg id="icon" />`,
+      "/src/logo.svg": `<svg id="logo" />`,
+    },
+    entryPoints: ["/src/pages/a/entry.ts", "/src/pages/b/entry.ts"],
+    outputPaths: ["/out/pages/a/entry.js", "/out/pages/b/entry.js"],
+    root: "/src",
+    outdir: "/out",
+    splitting: true,
+    publicPath: CDN_PUBLIC_PATH,
+    chunkNaming: "chunk-[hash].[ext]",
+    loader: { ".svg": "file" },
+    onAfterBundle(api) {
+      // The nested entry references the shared chunk and its own asset. Both
+      // must resolve under the public path, not above it.
+      const nested = cdnUrls(api.readFile("out/pages/a/entry.js")).map(url => url.slice(CDN_PUBLIC_PATH.length));
+      expect(nested.sort()).toEqual([
+        expect.stringMatching(/^chunk-[a-z0-9]+\.js$/),
+        expect.stringMatching(/^logo-[a-z0-9]+\.svg$/),
+      ]);
+      for (const rel of nested) {
+        api.assertFileExists(join("out", rel));
+      }
+
+      // The root-level chunk emits the same form in the same build.
+      const chunks = readdirSync(api.outdir).filter(file => file.endsWith(".js"));
+      expect(chunks).toHaveLength(1);
+      const rootLevel = cdnUrls(api.readFile(join("out", chunks[0]))).map(url => url.slice(CDN_PUBLIC_PATH.length));
+      expect(rootLevel).toEqual([expect.stringMatching(/^icon-[a-z0-9]+\.svg$/)]);
+      api.assertFileExists(join("out", rootLevel[0]));
+    },
+  });
+  itBundled("edgecase/PublicPathNestedEntryAsset", {
+    files: {
+      "/src/pages/a/entry.ts": /* ts */ `
+        import logo from "../../logo.svg";
+        console.log(logo);
+      `,
+      "/src/logo.svg": `<svg id="logo" />`,
+    },
+    entryPoints: ["/src/pages/a/entry.ts"],
+    outputPaths: ["/out/pages/a/entry.js"],
+    root: "/src",
+    outdir: "/out",
+    publicPath: CDN_PUBLIC_PATH,
+    loader: { ".svg": "file" },
+    onAfterBundle(api) {
+      const urls = cdnUrls(api.readFile("out/pages/a/entry.js")).map(url => url.slice(CDN_PUBLIC_PATH.length));
+      expect(urls).toEqual([expect.stringMatching(/^logo-[a-z0-9]+\.svg$/)]);
+      api.assertFileExists(join("out", urls[0]));
+    },
+  });
+  itBundled("edgecase/NoPublicPathNestedChunkStaysRelative", {
+    files: {
+      "/src/pages/a/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        console.log(shared());
+      `,
+      "/src/pages/b/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        console.log(shared());
+      `,
+      "/src/shared.ts": `export const shared = () => "shared";`,
+    },
+    entryPoints: ["/src/pages/a/entry.ts", "/src/pages/b/entry.ts"],
+    outputPaths: ["/out/pages/a/entry.js", "/out/pages/b/entry.js"],
+    root: "/src",
+    outdir: "/out",
+    splitting: true,
+    chunkNaming: "chunk-[hash].[ext]",
+    onAfterBundle(api) {
+      api.expectFile("out/pages/a/entry.js").toMatch(/from "\.\.\/\.\.\/chunk-[a-z0-9]+\.js"/);
+    },
+  });
   itBundled("edgecase/ImportDefaultInDirectory", {
     files: {
       "/a/file.js": `
@@ -1194,6 +1288,48 @@ describe("bundler", () => {
         mappingsExactMatch:
           "AACQ,QAAQ,IAAI,MAAM,EAOlB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM",
       },
+    },
+  });
+  // SourceMapPieces.finalize advanced the shift cursor at most once per
+  // mapping, so a mapping crossing >=2 placeholder substitutions on one
+  // minified line was re-encoded against a stale shift and landed out of order.
+  itBundled("edgecase/EmitInvalidSourceMapMultipleShifts", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import a from "./a.bin";
+        import b from "./b.bin";
+        import c from "./c.bin";
+        const keep: string[] = [a, b, c];
+        console.log(keep);
+      `,
+      "/a.bin": "AAAA",
+      "/b.bin": "BBBB",
+      "/c.bin": "CCCC",
+    },
+    outdir: "/out",
+    loader: { ".bin": "file" },
+    sourceMap: "external",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      const map = JSON.parse(api.readFile("/out/entry.js.map"));
+      expect(map.sources).toEqual(["../entry.ts"]);
+      const line1 = decodeSourceMappingsLine(map.mappings.split(";")[0]);
+      for (let i = 1; i < line1.length; i++) {
+        if (line1[i].gen < line1[i - 1].gen) {
+          throw new Error(
+            `out-of-order mappings on line 1: generated column ` +
+              `${line1[i - 1].gen} -> ${line1[i].gen}\n` +
+              line1.map(s => `  col ${s.gen} -> entry.ts:${s.ol + 1}:${s.oc}`).join("\n"),
+          );
+        }
+      }
+      // The first mapping after all three substituted asset paths is for
+      // `keep` in `const keep`. It must point at the `keep` identifier in
+      // the generated output, not at a stale pre-shift column.
+      const keepCol = js.split("\n")[0].indexOf("keep=[");
+      expect(keepCol).toBeGreaterThan(0);
+      expect(line1).toContainEqual({ gen: keepCol, src: 0, ol: 3, oc: 6 });
     },
   });
   itBundled("edgecase/NoUselessConstructorTS", {
@@ -2495,6 +2631,27 @@ describe("bundler", () => {
     run: {
       stdout: "",
     },
+  });
+  itBundled("edgecase/MacroProtoKeyIsOwnProperty", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { getData } from "./macro.ts" with { type: "macro" };
+        const data = getData();
+        console.write(JSON.stringify([
+          Object.getPrototypeOf(data) === Object.prototype,
+          Object.hasOwn(data, "__proto__"),
+          data.x,
+          JSON.stringify(data),
+        ]));
+      `,
+      "/macro.ts": /* js */ `
+        export function getData() {
+          return JSON.parse('{"__proto__": {"x": 1}, "a": 2}');
+        }
+      `,
+    },
+    target: "bun",
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
   itBundled("edgecase/NodeBuiltinWithoutPrefix", {
     files: {

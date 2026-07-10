@@ -55,6 +55,16 @@ pub mod lib {
         Fatal = -30,
     }
 
+    impl Result {
+        /// `Ok` or `Warn`: the call completed. libarchive returns `Warn` for
+        /// recoverable per-call issues while still producing a result, e.g. a
+        /// `read_next_header` that fell back to the raw pathname bytes.
+        #[inline]
+        pub fn succeeded(self) -> bool {
+            matches!(self, Result::Ok | Result::Warn)
+        }
+    }
+
     // ── raw libarchive C FFI ───────────────────────────────────────────────
     // Signatures match `vendor/libarchive/archive.h` exactly. `Result` is `#[repr(i32)]`
     // so it is ABI-compatible with the C `int` return values.
@@ -121,7 +131,6 @@ pub mod lib {
         fn archive_entry_free(e: *mut Entry);
         fn archive_entry_clear(e: *mut Entry) -> *mut Entry;
         fn archive_entry_pathname(e: *mut Entry) -> *const c_char;
-        fn archive_entry_pathname_utf8(e: *mut Entry) -> *const c_char;
         #[cfg(windows)]
         fn archive_entry_pathname_w(e: *mut Entry) -> *const u16;
         fn archive_entry_symlink(e: *mut Entry) -> *const c_char;
@@ -418,10 +427,6 @@ pub mod lib {
             // SAFETY: self valid; returned string owned by libarchive for the
             // lifetime of this entry.
             unsafe { ZStr::from_c_ptr(archive_entry_pathname(self.as_mut_ptr())) }
-        }
-        pub fn pathname_utf8(&self) -> &ZStr {
-            // SAFETY: self valid.
-            unsafe { ZStr::from_c_ptr(archive_entry_pathname_utf8(self.as_mut_ptr())) }
         }
         #[cfg(windows)]
         pub fn pathname_w(&self) -> &bun_core::WStr {
@@ -721,7 +726,8 @@ pub mod lib {
                 return match a.read_next_header(&mut entry) {
                     Result::Retry => continue,
                     Result::Eof => IteratorResult::init_res(None),
-                    Result::Ok => {
+                    // `Warn` still yields a fully populated entry; see `Result::succeeded`.
+                    Result::Ok | Result::Warn => {
                         let kind = bun_sys::kind_from_mode(
                             Entry::opaque_ref(entry).filetype() as bun_sys::Mode
                         );
@@ -1023,7 +1029,8 @@ pub mod lib {
                 match a.read_next_header(&mut entry) {
                     Result::Retry => continue,
                     Result::Eof => return Ok(None),
-                    Result::Ok => {
+                    // `Warn` still yields a fully populated entry; see `Result::succeeded`.
+                    Result::Ok | Result::Warn => {
                         let kind = bun_sys::kind_from_mode(
                             Entry::opaque_ref(entry).filetype() as bun_sys::Mode
                         );

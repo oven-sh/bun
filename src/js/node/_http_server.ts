@@ -1346,6 +1346,7 @@ function detachSocketListenersForHandoff(socket) {
   socket.on("end", onReadableStreamEnd);
 }
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
+const kStreamingEnabled = Symbol("kStreamingEnabled");
 const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
 // When the keep-alive idle period on a connection started (the last response
 // finish). onResponseFinishHandleSocket records this instead of rescheduling
@@ -1464,6 +1465,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   connecting = false;
   timeout = 0;
   parser = null;
+  [kStreamingEnabled] = false;
   [kBytesWritten] = 0;
   [kHandle];
   [kUpgradeIncoming] = undefined;
@@ -1520,8 +1522,15 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   }
 
   [kEnableStreaming](enable: boolean) {
+    // The common keep-alive request never streams: the dispatcher disables
+    // streaming on every request, so track the state and skip the two native
+    // setter crossings (writing undefined over undefined) when unchanged.
+    if (this[kStreamingEnabled] === enable) {
+      return;
+    }
     const handle = this[kHandle];
     if (handle) {
+      this[kStreamingEnabled] = enable;
       if (enable) {
         handle.ondata = this.#onData.bind(this);
         handle.ondrain = this.#onDrain.bind(this);
@@ -1550,6 +1559,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
       const handle = this[kHandle];
       if (handle) {
         handle.ondata = undefined;
+        this[kStreamingEnabled] = false;
         // The peer finished its writable side of a CONNECT/Upgrade tunnel. The
         // connection stays writable (allowHalfOpen), but - like Node, where the
         // detached socket stops reading and no longer keeps the process alive -
@@ -1955,10 +1965,15 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
 // been decided, so `this.chunkedEncoding` is already set. Bun frames the body in uWS
 // and never sets `response.chunkedEncoding`, so reproduce Node's decision here.
 function willBeChunked(response) {
-  if (response.hasHeader("transfer-encoding")) {
-    return chunkExpression.test(String(response.getHeader("transfer-encoding")));
+  // kOutHeaders is a null-proto map of lowercased name -> [name, value];
+  // index it directly instead of paying hasHeader/getHeader (each of which
+  // re-reads the symbol and lowercases its argument) per check.
+  const outHeaders = response[kOutHeaders];
+  const te = outHeaders !== null ? outHeaders["transfer-encoding"] : undefined;
+  if (te !== undefined) {
+    return chunkExpression.test(String(te[1]));
   }
-  if (response.hasHeader("content-length")) return false;
+  if (outHeaders !== null && outHeaders["content-length"] !== undefined) return false;
   if (response._hasBody === false) return false;
   if (response._removedTE) return false;
   return response.useChunkedEncodingByDefault === true;
@@ -1967,7 +1982,10 @@ function willBeChunked(response) {
 // A non-chunked message is terminated by the first empty line after the header
 // fields, so it can carry neither a body nor trailers.
 function hasInvalidTrailer(response) {
-  return !willBeChunked(response) && (response._trailer || response.hasHeader("trailer"));
+  if (willBeChunked(response)) return false;
+  if (response._trailer) return true;
+  const outHeaders = response[kOutHeaders];
+  return outHeaders !== null && outHeaders["trailer"] !== undefined;
 }
 
 function _writeHead(statusCode, reason, obj, response) {
@@ -2092,8 +2110,9 @@ function ServerResponse(req, options): void {
     // a user calling `new ServerResponse(req, { rejectNonStandardBodyWrites: true })`
     // passes the string key — which the OutgoingMessage constructor already
     // applied to the same shared symbol — so don't clobber it.
-    if (options[kRejectNonStandardBodyWrites] !== undefined) {
-      this[kRejectNonStandardBodyWrites] = options[kRejectNonStandardBodyWrites];
+    const rejectNonStandardBodyWrites = options[kRejectNonStandardBodyWrites];
+    if (rejectNonStandardBodyWrites !== undefined) {
+      this[kRejectNonStandardBodyWrites] = rejectNonStandardBodyWrites;
     }
   } else {
     this[kHandle] = req[kHandle];
@@ -2947,8 +2966,10 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     });
   } else {
     // If there's no data but you already called end, then you're done.
-    // We can ignore it in that case.
-    if (!(!chunk && handle.ended) && !handle.aborted) {
+    // We can ignore it in that case. `flags` was read above in the same tick
+    // (no native call in between can change it), so reuse its bits instead of
+    // paying two more native getter crossings.
+    if (!(!chunk && flags & NodeHTTPResponseFlags.ended) && !(flags & NodeHTTPResponseFlags.socket_closed)) {
       handle.end(chunk, encoding, undefined, strictContentLength(this));
     }
   }

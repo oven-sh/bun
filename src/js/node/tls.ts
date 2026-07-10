@@ -1386,8 +1386,11 @@ function Server(options, secureConnectionListener): void {
 
       const rejectUnauthorized = options.rejectUnauthorized;
 
+      // Node only disables verification on an explicit `false` (null, 0, ""
+      // all mean enabled), and this field now reaches the native listener
+      // again on every rotation below - fail closed.
       if (typeof rejectUnauthorized !== "undefined") {
-        this._rejectUnauthorized = rejectUnauthorized;
+        this._rejectUnauthorized = rejectUnauthorized !== false;
       } else this._rejectUnauthorized = rejectUnauthorizedDefault();
 
       const ciphers = options.ciphers;

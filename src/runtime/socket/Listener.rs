@@ -762,11 +762,9 @@ impl Listener {
 
         // Parsing reads the options object, which can run user JS and close the
         // server out from under us — re-read the listener afterwards.
-        let Some(ssl_config) = ({
-            // SAFETY: per-thread VM; valid for program lifetime.
-            let vm = VirtualMachine::get().as_mut();
-            SSLConfig::from_js(vm, global, tls)?
-        }) else {
+        // SAFETY: per-thread VM; valid for program lifetime.
+        let vm = VirtualMachine::get().as_mut();
+        let Some(ssl_config) = SSLConfig::from_js(vm, global, tls)? else {
             return Ok(JSValue::UNDEFINED);
         };
         let ListenerType::Uws(ls) = this.listener.get() else {

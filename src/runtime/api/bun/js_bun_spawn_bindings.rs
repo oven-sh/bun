@@ -1413,12 +1413,18 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         IS_SYNC,
     ));
 
-    // For inline terminal options: release parent's slave_fd so EOF reaches the
-    // master when the child exits (deferred to on_process_exit on macOS; see
-    // Terminal::close_slave_fd). Existing terminals keep slave_fd for reuse.
+    // For inline terminal options: keep the parent's slave_fd open until the
+    // subprocess exits. BSD/macOS flush the pty output queue on last slave
+    // close, so closing here races the child's final writes; on_process_exit
+    // drains the master then closes it (Terminal::drain_and_close_slave_fd).
+    // Existing terminals keep slave_fd for reuse.
     if let Some(info) = terminal_info.take() {
         terminal_js_value = info.js_value;
-        // Spawn succeeded so the child holds its own copy of the slave fd.
+        #[cfg(unix)]
+        info.term().mark_inline_spawned();
+        // Windows: ConPTY's conhost buffers output, so the client handle can go
+        // now; EOF is delivered via close_pseudoconsole on exit.
+        #[cfg(windows)]
         info.term().close_slave_fd();
         subprocess.update_flags(|f| f.insert(Subprocess::Flags::OWNS_TERMINAL));
     }

@@ -176,8 +176,8 @@ bitflags::bitflags! {
         /// Set when an inline-created terminal has been attached to a subprocess
         /// via spawn; prevents reusing the same inline terminal for a second
         /// spawn. On Windows the first exit's ClosePseudoConsole would silently
-        /// kill the second; on Linux `slave_fd` is already closed; on macOS
-        /// `slave_fd` is held until the first exit (see `close_slave_fd`).
+        /// kill the second; on POSIX slave_fd is held until the first exit
+        /// (see `drain_and_close_slave_fd`).
         const INLINE_SPAWNED = 1 << 7;
     }
 }
@@ -663,30 +663,34 @@ impl Terminal {
         self.hpcon.get()
     }
 
-    /// Close the parent's copy of slave_fd after spawn. The child holds its
-    /// own; closing ours lets the master observe EOF when the child exits.
-    ///
-    /// On macOS this is deferred: xnu's `ptsclose` → `ttyclose` → `ttyflush`
-    /// flushes the pty output queue when the last slave closes, so if a short
-    /// lived child writes and exits before we poll kqueue, closing our slave
-    /// here would drop that output. Subprocess::on_process_exit closes it via
-    /// `drain_and_close_slave_fd` instead.
-    pub(crate) fn close_slave_fd(&self) {
+    /// Mark a terminal created inline by `Bun.spawn` so it cannot be reused
+    /// for a later spawn. See the `INLINE_SPAWNED` flag docs.
+    pub(crate) fn mark_inline_spawned(&self) {
         self.update_flags(|f| f.insert(Flags::INLINE_SPAWNED));
-        #[cfg(not(target_os = "macos"))]
-        {
-            let fd = self.slave_fd.get();
-            if fd != Fd::INVALID {
-                fd.close();
-                self.slave_fd.set(Fd::INVALID);
-            }
+    }
+
+    /// Close the parent's copy of slave_fd. The child holds its own; once
+    /// every slave fd is gone the master reader observes EOF.
+    pub(crate) fn close_slave_fd(&self) {
+        self.mark_inline_spawned();
+        let fd = self.slave_fd.get();
+        if fd != Fd::INVALID {
+            fd.close();
+            self.slave_fd.set(Fd::INVALID);
         }
     }
 
-    /// macOS: synchronously drain the master (delivering any buffered output
+    /// POSIX: synchronously drain the master (delivering any buffered output
     /// via the data callback) and then release our slave_fd so the next read
     /// observes EOF. Called from Subprocess::on_process_exit on the JS thread.
-    #[cfg(target_os = "macos")]
+    ///
+    /// BSD-derived tty layers flush the pty output queue when the last slave
+    /// closes (xnu `ptsclose` → `ttyclose` → `ttyflush`; FreeBSD `ttydev_leave`
+    /// → `ttydisc_close` → `tty_flush` after a 1s drain window). We keep our
+    /// slave open until the child exits so that window cannot race us, then
+    /// drain here before releasing the last reference. Linux preserves the
+    /// queue, so this only changes when EOF arrives there.
+    #[cfg(unix)]
     pub(crate) fn drain_and_close_slave_fd(&self) {
         let flags = self.flags.get();
         if flags.contains(Flags::CLOSED) {
@@ -699,11 +703,7 @@ impl Terminal {
                 return;
             }
         }
-        let fd = self.slave_fd.get();
-        if fd != Fd::INVALID {
-            fd.close();
-            self.slave_fd.set(Fd::INVALID);
-        }
+        self.close_slave_fd();
     }
 
     /// Windows: close only the ConPTY handle so conhost releases its pipe ends and

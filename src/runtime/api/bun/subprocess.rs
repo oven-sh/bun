@@ -907,21 +907,19 @@ impl Subprocess<'_> {
         // provenance (no `&Process → *mut` round-trip).
         unsafe { (*jsc_vm).on_subprocess_exit(NonNull::new_unchecked(process)) };
 
-        #[cfg(any(windows, target_os = "macos"))]
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
-            // Linux: EOF on the master arrives when the child (last slave_fd
-            // holder) exits; nothing to do.
-            // macOS: we still hold slave_fd (xnu flushes the pty output queue on
-            // last slave close), so drain the master now and release our slave.
+            // POSIX: we still hold slave_fd (BSD/macOS flush the pty output
+            // queue on last slave close), so drain the master now and release
+            // our slave so the reader observes EOF.
             // Windows: ConPTY's conhost stays alive after the child exits, so
-            // close the pseudoconsole to deliver EOF. Both paths leave the
-            // Terminal itself open (closed=false).
+            // close the pseudoconsole to deliver EOF.
+            // Both paths leave the Terminal itself open (closed=false).
             if let Some(terminal) = self.terminal.get() {
                 // `BackRef` invariant holds: the terminal is owned by (or
                 // borrowed from a JS wrapper kept live by) this subprocess and
                 // outlives this scope; single JS thread.
                 let term = bun_ptr::BackRef::from(terminal);
-                #[cfg(target_os = "macos")]
+                #[cfg(unix)]
                 term.drain_and_close_slave_fd();
                 #[cfg(windows)]
                 term.close_pseudoconsole();

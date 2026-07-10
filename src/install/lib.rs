@@ -581,7 +581,7 @@ impl RunCommand {
     pub fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // If we are already running as "node", the path should exist
         if PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -874,7 +874,7 @@ impl RunCommand {
         env: Option<*mut bun_dotenv::Loader<'static>>,
         _log_errors: bool,
         store_root_fd: bool,
-    ) -> Result<*mut (), bun_core::Error> {
+    ) -> Result<*mut (), crate::Error> {
         use bun_core::Global;
 
         let args = ctx.args.clone();

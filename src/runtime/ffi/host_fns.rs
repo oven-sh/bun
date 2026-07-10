@@ -211,7 +211,7 @@ impl Function {
     pub fn print_source_code(
         &self,
         writer: &mut impl std::io::Write,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if !self.arg_types.is_empty() {
             writer.write_all(b"#define HAS_ARGUMENTS\n")?;
         }
@@ -363,7 +363,7 @@ impl Function {
         global_object: Option<&JSGlobalObject>,
         context_ptr: Option<*mut c_void>,
         writer: &mut impl std::io::Write,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         {
             let ptr = global_object
                 .map(|g| std::ptr::from_ref(g) as usize)

@@ -4,7 +4,7 @@ use core::sync::atomic::AtomicU8;
 #[cfg(not(windows))]
 use core::sync::atomic::Ordering;
 
-use bun_core::Error;
+use crate::Error as Error;
 use bun_core::ZigString;
 use bun_io::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::ZigStringJsc as _;
@@ -648,8 +648,8 @@ mod windows_impl {
         }
     }
 
-    impl PartialEq<bun_core::Error> for WriteFileWindowsError {
-        fn eq(&self, other: &bun_core::Error) -> bool {
+    impl PartialEq<crate::Error> for WriteFileWindowsError {
+        fn eq(&self, other: &crate::Error) -> bool {
             <&'static str>::from(self) == other.name()
         }
     }

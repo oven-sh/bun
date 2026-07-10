@@ -51,7 +51,7 @@ impl PluginResolver for PluginRunner {
         log: &mut bun_ast::Log,
         loc: bun_ast::Loc,
         target: BunPluginTarget,
-    ) -> Result<Option<FsPath<'static>>, bun_core::Error> {
+    ) -> Result<Option<FsPath<'static>>, crate::Error> {
         let global = self.global();
 
         let namespace_slice = Self::extract_namespace(specifier);

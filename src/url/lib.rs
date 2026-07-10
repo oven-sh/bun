@@ -1370,23 +1370,18 @@ pub struct PercentEncoding;
 #[derive(Debug)]
 pub enum DecodeError {
     DecodingError,
-    Write(crate::Error),
-}
-impl From<crate::Error> for DecodeError {
-    fn from(e: crate::Error) -> Self {
-        DecodeError::Write(e)
-    }
+    Write(bun_core::Error),
 }
 impl From<bun_core::Error> for DecodeError {
     fn from(e: bun_core::Error) -> Self {
-        DecodeError::Write(e.into())
+        DecodeError::Write(e)
     }
 }
 impl From<DecodeError> for crate::Error {
     fn from(e: DecodeError) -> Self {
         match e {
             DecodeError::DecodingError => crate::Error::DecodingError,
-            DecodeError::Write(inner) => inner,
+            DecodeError::Write(inner) => crate::Error::Core(inner),
         }
     }
 }

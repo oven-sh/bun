@@ -32,6 +32,8 @@ pub enum Error {
     InvalidSourceMap,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
+    #[error(transparent)]
+    Core(#[from] bun_core::Error),
 }
 
 impl Error {
@@ -53,6 +55,7 @@ impl Error {
             Self::UnsupportedVersion => "UnsupportedVersion",
             Self::InvalidSourceMap => "InvalidSourceMap",
             Self::Alloc(_) => "OutOfMemory",
+            Self::Core(e) => e.name(),
         }
     }
 }

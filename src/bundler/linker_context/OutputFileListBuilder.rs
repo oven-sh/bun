@@ -50,7 +50,7 @@ impl OutputFileList {
         c: &LinkerContext,
         chunks: &[Chunk],
         _unused: usize,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> Result<Self, crate::Error> {
         let (length, supplementary_file_count) =
             OutputFileList::calculate_output_file_list_capacity(c, chunks);
         let mut output_files: Vec<options::OutputFile> = Vec::with_capacity(length as usize);

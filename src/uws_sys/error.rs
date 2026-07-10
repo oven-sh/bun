@@ -6,6 +6,8 @@ pub enum Error {
     FailedToOpenSocket,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
+    #[error(transparent)]
+    Sys(#[from] bun_errno::SystemErrno),
 }
 
 impl Error {
@@ -14,6 +16,7 @@ impl Error {
             Self::RequestBodyTooLarge => "RequestBodyTooLarge",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::Alloc(_) => "OutOfMemory",
+            Self::Sys(e) => <&'static str>::from(e),
         }
     }
 }

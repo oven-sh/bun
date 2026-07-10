@@ -78,7 +78,7 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
 
 /// Shim around `protocol::valkey_error_to_js` that:
 /// 1. accepts whatever error type `JSValkeyClient::send` currently returns
-///    (presently `bun_core::Error`) and
+///    (presently `crate::Error`) and
 ///    converts it to `RedisError` so the user-visible error code matches the
 ///    real failure variant, and
 /// 2. wraps the resulting `JSValue` in `Ok` for use in `JsResult<JSValue>`

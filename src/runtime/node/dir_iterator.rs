@@ -25,9 +25,9 @@ pub enum IteratorError {
     #[error("Unexpected")]
     Unexpected,
 }
-impl From<IteratorError> for bun_core::Error {
+impl From<IteratorError> for crate::Error {
     fn from(e: IteratorError) -> Self {
-        bun_core::Error::intern(<&'static str>::from(e))
+        crate::Error::intern(<&'static str>::from(e))
     }
 }
 

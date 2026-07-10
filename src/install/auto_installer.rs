@@ -178,7 +178,7 @@ impl hooks::AutoInstaller for PackageManager {
     fn lockfile_legacy_package_to_dependency_id(
         &self,
         package_id: PackageID,
-    ) -> Result<DependencyID, bun_core::Error> {
+    ) -> Result<DependencyID, crate::Error> {
         self.lockfile
             .buffers
             .legacy_package_to_dependency_id(None, package_id)
@@ -194,7 +194,7 @@ impl hooks::AutoInstaller for PackageManager {
         &mut self,
         package_json: &dyn hooks::PackageJsonView,
         features: Features,
-    ) -> Result<PackageID, bun_core::Error> {
+    ) -> Result<PackageID, crate::Error> {
         // Builds a `Package` from a package.json and appends it to the
         // lockfile, driven entirely off the
         // `PackageJsonView` interface so this impl does not need to name
@@ -299,7 +299,7 @@ impl hooks::AutoInstaller for PackageManager {
         Ok(appended.meta.id)
     }
 
-    fn lockfile_append_root_stub(&mut self) -> Result<PackageID, bun_core::Error> {
+    fn lockfile_append_root_stub(&mut self) -> Result<PackageID, crate::Error> {
         let pkg = Package {
             resolution: resolution::Resolution::init(resolution::TaggedValue::Root),
             ..Default::default()
@@ -319,7 +319,7 @@ impl hooks::AutoInstaller for PackageManager {
         package_id: PackageID,
         resolution: &hooks::Resolution,
         buf: &'b mut [u8],
-    ) -> Result<&'b [u8], bun_core::Error> {
+    ) -> Result<&'b [u8], crate::Error> {
         // The resolver passes a `bun_paths::PathBuffer`-sized slice
         // (`bufs!(path_in_global_disk_cache)`); reborrow it as the install
         // signature's `&mut PathBuffer`.
@@ -346,7 +346,7 @@ impl hooks::AutoInstaller for PackageManager {
         resolution: &hooks::Resolution,
         ctx: hooks::TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let r = resolution_from_hooks(resolution);
         // Only the npm arm reaches this enqueue.
         // Caller passes a `Resolution` whose tag was already checked == Npm by
@@ -456,7 +456,7 @@ pub(crate) unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
     mut env: core::ptr::NonNull<bun_dotenv::Loader<'static>>,
-) -> Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_core::Error> {
+) -> Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, crate::Error> {
     // Idempotent.
     bun_http::http_thread::init(&Default::default());
 

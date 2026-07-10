@@ -1287,7 +1287,7 @@ bun_core::oom_from_alloc!(LinkError);
 impl From<BunError> for LinkError {
     fn from(e: BunError) -> Self {
         // OOM keeps its identity through
-        // `load()`, so OOMs travelling as `bun_core::Error` must not be
+        // `load()`, so OOMs travelling as `crate::Error` must not be
         // misreported as build failures. Everything else collapses to
         // `BuildFailed`; user-facing diagnostics flow through the bundler `Log`,
         // not this variant.

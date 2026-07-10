@@ -315,7 +315,7 @@ impl MySQLQuery {
                 Ok(s) => s,
                 Err(err) => {
                     if !global_object.has_exception() {
-                        // `Signature::generate` returns a wider `bun_core::Error`. Use
+                        // `Signature::generate` returns a wider `crate::Error`. Use
                         // `throw_error` (which builds an `Error` instance from the error
                         // name + message) instead of forcing into the MySQL enum.
                         let _ = global_object.throw_error(err, "failed to generate signature");
@@ -330,7 +330,7 @@ impl MySQLQuery {
                 Ok(e) => e,
                 Err(err) => {
                     // `err` is `bun_core::AllocError`; `throw_error` takes
-                    // `bun_core::Error` (`From<AllocError>` → OutOfMemory).
+                    // `crate::Error` (`From<AllocError>` → OutOfMemory).
                     let _ = global_object.throw_error(err.into(), "failed to allocate statement");
                     return Err(crate::Error::JSError);
                 }

@@ -23,7 +23,7 @@ impl Signature {
 
     // JSError (from QueryBindingIterator /
     // Tag::from_js), OOM, and InvalidQueryBinding are collapsed to the
-    // crate-wide `bun_core::Error`.
+    // crate-wide `crate::Error`.
     pub fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],

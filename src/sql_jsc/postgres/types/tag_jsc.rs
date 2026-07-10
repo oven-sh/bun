@@ -11,7 +11,7 @@ use bun_sql::postgres::types::tag::Tag;
 // is a plain match and the only caller (DataCell) computes the tag at runtime
 // anyway.
 // `UnsupportedArrayType` is reported via the crate-wide
-// `bun_core::Error`.
+// `crate::Error`.
 pub(crate) fn to_js_typed_array_type(t: Tag) -> crate::Result<JSType> {
     match t {
         Tag::int4_array => Ok(JSType::Int32Array),

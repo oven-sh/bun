@@ -316,7 +316,7 @@ impl CatalogMap {
         pm: &mut PM,
         old_buf: &[u8],
         builder: &mut StringBuilder,
-    ) -> Result<CatalogMap, bun_core::Error> {
+    ) -> Result<CatalogMap, crate::Error> {
         let mut new_catalog = CatalogMap::default();
 
         new_catalog

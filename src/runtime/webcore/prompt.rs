@@ -181,7 +181,7 @@ pub mod prompt {
     }
 
     impl ReadByte for bun_core::output::BufferedStdin {
-        type Error = bun_core::Error;
+        type Error = crate::Error;
         #[inline]
         fn read_byte(&mut self) -> Result<u8, Self::Error> {
             bun_core::output::BufferedStdin::read_byte(self)

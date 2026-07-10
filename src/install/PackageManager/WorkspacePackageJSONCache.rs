@@ -1,7 +1,7 @@
 // maybe rename to `PackageJSONCache` if we cache more than workspaces
 
 use bun_collections::StringHashMap;
-use bun_core::Error;
+use crate::Error as Error;
 // `Expr` here is the JSON parser's AST node (`bun_ast::Expr`, re-
 // exported via `crate::bun_json`). It is intentionally NOT `bun_ast::Expr`
 // — that lives in a higher-tier crate and is a distinct type. Consumers of
@@ -78,7 +78,7 @@ fn parse_package_json(
     log: &mut Log,
     bump: &bun_alloc::Arena,
     guess_indentation: bool,
-) -> Result<json::JsonResult, bun_core::Error> {
+) -> Result<json::JsonResult, crate::Error> {
     json::parse_package_json_utf8_with_opts(
         json::JSONOptions {
             json_warn_duplicate_keys: false,

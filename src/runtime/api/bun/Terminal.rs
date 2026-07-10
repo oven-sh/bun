@@ -331,9 +331,9 @@ impl From<CreatePtyError> for InitError {
     }
 }
 
-impl From<InitError> for bun_core::Error {
+impl From<InitError> for crate::Error {
     fn from(e: InitError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
+        crate::Error::from_name(<&'static str>::from(e))
     }
 }
 
@@ -768,9 +768,9 @@ pub enum CreatePtyError {
     NotSupported,
 }
 
-impl From<CreatePtyError> for bun_core::Error {
+impl From<CreatePtyError> for crate::Error {
     fn from(e: CreatePtyError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
+        crate::Error::from_name(<&'static str>::from(e))
     }
 }
 

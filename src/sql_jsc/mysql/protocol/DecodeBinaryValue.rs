@@ -181,7 +181,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 let data = reader.read(l as usize)?;
                 let time = DateTime::from_data(&data)?;
                 // Map JsError variants to their
-                // interned bun_core::Error names so `?` can widen here.
+                // interned crate::Error names so `?` can widen here.
                 let ts = time.to_js_timestamp(global_object).map_err(|e| match e {
                     bun_jsc::JsError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
                     bun_jsc::JsError::Terminated => crate::Error::Terminated,

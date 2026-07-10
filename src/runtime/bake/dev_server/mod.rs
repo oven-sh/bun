@@ -259,7 +259,7 @@ impl GraphTraceState {
         self.client_bits.unmanaged.set_all(false);
     }
 
-    pub fn resize(&mut self, side: Side, new_size: usize) -> Result<(), bun_core::Error> {
+    pub fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
         let b = match side {
             Side::Client => &mut self.client_bits,
             Side::Server => &mut self.server_bits,

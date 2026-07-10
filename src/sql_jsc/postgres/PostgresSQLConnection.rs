@@ -2377,10 +2377,10 @@ impl PostgresSQLConnection {
         message_type: MessageType,
         mut reader: protocol::NewReader<Context>,
     ) -> Result<(), AnyPostgresError> {
-        // protocol `decode_internal` returns `bun_core::Error`;
+        // protocol `decode_internal` returns `crate::Error`;
         // round-trip through the name-based `From` impl.
         #[inline(always)]
-        fn pg_err(e: bun_core::Error) -> AnyPostgresError {
+        fn pg_err(e: crate::Error) -> AnyPostgresError {
             AnyPostgresError::from(e)
         }
         debug!("on({})", <&'static str>::from(message_type));

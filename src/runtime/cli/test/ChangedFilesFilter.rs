@@ -67,7 +67,7 @@ pub(crate) fn filter<'a>(
     vm: &mut VirtualMachine,
     test_files: &'a mut [Interned],
     changed_since: &[u8],
-) -> core::result::Result<Result<'a>, bun_core::Error> {
+) -> core::result::Result<Result<'a>, crate::Error> {
     let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
     // If this process was restarted by the --watch file watcher, it

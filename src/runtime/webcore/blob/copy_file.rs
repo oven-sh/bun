@@ -69,7 +69,7 @@ pub struct CopyFile<'a> {
     pub destination_mode: Option<Mode>,
 }
 
-pub type ResultType = Result<SizeType, bun_core::Error>;
+pub type ResultType = Result<SizeType, crate::Error>;
 
 pub type Callback = fn(ctx: *mut c_void, len: ResultType);
 
@@ -218,7 +218,7 @@ impl<'a> CopyFile<'a> {
         }
     }
 
-    pub fn do_open_file<const WHICH: IOWhich>(&mut self) -> Result<(), bun_core::Error> {
+    pub fn do_open_file<const WHICH: IOWhich>(&mut self) -> Result<(), crate::Error> {
         let mut path_buf1 = PathBuffer::uninit();
         // open source file first
         // if it fails, we don't want the extra destination file hanging out
@@ -312,7 +312,7 @@ impl<'a> CopyFile<'a> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn do_copy_file_range<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
         &mut self,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         use bun_sys::linux;
 
         self.read_off += self.offset;
@@ -536,7 +536,7 @@ impl<'a> CopyFile<'a> {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn do_fcopy_file_with_read_write_loop_fallback(&mut self) -> Result<(), bun_core::Error> {
+    pub fn do_fcopy_file_with_read_write_loop_fallback(&mut self) -> Result<(), crate::Error> {
         match bun_sys::fcopyfile(
             self.source_fd,
             self.destination_fd,
@@ -584,7 +584,7 @@ impl<'a> CopyFile<'a> {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn do_clonefile(&mut self) -> Result<(), bun_core::Error> {
+    pub fn do_clonefile(&mut self) -> Result<(), crate::Error> {
         let mut source_buf = PathBuffer::uninit();
         let mut dest_buf = PathBuffer::uninit();
 

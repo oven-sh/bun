@@ -202,7 +202,7 @@ pub(crate) struct WalkTask<'a> {
 
 pub(crate) enum WalkTaskErr {
     Syscall(syscall::Error),
-    Unknown(bun_core::Error),
+    Unknown(crate::Error),
 }
 
 impl WalkTaskErr {

@@ -89,7 +89,7 @@ impl ZigException {
         error_list: &mut Vec<api::JsException>,
         root_path: &[u8],
         origin: Option<&ZigURL>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let name_slice = self.name.to_utf8();
         let message_slice = self.message.to_utf8();
 

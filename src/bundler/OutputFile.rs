@@ -4,7 +4,7 @@ use crate::options::Loader;
 // `bake::Side` / `jsc.api.BuildArtifact.OutputKind` are TYPE_ONLY move-ins;
 // the `options` module already defines them locally.
 use crate::options::{OutputKind, Side};
-use bun_core::Error;
+use crate::Error as Error;
 use bun_core::String as BunString;
 use bun_paths::PathBuffer;
 use bun_paths::fs;

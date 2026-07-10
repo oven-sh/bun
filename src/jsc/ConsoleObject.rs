@@ -40,7 +40,7 @@ mod JSPrinter {
         input: &[u8],
         writer: &mut (impl bun_io::Write + ?Sized),
         encoding: Encoding,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         match encoding {
             Encoding::Latin1 => {
                 bun_js_printer::write_json_string::<_, { Encoding::Latin1 }>(input, writer)
@@ -1187,7 +1187,7 @@ impl<'a> DynWriteAdapter<'a> {
         &mut self.head
     }
 
-    fn thunk_write_all(w: *mut bun_core::io::Writer, bytes: &[u8]) -> Result<(), bun_core::Error> {
+    fn thunk_write_all(w: *mut bun_core::io::Writer, bytes: &[u8]) -> Result<(), crate::Error> {
         // SAFETY: only reachable via the `io::Writer` vtable installed in
         // `Self::new`, which always passes `&mut self.head` (first repr(C)
         // field) as `w`; safe-fn coerces to the unsafe-fn-ptr slot type.
@@ -1195,7 +1195,7 @@ impl<'a> DynWriteAdapter<'a> {
         this.inner.write_all(bytes)
     }
 
-    fn thunk_flush(w: *mut bun_core::io::Writer) -> Result<(), bun_core::Error> {
+    fn thunk_flush(w: *mut bun_core::io::Writer) -> Result<(), crate::Error> {
         // SAFETY: only reachable via the `io::Writer` vtable installed in
         // `Self::new`, which always passes `&mut self.head` (first repr(C)
         // field) as `w`; safe-fn coerces to the unsafe-fn-ptr slot type.
@@ -1914,7 +1914,7 @@ pub mod formatter {
         impl bun_collections::pool::ObjectPoolType for Map {
             // Fresh nodes start with an empty map so clearing retained
             // capacity on first use is well-defined.
-            const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(|| Ok(Map::default()));
+            const INIT: Option<fn() -> Result<Self, crate::Error>> = Some(|| Ok(Map::default()));
         }
 
         // Thread-local free list, capped at 16 nodes.

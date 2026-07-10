@@ -4,7 +4,7 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
-use bun_core::Error;
+use crate::Error as Error;
 use bun_http::headers::api::StringPointer;
 use bun_http::headers::append_etag;
 use bun_http::{Headers, Method};

@@ -395,7 +395,7 @@ pub mod debug {
 // The local stub predated `bun_io` compiling; it carried a
 // `core::fmt::Write` supertrait so `write!(…)` returned `fmt::Result`. The
 // canonical trait instead provides its own `write_fmt` returning
-// `Result<(), bun_core::Error>`, so `write!` on `impl Write` now yields the
+// `Result<(), crate::Error>`, so `write!` on `impl Write` now yields the
 // crate-native error directly (the `fmt_err` shim below became identity).
 // `BoundedArray<u8,N>` and `FmtAdapter` impls live in `bun_io` (orphan rules).
 // ──────────────────────────────────────────────────────────────────────────

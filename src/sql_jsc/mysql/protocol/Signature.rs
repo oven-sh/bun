@@ -22,7 +22,7 @@ impl Signature {
 
     // `deinit` deleted — body only freed owned slices; `Box<[T]>` fields drop automatically.
 
-    // Errors are collapsed into the crate-wide `bun_core::Error` currency.
+    // Errors are collapsed into the crate-wide `crate::Error` currency.
     pub fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],

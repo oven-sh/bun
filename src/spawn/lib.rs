@@ -414,7 +414,7 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
         ..Default::default()
     };
 
-    // Outer `Result<_, bun_core::Error>` for hard errors,
+    // Outer `Result<_, crate::Error>` for hard errors,
     // inner `Maybe` for the syscall error.
     let result = process::sync::spawn(&sync_opts)??;
 

@@ -20,18 +20,17 @@ pub mod sys {
 
 // C++ allocates (`new WebCore::FetchHeaders` + `relaxAdoptionRequirement`) and
 // hands back a `+1`. One `FetchHeaders` handle owns exactly that one ref.
-bun_opaque::foreign_owned!(sys::FetchHeaders, WebCore__FetchHeaders__deref);
-
-/// Owned handle to a C++ `WebCore::FetchHeaders`.
-///
-/// Holds one ref on the C++ intrusive refcount; `Drop` gives it back. Every
-/// method takes `&self`: a refcount is shared by definition, and C++ mutates
-/// the headers through the same pointer, so there is no `&mut self` to have.
-///
-/// A `FetchHeaders` *borrowed* from a JS `Headers` wrapper (see [`Self::cast`])
-/// is a `ManuallyDrop<FetchHeaders>` — the JS object owns that ref, not us.
-#[repr(transparent)]
-pub struct FetchHeaders(bun_opaque::ForeignRef<sys::FetchHeaders>);
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C++ `WebCore::FetchHeaders`.
+    ///
+    /// Holds one ref on the C++ intrusive refcount; `Drop` gives it back. Every
+    /// method takes `&self`: a refcount is shared by definition, and C++ mutates
+    /// the headers through the same pointer, so there is no `&mut self` to have.
+    ///
+    /// A `FetchHeaders` *borrowed* from a JS `Headers` wrapper (see [`Self::cast`])
+    /// is a `ManuallyDrop<FetchHeaders>` — the JS object owns that ref, not us.
+    pub struct FetchHeaders(sys::FetchHeaders) via WebCore__FetchHeaders__deref;
+}
 
 // `JSGlobalObject`/`VM`/`sys::FetchHeaders` are opaque `UnsafeCell`-backed ZST
 // handles, so `&T` is ABI-identical to a non-null `*const T` and C++ mutating
@@ -139,63 +138,27 @@ struct PicoHeaders {
     len: usize,
 }
 
-/// Ownership plumbing.
-impl FetchHeaders {
-    /// Adopt a `+1` returned by C++.
-    ///
-    /// # Safety
-    /// `ptr` must carry exactly one ref that no other handle will release.
-    #[inline]
-    pub unsafe fn adopt(ptr: NonNull<sys::FetchHeaders>) -> Self {
-        // SAFETY: caller transfers the +1.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// Adopt a nullable `+1`; `None` on null.
-    #[inline]
-    fn adopt_ptr(ptr: *mut sys::FetchHeaders) -> Option<Self> {
-        // SAFETY: C++ `create*` returns a fresh +1 or null.
-        NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
-    }
-
-    /// The C++ pointer, still owned by `self`.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut sys::FetchHeaders {
-        self.0.as_ptr()
-    }
-
-    /// Hand our `+1` to a foreign owner. Pairs with a later [`Self::adopt`].
-    #[inline]
-    pub fn leak(self) -> NonNull<sys::FetchHeaders> {
-        self.0.leak()
-    }
-
-    #[inline]
-    fn raw(&self) -> &sys::FetchHeaders {
-        &self.0
-    }
-}
-
 /// Constructors. C++ allocates; every one of these returns a `+1`.
 impl FetchHeaders {
     pub fn create_empty() -> Self {
-        Self::adopt_ptr(WebCore__FetchHeaders__createEmpty())
+        // SAFETY: C++ `createEmpty` transfers a fresh `+1`, or returns null.
+        unsafe { Self::adopt_ptr(WebCore__FetchHeaders__createEmpty()) }
             .expect("WebCore__FetchHeaders__createEmpty returned null")
     }
 
     /// # Safety
     /// `uws_request` must be a live `uWS::HttpRequest*`; C++ dereferences it.
     pub unsafe fn create_from_uws(uws_request: *mut c_void) -> Self {
-        // SAFETY: caller contract.
-        Self::adopt_ptr(unsafe { WebCore__FetchHeaders__createFromUWS(uws_request) })
+        // SAFETY: caller contract; C++ `createFromUWS` transfers a fresh `+1`, or null.
+        unsafe { Self::adopt_ptr(WebCore__FetchHeaders__createFromUWS(uws_request)) }
             .expect("WebCore__FetchHeaders__createFromUWS returned null")
     }
 
     /// # Safety
     /// `h3_request` must be a live `uWS::Http3Request*`; C++ dereferences it.
     pub unsafe fn create_from_h3(h3_request: *mut c_void) -> Self {
-        // SAFETY: caller contract.
-        Self::adopt_ptr(unsafe { WebCore__FetchHeaders__createFromH3(h3_request) })
+        // SAFETY: caller contract; C++ `createFromH3` transfers a fresh `+1`, or null.
+        unsafe { Self::adopt_ptr(WebCore__FetchHeaders__createFromH3(h3_request)) }
             .expect("WebCore__FetchHeaders__createFromH3 returned null")
     }
 
@@ -212,8 +175,8 @@ impl FetchHeaders {
     /// # Safety
     /// `pico_headers` must point to a live `PicoHeaders`.
     unsafe fn create_from_pico_headers_(pico_headers: *const c_void) -> Self {
-        // SAFETY: caller contract.
-        Self::adopt_ptr(unsafe { WebCore__FetchHeaders__createFromPicoHeaders_(pico_headers) })
+        // SAFETY: caller contract; C++ `createFromPicoHeaders_` transfers a fresh `+1`, or null.
+        unsafe { Self::adopt_ptr(WebCore__FetchHeaders__createFromPicoHeaders_(pico_headers)) }
             .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
     }
 
@@ -221,7 +184,8 @@ impl FetchHeaders {
     /// `Record<String, String>`. Throws on invalid input; `None` if empty.
     pub fn create_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
         host_fn::from_js_host_call_generic(global, || {
-            Self::adopt_ptr(WebCore__FetchHeaders__createFromJS(global, value))
+            // SAFETY: C++ `createFromJS` transfers a fresh `+1`, or returns null.
+            unsafe { Self::adopt_ptr(WebCore__FetchHeaders__createFromJS(global, value)) }
         })
     }
 
@@ -246,13 +210,15 @@ impl FetchHeaders {
                 count,
             )
         };
-        Self::adopt_ptr(p)
+        // SAFETY: C++ `createValueNotJS` transfers a fresh `+1`, or returns null.
+        unsafe { Self::adopt_ptr(p) }
     }
 
     /// Deep-copies on the C++ side, so the result is a fresh `+1`.
     pub fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
         host_fn::from_js_host_call_generic(global, || {
-            Self::adopt_ptr(WebCore__FetchHeaders__cloneThis(self.raw(), global))
+            // SAFETY: C++ `cloneThis` deep-copies and transfers a fresh `+1`, or returns null.
+            unsafe { Self::adopt_ptr(WebCore__FetchHeaders__cloneThis(self.raw(), global)) }
         })
     }
 

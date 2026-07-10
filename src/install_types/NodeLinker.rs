@@ -73,54 +73,67 @@ pub mod npm {
 // (`__bun_regex_*`) defined `#[no_mangle]` in `bun_jsc::regular_expression`.
 // ══════════════════════════════════════════════════════════════════════════
 
-use core::ptr::NonNull;
-
 use bun_alloc::Arena;
 use bun_ast as ast;
 use bun_core::escape_reg_exp::escape_reg_exp_for_package_name_matching;
 use bun_core::{String as BunString, strings};
 
-// LAYERING: `bun_jsc::RegularExpression` (Yarr FFI) lives in a higher tier.
-// The bodies are defined `#[no_mangle]` in
-// `bun_jsc::regular_expression`; declared here as `extern "Rust"` and
-// resolved at link time.
-unsafe extern "Rust" {
-    /// Compile `pattern` with no flags. `None` ⇔ `error.InvalidRegExp`.
-    /// Performs `jsc::initialize(false)` lazily on first call.
-    fn __bun_regex_compile(pattern: BunString) -> Option<NonNull<()>>;
-    fn __bun_regex_matches(regex: NonNull<()>, input: &BunString) -> bool;
-    fn __bun_regex_drop(regex: NonNull<()>);
+// FORWARD_DECL(b0): this tier cannot name `bun_jsc::RegularExpression`, so it
+// re-declares the handle. The two ZSTs meet only at the `extern "Rust"`
+// boundary below, where both are a bare non-null pointer.
+/// The JSC object itself. Only the extern declarations below name this type;
+/// all Rust code uses the owning [`RegularExpression`] handle.
+pub mod sys {
+    bun_opaque::opaque_ffi! {
+        /// `JSC::Yarr::RegularExpression`. `&Self` is ABI-identical to a
+        /// non-null `RegularExpression*` and carries no `noalias`/`readonly` —
+        /// Yarr mutates its match state through it.
+        pub struct RegularExpression;
+    }
 }
 
-/// Owned, type-erased JSC regex; drops through the vtable.
-// FORWARD_DECL(b0): bun_jsc::RegularExpression — stored as raw NonNull<()>
-// (NOT Box<ZST>: a zero-sized opaque Box is a dangling sentinel that would
-// leak the real JSC allocation and skip its destructor).
-pub struct RegularExpression(NonNull<()>);
+// LAYERING: the bodies live `#[no_mangle]` in the higher-tier
+// `bun_jsc::regular_expression`; declared `extern "Rust"`, resolved at link time.
+// `&sys::RegularExpression` is ABI-identical to the pointer they take.
+unsafe extern "Rust" {
+    /// Compile `pattern` with no flags. Null ⇔ `error.InvalidRegExp`.
+    /// Performs `jsc::initialize(false)` lazily on first call.
+    safe fn __bun_regex_compile(pattern: BunString) -> *mut sys::RegularExpression;
+    safe fn __bun_regex_matches(regex: &sys::RegularExpression, input: &BunString) -> bool;
+    // safe: runs the Yarr destructor + free. Giving the allocation back is not
+    // exclusive access, so the receiver is `&`, not `&mut`.
+    safe fn __bun_regex_drop(regex: &sys::RegularExpression);
+}
 
+// `__bun_regex_compile` allocates and hands back the sole owning pointer. One
+// `RegularExpression` handle owns exactly that allocation.
+bun_opaque::foreign_handle! {
+    /// Owned handle to a JSC `Yarr::RegularExpression`.
+    ///
+    /// Holds the one ownership unit `__bun_regex_compile` produced; `Drop` gives it
+    /// back. [`Self::matches`] takes `&self`: Yarr mutates its match state through
+    /// the same pointer, so there is no `&mut self` to have.
+    pub struct RegularExpression(sys::RegularExpression) via __bun_regex_drop;
+}
+
+/// Matching. `&self`: Yarr mutates through the same pointer.
 impl RegularExpression {
     #[inline]
     pub(crate) fn matches(&self, input: &BunString) -> bool {
-        // SAFETY: self.0 was produced by `__bun_regex_compile`.
-        unsafe { __bun_regex_matches(self.0, input) }
+        __bun_regex_matches(self.raw(), input)
     }
 }
 
-impl Drop for RegularExpression {
-    fn drop(&mut self) {
-        // SAFETY: self.0 was produced by `__bun_regex_compile`; runs JSC destructor + free.
-        unsafe { __bun_regex_drop(self.0) }
-    }
-}
-
-/// Compile `pattern` into a Yarr regex via the link-time extern. `pub` so
-/// higher-tier callers re-use this single declaration site instead of
-/// duplicating the `__bun_regex_*` extern block (one declarer per upward call,
-/// per PORTING.md §extern-Rust-ban).
+/// Compile `pattern` into a Yarr regex via the link-time extern. The single
+/// declaration site for `__bun_regex_*`, so higher-tier callers do not
+/// duplicate the extern block (one declarer per upward call, per PORTING.md
+/// §extern-Rust-ban).
 #[inline]
 pub(crate) fn compile_regex(pattern: BunString) -> Option<RegularExpression> {
-    // SAFETY: link-time extern; pattern ownership transfers.
-    unsafe { __bun_regex_compile(pattern) }.map(RegularExpression)
+    // SAFETY: `__bun_regex_compile` leaks a fresh `+1` to us, or returns null on an
+    // invalid pattern — having already freed the regex it allocated, so there is
+    // nothing for us to adopt.
+    unsafe { RegularExpression::adopt_ptr(__bun_regex_compile(pattern)) }
 }
 
 pub struct PnpmMatcher {

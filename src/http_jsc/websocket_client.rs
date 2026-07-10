@@ -173,8 +173,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.message_is_compressed.set(false);
         self.deflate.replace(None);
         if let Some(s) = self.secure.take() {
-            // SAFETY: s is a valid SSL_CTX* owned by us per field invariant
-            unsafe { boringssl::c::SSL_CTX_free(s) };
+            // `s` is an owned SSL_CTX ref per the field invariant.
+            boringssl::c::SSL_CTX_free(SslCtx::opaque_ref(s));
         }
         // Detach the tunnel first so its shutdown callbacks cannot re-enter this path.
         if let Some(tunnel) = self.proxy_tunnel.take() {

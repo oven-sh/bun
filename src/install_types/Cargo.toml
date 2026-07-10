@@ -24,3 +24,4 @@ bun_collections.workspace = true
 bun_ast.workspace = true
 bun_semver.workspace = true
 bun_wyhash.workspace = true
+bun_opaque.workspace = true

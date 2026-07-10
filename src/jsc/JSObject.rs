@@ -53,10 +53,7 @@ impl JSObject {
     ///
     /// This method is equivalent to `Object.create(...)` + setting properties,
     /// and is only intended for creating POJOs.
-    pub fn create<T: PojoFields>(
-        pojo: &T,
-        global: &JSGlobalObject,
-    ) -> JsResult<&'static mut JSObject> {
+    pub fn create<T: PojoFields>(pojo: &T, global: &JSGlobalObject) -> JsResult<&'static JSObject> {
         Self::create_from_struct_with_prototype::<T, false>(pojo, global)
     }
 
@@ -71,7 +68,7 @@ impl JSObject {
     pub fn create_null_proto<T: PojoFields>(
         pojo: &T,
         global: &JSGlobalObject,
-    ) -> JsResult<&'static mut JSObject> {
+    ) -> JsResult<&'static JSObject> {
         Self::create_from_struct_with_prototype::<T, true>(pojo, global)
     }
 
@@ -90,7 +87,7 @@ impl JSObject {
     fn create_from_struct_with_prototype<T: PojoFields, const NULL_PROTOTYPE: bool>(
         pojo: &T,
         global: &JSGlobalObject,
-    ) -> JsResult<&'static mut JSObject> {
+    ) -> JsResult<&'static JSObject> {
         // Rust has no field reflection; `PojoFields` impls are hand-written
         // (see trait docs) and emit an inline
         // `put(b"name", JSValue::from_any(global, &self.name)?)?;` per field.
@@ -101,12 +98,10 @@ impl JSObject {
             JSValue::create_empty_object(global, T::FIELD_COUNT)
         };
         debug_assert!(val.is_object());
-        // `val.is_object()` asserted above in debug; JSC guarantees these
-        // constructors return a JSObject cell. A cell-tagged JSValue's payload
-        // IS the cell pointer (NotCellMask bits are zero). `JSObject` is an
-        // `opaque_ffi!` ZST handle; `opaque_mut` is the centralised
-        // non-null-ZST deref proof (zero-byte `&mut` cannot alias).
-        let obj = JSObject::opaque_mut(val.0 as *mut JSObject);
+        // JSC guarantees these constructors return a JSObject cell; a cell-tagged
+        // JSValue's payload IS the cell pointer (NotCellMask bits are zero).
+        // `opaque_ref` is the centralised non-null-ZST deref proof.
+        let obj = JSObject::opaque_ref(val.0 as *const JSObject);
 
         let cell = obj.to_js();
         // Each `fromAny` result is `put()` immediately before the next field
@@ -213,7 +208,7 @@ impl JSObject {
 
     #[track_caller]
     pub fn put_record(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         key: &mut ZigString,
         values: &mut [ZigString],
@@ -232,7 +227,7 @@ impl JSObject {
     }
 
     /// This will not call getters or be observable from JavaScript.
-    pub fn get_code_property_vm_inquiry(&mut self, global: &JSGlobalObject) -> Option<JSValue> {
+    pub fn get_code_property_vm_inquiry(&self, global: &JSGlobalObject) -> Option<JSValue> {
         let v = Bun__JSObject__getCodePropertyVMInquiry(global, self);
         if v.is_empty() {
             return None;
@@ -286,7 +281,7 @@ pub(crate) type InitializeCallback =
 /// Object-initializer contract: implement `create` on your context type and
 /// pass it to `JSObject::create_with_initializer`.
 pub trait ObjectInitializer {
-    fn create(&mut self, obj: &mut JSObject, global: &JSGlobalObject) -> JsResult<()>;
+    fn create(&mut self, obj: &JSObject, global: &JSGlobalObject) -> JsResult<()>;
 }
 
 extern "C" fn initializer_call<Ctx: ObjectInitializer>(
@@ -297,7 +292,7 @@ extern "C" fn initializer_call<Ctx: ObjectInitializer>(
     // SAFETY: `this` was produced from `&mut Ctx` in `create_with_initializer`;
     // `obj` is a live JSC pointer for the duration of the callback. `global` is
     // taken by reference at the C ABI (`&T` ≡ non-null `*const T`).
-    let result = unsafe { Ctx::create(&mut *this.cast::<Ctx>(), &mut *obj, global) };
+    let result = unsafe { Ctx::create(&mut *this.cast::<Ctx>(), &*obj, global) };
     if let Err(err) = result {
         // Mirrors `host_fn::void_from_js_error` — OOM throws,
         // anything else asserts an exception is already pending.

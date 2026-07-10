@@ -4098,7 +4098,7 @@ impl Resolver {
             if self.any_requests_pending() {
                 // SAFETY: `channel` is the live c-ares channel owned by `self`.
                 c_ares::ares_process_fd(
-                    unsafe { &mut *channel },
+                    unsafe { &*channel },
                     c_ares::ARES_SOCKET_BAD,
                     c_ares::ARES_SOCKET_BAD,
                 );
@@ -5671,7 +5671,7 @@ impl Resolver {
         {
             let ip = u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]]);
             // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-            c_ares::ares_set_local_ip4(unsafe { &mut *channel }, ip);
+            c_ares::ares_set_local_ip4(unsafe { &*channel }, ip);
             return Ok(c_ares::AF::INET);
         }
 
@@ -5888,7 +5888,7 @@ impl Resolver {
     ) -> JsResult<JSValue> {
         let channel = self.get_channel_or_error(global_this)?;
         // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-        c_ares::ares_cancel(unsafe { &mut *channel });
+        c_ares::ares_cancel(unsafe { &*channel });
         Ok(JSValue::UNDEFINED)
     }
 

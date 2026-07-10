@@ -5784,7 +5784,7 @@ impl VirtualMachine {
         });
         let code: Option<&[u8]> = if is_error_instance {
             // SAFETY: `is_error_instance` ⇒ `get_object()` is `Some`.
-            let obj = unsafe { &mut *error_instance.get_object().unwrap_unchecked() };
+            let obj = unsafe { &*error_instance.get_object().unwrap_unchecked() };
             if let Some(code_value) = obj.get_code_property_vm_inquiry(global_ref) {
                 if code_value.is_string() {
                     match code_value.to_bun_string(global_ref) {

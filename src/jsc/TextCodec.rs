@@ -3,23 +3,49 @@ use core::ptr::NonNull;
 use crate::mark_binding;
 use bun_core::String as BunString;
 
+/// The C++ object itself. Only the extern declarations below name this type;
+/// all Rust code uses the owning [`TextCodec`] handle.
+pub mod sys {
+    bun_opaque::opaque_ffi! {
+        /// `PAL::TextCodec`. `&Self` is ABI-identical to a non-null
+        /// `PAL::TextCodec*` (C++ spells it `void*`), and carries no
+        /// `noalias`/`readonly` — C++ mutates the codec's streaming state
+        /// (lead byte, ISO-2022-JP mode, GB18030 bytes) through it.
+        pub struct TextCodec;
+    }
+}
+
+// C++ `newTextCodec(encoding).release()` hands back the sole owning pointer;
+// `Bun__deleteTextCodec` `delete`s it. One handle owns exactly one codec.
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C++ `PAL::TextCodec`.
+    ///
+    /// `Drop` deletes the codec. Every method takes `&self`: C++ mutates the codec
+    /// through the same pointer, and giving the object back is not exclusive
+    /// access, so there is no `&mut self` and no `DerefMut`.
+    pub struct TextCodec(sys::TextCodec) via Bun__deleteTextCodec;
+}
+
+// `&sys::TextCodec` is ABI-identical to the `void*` the C++ shims declare. Shims
+// that also take raw `*const u8` / out-pointers stay `unsafe fn`: safe Rust can
+// forge those.
 unsafe extern "C" {
     fn Bun__createTextCodec(
         encoding_name: *const u8,
         encoding_name_len: usize,
-    ) -> Option<NonNull<TextCodec>>;
+    ) -> *mut sys::TextCodec;
     fn Bun__decodeWithTextCodec(
-        codec: *mut TextCodec,
+        codec: &sys::TextCodec,
         data: *const u8,
         length: usize,
         flush: bool,
         stop_on_error: bool,
         out_saw_error: *mut bool,
     ) -> BunString;
-    fn Bun__deleteTextCodec(codec: *mut TextCodec);
-    // safe: `TextCodec` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
-    // to a non-null `*mut` and C++ mutating codec state is interior to the cell.
-    safe fn Bun__stripBOMFromTextCodec(codec: &mut TextCodec);
+    // safe: C++ `delete`s the codec. Handing the object back is not exclusive
+    // access as Rust sees it, so the receiver is `&`, not `&mut`.
+    safe fn Bun__deleteTextCodec(codec: &sys::TextCodec);
+    safe fn Bun__stripBOMFromTextCodec(codec: &sys::TextCodec);
     fn Bun__isEncodingSupported(encoding_name: *const u8, encoding_name_len: usize) -> bool;
     fn Bun__getCanonicalEncodingName(
         encoding_name: *const u8,
@@ -28,39 +54,29 @@ unsafe extern "C" {
     ) -> Option<NonNull<u8>>;
 }
 
-bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle to a C++ PAL::TextCodec.
-    pub struct TextCodec;
-}
-
 pub struct DecodeResult {
     pub result: BunString,
     pub saw_error: bool,
 }
 
 impl TextCodec {
-    pub fn create(encoding: &[u8]) -> Option<NonNull<TextCodec>> {
+    /// `None` when `encoding` does not name a valid WebKit encoding.
+    pub fn create(encoding: &[u8]) -> Option<Self> {
         mark_binding!();
-        // SAFETY: encoding.ptr is valid for encoding.len bytes.
-        unsafe { Bun__createTextCodec(encoding.as_ptr(), encoding.len()) }
+        // SAFETY: encoding.ptr is valid for encoding.len bytes; C++
+        // `newTextCodec(encoding).release()` transfers us the sole owning
+        // pointer, or null.
+        unsafe { Self::adopt_ptr(Bun__createTextCodec(encoding.as_ptr(), encoding.len())) }
     }
 
-    // FFI-owned opaque; constructed/destroyed across FFI, so explicit
-    // destroy instead of `impl Drop` (cannot own a `TextCodec` by value).
-    pub unsafe fn destroy(this: *mut TextCodec) {
-        mark_binding!();
-        // SAFETY: caller guarantees `this` was returned by `create` and not yet freed.
-        unsafe { Bun__deleteTextCodec(this) }
-    }
-
-    pub fn decode(&mut self, data: &[u8], flush: bool, stop_on_error: bool) -> DecodeResult {
+    pub fn decode(&self, data: &[u8], flush: bool, stop_on_error: bool) -> DecodeResult {
         mark_binding!();
         let mut saw_error: bool = false;
-        // SAFETY: `self` is a valid live codec; `data` valid for `data.len()` bytes;
-        // `saw_error` is a valid out-pointer for the duration of the call.
+        // SAFETY: `data` valid for `data.len()` bytes; `saw_error` is a valid
+        // out-pointer for the duration of the call.
         let result = unsafe {
             Bun__decodeWithTextCodec(
-                self,
+                self.raw(),
                 data.as_ptr(),
                 data.len(),
                 flush,
@@ -72,9 +88,9 @@ impl TextCodec {
         DecodeResult { result, saw_error }
     }
 
-    pub fn strip_bom(&mut self) {
+    pub fn strip_bom(&self) {
         mark_binding!();
-        Bun__stripBOMFromTextCodec(self)
+        Bun__stripBOMFromTextCodec(self.raw())
     }
 
     pub fn is_supported(encoding: &[u8]) -> bool {

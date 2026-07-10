@@ -12,72 +12,81 @@ pub enum WeakRefType {
     PostgreSQLQueryClient = 2,
 }
 
-bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle (C++ `Bun::WeakRef`).
-    pub(crate) struct WeakImpl;
-}
-
-impl WeakImpl {
-    pub(crate) fn init(
-        global_this: &JSGlobalObject,
-        value: JSValue,
-        ref_type: WeakRefType,
-        ctx: Option<NonNull<c_void>>,
-    ) -> NonNull<WeakImpl> {
-        NonNull::new(Bun__WeakRef__new(
-            global_this,
-            value,
-            ref_type,
-            ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr()),
-        ))
-        .expect("Bun__WeakRef__new returned null")
-    }
-
-    /// Read the weakly-held `JSValue` (or `JSValue::ZERO` if collected).
-    ///
-    /// Safe: every `NonNull<WeakImpl>` in this crate originates from
-    /// [`WeakImpl::init`] and is held by a [`Weak<T>`] that drops it via
-    /// [`WeakImpl::destroy`] before releasing the slot — so any
-    /// `NonNull<WeakImpl>` reachable here is a live C++ `JSC::Weak` handle.
-    /// Same contract as [`crate::strong::Impl::get`].
-    pub(crate) fn get(this: NonNull<WeakImpl>) -> JSValue {
-        Bun__WeakRef__get(WeakImpl::opaque_ref(this.as_ptr()))
-    }
-
-    /// Clear the weakly-held value without freeing the handle.
-    ///
-    /// Safe for the same reason as [`WeakImpl::get`] — the handle is live by
-    /// construction; `clear` is idempotent and does not invalidate `this`.
-    pub(crate) fn clear(this: NonNull<WeakImpl>) {
-        Bun__WeakRef__clear(WeakImpl::opaque_ref(this.as_ptr()))
-    }
-
-    pub(crate) unsafe fn destroy(this: NonNull<WeakImpl>) {
-        // SAFETY: `this` is a live WeakImpl handle; consumed here.
-        unsafe { Bun__WeakRef__delete(this.as_ptr()) }
+/// The C++ object itself. Only the extern declarations below name this type;
+/// all Rust code uses the owning [`WeakImpl`] handle.
+pub(crate) mod sys {
+    bun_opaque::opaque_ffi! {
+        /// `Bun::WeakRef`. `&Self` is ABI-identical to a non-null
+        /// `Bun::WeakRef*`, and carries no `noalias`/`readonly` — C++ mutates
+        /// the `JSC::Weak` slot through it.
+        pub(crate) struct WeakImpl;
     }
 }
 
-// `WeakImpl` is an opaque `UnsafeCell`-backed ZST handle (`&WeakImpl` is
-// ABI-identical to non-null `*const WeakImpl`; C++ slot mutation is interior).
-// `new` is `safe fn`: `&JSGlobalObject` is the non-null handle proof, and `ctx`
-// is an opaque round-trip pointer C++ only stores and forwards to the finalizer
-// (never dereferenced as Rust data) — same contract as `JSC__VM__holdAPILock`.
-// `delete` consumes the allocation and so stays `unsafe fn`.
+// C++ `new Bun::WeakRef` hands back the allocation. One `WeakImpl` handle owns
+// exactly that one allocation; `Drop` gives it back.
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C++ `Bun::WeakRef`.
+    ///
+    /// Every method takes `&self`: C++ mutates the `JSC::Weak` slot through the
+    /// same pointer, so there is no `&mut self` to have.
+    pub(crate) struct WeakImpl(sys::WeakImpl) via Bun__WeakRef__delete;
+}
+
+// `JSGlobalObject`/`sys::WeakImpl` are ZST handles: `&T` is ABI-identical to a
+// non-null `*const T`, and C++ writing the slot through it is interior mutation.
+// Shims trafficking only in such refs + scalars are `safe fn`.
 unsafe extern "C" {
-    fn Bun__WeakRef__delete(this: *mut WeakImpl);
-    safe fn Bun__WeakRef__new(
+    // safe: C++ clears the slot and `delete`s the object. Destruction is not
+    // exclusive access of any Rust-visible bytes, so the receiver is `&`.
+    safe fn Bun__WeakRef__delete(this: &sys::WeakImpl);
+    // NOT `safe fn`: C++ stores `ctx` in the `JSC::Weak` and hands it to
+    // `Bun__<T>_finalize`, which dereferences it. Safe Rust can forge a
+    // `*mut c_void`, so the call itself carries the validity obligation.
+    fn Bun__WeakRef__new(
         global: &JSGlobalObject,
         value: JSValue,
         ref_type: WeakRefType,
         ctx: *mut c_void,
-    ) -> *mut WeakImpl;
-    safe fn Bun__WeakRef__get(this: &WeakImpl) -> JSValue;
-    safe fn Bun__WeakRef__clear(this: &WeakImpl);
+    ) -> *mut sys::WeakImpl;
+    safe fn Bun__WeakRef__get(this: &sys::WeakImpl) -> JSValue;
+    safe fn Bun__WeakRef__clear(this: &sys::WeakImpl);
+}
+
+impl WeakImpl {
+    fn new(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+        ref_type: WeakRefType,
+        ctx: Option<NonNull<c_void>>,
+    ) -> Self {
+        // SAFETY: C++ only stores `ctx` and forwards it to the type's finalizer;
+        // the owner it points at outlives this handle.
+        let ptr = unsafe {
+            Bun__WeakRef__new(
+                global_this,
+                value,
+                ref_type,
+                ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr()),
+            )
+        };
+        // SAFETY: `Bun__WeakRef__new` transfers a fresh allocation, or null.
+        unsafe { Self::adopt_ptr(ptr) }.expect("Bun__WeakRef__new returned null")
+    }
+
+    /// Read the weakly-held `JSValue` (or `JSValue::ZERO` if collected).
+    fn get(&self) -> JSValue {
+        Bun__WeakRef__get(self.raw())
+    }
+
+    /// Clear the weakly-held value without freeing the handle; idempotent.
+    fn clear(&self) {
+        Bun__WeakRef__clear(self.raw())
+    }
 }
 
 pub struct Weak<T> {
-    r#ref: Option<NonNull<WeakImpl>>,
+    r#ref: Option<WeakImpl>,
     global_this: Option<crate::GlobalRef>,
     _ctx: PhantomData<*mut T>,
 }
@@ -114,7 +123,7 @@ impl<T> Weak<T> {
     ) -> Self {
         if !value.is_empty() {
             return Self {
-                r#ref: Some(WeakImpl::init(
+                r#ref: Some(WeakImpl::new(
                     global_this,
                     value,
                     ref_type,
@@ -133,8 +142,7 @@ impl<T> Weak<T> {
     }
 
     pub fn get(&self) -> Option<JSValue> {
-        let r#ref = self.r#ref?;
-        let result = WeakImpl::get(r#ref);
+        let result = self.r#ref.as_ref()?.get();
         if result.is_empty() {
             return None;
         }
@@ -143,23 +151,23 @@ impl<T> Weak<T> {
     }
 
     pub fn swap(&mut self) -> JSValue {
-        let Some(r#ref) = self.r#ref else {
+        let Some(r#ref) = self.r#ref.as_ref() else {
             return JSValue::ZERO;
         };
-        let result = WeakImpl::get(r#ref);
+        let result = r#ref.get();
         if result.is_empty() {
             return JSValue::ZERO;
         }
 
-        WeakImpl::clear(r#ref);
+        r#ref.clear();
         result
     }
 
     pub fn has(&self) -> bool {
-        let Some(r#ref) = self.r#ref else {
+        let Some(r#ref) = self.r#ref.as_ref() else {
             return false;
         };
-        !WeakImpl::get(r#ref).is_empty()
+        !r#ref.get().is_empty()
     }
 
     pub fn try_swap(&mut self) -> Option<JSValue> {
@@ -172,20 +180,9 @@ impl<T> Weak<T> {
     }
 
     pub fn clear(&mut self) {
-        let Some(r#ref) = self.r#ref else {
+        let Some(r#ref) = self.r#ref.as_ref() else {
             return;
         };
-        WeakImpl::clear(r#ref);
-    }
-}
-
-impl<T> Drop for Weak<T> {
-    fn drop(&mut self) {
-        let Some(r#ref) = self.r#ref else {
-            return;
-        };
-        self.r#ref = None;
-        // SAFETY: `r#ref` was live; we just took ownership and are deleting it.
-        unsafe { WeakImpl::destroy(r#ref) };
+        r#ref.clear();
     }
 }

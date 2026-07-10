@@ -244,7 +244,7 @@ impl FileRoute {
                 }
             }
             AnyResponse::H3(s) => {
-                let s = bun_opaque::opaque_deref_mut(s);
+                let s = bun_opaque::opaque_deref(s);
                 for (name, value) in names.iter().zip(values) {
                     s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
                 }
@@ -275,7 +275,7 @@ impl FileRoute {
                 let mut b = bun_core::fmt::ItoaBuf::new();
                 let s = bun_core::fmt::itoa(&mut b, status);
                 // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(r).write_status(s);
+                bun_opaque::opaque_deref(r).write_status(s);
             }
         }
     }

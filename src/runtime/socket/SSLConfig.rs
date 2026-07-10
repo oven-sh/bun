@@ -306,8 +306,8 @@ fn handle_file(
             jsc::generated::SSLConfigFile::String(val) => SingleFile::String(val.get()),
             jsc::generated::SSLConfigFile::Buffer(val) => {
                 // SAFETY: GenVal::get() yields a non-null pointer valid for the
-                // lifetime of `generated`; we narrow it to `&mut` for the call.
-                SingleFile::Buffer(unsafe { &mut *val.get() })
+                // lifetime of `generated`.
+                SingleFile::Buffer(unsafe { &*val.get() })
             }
             jsc::generated::SSLConfigFile::File(val) => {
                 // SAFETY: opaque `GenBlob` (`*mut c_void`) is the JS class `m_ctx`
@@ -348,7 +348,7 @@ fn handle_file_array(
                 jsc::generated::SSLConfigSingleFile::Buffer(val) => {
                     // SAFETY: see `handle_file` above — non-null GenVal pointers
                     // valid for the lifetime of `generated`.
-                    SingleFile::Buffer(unsafe { &mut *val.get() })
+                    SingleFile::Buffer(unsafe { &*val.get() })
                 }
                 jsc::generated::SSLConfigSingleFile::File(val) => {
                     // SAFETY: opaque `GenBlob` (`*mut c_void`) is layout-identical
@@ -364,7 +364,7 @@ fn handle_file_array(
 
 enum SingleFile<'a> {
     String(bun_core::String),
-    Buffer(&'a mut jsc::JSCArrayBuffer),
+    Buffer(&'a jsc::JSCArrayBuffer),
     File(&'a mut crate::webcore::Blob),
 }
 

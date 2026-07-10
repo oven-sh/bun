@@ -132,10 +132,10 @@ impl ClientSession {
             if let crate::HTTPRequestBody::Stream(s) = &mut client.state.original_request_body {
                 s.ended = ended;
             }
-            // `drain_send_body` needs `&mut Stream` and `&mut quic::Stream` at
-            // once; they are disjoint objects, so bypass `Stream::qstream_mut`.
+            // `drain_send_body` needs `&mut Stream` and `&quic::Stream` at once;
+            // they are disjoint objects, so bypass `Stream::qstream_ref`.
             if let Some(qs) = stream.qstream {
-                encode::drain_send_body(stream, quic_stream_mut(qs.as_ptr()));
+                encode::drain_send_body(stream, quic_stream_ref(qs.as_ptr()));
             }
             return;
         }
@@ -151,7 +151,7 @@ impl ClientSession {
                 continue;
             }
             if core::mem::take(&mut stream.read_paused) {
-                if let Some(qs) = stream.qstream_mut() {
+                if let Some(qs) = stream.qstream_ref() {
                     qs.want_read(true);
                 }
             }
@@ -167,7 +167,7 @@ impl ClientSession {
         }
         st.client = None;
         let request_body_done = st.request_body_done;
-        if let Some(qs) = st.qstream_mut() {
+        if let Some(qs) = st.qstream_ref() {
             qs.ext::<Stream>().set(None);
             // The success path can reach here while the request body is still
             // being written (server responded early). FIN would be a
@@ -412,16 +412,18 @@ pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket
     unsafe { &mut *qs }
 }
 
-/// Upgrade a non-null `*mut quic::Stream` lsquic FFI handle to `&mut`.
+/// Upgrade a non-null `*mut quic::Stream` lsquic FFI handle to `&`.
 ///
 /// Same INVARIANT as [`quic_socket_mut`] — lsquic-owned, live for the
 /// borrow's duration (callback argument, or `Stream.qstream` set in
 /// `on_stream_open` and nulled in `on_stream_close` / `detach`), FFI
-/// allocation distinct from any Rust holder, HTTP-thread-only.
+/// allocation distinct from any Rust holder, HTTP-thread-only. `quic::Stream`
+/// is an opaque FFI ZST whose methods all take `&self`, so there is no `&mut`
+/// to hand out — lsquic mutates the real stream through the handle.
 #[inline(always)]
-pub(super) fn quic_stream_mut<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {
+pub(super) fn quic_stream_ref<'a>(s: *mut quic::Stream) -> &'a quic::Stream {
     // SAFETY: see [`quic_socket_mut`] INVARIANT.
-    unsafe { &mut *s }
+    unsafe { &*s }
 }
 
 /// Upgrade a `*mut Stream` (a `self.pending` entry, or one just removed from

@@ -19,7 +19,7 @@ use bun_parsers::json as JSON;
 // lift via `bun_ast::Expr::from(t2_expr)` at the call site.
 use bun_ast::{E, Expr, ExprData};
 use bun_js_printer as js_printer;
-use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
+use bun_libarchive::lib::{Entry as ArchiveEntry, Result as ArchiveStatus, sys::Archive};
 use bun_paths::{self as path, PathBuffer, SEP_STR};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
 // borrow_subslice/length live on `cow_slice::CowSliceZ`, not on the `std::borrow::Cow`

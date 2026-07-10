@@ -144,9 +144,7 @@ pub(crate) fn do_send(
             match unsafe { (*listener).listener.get() } {
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
-                    let fd = bun_opaque::opaque_deref_mut(socket_uws)
-                        .get_socket()
-                        .get_fd();
+                    let fd = bun_opaque::opaque_deref(socket_uws).get_socket().get_fd();
                     zig_handle = Some(Handle::init(fd, handle));
                 }
                 crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}

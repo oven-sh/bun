@@ -461,7 +461,8 @@ const rustSharedTypes: Record<string, string> = {
   "JSC::JSPromise": "crate::JSPromise",
   "JSC::JSMap": "crate::JSMap",
   "JSC::CustomGetterSetter": "crate::CustomGetterSetter",
-  "JSC::SourceProvider": "crate::SourceProvider",
+  // `crate::SourceProvider` is the owning handle; the C++ object is the ZST.
+  "JSC::SourceProvider": "crate::source_provider::sys::SourceProvider",
   "JSC::CallFrame": "crate::CallFrame",
   "JSC::JSObject": "crate::JSObject",
   "JSC::JSString": "crate::JSString",
@@ -469,7 +470,7 @@ const rustSharedTypes: Record<string, string> = {
   "JSC::JSInternalPromise": "crate::JSInternalPromise",
   "WTF::StringImpl": "core::ffi::c_void",
   "WebCore::DOMURL": "crate::DOMURL",
-  "WebCore::EventLoopTask": "crate::cpp_task::CppTask",
+  "WebCore::EventLoopTask": "crate::cpp_task::sys::CppTask",
   // HTTPServerAgent / inspector types only show up in `nothrow` exports;
   // emit as opaque so the raw extern still type-checks.
   "Inspector::InspectorHTTPServerAgent": "core::ffi::c_void",

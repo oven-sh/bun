@@ -34,7 +34,7 @@ impl AnyRequest {
     }
     pub fn set_yield(&mut self, y: bool) {
         match self {
-            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).set_yield(y),
+            Self::H1(r) => bun_opaque::opaque_deref(*r).set_yield(y),
             Self::H3(r) => bun_opaque::opaque_deref_mut(*r).set_yield(y),
         }
     }
@@ -52,7 +52,7 @@ impl Request {
     pub fn get_yield(&self) -> bool {
         c::uws_req_get_yield(self)
     }
-    pub fn set_yield(&mut self, yield_: bool) {
+    pub fn set_yield(&self, yield_: bool) {
         c::uws_req_set_yield(self, yield_)
     }
     pub fn url(&self) -> &[u8] {
@@ -105,7 +105,7 @@ mod c {
     unsafe extern "C" {
         pub(super) safe fn uws_req_is_ancient(res: &Request) -> bool;
         pub(super) safe fn uws_req_get_yield(res: &Request) -> bool;
-        pub(super) safe fn uws_req_set_yield(res: &mut Request, yield_: bool);
+        pub(super) safe fn uws_req_set_yield(res: &Request, yield_: bool);
         // Out-param `dest` is a `&mut *const u8` (non-null, valid for write); the C
         // shim only stores a pointer into request-owned storage and returns its
         // length — no read-through-ptr precondition, so `safe fn`.

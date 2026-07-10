@@ -442,10 +442,10 @@ mod _impl {
                         self.flush as c_uint,
                     )
                 },
-                // SAFETY: state is a valid DCtx.
+                // SAFETY: state is a valid, non-null DCtx (checked above).
                 NodeMode::ZSTD_DECOMPRESS => unsafe {
                     c::ZSTD_decompressStream(
-                        self.state_ptr().cast(),
+                        c::ZSTD_DStream::opaque_ref(self.state_ptr().cast()),
                         &raw mut self.output,
                         &raw mut self.input,
                     )

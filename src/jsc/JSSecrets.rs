@@ -1,38 +1,71 @@
 use crate::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject, JSValue, JsResult, Strong};
 
-// Opaque pointer to C++ SecretsJobOptions struct
-bun_opaque::opaque_ffi! { pub struct SecretsJobOptions; }
+/// The C++ object itself. Only the extern declarations below name this type;
+/// all Rust code uses the owning [`SecretsJobOptions`] handle.
+pub mod sys {
+    bun_opaque::opaque_ffi! {
+        /// C++ `SecretsJobOptions`. `&Self` is ABI-identical to a non-null
+        /// `SecretsJobOptions*` and carries no `noalias`/`readonly` — the
+        /// threadpool body writes `error`/`resultPassword`/`deleted` through it.
+        pub struct SecretsJobOptions;
+    }
+}
 
-// safe fn: `SecretsJobOptions` and `JSGlobalObject` are `opaque_ffi!` ZST
-// handles (`!Freeze` via `UnsafeCell`); `&mut`/`&` are ABI-identical to
-// non-null `*mut`/`*const` and C++ mutating job state through them is interior
-// to the cell. `deinit` consumes/frees the C++ allocation and so stays
-// `unsafe fn` (double-free precondition).
+// C++ `SecretsJobOptions::fromJS` does a plain `new`, handing Rust the sole
+// ownership unit. `deinit` is the matching `delete`; the dtor memsets the
+// service/name/password buffers, so dropping is load-bearing, not just free.
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C++ `SecretsJobOptions`.
+    ///
+    /// Holds one heap allocation; `Drop` runs the C++ `delete`, which zeroes the
+    /// secret buffers. Every method takes `&self`: the ZST is `UnsafeCell`-backed,
+    /// so C++ mutates the job's result fields through `&` and there is no `&mut`
+    /// exclusivity to claim — the work pool and the C++ side share the object.
+    pub struct SecretsJobOptions(sys::SecretsJobOptions) via Bun__SecretsJobOptions__deinit;
+}
+
+// safe fn: `sys::SecretsJobOptions` and `JSGlobalObject` are `opaque_ffi!` ZST
+// handles (`!Freeze` via `UnsafeCell`), so `&T` is ABI-identical to a non-null
+// pointer and C++ mutating through it is interior to the cell.
 unsafe extern "C" {
-    safe fn Bun__SecretsJobOptions__runTask(ctx: &mut SecretsJobOptions, global: &JSGlobalObject);
+    safe fn Bun__SecretsJobOptions__runTask(opts: &sys::SecretsJobOptions, global: &JSGlobalObject);
     safe fn Bun__SecretsJobOptions__runFromJS(
-        ctx: &mut SecretsJobOptions,
+        opts: &sys::SecretsJobOptions,
         global: &JSGlobalObject,
         promise: JSValue,
     );
-    fn Bun__SecretsJobOptions__deinit(ctx: *mut SecretsJobOptions);
+    // safe: C++ `delete opts`. Freeing is not exclusive access, so the receiver
+    // is `&`. Reachable only via `ForeignRef`'s `Drop`, which owns the one unit
+    // it gives back — that pairing is the double-free proof.
+    safe fn Bun__SecretsJobOptions__deinit(opts: &sys::SecretsJobOptions);
 }
 
+/// Job body. `&self` throughout: C++ writes the result fields through the same
+/// pointer, and neither call takes or gives back an ownership unit.
+impl SecretsJobOptions {
+    /// Runs OFF the JS thread; performs the platform keychain call.
+    pub fn run_task(&self, global: &JSGlobalObject) {
+        Bun__SecretsJobOptions__runTask(self.raw(), global)
+    }
+
+    /// Runs ON the JS thread; settles `promise` from the job's result fields.
+    pub fn run_from_js(&self, global: &JSGlobalObject, promise: JSValue) {
+        Bun__SecretsJobOptions__runFromJS(self.raw(), global, promise)
+    }
+}
+
+/// Owns the job options for the life of the task; both fields drop themselves,
+/// `options` before `promise`, exactly where the old hand-rolled `Drop` ran.
 pub(crate) struct SecretsCtx {
-    ctx: *mut SecretsJobOptions,
+    options: SecretsJobOptions,
     promise: Strong,
 }
 
 impl AnyTaskJobCtx for SecretsCtx {
     fn run(&mut self, global: *mut JSGlobalObject) {
-        // `ctx` is a valid C++ SecretsJobOptions* held alive until Drop;
-        // `global` is the creating VM's global pointer. Both are `opaque_ffi!`
-        // ZST handles, so `opaque_mut`/`opaque_ref` are the centralised
-        // zero-byte deref proofs (panic on null).
-        Bun__SecretsJobOptions__runTask(
-            SecretsJobOptions::opaque_mut(self.ctx),
-            JSGlobalObject::opaque_ref(global),
-        );
+        // `global` is the creating VM's global pointer, forwarded to C++ without
+        // being dereferenced here; `opaque_ref` is the zero-byte deref proof.
+        self.options.run_task(JSGlobalObject::opaque_ref(global));
     }
 
     fn then(&mut self, global: &JSGlobalObject) -> JsResult<()> {
@@ -46,32 +79,33 @@ impl AnyTaskJobCtx for SecretsCtx {
         // scope here, `drainMicrotasks`'s `TopExceptionScope` ctor asserts on the
         // unchecked simulated throw — same shape as `JSCDeferredWorkTask::run`.
         crate::validation_scope!(scope, global);
-        Bun__SecretsJobOptions__runFromJS(SecretsJobOptions::opaque_mut(self.ctx), global, promise);
+        self.options.run_from_js(global, promise);
         scope.assert_no_exception_except_termination()
-    }
-}
-
-impl Drop for SecretsCtx {
-    fn drop(&mut self) {
-        // SAFETY: `ctx` is the C++ SecretsJobOptions* passed to `create`; C++ side owns cleanup.
-        unsafe { Bun__SecretsJobOptions__deinit(self.ctx) };
-        // `promise: Strong` drops automatically.
     }
 }
 
 pub(crate) type SecretsJob = AnyTaskJob<SecretsCtx>;
 
-// Helper function for C++ to call with opaque pointer
+/// `jsSecretsGet`/`Set`/`Delete` hand over a fresh `new SecretsJobOptions`;
+/// Rust adopts it and is solely responsible for the `delete`.
+///
+/// # Safety
+/// `options` must be a live, uniquely-owned `SecretsJobOptions*`.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__Secrets__scheduleJob(
+pub(crate) unsafe extern "C" fn Bun__Secrets__scheduleJob(
     global: &JSGlobalObject,
-    options: *mut SecretsJobOptions,
+    options: *mut sys::SecretsJobOptions,
     promise: JSValue,
 ) {
+    // SAFETY: caller contract. Non-null: every call site does
+    // `RETURN_IF_EXCEPTION` + `ASSERT(options)` after `fromJS`.
+    let options = unsafe { SecretsJobOptions::adopt_ptr(options) }
+        .expect("Bun__Secrets__scheduleJob: null SecretsJobOptions");
+    // On `Err` the job is freed, running `SecretsCtx`'s drop.
     SecretsJob::create_and_schedule(
         global,
         SecretsCtx {
-            ctx: options,
+            options,
             promise: Strong::create(promise, global),
         },
     )

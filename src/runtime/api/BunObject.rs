@@ -2562,7 +2562,7 @@ pub mod JSZlib {
                 leak_list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
-                let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
+                let Some(decompressor) = bun_libdeflate::Decompressor::new() else {
                     drop(list);
                     return Err(global_this.throw_out_of_memory());
                 };
@@ -2701,8 +2701,7 @@ pub mod JSZlib {
                 leak_list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
-                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level.unwrap_or(6))
-                else {
+                let Some(compressor) = bun_libdeflate::Compressor::new(level.unwrap_or(6)) else {
                     return Err(global_this.throw_out_of_memory());
                 };
                 let encoding = if is_gzip {

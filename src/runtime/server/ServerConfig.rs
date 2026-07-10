@@ -325,7 +325,7 @@ impl ServerConfig {
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
-    app: &mut uws::NewApp<SSL>,
+    app: &uws::NewApp<SSL>,
     entry: *mut T,
     path: &[u8],
     method: http_method::Optional,

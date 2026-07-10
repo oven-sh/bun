@@ -1614,9 +1614,8 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
     let mut max_id: i32 = 0;
 
     // Recursively report all discovered tests starting from root scope.
-    // SAFETY: `agent` is a live C++ handle (fn contract).
     retroactively_report_scope(
-        unsafe { &mut *agent },
+        TestReporterHandle::opaque_ref(agent),
         &mut active_file.collection.root_scope,
         -1,
         &mut max_id,
@@ -1628,7 +1627,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
     let _ = max_id;
 
     fn retroactively_report_scope(
-        agent: &mut TestReporterHandle,
+        agent: &TestReporterHandle,
         scope: &mut DescribeScope,
         parent_id: i32,
         max_id: &mut i32,

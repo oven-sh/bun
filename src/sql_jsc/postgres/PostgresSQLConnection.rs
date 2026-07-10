@@ -1446,8 +1446,7 @@ impl PostgresSQLConnection {
 
             // tls_config dropped by Box drop below.
             if let Some(s) = (*this).secure {
-                // SSL_CTX_free on a valid SSL_CTX*.
-                BoringSSL::c::SSL_CTX_free(s);
+                BoringSSL::c::SSL_CTX_free(uws::SslCtx::opaque_ref(s));
             }
             // Box-allocated in `call()`; ref_count is 0; reclaim.
             drop(bun_core::heap::take(this));

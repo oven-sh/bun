@@ -6,21 +6,34 @@ use bun_core::ZStr;
 // ─── FFI bindings ─────────────────────────────────────────────────────────
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
 // and isn't already *_sys, leave them in place".
+/// The C object itself. Only the extern declarations in [`c`] name this type;
+/// all Rust code uses the owning [`ZSTD_DStream`] handle.
+#[allow(non_camel_case_types)]
+pub mod sys {
+    bun_opaque::opaque_ffi! {
+        /// `ZSTD_DStream` (`typedef ZSTD_DCtx ZSTD_DStream`) — opaque streaming
+        /// decompression context. `&Self` is ABI-identical to a non-null
+        /// `ZSTD_DStream*` and carries no `noalias`/`readonly`: zstd mutates the
+        /// context on every call.
+        pub struct ZSTD_DStream;
+    }
+}
+
 #[allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 pub mod c {
     use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
 
-    // `ZSTD_DStream` — opaque streaming-decompression context (Nomicon FFI pattern).
-    //
-    // `UnsafeCell` makes the type `!Freeze` so a `&ZSTD_DStream` does not assert
-    // immutability of the C-owned state (zstd mutates internally on every call).
+    // The decompression context lives in `crate::sys`; Rust owns it via the
+    // `crate::ZSTD_DStream` handle. Re-exported so the externs below can name it.
+    pub use crate::sys::ZSTD_DStream;
+
     bun_opaque::opaque_ffi! {
-        pub struct ZSTD_DStream;
         /// `ZSTD_CCtx` — opaque streaming-compression context.
         pub struct ZSTD_CCtx;
     }
 
-    /// `typedef ZSTD_DCtx ZSTD_DStream;` — same opaque object.
+    /// `typedef ZSTD_DCtx ZSTD_DStream;` — same opaque object. Still names the C
+    /// object, so the `*mut ZSTD_DCtx` externs below are unaffected by the handle.
     pub(crate) type ZSTD_DCtx = ZSTD_DStream;
 
     // C enums passed by value across FFI — model as `c_uint` (their declared
@@ -100,11 +113,16 @@ pub mod c {
         pub(crate) safe fn ZSTD_getErrorName(code: usize) -> *const c_char;
         pub(crate) safe fn ZSTD_defaultCLevel() -> c_int;
 
+        // Mallocs the context and hands back sole ownership, or null.
         pub(crate) safe fn ZSTD_createDStream() -> *mut ZSTD_DStream;
-        pub(crate) fn ZSTD_freeDStream(zds: *mut ZSTD_DStream) -> usize;
-        pub(crate) fn ZSTD_initDStream(zds: *mut ZSTD_DStream) -> usize;
+        // safe: `ZSTD_freeDStream` is `ZSTD_freeDCtx`. Freeing is not exclusive
+        // access, so the receiver is `&`, not `&mut`.
+        pub(crate) safe fn ZSTD_freeDStream(zds: &ZSTD_DStream) -> usize;
+        pub(crate) safe fn ZSTD_initDStream(zds: &ZSTD_DStream) -> usize;
+        // NOT `safe fn`: zstd dereferences `output->dst` / `input->src`, and both
+        // fields are `pub` raw pointers that safe Rust can forge.
         pub fn ZSTD_decompressStream(
-            zds: *mut ZSTD_DStream,
+            zds: &ZSTD_DStream,
             output: *mut ZSTD_outBuffer,
             input: *mut ZSTD_inBuffer,
         ) -> usize;
@@ -185,6 +203,55 @@ pub enum ZstdError {
 bun_core::impl_tag_error!(ZstdError);
 
 bun_core::named_error_set!(ZstdError);
+
+// `ZSTD_createDStream()` mallocs the context and hands back sole ownership. One
+// `ZSTD_DStream` handle owns exactly one such context.
+fn free_dstream(zds: &sys::ZSTD_DStream) {
+    // `ZSTD_freeDStream` is `ZSTD_freeDCtx`; its `size_t` is always 0.
+    let _ = c::ZSTD_freeDStream(zds);
+}
+
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C `ZSTD_DStream` (`== ZSTD_DCtx`).
+    ///
+    /// `Drop` frees the context. Every method takes `&self`: zstd mutates the
+    /// context through the same pointer on every call, so there is no `&mut self`
+    /// to have, and freeing is not exclusive access either.
+    #[allow(non_camel_case_types)]
+    pub struct ZSTD_DStream(sys::ZSTD_DStream) via free_dstream;
+}
+
+impl ZSTD_DStream {
+    /// `ZSTD_createDStream()` + `ZSTD_initDStream()`.
+    pub fn create() -> core::result::Result<Self, ZstdError> {
+        // SAFETY: `ZSTD_createDStream` transfers the sole ownership unit, or null.
+        let zds = unsafe { Self::adopt_ptr(c::ZSTD_createDStream()) }
+            .ok_or(ZstdError::ZstdFailedToCreateInstance)?;
+        zds.init();
+        Ok(zds)
+    }
+
+    /// Reset the context for the next frame. Designed to be called repeatedly on
+    /// the same context; needs no cleanup in between.
+    pub fn init(&self) {
+        let _ = c::ZSTD_initDStream(self.raw());
+    }
+
+    /// One `ZSTD_decompressStream` step: 0 at a frame boundary, otherwise a
+    /// read-size hint or an error code (test with [`is_error`]).
+    ///
+    /// # Safety
+    /// `output.dst` and `input.src` must be valid for their `size` bytes; zstd
+    /// dereferences both.
+    pub unsafe fn decompress_stream(
+        &self,
+        output: &mut c::ZSTD_outBuffer,
+        input: &mut c::ZSTD_inBuffer,
+    ) -> usize {
+        // SAFETY: caller contract; both buffer structs are live `&mut`s.
+        unsafe { c::ZSTD_decompressStream(self.raw(), &raw mut *output, &raw mut *input) }
+    }
+}
 
 /// ZSTD_compress() :
 ///  Compresses `src` content as a single zstd compressed frame into already allocated `dst`.
@@ -331,7 +398,8 @@ pub struct ZstdReaderArrayList<'a> {
     // We operate on the caller's Vec directly via the `&mut` borrow.
     pub list_ptr: &'a mut Vec<u8>,
     // `list_allocator` / `allocator` params deleted — global mimalloc.
-    pub zstd: *mut c::ZSTD_DStream,
+    // `None` after `end()`, which frees the context there rather than at drop.
+    zstd: Option<ZSTD_DStream>,
     pub state: State,
     pub total_out: usize,
     pub total_in: usize,
@@ -355,17 +423,12 @@ impl<'a> ZstdReaderArrayList<'a> {
         list: &'a mut Vec<u8>,
         // list_allocator / allocator params deleted (global mimalloc).
     ) -> core::result::Result<Box<ZstdReaderArrayList<'a>>, ZstdError> {
-        let zstd = c::ZSTD_createDStream();
-        if zstd.is_null() {
-            return Err(ZstdError::ZstdFailedToCreateInstance);
-        }
-        // SAFETY: zstd is a freshly created non-null DStream.
-        let _ = unsafe { c::ZSTD_initDStream(zstd) };
+        let zstd = ZSTD_DStream::create()?;
 
         Ok(Box::new(ZstdReaderArrayList {
             input,
             list_ptr: list,
-            zstd,
+            zstd: Some(zstd),
             state: State::Uninitialized,
             total_out: 0,
             total_in: 0,
@@ -375,9 +438,8 @@ impl<'a> ZstdReaderArrayList<'a> {
 
     pub fn end(&mut self) {
         if self.state != State::End {
-            // SAFETY: self.zstd was created by ZSTD_createDStream and has not been freed
-            // (guarded by state != End).
-            let _ = unsafe { c::ZSTD_freeDStream(self.zstd) };
+            // Drops the owned context here, at the point the old free happened.
+            self.zstd = None;
             self.state = State::End;
         }
     }
@@ -426,10 +488,13 @@ impl<'a> ZstdReaderArrayList<'a> {
                 pos: 0,
             };
 
-            // SAFETY: self.zstd is a valid DStream (state != End); in_buf/out_buf point
-            // into live slices with correct sizes.
-            let rc =
-                unsafe { c::ZSTD_decompressStream(self.zstd, &raw mut out_buf, &raw mut in_buf) };
+            // SAFETY: in_buf/out_buf point into live slices with correct sizes.
+            let rc = unsafe {
+                self.zstd
+                    .as_ref()
+                    .expect("read_all after end()")
+                    .decompress_stream(&mut out_buf, &mut in_buf)
+            };
             if c::ZSTD_isError(rc) != 0 {
                 self.state = State::Error;
                 return Err(ZstdError::ZstdDecompressionError);
@@ -460,10 +525,7 @@ impl<'a> ZstdReaderArrayList<'a> {
                     return Ok(());
                 }
                 // More input available, reset for the next frame
-                // ZSTD_initDStream() safely resets the stream state without needing cleanup
-                // It's designed to be called multiple times on the same DStream object
-                // SAFETY: self.zstd is a valid DStream.
-                let _ = unsafe { c::ZSTD_initDStream(self.zstd) };
+                self.zstd.as_ref().expect("read_all after end()").init();
                 continue;
             }
 
@@ -492,12 +554,6 @@ impl<'a> ZstdReaderArrayList<'a> {
     }
 }
 
-impl Drop for ZstdReaderArrayList<'_> {
-    fn drop(&mut self) {
-        self.end();
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // StreamingDecoder
 // ──────────────────────────────────────────────────────────────────────────
@@ -508,7 +564,7 @@ impl Drop for ZstdReaderArrayList<'_> {
 /// per call, so callers can hold the decoder across multiple body chunks
 /// without lifetime erasure.
 pub struct StreamingDecoder {
-    stream: core::ptr::NonNull<c::ZSTD_DStream>,
+    stream: ZSTD_DStream,
     pub state: State,
     /// Decompression-bomb guard: `decompress` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
@@ -517,12 +573,8 @@ pub struct StreamingDecoder {
 
 impl StreamingDecoder {
     pub fn new() -> core::result::Result<Self, ZstdError> {
-        let stream = core::ptr::NonNull::new(c::ZSTD_createDStream())
-            .ok_or(ZstdError::ZstdFailedToCreateInstance)?;
-        // SAFETY: stream is a freshly created non-null DStream.
-        let _ = unsafe { c::ZSTD_initDStream(stream.as_ptr()) };
         Ok(Self {
-            stream,
+            stream: ZSTD_DStream::create()?,
             state: State::Uninitialized,
             max_output_size: usize::MAX,
         })
@@ -575,11 +627,8 @@ impl StreamingDecoder {
                 pos: 0,
             };
 
-            // SAFETY: stream is a valid DStream (not freed); in_buf/out_buf
-            // point into live slices with correct sizes.
-            let rc = unsafe {
-                c::ZSTD_decompressStream(self.stream.as_ptr(), &raw mut out_buf, &raw mut in_buf)
-            };
+            // SAFETY: in_buf/out_buf point into live slices with correct sizes.
+            let rc = unsafe { self.stream.decompress_stream(&mut out_buf, &mut in_buf) };
             if c::ZSTD_isError(rc) != 0 {
                 self.state = State::Error;
                 return Err(ZstdError::ZstdDecompressionError);
@@ -602,8 +651,7 @@ impl StreamingDecoder {
                     return Ok(());
                 }
                 // More input available — reinitialize for the next frame.
-                // SAFETY: stream is a valid DStream.
-                let _ = unsafe { c::ZSTD_initDStream(self.stream.as_ptr()) };
+                self.stream.init();
                 continue;
             }
 
@@ -621,12 +669,5 @@ impl StreamingDecoder {
             }
         }
         Ok(())
-    }
-}
-
-impl Drop for StreamingDecoder {
-    fn drop(&mut self) {
-        // SAFETY: stream was created by ZSTD_createDStream; freed once here.
-        let _ = unsafe { c::ZSTD_freeDStream(self.stream.as_ptr()) };
     }
 }

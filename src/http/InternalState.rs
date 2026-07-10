@@ -313,7 +313,7 @@ impl<'a> InternalState<'a> {
                             (estimated_size as usize).saturating_sub(body_out_str.list.len()),
                         );
                         body_out_str.list.clear();
-                        let result = deflater.decompressor_mut().decompress_to_vec(
+                        let result = deflater.decompressor().decompress_to_vec(
                             buffer,
                             &mut body_out_str.list,
                             bun_libdeflate::Encoding::Gzip,
@@ -326,9 +326,11 @@ impl<'a> InternalState<'a> {
                     }
                 }
 
+                // Field access, not `deflater.decompressor()`: keeps the borrow
+                // field-split so `&mut deflater.shared_buffer` below still holds.
                 let decompressor = deflater
                     .decompressor
-                    .as_deref_mut()
+                    .as_ref()
                     .expect("set in HttpThread::deflater()");
                 let result = decompressor.decompress(
                     buffer,

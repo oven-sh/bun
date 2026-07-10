@@ -20,7 +20,7 @@ use crate::{HTTPClient, HTTPVerboseLevel, Protocol};
 pub fn write_request(
     session: &ClientSession,
     stream: &mut Stream,
-    qs: &mut quic::Stream,
+    qs: &quic::Stream,
 ) -> Result<(), bun_core::Error> {
     let Some(client_ptr) = stream.client else {
         return Err(err!(Aborted));
@@ -147,7 +147,7 @@ pub fn write_request(
 /// Push as much of the request body onto `qs` as flow control allows. Called
 /// from `write_request`, `callbacks.on_stream_writable`, and
 /// `ClientSession.stream_body_by_http_id` (when the JS sink delivers more bytes).
-pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
+pub(crate) fn drain_send_body(stream: &mut Stream, qs: &quic::Stream) {
     if stream.request_body_done {
         return;
     }

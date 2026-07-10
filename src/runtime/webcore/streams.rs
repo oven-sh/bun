@@ -804,16 +804,14 @@ impl StreamResult {
                 let value = err.to_js(global_this);
                 value.ensure_still_alive();
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut`
-                // deref. Fresh temp `&mut` is the sole borrow across this
-                // re-entrant call (no long-lived `&mut JSPromise` held).
+                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &` deref.
                 let _ =
-                    JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(value));
+                    JSPromise::opaque_ref(promise).reject_with_async_stack(global_this, Ok(value));
                 // TODO: properly propagate exception upwards
             }
             StreamResult::Done => {
-                // S008: see reject_with_async_stack above; fresh temp `&mut`.
-                let _ = JSPromise::opaque_mut(promise).resolve(global_this, JSValue::FALSE);
+                // S008: see reject_with_async_stack above.
+                let _ = JSPromise::opaque_ref(promise).resolve(global_this, JSValue::FALSE);
                 // TODO: properly propagate exception upwards
             }
             _ => {
@@ -821,8 +819,8 @@ impl StreamResult {
                     Ok(v) => v,
                     Err(err) => {
                         *result = StreamResult::Temporary(RawSlice::EMPTY);
-                        // S008: see reject_with_async_stack above; fresh temp `&mut`.
-                        let _ = JSPromise::opaque_mut(promise).reject(global_this, Err(err));
+                        // S008: see reject_with_async_stack above.
+                        let _ = JSPromise::opaque_ref(promise).reject(global_this, Err(err));
                         // TODO: properly propagate exception upwards
                         vm.event_loop_ref().exit();
                         return;
@@ -831,8 +829,8 @@ impl StreamResult {
                 value.ensure_still_alive();
 
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
-                // S008: see reject_with_async_stack above; fresh temp `&mut`.
-                let _ = JSPromise::opaque_mut(promise).resolve(global_this, value);
+                // S008: see reject_with_async_stack above.
+                let _ = JSPromise::opaque_ref(promise).resolve(global_this, value);
                 // TODO: properly propagate exception upwards
             }
         }
@@ -2014,9 +2012,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
             let global_this = self.global_this();
-            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `* → &`/`&mut` deref.
+            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `* → &` deref.
             JSPromise::opaque_ref(prom).to_js().unprotect();
-            let result = JSPromise::opaque_mut(prom).resolve(
+            let result = JSPromise::opaque_ref(prom).resolve(
                 global_this,
                 JSValue::js_number(self.wrote.saturating_sub(self.wrote_at_start_of_flush) as f64),
             );
@@ -2501,8 +2499,8 @@ impl BufferAction {
         global: &JSGlobalObject,
         err: &StreamError,
     ) -> core::result::Result<(), jsc::JsTerminated> {
-        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-        JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)))
+        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &` deref.
+        JSPromise::opaque_ref(self.swap()).reject(global, Ok(err.to_js(global)))
     }
 
     pub fn resolve(
@@ -2510,8 +2508,8 @@ impl BufferAction {
         global: &JSGlobalObject,
         result: JSValue,
     ) -> core::result::Result<(), jsc::JsTerminated> {
-        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-        JSPromise::opaque_mut(self.swap()).resolve(global, result)
+        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &` deref.
+        JSPromise::opaque_ref(self.swap()).resolve(global, result)
     }
 
     pub fn value(&self) -> JSValue {

@@ -676,9 +676,6 @@ impl EventLoop {
     /// Without this, the last worker's close-task lambda — and the
     /// `WebWorker` box reachable through its `protectedThis` — leak.
     pub fn drop_concurrent_cpp_tasks(&mut self) {
-        unsafe extern "C" {
-            fn Bun__deleteEventLoopTask(task: *mut CppTask);
-        }
         let mut iter = self.concurrent_tasks.pop_batch().iterator();
         loop {
             let node = iter.next();
@@ -690,10 +687,16 @@ impl EventLoop {
             // freeing here is sound.
             let (task, auto_delete) = unsafe { ((*node).task, (*node).auto_delete()) };
             if task.tag == bun_event_loop::task_tag::CppTask {
-                // SAFETY: every `CppTask` payload is a heap
+                // SAFETY: every `CppTask` payload is a non-null heap
                 // `WebCore::EventLoopTask*` (`ScriptExecutionContext::postTask*`
-                // → `new EventLoopTask`); we own it once popped.
-                unsafe { Bun__deleteEventLoopTask(task.ptr.cast::<CppTask>()) };
+                // → `new EventLoopTask`); we own it once popped, and `Drop`
+                // deletes it without running.
+                let task = unsafe {
+                    CppTask::adopt(NonNull::new_unchecked(
+                        task.ptr.cast::<crate::cpp_task::sys::CppTask>(),
+                    ))
+                };
+                drop(task);
             } else {
                 // Hand non-Cpp payloads to `self.tasks` so `deinit()`'s
                 // existing per-tag reclaim handles them.

@@ -34,11 +34,11 @@ pub use bun_uws_sys::response::State;
 pub use bun_uws_sys::{h3 as H3, quic, udp, vtable};
 pub type Socket = us_socket_t;
 
-/// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
-/// policy (verify mode, reneg limits) is encoded on the SSL_CTX itself via
-/// `us_ssl_ctx_from_options`, so there's no wrapper struct. `Option<*mut SslCtx>`
-/// is what listen/connect/adopt take.
-pub type SslCtx = bun_boringssl::c::SSL_CTX;
+/// The BoringSSL `SSL_CTX` C object. `SSL_CTX_up_ref`/`SSL_CTX_free` is the
+/// refcount; policy (verify mode, reneg limits) is encoded on the SSL_CTX itself
+/// via `us_ssl_ctx_from_options`. `Option<*mut SslCtx>` is what
+/// listen/connect/adopt take; the owning handle is `bun_boringssl::c::SSL_CTX`.
+pub type SslCtx = bun_boringssl::c::sys::SSL_CTX;
 
 /// uWS C++ `WebSocketContext<SSL,true,UserData>*`. Only ever produced by the
 /// upgrade-handler thunk and round-tripped to `uws_res_upgrade`; Rust never
@@ -154,16 +154,22 @@ pub mod ssl_wrapper {
     // Re-export the canonical BoringSSL FFI surface; the lower-tier crate now
     // declares every symbol SSLWrapper needs, so the old local shim is gone.
     mod boring_sys {
+        // The C objects, not the owning handles: `SSLWrapper` stores the raw
+        // `SSL_CTX*` and releases it in `deinit`; the trust store returned by
+        // `us_get_shared_default_ca_store` is handed straight to the
+        // `SSL_set0_verify_cert_store` sink (a transfer, not a release), and the
+        // `X509_STORE_CTX*` in the verify callback is owned by BoringSSL.
+        pub(super) use bun_boringssl::c::sys::{SSL_CTX, X509_STORE, X509_STORE_CTX};
         pub(super) use bun_boringssl::c::{
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_s_mem, BIO_set_mem_eof_return,
-            BIO_write, ERR_clear_error, SSL, SSL_CTX, SSL_CTX_free, SSL_CTX_get_verify_mode,
-            SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
+            BIO_write, ERR_clear_error, SSL, SSL_CTX_free, SSL_CTX_get_verify_mode, SSL_ERROR_SSL,
+            SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
             SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_VERIFY_NONE,
             SSL_VERIFY_PEER, SSL_do_handshake, SSL_free, SSL_get_error, SSL_get_rbio,
             SSL_get_shutdown, SSL_get_wbio, SSL_is_init_finished, SSL_new, SSL_pending, SSL_read,
             SSL_renegotiate, SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state,
             SSL_set_renegotiate_mode, SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown,
-            SSL_write, X509_STORE, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
+            SSL_write, ssl_renegotiate_explicit, ssl_renegotiate_never,
         };
     }
 
@@ -383,9 +389,11 @@ pub mod ssl_wrapper {
             handlers: Handlers<T>,
         ) -> Result<Self, InitError> {
             bun_boringssl::load();
-            // SAFETY: ctx is a valid non-null SSL_CTX*; SSL_new returns null on OOM.
-            let ssl = NonNull::new(unsafe { boring_sys::SSL_new(ctx.as_ptr()) })
-                .ok_or(InitError::OutOfMemory)?;
+            // SSL_new returns null on OOM.
+            let ssl = NonNull::new(boring_sys::SSL_new(boring_sys::SSL_CTX::opaque_ref(
+                ctx.as_ptr(),
+            )))
+            .ok_or(InitError::OutOfMemory)?;
             // errdefer BoringSSL.SSL_free(ssl) — FFI cleanup on early return
             let ssl_guard = scopeguard::guard(ssl, |ssl| {
                 // SAFETY: ssl was created by SSL_new above and is solely owned by this guard until disarmed.
@@ -427,8 +435,9 @@ pub mod ssl_wrapper {
                     // accident: net.ts forced `requestCert: true` after
                     // `[buntls]` and `SSLConfig.fromJS` rebuilt the CTX with
                     // roots from that.)
-                    if boring_sys::SSL_CTX_get_verify_mode(ctx.as_ptr())
-                        == boring_sys::SSL_VERIFY_NONE
+                    if boring_sys::SSL_CTX_get_verify_mode(boring_sys::SSL_CTX::opaque_ref(
+                        ctx.as_ptr(),
+                    )) == boring_sys::SSL_VERIFY_NONE
                     {
                         boring_sys::SSL_set_verify(
                             ssl.as_ptr(),
@@ -522,8 +531,7 @@ pub mod ssl_wrapper {
             // already freed inside create_ssl_context, so SSL_CTX_free is
             // sufficient on the error path.
             let ctx_guard = scopeguard::guard(ssl_ctx, |c| {
-                // SAFETY: ssl_ctx ref was just created by create_ssl_context and not yet adopted by init_with_ctx.
-                unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
+                boring_sys::SSL_CTX_free(boring_sys::SSL_CTX::opaque_ref(c.as_ptr()));
             });
             let this = Self::init_with_ctx(ssl_ctx, is_client, handlers)?;
             let _ = scopeguard::ScopeGuard::into_inner(ctx_guard);
@@ -799,8 +807,9 @@ pub mod ssl_wrapper {
                 unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
             }
             if let Some(ctx) = self.ctx.take() {
-                // SAFETY: ctx ref was adopted in init/init_with_ctx; SSL_CTX_free decrements the C refcount and frees the SSL context and all the certificates when it hits zero.
-                unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
+                // The ref adopted in init/init_with_ctx; the C refcount frees the
+                // context and all its certificates when it hits zero.
+                boring_sys::SSL_CTX_free(boring_sys::SSL_CTX::opaque_ref(ctx.as_ptr()));
             }
         }
 

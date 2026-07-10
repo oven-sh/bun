@@ -901,7 +901,7 @@ impl MatchedRoute {
             query: &'a mut QueryStringMap,
         }
         impl<'a> ObjectInitializer for QueryObjectCreator<'a> {
-            fn create(&mut self, obj: &mut JSObject, global: &JSGlobalObject) -> JsResult<()> {
+            fn create(&mut self, obj: &JSObject, global: &JSGlobalObject) -> JsResult<()> {
                 // Stack scratch — 256 × 16-byte fat ptr × 2 ≈ 8 KiB, well within Bun's
                 // JS-thread stack budget. A `RefCell<[&'static [u8]; 256]>` TLS slot
                 // would be unsound: `iter.next()` writes QueryStringMap-lifetime

@@ -1706,7 +1706,10 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         }
         let dw = bun_core::heap::into_raw(HmrSocket::new(this, res));
         let _ = this.active_websocket_connections.insert(dw, ());
-        let _ = res.upgrade(
+        // Fully qualified: `ResponseLike::upgrade` is also in scope for this type
+        // and would box `dw` a second time. The inherent one takes the raw pointer.
+        let _ = bun_uws_sys::NewAppResponse::<SSL>::upgrade(
+            res,
             dw,
             req.header(b"sec-websocket-key").unwrap_or(b""),
             req.header(b"sec-websocket-protocol").unwrap_or(b""),

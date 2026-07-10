@@ -76,9 +76,10 @@ pub struct BindgenStrongAny;
 
 impl Bindgen for BindgenStrongAny {
     type ZigType = Strong;
-    // `?*jsc.Strong.Impl` — must be single-word for #[repr(C)] union placement, so
-    // `Option<NonNull<T>>` (niche-optimized), NOT `Option<*mut T>` (two words).
-    type ExternType = Option<NonNull<jsc::strong::Impl>>;
+    // `?*jsc.Strong.Impl` — the C++ HandleSlot, not the owning Rust handle. Must
+    // be single-word for #[repr(C)] union placement, so `Option<NonNull<T>>`
+    // (niche-optimized), NOT `Option<*mut T>` (two words).
+    type ExternType = Option<NonNull<jsc::strong::sys::Impl>>;
 
     fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType {
         // SAFETY: bindgen contract — C++ passes a freshly-allocated Strong handle

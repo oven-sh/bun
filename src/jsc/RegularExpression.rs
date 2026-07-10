@@ -1,8 +1,31 @@
+use core::mem::ManuallyDrop;
+use core::ptr::NonNull;
+
 use bun_core::String as BunString;
 
-bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle for `JSC::Yarr::RegularExpression`.
-    pub struct RegularExpression;
+/// The C++ object itself. Only the extern declarations below name this type;
+/// all Rust code uses the owning [`RegularExpression`] handle.
+pub mod sys {
+    bun_opaque::opaque_ffi! {
+        /// `JSC::Yarr::RegularExpression`. `&Self` is ABI-identical to a non-null
+        /// `RegularExpression*`, and carries no `noalias`/`readonly` - C++ mutates
+        /// the match cursor through it.
+        pub struct RegularExpression;
+    }
+}
+
+// C++ hands back a `new RegularExpression` (a `+1`); one `RegularExpression`
+// handle owns exactly that allocation, and `deinit` (`delete re`) gives it back.
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C++ `JSC::Yarr::RegularExpression`.
+    ///
+    /// Owns one allocation; `Drop` deletes it. Every method takes `&self`: the ZST is
+    /// `UnsafeCell`-backed and C++ advances the match cursor through the same pointer,
+    /// so there is no `&mut self` to have.
+    ///
+    /// A handle borrowed from a pointer someone else owns (see [`Self::borrow_leaked`])
+    /// is a `ManuallyDrop<RegularExpression>` - dropping it would free their regex.
+    pub struct RegularExpression(sys::RegularExpression) via Yarr__RegularExpression__deinit;
 }
 
 #[repr(u16)]
@@ -28,71 +51,82 @@ pub enum RegularExpressionError {
 
 bun_core::named_error_set!(RegularExpressionError);
 
-// `RegularExpression` is an opaque `UnsafeCell`-backed ZST handle, so
-// `&RegularExpression` is ABI-identical to a non-null `*const` and C++ mutating
-// internal Yarr state through it is interior mutation invisible to Rust. The
-// query/compile shims are therefore declared `safe fn`; only `deinit` (which
-// frees the allocation) keeps a raw `*mut` and stays `unsafe`.
+// `&sys::RegularExpression` is ABI-identical to a non-null `RegularExpression*`
+// and carries no `noalias`; Yarr mutates through it. Every shim traffics only in
+// that plus POD, so all are `safe fn` — `deinit` releases, it is not exclusive.
 unsafe extern "C" {
-    safe fn Yarr__RegularExpression__init(pattern: BunString, flags: u16)
-    -> *mut RegularExpression;
-    fn Yarr__RegularExpression__deinit(pattern: *mut RegularExpression);
-    safe fn Yarr__RegularExpression__isValid(this: &RegularExpression) -> bool;
-    safe fn Yarr__RegularExpression__matchedLength(this: &RegularExpression) -> i32;
+    safe fn Yarr__RegularExpression__init(
+        pattern: BunString,
+        flags: u16,
+    ) -> *mut sys::RegularExpression;
+    safe fn Yarr__RegularExpression__deinit(this: &sys::RegularExpression);
+    safe fn Yarr__RegularExpression__isValid(this: &sys::RegularExpression) -> bool;
+    safe fn Yarr__RegularExpression__matchedLength(this: &sys::RegularExpression) -> i32;
     // C++: int Yarr__RegularExpression__searchRev(RegularExpression*, BunString) (bindings/RegularExpression.cpp:30)
-    safe fn Yarr__RegularExpression__searchRev(this: &RegularExpression, string: BunString) -> i32;
-    safe fn Yarr__RegularExpression__matches(this: &RegularExpression, string: BunString) -> i32;
+    safe fn Yarr__RegularExpression__searchRev(
+        this: &sys::RegularExpression,
+        string: BunString,
+    ) -> i32;
+    safe fn Yarr__RegularExpression__matches(
+        this: &sys::RegularExpression,
+        string: BunString,
+    ) -> i32;
 }
 
+/// Construction and queries. `&self` throughout: C++ mutates the match cursor
+/// through the same pointer.
 impl RegularExpression {
+    /// Borrow a regex handed to a foreign owner by [`Self::leak`].
+    ///
+    /// Takes **no** ownership, hence `ManuallyDrop`: dropping this would free an
+    /// allocation the leak's new owner still holds.
+    ///
+    /// # Safety
+    /// `ptr` must be live for the returned handle's lifetime.
     #[inline]
-    pub fn init(
-        pattern: BunString,
-        flags: Flags,
-    ) -> Result<*mut RegularExpression, RegularExpressionError> {
-        let regex = Yarr__RegularExpression__init(pattern, flags as u16);
-        // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is
-        // the centralised non-null-ZST deref proof (panics on null, which
-        // `Yarr__RegularExpression__init` never returns).
-        if !RegularExpression::opaque_mut(regex).is_valid() {
-            // SAFETY: `regex` is a valid live Yarr handle we just allocated; consumed here.
-            unsafe { Self::destroy(regex) };
+    pub unsafe fn borrow_leaked(ptr: NonNull<sys::RegularExpression>) -> ManuallyDrop<Self> {
+        // SAFETY: caller contract; ManuallyDrop never releases it.
+        ManuallyDrop::new(unsafe { Self::adopt(ptr) })
+    }
+
+    /// C++ `new`s the regex. On an invalid pattern the handle drops here, so the
+    /// allocation is freed before the `Err` reaches the caller.
+    #[inline]
+    pub fn init(pattern: BunString, flags: Flags) -> Result<Self, RegularExpressionError> {
+        // SAFETY: C++ `init` transfers a fresh `+1` allocation (or null) to us.
+        let regex =
+            unsafe { Self::adopt_ptr(Yarr__RegularExpression__init(pattern, flags as u16)) }
+                .expect("Yarr__RegularExpression__init returned null");
+        if !regex.is_valid() {
             return Err(RegularExpressionError::InvalidRegExp);
         }
         Ok(regex)
     }
 
     #[inline]
-    pub fn is_valid(&mut self) -> bool {
-        Yarr__RegularExpression__isValid(self)
+    pub fn is_valid(&self) -> bool {
+        Yarr__RegularExpression__isValid(self.raw())
     }
 
     // Reserving `match` for a full match result.
     // #[inline]
-    // pub fn r#match(&mut self, str: BunString, start_from: i32) -> MatchResult {
+    // pub fn r#match(&self, str: BunString, start_from: i32) -> MatchResult {
     // }
 
     /// Simple boolean matcher
     #[inline]
-    pub fn matches(&mut self, str: BunString) -> bool {
-        Yarr__RegularExpression__matches(self, str) >= 0
+    pub fn matches(&self, str: BunString) -> bool {
+        Yarr__RegularExpression__matches(self.raw(), str) >= 0
     }
 
     #[inline]
-    pub fn search_rev(&mut self, str: BunString) -> i32 {
-        Yarr__RegularExpression__searchRev(self, str)
+    pub fn search_rev(&self, str: BunString) -> i32 {
+        Yarr__RegularExpression__searchRev(self.raw(), str)
     }
 
     #[inline]
-    pub fn matched_length(&mut self) -> i32 {
-        Yarr__RegularExpression__matchedLength(self)
-    }
-
-    /// Destroys the FFI-allocated handle. Caller must not use `this` afterwards.
-    #[inline]
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: `this` is a valid live Yarr RegularExpression handle; consumed here.
-        unsafe { Yarr__RegularExpression__deinit(this) }
+    pub fn matched_length(&self) -> i32 {
+        Yarr__RegularExpression__matchedLength(self.raw())
     }
 }
 
@@ -105,25 +139,24 @@ impl RegularExpression {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {
+pub(crate) fn __bun_regex_compile(pattern: BunString) -> Option<NonNull<()>> {
     // Initialize JSC before first compile (idempotent).
     crate::initialize(false);
-    match RegularExpression::init(pattern, Flags::None) {
-        Ok(r) => core::ptr::NonNull::new(r.cast()),
-        Err(_) => None,
-    }
+    // The allocation is leaked to the caller, which owns it until `__bun_regex_drop`.
+    RegularExpression::init(pattern, Flags::None)
+        .ok()
+        .map(|r| r.leak().cast::<()>())
 }
 
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> bool {
-    // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
-    // centralised non-null deref proof. `regex` was produced by
-    // `__bun_regex_compile` and remains live until `__bun_regex_drop`.
-    RegularExpression::opaque_mut(regex.as_ptr().cast()).matches(*input)
+pub(crate) fn __bun_regex_matches(regex: NonNull<()>, input: &BunString) -> bool {
+    // SAFETY: `regex` was leaked by `__bun_regex_compile` and stays live until
+    // `__bun_regex_drop`; the borrow releases nothing.
+    unsafe { RegularExpression::borrow_leaked(regex.cast()) }.matches(*input)
 }
 
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
-    // SAFETY: `regex` was produced by `__bun_regex_compile`; consumed here.
-    unsafe { RegularExpression::destroy(regex.as_ptr().cast()) }
+pub(crate) fn __bun_regex_drop(regex: NonNull<()>) {
+    // SAFETY: re-adopts the allocation leaked by `__bun_regex_compile`; `Drop` frees it.
+    drop(unsafe { RegularExpression::adopt(regex.cast()) })
 }

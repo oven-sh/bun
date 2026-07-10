@@ -1,6 +1,5 @@
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl as boringssl;
@@ -502,7 +501,8 @@ impl JSValkeyClient {
         // the case right now and I do not understand why. It will take some work in JSC to
         // understand why this is happening, but since I need to uncork valkey, I'm adding this as
         // a stop-gap.
-        let parsed_url: NonNull<URL> = 'get_url: {
+        // Owns the C++ heap `WTF::URL`; `Drop` frees it on scope exit.
+        let parsed_url: URL = 'get_url: {
             let url_slice = url_str.to_utf8();
             let url_byte_slice = url_slice.slice();
 
@@ -547,13 +547,6 @@ impl JSValkeyClient {
                 }
             }
         };
-        // SAFETY: `from_utf8` heap-allocates; release on scope exit.
-        let _parsed_url_drop =
-            scopeguard::guard(parsed_url, |p| unsafe { URL::destroy(p.as_ptr()) });
-        // `_parsed_url_drop` keeps the heap `URL` live for this scope, so the
-        // `BackRef` liveness invariant holds; `Deref` encapsulates the single
-        // `NonNull::as_ref` site.
-        let parsed_url = bun_ptr::BackRef::from(parsed_url);
 
         // Extract protocol string
         let protocol_str = parsed_url.protocol();
@@ -1288,9 +1281,9 @@ impl JSValkeyClient {
 
             if let Some(promise) = Js::connection_promise_get_cached(this_value) {
                 Js::connection_promise_set_cached(this_value, &global_object, JSValue::ZERO);
-                // `JSPromise` is an `opaque_ffi!` ZST — `opaque_mut` is the
+                // `JSPromise` is an `opaque_ffi!` ZST — `opaque_ref` is the
                 // safe deref. Cached slot held a valid JSPromise.
-                let js_promise = JSPromise::opaque_mut(promise.as_promise().unwrap());
+                let js_promise = JSPromise::opaque_ref(promise.as_promise().unwrap());
                 if self.client.get().flags.connection_promise_returns_client {
                     debug!("Resolving connection promise with client instance");
                     js_promise.resolve(&global_object, this_value)?;
@@ -1437,9 +1430,9 @@ impl JSValkeyClient {
         if !this_jsvalue.is_undefined() {
             if let Some(promise) = Js::connection_promise_get_cached(this_jsvalue) {
                 Js::connection_promise_set_cached(this_jsvalue, &global_object, JSValue::ZERO);
-                // `JSPromise` is an `opaque_ffi!` ZST — `opaque_mut` is the
+                // `JSPromise` is an `opaque_ffi!` ZST — `opaque_ref` is the
                 // safe deref. Cached slot held a valid JSPromise.
-                JSPromise::opaque_mut(promise.as_promise().unwrap())
+                JSPromise::opaque_ref(promise.as_promise().unwrap())
                     .reject(&global_object, Ok(error_value))?;
             }
         }
@@ -1736,8 +1729,8 @@ impl JSValkeyClient {
             let this_ref = unsafe { &*this };
             debug_assert!(this_ref.client.get().socket.is_closed());
             if let Some(s) = this_ref._secure.get() {
-                // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
-                unsafe { boringssl::c::SSL_CTX_free(s) };
+                // SSL_CTX is C-refcounted; this releases our ref.
+                boringssl::c::SSL_CTX_free(uws::SslCtx::opaque_ref(s));
             }
             this_ref.client_mut().shutdown(None);
             this_ref.poll_ref.with_mut(|r| r.disable());

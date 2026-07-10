@@ -92,7 +92,7 @@ fn compress_libdeflate_fast(
     enc: bun_libdeflate_sys::libdeflate::Encoding,
     level: Option<i32>,
 ) -> Option<usize> {
-    use bun_libdeflate_sys::libdeflate::{Compressor, OwnedCompressor};
+    use bun_libdeflate_sys::libdeflate::Compressor;
 
     // Split-borrow so the compressor handle and `shared_buffer` can be used
     // together.
@@ -102,7 +102,7 @@ fn compress_libdeflate_fast(
         ..
     } = state;
     let cached = compressor.get_or_insert_with(|| {
-        OwnedCompressor::new(DEFAULT_DEFLATE_LEVEL).unwrap_or_else(|| bun_core::out_of_memory())
+        Compressor::new(DEFAULT_DEFLATE_LEVEL).unwrap_or_else(|| bun_core::out_of_memory())
     });
 
     // Bound is level-independent — use the cached handle so the slow-path
@@ -113,10 +113,10 @@ fn compress_libdeflate_fast(
 
     // Custom level → allocate a temporary compressor; the cached handle is
     // pinned to DEFAULT_DEFLATE_LEVEL.
-    let mut tmp: Option<OwnedCompressor> = None;
-    let compressor: &mut Compressor = match level {
+    let mut tmp: Option<Compressor> = None;
+    let compressor: &Compressor = match level {
         Some(l) if l != DEFAULT_DEFLATE_LEVEL => {
-            tmp.insert(OwnedCompressor::new(l).unwrap_or_else(|| bun_core::out_of_memory()))
+            tmp.insert(Compressor::new(l).unwrap_or_else(|| bun_core::out_of_memory()))
         }
         _ => cached,
     };

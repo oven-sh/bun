@@ -311,8 +311,8 @@ impl MySQLConnection {
 
         self.auth_data = Vec::new();
         if let Some(s) = self.secure.take() {
-            // SAFETY: FFI — secure is an owned SSL_CTX* freed exactly once here
-            unsafe { bun_boringssl_sys::SSL_CTX_free(s) };
+            // `secure` is an owned SSL_CTX ref, released exactly once here.
+            bun_boringssl_sys::SSL_CTX_free(SslCtx::opaque_ref(s));
         }
         // _options_buf dropped at scope exit (Box<[u8]> frees via Drop)
     }

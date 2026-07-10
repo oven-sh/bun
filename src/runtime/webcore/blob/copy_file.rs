@@ -1570,10 +1570,10 @@ impl<'a> CopyFileWindows<'a> {
 
     pub fn throw(&mut self, err: bun_sys::Error) {
         let global_this = self.event_loop.global_ref();
-        // `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
-        // `self`), but its lifetime is elided to `&mut self`. Decay to a raw pointer so
-        // borrowck doesn't tie it to `self` across `destroy` below.
-        let promise = JSPromise::opaque_mut(self.promise.swap());
+        // `swap()` borrows a GC-owned cell (not `self`), but its lifetime is elided
+        // to `&mut self`. Decay to a raw pointer so borrowck doesn't tie it to `self`
+        // across `destroy` below.
+        let promise = JSPromise::opaque_ref(self.promise.swap());
         let err_instance = err.to_js_with_async_stack(global_this, promise);
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
@@ -1662,7 +1662,7 @@ impl<'a> CopyFileWindows<'a> {
         let global_this = self.event_loop.global_ref();
         // see `throw` — re-type the GC cell via the ZST opaque deref so it
         // outlives `destroy(self)` for borrowck.
-        let promise = JSPromise::opaque_mut(self.promise.swap());
+        let promise = JSPromise::opaque_ref(self.promise.swap());
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop.
         let _guard = unsafe {

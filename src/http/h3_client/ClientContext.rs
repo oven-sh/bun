@@ -40,15 +40,15 @@ static INSTANCE: bun_core::AtomicCell<Option<NonNull<ClientContext>>> =
 static LSQUIC_INIT_ONCE: std::sync::Once = std::sync::Once::new();
 
 impl ClientContext {
-    /// Mutable access to the lsquic client engine.
+    /// Access to the lsquic client engine.
     ///
     /// INVARIANT: `qctx` is set once in `get_or_create` to a fresh
     /// `us_quic_socket_context_t` and is never freed (process-lifetime, same as
-    /// this singleton). HTTP-thread only, so the `&mut` is the sole live borrow.
+    /// this singleton).
     #[inline]
-    fn qctx_mut(&mut self) -> &mut quic::Context {
+    fn qctx(&self) -> &quic::Context {
         // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.qctx.as_ptr() }
+        unsafe { self.qctx.as_ref() }
     }
 
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
@@ -94,11 +94,11 @@ impl ClientContext {
             qctx,
             sessions: Vec::new(),
         });
-        // Route through the existing [`qctx_mut`] / [`as_mut`] accessors (one
-        // centralised unsafe each) instead of an open-coded `qctx.as_mut()`.
+        // Route through the existing [`qctx`] / [`as_mut`] accessors (one
+        // centralised unsafe each) instead of an open-coded `qctx.as_ref()`.
         // `self_` is the freshly-boxed sole owner; callbacks don't fire until
         // the loop runs, so registering after construction is order-neutral.
-        callbacks::register(Self::as_mut(self_).qctx_mut());
+        callbacks::register(Self::as_mut(self_).qctx());
         INSTANCE.store(Some(self_));
         Some(self_)
     }
@@ -139,9 +139,9 @@ impl ClientContext {
         self.sessions.push(session);
         session_mut(session).enqueue(client);
 
-        let result =
-            self.qctx_mut()
-                .connect(host_z, port, host_z, reject, session.cast::<c_void>());
+        let result = self
+            .qctx()
+            .connect(host_z, port, host_z, reject, session.cast::<c_void>());
         match result {
             ConnectResult::Socket(qs) => {
                 session_mut(session).qsocket = NonNull::new(qs);
@@ -164,7 +164,7 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
-                let l = self.qctx_mut().r#loop();
+                let l = self.qctx().r#loop();
                 PendingConnect::register(session, pending, l.cast::<UwsLoop>());
             }
             ConnectResult::Err => {

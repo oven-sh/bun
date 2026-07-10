@@ -100,8 +100,10 @@ pub fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
 /// This function is called on the main thread
 /// The bunVM() call will assert this
 // HOST_EXPORT(Bun__queueTask, c)
-pub fn queue_task(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
+pub fn queue_task(global: &JSGlobalObject, task: *mut crate::cpp_task::sys::CppTask) {
     crate::mark_binding!();
+    // C++ hands over the sole owner; the queue holds it until `CppTask::run`
+    // or `EventLoop::drop_concurrent_cpp_tasks` gives it back.
     global
         .bun_vm()
         .event_loop_mut()
@@ -125,8 +127,9 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValu
 /// The main difference: we need to allocate the task & wakeup the thread
 /// We can avoid that if we run it from the main thread.
 // HOST_EXPORT(Bun__queueTaskConcurrently, c)
-pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
+pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_task::sys::CppTask) {
     crate::mark_binding!();
+    // C++ hands over the sole owner; the concurrent queue holds it.
     // SAFETY: bun_vm_concurrently() yields the live VM; `event_loop()` never
     // returns null for a Bun-owned global. Called off-thread but the loop
     // wakeup is thread-safe.

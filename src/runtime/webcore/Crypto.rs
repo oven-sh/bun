@@ -32,7 +32,6 @@ impl Crypto {
         array_a: &JSUint8Array,
         array_b: &JSUint8Array,
     ) -> JSValue {
-        // `JSUint8Array::slice()` takes `&mut self`; use ptr/len (`&self`) instead.
         let a_ptr = array_a.ptr();
         let b_ptr = array_b.ptr();
         let len = array_a.len();
@@ -49,8 +48,8 @@ impl Crypto {
             return JSValue::ZERO;
         }
 
-        // SAFETY: a_ptr/b_ptr are valid for `len` bytes (just obtained from JSUint8Array;
-        // `JSUint8Array::slice()` needs `&mut self`, so reconstruct the slices here).
+        // SAFETY: a_ptr/b_ptr are valid for `len` bytes. Both arrays may be the same cell,
+        // so take shared slices rather than two `slice()` results.
         // `ffi::slice` tolerates `(null, 0)` for detached/empty arrays.
         let (a, b) = unsafe {
             (
@@ -95,8 +94,8 @@ impl Crypto {
         global: &JSGlobalObject,
         array: &JSUint8Array,
     ) -> JSValue {
-        // `JSUint8Array::slice()` takes
-        // `&mut self`; use ptr()/len() (which take `&self`) to avoid the &mut requirement.
+        // `JSUint8Array::slice()` takes `&mut self`; use ptr()/len() (which take
+        // `&self`) to avoid the &mut requirement.
         // SAFETY: JSC guarantees `ptr()` is valid for `len()` writable bytes while the
         // typed-array cell is alive; `ffi::slice_mut` tolerates `(null, 0)` for detached.
         random_data(global, unsafe {

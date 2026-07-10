@@ -26,18 +26,14 @@ type Digest = evp::Digest;
 const EVP_MAX_MD_SIZE_USIZE: usize = boring_ssl::EVP_MAX_MD_SIZE as usize;
 
 /// Local helper: dereference the raw `*mut VirtualMachine` to reach
-/// `RareData::boring_engine()` and cast the bun_jsc-local opaque `ENGINE`
-/// to the real `bun_boringssl_sys::ENGINE` (both name the same C struct).
+/// `RareData::boring_engine()`, which borrows the VM-owned `ENGINE` out of the
+/// owning `bun_boringssl_sys::ENGINE` handle stored on `RareData`. The result is
+/// the C object, never the handle — nothing here releases a ref.
 #[inline]
-fn boring_engine(global: &JSGlobalObject) -> *mut boring_ssl::ENGINE {
+fn boring_engine(global: &JSGlobalObject) -> *mut boring_ssl::sys::ENGINE {
     // SAFETY: `bun_vm()` returns the raw `*mut VirtualMachine` for a Bun-owned
     // global (never null, single-threaded JS heap), so deref-to-&mut is sound here.
-    global
-        .bun_vm()
-        .as_mut()
-        .rare_data()
-        .boring_engine()
-        .cast::<boring_ssl::ENGINE>()
+    global.bun_vm().as_mut().rare_data().boring_engine()
 }
 
 /// Local helper replacing `input == .blob && input.blob.isBunFile()`.
@@ -1104,7 +1100,7 @@ pub trait StaticHasher: 'static {
     fn final_(&mut self, out: &mut Self::Digest);
     /// # Safety
     /// `engine` must be null (default engine) or a live `ENGINE*`.
-    unsafe fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE);
+    unsafe fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::sys::ENGINE);
     /// Per-monomorphization codegen module (`bun_jsc::generated::JS${NAME}`);
     /// each `impl_static_hasher!` arm binds to the typed wrapper exported by
     /// `js_class_module!` for its concrete name.
@@ -1139,9 +1135,14 @@ macro_rules! impl_static_hasher {
                 <$ty>::r#final(self, out)
             }
             #[inline]
-            unsafe fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE) {
-                // `bun_sha_hmac::sha::ffi::ENGINE` re-exports `bun_boringssl_sys::ENGINE`,
-                // so the VM-owned engine pointer threads through without a cast.
+            unsafe fn hash(
+                input: &[u8],
+                out: &mut Self::Digest,
+                engine: *mut boring_ssl::sys::ENGINE,
+            ) {
+                // `bun_sha_hmac::sha::ffi::ENGINE` re-exports
+                // `bun_boringssl_sys::sys::ENGINE`, so the VM-owned engine pointer
+                // threads through without a cast.
                 // SAFETY: caller upholds `engine` validity (forwarded).
                 unsafe { <$ty>::hash(input, out, engine) }
             }

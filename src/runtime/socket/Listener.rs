@@ -85,7 +85,7 @@ pub struct Listener {
     /// `SSL_CTX*` for accepted sockets. One owned ref; `SSL_CTX_free` on close.
     /// `SSL_new()` per-accept takes its own ref, so accepted sockets outlive a
     /// stopped listener safely.
-    pub secure_ctx: Cell<Option<NonNull<boring_sys::SSL_CTX>>>,
+    pub secure_ctx: Cell<Option<NonNull<boring_sys::sys::SSL_CTX>>>,
     pub ssl: bool,
     pub protos: Option<Box<[u8]>>,
 
@@ -335,8 +335,8 @@ impl Listener {
             // SAFETY: this is still the sole owner on the error path
             let this_owned: Box<Listener> = unsafe { bun_core::heap::take(this) };
             if let Some(c) = this_owned.secure_ctx.get() {
-                // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref from create_ssl_context
-                unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
+                // secure_ctx holds one owned SSL_CTX ref from create_ssl_context.
+                boring_sys::SSL_CTX_free(boring_sys::sys::SSL_CTX::opaque_ref(c.as_ptr()));
             }
             // protos: Box drops automatically when Listener is dropped below
             bun_core::asan::unregister_root_region(
@@ -353,7 +353,7 @@ impl Listener {
             match ssl_cfg.as_usockets().create_ssl_context(&mut create_err) {
                 Some(ctx) => this_ref
                     .secure_ctx
-                    .set(NonNull::new(ctx.cast::<boring_sys::SSL_CTX>())),
+                    .set(NonNull::new(ctx.cast::<boring_sys::sys::SSL_CTX>())),
                 None => {
                     return Err(global.throw_value(
                         crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
@@ -403,7 +403,7 @@ impl Listener {
                 });
                 if !ls.is_null() {
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    *port = u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port())
+                    *port = u16::try_from(bun_opaque::opaque_deref(ls).get_local_port())
                         .expect("int cast");
                 }
                 ls
@@ -496,7 +496,7 @@ impl Listener {
                     // hint for sni_cb, not load-bearing — sni_find() miss falls
                     // through to the default SSL_CTX anyway.
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    let _ = bun_opaque::opaque_deref_mut(listen_socket).add_server_name(
+                    let _ = bun_opaque::opaque_deref(listen_socket).add_server_name(
                         server_name,
                         secure.as_ptr().cast(),
                         core::ptr::null_mut(),
@@ -513,7 +513,7 @@ impl Listener {
             // resolution suspends the handshake until resumeSNI.
             if !this_ref.handlers.on_server_name().is_empty() {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
-                bun_opaque::opaque_deref_mut(listen_socket).on_server_name(us_dispatch_server_name);
+                bun_opaque::opaque_deref(listen_socket).on_server_name(us_dispatch_server_name);
             }
         }
 
@@ -613,7 +613,7 @@ impl Listener {
         }
         if let uws::InternalSocket::Connected(s) = socket.socket {
             // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-            bun_opaque::opaque_deref_mut(s).set_kind(if SSL {
+            bun_opaque::opaque_deref(s).set_kind(if SSL {
                 uws_sys::SocketKind::BunSocketTls
             } else {
                 uws_sys::SocketKind::BunSocketTcp
@@ -661,7 +661,7 @@ impl Listener {
 
         // node:tls passes the native SecureContext (already-built SSL_CTX*) — no
         // re-parse. Bun.listen({tls}) callers may still pass a raw options dict.
-        let sni_ctx: *mut boring_sys::SSL_CTX =
+        let sni_ctx: *mut boring_sys::sys::SSL_CTX =
             if let Some(sc) = tls.as_class_ref::<SecureContext>() {
                 sc.borrow()
             } else if let Some(ssl_config) = {
@@ -693,11 +693,11 @@ impl Listener {
 
         // The C SNI tree SSL_CTX_up_ref()s; drop our build/borrow ref once added.
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-        let ls_ref = bun_opaque::opaque_deref_mut(ls);
+        let ls_ref = bun_opaque::opaque_deref(ls);
         ls_ref.remove_server_name(server_name);
         let ok = ls_ref.add_server_name(server_name, sni_ctx.cast(), core::ptr::null_mut());
-        // SAFETY: FFI — drop the +1 ref we took via borrow()/get_or_create(); SNI tree up_ref'd its own
-        unsafe { boring_sys::SSL_CTX_free(sni_ctx) };
+        // Drop the +1 we took via borrow()/get_or_create(); the SNI tree up_ref'd its own.
+        boring_sys::SSL_CTX_free(boring_sys::sys::SSL_CTX::opaque_ref(sni_ctx));
         if !ok {
             // Old entry was already removed; failing silently would leave the
             // hostname with no SNI mapping at all. Surface it.
@@ -761,7 +761,7 @@ impl Listener {
 
         match listener {
             // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-            ListenerType::Uws(socket) => bun_opaque::opaque_deref_mut(socket).close(),
+            ListenerType::Uws(socket) => bun_opaque::opaque_deref(socket).close(),
             #[cfg(windows)]
             ListenerType::NamedPipe(named_pipe) => {
                 // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit
@@ -783,7 +783,7 @@ impl Listener {
             ListenerType::Uws(socket) => {
                 Self::unlink_unix_socket_path(&self);
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(socket).close();
+                bun_opaque::opaque_deref(socket).close();
             }
             #[cfg(windows)]
             ListenerType::NamedPipe(named_pipe) => {
@@ -837,8 +837,8 @@ impl Listener {
         // SAFETY: group was init'd in listen(); not concurrently walked.
         unsafe { uws::SocketGroup::destroy(self.group.as_ptr()) };
         if let Some(ctx) = self.secure_ctx.get() {
-            // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref; release it
-            unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
+            // secure_ctx holds one owned SSL_CTX ref; release it.
+            boring_sys::SSL_CTX_free(boring_sys::sys::SSL_CTX::opaque_ref(ctx.as_ptr()));
         }
 
         // connection / protos / the handlers `Rc`: dropped with the Box below
@@ -878,7 +878,7 @@ impl Listener {
         match this.listener.get() {
             ListenerType::Uws(uws_listener) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                let socket = bun_opaque::opaque_deref_mut(uws_listener).socket::<false>();
+                let socket = bun_opaque::opaque_deref(uws_listener).socket::<false>();
                 // On Windows the listening socket fd is a system-kind SOCKET
                 // handle; routing it through `.uv()` panics for anything but
                 // stdio. The sys_jsc helper branches on kind
@@ -995,7 +995,7 @@ impl Listener {
         // Resolve the prebuilt SSL_CTX before the platform branches so the Windows
         // named-pipe path can adopt it. node:tls passes the native SecureContext as
         // `tls.secureContext` so we share its already-built SSL_CTX.
-        let mut owned_ssl_ctx: Option<NonNull<boring_sys::SSL_CTX>> = None;
+        let mut owned_ssl_ctx: Option<NonNull<boring_sys::sys::SSL_CTX>> = None;
         if ssl_enabled {
             let native_sc: Option<&SecureContext> = 'blk: {
                 let Some(tls_js) = opts.get_truthy(global, "tls")? else {
@@ -1015,8 +1015,8 @@ impl Listener {
         }
         let mut ssl_ctx_guard = scopeguard::guard(owned_ssl_ctx, |c| {
             if let Some(c) = c {
-                // SAFETY: FFI — c is a live SSL_CTX* with one owned ref from borrow()/get_or_create()
-                unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
+                // One owned ref from borrow()/get_or_create().
+                boring_sys::SSL_CTX_free(boring_sys::sys::SSL_CTX::opaque_ref(c.as_ptr()));
             }
         });
 
@@ -1249,7 +1249,7 @@ impl Listener {
                 let mut create_err = uws::create_bun_socket_error_t::none;
                 match with_ssl_ctx_cache(|cache| cache.get_or_create(ssl_cfg, &mut create_err)) {
                     Some(ctx) => {
-                        *ssl_ctx_guard = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>());
+                        *ssl_ctx_guard = NonNull::new(ctx.cast::<boring_sys::sys::SSL_CTX>());
                     }
                     None => {
                         return Err(global.throw_value(
@@ -1327,7 +1327,7 @@ impl Listener {
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-        let socket_ref = bun_opaque::opaque_deref_mut(socket);
+        let socket_ref = bun_opaque::opaque_deref(socket);
         let address_bytes: &[u8] = match socket_ref.get_local_address(&mut buf) {
             Ok(b) => b,
             Err(_) => return Ok(JSValue::UNDEFINED),
@@ -1378,7 +1378,7 @@ fn connect_finish<const IS_SSL: bool>(
     connection: UnixOrHost,
     local_binding: Option<(Box<[u8]>, u16)>,
     mut ssl: Option<&mut SSLConfig>,
-    owned_ssl_ctx: Option<NonNull<boring_sys::SSL_CTX>>,
+    owned_ssl_ctx: Option<NonNull<boring_sys::sys::SSL_CTX>>,
     default_data: JSValue,
     allow_half_open: bool,
     port: Option<u16>,
@@ -1409,8 +1409,8 @@ fn connect_finish<const IS_SSL: bool>(
         prev.server_name
             .set(ssl.as_mut().and_then(|s| s.take_server_name()));
         if let Some(old) = prev.owned_ssl_ctx.get() {
-            // SAFETY: FFI — old is the previous owned SSL_CTX ref on this reused socket
-            unsafe { boring_sys::SSL_CTX_free(old) };
+            // `old` is the previous owned SSL_CTX ref on this reused socket.
+            boring_sys::SSL_CTX_free(boring_sys::sys::SSL_CTX::opaque_ref(old));
         }
         prev.owned_ssl_ctx.set(owned_ssl_ctx.map(|p| p.as_ptr()));
         prev
@@ -1567,7 +1567,7 @@ pub struct WindowsNamedPipeListeningContext {
     /// JSC_BORROW: process-lifetime singleton; `&'static` so call sites read
     /// `self.vm.is_shutting_down()` without a raw-pointer deref.
     pub vm: &'static VirtualMachine,
-    pub ctx: Option<NonNull<boring_sys::SSL_CTX>>, // server reuses the same ctx
+    pub ctx: Option<NonNull<boring_sys::sys::SSL_CTX>>, // server reuses the same ctx
 }
 
 #[cfg(not(windows))]
@@ -1692,7 +1692,7 @@ impl WindowsNamedPipeListeningContext {
             let mut err = uws::create_bun_socket_error_t::none;
             // Create SSL context using uSockets to match behavior of node.js
             match ctx_opts.create_ssl_context(&mut err) {
-                Some(ctx) => this_ref.ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
+                Some(ctx) => this_ref.ctx = NonNull::new(ctx.cast::<boring_sys::sys::SSL_CTX>()),
                 None => return Err(bun_core::err!("InvalidOptions")),
             }
         }
@@ -1740,8 +1740,8 @@ impl WindowsNamedPipeListeningContext {
     fn deinit(mut self: Box<Self>) {
         self.listener = None;
         if let Some(ctx) = self.ctx.take() {
-            // SAFETY: the server owns the only reference to this context.
-            unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
+            // The server owns the only reference to this context.
+            boring_sys::SSL_CTX_free(boring_sys::sys::SSL_CTX::opaque_ref(ctx.as_ptr()));
         }
     }
 }
@@ -1775,7 +1775,7 @@ pub(crate) extern "C" fn us_dispatch_server_name(
     }
     // The accept group's ext holds the owning `*mut Listener` for the lifetime
     // of the listen socket. S008: `ListenSocket` is an `opaque_ffi!` ZST.
-    let listener_ptr: *mut Listener = bun_opaque::opaque_deref_mut(ls).group().owner::<Listener>();
+    let listener_ptr: *mut Listener = bun_opaque::opaque_deref(ls).group().owner::<Listener>();
     if listener_ptr.is_null() {
         return core::ptr::null_mut();
     }

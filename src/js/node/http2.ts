@@ -6134,6 +6134,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     let hasTransferEncoding = false;
     let hasDate = false;
     let hasConnection = false;
+    let hasKeepAlive = false;
     const headers = head?.headers;
     if (headers) {
       // ServerResponse drives this handle with renderNativeHeaders(): a flat
@@ -6162,6 +6163,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
           case "connection":
             hasConnection = true;
             break;
+          case "keep-alive":
+            hasKeepAlive = true;
+            break;
         }
         out += `${name}: ${value}\r\n`;
       }
@@ -6189,8 +6193,16 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if ((autoBits & 4) !== 0) {
         out += "Connection: close\r\n";
       } else if (shouldKeepAlive) {
-        const kaSecs = (autoBits & 8) !== 0 ? head.keepAliveTimeoutSecs : Math.floor((keepAliveTimeout || 5000) / 1000);
-        out += `Connection: keep-alive\r\nKeep-Alive: timeout=${kaSecs}\r\n`;
+        out += "Connection: keep-alive\r\n";
+        // A user-sent Keep-Alive header (already written by the loop above)
+        // suppresses the auto line, like the native writeAutoHeaders. The
+        // bit-carried timeout wins when present; otherwise fall back to this
+        // handle's configured timeout, preserving pre-bits behavior.
+        if (!hasKeepAlive) {
+          const kaSecs =
+            (autoBits & 8) !== 0 ? head.keepAliveTimeoutSecs : Math.floor((keepAliveTimeout || 5000) / 1000);
+          out += `Keep-Alive: timeout=${kaSecs}\r\n`;
+        }
       } else {
         out += "Connection: close\r\n";
       }

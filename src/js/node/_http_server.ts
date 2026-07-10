@@ -2212,144 +2212,154 @@ function renderNativeHeaders(res) {
   let hasDate = false;
   let hasConnection = false;
   let hasKeepAlive = false;
-  if (headersMap !== null && headersMap !== undefined) {
-    for (const key in headersMap) {
-      const entry = headersMap[key];
-      const name = entry[0];
-      const value = entry[1];
-      if (key === "date") hasDate = true;
-      else if (key === "connection") {
-        hasConnection = true;
-        // An explicit `Connection: close` response header must also close the
-        // transport after 'finish' (Node.js's matchHeader sets _last, then
-        // resOnFinish destroys the socket).
-        if (RE_CONN_CLOSE.test($isArray(value) ? value.join(", ") : String(value))) {
-          res[kMustCloseConnection] = true;
-        }
-      } else if (key === "keep-alive") hasKeepAlive = true;
-      if ($isArray(value)) {
-        const valueLength = value.length;
-        // Like Node's _storeHeader: array values become one line each, except
-        // "cookie" and headers listed in the uniqueHeaders option, which are
-        // sent as a single line joined with "; ".
-        // res[kUniqueHeaders] is only consulted for multi-valued headers, so
-        // read it here rather than once per render: it is a prototype-chain
-        // miss for every response whose server did not set `uniqueHeaders`.
-        if (valueLength >= 2 && (key === "cookie" || (res[kUniqueHeaders] != null && res[kUniqueHeaders].$has(key)))) {
-          flat.push(name, value.join("; "));
-        } else {
-          for (let i = 0; i < valueLength; i++) {
-            flat.push(name, String(value[i]));
+  try {
+    if (headersMap !== null && headersMap !== undefined) {
+      for (const key in headersMap) {
+        const entry = headersMap[key];
+        const name = entry[0];
+        const value = entry[1];
+        if (key === "date") hasDate = true;
+        else if (key === "connection") {
+          hasConnection = true;
+          // An explicit `Connection: close` response header must also close the
+          // transport after 'finish' (Node.js's matchHeader sets _last, then
+          // resOnFinish destroys the socket).
+          if (RE_CONN_CLOSE.test($isArray(value) ? value.join(", ") : String(value))) {
+            res[kMustCloseConnection] = true;
           }
-        }
-      } else {
-        flat.push(name, String(value));
-      }
-    }
-  }
-
-  if (res.sendDate && !hasDate) {
-    autoHeaders |= AUTO_HEADER_DATE;
-  }
-
-  // RFC 2616 mandates that 204 and 304 responses MUST NOT have a body. A
-  // chunked Transfer-Encoding on such a response could confuse reverse
-  // proxies, so like Node.js the body framing is suppressed and the
-  // connection is forcibly closed after the response.
-  // headersMap already holds res[kOutHeaders]; index the two framing headers
-  // once instead of re-reading the symbol per check below.
-  const storedTransferEncoding = headersMap === null ? undefined : headersMap["transfer-encoding"];
-  const storedContentLength = headersMap === null ? undefined : headersMap["content-length"];
-  let defectiveNoBodyResponse = false;
-  if (storedTransferEncoding !== undefined) {
-    const statusCode = res[kSnapshotStatusCode] ?? res.statusCode;
-    if (statusCode === 204 || statusCode === 304) {
-      defectiveNoBodyResponse = true;
-      res[kMustCloseConnection] = true;
-    }
-  }
-
-  // Like Node.js's _storeHeader: with no framing headers on the wire, removing
-  // Transfer-Encoding makes the response close-delimited (the "both removed"
-  // _last branch), while removing only Content-Length falls through to chunked
-  // encoding and keeps the connection alive. Decide before the Connection
-  // header is rendered so the advertised value matches the transport.
-  let closeDelimited = false;
-  let forceChunked = false;
-  if (storedContentLength === undefined && storedTransferEncoding === undefined) {
-    if (res._hasBody === false) {
-      // HEAD / 204 / 304 / 1xx: there is no body to delimit, so removing the
-      // framing headers must not close the connection (Node's _storeHeader
-      // checks !_hasBody before its close-delimited else-branch).
-    } else if (res._removedTE) {
-      closeDelimited = true;
-      res[kMustCloseConnection] = true;
-    } else if (res._removedContLen) {
-      forceChunked = true;
-    }
-  }
-
-  if (res._removedConnection) {
-    // Node's _storeHeader: `this._last = !this.shouldKeepAlive` - no
-    // Connection header is written (the user removed it), but the socket
-    // still closes after 'finish' when shouldKeepAlive was cleared.
-    if (res.shouldKeepAlive === false) {
-      res[kMustCloseConnection] = true;
-    }
-  } else if (!hasConnection) {
-    if (
-      !defectiveNoBodyResponse &&
-      !closeDelimited &&
-      !res.maxRequestsOnConnectionReached &&
-      res.shouldKeepAlive !== false &&
-      requestShouldKeepAlive(res.req)
-    ) {
-      const keepAliveTimeout = res._keepAliveTimeout;
-      const maxRequestsPerSocket = res._maxRequestsPerSocket;
-      if (keepAliveTimeout && !hasKeepAlive && ~~maxRequestsPerSocket > 0) {
-        // Rare path (maxRequestsPerSocket set): render both lines in JS.
-        flat.push("Connection", "keep-alive");
-        flat.push("Keep-Alive", `timeout=${MathFloor(keepAliveTimeout / 1000)}, max=${maxRequestsPerSocket}`);
-      } else {
-        autoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE;
-        if (keepAliveTimeout && !hasKeepAlive) {
-          autoHeaders |= AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
-          keepAliveSecs = MathFloor(keepAliveTimeout / 1000);
+        } else if (key === "keep-alive") hasKeepAlive = true;
+        if ($isArray(value)) {
+          const valueLength = value.length;
+          // Like Node's _storeHeader: array values become one line each, except
+          // "cookie" and headers listed in the uniqueHeaders option, which are
+          // sent as a single line joined with "; ".
+          // res[kUniqueHeaders] is only consulted for multi-valued headers, so
+          // read it here rather than once per render: it is a prototype-chain
+          // miss for every response whose server did not set `uniqueHeaders`.
+          if (
+            valueLength >= 2 &&
+            (key === "cookie" || (res[kUniqueHeaders] != null && res[kUniqueHeaders].$has(key)))
+          ) {
+            flat.push(name, value.join("; "));
+          } else {
+            for (let i = 0; i < valueLength; i++) {
+              flat.push(name, String(value[i]));
+            }
+          }
+        } else {
+          flat.push(name, String(value));
         }
       }
-    } else {
-      // Like Node's shouldSendKeepAlive/_last handling: a user-cleared
-      // shouldKeepAlive (graceful-shutdown helpers set it on in-flight
-      // responses) must also end the socket after 'finish'.
+    }
+
+    if (res.sendDate && !hasDate) {
+      autoHeaders |= AUTO_HEADER_DATE;
+    }
+
+    // RFC 2616 mandates that 204 and 304 responses MUST NOT have a body. A
+    // chunked Transfer-Encoding on such a response could confuse reverse
+    // proxies, so like Node.js the body framing is suppressed and the
+    // connection is forcibly closed after the response.
+    // headersMap already holds res[kOutHeaders]; index the two framing headers
+    // once instead of re-reading the symbol per check below.
+    const storedTransferEncoding = headersMap === null ? undefined : headersMap["transfer-encoding"];
+    const storedContentLength = headersMap === null ? undefined : headersMap["content-length"];
+    let defectiveNoBodyResponse = false;
+    if (storedTransferEncoding !== undefined) {
+      const statusCode = res[kSnapshotStatusCode] ?? res.statusCode;
+      if (statusCode === 204 || statusCode === 304) {
+        defectiveNoBodyResponse = true;
+        res[kMustCloseConnection] = true;
+      }
+    }
+
+    // Like Node.js's _storeHeader: with no framing headers on the wire, removing
+    // Transfer-Encoding makes the response close-delimited (the "both removed"
+    // _last branch), while removing only Content-Length falls through to chunked
+    // encoding and keeps the connection alive. Decide before the Connection
+    // header is rendered so the advertised value matches the transport.
+    let closeDelimited = false;
+    let forceChunked = false;
+    if (storedContentLength === undefined && storedTransferEncoding === undefined) {
+      if (res._hasBody === false) {
+        // HEAD / 204 / 304 / 1xx: there is no body to delimit, so removing the
+        // framing headers must not close the connection (Node's _storeHeader
+        // checks !_hasBody before its close-delimited else-branch).
+      } else if (res._removedTE) {
+        closeDelimited = true;
+        res[kMustCloseConnection] = true;
+      } else if (res._removedContLen) {
+        forceChunked = true;
+      }
+    }
+
+    if (res._removedConnection) {
+      // Node's _storeHeader: `this._last = !this.shouldKeepAlive` - no
+      // Connection header is written (the user removed it), but the socket
+      // still closes after 'finish' when shouldKeepAlive was cleared.
       if (res.shouldKeepAlive === false) {
         res[kMustCloseConnection] = true;
       }
-      autoHeaders |= AUTO_HEADER_CONN_CLOSE;
+    } else if (!hasConnection) {
+      if (
+        !defectiveNoBodyResponse &&
+        !closeDelimited &&
+        !res.maxRequestsOnConnectionReached &&
+        res.shouldKeepAlive !== false &&
+        requestShouldKeepAlive(res.req)
+      ) {
+        const keepAliveTimeout = res._keepAliveTimeout;
+        const maxRequestsPerSocket = res._maxRequestsPerSocket;
+        if (keepAliveTimeout && !hasKeepAlive && ~~maxRequestsPerSocket > 0) {
+          // Rare path (maxRequestsPerSocket set): render both lines in JS.
+          flat.push("Connection", "keep-alive");
+          flat.push("Keep-Alive", `timeout=${MathFloor(keepAliveTimeout / 1000)}, max=${maxRequestsPerSocket}`);
+        } else {
+          autoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE;
+          if (keepAliveTimeout && !hasKeepAlive) {
+            autoHeaders |= AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
+            keepAliveSecs = MathFloor(keepAliveTimeout / 1000);
+          }
+        }
+      } else {
+        // Like Node's shouldSendKeepAlive/_last handling: a user-cleared
+        // shouldKeepAlive (graceful-shutdown helpers set it on in-flight
+        // responses) must also end the socket after 'finish'.
+        if (res.shouldKeepAlive === false) {
+          res[kMustCloseConnection] = true;
+        }
+        autoHeaders |= AUTO_HEADER_CONN_CLOSE;
+      }
     }
-  }
 
-  if (res._hasBody === false) {
-    // A method-based no-body response (HEAD): the native side only knows
-    // 204/304 from the status line, so signal no-body explicitly. Any
-    // user-set framing headers are still advertised, but the body framing
-    // itself (auto Content-Length/Transfer-Encoding and the terminating
-    // chunk) is suppressed, like Node.js's `_hasBody && chunkedEncoding`
-    // gate - a HEAD response ends at the first empty line whatever headers
-    // it carries (RFC 9112 6.3).
-    flat.push("\u0000", "2");
-  }
+    if (res._hasBody === false) {
+      // A method-based no-body response (HEAD): the native side only knows
+      // 204/304 from the status line, so signal no-body explicitly. Any
+      // user-set framing headers are still advertised, but the body framing
+      // itself (auto Content-Length/Transfer-Encoding and the terminating
+      // chunk) is suppressed, like Node.js's `_hasBody && chunkedEncoding`
+      // gate - a HEAD response ends at the first empty line whatever headers
+      // it carries (RFC 9112 6.3).
+      flat.push("\u0000", "2");
+    }
 
-  if (closeDelimited) {
-    // The NUL-named sentinel pair tells the native writeHead the body is
-    // close-delimited: written raw, with the connection closed after the
-    // response (it is not a real header).
-    flat.push("\u0000", "1");
-  } else if (forceChunked) {
-    // The user removed Content-Length (only): advertise chunked so the native
-    // side frames the body instead of auto-writing the removed header back.
-    flat.push("Transfer-Encoding", "chunked");
+    if (closeDelimited) {
+      // The NUL-named sentinel pair tells the native writeHead the body is
+      // close-delimited: written raw, with the connection closed after the
+      // response (it is not a real header).
+      flat.push("\u0000", "1");
+    } else if (forceChunked) {
+      // The user removed Content-Length (only): advertise chunked so the native
+      // side frames the body instead of auto-writing the removed header back.
+      flat.push("Transfer-Encoding", "chunked");
+    }
+  } catch (e) {
+    // String(value) above can run user toString() that throws; release the
+    // scratch array so the next render is not forced onto fresh arrays for
+    // the process lifetime.
+    if (flat === scratchFlatHeaders) scratchFlatHeadersBusy = false;
+    throw e;
   }
-
   renderedAutoHeaders = autoHeaders;
   renderedKeepAliveSecs = keepAliveSecs;
   return flat;

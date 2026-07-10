@@ -1164,7 +1164,7 @@ impl TranspilerJob {
             if let Some(mi) = module_info {
                 mi.destroy();
             }
-            self.parse_error = Some(err);
+            self.parse_error = Some(err.into());
             return;
         }
 

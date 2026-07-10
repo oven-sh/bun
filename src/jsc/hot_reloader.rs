@@ -39,8 +39,8 @@ const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8
 impl ImportWatcher {
     pub fn start(&mut self) -> Result<(), crate::Error> {
         match self {
-            ImportWatcher::Hot(w) => w.start(),
-            ImportWatcher::Watch(w) => w.start(),
+            ImportWatcher::Hot(w) => w.start().map_err(Into::into),
+            ImportWatcher::Watch(w) => w.start().map_err(Into::into),
             ImportWatcher::None => Ok(()),
         }
     }

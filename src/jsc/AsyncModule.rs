@@ -278,8 +278,8 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
         Queue::on_resolve(ctx)
     }
 
-    fn on_package_manifest_error(ctx: &mut Queue, name: &[u8], err: crate::CrateError, url: &[u8]) {
-        ctx.on_package_manifest_error(name, err, url)
+    fn on_package_manifest_error(ctx: &mut Queue, name: &[u8], err: bun_install::Error, url: &[u8]) {
+        ctx.on_package_manifest_error(name, err.into(), url)
     }
 
     fn on_package_download_error_pkg(
@@ -287,10 +287,10 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
         package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
-        err: crate::CrateError,
+        err: bun_install::Error,
         url: &[u8],
     ) {
-        ctx.on_package_download_error(package_id, name, resolution, err, url)
+        ctx.on_package_download_error(package_id, name, resolution, err.into(), url)
     }
 }
 

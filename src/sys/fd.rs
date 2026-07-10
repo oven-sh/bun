@@ -27,7 +27,7 @@ pub enum ErrorCase {
     LeakFdOnFail,
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum MakeLibUvOwnedError {
     #[error("SystemFdQuotaExceeded")]
     SystemFdQuotaExceeded,

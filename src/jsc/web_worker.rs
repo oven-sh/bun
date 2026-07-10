@@ -831,7 +831,7 @@ impl WebWorker {
     /// ran `shutdown()` (after which `self` may be freed by `~Worker` on the
     /// parent thread; touching `self` past that point is the UAF this return
     /// shape exists to prevent).
-    fn start_vm(&self) -> Result<*mut VirtualMachine, crate::Error> {
+    fn start_vm(&self) -> Result<*mut VirtualMachine, crate::CrateError> {
         debug_assert!(self.status.get() == Status::Start);
         debug_assert!(self.vm_ptr().is_null());
 

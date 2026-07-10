@@ -21,7 +21,7 @@ impl<T: Copy> Errorable<T> {
             unsafe { Ok(self.result.value) }
         } else {
             // SAFETY: success == false implies the `err` arm is active.
-            unsafe { Err(self.result.err.code.to_error()) }
+            unsafe { Err(self.result.err.code) }
         }
     }
 

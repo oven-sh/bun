@@ -90,6 +90,24 @@ pub enum Error {
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
+    #[error(transparent)]
+    Core(#[from] bun_core::Error),
+    #[error(transparent)]
+    Resolver(#[from] bun_resolver::Error),
+    #[error(transparent)]
+    MakeLibUvOwned(#[from] bun_sys::MakeLibUvOwnedError),
+    #[error(transparent)]
+    Path(#[from] bun_paths::path_options::Error),
+    #[error(transparent)]
+    Bundler(#[from] bun_bundler::Error),
+    #[error(transparent)]
+    Watcher(#[from] bun_watcher::Error),
+    #[error(transparent)]
+    Install(#[from] bun_install::Error),
+    #[error(transparent)]
+    Ast(#[from] bun_ast::Error),
+    #[error("{0}")]
+    ErrorCode(crate::error_code::ErrorCode),
 }
 
 impl Error {
@@ -140,7 +158,23 @@ impl Error {
             Self::EndOfFile => "EndOfFile",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
+            Self::Core(e) => e.name(),
+            Self::Resolver(e) => e.name(),
+            Self::MakeLibUvOwned(e) => <&'static str>::from(e),
+            Self::Path(e) => <&'static str>::from(e),
+            Self::Bundler(e) => e.name(),
+            Self::Watcher(e) => e.name(),
+            Self::Install(e) => e.name(),
+            Self::Ast(e) => e.name(),
+            Self::ErrorCode(e) => <&'static str>::from(*e),
         }
+    }
+}
+
+impl From<crate::error_code::ErrorCode> for Error {
+    #[inline]
+    fn from(e: crate::error_code::ErrorCode) -> Self {
+        Self::ErrorCode(e)
     }
 }
 

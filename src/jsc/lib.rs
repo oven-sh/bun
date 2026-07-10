@@ -2100,9 +2100,8 @@ pub trait FnTyped<Context> {
     fn call(this: &mut Context);
 }
 
-/// Legacy alias for [`ErrorCode`] (`src/jsc/ErrorCode.rs`) — the same type
-/// under both names.
-pub type Error = ErrorCode;
+/// Legacy alias — now points at the crate's [`error::Error`] enum.
+pub type Error = error::Error;
 
 /// Maximum Date in JavaScript is less than Number.MAX_SAFE_INTEGER (u52).
 pub const INIT_TIMESTAMP: JSTimeType = (1u64 << 52) - 1;

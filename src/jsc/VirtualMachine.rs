@@ -1485,7 +1485,7 @@ impl VirtualMachine {
             if let Err(e) =
                 crate::bun_cpu_profiler::stop_and_write_profile(self.jsc_vm_mut(), &config)
             {
-                bun_core::Output::err(crate::CrateError::from(e), "Failed to write CPU profile", ());
+                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
             }
         }
         // Write heap profile if profiling was enabled - do this after CPU
@@ -2704,14 +2704,12 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         &mut self,
         chunk: bun_sourcemap::Chunk,
         source: &bun_ast::Source,
-    ) -> crate::CrateResult<()> {
+    ) -> bun_js_printer::Result<()> {
         let mut temp_json_buffer = bun_core::MutableString::init_empty();
         // `defer temp_json_buffer.deinit()` → Drop.
-        chunk.print_source_map_contents_from_internal::<true>(
-            source,
-            &mut temp_json_buffer,
-            true,
-        )?;
+        chunk
+            .print_source_map_contents_from_internal::<true>(source, &mut temp_json_buffer, true)
+            .map_err(|_| bun_js_printer::Error::WriteFailed)?;
         const SOURCE_MAP_URL_PREFIX_START: &[u8] =
             b"//# sourceMappingURL=data:application/json;base64,";
         // TODO: do we need to %-encode the path?
@@ -2721,7 +2719,8 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
         self.vm_source_mappings_mut()
-            .put_mappings(source, chunk.buffer)?;
+            .put_mappings(source, chunk.buffer)
+            .map_err(|_| bun_js_printer::Error::WriteFailed)?;
 
         // SAFETY: `printer` is the raw `*mut BufferPrinter` passed in by the
         // caller (jsc_hooks.rs), with the SAME provenance as the `writer` arg
@@ -3918,7 +3917,7 @@ impl VirtualMachine {
             ModuleLoader::fetch_builtin_module(jsc_vm, global_ptr, &specifier, &referrer, &mut ret);
         match builtin {
             ModuleLoader::FetchBuiltinResult::Found | ModuleLoader::FetchBuiltinResult::Errored => {
-                return ret.unwrap();
+                return ret.unwrap().map_err(Into::into);
             }
             ModuleLoader::FetchBuiltinResult::NotFound => {}
         }
@@ -4019,7 +4018,7 @@ impl VirtualMachine {
             guard.1 = true; // errdefer
         }
         // `blob_to_deinit` drop guard fires here.
-        ret.unwrap()
+        ret.unwrap().map_err(Into::into)
     }
 
     /// Dupe `s` into a VM-owned allocation for the `_resolve` fast-paths.
@@ -4144,7 +4143,7 @@ impl VirtualMachine {
                 global_cache,
             ) {
                 ResultUnion::Success(r) => break r,
-                ResultUnion::Failure(e) => return Err(e),
+                ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
                     if !retry_on_not_found {
                         return Err(crate::CrateError::ModuleNotFound);
@@ -4398,7 +4397,7 @@ impl VirtualMachine {
                 .iter()
                 .find_map(|m| {
                     if let bun_ast::Metadata::Resolve(r) = &m.metadata {
-                        err = r.err;
+                        err = r.err.into();
                         Some(m.clone())
                     } else {
                         None
@@ -4416,7 +4415,7 @@ impl VirtualMachine {
                         metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
                             specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
                             import_kind,
-                            err,
+                            err: bun_ast::Error::ModuleNotFound,
                         }),
                         ..Default::default()
                     }

@@ -312,7 +312,11 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      env: {
+        ...bunEnv,
+        BUN_DEBUG_QUIET_LOGS: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -352,7 +356,11 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      env: {
+        ...bunEnv,
+        BUN_DEBUG_QUIET_LOGS: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -396,7 +404,11 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      env: {
+        ...bunEnv,
+        BUN_DEBUG_QUIET_LOGS: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       stderr: "pipe",
       stdout: "pipe",
     });

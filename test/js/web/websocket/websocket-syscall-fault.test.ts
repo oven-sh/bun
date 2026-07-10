@@ -298,6 +298,15 @@ describe.concurrent.skipIf(skip)("WebSocket client close-frame under faults", ()
 });
 
 describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected syscall faults (subprocess)", () => {
+  // detect_leaks=0: these fixtures call process.exit() from ws.onclose before
+  // s.stop() has torn down the upgrade RequestContext, so LSan reports the
+  // Request box from on_web_socket_upgrade. See #33726.
+  const subEnv = {
+    ...bunEnv,
+    BUN_DEBUG_QUIET_LOGS: "1",
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+  };
+
   test("send → short writes (1 byte) deliver complete frame to client", async () => {
     const fixture = /* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
@@ -312,11 +321,7 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: {
-        ...bunEnv,
-        BUN_DEBUG_QUIET_LOGS: "1",
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
-      },
+      env: subEnv,
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -356,11 +361,7 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: {
-        ...bunEnv,
-        BUN_DEBUG_QUIET_LOGS: "1",
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
-      },
+      env: subEnv,
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -404,11 +405,7 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: {
-        ...bunEnv,
-        BUN_DEBUG_QUIET_LOGS: "1",
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
-      },
+      env: subEnv,
       stderr: "pipe",
       stdout: "pipe",
     });

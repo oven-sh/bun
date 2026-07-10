@@ -311,7 +311,9 @@ pub(crate) fn __bun_macro_context_call(
     import_range: Range,
     caller: Expr,
     function_name: &[u8],
-) -> crate::Result<Expr> {
+) -> Result<Expr, bun_js_parser::Error> {
+    // ABI: the `extern "Rust"` declaration in bun_js_parser names
+    // `bun_js_parser::Error`; keep both sides byte-identical.
     debug_assert!(
         !ctx.data.is_null(),
         "MacroContext.call reached without init"
@@ -320,15 +322,17 @@ pub(crate) fn __bun_macro_context_call(
     // lower-tier handle is uniquely borrowed for this call so no alias exists.
     let inner = unsafe { &mut *ctx.data.cast::<MacroContext>() };
     inner.javascript_object = JSValue::from_encoded(ctx.javascript_object.0 as usize);
-    inner.call(
-        import_record_path,
-        source_dir,
-        log,
-        source,
-        import_range,
-        caller,
-        function_name,
-    )
+    inner
+        .call(
+            import_record_path,
+            source_dir,
+            log,
+            source,
+            import_range,
+            caller,
+            function_name,
+        )
+        .map_err(|_| bun_js_parser::Error::MacroFailed)
 }
 
 #[unsafe(no_mangle)]

@@ -148,50 +148,57 @@ impl ResolveMessage {
             .ok();
             return out;
         }
-        if err == crate::CrateError::ModuleNotFound {
-            if referrer == b"bun:main" {
-                write!(&mut out, "Module not found '{}'", BStr::new(specifier)).ok();
+        // The same logical error can arrive nested (e.g. via
+        // `CrateError::Resolver(resolver::Error::ModuleNotFound)`), so dispatch
+        // on the tag string rather than structural equality.
+        match err.name() {
+            "ModuleNotFound" => {
+                if referrer == b"bun:main" {
+                    write!(&mut out, "Module not found '{}'", BStr::new(specifier)).ok();
+                    return out;
+                }
+                if bun_resolver::is_package_path(specifier)
+                    && !strings::contains_char(specifier, b'/')
+                {
+                    write!(
+                        &mut out,
+                        "Cannot find package '{}' from '{}'",
+                        BStr::new(specifier),
+                        BStr::new(referrer),
+                    )
+                    .ok();
+                } else {
+                    write!(
+                        &mut out,
+                        "Cannot find module '{}' from '{}'",
+                        BStr::new(specifier),
+                        BStr::new(referrer),
+                    )
+                    .ok();
+                }
                 return out;
             }
-            if bun_resolver::is_package_path(specifier) && !strings::contains_char(specifier, b'/')
-            {
+            "InvalidDataURL" => {
                 write!(
                     &mut out,
-                    "Cannot find package '{}' from '{}'",
+                    "Cannot resolve invalid data URL '{}' from '{}'",
                     BStr::new(specifier),
                     BStr::new(referrer),
                 )
                 .ok();
-            } else {
-                write!(
-                    &mut out,
-                    "Cannot find module '{}' from '{}'",
-                    BStr::new(specifier),
-                    BStr::new(referrer),
-                )
-                .ok();
+                return out;
             }
-            return out;
-        }
-        if err == crate::CrateError::InvalidDataURL {
-            write!(
-                &mut out,
-                "Cannot resolve invalid data URL '{}' from '{}'",
-                BStr::new(specifier),
-                BStr::new(referrer),
-            )
-            .ok();
-            return out;
-        }
-        if err == crate::CrateError::InvalidURL {
-            write!(
-                &mut out,
-                "Cannot resolve invalid URL '{}' from '{}'",
-                BStr::new(specifier),
-                BStr::new(referrer),
-            )
-            .ok();
-            return out;
+            "InvalidURL" => {
+                write!(
+                    &mut out,
+                    "Cannot resolve invalid URL '{}' from '{}'",
+                    BStr::new(specifier),
+                    BStr::new(referrer),
+                )
+                .ok();
+                return out;
+            }
+            _ => {}
         }
         // else
         if bun_resolver::is_package_path(specifier) {

@@ -458,7 +458,11 @@ pub(crate) unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
     mut env: core::ptr::NonNull<bun_dotenv::Loader<'static>>,
-) -> Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, crate::Error> {
+) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_core::Error> {
+    // ABI: the resolver-side `extern "Rust"` declaration names `bun_core::Error`
+    // (the only error type both crates can see without a dep cycle). Keep both
+    // sides byte-identical or the `Result` layout diverges.
+    //
     // Idempotent.
     bun_http::http_thread::init(&Default::default());
 
@@ -476,7 +480,14 @@ pub(crate) unsafe fn __bun_resolver_init_package_manager(
         bun_install,
         crate::package_manager::CommandLineArguments::default(),
         env_ref,
-    )?;
+    )
+    .map_err(|e| {
+        log_ref.add_zig_error_with_note(
+            e.name(),
+            format_args!("while initializing the auto-install package manager"),
+        );
+        bun_core::Error::Unexpected
+    })?;
     // On success `init_with_runtime` returns the non-null `holder::RAW_PTR`
     // singleton; upcast to the trait object the resolver stores.
     Ok(core::ptr::NonNull::new(pm as *mut dyn hooks::AutoInstaller)

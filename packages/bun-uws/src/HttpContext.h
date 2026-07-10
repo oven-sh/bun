@@ -295,11 +295,15 @@ private:
              * or Connection: close, set below). RFC 9112 9.3/9.6: the connection
              * is non-persistent; do not dispatch a pipelined follow-up. Runs
              * before the per-request timeout/offset resets so a backpressured
-             * prior response keeps its armed idle timeout. */
+             * prior response keeps its armed idle timeout. Uncork first:
+             * uws_res_end_without_body / uws_res_end_sendfile markDone without
+             * uncorking, and getBufferedAmount() does not count corked bytes. */
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
-                if (((AsyncSocket<SSL> *) s)->getBufferedAmount() == 0) {
-                    ((AsyncSocket<SSL> *) s)->shutdown();
-                    ((AsyncSocket<SSL> *) s)->close();
+                auto *asyncSocket = (AsyncSocket<SSL> *) s;
+                asyncSocket->uncork();
+                if (asyncSocket->getBufferedAmount() == 0) {
+                    asyncSocket->shutdown();
+                    asyncSocket->close();
                 }
                 return nullptr;
             }

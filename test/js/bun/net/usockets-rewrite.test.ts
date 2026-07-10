@@ -2,9 +2,9 @@
 // Exercises the listen/accept/read/write/close hot path, TLS handshake, and
 // UDP round-trip through the Rust-provided extern "C" symbols end to end.
 import { describe, expect, test } from "bun:test";
-import { once } from "node:events";
-import dgram from "node:dgram";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
+import dgram from "node:dgram";
+import { once } from "node:events";
 
 describe("usockets backend", () => {
   test("TCP listen/accept/data/write/close round-trip", async () => {

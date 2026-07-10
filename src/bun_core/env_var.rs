@@ -86,6 +86,10 @@ new!(pub BUN_INSPECT_PRELOAD: string, "BUN_INSPECT_PRELOAD", {});
 new!(pub BUN_INSTALL: string, "BUN_INSTALL", {});
 new!(pub BUN_INSTALL_BIN: string, "BUN_INSTALL_BIN", {});
 new!(pub BUN_INSTALL_GLOBAL_DIR: string, "BUN_INSTALL_GLOBAL_DIR", {});
+// Opt out of the parallel hoisted node_modules linker and fall back
+// to linking packages one at a time on the main thread. Escape hatch
+// if the thread-pool fan-out misbehaves on a filesystem.
+new!(pub BUN_INSTALL_SERIAL_HOISTED: boolean, "BUN_INSTALL_SERIAL_HOISTED", { default: false });
 // Minimum response `Content-Length` (in bytes) for `bun install` to
 // stream a tarball directly into libarchive instead of buffering the
 // whole body first. Smaller tarballs stay on the buffered path where
@@ -236,6 +240,10 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS, "BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", {});
     new_feature_flag!(pub BUN_INSTRUMENTS, "BUN_INSTRUMENTS", {});
     new_feature_flag!(pub BUN_INTERNAL_BUNX_INSTALL, "BUN_INTERNAL_BUNX_INSTALL", {});
+    // Test-only: emit "[ParallelHoistedInstall] N tasks" to stderr from
+    // the hoisted linker's thread-pool drain so tests can assert the
+    // parallel path was taken without timing.
+    new_feature_flag!(pub BUN_INTERNAL_PARALLEL_HOISTED_MARKER, "BUN_INTERNAL_PARALLEL_HOISTED_MARKER", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN, "BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT, "BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF, "BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF", {});

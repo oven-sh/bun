@@ -417,6 +417,12 @@ pub(crate) fn install_hoisted_packages(
                 folder_path_buf: bun_paths::PathBuffer::uninit(),
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
+                #[cfg(unix)]
+                parallel_tasks: Vec::new(),
+                #[cfg(unix)]
+                parallel_wait_group: bun_threading::WaitGroup::init(),
+                #[cfg(unix)]
+                parallel_batch: bun_threading::thread_pool::Batch::default(),
             };
         };
 
@@ -468,6 +474,11 @@ pub(crate) fn install_hoisted_packages(
             for dependency_id in remaining {
                 installer.install_package(*dependency_id, log_level);
             }
+
+            // Flush any ParallelHoistedTasks accumulated for this tree so
+            // workers start immediately rather than waiting for the full
+            // tree iteration to finish.
+            installer.schedule_parallel_batch();
 
             run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
                 this,
@@ -556,6 +567,73 @@ pub(crate) fn install_hoisted_packages(
         }
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
+
+        // Wait for any thread-pool package installs kicked off during the
+        // tree iteration above, then run their result handling (summary,
+        // bins, scripts, tree counts) serially. This must happen before the
+        // forced pending-install drain below so bin linking and lifecycle
+        // scripts see a fully populated node_modules. If any worker
+        // discovered a package missing from the cache, the result handler
+        // re-enters the serial path which enqueues a download/extract task;
+        // drain those here.
+        if installer.complete_parallel_installs(log_level) {
+            struct DrainClosure<'a, 'b> {
+                installer: &'a mut PackageInstaller<'b>,
+                err: Option<bun_core::Error>,
+                manager: *mut PackageManager,
+            }
+            impl<'a, 'b> DrainClosure<'a, 'b> {
+                pub(crate) fn is_done(closure: &mut Self) -> bool {
+                    // SAFETY: see the sibling `Closure::is_done` above.
+                    let manager = unsafe { &mut *closure.manager };
+                    let log_level = manager.options.log_level;
+                    if let Err(err) = run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
+                        manager,
+                        closure.installer,
+                        true,
+                        log_level,
+                    ) {
+                        closure.err = Some(err);
+                    }
+                    if closure.err.is_some() {
+                        return true;
+                    }
+
+                    manager.report_slow_lifecycle_scripts();
+
+                    if PackageManager::verbose_install() {
+                        let pending_task_count = manager.pending_task_count();
+                        if pending_task_count > 0
+                            && PackageManager::has_enough_time_passed_between_waiting_messages()
+                        {
+                            bun_core::pretty_errorln!(
+                                "<d>[PackageManager]<r> waiting for {} tasks\n",
+                                pending_task_count
+                            );
+                        }
+                    }
+
+                    manager.pending_task_count() == 0
+                }
+            }
+            let mgr: *mut PackageManager = mgr_ptr;
+            let mut drain_closure = DrainClosure {
+                installer: &mut installer,
+                err: None,
+                manager: mgr,
+            };
+            // run_tasks pushes task_batch to the thread pool via
+            // drain_dependency_list, so call it once before sleeping.
+            if !DrainClosure::is_done(&mut drain_closure) {
+                // SAFETY: see the sibling `sleep_until` call above.
+                unsafe {
+                    PackageManager::sleep_until(mgr, &mut drain_closure, DrainClosure::is_done)
+                };
+            }
+            if let Some(err) = drain_closure.err {
+                return Err(err);
+            }
+        }
 
         // Index instead of `.iter()` so the immutable borrow of
         // `installer.trees` doesn't overlap `&mut self`.

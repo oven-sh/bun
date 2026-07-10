@@ -417,6 +417,7 @@ static void nativeSourceSever(JSGlobalObject* globalObject, JSNativeStreamSource
     }
     adapter->m_handle.clear();
     adapter->m_pendingView.clear();
+    adapter->m_pendingIsBYOB = false;
 }
 
 static inline bool nativeByteControllerCanCloseOrEnqueue(JSReadableByteStreamController* controller)
@@ -506,15 +507,17 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         if (!isClosed)
             nativeAdjustChunkSize(adapter, written > 0 ? static_cast<size_t>(written) : 0);
         if (hasBYOBRequest) {
-            if (controller) {
-                if (written > 0) {
-                    uint64_t count = static_cast<uint64_t>(std::min(static_cast<size_t>(written), view ? static_cast<size_t>(view->length()) : 0));
+            // The pull-into can be gone by the time an async pull settles (cancel / release
+            // cleared it); skip respond() rather than tripping its non-empty precondition.
+            if (controller && view && !controller->m_pendingPullIntos.isEmpty()) {
+                uint64_t count = static_cast<uint64_t>(std::min(static_cast<size_t>(written), static_cast<size_t>(view->length())));
+                if (count > 0) {
                     readableByteStreamControllerRespond(globalObject, controller, count);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
-                if (isClosed)
-                    scheduleNativeSourceCallClose(globalObject, adapter);
             }
+            if (isClosed)
+                scheduleNativeSourceCallClose(globalObject, adapter);
             return jsUndefined();
         }
         JSValue newView = view ? JSValue(view) : jsUndefined();

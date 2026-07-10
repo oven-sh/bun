@@ -113,7 +113,7 @@ static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalOb
 }
 
 // The [[pullAlgorithm]] dispatch. The reachable kind set on a byte controller is exactly
-// {JavaScript, Nothing, ByteTeeBranch}; the switch is total over SourceKind.
+// {JavaScript, Nothing, ByteTeeBranch, Native}; the switch is total over SourceKind.
 // Returns nullptr with no exception pending when the pull completed synchronously with a
 // non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableByteStreamController* controller)

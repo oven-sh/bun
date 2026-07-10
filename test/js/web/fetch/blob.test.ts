@@ -601,20 +601,23 @@ describe("Blob.prototype.stream() is a byte stream (supports BYOB readers)", () 
   });
 
   test("releaseLock after a default reader then attach a BYOB reader", async () => {
-    const payload = new Uint8Array(4096).map((_, i) => i & 0xff);
+    const payload = new Uint8Array(40_000).map((_, i) => i & 0xff);
     const stream = new Blob([payload]).stream();
     const r1 = stream.getReader();
     const first = await r1.read();
     expect(first.done).toBe(false);
+    const consumed = first.value!.byteLength;
+    expect(consumed).toBeGreaterThan(0);
+    expect(consumed).toBeLessThan(payload.length);
     r1.releaseLock();
 
-    // A byte stream permits a BYOB reader after a default reader is released.
+    // A byte stream permits a BYOB reader after a default reader is released,
+    // and the BYOB read picks up exactly where the default reader left off.
     const r2 = stream.getReader({ mode: "byob" });
     const second = await r2.read(new Uint8Array(32));
-    // The remaining bytes (if any) are still delivered, or the stream is already closed.
-    if (!second.done) {
-      expect(second.value).toBeInstanceOf(Uint8Array);
-    }
+    expect(second.done).toBe(false);
+    expect(second.value!.byteLength).toBe(32);
+    expect(Buffer.from(second.value!)).toEqual(Buffer.from(payload.subarray(consumed, consumed + 32)));
     await r2.cancel();
   });
 

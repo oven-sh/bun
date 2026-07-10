@@ -15,7 +15,6 @@ members = [
   "src/install/windows-shim",
   "src/parsers",
   "src/io",
-  "src/js",
   "src/libarchive",
   "src/md",
   "src/paths",
@@ -363,7 +362,6 @@ bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
-bun_js = { path = "src/js" }
 bun_libarchive = { path = "src/libarchive" }
 bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }

@@ -110,6 +110,11 @@ pub struct PostgresSQLConnection {
     pub pipelined_requests: Cell<u32>,
     /// number of non-pipelined requests (Simple/Copy)
     pub nonpipelinable_requests: Cell<u32>,
+    /// number of queued requests whose bytes have not been written yet
+    /// (QueryStatus::Pending); gates the enqueue-time pipeline fast path so a
+    /// later prepared-statement execute cannot be emitted ahead of an earlier
+    /// queued request whose Parse/Bind/Execute is still unwritten.
+    pub pending_requests: Cell<u32>,
 
     pub poll_ref: JsCell<KeepAlive>,
     // Read-only back-reference to the JS global; the VM/global strictly outlives
@@ -1194,6 +1199,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             requests: JsCell::new(PostgresRequest::Queue::init()),
             pipelined_requests: Cell::new(0),
             nonpipelinable_requests: Cell::new(0),
+            pending_requests: Cell::new(0),
             poll_ref: JsCell::new(KeepAlive::default()),
             global_object: BackRef::new(global_object),
             // `vm` is the `&mut VirtualMachine` from `bun_vm().as_mut()` above —
@@ -1487,6 +1493,7 @@ impl PostgresSQLConnection {
             match request.status.get() {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
                 QueryStatus::Pending => {
+                    self.note_request_written();
                     let Some(stmt) = request.statement_mut() else {
                         // The deref/discard at the bottom of the loop is intentionally skipped here.
                         continue;
@@ -1598,6 +1605,18 @@ impl PostgresSQLConnection {
             .get()
             .contains(ConnectionFlags::IS_READY_FOR_QUERY)
             || self.current().is_some()
+    }
+
+    #[inline]
+    pub fn note_request_pending(&self) {
+        self.pending_requests.set(self.pending_requests.get() + 1);
+    }
+
+    #[inline]
+    pub fn note_request_written(&self) {
+        let n = self.pending_requests.get();
+        debug_assert!(n > 0, "pending_requests underflow");
+        self.pending_requests.set(n.wrapping_sub(1));
     }
 
     pub fn can_pipeline(&self) -> bool {
@@ -1797,7 +1816,12 @@ impl PostgresSQLConnection {
                         .set(self.pipelined_requests.get() - 1);
                 }
             }
-            QueryStatus::Success | QueryStatus::Fail | QueryStatus::Pending => {}
+            QueryStatus::Pending => {
+                // ErrorResponse on a Parse-in-flight request: it never reached
+                // Binding, so account for it leaving the pending set here.
+                self.note_request_written();
+            }
+            QueryStatus::Success | QueryStatus::Fail => {}
         }
     }
 
@@ -1867,6 +1891,11 @@ impl PostgresSQLConnection {
             let req = ParentRef::from(NonNull::new(req_ptr).expect("queue item non-null"));
             match req.status.get() {
                 QueryStatus::Pending => {
+                    // Optimistically account for this request leaving Pending; the
+                    // few paths below that keep it Pending (can't execute yet /
+                    // Parse written but not Bind / statement still Parsing) undo
+                    // this via note_request_pending() before returning/continuing.
+                    self.note_request_written();
                     if req.flags.get().simple {
                         if self.pipelined_requests.get() > 0
                             || !self
@@ -1882,6 +1911,7 @@ impl PostgresSQLConnection {
                                     .contains(ConnectionFlags::IS_READY_FOR_QUERY)
                             );
                             // need to wait for the previous request to finish before starting simple queries
+                            self.note_request_pending();
                             defer_cleanup!(self);
                             return;
                         }
@@ -2065,6 +2095,7 @@ impl PostgresSQLConnection {
                                             "need to wait to finish the pipeline before starting a new query preparation"
                                         );
                                         // need to wait to finish the pipeline before starting a new query preparation
+                                        self.note_request_pending();
                                         defer_cleanup!(self);
                                         return;
                                     }
@@ -2266,17 +2297,22 @@ impl PostgresSQLConnection {
                                         f.insert(ConnectionFlags::WAITING_TO_PREPARE);
                                     });
                                     statement.status = StatementStatus::Parsing;
+                                    // Parse+Describe+Sync written; Bind+Execute deferred to the
+                                    // next advance(), so the request is still pending on the wire.
+                                    self.note_request_pending();
                                     self.flush_data_and_reset_timeout();
                                     defer_cleanup!(self);
                                     return;
                                 }
                                 StatementStatus::Parsing => {
                                     // we are still parsing, lets wait for it to be prepared or failed
+                                    self.note_request_pending();
                                     offset += 1;
                                     continue;
                                 }
                             }
                         } else {
+                            self.note_request_pending();
                             offset += 1;
                             continue;
                         }

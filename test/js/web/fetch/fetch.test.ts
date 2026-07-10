@@ -2883,3 +2883,59 @@ it("does not reuse a keep-alive connection whose response carried more bytes tha
     server.close();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/16682
+it("an explicit numeric `timeout` extends the socket idle deadline past the default", async () => {
+  // The child runs with a 1s idle default (BUN_CONFIG_HTTP_IDLE_TIMEOUT=1) and
+  // talks to an in-process server whose handler holds every request idle for
+  // 10s (longer than the worst-case firing window of the 1s idle timer, which
+  // is swept on uSockets' 4s tick) before responding.
+  //
+  //   - `timeout: 60_000` must override the 1s idle default and resolve.
+  //   - `timeout: 0` must keep meaning "no timeout" and resolve.
+  //   - no `timeout` at all must still hit the 1s idle default (control that
+  //     proves the env override and the stall are both real).
+  const script = /* js */ `
+    const HOLD_MS = 10_000;
+    using server = Bun.serve({
+      port: 0,
+      // Disable Bun.serve's own request idle timeout; only the client-side
+      // idle timer under test may abort anything here.
+      idleTimeout: 0,
+      async fetch(req) {
+        const arrived = Date.now();
+        // Hold the connection idle (no bytes in either direction) until the
+        // hold window has really elapsed on the server's clock.
+        while (Date.now() - arrived < HOLD_MS) {
+          await Bun.sleep(HOLD_MS - (Date.now() - arrived));
+        }
+        return new Response("hello");
+      },
+    });
+    const get = init => fetch(server.url, init).then(r => r.text(), e => "ERR:" + (e?.code ?? e?.name ?? e));
+    const [withTimeout, withZero, withInfinity, withDefault] = await Promise.all([
+      get({ timeout: 60_000 }),
+      get({ timeout: 0 }),
+      get({ timeout: Infinity }),
+      get(undefined),
+    ]);
+    console.log(JSON.stringify({ withTimeout, withZero, withInfinity, withDefault }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout.trim().split("\n").pop()!) as Record<string, string>;
+  expect({ withTimeout: out.withTimeout, withZero: out.withZero, withInfinity: out.withInfinity }).toEqual({
+    withTimeout: "hello",
+    withZero: "hello",
+    withInfinity: "hello",
+  });
+  // Control: without an explicit `timeout`, the 1s idle default still aborts
+  // the stalled request.
+  expect(out.withDefault).toStartWith("ERR:");
+  expect(exitCode).toBe(0);
+}, 60_000);

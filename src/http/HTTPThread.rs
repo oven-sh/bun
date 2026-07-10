@@ -1055,6 +1055,7 @@ impl HttpThread {
                 drop(core::mem::take(&mut client.redirect));
                 drop(core::mem::take(&mut client.prev_redirect));
                 drop(core::mem::take(&mut client.compressed_request_body));
+                drop(core::mem::take(&mut client.proxy_authorization));
                 if let Some(tunnel) = client.proxy_tunnel.take() {
                     (*tunnel.as_ptr()).detach_socket();
                     tunnel.deref();
@@ -1264,25 +1265,16 @@ mod _event_loop_draft {
     pub(super) fn on_start(opts: InitOpts) {
         Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
 
-        // uSockets' long-timeout counter is `% 240` minutes (see
-        // `us_socket_long_timeout` in packages/bun-usockets/src/socket.c), so
-        // values above 239 min wrap around and fire early. Clamp here — it's the
-        // only assignment — so the underlying timer can't wrap, and round values
-        // above 240s up to a whole minute so `socket.set_timeout`'s floor-to-
-        // minute long-timer path never yields a timeout *shorter* than requested.
-        // Normalising once here keeps the h1 (`HTTPClient::set_timeout`) and h2
-        // (`ClientSession::rearm_timeout`) paths identical without duplicating the
-        // math at each call site.
-        let raw: u64 = bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT
-            .get()
-            .unwrap_or(300)
-            .min(239 * 60);
+        // Normalising once here (see `normalize_idle_timeout_seconds`) keeps
+        // the h1 (`HTTPClient::set_timeout`) and h2
+        // (`ClientSession::rearm_timeout`) paths identical without duplicating
+        // the math at each call site.
         crate::IDLE_TIMEOUT_SECONDS.store(
-            (if raw > 240 {
-                raw.div_ceil(60) * 60
-            } else {
-                raw
-            }) as core::ffi::c_uint,
+            crate::normalize_idle_timeout_seconds(
+                bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT
+                    .get()
+                    .unwrap_or(300),
+            ),
             core::sync::atomic::Ordering::Relaxed,
         );
 

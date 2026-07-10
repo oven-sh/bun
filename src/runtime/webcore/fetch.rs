@@ -8,30 +8,25 @@ pub(crate) const FETCH_ERROR_UNEXPECTED_BODY: &str =
     "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
 pub(crate) const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
 
-// by the C `kJSType*` ordinal until a typed key is available.
-pub const FETCH_TYPE_ERROR_NAMES: [&str; 8] = [
-    /* kJSTypeUndefined */ "Undefined",
-    /* kJSTypeNull      */ "Null",
-    /* kJSTypeBoolean   */ "Boolean",
-    /* kJSTypeNumber    */ "Number",
-    /* kJSTypeString    */ "String",
-    /* kJSTypeObject    */ "Object",
-    /* kJSTypeSymbol    */ "Symbol",
-    /* kJSTypeBigInt    */ "BigInt",
-];
-
-pub(crate) const FETCH_TYPE_ERROR_STRING_VALUES: [&str; 8] = [
-    concat!("fetch() expects a string, but received ", "Undefined"),
-    concat!("fetch() expects a string, but received ", "Null"),
-    concat!("fetch() expects a string, but received ", "Boolean"),
-    concat!("fetch() expects a string, but received ", "Number"),
-    concat!("fetch() expects a string, but received ", "String"),
-    concat!("fetch() expects a string, but received ", "Object"),
-    concat!("fetch() expects a string, but received ", "Symbol"),
-    concat!("fetch() expects a string, but received ", "BigInt"),
-];
-
-pub(crate) const FETCH_TYPE_ERROR_STRINGS: [&str; 8] = FETCH_TYPE_ERROR_STRING_VALUES;
+pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
+    if value.is_undefined() {
+        "fetch() expects a string, but received Undefined"
+    } else if value.is_null() {
+        "fetch() expects a string, but received Null"
+    } else if value.is_boolean() {
+        "fetch() expects a string, but received Boolean"
+    } else if value.is_number() {
+        "fetch() expects a string, but received Number"
+    } else if value.is_symbol() {
+        "fetch() expects a string, but received Symbol"
+    } else if value.is_big_int() {
+        "fetch() expects a string, but received BigInt"
+    } else if value.is_string_literal() {
+        "fetch() expects a string, but received String"
+    } else {
+        "fetch() expects a string, but received Object"
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export: FetchTasklet lives in ./fetch/FetchTasklet.rs
@@ -200,20 +195,9 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     };
     let blob = Blob::init(data, global_this);
 
-    let mut allocated = false;
-    let mime_type = MimeType::MimeType::init(data_url.mime_type, true, Some(&mut allocated));
-    // `mime_type.value` is `Cow<'static, [u8]>`; Blob.content_type is
-    // `*const [u8]` discriminated by `content_type_allocated` (Blob's Drop reclaims
-    // via `heap::take` when set). Use `heap::alloc` (paired alloc/free), not
-    // leaking.
-    blob.content_type.set(match mime_type.value {
-        std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
-        std::borrow::Cow::Owned(v) => {
-            blob.content_type_allocated.set(true);
-            bun_core::heap::into_raw(v.into_boxed_slice()).cast_const()
-        }
-    });
-    debug_assert_eq!(allocated, blob.content_type_allocated.get());
+    let mime_type = MimeType::MimeType::init(data_url.mime_type, true, None);
+    blob.content_type
+        .set(crate::webcore::blob::BlobContentType::from(mime_type));
 
     let response = bun_core::heap::into_raw(Box::new(Response::init(
         response::Init {
@@ -355,13 +339,40 @@ impl StringOrURL {
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
 #[bun_jsc::host_fn(export = "Bun__fetch")]
 pub(crate) fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    fetch_impl::<false>(ctx, callframe)
+    reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
 }
 
 /// Internal entry point for Node.js HTTP client - allows body on GET/HEAD/OPTIONS
 #[bun_jsc::host_fn]
 pub(crate) fn node_http_client(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    fetch_impl::<true>(ctx, callframe)
+    reject_on_exception(ctx, fetch_impl::<true>(ctx, callframe))
+}
+
+/// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
+/// rejects the returned promise; `fetch()` never throws synchronously.
+fn reject_on_exception(
+    global_this: &JSGlobalObject,
+    result: JsResult<JSValue>,
+) -> JsResult<JSValue> {
+    let err = match result {
+        Ok(v) if !v.is_empty() => return Ok(v),
+        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
+        Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
+        Ok(_) | Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
+            Some(exc) if exc.is_termination_exception() => return Err(jsc::JsError::Terminated),
+            Some(exc) => exc.to_error().unwrap_or(exc),
+            None => {
+                // `fetch_impl` only returns Ok(ZERO)/Err(Thrown) with an exception
+                // pending; reaching here means it was cleared, which is a bug.
+                debug_assert!(
+                    false,
+                    "fetch_impl signaled a thrown exception but none is pending"
+                );
+                global_this.create_error_instance(format_args!("fetch() failed"))
+            }
+        },
+    };
+    Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(global_this, err))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -421,6 +432,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let first_arg = args.next_eat().unwrap();
 
     let mut disable_timeout = false;
+    let mut idle_timeout_seconds: Option<core::ffi::c_uint> = None;
     let mut disable_keepalive = false;
     let mut disable_decompression = false;
     let mut compress: Option<compress_body::CompressOption> = None;
@@ -860,7 +872,22 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     if timeout_value.is_boolean() {
                         break 'extract_disable_timeout !timeout_value.as_boolean();
                     } else if timeout_value.is_number() {
-                        break 'extract_disable_timeout timeout_value.to_int32() == 0;
+                        // A finite positive `timeout` (in ms) also governs the
+                        // socket idle deadline, overriding the global
+                        // `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default.
+                        let ms = timeout_value.as_number();
+                        if ms.is_finite() && ms > 0.0 {
+                            idle_timeout_seconds =
+                                Some((ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
+                                    as core::ffi::c_uint);
+                        }
+                        // `to_int32()` saturates ±Infinity (JSC's
+                        // `coerceJSValueDoubleTruncatingT`, not spec ToInt32),
+                        // so gate on `is_finite()` too so `{timeout: Infinity}`
+                        // disables the timer instead of silently falling back
+                        // to the global default.
+                        break 'extract_disable_timeout !ms.is_finite()
+                            || timeout_value.to_int32() == 0;
                     }
                 }
 
@@ -983,8 +1010,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(proxy_arg) = obj.get(global_this, "proxy")? {
+                    // A URL instance has no `.url` own property, so the `{url, headers}`
+                    // branch below would silently ignore it. Treat it as its href here.
+                    let is_url_instance =
+                        bun_jsc::DOMURL::cast_(proxy_arg, global_this.vm()).is_some();
                     // Handle string format: proxy: "http://proxy.example.com:8080"
-                    if proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0 {
+                    if is_url_instance || (proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0)
+                    {
                         // `href_from_js` returns a +1 WTFStringImpl ref; `bun_core::String`
                         // is `Copy` with no `Drop`, so wrap in `OwnedString` for scope-exit
                         // deref (mirrors `defer href.deref()` in fetch.zig).
@@ -1020,7 +1052,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                     // Handle object format: proxy: { url: "http://proxy.example.com:8080", headers?: Headers }
                     // If the proxy object doesn't have a 'url' property, ignore it.
-                    // This handles cases like passing a URL object directly as proxy (which has 'href' not 'url').
                     if proxy_arg.is_object() {
                         // Get the URL from the proxy object
                         if let Some(proxy_url_arg) = proxy_arg.get(global_this, "url")? {
@@ -2024,6 +2055,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         body,
         disable_keepalive,
         disable_timeout,
+        idle_timeout_seconds,
         disable_decompression,
         max_redirects,
         reject_unauthorized,

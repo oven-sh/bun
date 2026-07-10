@@ -19,7 +19,7 @@ describe("bun", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("non-string \"type\" does not hide scripts from bun run", () => {
+  test('non-string "type" does not hide scripts from bun run', () => {
     // "type" is a module-loader concern; a non-string value must not make
     // `bun run <script>` miss the package.json (npm/pnpm/yarn all run it).
     using dir = tempDir("bad-type-scripts", {

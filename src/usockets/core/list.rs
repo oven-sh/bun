@@ -42,7 +42,7 @@ impl<T> Default for ListLinks<T> {
 /// to a `ListLinks<Self>` that lives exactly as long as `*p` and is used by no
 /// other list. All `NonNull<Self>` handed to [`IntrusiveList`] methods must
 /// point at live, well-aligned storage for the duration of the call.
-pub unsafe trait Linked {
+pub unsafe trait Linked: Sized {
     fn links(p: NonNull<Self>) -> NonNull<ListLinks<Self>>;
 }
 
@@ -100,6 +100,17 @@ impl<T: Linked> IntrusiveList<T> {
             if let Some(n) = next {
                 T::links(n).as_ref().prev.set(prev);
             }
+        }
+    }
+
+    /// If `slot` currently points at `node`, advance it to `node`'s successor.
+    /// Call this *before* [`Self::remove`] when `node` may be the sweep cursor
+    /// for an in-flight [`Sweep`] over this list (see `SocketGroup::unlink_socket`).
+    #[inline]
+    pub fn advance_cursor(&self, slot: &Cell<Option<NonNull<T>>>, node: NonNull<T>) {
+        if slot.get() == Some(node) {
+            // SAFETY: `node` is a live member of this list per the `remove` contract.
+            slot.set(unsafe { T::links(node).as_ref() }.next.get());
         }
     }
 

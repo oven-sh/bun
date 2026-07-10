@@ -127,7 +127,8 @@ describe("null byte injection protection", () => {
     });
 
     test("works normally with valid argv0", () => {
-      const result = Bun.spawnSync({ cmd: ["echo", "hello"], argv0: "myecho" });
+      // argv0 kept as "echo": busybox dispatches applets by argv[0].
+      const result = Bun.spawnSync({ cmd: ["echo", "hello"], argv0: "echo" });
       expect(result.stdout.toString().trim()).toBe("hello");
       expect(result.exitCode).toBe(0);
     });

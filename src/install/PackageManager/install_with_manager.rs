@@ -1360,7 +1360,7 @@ fn add_dependency_error(
         );
     } else {
         log.add_zig_error_with_note(
-            err,
+            err.name(),
             format_args!("error occurred while resolving {}", path_fmt),
         );
     }

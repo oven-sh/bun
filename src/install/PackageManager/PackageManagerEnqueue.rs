@@ -162,7 +162,7 @@ pub fn enqueue_dependency_list(
                 );
             } else {
                 log.add_zig_error_with_note(
-                    err,
+                    err.name(),
                     format_args!("error occurred while resolving {}", path_fmt),
                 );
             }

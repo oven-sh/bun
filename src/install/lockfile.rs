@@ -564,7 +564,7 @@ impl Lockfile {
                 Err(e) => {
                     return LoadResult::Err(LoadResultErr {
                         step: LoadStep::ParseFile,
-                        value: e,
+                        value: e.into(),
                         lockfile_path: zstr!("bun.lock"),
                         format: lockfile_format,
                     });
@@ -1312,7 +1312,7 @@ fn clean_preprocess_update_requests_cold(
 #[cold]
 #[inline(never)]
 fn clean_verbose_timer_start() -> Result<Timer, BunError> {
-    Timer::start()
+    Ok(Timer::start()?)
 }
 
 #[cold]
@@ -1841,7 +1841,7 @@ impl<'a> Printer<'a> {
         let entries_option = fs.fs.read_directory(top_level_dir, None, 0, true)?;
         let entries: &mut Fs::DirEntry = match entries_option {
             Fs::EntriesOption::Entries(e) => &mut **e,
-            Fs::EntriesOption::Err(e) => return Err(e.canonical_error),
+            Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
         };
 
         // PORTING.md §Forbidden patterns: never `Box::leak` — own `map`/`loader` as locals;
@@ -2052,13 +2052,13 @@ impl Lockfile {
         }
 
         if let Err(e) = file.close_and_move_to(tmpname, save_format.filename()) {
-            bun_core::handle_error_return_trace(e);
+            bun_core::handle_error_return_trace(&e);
 
             // note: file is already closed here.
             let _ = sys::unlink(tmpname);
 
             Output::err(
-                e,
+                &e,
                 "Failed to replace old lockfile with new lockfile on disk",
                 format_args!(""),
             );

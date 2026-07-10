@@ -234,7 +234,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     Err(err) => {
                         bun_core::pretty_errorln!(
                             "<r><red>error<r>: bun is unable to access tempdir: {}",
-                            err.name()
+                            bun_fmt::s(err.name())
                         );
                         Global::crash();
                     }
@@ -247,7 +247,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
     let mut timer = if manager.options.log_level != LogLevel::Silent {
-        Some(bun_core::time::Timer::start().expect("unreachable"))
+        Some(bun_core::time::Timer::start())
     } else {
         None
     };
@@ -274,7 +274,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                         Err(err) => {
                             bun_core::pretty_errorln!(
                                 "<r><red>error<r>: bun is unable to access tempdir: {}",
-                                err.name()
+                                bun_fmt::s(err.name())
                             );
                             Global::crash();
                         }
@@ -283,7 +283,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     if verbose_install() {
                         bun_core::pretty_errorln!(
                             "<r><yellow>warn<r>: bun is unable to access tempdir: {}, using fallback",
-                            err2.name()
+                            bun_fmt::s(err2.name())
                         );
                     }
 
@@ -291,7 +291,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                 }
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: {} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>",
-                    err2.name()
+                    bun_fmt::s(err2.name())
                 );
                 Global::crash();
             }
@@ -308,7 +308,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                         Err(err2) => {
                             bun_core::pretty_errorln!(
                                 "<r><red>error<r>: bun is unable to write files to tempdir: {}",
-                                err2.name()
+                                bun_fmt::s(err2.name())
                             );
                             Global::crash();
                         }
@@ -423,7 +423,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             Err(err) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: bun is unable to write files: {}",
-                    err.name()
+                    bun_fmt::s(err.name())
                 );
                 Global::crash();
             }
@@ -1114,7 +1114,7 @@ pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     ) {
         Ok(f) => f,
         Err(err) => {
-            bun_core::pretty_errorln!("<r><red>error:<r> {} create package.json", err.name());
+            bun_core::pretty_errorln!("<r><red>error:<r> {} create package.json", bun_fmt::s(err.name()));
             Global::crash();
         }
     };

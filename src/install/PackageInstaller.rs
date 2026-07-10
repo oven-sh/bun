@@ -205,7 +205,7 @@ impl NodeModulesFolder {
                     | bun_sys::Errno::ENAMETOOLONG => {
                         // Use fallback
                     }
-                    _ => return Err(e.to_zig_err()),
+                    _ => return Err(e.to_zig_err().into()),
                 },
                 Ok(file) => return Ok(file),
             }
@@ -213,7 +213,7 @@ impl NodeModulesFolder {
 
         let dir = self.open_dir(root_node_modules_dir)?;
         let res = dir.open_file(file_path, bun_sys::O::RDONLY, 0);
-        res.map_err(|e| e.to_zig_err())
+        res.map_err(|e| e.to_zig_err().into())
     }
 
     pub(crate) fn open_dir(&self, root: &Dir) -> crate::Result<Dir> {
@@ -224,7 +224,7 @@ impl NodeModulesFolder {
             let path_z = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
             return root
                 .open_at_with(path_z.as_bytes(), 0)
-                .map_err(|e| e.to_zig_err());
+                .map_err(|e| e.to_zig_err().into());
         }
 
         #[cfg(not(unix))]
@@ -1754,7 +1754,7 @@ impl<'a> PackageInstaller<'a> {
                             Ok(d) => d,
                             Err(err) => {
                                 break 'result package_install::InstallResult::fail(
-                                    err,
+                                    err.into(),
                                     package_install::Step::OpeningCacheDir,
                                     None,
                                 );

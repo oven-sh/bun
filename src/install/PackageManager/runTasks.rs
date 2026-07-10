@@ -392,6 +392,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
+                        .map(crate::Error::from)
                         .unwrap_or(crate::Error::HTTPError);
 
                     if task.retried < manager.options.max_retry_count {
@@ -420,6 +421,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
+                        .map(crate::Error::from)
                         .unwrap_or(crate::Error::HTTPError);
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
@@ -659,6 +661,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
+                        .map(crate::Error::from)
                         .unwrap_or(crate::Error::TarballFailedToDownload);
 
                     if task.retried < manager.options.max_retry_count {
@@ -700,6 +703,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
+                        .map(crate::Error::from)
                         .unwrap_or(crate::Error::TarballFailedToDownload);
 
                     // The download will not be retried for this task_id, so

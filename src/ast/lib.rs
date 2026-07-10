@@ -2091,12 +2091,16 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_zig_error_with_note(&mut self, err: crate::Error, note_args: fmt::Arguments<'_>) {
+    pub fn add_zig_error_with_note(
+        &mut self,
+        err_name: &'static str,
+        note_args: fmt::Arguments<'_>,
+    ) {
         self.errors += 1;
 
         let notes: Box<[Data]> = Box::new([range_data(None, Range::NONE, alloc_print(note_args))]);
 
-        let data = self.tracked_range_data(None, Range::NONE, err.name().as_bytes());
+        let data = self.tracked_range_data(None, Range::NONE, err_name.as_bytes());
         self.add_msg(Msg {
             kind: Kind::Err,
             data,

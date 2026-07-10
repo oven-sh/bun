@@ -1278,7 +1278,7 @@ impl<'a> Linker<'a> {
         match sys::symlink_running_executable(rel_target, abs_dest) {
             sys::Result::Err(err) => {
                 if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
-                    self.err = Some(err.to_zig_err());
+                    self.err = Some(err.into());
                     Self::chmod_on_ok(self.err, abs_target);
                     return;
                 }
@@ -1286,7 +1286,7 @@ impl<'a> Linker<'a> {
                 // ENOENT means `.bin` hasn't been created yet. Should only happen if this isn't global
                 if err.get_errno() == sys::Errno::ENOENT {
                     if global {
-                        self.err = Some(err.to_zig_err());
+                        self.err = Some(err.into());
                         Self::chmod_on_ok(self.err, abs_target);
                         return;
                     }
@@ -1301,7 +1301,7 @@ impl<'a> Linker<'a> {
                     match sys::symlink_running_executable(rel_target, abs_dest) {
                         sys::Result::Err(real_error) => {
                             // It was just created, no need to delete destination and symlink again
-                            self.err = Some(real_error.to_zig_err());
+                            self.err = Some(real_error.into());
                             Self::chmod_on_ok(self.err, abs_target);
                             return;
                         }
@@ -1324,7 +1324,7 @@ impl<'a> Linker<'a> {
         // delete and try again
         let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
-            self.err = Some(err.to_zig_err());
+            self.err = Some(err.into());
         }
         Self::chmod_on_ok(self.err, abs_target);
     }
@@ -1760,7 +1760,7 @@ impl<'a> Linker<'a> {
                                 // avoid erroring when the directory does not exist
                                 return;
                             }
-                            self.err = Some(err.to_zig_err());
+                            self.err = Some(err.into());
                             return;
                         }
                     };
@@ -1914,7 +1914,7 @@ impl<'a> Linker<'a> {
                     let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                         Ok(d) => d,
                         Err(err) => {
-                            self.err = Some(err.to_zig_err());
+                            self.err = Some(err.into());
                             return;
                         }
                     };

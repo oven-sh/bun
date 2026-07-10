@@ -271,7 +271,7 @@ impl ExtractTarball {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "{} when create temporary directory named \"{}\" (while extracting \"{}\")",
-                            err.name(),
+                            bun_fmt::s(err.name()),
                             bun_fmt::s(tmpname.as_bytes()),
                             bun_fmt::s(name),
                         ),
@@ -780,7 +780,7 @@ impl ExtractTarball {
                     Ok(pair) => pair,
                     Err(err) => {
                         if self.resolution.tag == ResolutionTag::Github
-                            && err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                            && err.get_errno() == bun_errno::SystemErrno::ENOENT
                         {
                             // allow git dependencies without package.json
                             return Ok(ExtractData {
@@ -796,7 +796,7 @@ impl ExtractTarball {
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to open: {}",
                                 bun_fmt::s(name),
-                                err.name(),
+                                bun_fmt::s(err.name()),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);
@@ -814,7 +814,7 @@ impl ExtractTarball {
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to resolve: {}",
                                 bun_fmt::s(name),
-                                err.name(),
+                                bun_fmt::s(err.name()),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);

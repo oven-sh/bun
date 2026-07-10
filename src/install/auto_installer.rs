@@ -178,10 +178,11 @@ impl hooks::AutoInstaller for PackageManager {
     fn lockfile_legacy_package_to_dependency_id(
         &self,
         package_id: PackageID,
-    ) -> Result<DependencyID, crate::Error> {
+    ) -> Result<DependencyID, bun_core::Error> {
         self.lockfile
             .buffers
             .legacy_package_to_dependency_id(None, package_id)
+            .map_err(Into::into)
     }
 
     fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8] {
@@ -194,7 +195,7 @@ impl hooks::AutoInstaller for PackageManager {
         &mut self,
         package_json: &dyn hooks::PackageJsonView,
         features: Features,
-    ) -> Result<PackageID, crate::Error> {
+    ) -> Result<PackageID, bun_core::Error> {
         // Builds a `Package` from a package.json and appends it to the
         // lockfile, driven entirely off the
         // `PackageJsonView` interface so this impl does not need to name
@@ -262,7 +263,7 @@ impl hooks::AutoInstaller for PackageManager {
                     // (and any already-written deps) before restoring length.
                     dependencies_list.truncate(dep_start);
                     string_builder.clamp();
-                    return Err(e);
+                    return Err(e.into());
                 }
             }
             dependencies = &mut dependencies[1..];
@@ -299,7 +300,7 @@ impl hooks::AutoInstaller for PackageManager {
         Ok(appended.meta.id)
     }
 
-    fn lockfile_append_root_stub(&mut self) -> Result<PackageID, crate::Error> {
+    fn lockfile_append_root_stub(&mut self) -> Result<PackageID, bun_core::Error> {
         let pkg = Package {
             resolution: resolution::Resolution::init(resolution::TaggedValue::Root),
             ..Default::default()
@@ -319,7 +320,7 @@ impl hooks::AutoInstaller for PackageManager {
         package_id: PackageID,
         resolution: &hooks::Resolution,
         buf: &'b mut [u8],
-    ) -> Result<&'b [u8], crate::Error> {
+    ) -> Result<&'b [u8], bun_core::Error> {
         // The resolver passes a `bun_paths::PathBuffer`-sized slice
         // (`bufs!(path_in_global_disk_cache)`); reborrow it as the install
         // signature's `&mut PathBuffer`.
@@ -330,7 +331,8 @@ impl hooks::AutoInstaller for PackageManager {
         let path_buf: &mut bun_paths::PathBuffer =
             unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
         let r = resolution_from_hooks(resolution);
-        let out = directories::path_for_resolution(self, package_id, &r, path_buf)?;
+        let out = directories::path_for_resolution(self, package_id, &r, path_buf)
+            .map_err(bun_core::Error::from)?;
         Ok(&*out)
     }
 
@@ -346,7 +348,7 @@ impl hooks::AutoInstaller for PackageManager {
         resolution: &hooks::Resolution,
         ctx: hooks::TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), bun_core::Error> {
         let r = resolution_from_hooks(resolution);
         // Only the npm arm reaches this enqueue.
         // Caller passes a `Resolution` whose tag was already checked == Npm by
@@ -364,7 +366,7 @@ impl hooks::AutoInstaller for PackageManager {
             crate::TaskCallbackContext::RootRequestId(ctx.root_request_id),
             patch_name_and_version_hash,
         )
-        .map_err(Into::into)
+        .map_err(|e| crate::Error::from(e).into())
     }
 
     fn resolve_from_disk_cache(
@@ -392,7 +394,7 @@ impl hooks::AutoInstaller for PackageManager {
             },
             enqueue::DependencyToEnqueue::Pending(id) => hooks::EnqueueResult::Pending(id),
             enqueue::DependencyToEnqueue::NotFound => hooks::EnqueueResult::NotFound,
-            enqueue::DependencyToEnqueue::Failure(e) => hooks::EnqueueResult::Failure(e),
+            enqueue::DependencyToEnqueue::Failure(e) => hooks::EnqueueResult::Failure(e.into()),
         }
     }
 

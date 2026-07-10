@@ -717,8 +717,8 @@ impl RepositoryExt for Repository {
                 Ok(dir)
             }
             Err(not_found) => {
-                if not_found != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                    return Err(not_found);
+                if not_found.get_errno() != bun_sys::E::ENOENT {
+                    return Err(not_found.into());
                 }
 
                 let target = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
@@ -749,7 +749,9 @@ impl RepositoryExt for Repository {
                     return Err(err);
                 }
 
-                bun_sys::Dir::borrow(&cache_dir).open_dir_z(folder_name)
+                bun_sys::Dir::borrow(&cache_dir)
+                    .open_dir_z(folder_name)
+                    .map_err(Into::into)
             }
         }
     }
@@ -948,7 +950,7 @@ impl RepositoryExt for Repository {
             match bun_sys::File::read_file_from(package_dir.fd(), b"package.json") {
                 Ok(v) => v,
                 Err(err) => {
-                    if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                    if err.get_errno() == bun_sys::E::ENOENT {
                         // allow git dependencies without package.json
                         package_dir.close();
                         return Ok(ExtractData {
@@ -964,7 +966,7 @@ impl RepositoryExt for Repository {
                         format_args!(
                             "\"package.json\" for \"{}\" failed to open: {}",
                             BStr::new(name),
-                            err.name()
+                            BStr::new(err.name())
                         ),
                     );
                     package_dir.close();
@@ -981,7 +983,7 @@ impl RepositoryExt for Repository {
                     format_args!(
                         "\"package.json\" for \"{}\" failed to resolve: {}",
                         BStr::new(name),
-                        err.name()
+                        BStr::new(err.name())
                     ),
                 );
                 let _ = json_file.close(); // close error is non-actionable

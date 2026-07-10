@@ -79,7 +79,7 @@ fn parse_package_json(
     bump: &bun_alloc::Arena,
     guess_indentation: bool,
 ) -> Result<json::JsonResult, crate::Error> {
-    json::parse_package_json_utf8_with_opts(
+    Ok(json::parse_package_json_utf8_with_opts(
         json::JSONOptions {
             json_warn_duplicate_keys: false,
             guess_indentation,
@@ -88,7 +88,7 @@ fn parse_package_json(
         source,
         log,
         bump,
-    )
+    )?)
 }
 
 #[derive(Clone, Copy)]

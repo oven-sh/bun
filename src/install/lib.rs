@@ -637,7 +637,7 @@ impl RunCommand {
                             // No usable target — propagate the OS error when we
                             // have one, otherwise leave PATH unmodified.
                             return match result {
-                                Err(e) => Err(e),
+                                Err(e) => Err(e.into()),
                                 Ok(_) => Ok(()),
                             };
                         }
@@ -1181,7 +1181,7 @@ pub enum TaskCallbackContext {
 // 2.
 
 #[derive(strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum PackageManifestError {
+pub enum PackageManifestError {
     PackageManifestHTTP400,
     PackageManifestHTTP401,
     PackageManifestHTTP402,

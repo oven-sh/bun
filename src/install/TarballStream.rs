@@ -943,7 +943,7 @@ impl TarballStream {
                 self.entry_actual_offset += i64::try_from(data.len()).expect("int cast");
                 Ok(())
             }
-            Err(e) => Err(e.to_zig_err()),
+            Err(e) => Err(e.to_zig_err().into()),
         }
     }
 
@@ -1334,13 +1334,13 @@ fn open_output_file(
             Err(e) => match e.get_errno() {
                 bun_sys::E::EPERM | bun_sys::E::ENOENT => 'brk: {
                     let Some(dir) = bun_paths::Dirname::dirname::<u16>(path_slice) else {
-                        return Err(e.to_zig_err());
+                        return Err(e.to_zig_err().into());
                     };
                     let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), dir);
                     break 'brk bun_sys::openat_windows(dest_fd, path, flags, 0)
-                        .map_err(|e| e.to_zig_err());
+                        .map_err(|e| e.to_zig_err().into());
                 }
-                _ => Err(e.to_zig_err()),
+                _ => Err(e.to_zig_err().into()),
             },
         };
     }
@@ -1351,13 +1351,13 @@ fn open_output_file(
             Err(e) => match e.get_errno() {
                 bun_sys::E::EACCES | bun_sys::E::ENOENT => 'brk: {
                     let Some(dir) = bun_paths::dirname(path_slice) else {
-                        return Err(e.to_zig_err());
+                        return Err(e.to_zig_err().into());
                     };
                     let _ = dest_fd.make_path(dir);
                     break 'brk bun_sys::openat(dest_fd, path, flags, mode)
-                        .map_err(|e| e.to_zig_err());
+                        .map_err(|e| e.to_zig_err().into());
                 }
-                _ => Err(e.to_zig_err()),
+                _ => Err(e.to_zig_err().into()),
             },
         }
     }

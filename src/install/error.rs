@@ -239,6 +239,30 @@ pub enum Error {
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
+    #[error(transparent)]
+    Core(#[from] bun_core::Error),
+    #[error(transparent)]
+    Resolver(#[from] bun_resolver::Error),
+    #[error(transparent)]
+    Spawn(#[from] bun_spawn::Error),
+    #[error(transparent)]
+    Http(#[from] bun_http::Error),
+    #[error(transparent)]
+    PackageManifest(#[from] crate::PackageManifestError),
+    #[error(transparent)]
+    Dotenv(#[from] bun_dotenv::Error),
+    #[error(transparent)]
+    Parsers(#[from] bun_parsers::Error),
+    #[error(transparent)]
+    Bunfig(#[from] bun_bunfig::Error),
+    #[error(transparent)]
+    Transpiler(#[from] bun_transpiler::Error),
+    #[error(transparent)]
+    Zlib(#[from] bun_zlib::ZlibError),
+    #[error(transparent)]
+    Paths(#[from] bun_paths::Error),
+    #[error(transparent)]
+    Fmt(#[from] core::fmt::Error),
 }
 
 impl Error {
@@ -363,13 +387,92 @@ impl Error {
             Self::InvalidBinContent => "InvalidBinContent",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
+            Self::Core(e) => e.name(),
+            Self::Resolver(e) => e.name(),
+            Self::Spawn(e) => e.name(),
+            Self::Http(e) => e.name(),
+            Self::PackageManifest(e) => <&'static str>::from(e),
+            Self::Dotenv(e) => e.name(),
+            Self::Parsers(e) => e.name(),
+            Self::Bunfig(e) => e.name(),
+            Self::Transpiler(e) => e.name(),
+            Self::Zlib(e) => <&'static str>::from(e),
+            Self::Paths(e) => e.name(),
+            Self::Fmt(_) => "FmtError",
         }
     }
 }
 
 impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
-        (*self).name().as_bytes()
+        Error::name(self).as_bytes()
+    }
+}
+
+impl From<bun_sys::Error> for Error {
+    fn from(e: bun_sys::Error) -> Self {
+        Self::Sys(e.into())
+    }
+}
+
+impl From<bun_libarchive::Error> for Error {
+    fn from(e: bun_libarchive::Error) -> Self {
+        match e {
+            bun_libarchive::Error::Fail => Self::Fail,
+            bun_libarchive::Error::Sys(s) => Self::Sys(s),
+            bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
+            bun_libarchive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
+        }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(_: std::io::Error) -> Self {
+        Self::WriteFailed
+    }
+}
+
+impl From<crate::lockfile_real::tree::SubtreeError> for Error {
+    fn from(e: crate::lockfile_real::tree::SubtreeError) -> Self {
+        use crate::lockfile_real::tree::SubtreeError as E;
+        match e {
+            E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
+            E::DependencyLoop => Self::DependencyLoop,
+        }
+    }
+}
+
+impl From<crate::lockfile_real::bun_lock::ParseError> for Error {
+    fn from(e: crate::lockfile_real::bun_lock::ParseError) -> Self {
+        match e {
+            crate::lockfile_real::bun_lock::ParseError::OutOfMemory => {
+                Self::Alloc(bun_alloc::AllocError)
+            }
+            _ => Self::InvalidLockfile,
+        }
+    }
+}
+
+impl From<crate::pnpm::MigratePnpmLockfileError> for Error {
+    fn from(e: crate::pnpm::MigratePnpmLockfileError) -> Self {
+        use crate::pnpm::MigratePnpmLockfileError as E;
+        match e {
+            E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
+            E::DependencyLoop => Self::DependencyLoop,
+            _ => Self::InvalidLockfile,
+        }
+    }
+}
+
+impl From<Error> for bun_core::Error {
+    fn from(e: Error) -> Self {
+        match e {
+            Error::Core(inner) => inner,
+            Error::Alloc(a) => bun_core::Error::Alloc(a),
+            Error::WriteFailed => bun_core::Error::WriteFailed,
+            Error::InvalidCharacter => bun_core::Error::InvalidCharacter,
+            _ => bun_core::Error::Unexpected,
+        }
     }
 }
 

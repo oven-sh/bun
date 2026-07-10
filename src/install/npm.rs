@@ -167,7 +167,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let res = match req.send_sync() {
         Ok(res) => res,
-        Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => return Err(WhoamiError::OutOfMemory),
+        Err(e) if e == bun_http::Error::Alloc(bun_alloc::AllocError) => return Err(WhoamiError::OutOfMemory),
         Err(e) => {
             Output::err(e, "whoami request failed to send", format_args!(""));
             Global::crash();
@@ -192,7 +192,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
     let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
         Ok(j) => j,
-        Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => return Err(WhoamiError::OutOfMemory),
+        Err(e) if e == bun_parsers::Error::Alloc(bun_alloc::AllocError) => return Err(WhoamiError::OutOfMemory),
         Err(e) => {
             Output::err(
                 e,
@@ -227,7 +227,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
         let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
             Ok(j) => j,
-            Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => return Err(AllocError),
+            Err(e) if e == bun_parsers::Error::Alloc(bun_alloc::AllocError) => return Err(AllocError),
             Err(_) => break 'message None,
         };
 

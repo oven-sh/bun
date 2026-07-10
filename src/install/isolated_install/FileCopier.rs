@@ -2,7 +2,6 @@
 use core::ptr;
 
 use bun_alloc::AllocError;
-use crate::Error;
 #[cfg(not(windows))]
 use bun_core::{Global, fmt as bun_fmt};
 use bun_paths::{self, OSPathChar, OSPathSlice};
@@ -75,32 +74,9 @@ impl FileCopier {
             Ok(d) => d,
             Err(e) => {
                 // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
-                let errno: E = {
-                    let e: Error = e;
-                    match e {
-                        crate::Error::Sys(bun_errno::SystemErrno::EACCES) => E::EPERM,
-                        crate::Error::FileTooBig => E::EFBIG,
-                        crate::Error::SymLinkLoop => E::ELOOP,
-                        crate::Error::ProcessFdQuotaExceeded => E::ENFILE,
-                        crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG) => E::ENAMETOOLONG,
-                        crate::Error::SystemFdQuotaExceeded => E::EMFILE,
-                        crate::Error::SystemResources => E::ENOMEM,
-                        crate::Error::ReadOnlyFileSystem => E::EROFS,
-                        crate::Error::FileSystem => E::EIO,
-                        crate::Error::FileBusy | crate::Error::DeviceBusy => E::EBUSY,
-                        // One of the path components was not a directory.
-                        // This error is unreachable if `sub_path` does not contain a path separator.
-                        crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => E::ENOTDIR,
-                        // On Windows, file paths must be valid Unicode.
-                        // On Windows, file paths cannot contain these characters:
-                        // '/', '*', '?', '"', '<', '>', '|'
-                        crate::Error::InvalidUtf8
-                        | crate::Error::InvalidWtf8
-                        | crate::Error::Sys(bun_errno::SystemErrno::EINVAL) => E::EINVAL,
-                        crate::Error::Sys(bun_errno::SystemErrno::ENOENT) => E::ENOENT,
-                        crate::Error::Sys(bun_errno::SystemErrno::EISDIR) => E::EISDIR,
-                        _ => E::EFAULT,
-                    }
+                let errno: E = match e.get_errno() {
+                    E::EACCES => E::EPERM,
+                    other => other,
                 };
                 #[cfg(windows)]
                 let errno = if errno == E::ENOTDIR {
@@ -233,7 +209,7 @@ impl FileCopier {
                             Err(err) => {
                                 bun_core::pretty_errorln!(
                                     "<r><red>{}<r>: copy file {}",
-                                    err.name(),
+                                    bstr::BStr::new(err.name()),
                                     bun_fmt::fmt_os_path(entry.path, Default::default()),
                                 );
                                 Global::exit(1);

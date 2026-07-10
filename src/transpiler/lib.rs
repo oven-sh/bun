@@ -7,3 +7,4 @@
 // `bun_bundler` directly.
 pub use bun_bundler::transpiler;
 pub use bun_bundler::transpiler::Transpiler;
+pub use bun_bundler::Error;

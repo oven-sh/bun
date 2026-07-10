@@ -1232,7 +1232,7 @@ impl<'a> PackageInstall<'a> {
                 Err(err) => {
                     // Drop on the caller's `state` runs unconditionally on this early
                     // return, so an explicit close here would double-close. Drop handles it.
-                    return InstallResult::fail(err, Step::OpeningDestDir, None);
+                    return InstallResult::fail(err.into(), Step::OpeningDestDir, None);
                 }
             };
             return InstallResult::Success;
@@ -2281,7 +2281,7 @@ impl<'a> PackageInstall<'a> {
                         OpenDirOptions::default(),
                     ) {
                         Ok(d) => d,
-                        Err(err) => return InstallResult::fail(err, Step::LinkingDependency, None),
+                        Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency, None),
                     },
                 )
             } else {

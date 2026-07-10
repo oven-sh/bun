@@ -950,7 +950,7 @@ impl PackageManager {
                     ctx.as_ptr(),
                     dependency,
                     dependency_id,
-                    err,
+                    err.into(),
                 );
             }
         }
@@ -1203,7 +1203,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         .make_open_path(&manager.node_gyp_tempdir_name, Default::default())
     {
         Ok(d) => d,
-        Err(e) if e == crate::Error::Sys(bun_errno::SystemErrno::EEXIST) => {
+        Err(e) if e.get_errno() == bun_errno::SystemErrno::EEXIST => {
             // it should not exist
             bun_core::pretty_errorln!("<r><red>error<r>: node-gyp tempdir already exists");
             Global::crash();
@@ -1211,7 +1211,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         Err(e) => {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
-                e.name(),
+                bstr::BStr::new(e.name()),
             );
             Global::crash();
         }
@@ -1812,7 +1812,7 @@ pub fn init(
             // access — sole exclusive borrow is sound.
             unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) }
         }
-        fs::EntriesOption::Err(e) => return Err(e.canonical_error),
+        fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
     };
 
     // SAFETY: `init()` runs once on the main thread before any other access to the singleton.
@@ -2322,7 +2322,7 @@ pub(crate) fn init_with_runtime_once(
         // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
         // and runtime init runs once on the main thread before any other access.
         fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
-        fs::EntriesOption::Err(e) => return Err(e.canonical_error),
+        fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
     };
 
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());

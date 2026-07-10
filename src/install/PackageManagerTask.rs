@@ -277,6 +277,7 @@ impl<'a> Task<'a> {
                         let err = network
                             .response
                             .fail
+                            .map(crate::Error::from)
                             .unwrap_or(crate::Error::HTTPError);
                         this.log.add_error_fmt(
                             None,

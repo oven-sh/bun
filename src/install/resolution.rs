@@ -589,7 +589,7 @@ impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
     /// folder/tarball path under a Latin-1 directory would emit U+FFFD instead
     /// of the original byte). `write_to` pushes the lockfile string-buffer
     /// bytes through unchanged.
-    pub(crate) fn write_to<W>(&self, writer: &mut W) -> Result<(), crate::Error>
+    pub(crate) fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
         W: bun_core::io::Write + ?Sized,
     {
@@ -685,7 +685,7 @@ impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
     /// See [`URLFormatter::write_to`] for rationale — `Display` is lossy on
     /// non-UTF-8 path bytes; this writes the lockfile string-buffer slices
     /// verbatim via `write_all`.
-    pub fn write_to<W>(&self, writer: &mut W) -> Result<(), crate::Error>
+    pub fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
         W: bun_core::io::Write + ?Sized,
     {

@@ -765,7 +765,10 @@ pub(crate) fn run_scripts_with_filter(
             None,
             IncludeScripts::IncludeScripts,
         )
-        .filter(|p| !p.invalid) else {
+        // `invalid` is also set for a non-string `"type"` on an otherwise
+        // fully-parsed file; only the unparseable (poisoned) entries have
+        // empty `source_contents`. Scripts from the former still run.
+        .filter(|p| !p.invalid || !p.source_contents.is_empty()) else {
             bun_core::warn!(
                 "Failed to read {}, skipping this workspace package\n",
                 bun_core::fmt::quote(&*package_json_path),

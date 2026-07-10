@@ -1,5 +1,3 @@
-use core::ffi::c_void;
-
 use bun_core::MutableString;
 use bun_core::strings;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
@@ -19,7 +17,14 @@ use bun_s3_signing::storage_class::StorageClass;
 use bun_threading::thread_pool;
 use bun_url::URL;
 
+use crate::server::AnyRequestContext;
+use crate::webcore::blob::store::{S3BlobDeleteTask, S3BlobListObjectsTask};
+use crate::webcore::blob::{
+    S3BlobDownloadTask, S3BlobUploadBytesTask, S3BlobUploadEmptyTask, S3ReadBytesTask,
+};
 use crate::webcore::s3::list_objects;
+use crate::webcore::s3::multipart::{MultiPartUpload, UploadPart};
+use crate::webcore::s3_file::S3BlobStatTask;
 
 // The result/options structs below carry borrowed slices that are valid only for the
 // duration of the callback invocation (not owned; they must be copied if used
@@ -122,7 +127,6 @@ pub struct S3HttpSimpleTask {
     pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
     pub sign_result: SignResult,
     pub headers: Headers,
-    pub callback_context: *mut c_void,
     pub callback: Callback,
     pub response_buffer: MutableString,
     // `'static` here because `result.body` (when set) points at our own
@@ -150,16 +154,12 @@ impl Taskable for S3HttpSimpleTask {
 // inert placeholders that callers always overwrite (see client.rs / execute_simple_s3_request).
 impl Default for S3HttpSimpleTask {
     fn default() -> Self {
-        fn unset_callback(_: S3UploadResult<'_>, _: *mut c_void) -> JsTerminatedResult<()> {
-            unreachable!("S3HttpSimpleTask.callback used before being set")
-        }
         Self {
             http: core::mem::MaybeUninit::uninit(),
             vm: None,
             sign_result: SignResult::default(),
             headers: Headers::default(),
-            callback_context: core::ptr::null_mut(),
-            callback: Callback::Upload(unset_callback),
+            callback: Callback::Unset,
             response_buffer: MutableString::default(),
             result: HTTPClientResult::default(),
             concurrent_task: ConcurrentTask::default(),
@@ -174,55 +174,169 @@ impl Default for S3HttpSimpleTask {
 // Re-export the canonical alias so sibling modules that imported it from here keep compiling.
 pub use bun_jsc::JsTerminatedResult;
 
+/// Response-handling kind: selects which `S3*Result` payload `on_response`
+/// builds and which HTTP status codes count as success.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Stat,
+    Download,
+    Upload,
+    Delete,
+    ListObjects,
+    Commit,
+    Part,
+}
+
+/// Static dispatch: each variant names the concrete context type and the
+/// handler is called directly from the `match` below, so backtraces show the
+/// callee frame instead of dead-ending at an indirect call.
+#[derive(Clone, Copy)]
 pub enum Callback {
-    Stat(fn(S3StatResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
-    Download(fn(S3DownloadResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
-    Upload(fn(S3UploadResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
-    Delete(fn(S3DeleteResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
-    ListObjects(fn(S3ListObjectsResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
-    Commit(fn(S3CommitResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
-    Part(fn(S3PartResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
+    /// Placeholder for `Default`; never dispatched.
+    Unset,
+
+    // Kind::Stat
+    BlobExists(*mut S3BlobStatTask),
+    BlobStat(*mut S3BlobStatTask),
+    BlobSize(*mut S3BlobStatTask),
+    HeadResponseSize(AnyRequestContext),
+
+    // Kind::Download
+    BlobDownload(*mut S3BlobDownloadTask),
+    BlobReadBytes(*mut S3ReadBytesTask),
+    MultipartStart(*mut MultiPartUpload),
+
+    // Kind::Upload
+    BlobUploadEmpty(*mut S3BlobUploadEmptyTask),
+    BlobUploadBytes(*mut S3BlobUploadBytesTask),
+    MultipartSingleSend(*mut MultiPartUpload),
+    MultipartRollback(*mut MultiPartUpload),
+
+    // Kind::Delete
+    BlobDelete(*mut S3BlobDeleteTask),
+
+    // Kind::ListObjects
+    BlobListObjects(*mut S3BlobListObjectsTask),
+
+    // Kind::Commit
+    MultipartCommit(*mut MultiPartUpload),
+
+    // Kind::Part
+    MultipartPart(*mut UploadPart),
 }
 
 impl Callback {
-    pub(crate) fn fail(
-        &self,
-        code: &[u8],
-        message: &[u8],
-        context: *mut c_void,
-    ) -> JsTerminatedResult<()> {
-        let err = S3Error { code, message };
+    pub(crate) fn kind(&self) -> Kind {
         match self {
-            Callback::Upload(callback) => callback(S3UploadResult::Failure(err), context)?,
-            Callback::Download(callback) => callback(S3DownloadResult::Failure(err), context)?,
-            Callback::Stat(callback) => callback(S3StatResult::Failure(err), context)?,
-            Callback::Delete(callback) => callback(S3DeleteResult::Failure(err), context)?,
-            Callback::ListObjects(callback) => {
-                callback(S3ListObjectsResult::Failure(err), context)?
-            }
-            Callback::Commit(callback) => callback(S3CommitResult::Failure(err), context)?,
-            Callback::Part(callback) => callback(S3PartResult::Failure(err), context)?,
+            Callback::Unset => unreachable!("S3HttpSimpleTask.callback used before being set"),
+            Callback::BlobExists(_)
+            | Callback::BlobStat(_)
+            | Callback::BlobSize(_)
+            | Callback::HeadResponseSize(_) => Kind::Stat,
+            Callback::BlobDownload(_)
+            | Callback::BlobReadBytes(_)
+            | Callback::MultipartStart(_) => Kind::Download,
+            Callback::BlobUploadEmpty(_)
+            | Callback::BlobUploadBytes(_)
+            | Callback::MultipartSingleSend(_)
+            | Callback::MultipartRollback(_) => Kind::Upload,
+            Callback::BlobDelete(_) => Kind::Delete,
+            Callback::BlobListObjects(_) => Kind::ListObjects,
+            Callback::MultipartCommit(_) => Kind::Commit,
+            Callback::MultipartPart(_) => Kind::Part,
         }
-        Ok(())
     }
 
-    pub(crate) fn not_found(
-        &self,
-        code: &[u8],
-        message: &[u8],
-        context: *mut c_void,
-    ) -> JsTerminatedResult<()> {
-        let err = S3Error { code, message };
-        match self {
-            Callback::Download(callback) => callback(S3DownloadResult::NotFound(err), context)?,
-            Callback::Stat(callback) => callback(S3StatResult::NotFound(err), context)?,
-            Callback::Delete(callback) => callback(S3DeleteResult::NotFound(err), context)?,
-            Callback::ListObjects(callback) => {
-                callback(S3ListObjectsResult::NotFound(err), context)?
+    fn dispatch_stat(&self, result: S3StatResult<'_>) -> JsTerminatedResult<()> {
+        match *self {
+            Callback::BlobExists(ctx) => S3BlobStatTask::on_s3_exists_resolved(result, ctx),
+            Callback::BlobStat(ctx) => S3BlobStatTask::on_s3_stat_resolved(result, ctx),
+            Callback::BlobSize(ctx) => S3BlobStatTask::on_s3_size_resolved(result, ctx),
+            Callback::HeadResponseSize(ctx) => {
+                ctx.on_s3_stat_resolved(result);
+                Ok(())
             }
-            _ => self.fail(code, message, context)?,
+            _ => unreachable!(),
         }
-        Ok(())
+    }
+
+    fn dispatch_download(&self, result: S3DownloadResult<'_>) -> JsTerminatedResult<()> {
+        match *self {
+            Callback::BlobDownload(ctx) => S3BlobDownloadTask::on_s3_download_resolved(result, ctx),
+            Callback::BlobReadBytes(ctx) => S3ReadBytesTask::on_download(result, ctx),
+            Callback::MultipartStart(ctx) => {
+                MultiPartUpload::start_multi_part_request_result(result, ctx)
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn dispatch_upload(&self, result: S3UploadResult<'_>) -> JsTerminatedResult<()> {
+        match *self {
+            Callback::BlobUploadEmpty(ctx) => S3BlobUploadEmptyTask::resolve(result, ctx),
+            Callback::BlobUploadBytes(ctx) => S3BlobUploadBytesTask::resolve(result, ctx),
+            Callback::MultipartSingleSend(ctx) => {
+                MultiPartUpload::single_send_upload_response(result, ctx)
+            }
+            Callback::MultipartRollback(ctx) => {
+                MultiPartUpload::on_rollback_multi_part_request(result, ctx)
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn dispatch_delete(&self, result: S3DeleteResult<'_>) -> JsTerminatedResult<()> {
+        match *self {
+            Callback::BlobDelete(ctx) => S3BlobDeleteTask::resolve(result, ctx),
+            _ => unreachable!(),
+        }
+    }
+
+    fn dispatch_list_objects(&self, result: S3ListObjectsResult<'_>) -> JsTerminatedResult<()> {
+        match *self {
+            Callback::BlobListObjects(ctx) => S3BlobListObjectsTask::resolve(result, ctx),
+            _ => unreachable!(),
+        }
+    }
+
+    fn dispatch_commit(&self, result: S3CommitResult<'_>) -> JsTerminatedResult<()> {
+        match *self {
+            Callback::MultipartCommit(ctx) => {
+                MultiPartUpload::on_commit_multi_part_request(result, ctx)
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn dispatch_part(&self, result: S3PartResult<'_>) -> JsTerminatedResult<()> {
+        match *self {
+            Callback::MultipartPart(ctx) => UploadPart::on_part_response(result, ctx),
+            _ => unreachable!(),
+        }
+    }
+
+    pub(crate) fn fail(&self, code: &[u8], message: &[u8]) -> JsTerminatedResult<()> {
+        let err = S3Error { code, message };
+        match self.kind() {
+            Kind::Stat => self.dispatch_stat(S3StatResult::Failure(err)),
+            Kind::Download => self.dispatch_download(S3DownloadResult::Failure(err)),
+            Kind::Upload => self.dispatch_upload(S3UploadResult::Failure(err)),
+            Kind::Delete => self.dispatch_delete(S3DeleteResult::Failure(err)),
+            Kind::ListObjects => self.dispatch_list_objects(S3ListObjectsResult::Failure(err)),
+            Kind::Commit => self.dispatch_commit(S3CommitResult::Failure(err)),
+            Kind::Part => self.dispatch_part(S3PartResult::Failure(err)),
+        }
+    }
+
+    pub(crate) fn not_found(&self, code: &[u8], message: &[u8]) -> JsTerminatedResult<()> {
+        let err = S3Error { code, message };
+        match self.kind() {
+            Kind::Stat => self.dispatch_stat(S3StatResult::NotFound(err)),
+            Kind::Download => self.dispatch_download(S3DownloadResult::NotFound(err)),
+            Kind::Delete => self.dispatch_delete(S3DeleteResult::NotFound(err)),
+            Kind::ListObjects => self.dispatch_list_objects(S3ListObjectsResult::NotFound(err)),
+            Kind::Upload | Kind::Commit | Kind::Part => self.fail(code, message),
+        }
     }
 }
 
@@ -276,10 +390,9 @@ impl S3HttpSimpleTask {
                 code = b"NoSuchKey";
                 message = b"The specified key does not exist.";
             }
-            self.callback
-                .not_found(code, message, self.callback_context)?;
+            self.callback.not_found(code, message)?;
         } else {
-            self.callback.fail(code, message, self.callback_context)?;
+            self.callback.fail(code, message)?;
         }
         Ok(())
     }
@@ -321,7 +434,7 @@ impl S3HttpSimpleTask {
         } else if status == 200 || status == 206 {
             return Ok(false);
         }
-        self.callback.fail(code, message, self.callback_context)?;
+        self.callback.fail(code, message)?;
         Ok(true)
     }
 
@@ -347,42 +460,39 @@ impl S3HttpSimpleTask {
         debug_assert!(this.result.metadata.is_some());
         // reshaped for borrowck — borrow response once, dispatch on a copy of `callback`.
         let response = &this.result.metadata.as_ref().unwrap().response;
-        match this.callback {
-            Callback::Stat(callback) => match response.status_code {
+        let callback = this.callback;
+        match callback.kind() {
+            Kind::Stat => match response.status_code {
                 200 => {
-                    callback(
-                        S3StatResult::Success(S3StatSuccess {
-                            etag: response.headers.get(b"etag").unwrap_or(b""),
-                            last_modified: response.headers.get(b"last-modified").unwrap_or(b""),
-                            content_type: response.headers.get(b"content-type").unwrap_or(b""),
-                            size: response
-                                .headers
-                                .get(b"content-length")
-                                .map(bun_http_types::parse_content_length)
-                                .unwrap_or(0),
-                        }),
-                        this.callback_context,
-                    )?;
+                    callback.dispatch_stat(S3StatResult::Success(S3StatSuccess {
+                        etag: response.headers.get(b"etag").unwrap_or(b""),
+                        last_modified: response.headers.get(b"last-modified").unwrap_or(b""),
+                        content_type: response.headers.get(b"content-type").unwrap_or(b""),
+                        size: response
+                            .headers
+                            .get(b"content-length")
+                            .map(bun_http_types::parse_content_length)
+                            .unwrap_or(0),
+                    }))?;
                 }
                 404 => this.error_with_body(ErrorType::NotFound)?,
                 _ => this.error_with_body(ErrorType::Failure)?,
             },
-            Callback::Delete(callback) => match response.status_code {
-                200 | 204 => callback(S3DeleteResult::Success, this.callback_context)?,
+            Kind::Delete => match response.status_code {
+                200 | 204 => callback.dispatch_delete(S3DeleteResult::Success)?,
                 404 => this.error_with_body(ErrorType::NotFound)?,
                 _ => this.error_with_body(ErrorType::Failure)?,
             },
-            Callback::ListObjects(callback) => match response.status_code {
+            Kind::ListObjects => match response.status_code {
                 200 => {
                     if let Some(body) = &this.result.body {
                         // parse_s3_list_objects_result is infallible (alloc-only
                         // failure modes abort).
                         let success =
                             list_objects::parse_s3_list_objects_result(body.list.as_slice());
-                        callback(
-                            S3ListObjectsResult::Success(Box::new(success)),
-                            this.callback_context,
-                        )?;
+                        callback.dispatch_list_objects(S3ListObjectsResult::Success(Box::new(
+                            success,
+                        )))?;
                     } else {
                         this.error_with_body(ErrorType::Failure)?;
                     }
@@ -390,22 +500,19 @@ impl S3HttpSimpleTask {
                 404 => this.error_with_body(ErrorType::NotFound)?,
                 _ => this.error_with_body(ErrorType::Failure)?,
             },
-            Callback::Upload(callback) => match response.status_code {
-                200 => callback(S3UploadResult::Success, this.callback_context)?,
+            Kind::Upload => match response.status_code {
+                200 => callback.dispatch_upload(S3UploadResult::Success)?,
                 _ => this.error_with_body(ErrorType::Failure)?,
             },
-            Callback::Download(callback) => match response.status_code {
+            Kind::Download => match response.status_code {
                 200 | 204 | 206 => {
                     let body = core::mem::take(&mut this.response_buffer);
                     // re-borrow response after &mut access to response_buffer
                     let response = &this.result.metadata.as_ref().unwrap().response;
-                    callback(
-                        S3DownloadResult::Success(S3DownloadSuccess {
-                            etag: response.headers.get(b"etag").unwrap_or(b""),
-                            body,
-                        }),
-                        this.callback_context,
-                    )?;
+                    callback.dispatch_download(S3DownloadResult::Success(S3DownloadSuccess {
+                        etag: response.headers.get(b"etag").unwrap_or(b""),
+                        body,
+                    }))?;
                 }
                 404 => this.error_with_body(ErrorType::NotFound)?,
                 _ => {
@@ -413,19 +520,19 @@ impl S3HttpSimpleTask {
                     this.error_with_body(ErrorType::Failure)?;
                 }
             },
-            Callback::Commit(callback) => {
+            Kind::Commit => {
                 // commit multipart upload can fail with status 200
                 let status = response.status_code;
                 if !this.fail_if_contains_error(status)? {
-                    callback(S3CommitResult::Success, this.callback_context)?;
+                    callback.dispatch_commit(S3CommitResult::Success)?;
                 }
             }
-            Callback::Part(callback) => {
+            Kind::Part => {
                 let status = response.status_code;
                 if !this.fail_if_contains_error(status)? {
                     let response = &this.result.metadata.as_ref().unwrap().response;
                     if let Some(etag) = response.headers.get(b"etag") {
-                        callback(S3PartResult::Etag(etag), this.callback_context)?;
+                        callback.dispatch_part(S3PartResult::Etag(etag))?;
                     } else {
                         this.error_with_body(ErrorType::Failure)?;
                     }
@@ -567,7 +674,6 @@ pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
     options: S3SimpleRequestOptions<'_>,
     callback: Callback,
-    callback_context: *mut c_void,
 ) -> JsTerminatedResult<()> {
     let result = match this.sign_request::<false>(
         &SignOptions {
@@ -590,11 +696,7 @@ pub(crate) fn execute_simple_s3_request(
             // options.range drops here automatically
             drop(options.range);
             let error_code_and_message = get_sign_error_code_and_message(sign_err.into());
-            callback.fail(
-                error_code_and_message.code,
-                error_code_and_message.message,
-                callback_context,
-            )?;
+            callback.fail(error_code_and_message.code, error_code_and_message.message)?;
             return Ok(());
         }
     };
@@ -623,7 +725,6 @@ pub(crate) fn execute_simple_s3_request(
         // written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
         sign_result: result,
-        callback_context,
         callback,
         range: options.range,
         headers,

@@ -908,12 +908,9 @@ impl Subprocess<'_> {
         unsafe { (*jsc_vm).on_subprocess_exit(NonNull::new_unchecked(process)) };
 
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
-            // POSIX: we still hold slave_fd (BSD/macOS flush the pty output
-            // queue on last slave close), so drain the master now and release
-            // our slave so the reader observes EOF.
-            // Windows: ConPTY's conhost stays alive after the child exits, so
-            // close the pseudoconsole to deliver EOF.
-            // Both paths leave the Terminal itself open (closed=false).
+            // Deliver EOF to the terminal reader without closing the Terminal:
+            // POSIX drains then releases slave_fd (BSD kernels flush on last
+            // slave close); Windows closes the ConPTY pseudoconsole.
             if let Some(terminal) = self.terminal.get() {
                 // `BackRef` invariant holds: the terminal is owned by (or
                 // borrowed from a JS wrapper kept live by) this subprocess and

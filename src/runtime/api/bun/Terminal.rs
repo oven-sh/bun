@@ -680,16 +680,9 @@ impl Terminal {
         }
     }
 
-    /// POSIX: synchronously drain the master (delivering any buffered output
-    /// via the data callback) and then release our slave_fd so the next read
-    /// observes EOF. Called from Subprocess::on_process_exit on the JS thread.
-    ///
-    /// BSD-derived tty layers flush the pty output queue when the last slave
-    /// closes (xnu `ptsclose` → `ttyclose` → `ttyflush`; FreeBSD `ttydev_leave`
-    /// → `ttydisc_close` → `tty_flush` after a 1s drain window). We keep our
-    /// slave open until the child exits so that window cannot race us, then
-    /// drain here before releasing the last reference. Linux preserves the
-    /// queue, so this only changes when EOF arrives there.
+    /// Drain buffered pty output, then close our slave_fd so the reader sees
+    /// EOF. BSD kernels flush the output queue on last slave close; holding
+    /// ours until Subprocess::on_process_exit keeps a fast child's writes.
     #[cfg(unix)]
     pub(crate) fn drain_and_close_slave_fd(&self) {
         let flags = self.flags.get();

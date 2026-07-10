@@ -1413,10 +1413,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         IS_SYNC,
     ));
 
-    // For inline terminal options: keep the parent's slave_fd open until the
-    // subprocess exits. BSD/macOS flush the pty output queue on last slave
-    // close, so closing here races the child's final writes; on_process_exit
-    // drains the master then closes it (Terminal::drain_and_close_slave_fd).
+    // Inline terminals keep slave_fd until on_process_exit (BSD kernels flush
+    // pty output on last slave close; see Terminal::drain_and_close_slave_fd).
     // Existing terminals keep slave_fd for reuse.
     if let Some(info) = terminal_info.take() {
         terminal_js_value = info.js_value;

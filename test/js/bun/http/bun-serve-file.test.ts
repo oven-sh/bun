@@ -1068,11 +1068,13 @@ process.exit(0);
 // async uv_fs_close calls, an unrelated open could be handed the recycled
 // slot and have it closed under it. On POSIX the reader honors CLOSE_HANDLE,
 // so this is effectively a Windows regression test.
-test.skipIf(!isWindows)("Response(Bun.file) does not double-close the fd on Windows", async () => {
-  using dir = tempDir("serve-file-double-close", {
-    "served.bin": Buffer.alloc(32 * 1024, 65),
-    "victim.json": JSON.stringify({ ok: true }),
-    "fixture.ts": /* ts */ `
+test.skipIf(!isWindows)(
+  "Response(Bun.file) does not double-close the fd on Windows",
+  async () => {
+    using dir = tempDir("serve-file-double-close", {
+      "served.bin": Buffer.alloc(32 * 1024, 65),
+      "victim.json": JSON.stringify({ ok: true }),
+      "fixture.ts": /* ts */ `
 import { openSync, fstatSync, closeSync } from "node:fs";
 let serverError: unknown;
 const server = Bun.serve({
@@ -1121,16 +1123,18 @@ server.stop(true);
 if (canaryHits) throw new Error("double-close closed " + canaryHits + " canary fds");
 console.log("OK");
 `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
-}, 60_000);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
+  },
+  60_000,
+);

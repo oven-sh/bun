@@ -6188,10 +6188,14 @@ pub mod RTLD {
 /// Idempotent: skips if the file already has a valid `.codesign` section.
 #[cfg(target_env = "ohos")]
 pub fn ohos_sign_binary(path: &ZStr) {
-    let path_str = core::str::from_utf8(path.as_bytes()).unwrap_or("");
+    let bytes = path.as_bytes();
+    if !bytes.ends_with(b".so") && !bytes.ends_with(b".node") {
+        return;
+    }
+    let path_str = core::str::from_utf8(bytes).unwrap_or("");
     let p = std::path::Path::new(path_str);
-    if let Ok(bytes) = std::fs::read(p) {
-        if !ohos_sign::has_codesign(&bytes) {
+    if let Ok(elf_bytes) = std::fs::read(p) {
+        if !ohos_sign::has_codesign(&elf_bytes) {
             let _ = ohos_sign::sign_selfsign_inplace(p);
         }
     }
@@ -6216,7 +6220,12 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     #[cfg(target_env = "ohos")]
     {
         fn ensure_signed(path: &ZStr) {
-            let path_str = path.as_cstr().to_str().unwrap_or("");
+            let bytes = path.as_bytes();
+            // Only sign loadable modules — system libs (.so) already signed.
+            if !bytes.ends_with(b".so") && !bytes.ends_with(b".node") {
+                return;
+            }
+            let path_str = core::str::from_utf8(bytes).unwrap_or("");
             let p = std::path::Path::new(path_str);
             if ohos_sign::has_codesign(&std::fs::read(p).unwrap_or_default()) {
                 return;

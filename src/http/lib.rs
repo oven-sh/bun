@@ -4982,6 +4982,7 @@ impl<'a> HTTPClient<'a> {
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
+        let mut unsupported_transfer_coding = false;
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
@@ -5061,30 +5062,15 @@ impl<'a> HTTPClient<'a> {
                     }
                     // RFC 9112 §7: transfer-coding names are case-insensitive.
                     let value = header.value();
-                    if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
-                        || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
-                    {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Gzip;
-                        }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"deflate") {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Deflate;
-                        }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Brotli;
-                        }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Zstd;
-                        }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"identity") {
+                    if strings::eql_case_insensitive_ascii_check_length(value, b"identity") {
                         self.state.transfer_encoding = Encoding::Identity;
                     } else if strings::eql_case_insensitive_ascii_check_length(value, b"chunked") {
                         self.state.transfer_encoding = Encoding::Chunked;
                     } else {
-                        return Err(err!(UnsupportedTransferEncoding));
+                        // We never send a TE request header, so any coding other than
+                        // chunked has no decoder here. Defer the error: RFC 9112 §6.1
+                        // allows this header on HEAD/304 where there is no body.
+                        unsupported_transfer_coding = true;
                     }
                 }
                 h if h == hash_header_const(b"Location") => {
@@ -5492,6 +5478,9 @@ impl<'a> HTTPClient<'a> {
                 || self.state.transfer_encoding == Encoding::Chunked
                 || is_server_sent_events)
         {
+            if unsupported_transfer_coding {
+                return Err(err!(UnsupportedTransferEncoding));
+            }
             Ok(ShouldContinue::ContinueStreaming)
         } else {
             Ok(ShouldContinue::Finished)

@@ -370,6 +370,20 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
 
+// Scope-free VM::exception() read. A callee's ThrowScope destructor
+// simulates a throw so its caller must check; when the caller is Rust
+// (writeHeadAndEnd's write-head phase) there is no ThrowScope to do it, so
+// this acknowledges the check without declaring a scope (declaring one
+// would trip the verifier before the read). The actual success/failure
+// travels through NodeHTTPServer__writeHead's return value.
+extern "C" void Bun__NodeHTTP__acknowledgeThrowScope(JSC::JSGlobalObject* globalObject)
+{
+    // The same sanctioned read RETURN_IF_EXCEPTION performs; it observes
+    // (and under exception-scope verification, acknowledges) any pending
+    // exception without constructing a verifying scope.
+    (void)globalObject->vm().hasExceptionsAfterHandlingTraps();
+}
+
 // Defined in Rust (NodeHTTPResponse.rs): moves the captured raw header bytes
 // onto the native response so takeRawHeaders can materialize them on demand.
 extern "C" void NodeHTTPResponse__adoptRawRequestHeaders(void* nodeHttpResponse, const uint8_t* data, size_t length);

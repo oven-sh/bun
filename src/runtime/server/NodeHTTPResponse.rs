@@ -202,6 +202,10 @@ unsafe extern "C" {
     ) -> JSValue;
     // Builds req.rawHeaders' flat [name, value, ...] JSArray from the header
     // bytes captured at dispatch ([u32 nameLen][u32 valueLen][name][value]...).
+    // Scope-free VM::exception() read: satisfies the exception-check
+    // verifier after a callee ThrowScope destructor simulated a throw for
+    // this (scope-less native) caller. A single load in release builds.
+    safe fn Bun__NodeHTTP__acknowledgeThrowScope(global_object: &JSGlobalObject);
     safe fn Bun__NodeHTTP__buildRawHeadersArray(
         global_object: &JSGlobalObject,
         data: *const u8,
@@ -949,11 +953,12 @@ impl NodeHTTPResponse {
             }
         }
 
-        // The C++ header writer can throw (invalid header characters, header
-        // conversion) and reports it via its return value, checked inside its
-        // own ThrowScope. When this runs inside writeHeadAndEnd there is no
-        // JS binding wrapper between the phases, so propagate here -
-        // otherwise the end phase would run with an exception pending.
+        // The writeHead ThrowScope's destructor simulates a throw so its
+        // caller must check; acknowledge it scope-free (we are that caller
+        // when running inside writeHeadAndEnd), then propagate the result
+        // that traveled through the return value - otherwise the end phase
+        // would run with an exception pending.
+        Bun__NodeHTTP__acknowledgeThrowScope(global_object);
         if !wrote_head_ok {
             return Err(jsc::JsError::Thrown);
         }

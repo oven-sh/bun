@@ -221,9 +221,9 @@ it("Fail to complete client's chain.", async () => {
     });
     expect.unreachable();
   } catch (err: any) {
-    // The X.509 verify result (UNABLE_TO_GET_ISSUER_CERT) is the server's.
-    // Node's server signals it with a TLS alert (its client sees an SSL alert
-    // error); Bun's server aborts the connection, so the client sees a reset.
+    // The server aborts the handshake with a fatal TLS alert; over TLS 1.3 the
+    // alert arrives after the client has sent its request, and fetch currently
+    // folds that post-handshake close into ECONNRESET (see #33294).
     expect(err.code).toBe("ECONNRESET");
   }
 });

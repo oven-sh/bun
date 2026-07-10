@@ -1281,13 +1281,11 @@ impl<'a> BlobReadChain<'a> {
             outer: jsc::JSPromiseStrong::init(global),
         });
         let promise = chain.outer.value();
-        // `read_bytes_to_handler` stores the handler pointer and calls
-        // `on_read_bytes` on the JS thread (sync for in-memory, async for
-        // file/S3). Ownership of the chain transfers there; the trait impl
-        // below reconstructs the Box and frees it.
-        // `read_bytes_to_handler` stores the pointer across an async hop; the
-        // `'a` borrow of `global` is a JSC_BORROW (process-lifetime) so the
-        // `'static` erasure is sound.
+        // `read_bytes_to_handler` stores the pointer and calls `on_read_bytes`
+        // on the JS thread (sync for in-memory, async for file/S3). Ownership
+        // of the chain transfers there; `on_read_bytes` below reconstructs the
+        // Box and frees it. The `'a` borrow of `global` is a JSC_BORROW
+        // (process-lifetime) so the `'static` erasure is sound.
         let raw = bun_core::heap::into_raw(chain).cast::<BlobReadChain<'static>>();
         // SAFETY: `raw` is freshly leaked and uniquely owned by the read
         // dispatch; reclaimed in `BlobReadChain::on_read_bytes`.

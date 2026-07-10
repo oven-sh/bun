@@ -510,7 +510,9 @@ pub(crate) fn braces(
         match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice.slice()) {
             Ok(v) => break 'lexer_output v,
             Err(err) => {
-                return Err(global.throw_error(crate::Error::from(err), "failed to tokenize braces"));
+                return Err(
+                    global.throw_error(crate::Error::from(err), "failed to tokenize braces")
+                );
             }
         }
     };

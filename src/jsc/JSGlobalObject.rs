@@ -894,7 +894,14 @@ impl JSGlobalObject {
 
         let mut buffer: Vec<u8> = Vec::new();
         use core::fmt::Write;
-        if write!(WriteVec(&mut buffer), "{} {}", bstr::BStr::new(err.name()), fmt).is_err() {
+        if write!(
+            WriteVec(&mut buffer),
+            "{} {}",
+            bstr::BStr::new(err.name()),
+            fmt
+        )
+        .is_err()
+        {
             return self.throw_out_of_memory();
         }
         let str = ZigString::init_utf8(&buffer);

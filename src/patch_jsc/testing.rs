@@ -93,10 +93,9 @@ impl TestingAPIs {
                 if e == ParseErr::hunk_header_integrity_check_failed {
                     return Err(global.throw_error(bun_patch::Error::from(e), "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)"));
                 } else {
-                    return Err(global.throw_error(
-                        bun_patch::Error::from(e),
-                        "failed to parse patch file",
-                    ));
+                    return Err(
+                        global.throw_error(bun_patch::Error::from(e), "failed to parse patch file")
+                    );
                 }
             }
         };
@@ -169,10 +168,7 @@ impl TestingAPIs {
             }
 
             drop(patchfile_src);
-            return Err(global.throw_error(
-                bun_patch::Error::from(e),
-                "failed to parse patchfile",
-            ));
+            return Err(global.throw_error(bun_patch::Error::from(e), "failed to parse patchfile"));
         }
 
         Ok(ApplyArgs {

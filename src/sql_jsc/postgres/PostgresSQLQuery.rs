@@ -701,9 +701,8 @@ impl PostgresSQLQuery {
                     Err(err) => {
                         drop(signature);
                         release_query_ref();
-                        return Err(
-                            global_object.throw_error(crate::Error::from(err), "failed to allocate statement")
-                        );
+                        return Err(global_object
+                            .throw_error(crate::Error::from(err), "failed to allocate statement"));
                     }
                 };
                 connection_entry_value = Some(entry_value_ptr);

@@ -241,10 +241,8 @@ impl UserOptions {
             match bun_sys::getcwd_alloc() {
                 Ok(z) => arena_dupe_z(&arena, z.as_bytes()).as_bytes(),
                 Err(e) => {
-                    return Err(global.throw_error(
-                        e.to_zig_err(),
-                        "while querying current working directory",
-                    ));
+                    return Err(global
+                        .throw_error(e.to_zig_err(), "while querying current working directory"));
                 }
             }
         };

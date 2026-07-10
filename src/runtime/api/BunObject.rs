@@ -499,13 +499,19 @@ pub(crate) fn braces(
         if strings::is_all_ascii(brace_slice.slice()) {
             break 'lexer_output match Braces::Lexer::tokenize(brace_slice.slice()) {
                 Ok(v) => v,
-                Err(err) => return Err(global.throw_error(crate::Error::from(err), "failed to tokenize braces")),
+                Err(err) => {
+                    return Err(
+                        global.throw_error(crate::Error::from(err), "failed to tokenize braces")
+                    );
+                }
             };
         }
 
         match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice.slice()) {
             Ok(v) => break 'lexer_output v,
-            Err(err) => return Err(global.throw_error(crate::Error::from(err), "failed to tokenize braces")),
+            Err(err) => {
+                return Err(global.throw_error(crate::Error::from(err), "failed to tokenize braces"));
+            }
         }
     };
 
@@ -524,9 +530,7 @@ pub(crate) fn braces(
         let ast_node = match parser.parse() {
             Ok(v) => v,
             Err(err) => {
-                return Err(
-                    global.throw_error(crate::Error::from(err), "failed to parse braces")
-                );
+                return Err(global.throw_error(crate::Error::from(err), "failed to parse braces"));
             }
         };
         // NOTE: see `tokenize` arm — manual JSON encoder for the AST.
@@ -1962,7 +1966,8 @@ pub(crate) fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObje
         Ok(p) => p,
         Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
         Err(err) => {
-            let _ = global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
+            let _ =
+                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
             return JSValue::ZERO;
         }
     };
@@ -1977,7 +1982,8 @@ pub(crate) fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObje
         Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
         Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
         Err(err) => {
-            let _ = global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
+            let _ =
+                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
             return JSValue::ZERO;
         }
     }
@@ -2544,9 +2550,7 @@ pub mod JSZlib {
                                 global_this.throw(format_args!("Zlib error: Invalid argument"))
                             );
                         }
-                        return Err(
-                            global_this.throw_error(crate::Error::from(err), "Zlib error")
-                        );
+                        return Err(global_this.throw_error(crate::Error::from(err), "Zlib error"));
                     }
                 };
 
@@ -2687,9 +2691,7 @@ pub mod JSZlib {
                                 global_this.throw(format_args!("Zlib error: Invalid argument"))
                             );
                         }
-                        return Err(
-                            global_this.throw_error(crate::Error::from(err), "Zlib error")
-                        );
+                        return Err(global_this.throw_error(crate::Error::from(err), "Zlib error"));
                     }
                 };
 

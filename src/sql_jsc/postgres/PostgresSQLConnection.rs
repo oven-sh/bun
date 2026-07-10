@@ -1281,9 +1281,10 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             Ok(s) => s,
             Err(err) => {
                 PostgresSQLConnection::deinit(ptr);
-                return Err(
-                    global_object.throw_error(bun_jsc::CrateError::from(err), "failed to connect to postgresql")
-                );
+                return Err(global_object.throw_error(
+                    bun_jsc::CrateError::from(err),
+                    "failed to connect to postgresql",
+                ));
             }
         }));
     }

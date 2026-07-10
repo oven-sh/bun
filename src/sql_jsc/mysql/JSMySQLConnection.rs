@@ -589,7 +589,8 @@ impl JSMySQLConnection {
                     // `this` (a `ParentRef`) is not used past this point, so no
                     // borrow outlives the `heap::take` inside `deinit`.
                     unsafe { Self::deref(ptr) };
-                    return Err(global_object.throw_error(bun_jsc::CrateError::from(e), "failed to connect to mysql"));
+                    return Err(global_object
+                        .throw_error(bun_jsc::CrateError::from(e), "failed to connect to mysql"));
                 }
             };
             this.connection_mut()

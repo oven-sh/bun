@@ -380,6 +380,7 @@ static char* toFileURI(std::span<const char> span)
 }
 
 extern "C" size_t Bun__process_dlopen_count;
+extern "C" void* Bun__dlopen(const char* path, int flags);
 
 // "Fire and forget" wrapper around unlink for c usage that handles EINTR
 extern "C" void Bun__unlink(const char*, size_t);
@@ -532,7 +533,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else
     CrashHandler__setDlOpenAction(utf8.data());
-    void* handle = dlopen(utf8.data(), RTLD_LAZY);
+    void* handle = Bun__dlopen(utf8.data(), RTLD_LAZY);
     CrashHandler__setDlOpenAction(nullptr);
 
     tryToDeleteIfNecessary();

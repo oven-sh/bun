@@ -53,10 +53,10 @@ static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalOb
     RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
 }
 
-// The [[pullAlgorithm]] dispatch. ByteTeeBranch is byte-controller-only and CrossRealm sources
-// are never created (transferable streams are unimplemented); the switch is total over SourceKind.
-// Returns nullptr with no exception pending when the pull completed synchronously with a
-// non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
+// The [[pullAlgorithm]] dispatch. Native and ByteTeeBranch are byte-controller-only and CrossRealm
+// sources are never created (transferable streams are unimplemented); the switch is total over
+// SourceKind. Returns nullptr with no exception pending when the pull completed synchronously with
+// a non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

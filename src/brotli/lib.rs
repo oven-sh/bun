@@ -596,16 +596,21 @@ impl<'a, W: bun_io::Write> BrotliWriter<'a, W> {
 }
 
 impl<W: bun_io::Write> bun_io::Write for BrotliWriter<'_, W> {
-    fn write_all(&mut self, buf: &[u8]) -> crate::Result<()> {
-        self.write(buf).map(|_| ())
+    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+        self.write(buf)
+            .map(|_| ())
+            .map_err(|_| bun_core::Error::WriteFailed)
     }
 
-    fn flush(&mut self) -> crate::Result<()> {
+    fn flush(&mut self) -> bun_io::Result<()> {
         // Drain the encoder first so compressed-so-far bytes reach the sink:
         // an empty write runs `compress_stream` with the stream's configured
         // `flush_op` (emits pending output for FLUSH-configured streams; a
         // no-op for PROCESS). `end()` is still required to finalize.
-        let out = self.compressor.write(b"", false)?;
+        let out = self
+            .compressor
+            .write(b"", false)
+            .map_err(|_| bun_core::Error::WriteFailed)?;
         self.input_writer.write_all(out)?;
         self.input_writer.flush()
     }

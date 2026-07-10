@@ -6,6 +6,8 @@ pub enum Error {
     ShortRead,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
+    #[error(transparent)]
+    Core(#[from] bun_core::Error),
 }
 
 impl Error {
@@ -14,6 +16,7 @@ impl Error {
             Self::ZlibError => "ZlibError",
             Self::ShortRead => "ShortRead",
             Self::Alloc(_) => "OutOfMemory",
+            Self::Core(e) => e.name(),
         }
     }
 }

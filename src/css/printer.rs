@@ -472,11 +472,11 @@ impl<'a> Printer<'a> {
 impl<'a> bun_io::Write for Printer<'a> {
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
-        Printer::write_str(self, buf).map_err(|_| crate::CrateError::CSSPrintError)
+        Printer::write_str(self, buf).map_err(|_| bun_core::Error::WriteFailed)
     }
     #[inline]
     fn write_byte(&mut self, b: u8) -> bun_io::Result<()> {
-        Printer::write_char(self, b).map_err(|_| crate::CrateError::CSSPrintError)
+        Printer::write_char(self, b).map_err(|_| bun_core::Error::WriteFailed)
     }
 }
 

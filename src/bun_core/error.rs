@@ -23,6 +23,8 @@ pub enum Error {
     FileNotFound,
     #[error("AccessDenied")]
     AccessDenied,
+    #[error("WriteFailed")]
+    WriteFailed,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
 }
@@ -41,6 +43,7 @@ impl Error {
             Self::NameTooLong => "NameTooLong",
             Self::FileNotFound => "FileNotFound",
             Self::AccessDenied => "AccessDenied",
+            Self::WriteFailed => "WriteFailed",
             Self::Alloc(_) => "OutOfMemory",
         }
     }

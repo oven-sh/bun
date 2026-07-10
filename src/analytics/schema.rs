@@ -13,13 +13,9 @@ use crate::Error;
 // per-type `decode`/`encode` impls call the primitive methods directly
 // (which is what the generated schema bodies already do).
 
-// peechy's two error cases (`EOF`, `InvalidValue`) are folded into
-// the crate-wide `bun_core::Error` so downstream `decode` signatures stay
-// `Result<_, bun_core::Error>` without an extra `From` hop.
-// (`Error::from_name` interns at runtime, so this is a fn, not a const.)
 #[inline]
 pub(crate) fn eof() -> Error {
-    crate::Error::Sys(bun_errno::SystemErrno::EOF)
+    crate::Error::EOF
 }
 
 /// Primitive integers encodable in the peechy wire format (native-endian raw

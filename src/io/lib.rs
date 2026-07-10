@@ -13,7 +13,7 @@
 // ── submodules ──────────────────────────────────────────────────────────────
 
 pub mod error;
-pub use error::{Error, Result};
+pub use error::Error;
 
 // ── merged from bun_io ──────────────────────────────────────────────────────
 //
@@ -2009,7 +2009,7 @@ pub mod waker {
             Self { fd: Fd::INVALID }
         }
 
-        pub fn init() -> crate::Result<Self> {
+        pub fn init() -> crate::error::Result<Self> {
             match bun_sys::eventfd(0, 0) {
                 Ok(fd) => Ok(Self::init_with_file_descriptor(fd)),
                 Err(err) => Err(bun_errno::SystemErrno::init(i64::from(err.errno))

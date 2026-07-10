@@ -701,6 +701,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_dispatch",
+ "bun_errno",
  "bun_paths",
  "bun_sys",
  "bun_url",
@@ -712,6 +713,7 @@ dependencies = [
  "libc",
  "scopeguard",
  "strum",
+ "thiserror",
 ]
 
 [[package]]
@@ -1235,8 +1237,10 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_alloc",
  "bun_collections",
  "bun_core",
+ "bun_errno",
  "bun_opaque",
  "bun_paths",
  "bun_sys",

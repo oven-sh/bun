@@ -582,26 +582,31 @@ nativeTests.test_wrap_lifetime_with_weak_ref = async () => {
 };
 
 nativeTests.test_wrap_lifetime_with_strong_ref = async () => {
-  let object = { foo: "bar" };
-  assert(createWrapWithStrongRef(object) === object);
-  assert(nativeTests.get_wrap_data(object) === 42);
+  // The IIFE ensures every frame that held the object's JSValue (including the
+  // native get_wrap_data_from_ref local) is below a popped JS frame before the
+  // final gcUntil; otherwise a conservative stack scan can re-root it.
+  await (async () => {
+    let object = { foo: "bar" };
+    assert(createWrapWithStrongRef(object) === object);
+    assert(nativeTests.get_wrap_data(object) === 42);
 
-  object = undefined;
-  // still referenced by native module so this should fail
-  try {
-    await gcUntil(() => nativeTests.was_wrap_finalize_called());
-    throw new Error("object was garbage collected while still referenced by native code");
-  } catch (e) {
-    if (!e.toString().includes("Condition was not met")) {
-      throw e;
+    object = undefined;
+    // still referenced by native module so this should fail
+    try {
+      await gcUntil(() => nativeTests.was_wrap_finalize_called());
+      throw new Error("object was garbage collected while still referenced by native code");
+    } catch (e) {
+      if (!e.toString().includes("Condition was not met")) {
+        throw e;
+      }
     }
-  }
 
-  // can still get the value using the ref
-  assert(nativeTests.get_wrap_data_from_ref() === 42);
+    // can still get the value using the ref
+    assert(nativeTests.get_wrap_data_from_ref() === 42);
 
-  // now we free it
-  nativeTests.unref_wrapped_value();
+    // now we free it
+    nativeTests.unref_wrapped_value();
+  })();
   await gcUntil(() => nativeTests.was_wrap_finalize_called());
 };
 
@@ -626,33 +631,37 @@ nativeTests.test_remove_wrap_lifetime_with_weak_ref = async () => {
 };
 
 nativeTests.test_remove_wrap_lifetime_with_strong_ref = async () => {
-  let object = { foo: "bar" };
-  assert(createWrapWithStrongRef(object) === object);
+  // IIFE so the frames that last held the object (the JSON.stringify of
+  // get_object_from_ref()) are popped before the final gcUntil.
+  await (async () => {
+    let object = { foo: "bar" };
+    assert(createWrapWithStrongRef(object) === object);
 
-  assert(nativeTests.get_wrap_data(object) === 42);
+    assert(nativeTests.get_wrap_data(object) === 42);
 
-  nativeTests.remove_wrap(object);
-  assert(nativeTests.get_wrap_data(object) === undefined);
-  assert(nativeTests.get_wrap_data_from_ref() === undefined);
-  assert(nativeTests.get_object_from_ref() === object);
+    nativeTests.remove_wrap(object);
+    assert(nativeTests.get_wrap_data(object) === undefined);
+    assert(nativeTests.get_wrap_data_from_ref() === undefined);
+    assert(nativeTests.get_object_from_ref() === object);
 
-  object = undefined;
+    object = undefined;
 
-  // finalizer should not be called and object should not be freed
-  try {
-    await gcUntil(() => nativeTests.was_wrap_finalize_called() || nativeTests.get_object_from_ref() === undefined);
-    throw new Error("finalizer ran");
-  } catch (e) {
-    if (!e.toString().includes("Condition was not met")) {
-      throw e;
+    // finalizer should not be called and object should not be freed
+    try {
+      await gcUntil(() => nativeTests.was_wrap_finalize_called() || nativeTests.get_object_from_ref() === undefined);
+      throw new Error("finalizer ran");
+    } catch (e) {
+      if (!e.toString().includes("Condition was not met")) {
+        throw e;
+      }
     }
-  }
 
-  // native code can still get the object
-  assert(JSON.stringify(nativeTests.get_object_from_ref()) === `{"foo":"bar"}`);
+    // native code can still get the object
+    assert(JSON.stringify(nativeTests.get_object_from_ref()) === `{"foo":"bar"}`);
 
-  // now it gets deleted
-  nativeTests.unref_wrapped_value();
+    // now it gets deleted
+    nativeTests.unref_wrapped_value();
+  })();
   await gcUntil(() => nativeTests.get_object_from_ref() === undefined);
 };
 

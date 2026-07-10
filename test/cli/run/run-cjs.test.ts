@@ -74,7 +74,8 @@ describe.concurrent("ES module syntax in a .cjs/.cts file is an error", () => {
     const { stdout, stderr, exitCode } = await run(
       {
         "bad.cjs": "export const x = 7;\n",
-        "entry.mjs": 'try { await import("./bad.cjs"); console.log("loaded"); } catch (e) { console.log("caught", e.message); }\n',
+        "entry.mjs":
+          'try { await import("./bad.cjs"); console.log("loaded"); } catch (e) { console.log("caught", e.message); }\n',
       },
       "entry.mjs",
     );
@@ -88,7 +89,8 @@ describe.concurrent("ES module syntax in a .cjs/.cts file is an error", () => {
     const { stdout, stderr, exitCode } = await run(
       {
         "bad.cjs": "export const x = 7;\n",
-        "entry.cjs": 'try { require("./bad.cjs"); console.log("loaded"); } catch (e) { console.log("caught", e.message); }\n',
+        "entry.cjs":
+          'try { require("./bad.cjs"); console.log("loaded"); } catch (e) { console.log("caught", e.message); }\n',
       },
       "entry.cjs",
     );

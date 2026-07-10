@@ -54,7 +54,6 @@ bun_core::impl_tag_error!(Error);
 /// (`bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError`) resolve.
 pub type AnyMySQLError = Error;
 
-
 // Reverse of the above: `crate::Error` is just an interned name; recover the
 // matching variant by name (or `UnknownError` as a catch-all). Needed because
 // helpers like `decode_binary_value` were widened to `crate::Error` while

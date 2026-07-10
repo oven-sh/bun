@@ -3,12 +3,12 @@ use std::io::Write as _;
 
 use bun_alloc::AllocError;
 
+use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
 use bun_core::ZStr;
 use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
-use crate::Error;
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
@@ -1114,7 +1114,10 @@ pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     ) {
         Ok(f) => f,
         Err(err) => {
-            bun_core::pretty_errorln!("<r><red>error:<r> {} create package.json", bun_fmt::s(err.name()));
+            bun_core::pretty_errorln!(
+                "<r><red>error:<r> {} create package.json",
+                bun_fmt::s(err.name())
+            );
             Global::crash();
         }
     };

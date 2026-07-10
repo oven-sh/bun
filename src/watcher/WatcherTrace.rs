@@ -50,11 +50,7 @@ pub fn write_events(
     let mut writer = scopeguard::guard(buffered, |mut w| {
         if let Err(err) = w.flush() {
             let name = err.to_string();
-            output::err(
-                name.as_str(),
-                "Failed to flush watcher trace file",
-                (),
-            );
+            output::err(name.as_str(), "Failed to flush watcher trace file", ());
         }
     });
 

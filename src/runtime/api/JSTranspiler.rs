@@ -4,6 +4,7 @@ use bun_alloc::ArenaVecExt as _;
 use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
+use crate::Error;
 use crate::node::{Encoding, StringOrBuffer};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
@@ -12,7 +13,6 @@ use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::options::{self, PackagesOption, SourceMapOption};
 use bun_bundler::transpiler::{MacroJSCtx, ParseOptions, ParseResult};
 use bun_bundler::{self as Transpiler};
-use crate::Error;
 use bun_js_parser::lexer as JSLexer;
 use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;

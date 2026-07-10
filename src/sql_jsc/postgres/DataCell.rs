@@ -38,10 +38,7 @@ fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
     })
 }
 
-fn unescape_postgres_string<'a>(
-    input: &[u8],
-    buffer: &'a mut [u8],
-) -> crate::Result<&'a mut [u8]> {
+fn unescape_postgres_string<'a>(input: &[u8], buffer: &'a mut [u8]) -> crate::Result<&'a mut [u8]> {
     let mut out_index: usize = 0;
     let mut i: usize = 0;
 

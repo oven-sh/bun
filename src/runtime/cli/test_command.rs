@@ -143,10 +143,7 @@ mod bun_test {
     }
 }
 
-pub(crate) fn escape_xml(
-    str_: &[u8],
-    writer: &mut impl bun_io::Write,
-) -> crate::Result<()> {
+pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate::Result<()> {
     let mut last: usize = 0;
     let mut i: usize = 0;
     let len = str_.len();

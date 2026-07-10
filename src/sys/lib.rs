@@ -1318,7 +1318,9 @@ pub fn errno() -> *mut i32 {
 /// Copy `path` into a NUL-terminated buffer.
 /// Returns `ENAMETOOLONG` if `path` contains an interior NUL.
 #[inline]
-pub fn to_posix_path(path: &[u8]) -> core::result::Result<std::ffi::CString, bun_errno::SystemErrno> {
+pub fn to_posix_path(
+    path: &[u8],
+) -> core::result::Result<std::ffi::CString, bun_errno::SystemErrno> {
     std::ffi::CString::new(path).map_err(|_| bun_errno::SystemErrno::ENAMETOOLONG)
 }
 
@@ -8908,11 +8910,7 @@ impl Drop for CloseOnDrop {
 pub mod make_path {
     use super::*;
     #[inline]
-    pub fn make_open_path(
-        dir: &Dir,
-        sub_path: &[u8],
-        opts: OpenDirOptions,
-    ) -> Maybe<Dir> {
+    pub fn make_open_path(dir: &Dir, sub_path: &[u8], opts: OpenDirOptions) -> Maybe<Dir> {
         dir.make_open_path(sub_path, opts)
     }
 
@@ -9230,12 +9228,7 @@ pub fn exists(path: &[u8]) -> bool {
 /// delete-tree + rename); on EISDIR removes the dest dir and
 /// retries; on EXDEV falls back to the slow open+copy path. Only opens the
 /// source inside the EXDEV branch.
-pub fn move_file_z(
-    from_dir: Fd,
-    filename: &ZStr,
-    to_dir: Fd,
-    destination: &ZStr,
-) -> Maybe<()> {
+pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
     match renameat_concurrently_without_fallback(from_dir, filename, to_dir, destination) {
         Ok(()) => Ok(()),
         // allow over-writing an empty directory

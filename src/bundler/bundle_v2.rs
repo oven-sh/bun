@@ -340,13 +340,13 @@ pub mod bv2_impl {
     use bun_alloc::{AllocError, Arena as ThreadLocalArena};
 
     use self::bake_types as bake;
+    use crate::Error;
     use bun_ast::server_component_boundary;
     use bun_ast::{Binding, E, Expr, G, S};
     use bun_ast::{ImportKind, ImportRecord};
     use bun_collections::{ArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged, VecExt};
     use bun_core::strings;
     use bun_core::{FeatureFlags, Output};
-    use crate::Error;
     use bun_resolver::DataURL;
     use bun_resolver::fs::PathResolverExt as _;
     use bun_resolver::{self as _resolver, is_package_path};

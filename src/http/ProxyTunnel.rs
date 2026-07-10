@@ -2,8 +2,8 @@ use core::cell::Cell;
 use core::ptr::{NonNull, addr_of, addr_of_mut};
 use core::sync::atomic::Ordering;
 
-use bun_core::scoped_log;
 use crate::Error;
+use bun_core::scoped_log;
 use bun_uws as uws;
 
 use crate::http_cert_error::HTTPCertError;

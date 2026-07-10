@@ -1335,7 +1335,8 @@ impl ModKey {
         cursor
             .write_all(b"-")
             .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-        write!(&mut cursor, "{:x}", hex_int).map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+        write!(&mut cursor, "{:x}", hex_int)
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
         let written = len - cursor.len();
         Ok(&out[..written])
     }
@@ -1354,11 +1355,7 @@ impl ModKey {
         bun_wyhash::hash(&hash_bytes)
     }
 
-    pub fn generate(
-        _: &mut RealFS,
-        _: &[u8],
-        file: &bun_sys::File,
-    ) -> crate::CrateResult<ModKey> {
+    pub fn generate(_: &mut RealFS, _: &[u8], file: &bun_sys::File) -> crate::CrateResult<ModKey> {
         let stat = file.stat()?;
 
         const NS_PER_S: i128 = 1_000_000_000;

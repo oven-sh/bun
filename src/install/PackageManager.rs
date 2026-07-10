@@ -3,6 +3,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::io::Write as _;
 
+use crate::Error;
 use crate::bun_fs as fs;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
@@ -12,7 +13,6 @@ use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
 use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
 use bun_core::ZBox;
 use bun_core::{Global, Output};
-use crate::Error;
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
 use bun_event_loop::MiniEventLoop as mini_event_loop;

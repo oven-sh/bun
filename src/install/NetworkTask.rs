@@ -266,7 +266,14 @@ impl NetworkTask {
                     // SAFETY: see the `on_chunk` call above — `stream` is
                     // live and `on_chunk` takes `*mut Self` per its
                     // freely-aliasing contract.
-                    unsafe { TarballStream::on_chunk(stream, chunk, true, result.fail.map(crate::Error::from)) };
+                    unsafe {
+                        TarballStream::on_chunk(
+                            stream,
+                            chunk,
+                            true,
+                            result.fail.map(crate::Error::from),
+                        )
+                    };
                     // Do NOT touch `this` — or anything it owns — after
                     // this point: `on_chunk(…, true, …)` sets `closed` and
                     // schedules a drain that may reach `finish()` on a

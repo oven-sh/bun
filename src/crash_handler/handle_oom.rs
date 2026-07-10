@@ -1,5 +1,5 @@
+use crate::Error;
 use bun_alloc::AllocError;
-use crate::Error as Error;
 
 // "OOM-only" vs "other errors possible" is encoded structurally in the
 // `HandleOom` trait impls below — the `AllocError` impls ARE the "OOM-only"

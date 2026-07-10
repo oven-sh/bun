@@ -32,10 +32,7 @@ fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) ->
 }
 
 #[inline(never)]
-pub fn compute_chunks(
-    this: &mut LinkerContext,
-    unique_key: u64,
-) -> crate::Result<Box<[Chunk]>> {
+pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Result<Box<[Chunk]>> {
     let _trace = bun_core::perf::trace("Bundler.computeChunks");
 
     debug_assert!(this.dev_server.is_none()); // use

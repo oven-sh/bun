@@ -297,9 +297,7 @@ pub fn run_as_coordinator(
 /// (`--path-ignore-patterns`, `--changed`), `--reporter`/`--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.
-fn build_worker_argv(
-    ctx: &Command::ContextData,
-) -> crate::Result<Box<[bun_spawn::CStrPtr]>> {
+fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn::CStrPtr]>> {
     // Null-sentinel slice of C-string pointers. String storage routes through
     // the process-lifetime CLI arena (bulk-freed on exit).
     let mut argv: Vec<bun_spawn::CStrPtr> = Vec::new();

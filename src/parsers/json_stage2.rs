@@ -1322,11 +1322,7 @@ fn read_trail_surrogate_escape(
     Some(value as u16)
 }
 
-fn decode_string_escapes<
-    's,
-    const ALLOW_RAW_CONTROL: bool,
-    L: LexerLog<'s, Err = crate::Error>,
->(
+fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err = crate::Error>>(
     l: &mut L,
     body: &[u8],
     buf: &mut Vec<u8>,

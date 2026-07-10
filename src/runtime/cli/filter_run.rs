@@ -288,11 +288,7 @@ impl<'a> State<'a> {
         self.remaining_scripts == 0
     }
 
-    fn read_chunk(
-        &mut self,
-        handle: &mut ProcessHandle<'a>,
-        chunk: &[u8],
-    ) -> crate::Result<()> {
+    fn read_chunk(&mut self, handle: &mut ProcessHandle<'a>, chunk: &[u8]) -> crate::Result<()> {
         if self.pretty_output {
             handle.buffer.extend_from_slice(chunk);
             let _ = self.redraw(false);

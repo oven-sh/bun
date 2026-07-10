@@ -683,7 +683,9 @@ impl Error {
             Self::INVALID_CALL => "INVALID_CALL",
             Self::STORE_LOOKUP => "STORE_LOOKUP",
             Self::NAME_CONSTRAINTS_WITHOUT_SANS => "NAME_CONSTRAINTS_WITHOUT_SANS",
-            Self::UNKNOWN_CERTIFICATE_VERIFICATION_ERROR => "UNKNOWN_CERTIFICATE_VERIFICATION_ERROR",
+            Self::UNKNOWN_CERTIFICATE_VERIFICATION_ERROR => {
+                "UNKNOWN_CERTIFICATE_VERIFICATION_ERROR"
+            }
             Self::MissingCredentials => "MissingCredentials",
             Self::InvalidMethod => "InvalidMethod",
             Self::InvalidPath => "InvalidPath",
@@ -733,7 +735,9 @@ impl Error {
             Self::HTTP404 => "HTTP404",
             Self::GitHubIsDown => "GitHubIsDown",
             Self::UpgradeFailedMissingExecutable => "UpgradeFailedMissingExecutable",
-            Self::UpgradeFailedBecauseOfMissingExecutableDir => "UpgradeFailedBecauseOfMissingExecutableDir",
+            Self::UpgradeFailedBecauseOfMissingExecutableDir => {
+                "UpgradeFailedBecauseOfMissingExecutableDir"
+            }
             Self::NoBinFound => "NoBinFound",
             Self::NeedToInstall => "NeedToInstall",
             Self::PathTooLong => "PathTooLong",

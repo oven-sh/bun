@@ -1,6 +1,6 @@
+use crate::Error;
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 use bun_core::{Global, Output};
-use crate::Error;
 use bun_install::package_manager_real::{
     CommandLineArguments, PackageManager, ROOT_PACKAGE_JSON_PATH, Subcommand, install_with_manager,
     update_package_json_and_install_with_manager,

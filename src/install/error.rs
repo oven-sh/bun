@@ -317,7 +317,9 @@ impl Error {
             Self::IPCPipeFailed => "IPCPipeFailed",
             Self::JSONPipeWriterFailed => "JSONPipeWriterFailed",
             Self::ProcessWatchFailed => "ProcessWatchFailed",
-            Self::SecurityScannerProcessFailedWithoutExitStatus => "SecurityScannerProcessFailedWithoutExitStatus",
+            Self::SecurityScannerProcessFailedWithoutExitStatus => {
+                "SecurityScannerProcessFailedWithoutExitStatus"
+            }
             Self::NoSecurityScanData => "NoSecurityScanData",
             Self::InvalidIPCMessage => "InvalidIPCMessage",
             Self::InvalidIPCFormat => "InvalidIPCFormat",
@@ -344,7 +346,9 @@ impl Error {
             Self::MissingLevelField => "MissingLevelField",
             Self::InvalidLevelField => "InvalidLevelField",
             Self::InvalidLevelValue => "InvalidLevelValue",
-            Self::MissingGlobalBinDirectoryTrySettingBUNINSTALL => "Missing global bin directory: try setting $BUN_INSTALL",
+            Self::MissingGlobalBinDirectoryTrySettingBUNINSTALL => {
+                "Missing global bin directory: try setting $BUN_INSTALL"
+            }
             Self::InvalidURL => "InvalidURL",
             Self::Fail => "Fail",
             Self::IntegrityCheckFailed => "IntegrityCheckFailed",
@@ -358,7 +362,9 @@ impl Error {
             Self::UnexpectedLockfileVersion => "Unexpected lockfile version",
             Self::OutdatedLockfileVersion => "Outdated lockfile version",
             Self::LockfileIsMissingData => "Lockfile is missing data",
-            Self::LockfileIsMalformedExpected0AtTheEnd => "Lockfile is malformed (expected 0 at the end)",
+            Self::LockfileIsMalformedExpected0AtTheEnd => {
+                "Lockfile is malformed (expected 0 at the end)"
+            }
             Self::CorruptLockfile => "CorruptLockfile",
             Self::LockfileIsMissingResolutionData => "Lockfile is missing resolution data",
             Self::MissingPackageName => "MissingPackageName",
@@ -367,14 +373,30 @@ impl Error {
             Self::GlobError => "GlobError",
             Self::PermissionDenied => "PermissionDenied",
             Self::Invalid => "Invalid",
-            Self::LockfileValidationFailedListIsImpossiblyLong => "Lockfile validation failed: list is impossibly long",
-            Self::LockfileValidationFailedAlignmentMismatch => "Lockfile validation failed: alignment mismatch",
-            Self::LockfileValidationFailedUnexpectedNumberOfPackageFields => "Lockfile validation failed: unexpected number of package fields",
-            Self::LockfileValidationFailedInvalidPackageListRange => "Lockfile validation failed: invalid package list range",
-            Self::LockfileValidationFailedInvalidResolutionTag => "Lockfile validation failed: invalid resolution tag",
-            Self::LockfileValidationFailedInvalidPackageMeta => "Lockfile validation failed: invalid package meta",
-            Self::LockfileValidationFailedInvalidBinTag => "Lockfile validation failed: invalid bin tag",
-            Self::LockfileValidationFailedInvalidPackageScripts => "Lockfile validation failed: invalid package scripts",
+            Self::LockfileValidationFailedListIsImpossiblyLong => {
+                "Lockfile validation failed: list is impossibly long"
+            }
+            Self::LockfileValidationFailedAlignmentMismatch => {
+                "Lockfile validation failed: alignment mismatch"
+            }
+            Self::LockfileValidationFailedUnexpectedNumberOfPackageFields => {
+                "Lockfile validation failed: unexpected number of package fields"
+            }
+            Self::LockfileValidationFailedInvalidPackageListRange => {
+                "Lockfile validation failed: invalid package list range"
+            }
+            Self::LockfileValidationFailedInvalidResolutionTag => {
+                "Lockfile validation failed: invalid resolution tag"
+            }
+            Self::LockfileValidationFailedInvalidPackageMeta => {
+                "Lockfile validation failed: invalid package meta"
+            }
+            Self::LockfileValidationFailedInvalidBinTag => {
+                "Lockfile validation failed: invalid bin tag"
+            }
+            Self::LockfileValidationFailedInvalidPackageScripts => {
+                "Lockfile validation failed: invalid package scripts"
+            }
             Self::NPMLockfileVersionMismatch => "NPMLockfileVersionMismatch",
             Self::InvalidNPMLockfile => "InvalidNPMLockfile",
             Self::PathTooLong => "PathTooLong",

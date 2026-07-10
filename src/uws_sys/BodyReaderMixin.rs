@@ -66,11 +66,7 @@ pub trait BodyReaderHandler: bun_core::IntrusiveField<BodyReaderMixin<Self>> + '
     /// SAFETY: `this` is the pointer previously passed to
     /// `BodyReaderMixin::read_body`; it is live and uniquely owned by the
     /// mixin until this call (no other `&mut` into the allocation is live).
-    unsafe fn on_body(
-        this: *mut Self,
-        body: &[u8],
-        resp: AnyResponse,
-    ) -> crate::Result<()>;
+    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> crate::Result<()>;
 
     /// Called on error or request abort. Same provenance contract as `on_body`.
     ///
@@ -149,12 +145,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         unsafe { Wrap::on_error(wrap) };
     }
 
-    fn on_data(
-        wrap: *mut Wrap,
-        resp: AnyResponse,
-        chunk: &[u8],
-        last: bool,
-    ) -> crate::Result<()> {
+    fn on_data(wrap: *mut Wrap, resp: AnyResponse, chunk: &[u8], last: bool) -> crate::Result<()> {
         if last {
             // Free everything after. Take via the mixin field first — no
             // `&mut Wrap` is live yet, and the temporary `&mut Self` ends at

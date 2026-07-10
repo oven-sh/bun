@@ -78,7 +78,6 @@ impl BackendError {
     }
 }
 
-
 bun_core::oom_from_alloc!(BackendError);
 
 pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {

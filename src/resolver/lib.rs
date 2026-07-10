@@ -91,10 +91,7 @@ pub mod fs {
                 pub fn instance() -> &'static Self {
                     &$zst
                 }
-                pub fn append_slice(
-                    &self,
-                    value: &[u8],
-                ) -> crate::CrateResult<&'static [u8]> {
+                pub fn append_slice(&self, value: &[u8]) -> crate::CrateResult<&'static [u8]> {
                     // SAFETY: `$backing()` returns the raw `*mut` process-lifetime singleton;
                     // `BSSStringList::append` takes `*mut Self` and serializes
                     // all mutation through its internal `mutex` (no aliased `&mut` is ever
@@ -104,10 +101,7 @@ pub mod fs {
                     unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
                         .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
                 }
-                pub fn append_parts(
-                    &self,
-                    parts: &[&[u8]],
-                ) -> crate::CrateResult<&'static [u8]> {
+                pub fn append_parts(&self, parts: &[&[u8]]) -> crate::CrateResult<&'static [u8]> {
                     // SAFETY: see `append_slice`.
                     unsafe { bun_alloc::BSSStringList::append($backing(), &parts) }
                         .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
@@ -263,9 +257,7 @@ pub mod fs {
         /// RLIMIT_NOFILE is raised and `file_limit`/`file_quota` carry the
         /// real fd budget — `need_to_close_files` depends on that to enable
         /// directory-fd caching.
-        pub fn init(
-            top_level_dir: Option<&[u8]>,
-        ) -> crate::CrateResult<*mut FileSystem> {
+        pub fn init(top_level_dir: Option<&[u8]>) -> crate::CrateResult<*mut FileSystem> {
             Self::init_with_force::<false>(top_level_dir)
         }
 
@@ -511,10 +503,8 @@ pub mod fs {
         /// Intern `text`/`pretty` into the process-lifetime `FilenameStore`,
         /// falling back to `alloc` (the per-build bundle arena) for the
         /// disjoint-`text`/`pretty` case — see the impl for why.
-        fn dupe_alloc(
-            &self,
-            alloc: &bun_alloc::MimallocArena,
-        ) -> crate::CrateResult<Path<'static>>;
+        fn dupe_alloc(&self, alloc: &bun_alloc::MimallocArena)
+        -> crate::CrateResult<Path<'static>>;
         fn dupe_alloc_fix_pretty(
             &self,
             alloc: &bun_alloc::MimallocArena,
@@ -880,11 +870,7 @@ pub mod fs {
 
         /// Renames the temp file from `from_name` to `name` relative to the
         /// current working directory.
-        pub fn promote_to_cwd(
-            &mut self,
-            from_name: &ZStr,
-            name: &ZStr,
-        ) -> crate::CrateResult<()> {
+        pub fn promote_to_cwd(&mut self, from_name: &ZStr, name: &ZStr) -> crate::CrateResult<()> {
             #[cfg(not(windows))]
             {
                 debug_assert!(self.fd != bun_sys::Fd::INVALID);
@@ -1016,10 +1002,7 @@ pub mod fs {
         pub fn get(&mut self, key: &[u8]) -> Option<&mut EntriesOption> {
             self.inner().get(key)
         }
-        pub fn get_or_put(
-            &mut self,
-            key: &[u8],
-        ) -> crate::CrateResult<bun_alloc::Result> {
+        pub fn get_or_put(&mut self, key: &[u8]) -> crate::CrateResult<bun_alloc::Result> {
             self.inner()
                 .get_or_put(key)
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
@@ -1119,10 +1102,7 @@ pub mod fs {
         }
 
         /// `open(path, O_DIRECTORY)`.
-        pub fn open_dir(
-            &self,
-            unsafe_dir_string: &[u8],
-        ) -> crate::CrateResult<Fd> {
+        pub fn open_dir(&self, unsafe_dir_string: &[u8]) -> crate::CrateResult<Fd> {
             #[cfg(windows)]
             {
                 // NtCreateFile with FILE_DIRECTORY_FILE/FILE_LIST_DIRECTORY so

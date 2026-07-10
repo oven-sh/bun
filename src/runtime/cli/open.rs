@@ -222,10 +222,13 @@ impl Editor {
             | Editor::Vscode
             | Editor::Webstorm
             | Editor::Intellij => {
-                cursor.write_all(file).map_err(|_| crate::Error::WriteFailed)?;
+                cursor
+                    .write_all(file)
+                    .map_err(|_| crate::Error::WriteFailed)?;
                 if let Some(line_) = line {
                     if !line_.is_empty() {
-                        write!(cursor, ":{}", bstr::BStr::new(line_)).map_err(|_| crate::Error::WriteFailed)?;
+                        write!(cursor, ":{}", bstr::BStr::new(line_))
+                            .map_err(|_| crate::Error::WriteFailed)?;
 
                         if !self.is_jet_brains() {
                             if let Some(col) = column {
@@ -244,7 +247,9 @@ impl Editor {
                 }
             }
             Editor::Textmate => {
-                cursor.write_all(file).map_err(|_| crate::Error::WriteFailed)?;
+                cursor
+                    .write_all(file)
+                    .map_err(|_| crate::Error::WriteFailed)?;
                 let file_path_len = usize::try_from(cursor.position()).expect("int cast");
 
                 // Note: borrowck — `cursor` holds `&mut spawned.file_path_buf`;
@@ -255,11 +260,13 @@ impl Editor {
                     if !line_.is_empty() {
                         push_arg!(b"--line");
 
-                        write!(cursor, "{}", bstr::BStr::new(line_)).map_err(|_| crate::Error::WriteFailed)?;
+                        write!(cursor, "{}", bstr::BStr::new(line_))
+                            .map_err(|_| crate::Error::WriteFailed)?;
 
                         if let Some(col) = column {
                             if !col.is_empty() {
-                                write!(cursor, ":{}", bstr::BStr::new(col)).map_err(|_| crate::Error::WriteFailed)?;
+                                write!(cursor, ":{}", bstr::BStr::new(col))
+                                    .map_err(|_| crate::Error::WriteFailed)?;
                             }
                         }
 
@@ -280,7 +287,9 @@ impl Editor {
             }
             _ => {
                 if !file.is_empty() {
-                    cursor.write_all(file).map_err(|_| crate::Error::WriteFailed)?;
+                    cursor
+                        .write_all(file)
+                        .map_err(|_| crate::Error::WriteFailed)?;
                     let pos = usize::try_from(cursor.position()).expect("int cast");
                     let file_path = &spawned.file_path_buf[0..pos];
                     push_arg!(file_path);

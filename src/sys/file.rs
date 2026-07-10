@@ -360,11 +360,7 @@ impl File {
     /// `NtSetInformationFile`, which opens its own source handle, so keeping
     /// `self` open across the call is fine and avoids passing a closed handle
     /// into the EXDEV fallback.)
-    pub fn close_and_move_to(
-        self,
-        src: &ZStr,
-        dest: &ZStr,
-    ) -> Maybe<()> {
+    pub fn close_and_move_to(self, src: &ZStr, dest: &ZStr) -> Maybe<()> {
         let cwd = Fd::cwd();
         let result = move_file_z_with_handle(self.handle, cwd, src, cwd, dest);
         let _ = self.close(); // close error is non-actionable; discarded
@@ -372,10 +368,7 @@ impl File {
     }
     /// `bun.sys.File.getPath` — `getFdPath(self.handle, buf)`.
     #[inline]
-    pub fn get_path<'a>(
-        &self,
-        buf: &'a mut bun_paths::PathBuffer,
-    ) -> Maybe<&'a [u8]> {
+    pub fn get_path<'a>(&self, buf: &'a mut bun_paths::PathBuffer) -> Maybe<&'a [u8]> {
         get_fd_path(self.handle, buf)
             .map(|s| &*s)
             .map_err(Into::into)
@@ -392,10 +385,7 @@ impl File {
     /// Open + read; returns BOTH
     /// the open `File` handle and the bytes. Caller owns the fd and must
     /// `close()` it. On read error the fd is closed before returning (no leak).
-    pub fn read_file_from(
-        dir: impl AsFd,
-        path: &[u8],
-    ) -> Maybe<(Self, Vec<u8>)> {
+    pub fn read_file_from(dir: impl AsFd, path: &[u8]) -> Maybe<(Self, Vec<u8>)> {
         let dir = dir.as_fd();
         let f = Self::openat(dir, path, O::RDONLY, 0)?;
         match f.read_to_end() {

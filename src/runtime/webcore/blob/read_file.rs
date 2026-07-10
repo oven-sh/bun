@@ -6,6 +6,7 @@ use core::sync::atomic::AtomicU8;
 #[cfg(not(windows))]
 use core::sync::atomic::Ordering;
 
+use crate::Error;
 use crate::webcore::Lifetime;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
@@ -14,9 +15,8 @@ use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Sto
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
-use bun_core::String as BunString;
 use bun_core;
-use crate::Error;
+use bun_core::String as BunString;
 use bun_io::{self as io, FileAction};
 #[cfg(windows)]
 // `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.

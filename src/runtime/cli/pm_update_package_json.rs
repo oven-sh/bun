@@ -9,9 +9,9 @@
 //! here, and the crate-local body re-enters `bun_install` via the public
 //! `update_package_json_and_install_and_cli`.
 
+use crate::Error;
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 use bun_core::{Global, Output};
-use crate::Error;
 use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
 use bun_install::package_manager_real::{Subcommand, update_package_json_and_install_and_cli};
 

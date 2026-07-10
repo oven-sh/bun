@@ -190,7 +190,6 @@ pub enum DecodeError {
     OutOfMemory,
 }
 
-
 impl From<DecodeError> for super::codecs::Error {
     fn from(e: DecodeError) -> Self {
         match e {

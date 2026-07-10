@@ -1077,9 +1077,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let resolution = &tarball.resolution;
 
                 if task.status == Task::Status::Fail {
-                    let err = task
-                        .err
-                        .unwrap_or(crate::Error::TarballFailedToExtract);
+                    let err = task.err.unwrap_or(crate::Error::TarballFailedToExtract);
 
                     // Extract-task failure (integrity check, libarchive error, etc.)
                     // is symmetric with the HTTP 4xx/5xx branch above: drop the

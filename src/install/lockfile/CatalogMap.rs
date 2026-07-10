@@ -382,7 +382,6 @@ pub enum FromPnpmLockfileError {
 
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
 
-
 fn put_entries_from_pnpm_lockfile(
     catalog_map: &mut Map,
     log: &mut Log,

@@ -267,11 +267,7 @@ impl<'a> TOML<'a> {
         }
     }
 
-    pub fn parse_assignment(
-        &mut self,
-        obj: &mut E::Object,
-        bump: &'a Bump,
-    ) -> crate::Result<()> {
+    pub fn parse_assignment(&mut self, obj: &mut E::Object, bump: &'a Bump) -> crate::Result<()> {
         self.lexer.allow_double_bracket = false;
         let rope = self.parse_key(bump)?;
         let rope_end = self.lexer.start;
@@ -305,7 +301,9 @@ impl<'a> TOML<'a> {
                     );
                     return Err(crate::Error::SyntaxError);
                 }
-                Err(SetError::OutOfMemory) => return Err(crate::Error::Alloc(bun_alloc::AllocError)),
+                Err(SetError::OutOfMemory) => {
+                    return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                }
             }
         }
         self.lexer.allow_double_bracket = true;

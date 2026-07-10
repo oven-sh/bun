@@ -1,8 +1,8 @@
+use crate::Error;
 use bun_ast::{E, ExprData};
 use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output, zstr};
-use crate::Error;
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_semver::query::token::Wildcard;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
@@ -910,7 +910,9 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 let items = arr.items();
                 let mut map = StringArrayHashMap::<()>::with_capacity(items.len());
                 for item in items {
-                    let s = item.as_str().ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
+                    let s = item
+                        .as_str()
+                        .ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
                     map.put_assume_capacity(s, ());
                 }
                 break 'deps Some(map);
@@ -1050,9 +1052,9 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                     unreachable!()
                                 };
                                 // the `else` here is technically possible to hit
-                                let resolved_v = ref_pkg
-                                    .get(b"resolved")
-                                    .ok_or_else(|| crate::Error::LockfileWorkspaceMissingResolved)?;
+                                let resolved_v = ref_pkg.get(b"resolved").ok_or_else(|| {
+                                    crate::Error::LockfileWorkspaceMissingResolved
+                                })?;
                                 let resolved = resolved_v
                                     .as_str()
                                     .ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
@@ -1172,7 +1174,9 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                         ),
 
                                         // npm does not support catalogs
-                                        DepTag::Catalog => return Err(crate::Error::InvalidNPMLockfile),
+                                        DepTag::Catalog => {
+                                            return Err(crate::Error::InvalidNPMLockfile);
+                                        }
 
                                         DepTag::Npm | DepTag::DistTag => {
                                             // It is theoretically possible to hit this in a case where the resolved dependency is NOT
@@ -1242,7 +1246,9 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
                                             let hash_index =
                                                 strings::last_index_of_char(str.slice, b'#')
-                                                    .ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
+                                                    .ok_or_else(|| {
+                                                        crate::Error::InvalidNPMLockfile
+                                                    })?;
 
                                             if !crate::repository::is_safe_resolved_tag(
                                                 &str.slice[hash_index + 1..],
@@ -1270,7 +1276,9 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
                                             let hash_index =
                                                 strings::last_index_of_char(str.slice, b'#')
-                                                    .ok_or_else(|| crate::Error::InvalidNPMLockfile)?;
+                                                    .ok_or_else(|| {
+                                                        crate::Error::InvalidNPMLockfile
+                                                    })?;
 
                                             if !crate::repository::is_safe_resolved_tag(
                                                 &str.slice[hash_index + 1..],

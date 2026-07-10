@@ -55,10 +55,7 @@ impl AuthSwitchRequest {
 }
 
 impl AuthSwitchRequest {
-    pub fn decode<Context: ReaderContext>(
-        &mut self,
-        context: Context,
-    ) -> crate::Result<()> {
+    pub fn decode<Context: ReaderContext>(&mut self, context: Context) -> crate::Result<()> {
         self.decode_internal(NewReader { wrapped: context })
     }
 }

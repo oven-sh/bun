@@ -5,11 +5,11 @@ use std::borrow::Cow;
 
 use bstr::BStr;
 
+use crate::Error;
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
 use crate::bun_json as json;
 use bun_core::{Global, Output};
-use crate::Error;
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
 use bun_paths::{self, PathBuffer};

@@ -146,7 +146,8 @@ impl ProgressBuf {
             let buf = &mut bufs[idx];
             let mut cursor: &mut [u8] = &mut buf[..];
             let cap = cursor.len();
-            write!(&mut cursor, "{}", args).map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+            write!(&mut cursor, "{}", args)
+                .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             let written = cap - cursor.len();
             // SAFETY: the slice points into a thread-local static buffer that
             // lives for the thread's lifetime; CLI usage prints/copies it before
@@ -1634,9 +1635,7 @@ impl CreateCommand {
         Ok(())
     }
 
-    pub(crate) fn extract_info(
-        ctx: &Command::Context<'_>,
-    ) -> crate::Result<ExtractedInfo> {
+    pub(crate) fn extract_info(ctx: &Command::Context<'_>) -> crate::Result<ExtractedInfo> {
         let example_tag;
         // SAFETY: process-lifetime singleton; init returns *mut.
         let filesystem = unsafe { &*fs::FileSystem::init(None)? };
@@ -2800,10 +2799,7 @@ impl GitHandler {
         outcome
     }
 
-    pub(crate) fn run<const VERBOSE: bool>(
-        destination: &[u8],
-        path: &[u8],
-    ) -> crate::Result<bool> {
+    pub(crate) fn run<const VERBOSE: bool>(destination: &[u8], path: &[u8]) -> crate::Result<bool> {
         let git_start = bun_core::time::nano_timestamp();
 
         // Not sure why...

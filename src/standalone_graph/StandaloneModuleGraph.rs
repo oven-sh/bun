@@ -1605,7 +1605,9 @@ pub(crate) fn download_to_path(
                         &mut tarball_bytes,
                     )
                     .map_err(|_| crate::Error::InvalidResponse)?;
-                    gunzip.read_all(true).map_err(|_| crate::Error::InvalidResponse)?;
+                    gunzip
+                        .read_all(true)
+                        .map_err(|_| crate::Error::InvalidResponse)?;
                     Ok(())
                 })();
                 refresher.root.end();
@@ -1755,9 +1757,10 @@ pub fn to_executable(
                         "Failed to extract executable for '{}'. The download may be incomplete.",
                         target
                     )),
-                    crate::Error::UnsupportedTarget => {
-                        CompileResult::fail_fmt(format_args!("Target '{}' is not supported", target))
-                    }
+                    crate::Error::UnsupportedTarget => CompileResult::fail_fmt(format_args!(
+                        "Target '{}' is not supported",
+                        target
+                    )),
                     _ => CompileResult::fail_fmt(format_args!(
                         "Failed to download '{}': {}",
                         target,
@@ -2257,12 +2260,13 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         return Err(crate::Error::InvalidSourceMap);
     }
 
-    let map_blob =
-        SourceMap::InternalSourceMap::from_vlq(map_vlq, 0).map_err(|_| crate::Error::InvalidSourceMap)?;
+    let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq, 0)
+        .map_err(|_| crate::Error::InvalidSourceMap)?;
 
     // Every offset/length in the serialized map is a u32 `StringPointer`;
     // anything that cannot be represented is a build error, not a crash.
-    let map_blob_len_u32 = u32::try_from(map_blob.len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
+    let map_blob_len_u32 =
+        u32::try_from(map_blob.len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
     let sources_len_u32 =
         u32::try_from(sources_paths.items().len()).map_err(|_| crate::Error::SourceMapTooLarge)?;
     header_list.extend_from_slice(&sources_len_u32.to_le_bytes());

@@ -2207,10 +2207,7 @@ impl PosixToWinNormalizer {
     }
 
     #[inline]
-    pub fn resolve_cwd<'a>(
-        &'a mut self,
-        maybe_posix_path: &'a [u8],
-    ) -> crate::Result<&'a [u8]> {
+    pub fn resolve_cwd<'a>(&'a mut self, maybe_posix_path: &'a [u8]) -> crate::Result<&'a [u8]> {
         Self::resolve_cwd_with_external_buf(&mut self._raw_bytes, maybe_posix_path)
     }
 

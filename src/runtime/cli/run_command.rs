@@ -269,8 +269,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         shell_path: Option<&[u8]>,
     ) -> crate::Result<()> {
         let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
-        let shell_bin = Self::find_shell(shell_search_path, cwd)
-            .ok_or_else(|| crate::Error::MissingShell)?;
+        let shell_bin =
+            Self::find_shell(shell_search_path, cwd).ok_or_else(|| crate::Error::MissingShell)?;
         env.map
             .put(b"npm_lifecycle_event", name)
             .expect("unreachable");
@@ -3059,11 +3059,7 @@ impl RunCommand {
         any(target_os = "linux", target_os = "android"),
         unsafe(link_section = ".text.unlikely")
     )]
-    fn exec_as_if_node_boot_failed(
-        ctx: &mut ContextData,
-        basename: &[u8],
-        err: crate::Error,
-    ) -> ! {
+    fn exec_as_if_node_boot_failed(ctx: &mut ContextData, basename: &[u8], err: crate::Error) -> ! {
         // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
         // CLI startup), process-lifetime.
         let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(

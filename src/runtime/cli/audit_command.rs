@@ -60,9 +60,7 @@ pub(crate) struct AuditCommand;
 
 impl AuditCommand {
     // `!noreturn` → `Result<Infallible, _>` so callers can `?`; all Ok paths Global::exit.
-    pub(crate) fn exec(
-        ctx: Command::Context,
-    ) -> crate::Result<core::convert::Infallible> {
+    pub(crate) fn exec(ctx: Command::Context) -> crate::Result<core::convert::Infallible> {
         let cli = CommandLineArguments::parse(Subcommand::Audit)?;
         // Note: `init` consumes `cli`; capture the fields read after it.
         let audit_level = cli.audit_level;

@@ -1330,11 +1330,7 @@ pub(crate) fn get_workspace_filters(
 /// manager.log.hasErrors() is checked.
 #[cold]
 #[inline(never)]
-fn add_dependency_error(
-    manager: &mut PackageManager,
-    dependency: &Dependency,
-    err: crate::Error,
-) {
+fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, err: crate::Error) {
     // reshaped for borrowck — capture the realname slice before
     // taking `&mut` on `manager.log`.
     let realname = dependency.realname();

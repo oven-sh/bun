@@ -1475,7 +1475,8 @@ fn extract_to_disk_filtered(
         let pathname_z = entry_ref.pathname();
         #[cfg(windows)]
         let pathname_zbox = ZBox::from_vec_with_nul(
-            entry_pathname_utf8(entry_ref).map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
+            entry_pathname_utf8(entry_ref)
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
         );
         #[cfg(windows)]
         let pathname_z = pathname_zbox.as_zstr();

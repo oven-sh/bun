@@ -34,7 +34,6 @@ pub enum ElfError {
     NewVaddrCollides,
 }
 
-
 pub struct ElfFile {
     pub data: Vec<u8>,
 }

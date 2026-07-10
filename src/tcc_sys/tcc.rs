@@ -112,7 +112,6 @@ pub enum Error {
     Alloc(#[from] bun_alloc::AllocError),
 }
 
-
 #[repr(i32)] // c_int == i32 on all Bun targets
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputFormat {

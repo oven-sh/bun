@@ -303,7 +303,9 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
         }
 
         let mut iter = opts.argv.iter();
-        let argv0 = iter.next().ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
+        let argv0 = iter
+            .next()
+            .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
         // `Command::new` does PATH/PATHEXT lookup on Windows.
         let mut cmd = std::process::Command::new(to_os(argv0));
         for arg in iter {
@@ -317,7 +319,9 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
 
         let out = cmd.output().map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
-            std::io::ErrorKind::PermissionDenied => crate::Error::Sys(bun_errno::SystemErrno::EACCES),
+            std::io::ErrorKind::PermissionDenied => {
+                crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+            }
             _ => crate::Error::Unexpected,
         })?;
 

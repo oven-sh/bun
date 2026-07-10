@@ -1,6 +1,6 @@
-use core::ffi::c_char;
 #[cfg(debug_assertions)]
 use bun_io::Write as _;
+use core::ffi::c_char;
 
 #[cfg(debug_assertions)]
 use crate::{CallFrame, VirtualMachineRef as VirtualMachine};

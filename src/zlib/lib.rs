@@ -347,7 +347,6 @@ pub enum ZlibError {
 
 bun_core::impl_tag_error!(ZlibError);
 
-
 // zlib `alloc_func`/`free_func` thunks → mimalloc. Shared by `ZlibReader` and
 // `ZlibCompressorArrayList`. Intentionally
 // `mi_malloc`, NOT `mi_calloc` (see `ZlibAllocator::alloc` for the zeroing

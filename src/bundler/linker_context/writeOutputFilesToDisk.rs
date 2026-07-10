@@ -1,10 +1,10 @@
 use crate::mal_prelude::*;
 use std::io::Write as _;
 
+use crate::Error;
 use bun_alloc::MaxHeapAllocator;
 use bun_ast::Loc;
 use bun_core::fmt::quote;
-use crate::Error;
 use bun_core::{String as BunString, strings};
 use bun_paths::{self as paths, PathBuffer};
 use bun_wyhash::hash;

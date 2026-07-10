@@ -104,7 +104,6 @@ pub enum CompressError {
     OutOfMemory,
 }
 
-
 impl PerMessageDeflate {
     pub(crate) fn init(params: Params) -> crate::Result<Box<Self>> {
         // Initialize compressor (deflate)

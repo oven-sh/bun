@@ -2,6 +2,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
+use crate::Error;
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{
@@ -12,7 +13,6 @@ use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
 use bun_core::{self, FeatureFlags};
-use crate::Error;
 use bun_uws as uws;
 
 bun_core::declare_scope!(HTTPContext, hidden);

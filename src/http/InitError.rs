@@ -9,4 +9,3 @@ pub enum InitError {
     #[error("InvalidCA")]
     InvalidCA,
 }
-

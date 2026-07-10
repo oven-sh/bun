@@ -328,9 +328,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
     Err(crate::Error::NoGlobalDirectoryFound)
 }
 
-pub(crate) fn open_global_bin_dir(
-    opts_: Option<&Api::BunInstall>,
-) -> crate::Result<bun_sys::Fd> {
+pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Result<bun_sys::Fd> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
@@ -347,7 +345,7 @@ pub(crate) fn open_global_bin_dir(
                 return Dir::cwd()
                     .make_open_path(home_dir, OpenDirOptions::default())
                     .map(|d| d.into_raw())
-            .map_err(Into::into);
+                    .map_err(Into::into);
             }
         }
     }

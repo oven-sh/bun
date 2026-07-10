@@ -36,7 +36,6 @@ pub(crate) enum ArgError {
     InvalidArgument,
 }
 
-
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ArgKind {
     Long,

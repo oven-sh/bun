@@ -2,8 +2,8 @@ use bun_collections::VecExt;
 use std::borrow::Cow;
 use std::io::Write as _;
 
-use bun_collections::{HashMap, StringHashMap};
 use crate::Error;
+use bun_collections::{HashMap, StringHashMap};
 use bun_install::bin::Bin;
 use bun_install::dependency::{self, Dependency, DependencyExt as _};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};

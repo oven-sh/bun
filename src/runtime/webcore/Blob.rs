@@ -162,10 +162,8 @@ pub trait BlobExt {
         global: &JSGlobalObject,
     );
     fn get_content_type(&self) -> Option<ZigStringSlice>;
-    fn _on_structured_clone_serialize<W: bun_io::Write>(
-        &self,
-        writer: &mut W,
-    ) -> crate::Result<()>;
+    fn _on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W)
+    -> crate::Result<()>;
     fn on_structured_clone_serialize(
         &self,
         _global_this: &JSGlobalObject,
@@ -4162,9 +4160,7 @@ fn write_float<W: bun_io::Write>(value: f64, writer: &mut W) -> crate::Result<()
     Ok(writer.write_all(&value.to_ne_bytes())?)
 }
 
-fn read_float<B: AsRef<[u8]>>(
-    reader: &mut bun_io::FixedBufferStream<B>,
-) -> crate::Result<f64> {
+fn read_float<B: AsRef<[u8]>>(reader: &mut bun_io::FixedBufferStream<B>) -> crate::Result<f64> {
     let mut bytes_buf = [0u8; core::mem::size_of::<f64>()];
     reader.read_exact(&mut bytes_buf)?;
     Ok(f64::from_ne_bytes(bytes_buf))

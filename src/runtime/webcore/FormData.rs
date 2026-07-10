@@ -329,8 +329,8 @@ pub fn for_each_multipart_entry<C>(
 
     while let Some(chunk) = splitter.next() {
         let mut remain = chunk;
-        let header_end =
-            strings::index_of(remain, b"\r\n\r\n").ok_or_else(|| crate::Error::IsMissingHeaderEnd)?;
+        let header_end = strings::index_of(remain, b"\r\n\r\n")
+            .ok_or_else(|| crate::Error::IsMissingHeaderEnd)?;
         let header = &remain[..header_end + 2];
         remain = &remain[header_end + 4..];
 

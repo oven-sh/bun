@@ -184,7 +184,6 @@ pub enum ZstdError {
 
 bun_core::impl_tag_error!(ZstdError);
 
-
 /// ZSTD_compress() :
 ///  Compresses `src` content as a single zstd compressed frame into already allocated `dst`.
 ///  NOTE: Providing `dstCapacity >= ZSTD_compressBound(srcSize)` guarantees that zstd will have

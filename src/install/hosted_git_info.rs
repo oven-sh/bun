@@ -75,7 +75,6 @@ pub enum HostedGitInfoError {
 
 bun_core::oom_from_alloc!(HostedGitInfoError);
 
-
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParseUrlError {
     #[error("InvalidGitUrl")]
@@ -85,7 +84,6 @@ pub enum ParseUrlError {
 }
 
 bun_core::oom_from_alloc!(ParseUrlError);
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Representation

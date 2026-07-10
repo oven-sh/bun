@@ -3,10 +3,10 @@ use std::sync::OnceLock;
 
 use bstr::BStr;
 
+use crate::Error;
 use bun_alloc::AllocError;
 use bun_core::strings;
 use bun_core::{self, Output};
-use crate::Error;
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::string::Buf as StringBuf;
 

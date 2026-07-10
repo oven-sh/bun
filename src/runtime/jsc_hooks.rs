@@ -652,9 +652,7 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
-unsafe fn load_preloads(
-    vm: *mut VirtualMachine,
-) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
+unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
     // Note: reshaped for borrowck — `wait_for_promise` / `event_loop().tick()`
     // need `&mut VirtualMachine` while we're also iterating `vm.preload` and
     // touching `vm.transpiler.resolver` / `vm.log`. Dereference per-field via

@@ -1867,11 +1867,7 @@ pub mod __gated_printer {
             Ok(())
         }
 
-        pub fn write_bytes_n_times(
-            &mut self,
-            bytes: &[u8],
-            n: usize,
-        ) -> crate::Result<()> {
+        pub fn write_bytes_n_times(&mut self, bytes: &[u8], n: usize) -> crate::Result<()> {
             for _ in 0..n {
                 self.write_all(bytes)?;
             }
@@ -7640,7 +7636,10 @@ impl BufferWriter {
     }
 
     pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> crate::Result<()> {
-        Ok(Write::write_fmt(&mut self.buffer.list, format_args!("{}", args))?)
+        Ok(Write::write_fmt(
+            &mut self.buffer.list,
+            format_args!("{}", args),
+        )?)
     }
 
     pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> crate::Result<()> {

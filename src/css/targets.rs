@@ -213,9 +213,7 @@ impl Browsers {
                 // error-name snapshot compat (do NOT collapse to UnsupportedCSSTarget).
                 let year = strings::parse_int::<u16>(number_part, 10).map_err(|e| match e {
                     strings::ParseIntError::Overflow => crate::CrateError::Overflow,
-                    strings::ParseIntError::InvalidCharacter => {
-                        crate::CrateError::InvalidCharacter
-                    }
+                    strings::ParseIntError::InvalidCharacter => crate::CrateError::InvalidCharacter,
                 })?;
                 match year {
                     // https://caniuse.com/?search=es2015

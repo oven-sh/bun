@@ -281,7 +281,12 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
         Queue::on_resolve(ctx)
     }
 
-    fn on_package_manifest_error(ctx: &mut Queue, name: &[u8], err: bun_install::Error, url: &[u8]) {
+    fn on_package_manifest_error(
+        ctx: &mut Queue,
+        name: &[u8],
+        err: bun_install::Error,
+        url: &[u8],
+    ) {
         ctx.on_package_manifest_error(name, err.into(), url)
     }
 
@@ -829,7 +834,8 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == crate::CrateError::DistTagNotFound || e == crate::CrateError::NoMatchingVersion
+        } else if e == crate::CrateError::DistTagNotFound
+            || e == crate::CrateError::NoMatchingVersion
         {
             // `Version::try_npm()` performs the tag guard and yields the
             // `NpmInfo` (whose `.version` is the semver query group).

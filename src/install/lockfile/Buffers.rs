@@ -151,11 +151,7 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> {
     Ok(misaligned.to_vec())
 }
 
-pub fn write_array<S, T>(
-    stream: &mut S,
-    array: &[T],
-    prefix: &'static str,
-) -> crate::Result<()>
+pub fn write_array<S, T>(stream: &mut S, array: &[T], prefix: &'static str) -> crate::Result<()>
 where
     // One type plays both the positional-stream and append-writer roles —
     // `StreamType` impls both `PositionalStream` (get_pos/pwrite) and

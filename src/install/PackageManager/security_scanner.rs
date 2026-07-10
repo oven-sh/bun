@@ -10,13 +10,13 @@ use bstr::BStr;
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
 // on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
+use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::bun_json::{Expr, ExprData};
 use crate::package_manager_real::Command::Context as CommandContext;
 use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_core::{self, Output};
-use crate::Error;
 use bun_event_loop::{AnyEventLoop, EventLoopHandle};
 use bun_install::{
     DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,

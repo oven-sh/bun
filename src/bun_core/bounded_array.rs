@@ -20,7 +20,6 @@ pub enum OverflowError {
     Overflow,
 }
 
-
 /// A structure with an array and a length, that can be used as a slice.
 ///
 /// Useful to pass around small arrays whose exact size is only known at

@@ -648,9 +648,9 @@ pub use bun_alloc::{
 // can write `bun_core::assert_ffi_layout!(...)` without naming `bun_opaque`.
 pub use Global::*;
 pub use bun_opaque::{FfiLayout, assert_ffi_discr, assert_ffi_layout};
+pub use error::{Error, Error as CrateError, Result as CrateResult};
 pub use ffi::{Zeroable, boxed_zeroed, boxed_zeroed_unchecked};
 pub use result::coreutils_error_map;
-pub use error::{Error, Error as CrateError, Result as CrateResult};
 pub use tty::Winsize;
 pub use util::*;
 

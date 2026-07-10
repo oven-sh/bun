@@ -7,13 +7,13 @@ use core::ffi::c_void;
 use core::mem::offset_of;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::Error as AnyError;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 use bun_ast::ImportRecord;
 use bun_ast::{Loc, Location, Log, Msg, Source};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
-use crate::Error as AnyError;
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPoolLib;
 

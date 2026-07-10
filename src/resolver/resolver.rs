@@ -231,10 +231,7 @@ mod bun_sys {
 /// resolver body can spell `fd.close()` / `fd.get_fd_path(buf)`.
 trait FdExt: Sized {
     fn close(self);
-    fn get_fd_path<'b>(
-        self,
-        buf: &'b mut ::bun_paths::PathBuffer,
-    ) -> crate::CrateResult<&'b [u8]>;
+    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]>;
 }
 impl FdExt for ::bun_sys::Fd {
     #[inline]
@@ -242,10 +239,7 @@ impl FdExt for ::bun_sys::Fd {
         let _ = ::bun_sys::close(self);
     }
     #[inline]
-    fn get_fd_path<'b>(
-        self,
-        buf: &'b mut ::bun_paths::PathBuffer,
-    ) -> crate::CrateResult<&'b [u8]> {
+    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]> {
         ::bun_sys::get_fd_path(self, buf)
             .map(|s| &*s)
             .map_err(Into::into)
@@ -877,9 +871,7 @@ impl<'a> Resolver<'a> {
     /// inside the factory) when the one-time init fails, e.g. the top-level
     /// directory was deleted or is unreadable — callers surface that as a
     /// resolve failure rather than panicking.
-    pub fn get_package_manager(
-        &mut self,
-    ) -> crate::CrateResult<*mut dyn AutoInstaller> {
+    pub fn get_package_manager(&mut self) -> crate::CrateResult<*mut dyn AutoInstaller> {
         if let Some(pm) = self.package_manager {
             return Ok(pm.as_ptr());
         }
@@ -1053,10 +1045,7 @@ impl<'a> Resolver<'a> {
         self.match_tsconfig_paths(tsconfig, import_path, kind, out)
     }
 
-    pub fn flush_debug_logs(
-        &mut self,
-        flush_mode: FlushMode,
-    ) -> crate::CrateResult<()> {
+    pub fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
         // NOTE: capture `log` before partially borrowing `self.debug_logs`
         // so the method call doesn't conflict with the field borrow (`log()`
         // derefs the raw `*mut Log` and is lifetime-decoupled from `&self`).
@@ -1555,9 +1544,7 @@ impl<'a> Resolver<'a> {
     ) -> crate::CrateResult<Result> {
         match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::disable) {
             ResultUnion::Success(result) => Ok(result),
-            ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                Err(crate::Error::ModuleNotFound)
-            }
+            ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
             ResultUnion::Failure(e) => Err(e),
         }
     }
@@ -3128,7 +3115,9 @@ impl<'a> Resolver<'a> {
                                 if let Some(d) = self.debug_logs.as_mut() {
                                     d.decrease_indent();
                                 }
-                                return MatchStatus::Failure(crate::Error::VersionSpecifierNotAllowedHere);
+                                return MatchStatus::Failure(
+                                    crate::Error::VersionSpecifierNotAllowedHere,
+                                );
                             }
                             string_buf = esm.version;
                             dependency_version = match manager!().parse_dependency(
@@ -3253,7 +3242,9 @@ impl<'a> Resolver<'a> {
                                             if let Some(d) = self.debug_logs.as_mut() {
                                                 d.decrease_indent();
                                             }
-                                            return MatchStatus::Failure(enqueue_download_err.into());
+                                            return MatchStatus::Failure(
+                                                enqueue_download_err.into(),
+                                            );
                                         }
                                     }
 
@@ -4119,17 +4110,11 @@ impl<'a> Resolver<'a> {
         Ok(Some(intern_package_json(pkg)))
     }
 
-    fn dir_info_cached(
-        &mut self,
-        path: &[u8],
-    ) -> crate::CrateResult<Option<DirInfoRef>> {
+    fn dir_info_cached(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
         self.dir_info_cached_maybe_log(true, path)
     }
 
-    pub fn read_dir_info(
-        &mut self,
-        path: &[u8],
-    ) -> crate::CrateResult<Option<DirInfoRef>> {
+    pub fn read_dir_info(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
         self.dir_info_cached_maybe_log(false, path)
     }
 
@@ -4490,8 +4475,7 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
-                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                            {
+                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
@@ -6421,8 +6405,7 @@ impl<'a> Resolver<'a> {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
                         let pretty = tsconfigpath;
-                        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                        {
+                        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             let _ = self.log_mut().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,

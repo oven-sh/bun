@@ -4,6 +4,7 @@ use core::cmp::Ordering;
 use core::fmt;
 use std::io::Write as _;
 
+use crate::Error as BunError;
 use bun_alloc::AllocError;
 use bun_collections::{
     ArrayHashMap, ArrayIdentityContext, ArrayIdentityContextU64, DynamicBitSet,
@@ -11,7 +12,6 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
-use crate::Error as BunError;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.

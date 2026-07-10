@@ -3515,9 +3515,7 @@ pub fn user_unique_id() -> u32 {
     bun_wyhash::hash32(bytemuck::cast_slice::<u16, u8>(name))
 }
 
-pub fn win_sock_error_to_zig_error(
-    err: win32::ws2_32::WinsockError,
-) -> Result<(), SystemErrno> {
+pub fn win_sock_error_to_zig_error(err: win32::ws2_32::WinsockError) -> Result<(), SystemErrno> {
     use win32::ws2_32::WinsockError as W;
     let _tag = match err {
         W::WSA_INVALID_HANDLE => "WSA_INVALID_HANDLE",
@@ -4038,7 +4036,9 @@ pub fn edit_win32_binary_subsystem(
     // Use `read_all` (which retries on short reads) rather than a single
     // `read()` syscall, so a short read isn't mis-reported as EndOfStream.
     let mut off_bytes = [0u8; 4];
-    let n = fd.read_all(&mut off_bytes).map_err(bun_errno::SystemErrno::from)?;
+    let n = fd
+        .read_all(&mut off_bytes)
+        .map_err(bun_errno::SystemErrno::from)?;
     if n != 4 {
         return Err(bun_errno::SystemErrno::EIO);
     }
@@ -4055,7 +4055,8 @@ pub fn edit_win32_binary_subsystem(
     // Use `write_all` rather than a single `write()` + length check so a
     // short write is retried instead of failing.
     let sub_bytes = (subsystem as u16).to_le_bytes();
-    fd.write_all(&sub_bytes).map_err(bun_errno::SystemErrno::from)?;
+    fd.write_all(&sub_bytes)
+        .map_err(bun_errno::SystemErrno::from)?;
     Ok(())
 }
 
@@ -4074,7 +4075,6 @@ pub mod rescle {
             copyright: *const u16,   // copyright (nullable)
         ) -> c_int;
     }
-
 
     #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
     pub enum RescleError {

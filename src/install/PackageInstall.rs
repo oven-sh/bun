@@ -187,7 +187,8 @@ impl Failure {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     #[inline]
     pub(crate) fn is_package_missing_from_cache(&self) -> bool {
-        (self.err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) || self.err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT))
+        (self.err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+            || self.err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT))
             && self.step == Step::OpeningCacheDir
     }
 }
@@ -1079,10 +1080,14 @@ impl<'a> PackageInstall<'a> {
                                 sys::Errno::EOPNOTSUPP => {
                                     return Err(crate::Error::NotSupported);
                                 }
-                                sys::Errno::ENOENT => return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)),
+                                sys::Errno::ENOENT => {
+                                    return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+                                }
                                 // sometimes the downloaded npm package has already node_modules with it, so just ignore exist error here
                                 sys::Errno::EEXIST => {}
-                                sys::Errno::EACCES => return Err(crate::Error::Sys(bun_errno::SystemErrno::EACCES)),
+                                sys::Errno::EACCES => {
+                                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EACCES));
+                                }
                                 _ => return Err(crate::Error::Unexpected),
                             },
                         }
@@ -1113,10 +1118,7 @@ impl<'a> PackageInstall<'a> {
 
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
     #[cfg(target_os = "macos")]
-    fn install_with_clonefile(
-        &mut self,
-        destination_dir: &Dir,
-    ) -> crate::Result<InstallResult> {
+    fn install_with_clonefile(&mut self, destination_dir: &Dir) -> crate::Result<InstallResult> {
         if self.destination_dir_subpath.as_bytes()[0] == b'@' {
             if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
                 let slash = slash as usize;
@@ -1657,7 +1659,9 @@ impl<'a> PackageInstall<'a> {
                                         return Err(crate::Error::NotSameFileSystem);
                                     }
                                     sys::E::ENXIO => {
-                                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENXIO));
+                                        return Err(crate::Error::Sys(
+                                            bun_errno::SystemErrno::ENXIO,
+                                        ));
                                     }
                                     _ => return Err(err.into()),
                                 }
@@ -1754,7 +1758,8 @@ impl<'a> PackageInstall<'a> {
                 }
                 #[cfg(not(windows))]
                 {
-                    if err == crate::Error::NotSameFileSystem || err == crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
+                    if err == crate::Error::NotSameFileSystem
+                        || err == crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
                     {
                         return Err(err);
                     }
@@ -1963,7 +1968,8 @@ impl<'a> PackageInstall<'a> {
                 }
                 #[cfg(not(windows))]
                 {
-                    if err == crate::Error::NotSameFileSystem || err == crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
+                    if err == crate::Error::NotSameFileSystem
+                        || err == crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
                     {
                         return Err(err);
                     }
@@ -2281,7 +2287,9 @@ impl<'a> PackageInstall<'a> {
                         OpenDirOptions::default(),
                     ) {
                         Ok(d) => d,
-                        Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency, None),
+                        Err(err) => {
+                            return InstallResult::fail(err.into(), Step::LinkingDependency, None);
+                        }
                     },
                 )
             } else {

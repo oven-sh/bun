@@ -656,10 +656,7 @@ impl RuntimeTranspilerCache {
         Ok(needed)
     }
 
-    pub fn get_cache_file_path(
-        buf: &mut PathBuffer,
-        input_hash: u64,
-    ) -> crate::CrateResult<&ZStr> {
+    pub fn get_cache_file_path(buf: &mut PathBuffer, input_hash: u64) -> crate::CrateResult<&ZStr> {
         let cache_dir_len = Self::get_cache_dir(buf)?;
         buf[cache_dir_len] = SEP;
         let cache_filename_len =

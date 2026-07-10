@@ -1984,10 +1984,7 @@ impl Function {
         };
     }
 
-    pub(crate) fn compile(
-        &mut self,
-        napi_env: Option<&napi::NapiEnv>,
-    ) -> crate::Result<()> {
+    pub(crate) fn compile(&mut self, napi_env: Option<&napi::NapiEnv>) -> crate::Result<()> {
         let mut source_code: Vec<u8> = Vec::new();
         self.print_source_code(&mut source_code)?;
 
@@ -2222,10 +2219,7 @@ impl Function {
         Ok(())
     }
 
-    pub(crate) fn print_source_code(
-        &self,
-        writer: &mut impl std::io::Write,
-    ) -> crate::Result<()> {
+    pub(crate) fn print_source_code(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         if !self.arg_types.is_empty() {
             writer.write_all(b"#define HAS_ARGUMENTS\n")?;
         }

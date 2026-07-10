@@ -1,7 +1,7 @@
 // maybe rename to `PackageJSONCache` if we cache more than workspaces
 
+use crate::Error;
 use bun_collections::StringHashMap;
-use crate::Error as Error;
 // `Expr` here is the JSON parser's AST node (`bun_ast::Expr`, re-
 // exported via `crate::bun_json`). It is intentionally NOT `bun_ast::Expr`
 // — that lives in a higher-tier crate and is a distinct type. Consumers of

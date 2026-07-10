@@ -422,7 +422,8 @@ impl MySQLQuery {
                         None => self.query.to_utf8(),
                     };
                     if let Err(err) = mysql_request::prepare_request(query.slice(), writer) {
-                        let _ = global_object.throw_sql_error(err.into(), "failed to prepare query");
+                        let _ =
+                            global_object.throw_sql_error(err.into(), "failed to prepare query");
                         return Err(crate::Error::JSError);
                     }
                     // `self.statement` was set in both branches above; route

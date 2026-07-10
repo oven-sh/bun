@@ -573,10 +573,7 @@ impl<'a> Part<'a> {
         }
     }
 
-    pub fn write_as_serialized(
-        &self,
-        writer: &mut impl bun_io::Write,
-    ) -> crate::Result<()> {
+    pub fn write_as_serialized(&self, writer: &mut impl bun_io::Write) -> crate::Result<()> {
         if let Part::Text(text) = self {
             debug_assert!(!text.is_empty());
             debug_assert!(strings::index_of_char(text, b'/').is_none());
@@ -1435,11 +1432,7 @@ impl TinyLog {
 }
 
 /// Local shim — `bun_core::io::Writer` exposes only `write_all`/`print`.
-fn writer_splat_byte_all(
-    w: &mut bun_core::io::Writer,
-    byte: u8,
-    n: usize,
-) -> crate::Result<()> {
+fn writer_splat_byte_all(w: &mut bun_core::io::Writer, byte: u8, n: usize) -> crate::Result<()> {
     let chunk = [byte; 256];
     let mut remain = n;
     while remain > 0 {

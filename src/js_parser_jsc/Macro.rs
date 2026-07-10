@@ -8,8 +8,8 @@ use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
 use bun_ast::{Log, Range, Source};
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
 use bun_collections::{ArrayHashMap, HashMap};
-use bun_core::strings;
 use bun_core::Output;
+use bun_core::strings;
 use bun_dotenv::Loader as DotEnvLoader;
 
 use crate::Error;

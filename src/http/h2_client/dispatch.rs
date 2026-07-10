@@ -496,7 +496,9 @@ pub(crate) fn dispatch_frame(
                         Some(crate::Error::HTTP2StreamReset)
                     }
                 }
-                x if x == wire::ErrorCode::REFUSED_STREAM.0 => Some(crate::Error::HTTP2RefusedStream),
+                x if x == wire::ErrorCode::REFUSED_STREAM.0 => {
+                    Some(crate::Error::HTTP2RefusedStream)
+                }
                 _ => Some(crate::Error::HTTP2StreamReset),
             };
         }

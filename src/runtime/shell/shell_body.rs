@@ -1013,10 +1013,7 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(true)
     }
 
-    pub fn append_utf8<const ALLOW_ESCAPE: bool>(
-        &mut self,
-        utf8: &[u8],
-    ) -> crate::Result<bool> {
+    pub fn append_utf8<const ALLOW_ESCAPE: bool>(&mut self, utf8: &[u8]) -> crate::Result<bool> {
         let invalid = simdutf::validate::utf8(utf8);
         // Note: the name `invalid` is misleading — it holds the validity bool.
         if !invalid {
@@ -1171,13 +1168,17 @@ pub mod testing_apis {
                 let mut lexer =
                     LexerAscii::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
                 if let Err(err) = lexer.lex() {
-                    return Err(global.throw_error(crate::Error::from(err).into(), "failed to lex shell"));
+                    return Err(
+                        global.throw_error(crate::Error::from(err).into(), "failed to lex shell")
+                    );
                 }
                 break 'brk lexer.get_result();
             }
             let mut lexer = LexerUnicode::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
             if let Err(err) = lexer.lex() {
-                return Err(global.throw_error(crate::Error::from(err).into(), "failed to lex shell"));
+                return Err(
+                    global.throw_error(crate::Error::from(err).into(), "failed to lex shell")
+                );
             }
             lexer.get_result()
         };

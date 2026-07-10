@@ -525,7 +525,7 @@ pub(crate) fn braces(
             Ok(v) => v,
             Err(err) => {
                 return Err(
-                    global.throw_error(crate::Error::from(err).into(), "failed to parse braces"),
+                    global.throw_error(crate::Error::from(err).into(), "failed to parse braces")
                 );
             }
         };
@@ -2545,7 +2545,7 @@ pub mod JSZlib {
                             );
                         }
                         return Err(
-                            global_this.throw_error(crate::Error::from(err).into(), "Zlib error"),
+                            global_this.throw_error(crate::Error::from(err).into(), "Zlib error")
                         );
                     }
                 };
@@ -2688,7 +2688,7 @@ pub mod JSZlib {
                             );
                         }
                         return Err(
-                            global_this.throw_error(crate::Error::from(err).into(), "Zlib error"),
+                            global_this.throw_error(crate::Error::from(err).into(), "Zlib error")
                         );
                     }
                 };

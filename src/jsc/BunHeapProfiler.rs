@@ -1,5 +1,5 @@
-use bun_core::{Output, Timespec, TimespecMockMode};
 use crate::CrateError as Error;
+use bun_core::{Output, Timespec, TimespecMockMode};
 use bun_core::{OwnedString, String as BunString};
 use bun_paths::{AutoAbsPath, PathBuffer, resolve_path};
 use bun_sys::{self as sys, E, Fd, FdDirExt};

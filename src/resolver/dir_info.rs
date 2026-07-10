@@ -458,20 +458,14 @@ pub(crate) unsafe fn put_slot(
 /// inherent before trait), so the bodies below delegate without recursing.
 /// (`put` is NOT here: it must not take `&mut self` — see [`put_slot`].)
 pub trait HashMapExt {
-    fn get_or_put(
-        &mut self,
-        key: &[u8],
-    ) -> core::result::Result<allocators::Result, crate::Error>;
+    fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<allocators::Result, crate::Error>;
     fn mark_not_found(&mut self, result: allocators::Result);
     fn remove(&mut self, key: &[u8]) -> bool;
     fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo>;
 }
 impl HashMapExt for HashMap {
     #[inline]
-    fn get_or_put(
-        &mut self,
-        key: &[u8],
-    ) -> core::result::Result<allocators::Result, crate::Error> {
+    fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<allocators::Result, crate::Error> {
         // Dot-syntax picks inherent `BSSMapInner::get_or_put` (inherent > trait); not recursive.
         self.get_or_put(key).map_err(Into::into)
     }

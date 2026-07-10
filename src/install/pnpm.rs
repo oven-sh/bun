@@ -181,7 +181,6 @@ impl From<crate::lockfile_real::catalog_map::FromPnpmLockfileError> for MigrateP
     }
 }
 
-
 #[inline]
 fn as_string(expr: &Expr) -> Option<&'static [u8]> {
     // YAML / package.json parse always produces UTF-8 EStrings; `E.String.data`
@@ -1181,7 +1180,6 @@ pub(crate) enum ParseAppendDependenciesError {
 }
 
 bun_core::oom_from_alloc!(ParseAppendDependenciesError);
-
 
 impl From<ParseAppendDependenciesError> for MigratePnpmLockfileError {
     fn from(e: ParseAppendDependenciesError) -> Self {

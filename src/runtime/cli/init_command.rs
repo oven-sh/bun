@@ -1,10 +1,10 @@
 //! `bun init`: scaffolds a new project in the current directory
 //! (package.json, tsconfig.json, entry file, README, .gitignore).
 
+use crate::Error;
 use bun_ast::StoreRef;
 use bun_collections::IntegerBitSet;
 use bun_core::{self as bun, Environment, Global, Output, env_var, fmt as bun_fmt};
-use crate::Error;
 use bun_core::{MutableString, ZStr, strings};
 use bun_js_printer as js_printer;
 use bun_parsers::json;
@@ -1410,12 +1410,10 @@ impl Template {
         });
         // SAFETY: object is arena-allocated and live for the command duration.
         let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
-        let mut scripts_json = object
-            .get_or_put_object(key, bump)
-            .map_err(|e| match e {
-                bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
-                bun_ast::E::SetError::Clobber => Error::Unexpected,
-            })?;
+        let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
+            bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
+            bun_ast::E::SetError::Clobber => Error::Unexpected,
+        })?;
         let the_scripts = self.scripts();
         let mut i: usize = 0;
         while i < the_scripts.len() {

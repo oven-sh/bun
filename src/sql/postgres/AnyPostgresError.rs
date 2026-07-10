@@ -49,7 +49,6 @@ pub enum AnyPostgresError {
 
 bun_core::impl_tag_error!(AnyPostgresError);
 
-
 // Reverse of the above: `crate::Error` is just an interned name; recover the
 // matching variant by name (or `JSError` as a catch-all). Needed because the
 // protocol `write_internal` helpers were widened to `crate::Error` while

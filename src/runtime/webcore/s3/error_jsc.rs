@@ -3,8 +3,8 @@
 
 use bun_core::String as BunString;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError};
-use bun_s3_signing::error::{self as s3_error, get_sign_error_message};
 use bun_s3_signing::Error as SignError;
+use bun_s3_signing::error::{self as s3_error, get_sign_error_message};
 
 pub use s3_error::S3Error;
 
@@ -42,7 +42,10 @@ pub fn get_js_sign_error(err: SignError, global_this: &JSGlobalObject) -> JSValu
         SignError::InvalidEndpoint => global_this
             .err(
                 ErrorCode::S3_INVALID_ENDPOINT,
-                format_args!("{}", msg(get_sign_error_message(SignError::InvalidEndpoint))),
+                format_args!(
+                    "{}",
+                    msg(get_sign_error_message(SignError::InvalidEndpoint))
+                ),
             )
             .to_js(),
         SignError::InvalidSessionToken => global_this
@@ -89,7 +92,10 @@ pub fn throw_sign_error(err: SignError, global_this: &JSGlobalObject) -> JsError
         SignError::InvalidEndpoint => global_this
             .err(
                 ErrorCode::S3_INVALID_ENDPOINT,
-                format_args!("{}", msg(get_sign_error_message(SignError::InvalidEndpoint))),
+                format_args!(
+                    "{}",
+                    msg(get_sign_error_message(SignError::InvalidEndpoint))
+                ),
             )
             .throw(),
         SignError::InvalidSessionToken => global_this

@@ -1364,7 +1364,9 @@ impl FetchTasklet {
             http::Error::Cert("CERT_SIGNATURE_FAILURE") => {
                 BunString::static_("certificate signature failure")
             }
-            http::Error::Cert("CRL_SIGNATURE_FAILURE") => BunString::static_("CRL signature failure"),
+            http::Error::Cert("CRL_SIGNATURE_FAILURE") => {
+                BunString::static_("CRL signature failure")
+            }
             http::Error::Cert("CERT_NOT_YET_VALID") => {
                 BunString::static_("certificate is not yet valid")
             }
@@ -1507,7 +1509,9 @@ impl FetchTasklet {
             http::Error::Cert("INVALID_CALL") => {
                 BunString::static_("Invalid certificate verification context")
             }
-            http::Error::Cert("STORE_LOOKUP") => BunString::static_("Issuer certificate lookup error"),
+            http::Error::Cert("STORE_LOOKUP") => {
+                BunString::static_("Issuer certificate lookup error")
+            }
             http::Error::Cert("NAME_CONSTRAINTS_WITHOUT_SANS") => {
                 BunString::static_("Issuer has name constraints but leaf has no SANs")
             }

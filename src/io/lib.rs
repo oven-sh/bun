@@ -2121,9 +2121,11 @@ pub mod waker {
         pub fn init() -> crate::error::Result<Self> {
             let kq = crate::safe_c::kqueue();
             if kq < 0 {
-                return Err(bun_errno::SystemErrno::init(bun_errno::posix::errno() as i64)
-                    .map(crate::Error::Sys)
-                    .unwrap_or(crate::Error::Unexpected));
+                return Err(
+                    bun_errno::SystemErrno::init(bun_errno::posix::errno() as i64)
+                        .map(crate::Error::Sys)
+                        .unwrap_or(crate::Error::Unexpected),
+                );
             }
             Self::init_with_file_descriptor(kq)
         }

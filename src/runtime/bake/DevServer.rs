@@ -3561,10 +3561,7 @@ impl DevServer {
 
     /// Used to generate the entry point. Unlike incremental patches, this always
     /// contains all needed files for a route.
-    fn generate_client_bundle(
-        &mut self,
-        route_bundle: &mut RouteBundle,
-    ) -> crate::Result<Vec<u8>> {
+    fn generate_client_bundle(&mut self, route_bundle: &mut RouteBundle) -> crate::Result<Vec<u8>> {
         debug_assert!(route_bundle.client_bundle.is_none());
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
 
@@ -5078,7 +5075,10 @@ impl DevServer {
             log.msgs.len(),
         );
 
-        if matches!(err, crate::Error::Sys(bun_errno::SystemErrno::ENOENT) | crate::Error::ModuleNotFound) {
+        if matches!(
+            err,
+            crate::Error::Sys(bun_errno::SystemErrno::ENOENT) | crate::Error::ModuleNotFound
+        ) {
             // Special-case files being deleted.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
@@ -5295,7 +5295,9 @@ impl DevServer {
             // Found a matching route, bundle it and handle the request
             match ensure_route_is_bundled(self, rbi, &mut ctx) {
                 Ok(()) => {}
-                Err(jsc::JsError::OutOfMemory) => return Err(crate::Error::Alloc(bun_alloc::AllocError)),
+                Err(jsc::JsError::OutOfMemory) => {
+                    return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                }
                 Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
                     self.vm().global().report_active_exception_as_unhandled(e);
                 }
@@ -5599,10 +5601,7 @@ pub(super) use crate::bake::dev_server::TraceImportGoal;
 impl DevServer {
     /// `extra_client_bits` is specified if it is possible that the client graph may
     /// increase in size while the bits are being used.
-    fn init_graph_trace_state(
-        &self,
-        extra_client_bits: usize,
-    ) -> crate::Result<GraphTraceState> {
+    fn init_graph_trace_state(&self, extra_client_bits: usize) -> crate::Result<GraphTraceState> {
         let server_bits = DynamicBitSet::init_empty(self.server_graph.bundled_files.len())?;
         let client_bits =
             DynamicBitSet::init_empty(self.client_graph.bundled_files.len() + extra_client_bits)?;
@@ -5774,10 +5773,7 @@ impl DevServer {
         self.publish(HmrTopic::MemoryVisualizer, &payload, Opcode::BINARY);
     }
 
-    pub fn write_memory_visualizer_message(
-        &self,
-        payload: &mut Vec<u8>,
-    ) -> crate::Result<()> {
+    pub fn write_memory_visualizer_message(&self, payload: &mut Vec<u8>) -> crate::Result<()> {
         let cost = self.memory_cost_detailed();
         let system_total = crate::node::os::totalmem();
         // Wire format: 10 contiguous native-endian u32s. `[u32; 10]` has no
@@ -6511,11 +6507,7 @@ impl EntryPointList {
     }
 
     /// Deduplictes requests to bundle the same file twice.
-    pub fn append(
-        &mut self,
-        abs_path: &[u8],
-        flags: entry_point_list::Flags,
-    ) -> crate::Result<()> {
+    pub fn append(&mut self, abs_path: &[u8], flags: entry_point_list::Flags) -> crate::Result<()> {
         let gop = self.set.get_or_put(abs_path)?;
         if gop.found_existing {
             *gop.value_ptr |= flags;
@@ -6620,11 +6612,7 @@ struct UnrefSourceMapRequest {
 
 bun_core::intrusive_field!(UnrefSourceMapRequest, body: uws::BodyReaderMixin<UnrefSourceMapRequest>);
 impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
-    unsafe fn on_body(
-        this: *mut Self,
-        body: &[u8],
-        resp: AnyResponse,
-    ) -> bun_uws_sys::Result<()> {
+    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
         // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
         // pointer with full-allocation provenance and no live borrows.
         unsafe { Self::run_with_body(this, body, resp) }.map_err(Into::into)

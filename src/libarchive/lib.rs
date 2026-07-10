@@ -1487,10 +1487,7 @@ pub mod archiver {
     }
 
     impl Plucker {
-        pub fn init(
-            filepath: &[OSPathChar],
-            estimated_size: usize,
-        ) -> crate::Result<Plucker> {
+        pub fn init(filepath: &[OSPathChar], estimated_size: usize) -> crate::Result<Plucker> {
             Ok(Plucker {
                 contents: MutableString::init(estimated_size)?,
                 filename_hash: hash(slice_as_bytes(filepath)),
@@ -1537,10 +1534,7 @@ pub trait ArchiveAppender {
         let _ = path;
         unreachable!()
     }
-    fn append_mutable(
-        &mut self,
-        path: &[OSPathChar],
-    ) -> crate::Result<&mut [OSPathChar]> {
+    fn append_mutable(&mut self, path: &[OSPathChar]) -> crate::Result<&mut [OSPathChar]> {
         let _ = path;
         unreachable!()
     }

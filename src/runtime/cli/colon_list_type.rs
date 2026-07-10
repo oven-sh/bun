@@ -1,7 +1,7 @@
+use crate::Error;
 use bun_core::fmt as bun_fmt;
 use bun_core::strings;
 use bun_core::{Global, pretty_errorln};
-use crate::Error;
 
 // The value type and its resolver fn collapse into one trait that the
 // value type implements. Each `T` declares its own resolver and whether it is the

@@ -452,7 +452,6 @@ pub(crate) enum GitError {
     GitFailed,
 }
 
-
 /// Return the set of changed files (absolute paths) according to git.
 ///
 /// With `since == ""` this is the union of unstaged, staged, and

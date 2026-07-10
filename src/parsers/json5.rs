@@ -99,7 +99,6 @@ bun_core::impl_tag_error!(ParseError);
 
 bun_core::oom_from_alloc!(ParseError);
 
-
 #[derive(Clone, Copy)]
 pub enum Error {
     Oom,

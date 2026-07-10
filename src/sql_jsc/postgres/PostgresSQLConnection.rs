@@ -2745,7 +2745,8 @@ impl PostgresSQLConnection {
                                 bstr::BStr::new(cont.r.slice()),
                             );
                         }
-                        sasl.compute_server_signature(&auth_string).map_err(pg_err)?;
+                        sasl.compute_server_signature(&auth_string)
+                            .map_err(pg_err)?;
 
                         let client_key = sasl.client_key();
                         let client_key_signature =

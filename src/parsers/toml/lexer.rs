@@ -99,7 +99,6 @@ pub enum Error {
 
 bun_core::oom_from_alloc!(Error);
 
-
 impl<'a> LexerLog<'a> for Lexer<'a> {
     type Err = Error;
     #[inline]

@@ -43,7 +43,6 @@ pub(crate) enum CronError {
     TooFewFields,
 }
 
-
 impl CronExpression {
     pub(crate) fn error_message(e: CronError) -> &'static [u8] {
         match e {

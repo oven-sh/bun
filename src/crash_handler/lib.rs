@@ -102,9 +102,9 @@ pub mod debug {
     // Previously lived in `bun_jsc::btjs::zig_std_debug`; relocated here so the
     // crash handler (lower-tier crate) gets real symbol names in debug builds
     // and `btjs` re-exports from this module.
+    use crate::Error;
     #[cfg(not(windows))]
     use bun_collections::HashMap;
-    use crate::Error;
     #[cfg(not(windows))]
     use core::ffi::c_void;
 
@@ -203,8 +203,8 @@ pub mod debug {
 
         #[cfg(not(any(target_vendor = "apple", windows)))]
         fn lookup_module_dl(&mut self, address: usize) -> Result<&mut Module, Error> {
-            let m = bun_sys::elf::find_loaded_module(address)
-                .ok_or(crate::Error::MissingDebugInfo)?;
+            let m =
+                bun_sys::elf::find_loaded_module(address).ok_or(crate::Error::MissingDebugInfo)?;
             if !self.address_map.contains_key(&m.base_address) {
                 let obj_di = Box::new(Module {
                     base_address: m.base_address,
@@ -1451,8 +1451,7 @@ mod draft {
                     "<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>",
                 );
             }
-        } else if err == crate::Error::NotOpenForReading || err == crate::Error::Unexpected
-        {
+        } else if err == crate::Error::NotOpenForReading || err == crate::Error::Unexpected {
             // The file descriptor problem may show up as other errors
             #[cfg(unix)]
             {
@@ -1688,9 +1687,7 @@ mod draft {
         bun_core::RacyCell::new([0; 512 * 1024]);
 
     #[cfg(unix)]
-    fn update_posix_segfault_handler(
-        mut act: Option<&mut libc::sigaction>,
-    ) -> crate::Result<()> {
+    fn update_posix_segfault_handler(mut act: Option<&mut libc::sigaction>) -> crate::Result<()> {
         if let Some(act_) = act.as_deref_mut() {
             // SAFETY: single global; only mutated during signal-handler setup
             if !DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
@@ -2582,10 +2579,7 @@ mod draft {
         }
     }
 
-    fn encode_trace_string(
-        opts: &TraceString<'_>,
-        writer: &mut impl Write,
-    ) -> crate::Result<()> {
+    fn encode_trace_string(opts: &TraceString<'_>, writer: &mut impl Write) -> crate::Result<()> {
         writer.write_all(report_base_url())?;
         writer.write_all(b"/")?;
         writer.write_all(Environment::VERSION_STRING.as_bytes())?;
@@ -2690,10 +2684,7 @@ mod draft {
         Ok(())
     }
 
-    pub fn write_u64_as_two_vlqs(
-        writer: &mut impl Write,
-        addr: usize,
-    ) -> crate::Result<()> {
+    pub fn write_u64_as_two_vlqs(writer: &mut impl Write, addr: usize) -> crate::Result<()> {
         // `as u32 as i32` reinterprets the 32-bit halves, preserving bits.
         let first = VLQ::encode((((addr as u64) & 0xFFFFFFFF00000000) >> 32) as u32 as i32);
         let second = VLQ::encode(((addr as u64) & 0xFFFFFFFF) as u32 as i32);
@@ -2985,10 +2976,7 @@ mod draft {
 
     #[cold]
     #[inline(never)]
-    fn cold_handle_error_return_trace<const IS_ROOT: bool>(
-        err: crate::Error,
-        trace: &StackTrace,
-    ) {
+    fn cold_handle_error_return_trace<const IS_ROOT: bool>(err: crate::Error, trace: &StackTrace) {
         // The format of the panic trace is slightly different in debug
         // builds Mainly, we demangle the backtrace immediately instead
         // of using a trace string.
@@ -3212,10 +3200,7 @@ mod draft {
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "android"))]
-    fn spawn_symbolizer(
-        program: &bun_core::ZStr,
-        trace: &StackTrace,
-    ) -> crate::Result<()> {
+    fn spawn_symbolizer(program: &bun_core::ZStr, trace: &StackTrace) -> crate::Result<()> {
         let mut argv: Vec<Vec<u8>> = Vec::new();
         argv.push(program.as_bytes().to_vec());
         argv.push(b"--exe".to_vec());

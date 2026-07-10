@@ -61,17 +61,18 @@ impl PluginResolver for PluginRunner {
         } else {
             BunString::empty()
         };
-        let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
-            namespace,
-            BunString::init(specifier).substring(if namespace.length() > 0 {
-                namespace.length() + 1
-            } else {
-                0
-            }),
-            BunString::init(importer),
-            target,
-        )
-        .map_err(js_err)?
+        let Some(on_resolve_plugin) = global
+            .run_on_resolve_plugins(
+                namespace,
+                BunString::init(specifier).substring(if namespace.length() > 0 {
+                    namespace.length() + 1
+                } else {
+                    0
+                }),
+                BunString::init(importer),
+                target,
+            )
+            .map_err(js_err)?
         else {
             return Ok(None);
         };
@@ -110,7 +111,9 @@ impl PluginResolver for PluginRunner {
         }
         let mut static_namespace = true;
         let user_namespace: BunString = 'brk: {
-            if let Some(namespace_value) = on_resolve_plugin.get(global, "namespace").map_err(js_err)? {
+            if let Some(namespace_value) =
+                on_resolve_plugin.get(global, "namespace").map_err(js_err)?
+            {
                 if !namespace_value.is_string() {
                     log.add_error(None, loc, b"Expected \"namespace\" to be a string");
                     return Ok(None);

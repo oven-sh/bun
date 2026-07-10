@@ -1,4 +1,5 @@
 #![warn(unused_must_use)]
+use crate::Error;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag};
@@ -7,7 +8,6 @@ use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
 use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
-use crate::Error;
 
 // Re-export so the parser-side type alias used in this file matches the
 // canonical definition in `TypeScript.rs`.

@@ -1241,9 +1241,7 @@ impl UpdateInteractiveCommand {
         result.into_boxed_slice()
     }
 
-    fn prompt_for_updates(
-        packages: &mut [OutdatedPackage],
-    ) -> crate::Result<Box<[bool]>> {
+    fn prompt_for_updates(packages: &mut [OutdatedPackage]) -> crate::Result<Box<[bool]>> {
         if packages.is_empty() {
             bun_core::prettyln!("<r><green>✓<r> All packages are up to date!");
             return Ok(Box::default());
@@ -1290,8 +1288,7 @@ impl UpdateInteractiveCommand {
             Err(err) => {
                 if matches!(
                     err,
-                    crate::Error::EndOfStream
-                        | crate::Error::Core(bun_core::Error::EndOfStream)
+                    crate::Error::EndOfStream | crate::Error::Core(bun_core::Error::EndOfStream)
                 ) {
                     Output::flush();
                     bun_core::prettyln!("\n<r><red>x<r> Cancelled");

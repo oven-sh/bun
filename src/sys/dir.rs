@@ -107,11 +107,7 @@ impl Dir {
     }
     /// Try opening the directory first; on ENOENT, `make_path`
     /// then open it.
-    pub fn make_open_path(
-        &self,
-        sub_path: &[u8],
-        _opts: OpenDirOptions,
-    ) -> Maybe<Dir> {
+    pub fn make_open_path(&self, sub_path: &[u8], _opts: OpenDirOptions) -> Maybe<Dir> {
         match open_dir_at(self.fd, sub_path) {
             Ok(fd) => Ok(Dir::from_fd(fd)),
             Err(e) if e.get_errno() == E::ENOENT => {
@@ -258,10 +254,7 @@ impl Dir {
     /// `sub_path` as a file; on `EISDIR`/`EPERM` open it as an iterable
     /// directory and return the fd. Returns `None` when removal succeeded or
     /// the path doesn't exist.
-    fn delete_tree_open_initial_subpath(
-        &self,
-        sub_path: &[u8],
-    ) -> Maybe<Option<Fd>> {
+    fn delete_tree_open_initial_subpath(&self, sub_path: &[u8]) -> Maybe<Option<Fd>> {
         let mut treat_as_dir = false;
         loop {
             if !treat_as_dir {
@@ -350,12 +343,7 @@ impl Dir {
     /// `is_directory` flag is a no-op on POSIX;
     /// on Windows it selects junction vs. file-symlink and
     /// callers route through `sys_uv::symlink_uv` instead.
-    pub fn sym_link(
-        &self,
-        target: &[u8],
-        link_name: &[u8],
-        _is_directory: bool,
-    ) -> Maybe<()> {
+    pub fn sym_link(&self, target: &[u8], link_name: &[u8], _is_directory: bool) -> Maybe<()> {
         let mut tbuf = bun_paths::PathBuffer::default();
         let tlen = target.len().min(tbuf.0.len() - 1);
         tbuf.0[..tlen].copy_from_slice(&target[..tlen]);
@@ -376,11 +364,7 @@ impl Dir {
     /// Create (or truncate) `sub_path` relative to
     /// this dir and return a `File` handle: `O_CREAT`,
     /// `O_WRONLY` (or `O_RDWR` if `flags.read`), `O_TRUNC` if `flags.truncate`.
-    pub fn create_file_z(
-        &self,
-        sub_path: &ZStr,
-        flags: CreateFlags,
-    ) -> Maybe<File> {
+    pub fn create_file_z(&self, sub_path: &ZStr, flags: CreateFlags) -> Maybe<File> {
         let mut o = O::CREAT | O::CLOEXEC;
         o |= if flags.read { O::RDWR } else { O::WRONLY };
         if flags.truncate {
@@ -458,11 +442,7 @@ impl Dir {
     /// create/rename children — unlike the read-only `open_dir_*` iteration
     /// helpers.
     #[inline]
-    pub fn open_dir(
-        &self,
-        sub_path: &[u8],
-        opts: OpenDirOptions,
-    ) -> Maybe<Dir> {
+    pub fn open_dir(&self, sub_path: &[u8], opts: OpenDirOptions) -> Maybe<Dir> {
         #[cfg(windows)]
         {
             return open_dir_at_windows_a(

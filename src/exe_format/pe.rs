@@ -48,7 +48,6 @@ pub enum Error {
     SizeOfImageMismatch,
 }
 
-
 // Enums for strip modes and options
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum StripMode {

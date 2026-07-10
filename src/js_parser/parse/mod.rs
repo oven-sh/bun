@@ -14,8 +14,8 @@ use bun_collections::VecExt;
 
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
-use bun_core::strings;
 use crate::Error;
+use bun_core::strings;
 
 use bun_ast::LexerLog as _;
 

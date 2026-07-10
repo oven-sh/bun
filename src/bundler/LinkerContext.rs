@@ -1,11 +1,11 @@
 use crate::mal_prelude::*;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::Error as BunError;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{Data, Loc, Log, Range, Source};
 use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt};
 use bun_core::{self as bun, FeatureFlags, Output};
-use crate::Error as BunError;
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_sourcemap::{
     self as SourceMap, DebugIDFormatter, LineOffsetTable, SourceMapPieces, SourceMapState,

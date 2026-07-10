@@ -1006,7 +1006,6 @@ pub enum FromTextLockfileError {
 
 bun_core::oom_from_alloc!(FromTextLockfileError);
 
-
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum FromPnpmLockfileError {
     #[error("out of memory")]
@@ -1016,4 +1015,3 @@ pub enum FromPnpmLockfileError {
 }
 
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
-

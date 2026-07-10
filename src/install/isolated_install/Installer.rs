@@ -2254,10 +2254,7 @@ impl<'a> Installer<'a> {
         None
     }
 
-    pub fn link_dependency_bins(
-        &self,
-        parent_entry_id: StoreEntryId,
-    ) -> crate::Result<()> {
+    pub fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {
         let lockfile = self.lockfile();
         let store = self.store;
 

@@ -1,12 +1,12 @@
 use std::io::Write as _;
 
+use crate::Error;
 use crate::cli::command::Context;
 use bun_ast::{E, Expr, ExprData, G};
 use bun_ast::{Loc, Log, Source};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
 use bun_core::{Global, Output};
-use crate::Error;
 use bun_install::PackageManager;
 use bun_js_printer as js_printer;
 use bun_parsers::json;
@@ -506,7 +506,9 @@ impl PmPkgCommand {
                     if !matches!(current.data, ExprData::EObject(_)) {
                         return Err(crate::Error::NotFound);
                     }
-                    current = current.get(prop_name).ok_or_else(|| crate::Error::NotFound)?;
+                    current = current
+                        .get(prop_name)
+                        .ok_or_else(|| crate::Error::NotFound)?;
                     remaining_part = &part[first_bracket..];
                 }
 
@@ -534,7 +536,9 @@ impl PmPkgCommand {
                         if !matches!(current.data, ExprData::EObject(_)) {
                             return Err(crate::Error::NotFound);
                         }
-                        current = current.get(index_str).ok_or_else(|| crate::Error::NotFound)?;
+                        current = current
+                            .get(index_str)
+                            .ok_or_else(|| crate::Error::NotFound)?;
                     }
 
                     remaining_part = &remaining_part[actual_bracket_end + 1..];

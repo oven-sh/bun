@@ -5,9 +5,9 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
+use crate::Error;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::strings;
-use crate::Error;
 
 use super::stream::{State as StreamState, Stream};
 use super::{dispatch, encode};

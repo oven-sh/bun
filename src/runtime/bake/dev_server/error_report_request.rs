@@ -48,11 +48,7 @@ pub(crate) struct ErrorReportRequest {
 
 bun_core::intrusive_field!(ErrorReportRequest, body: uws::BodyReaderMixin<ErrorReportRequest>);
 impl BodyReaderHandler for ErrorReportRequest {
-    unsafe fn on_body(
-        this: *mut Self,
-        body: &[u8],
-        resp: AnyResponse,
-    ) -> bun_uws_sys::Result<()> {
+    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
         // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
         // pointer with full-allocation provenance and no live borrows.
         unsafe { ErrorReportRequest::run_with_body(this, body, resp) }.map_err(Into::into)
@@ -542,9 +538,7 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
 /// reader (the canonical allocating version lives in the gated `DevServer.rs`
 /// draft and is not yet re-exported from `super`).
 #[inline]
-fn read_string32<'a>(
-    r: &mut bun_io::FixedBufferStream<&'a [u8]>,
-) -> crate::Result<&'a [u8]> {
+fn read_string32<'a>(r: &mut bun_io::FixedBufferStream<&'a [u8]>) -> crate::Result<&'a [u8]> {
     let len = r.read_int_le::<u32>()? as usize;
     let buf: &'a [u8] = r.buffer;
     let end = r

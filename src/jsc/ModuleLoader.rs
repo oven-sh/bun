@@ -14,8 +14,7 @@ use bun_options_types::LoaderExt as _;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     self as jsc, ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject,
-    JSInternalPromise,
-    JSValue, JsError, JsResult, ResolvedSource,
+    JSInternalPromise, JSValue, JsError, JsResult, ResolvedSource,
 };
 
 // Re-exports.
@@ -399,8 +398,10 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     let Some(hooks) = loader_hooks() else {
         // SAFETY: C++ passed a valid out-param.
         unsafe {
-            *ret =
-                ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), JSValue::UNDEFINED)
+            *ret = ErrorableResolvedSource::err(
+                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                JSValue::UNDEFINED,
+            )
         };
         return core::ptr::null_mut();
     };
@@ -593,8 +594,10 @@ pub(crate) unsafe extern "C" fn Bun__transpileVirtualModule(
     let Some(hooks) = loader_hooks() else {
         // SAFETY: C++ passed a valid out-param.
         unsafe {
-            *ret =
-                ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), JSValue::UNDEFINED);
+            *ret = ErrorableResolvedSource::err(
+                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                JSValue::UNDEFINED,
+            );
         }
         return true;
     };

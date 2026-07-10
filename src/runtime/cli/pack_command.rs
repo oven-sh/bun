@@ -42,11 +42,7 @@ use bun_sys::{
 // ───────────────────────────────────────────────────────────────────────────
 
 #[inline]
-fn dir_open_dir_z(
-    dir: &Dir,
-    path: &ZStr,
-    opts: bun_sys::OpenDirOptions,
-) -> crate::Result<Dir> {
+fn dir_open_dir_z(dir: &Dir, path: &ZStr, opts: bun_sys::OpenDirOptions) -> crate::Result<Dir> {
     Ok(dir.open_dir(path.as_bytes(), opts)?)
 }
 

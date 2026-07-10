@@ -213,7 +213,6 @@ pub(crate) enum GetBinNameError {
     NeedToInstall,
 }
 
-
 impl BunxCommand {
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -590,10 +589,7 @@ impl BunxCommand {
         Global::exit(1);
     }
 
-    pub(crate) fn exec(
-        ctx: &mut ContextData,
-        argv: &[&'static ZStr],
-    ) -> crate::Result<()> {
+    pub(crate) fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> crate::Result<()> {
         // Don't log stuff
         ctx.debug.silent = true;
 

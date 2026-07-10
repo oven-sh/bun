@@ -465,10 +465,7 @@ pub(super) fn session_mut<'a>(p: *mut ClientSession) -> &'a mut ClientSession {
     unsafe { &mut *p }
 }
 
-fn apply_headers(
-    stream: &mut Stream,
-    client: &mut HTTPClient,
-) -> crate::Result<HeaderResult> {
+fn apply_headers(stream: &mut Stream, client: &mut HTTPClient) -> crate::Result<HeaderResult> {
     // SAFETY: decoded_headers borrow the lsquic hset, which is deep-copied by
     // `clone_metadata` inside the same lsquic callback before lsquic frees it
     // — see `HTTPClient::apply_multiplexed_headers` contract.

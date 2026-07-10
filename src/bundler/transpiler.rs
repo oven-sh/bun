@@ -439,10 +439,7 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    fn _resolve_entry_point(
-        &mut self,
-        entry_point: &[u8],
-    ) -> crate::Result<resolver::Result> {
+    fn _resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         let top_level_dir = self.fs().top_level_dir;
         match self.resolver.resolve_with_framework(
             top_level_dir,
@@ -477,10 +474,7 @@ impl<'a> Transpiler<'a> {
 
     /// Resolve an entry-point specifier, busting the directory cache and
     /// retrying once on failure before reporting the error to the log.
-    pub fn resolve_entry_point(
-        &mut self,
-        entry_point: &[u8],
-    ) -> crate::Result<resolver::Result> {
+    pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         match self._resolve_entry_point(entry_point) {
             Ok(r) => Ok(r),
             Err(err) => {
@@ -1024,9 +1018,7 @@ fn to_parser_module_type(
 /// public constructors, so reproduce the singleton-init here:
 /// first call sets `top_level_dir` (defaulting to getcwd),
 /// subsequent calls return the existing instance untouched.
-fn init_file_system(
-    top_level_dir: Option<&'static [u8]>,
-) -> crate::Result<*mut Fs::FileSystem> {
+fn init_file_system(top_level_dir: Option<&'static [u8]>) -> crate::Result<*mut Fs::FileSystem> {
     // `FileSystem` initialization calls `adjustUlimit()`
     // to raise RLIMIT_NOFILE and stores the returned limit in
     // `file_limit`/`file_quota`, and touches the `DirEntry.EntryStore`
@@ -3000,7 +2992,9 @@ impl<'a> Transpiler<'a> {
                 let macro_remappings = {
                     let mut m = MacroRemap::default();
                     for (k, v) in self.options.macro_remap.iter() {
-                        let inner = v.clone().map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+                        let inner = v
+                            .clone()
+                            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                         m.insert(k, inner);
                     }
                     m

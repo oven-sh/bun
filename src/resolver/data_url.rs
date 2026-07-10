@@ -11,7 +11,6 @@ pub enum EncodeError {
     OutOfMemory,
 }
 
-
 impl EncodeError {
     /// Returns the error name string.
     pub fn name(self) -> &'static str {
@@ -25,7 +24,6 @@ pub enum ParseDataURLError {
     #[error("InvalidDataURL")]
     InvalidDataURL,
 }
-
 
 impl ParseDataURLError {
     /// Returns the error name string.
@@ -44,7 +42,6 @@ pub enum DecodeDataError {
     #[error("Base64DecodeError")]
     Base64DecodeError,
 }
-
 
 impl DecodeDataError {
     /// Returns the error name string.

@@ -3373,7 +3373,9 @@ pub mod serializer {
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
                         if !matches!(raw[filled_at], 0 | 1) {
-                            return Err(crate::Error::LockfileValidationFailedInvalidPackageScripts);
+                            return Err(
+                                crate::Error::LockfileValidationFailedInvalidPackageScripts,
+                            );
                         }
                     }
                 }

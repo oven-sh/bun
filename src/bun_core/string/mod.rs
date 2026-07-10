@@ -1813,10 +1813,7 @@ impl ZigString {
     /// `ZigString.sliceZBuf` — `Display`-format into `buf`, NUL-terminate, and
     /// return the borrowed `[:0]u8`. Errors if the formatted output (plus NUL)
     /// would not fit.
-    pub fn slice_z_buf<'a>(
-        &self,
-        buf: &'a mut crate::PathBuffer,
-    ) -> crate::CrateResult<&'a ZStr> {
+    pub fn slice_z_buf<'a>(&self, buf: &'a mut crate::PathBuffer) -> crate::CrateResult<&'a ZStr> {
         use std::io::Write as _;
         let buf_slice: &mut [u8] = &mut buf[..];
         let start_len = buf_slice.len();

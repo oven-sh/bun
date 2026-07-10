@@ -1,9 +1,9 @@
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use crate::Error;
 use bun_alloc::AllocError;
 use bun_collections::{StringHashMap, VecExt};
-use crate::Error;
 use bun_core::ZStr;
 #[cfg(windows)]
 use bun_core::w;
@@ -1699,7 +1699,8 @@ impl<'a> Linker<'a> {
                         if normalized_bin_dest.len()
                             >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                         {
-                            self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                            self.err =
+                                Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                             return;
                         }
 
@@ -1792,7 +1793,9 @@ impl<'a> Linker<'a> {
                                 if entry_name.len()
                                     >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                                 {
-                                    self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                                    self.err = Some(crate::Error::Sys(
+                                        bun_errno::SystemErrno::ENAMETOOLONG,
+                                    ));
                                     return;
                                 }
                                 dest_off = abs_dest_dir_end;
@@ -1884,7 +1887,8 @@ impl<'a> Linker<'a> {
                         if normalized_bin_dest.len()
                             >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                         {
-                            self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                            self.err =
+                                Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                             return;
                         }
 
@@ -1932,7 +1936,9 @@ impl<'a> Linker<'a> {
                                 if entry_name.len()
                                     >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                                 {
-                                    self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                                    self.err = Some(crate::Error::Sys(
+                                        bun_errno::SystemErrno::ENAMETOOLONG,
+                                    ));
                                     return;
                                 }
                                 dest_off = abs_dest_dir_end;

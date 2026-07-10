@@ -1,7 +1,7 @@
 use core::cmp::Ordering;
 
-use bun_collections::ArrayHashMap;
 use crate::Error;
+use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_install::dependency::{self, Behavior, Dependency, DependencyExt as _};
 use bun_install::{PackageManager, PackageNameHash};

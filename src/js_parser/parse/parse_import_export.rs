@@ -1,3 +1,4 @@
+use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
 use crate::parser::{ExportClauseResult, ImportClause, is_eval_or_arguments};
@@ -6,7 +7,6 @@ use bun_ast::LexerLog as _;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::op::Level;
 use bun_ast::{ClauseItem, E, Expr, LocRef};
-use crate::Error;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Note: The caller has already parsed the "import" keyword

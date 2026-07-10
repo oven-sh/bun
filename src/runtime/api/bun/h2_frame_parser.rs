@@ -7208,10 +7208,7 @@ impl H2FrameParser {
     }
 
     /// validate header name and convert to lowecase if needed
-    fn to_valid_header_name<'a>(
-        in_: &'a [u8],
-        out: &'a mut [u8],
-    ) -> crate::Result<&'a [u8]> {
+    fn to_valid_header_name<'a>(in_: &'a [u8], out: &'a mut [u8]) -> crate::Result<&'a [u8]> {
         if in_.len() > 4096 {
             return Err(crate::Error::InvalidHeaderName);
         }

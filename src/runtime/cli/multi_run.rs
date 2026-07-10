@@ -3,10 +3,10 @@ use core::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use crate::Error;
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
 use bun_core::{self as bun, Global, Output, UnwrapOrOom};
-use crate::Error;
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::BufferedReader;

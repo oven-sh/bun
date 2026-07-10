@@ -4,7 +4,7 @@ use core::sync::atomic::AtomicU8;
 #[cfg(not(windows))]
 use core::sync::atomic::Ordering;
 
-use crate::Error as Error;
+use crate::Error;
 use bun_core::ZigString;
 use bun_io::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::ZigStringJsc as _;

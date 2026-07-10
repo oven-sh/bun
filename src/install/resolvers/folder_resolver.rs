@@ -494,8 +494,7 @@ pub fn get_or_put(
     let package = match result {
         Ok(p) => p,
         Err(err) => {
-            let stored = if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-            {
+            let stored = if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 FolderResolution::Err(crate::Error::MissingPackageJSON)
             } else {
                 FolderResolution::Err(err)

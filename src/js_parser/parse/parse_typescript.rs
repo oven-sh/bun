@@ -1,6 +1,7 @@
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
 
+use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
 use crate::parser::{ParseStatementOptions, Ref, ScopeOrder};
@@ -16,7 +17,6 @@ use bun_ast::{
     StmtData, TSNamespaceMember, TSNamespaceMemberMap,
 };
 use bun_core::strings;
-use crate::Error;
 
 // `ts::Data` carries only Copy payloads but lacks a `derive(Clone)` upstream;
 // local helper so we can re-insert values fetched from `ref_to_ts_namespace_member`.

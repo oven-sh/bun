@@ -208,10 +208,7 @@ pub fn generate_symbols(
 impl Function {
     /// Emit the C trampoline that
     /// adapts a JSC host-call frame to the native symbol's ABI.
-    pub fn print_source_code(
-        &self,
-        writer: &mut impl std::io::Write,
-    ) -> Result<(), crate::Error> {
+    pub fn print_source_code(&self, writer: &mut impl std::io::Write) -> Result<(), crate::Error> {
         if !self.arg_types.is_empty() {
             writer.write_all(b"#define HAS_ARGUMENTS\n")?;
         }

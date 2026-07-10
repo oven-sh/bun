@@ -1183,10 +1183,7 @@ impl Bunfig {
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl<'a> Parser<'a> {
-    fn parse_registry_url_string(
-        &mut self,
-        str: &E::EString,
-    ) -> crate::Result<api::NpmRegistry> {
+    fn parse_registry_url_string(&mut self, str: &E::EString) -> crate::Result<api::NpmRegistry> {
         // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
         // The api `Parser` is generic over log/source and never reads them for
         // this path, so we just hand it our reborrowed handles.
@@ -1198,10 +1195,7 @@ impl<'a> Parser<'a> {
         .parse_registry_url_string_impl(bytes)?)
     }
 
-    fn parse_registry_object(
-        &mut self,
-        obj: &E::Object,
-    ) -> crate::Result<api::NpmRegistry> {
+    fn parse_registry_object(&mut self, obj: &E::Object) -> crate::Result<api::NpmRegistry> {
         let mut registry = api::NpmRegistry::default();
 
         if let Some(url) = obj.get(b"url") {

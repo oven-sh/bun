@@ -1192,4 +1192,3 @@ pub enum PackageManifestError {
 }
 
 bun_core::impl_tag_error!(PackageManifestError);
-

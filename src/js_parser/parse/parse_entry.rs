@@ -3,10 +3,10 @@ use bun_collections::VecExt;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 
-use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_core::strings;
-use bun_core;
 use crate::Error;
+use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_core;
+use bun_core::strings;
 use bun_wyhash::Wyhash;
 
 use crate::parser::options;

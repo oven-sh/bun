@@ -41,7 +41,6 @@ impl From<codecs::Error> for BackendError {
     }
 }
 
-
 impl BackendError {
     /// Reshape into the
     /// caller's `Result<Option<T>, codecs::Error>` convention used by

@@ -1243,7 +1243,6 @@ pub enum SignError {
     NoSpaceLeft,
 }
 
-
 impl<'a> Default for SignOptions<'a> {
     fn default() -> Self {
         Self {

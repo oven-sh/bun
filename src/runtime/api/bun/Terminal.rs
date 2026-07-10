@@ -689,8 +689,15 @@ impl Terminal {
     #[cfg(target_os = "macos")]
     pub(crate) fn drain_and_close_slave_fd(&self) {
         let flags = self.flags.get();
+        if flags.contains(Flags::CLOSED) {
+            return;
+        }
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
             self.reader.with_mut(|r| r.read());
+            // The data callback runs user JS, which may have closed us.
+            if self.flags.get().contains(Flags::CLOSED) {
+                return;
+            }
         }
         let fd = self.slave_fd.get();
         if fd != Fd::INVALID {

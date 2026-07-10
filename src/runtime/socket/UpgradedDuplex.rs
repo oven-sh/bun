@@ -348,13 +348,12 @@ impl UpgradedDuplex {
     /// memoised `SecureContext` can be reused on the duplex/named-pipe path.
     pub(crate) fn start_tls_with_ctx(
         &mut self,
-        ctx: *mut bun_boringssl_sys::SSL_CTX,
+        ctx: *mut bun_boringssl_sys::sys::SSL_CTX,
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
         // errdefer SSL_CTX_free(ctx) — free the adopted ref on the error path only.
         let ctx_guard = scopeguard::guard(ctx, |ctx| {
-            // SAFETY: ctx is a valid SSL_CTX* with one ref adopted by this fn.
-            unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
+            bun_boringssl_sys::SSL_CTX_free(bun_boringssl_sys::sys::SSL_CTX::opaque_ref(ctx));
         });
         let ctx_nn =
             NonNull::new(ctx).expect("caller passes a non-null SSL_CTX* with one adopted ref");

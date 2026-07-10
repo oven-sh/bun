@@ -204,7 +204,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 bun_opaque::opaque_ffi! { pub struct RawWebSocket; }
 
 impl RawWebSocket {
-    pub fn memory_cost(&mut self, ssl_flag: i32) -> usize {
+    pub fn memory_cost(&self, ssl_flag: i32) -> usize {
         c::uws_ws_memory_cost(ssl_flag, self)
     }
 
@@ -213,8 +213,10 @@ impl RawWebSocket {
     /// Equivalent to:
     ///
     ///   (struct us_socket_t *)socket
-    pub fn as_socket(&mut self) -> *mut Socket {
-        std::ptr::from_mut::<RawWebSocket>(self).cast::<Socket>()
+    pub fn as_socket(&self) -> *mut Socket {
+        std::ptr::from_ref::<RawWebSocket>(self)
+            .cast::<Socket>()
+            .cast_mut()
     }
 }
 
@@ -710,7 +712,7 @@ pub mod c {
     // is the socket itself (plus value types) are `safe fn`; (ptr,len) shims
     // and out-param shims stay unsafe.
     unsafe extern "C" {
-        pub(crate) safe fn uws_ws_memory_cost(ssl: i32, ws: &mut RawWebSocket) -> usize;
+        pub(crate) safe fn uws_ws_memory_cost(ssl: i32, ws: &RawWebSocket) -> usize;
         pub(crate) fn uws_ws(
             ssl: i32,
             app: *mut uws_app_t,

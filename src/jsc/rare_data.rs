@@ -1058,8 +1058,8 @@ impl Drop for RareData {
         debug_assert!(self.cron_jobs.is_empty());
 
         if let Some(s) = self.default_client_ssl_ctx.take() {
-            // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.
-            unsafe { boring::SSL_CTX_free(s) };
+            // Returned by ssl_ctx_cache.get_or_create_opts with a +1 ref.
+            boring::SSL_CTX_free(SslCtx::opaque_ref(s));
         }
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.

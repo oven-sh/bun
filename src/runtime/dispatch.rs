@@ -125,7 +125,7 @@ use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, napi_async_work};
 
 use bun_jsc::PosixSignalTask;
 use bun_jsc::RuntimeTranspilerStore;
-use bun_jsc::cpp_task::CppTask;
+use bun_jsc::cpp_task::{self, CppTask};
 use bun_jsc::hot_reloader;
 use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
 
@@ -266,7 +266,15 @@ pub fn run_task(
             }
         }
         task_tag::CppTask => {
-            if let Err(err) = cast!(CppTask).run(global) {
+            // SAFETY: §Dispatch — tag identifies pointee and the pointer is a
+            // non-null `EventLoopTask*` the queue solely owns. `run` consumes
+            // it (`performTask` → `delete this`), on the error path too.
+            let task = unsafe {
+                CppTask::adopt(core::ptr::NonNull::new_unchecked(cast_ptr!(
+                    cpp_task::sys::CppTask
+                )))
+            };
+            if let Err(err) = task.run(global) {
                 report_error_or_terminate(global, err)?;
             }
         }

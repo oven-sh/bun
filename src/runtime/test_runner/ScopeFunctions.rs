@@ -423,9 +423,10 @@ impl ScopeFunctions {
                             "matches_filter \"{}\"",
                             bstr::BStr::new(bun_test.collection.filter_buffer.as_slice())
                         ));
-                        // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is
-                        // the centralised non-null deref proof.
-                        matches_filter = RegularExpression::opaque_mut(filter_regex.as_ptr()).matches(str);
+                        // SAFETY: `filter_regex` was leaked into `TestOptions` by
+                        // `cli::Arguments` and lives for the process; the ManuallyDrop
+                        // borrow frees nothing.
+                        matches_filter = unsafe { RegularExpression::borrow_leaked(filter_regex) }.matches(str);
 
                         bun_test.collection.filter_buffer.clear();
                     }

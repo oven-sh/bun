@@ -1223,8 +1223,8 @@ pub use self::js_promise::Strong as JSPromiseStrong;
 pub use self::js_promise::Status as PromiseStatus;
 
 /// `bun_ptr::RefPtr` — intrusive refcounted smart pointer. Re-exported here so
-/// `crate::RefPtr<SourceProvider>` (ZigStackTrace.rs) resolves without every
-/// submodule taking a direct `bun_ptr` dep.
+/// submodules can write `crate::RefPtr<T>` without each taking a direct
+/// `bun_ptr` dep.
 pub use bun_ptr::RefPtr;
 
 /// `bun.String` — refcounted WTF-backed string. Re-exported at the crate root

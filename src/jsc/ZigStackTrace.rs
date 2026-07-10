@@ -1,5 +1,4 @@
 use core::ptr;
-use core::ptr::NonNull;
 
 use crate::schema_api as api;
 use bun_core::String as BunString;
@@ -21,12 +20,12 @@ pub struct ZigStackTrace {
     pub frames_len: u8,
     pub frames_cap: u8,
 
-    /// Non-null if `source_lines_*` points into data owned by a JSC::SourceProvider.
-    /// If so, then .deref must be called on it to release the memory.
+    /// `Some` if `source_lines_*` points into data owned by a `JSC::SourceProvider`.
+    /// C++ `ref()`s the provider before storing it here; `Drop` gives that ref back.
     ///
-    /// `Option<NonNull<_>>` niche-optimizes to a single thin pointer, so the
-    /// FFI layout is exactly one nullable pointer.
-    pub referenced_source_provider: Option<NonNull<SourceProvider>>,
+    /// `Option<SourceProvider>` niche-optimizes to a single thin pointer, so the
+    /// FFI layout is exactly one nullable `JSC::SourceProvider*`.
+    pub referenced_source_provider: Option<SourceProvider>,
 }
 
 impl ZigStackTrace {

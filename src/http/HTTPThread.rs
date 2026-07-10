@@ -276,25 +276,26 @@ pub struct CertCheckResumeMessage {
 }
 
 pub struct LibdeflateState {
-    pub decompressor: Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>,
-    pub compressor: Option<bun_libdeflate_sys::libdeflate::OwnedCompressor>,
+    pub decompressor: Option<bun_libdeflate_sys::libdeflate::Decompressor>,
+    pub compressor: Option<bun_libdeflate_sys::libdeflate::Compressor>,
     pub shared_buffer: [u8; 512 * 1024],
 }
 
-// SAFETY: `Option<Owned{De,}Compressor>` is `#[repr(transparent)]` over
-// `NonNull`, so all-zero = `None`; `[u8; N]` is valid at the all-zero bit
-// pattern.
+// SAFETY: `Option<Compressor>` / `Option<Decompressor>` are
+// `#[repr(transparent)]` over `NonNull`, so all-zero = `None`; `[u8; N]` is
+// valid at the all-zero bit pattern.
 unsafe impl bun_core::Zeroable for LibdeflateState {}
 
 impl LibdeflateState {
-    /// Mutable access to the libdeflate decompressor handle.
+    /// Access to the libdeflate decompressor handle. `&` suffices: libdeflate
+    /// mutates the decompressor's scratch state through a shared borrow.
     ///
     /// `decompressor` is set once in [`HttpThread::deflater`] (panics on OOM)
     /// and is never `None` after that, so the unwrap is infallible.
     #[inline]
-    pub(crate) fn decompressor_mut(&mut self) -> &mut bun_libdeflate_sys::libdeflate::Decompressor {
+    pub(crate) fn decompressor(&self) -> &bun_libdeflate_sys::libdeflate::Decompressor {
         self.decompressor
-            .as_deref_mut()
+            .as_ref()
             .expect("set in HttpThread::deflater()")
     }
 }
@@ -419,7 +420,7 @@ impl HttpThread {
 
     pub fn deflater(&mut self) -> &mut LibdeflateState {
         if self.lazy_libdeflater.is_none() {
-            let decompressor = bun_libdeflate_sys::libdeflate::OwnedDecompressor::new()
+            let decompressor = bun_libdeflate_sys::libdeflate::Decompressor::new()
                 .unwrap_or_else(|| bun_core::out_of_memory());
             let mut state: Box<LibdeflateState> = bun_core::boxed_zeroed();
             state.decompressor = Some(decompressor);

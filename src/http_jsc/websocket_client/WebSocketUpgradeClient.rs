@@ -35,7 +35,7 @@ use bun_io::KeepAlive;
 use bun_jsc::{JSGlobalObject, JsCell, VirtualMachineRef};
 use bun_picohttp as picohttp;
 use bun_ptr::ThisPtr;
-use bun_uws::{self as uws, SocketHandler, SocketKind, SslCtx};
+use bun_uws::{self as uws, SocketHandler, SocketKind};
 
 use super::cpp_websocket::CppWebSocket;
 use super::websocket_deflate as WebSocketDeflate;
@@ -87,27 +87,6 @@ enum State {
     Done,
 }
 
-/// Owned +1 reference to a `us_ssl_ctx_t` (`SSL_CTX*`); releases the ref via
-/// `SSL_CTX_free` on drop (BoringSSL decrements its internal refcount).
-/// Either dropped here, or transferred to the connected `WebSocket` via
-/// `into_raw()` after the upgrade completes.
-struct SslCtxOwned(*mut SslCtx);
-
-impl SslCtxOwned {
-    /// Transfer ownership of the retained ref to the caller without freeing.
-    fn into_raw(self) -> *mut SslCtx {
-        core::mem::ManuallyDrop::new(self).0
-    }
-}
-
-impl Drop for SslCtxOwned {
-    fn drop(&mut self) {
-        // SAFETY: `self.0` is an owned retained ref (returned with +1 by
-        // `ssl_ctx_cache_get_or_create`) that has not been transferred out.
-        unsafe { boringssl::c::SSL_CTX_free(self.0) };
-    }
-}
-
 /// WebSocket HTTP upgrade client, generic over `SSL`.
 ///
 /// Intrusive single-thread
@@ -141,7 +120,7 @@ pub struct HTTPClient<const SSL: bool> {
     /// Heap-allocated because ownership transfers to the connected
     /// `WebSocket` after the upgrade completes (so the `SSL_CTX` outlives
     /// this struct). RAII: dropping the wrapper releases the retained ref.
-    secure: Option<SslCtxOwned>,
+    secure: Option<boringssl::c::SSL_CTX>,
 
     /// Expected Sec-WebSocket-Accept value for handshake validation per RFC 6455 §4.2.2.
     /// This is base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")).
@@ -443,7 +422,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         };
                         // Owned ref; transferred to the connected WebSocket on
                         // upgrade, freed in `deinit` if we never get that far.
-                        client_box.secure = Some(SslCtxOwned(ctx));
+                        // SAFETY: `ssl_ctx_cache_get_or_create` handed back a +1.
+                        client_box.secure = unsafe { boringssl::c::SSL_CTX::adopt_ptr(ctx) };
                         break 'brk Some(ctx);
                     }
                 }
@@ -590,7 +570,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
         // ssl_config: Option<Box<SSLConfig>> — Drop runs SSLConfig::deinit + frees the box.
         self.ssl_config = None;
-        // secure: Option<SslCtxOwned> — Drop releases the ref taken in `connect`.
+        // secure: Option<SSL_CTX> — Drop releases the ref taken in `connect`.
         self.secure = None;
     }
 
@@ -1698,9 +1678,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         } else {
                             None
                         },
-                        // ownership transferred; `into_raw` suppresses the
-                        // RAII release at fn end.
-                        saved_secure.take().map(|s| &mut *s.into_raw()),
+                        // ownership transferred; `leak` suppresses the RAII
+                        // release at fn end.
+                        saved_secure.take().map(|s| &mut *s.leak().as_ptr()),
                     )
                 };
             } else {

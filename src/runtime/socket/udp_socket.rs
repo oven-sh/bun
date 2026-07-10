@@ -495,8 +495,8 @@ impl UDPSocket {
     /// fields are `Cell`/`JsCell`, so a shared borrow is sufficient (R-2).
     #[inline]
     fn from_uws<'a>(socket: *mut uws::udp::Socket) -> &'a UDPSocket {
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let user = uws::udp::Socket::opaque_mut(socket).user();
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+        let user = uws::udp::Socket::opaque_ref(socket).user();
         // SAFETY: `user` was set to `*mut UDPSocket` at creation; non-null and
         // live for the callback's duration (back-ref invariant).
         unsafe { &*user.cast::<UDPSocket>() }
@@ -544,8 +544,8 @@ impl UDPSocket {
             // repeats it), so ordering is unobservable.
             this.this_value.with_mut(|r| r.downgrade());
             if let Some(socket) = this.socket.take() {
-                // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-                uws::udp::Socket::opaque_mut(socket).close();
+                // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+                uws::udp::Socket::opaque_ref(socket).close();
             }
         });
 
@@ -622,8 +622,8 @@ impl UDPSocket {
 
         if let Some(connect) = &this.config.get().connect {
             let address_z = connect.address.to_owned_slice_z();
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            let ret = uws::udp::Socket::opaque_mut(this.socket.get().unwrap())
+            // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+            let ret = uws::udp::Socket::opaque_ref(this.socket.get().unwrap())
                 .connect(address_z.as_ptr(), connect.port as u32);
             if ret != 0 {
                 if let Some(sys_err) = errno_sys(ret, bun_sys::Tag::connect) {
@@ -719,8 +719,8 @@ impl UDPSocket {
                 .to_js(global_this),
             ));
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).set_broadcast(enabled);
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+        let res = uws::udp::Socket::opaque_ref(socket).set_broadcast(enabled);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -767,8 +767,8 @@ impl UDPSocket {
                 .to_js(global_this),
             ));
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).set_multicast_loopback(enabled);
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+        let res = uws::udp::Socket::opaque_ref(socket).set_multicast_loopback(enabled);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -835,10 +835,10 @@ impl UDPSocket {
                     "Family mismatch between address and interface"
                 )));
             }
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, Some(&interface), drop)
+            // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+            uws::udp::Socket::opaque_ref(socket).set_membership(&addr, Some(&interface), drop)
         } else {
-            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, None, drop)
+            uws::udp::Socket::opaque_ref(socket).set_membership(&addr, None, drop)
         };
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
@@ -949,15 +949,15 @@ impl UDPSocket {
                     "Family mismatch among source, group and interface addresses"
                 )));
             }
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
+            // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+            uws::udp::Socket::opaque_ref(socket).set_source_specific_membership(
                 &source_addr,
                 &group_addr,
                 Some(&interface),
                 drop,
             )
         } else {
-            uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
+            uws::udp::Socket::opaque_ref(socket).set_source_specific_membership(
                 &source_addr,
                 &group_addr,
                 None,
@@ -1036,8 +1036,8 @@ impl UDPSocket {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
 
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).set_multicast_interface(&addr);
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+        let res = uws::udp::Socket::opaque_ref(socket).set_multicast_interface(&addr);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1078,7 +1078,7 @@ impl UDPSocket {
         this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-        function: fn(&mut uws::udp::Socket, i32) -> c_int,
+        function: fn(&uws::udp::Socket, i32) -> c_int,
     ) -> JsResult<JSValue> {
         if this.closed.get() {
             return Err(global_this.throw_value(
@@ -1102,8 +1102,8 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = function(uws::udp::Socket::opaque_mut(socket), ttl);
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+        let res = function(uws::udp::Socket::opaque_ref(socket), ttl);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1314,8 +1314,8 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).send(&payloads, &lens, &addr_ptrs);
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+        let res = uws::udp::Socket::opaque_ref(socket).send(&payloads, &lens, &addr_ptrs);
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::send) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
@@ -1411,8 +1411,8 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).send(
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+        let res = uws::udp::Socket::opaque_ref(socket).send(
             &[payload.as_ptr()],
             &[payload.len()],
             &[addr_ptr],
@@ -1582,8 +1582,8 @@ impl UDPSocket {
             // shared borrow is sound; the (idempotent) downgrade is hoisted
             // because `on_close` repeats it.
             this.this_value.with_mut(|r| r.downgrade());
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).close();
+            // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+            uws::udp::Socket::opaque_ref(socket).close();
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1630,8 +1630,8 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return JSValue::UNDEFINED;
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        JSValue::js_number(uws::udp::Socket::opaque_mut(socket).bound_port() as f64)
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+        JSValue::js_number(uws::udp::Socket::opaque_ref(socket).bound_port() as f64)
     }
 
     fn create_sock_addr(global_this: &JSGlobalObject, address_bytes: &[u8], port: u16) -> JSValue {
@@ -1652,8 +1652,8 @@ impl UDPSocket {
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let socket = uws::udp::Socket::opaque_mut(socket);
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+        let socket = uws::udp::Socket::opaque_ref(socket);
         socket.bound_ip(buf.as_mut_ptr(), &mut length);
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
@@ -1678,8 +1678,8 @@ impl UDPSocket {
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        uws::udp::Socket::opaque_mut(socket).remote_ip(buf.as_mut_ptr(), &mut length);
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+        uws::udp::Socket::opaque_ref(socket).remote_ip(buf.as_mut_ptr(), &mut length);
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
         Self::create_sock_addr(global_this, address_bytes, connect_info.port)
@@ -1805,8 +1805,8 @@ impl UDPSocket {
             return Err(global_object.throw(format_args!("Socket is closed")));
         }
 
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        if uws::udp::Socket::opaque_mut(this.socket.get().unwrap()).disconnect() == -1 {
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+        if uws::udp::Socket::opaque_ref(this.socket.get().unwrap()).disconnect() == -1 {
             return Err(global_object.throw(format_args!("Failed to disconnect socket")));
         }
         this.connect_info.set(None);

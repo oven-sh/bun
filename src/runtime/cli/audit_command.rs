@@ -425,7 +425,7 @@ fn send_audit_request(
     body: &[u8],
 ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
     libdeflate::load();
-    let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
+    let compressor = libdeflate::Compressor::new(6).ok_or(bun_alloc::AllocError)?;
 
     let max_compressed_size = compressor.max_bytes_needed(body, libdeflate::Encoding::Gzip);
     let mut compressed_body = Vec::with_capacity(max_compressed_size);

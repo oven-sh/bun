@@ -63,7 +63,7 @@ pub struct Entry {
     /// Nulled by `bun_ssl_ctx_cache_on_free` when BoringSSL drops the last
     /// ref. Tombstoned entries are reclaimed on the next `get_or_create` for
     /// the same digest, or by the periodic compact.
-    pub ctx: Cell<*mut boringssl::SSL_CTX>,
+    pub ctx: Cell<*mut boringssl::sys::SSL_CTX>,
     /// BACKREF: the cache outlives every `Entry` it allocates (Drop clears
     /// ex_data first so the `CRYPTO_EX_free` callback never sees a dangling
     /// owner).
@@ -76,7 +76,7 @@ impl SSLContextCache {
         &mut self,
         config: &SSLConfig,
         err: &mut create_bun_socket_error_t,
-    ) -> Option<*mut boringssl::SSL_CTX> {
+    ) -> Option<*mut boringssl::sys::SSL_CTX> {
         let opts = config.as_usockets();
         self.get_or_create_digest(&opts, opts.digest(), err)
     }
@@ -87,7 +87,7 @@ impl SSLContextCache {
         &mut self,
         opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut create_bun_socket_error_t,
-    ) -> Option<*mut boringssl::SSL_CTX> {
+    ) -> Option<*mut boringssl::sys::SSL_CTX> {
         self.get_or_create_digest(opts, opts.digest(), err)
     }
 
@@ -99,7 +99,7 @@ impl SSLContextCache {
         opts: &uws::SocketContext::BunSocketContextOptions,
         d: Digest,
         err: &mut create_bun_socket_error_t,
-    ) -> Option<*mut boringssl::SSL_CTX> {
+    ) -> Option<*mut boringssl::sys::SSL_CTX> {
         {
             let _guard = self.mutex.lock_guard();
             if let Some(entry) = self.map.get(&d) {
@@ -108,8 +108,8 @@ impl SSLContextCache {
                 let entry = unsafe { &**entry };
                 let ctx = entry.ctx.get();
                 if !ctx.is_null() {
-                    // SAFETY: ctx non-null and tombstone write is serialized by this mutex.
-                    unsafe { boringssl::SSL_CTX_up_ref(ctx) };
+                    // The tombstone write is serialized by this mutex.
+                    boringssl::SSL_CTX_up_ref(boringssl::sys::SSL_CTX::opaque_ref(ctx));
                     return Some(ctx);
                 }
             }
@@ -139,21 +139,20 @@ impl SSLContextCache {
             // `bun_ssl_ctx_cache_on_free` and write this same `ctx` cell.
             let existing = entry.ctx.get();
             if !existing.is_null() {
-                // SAFETY: existing non-null; ctx is the fresh CTX we just built and own.
-                unsafe {
-                    boringssl::SSL_CTX_up_ref(existing);
-                    boringssl::SSL_CTX_free(ctx);
-                }
+                // `ctx` is the fresh CTX we just built and own; give it back.
+                boringssl::SSL_CTX_up_ref(boringssl::sys::SSL_CTX::opaque_ref(existing));
+                boringssl::SSL_CTX_free(boringssl::sys::SSL_CTX::opaque_ref(ctx));
                 return Some(existing);
             }
             // Tombstone — adopt the rebuilt CTX into the existing slot.
             // SSL_CTX_set_ex_data only fails on OOM (Bun crashes anyway), but if
             // it did, the entry would never tombstone and `entry.ctx` would dangle
             // after the CTX is freed. Don't cache it; caller still owns the ref.
-            // SAFETY: ctx is a valid SSL_CTX*; entry_ptr is a valid heap pointer.
+            // SAFETY: entry_ptr is a valid heap pointer; the CRYPTO_EX_free
+            // callback owns the eventual deref.
             if unsafe {
                 boringssl::SSL_CTX_set_ex_data(
-                    ctx,
+                    boringssl::sys::SSL_CTX::opaque_ref(ctx),
                     c::us_ssl_ctx_cache_ex_idx(),
                     entry_ptr.cast::<c_void>(),
                 )
@@ -170,10 +169,11 @@ impl SSLContextCache {
             owner: owner_ptr,
         }));
         *gop.value_ptr = entry;
-        // SAFETY: ctx is a valid SSL_CTX*; entry is a fresh non-null heap pointer.
+        // SAFETY: entry is a fresh non-null heap pointer; the CRYPTO_EX_free
+        // callback owns the eventual deref.
         if unsafe {
             boringssl::SSL_CTX_set_ex_data(
-                ctx,
+                boringssl::sys::SSL_CTX::opaque_ref(ctx),
                 c::us_ssl_ctx_cache_ex_idx(),
                 entry.cast::<c_void>(),
             )
@@ -257,10 +257,10 @@ impl Drop for SSLContextCache {
             let e = unsafe { &*entry };
             let ctx = e.ctx.get();
             if !ctx.is_null() {
-                // SAFETY: ctx non-null; clearing the ex_data slot we set.
+                // SAFETY: clearing the ex_data slot we set; null payload.
                 unsafe {
                     boringssl::SSL_CTX_set_ex_data(
-                        ctx,
+                        boringssl::sys::SSL_CTX::opaque_ref(ctx),
                         c::us_ssl_ctx_cache_ex_idx(),
                         ptr::null_mut(),
                     );

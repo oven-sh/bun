@@ -130,7 +130,7 @@ impl Archive {
 }
 
 /// Configure archive for reading tar/tar.gz
-fn configure_archive_reader(archive: &libarchive::lib::Archive) {
+fn configure_archive_reader(archive: &libarchive::lib::sys::Archive) {
     let _ = archive.read_support_format_tar();
     let _ = archive.read_support_format_gnutar();
     let _ = archive.read_support_filter_gzip();
@@ -148,7 +148,7 @@ fn entry_pathname_utf8(entry: &libarchive::lib::Entry) -> Result<Vec<u8>, bun_al
 /// Count the number of files in an archive
 fn count_files_in_archive(data: &[u8]) -> u32 {
     use libarchive::lib;
-    let archive = lib::ReadArchive::new();
+    let archive = lib::Archive::read_new();
     configure_archive_reader(&archive);
 
     if archive.read_open_memory(data) != lib::Result::Ok {
@@ -302,7 +302,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     // errdefer growing_buffer.deinit() — handled by Drop on Vec<u8>
 
     let archive = lib::WriteArchive::new();
-    let archive_ref: &lib::Archive = &archive;
+    let archive_ref: &lib::sys::Archive = &archive;
 
     if archive_ref.write_set_format_pax_restricted() != lib::Result::Ok {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -1140,7 +1140,7 @@ pub struct FilesContext {
 }
 
 impl FilesContext {
-    fn clone_error_string(archive: &libarchive::lib::Archive) -> Option<CString> {
+    fn clone_error_string(archive: &libarchive::lib::sys::Archive) -> Option<CString> {
         let err_str = archive.error_string();
         if err_str.is_empty() {
             return None;
@@ -1150,7 +1150,7 @@ impl FilesContext {
 
     fn do_run(&mut self) -> Result<FilesResult, bun_alloc::AllocError> {
         use libarchive::lib;
-        let archive = lib::ReadArchive::new();
+        let archive = lib::Archive::read_new();
         configure_archive_reader(&archive);
 
         if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
@@ -1343,8 +1343,8 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
     use bun_libdeflate_sys::libdeflate;
     libdeflate::load();
 
-    let mut compressor =
-        libdeflate::OwnedCompressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;
+    let compressor =
+        libdeflate::Compressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;
 
     let max_size = compressor.max_bytes_needed(data, libdeflate::Encoding::Gzip);
 
@@ -1429,7 +1429,7 @@ fn extract_to_disk_filtered(
     glob_patterns: Option<&[Box<[u8]>]>,
 ) -> Result<u32, bun_core::Error> {
     use libarchive::lib;
-    let archive = lib::ReadArchive::new();
+    let archive = lib::Archive::read_new();
     configure_archive_reader(&archive);
 
     if archive.read_open_memory(file_buffer) != lib::Result::Ok {

@@ -1730,8 +1730,8 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         };
         // The compiled regex lives in `bun_jsc::RegularExpression` (T6); the
         // T3 `TestOptions` field is type-erased to `NonNull<()>` to break the
-        // back-edge. High tier owns construction/destruction.
-        ctx.test_options.test_filter_regex = core::ptr::NonNull::new(regex.cast::<()>());
+        // back-edge. `leak()` hands it the allocation for the process lifetime.
+        ctx.test_options.test_filter_regex = Some(regex.leak().cast::<()>());
     }
     if let Some(since) = args.option(b"--changed") {
         ctx.test_options.changed = Some(since.into());

@@ -76,7 +76,7 @@ impl AnyResponseExt for uws::AnyResponse {
         match self {
             uws::AnyResponse::SSL(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
             uws::AnyResponse::TCP(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
-            uws::AnyResponse::H3(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
+            uws::AnyResponse::H3(p) => bun_opaque::opaque_deref(p).has_responded(),
         }
     }
     #[inline]
@@ -88,9 +88,7 @@ impl AnyResponseExt for uws::AnyResponse {
             uws::AnyResponse::TCP(p) => {
                 bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
             }
-            uws::AnyResponse::H3(p) => {
-                bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
-            }
+            uws::AnyResponse::H3(p) => bun_opaque::opaque_deref(p).override_write_offset(offset),
         }
     }
 }

@@ -59,16 +59,16 @@ impl Stream {
         }))
     }
 
-    /// Mutable access to the bound lsquic stream handle.
+    /// Access to the bound lsquic stream handle.
     ///
     /// INVARIANT: `qstream` is set in `callbacks::on_stream_open` and remains
     /// valid until `callbacks::on_stream_close` / `ClientSession::detach`
-    /// nulls it. HTTP-thread-only. Borrows `self` exclusively so no two live
-    /// `&mut quic::Stream` can be minted from one `Stream`.
+    /// nulls it. HTTP-thread-only. `quic::Stream` is an opaque FFI ZST, so `&`
+    /// carries no `noalias` — lsquic mutates the stream through the handle.
     #[inline]
-    pub fn qstream_mut(&mut self) -> Option<&mut quic::Stream> {
+    pub fn qstream_ref(&self) -> Option<&quic::Stream> {
         self.qstream
-            .map(|qs| super::client_session::quic_stream_mut(qs.as_ptr()))
+            .map(|qs| super::client_session::quic_stream_ref(qs.as_ptr()))
     }
 
     /// Mutable access to the owning `ClientSession`.
@@ -87,7 +87,7 @@ impl Stream {
     }
 
     pub fn abort(&mut self) {
-        if let Some(qs) = self.qstream_mut() {
+        if let Some(qs) = self.qstream_ref() {
             qs.close();
         }
     }

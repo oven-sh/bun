@@ -33,7 +33,7 @@ pub use crate::generated_classes::js_SecureContext as js;
 #[bun_jsc::JsClass]
 #[repr(C)]
 pub struct SecureContext {
-    pub ctx: *mut boringssl::SSL_CTX,
+    pub ctx: *mut boringssl::sys::SSL_CTX,
     /// `BunSocketContextOptions.digest()` — exactly the fields that reach
     /// `us_ssl_ctx_from_options`. Stored so an `intern()` WeakGCMap hit (keyed by
     /// the low 64 bits) can do a full content-equality check before reusing.
@@ -331,11 +331,8 @@ impl SecureContext {
     /// `SSL_CTX_up_ref` and return — for callers that want to outlive this
     /// wrapper's GC. Most paths just pass `this.ctx` directly and let `SSL_new`
     /// take its own ref.
-    pub fn borrow(&self) -> *mut boringssl::SSL_CTX {
-        unsafe {
-            // SAFETY: self.ctx is a valid SSL_CTX* held for the lifetime of this wrapper.
-            let _ = boringssl::SSL_CTX_up_ref(self.ctx);
-        }
+    pub fn borrow(&self) -> *mut boringssl::sys::SSL_CTX {
+        let _ = boringssl::SSL_CTX_up_ref(boringssl::sys::SSL_CTX::opaque_ref(self.ctx));
         self.ctx
     }
 
@@ -380,8 +377,8 @@ impl SecureContext {
     // false positive on that contract.
     #[allow(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
-        // SAFETY: `ctx` was created by `SSL_CTX_new`; freed exactly once here.
-        unsafe { boringssl::SSL_CTX_free(self.ctx) };
+        // `ctx` was created by `SSL_CTX_new`; released exactly once here.
+        boringssl::SSL_CTX_free(boringssl::sys::SSL_CTX::opaque_ref(self.ctx));
     }
 
     pub fn memory_cost(&self) -> usize {

@@ -154,12 +154,12 @@ impl Strong {
     pub fn reject_without_swap(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) {
         let Some(v) = self.strong.get() else { return };
         let val = val.unwrap_or_else(|_| global.try_take_exception().unwrap());
-        let _ = JSPromise::opaque_mut(v.as_promise().unwrap()).reject(global, Ok(val));
+        let _ = JSPromise::opaque_ref(v.as_promise().unwrap()).reject(global, Ok(val));
     }
 
     pub fn resolve_without_swap(&mut self, global: &JSGlobalObject, val: JSValue) {
         let Some(v) = self.strong.get() else { return };
-        let _ = JSPromise::opaque_mut(v.as_promise().unwrap()).resolve(global, val);
+        let _ = JSPromise::opaque_ref(v.as_promise().unwrap()).resolve(global, val);
     }
 
     pub fn reject(
@@ -423,14 +423,14 @@ impl JSPromise {
     /// Fulfill an existing promise with the value.
     /// The value can be another Promise.
     /// If you want to create a new Promise that is already resolved, see `resolved_promise_value`.
-    pub fn resolve(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
+    pub fn resolve(&self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
         // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__resolve(self, global, value)
             .map_err(|_| JsTerminated::JSTerminated)
     }
 
     pub fn reject(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         value: JsResult<JSValue>,
     ) -> Result<(), JsTerminated> {
@@ -456,7 +456,7 @@ impl JSPromise {
     }
 
     pub fn reject_as_handled(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         value: JSValue,
     ) -> Result<(), JsTerminated> {
@@ -470,7 +470,7 @@ impl JSPromise {
     /// of the event loop (threadpool callback) where the error would otherwise
     /// have an empty stack trace.
     pub fn reject_with_async_stack(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         value: JsResult<JSValue>,
     ) -> Result<(), JsTerminated> {
@@ -496,7 +496,7 @@ impl JSPromise {
         self.to_js()
     }
 
-    pub fn unwrap(&mut self, vm: &VM, mode: UnwrapMode) -> Unwrapped {
+    pub fn unwrap(&self, vm: &VM, mode: UnwrapMode) -> Unwrapped {
         match self.status() {
             Status::Pending => Unwrapped::Pending,
             Status::Fulfilled => Unwrapped::Fulfilled(self.result(vm)),

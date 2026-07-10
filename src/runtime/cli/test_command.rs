@@ -2084,14 +2084,13 @@ impl TestCommand {
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
                 max_concurrency: ctx.test_options.max_concurrency,
-                // `test_filter_regex` is an erased `*mut RegularExpression` (see
-                // options_types::context); cast back to a typed `NonNull` —
-                // kept raw so `matches()` can write through it without
-                // laundering shared-ref provenance.
+                // `test_filter_regex` is an erased pointer to the C++ regex (see
+                // options_types::context); cast back to the `sys` type, not the
+                // owning handle. We only borrow it - `Arguments` leaked it.
                 filter_regex: ctx
                     .test_options
                     .test_filter_regex()
-                    .map(|p| p.cast::<jsc::RegularExpression>()),
+                    .map(|p| p.cast::<jsc::regular_expression::sys::RegularExpression>()),
                 snapshots: Snapshots {
                     update_snapshots: ctx.test_options.update_snapshots,
                     total: 0,

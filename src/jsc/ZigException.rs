@@ -72,11 +72,9 @@ impl ZigException {
             frame.deinit();
         }
 
-        if let Some(source) = self.stack.referenced_source_provider {
-            // Pointer was set by JSC (C++) and is valid until this deref releases it.
-            // `SourceProvider` is an opaque ZST handle.
-            crate::SourceProvider::opaque_mut(source.as_ptr()).deref();
-        }
+        // Gives back the `+1` C++ took in `populateStackFramePosition`. `take()`
+        // nulls the slot, so the `Holder::drop` re-entry path releases nothing.
+        drop(self.stack.referenced_source_provider.take());
     }
 
     // `ZigException__fromException` is declared in headers.h but has no C++

@@ -534,7 +534,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let mut port = *port;
                 if let Some(listener) = self.listener {
                     // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-                    port = bun_opaque::opaque_deref_mut(listener).get_local_port() as u16;
+                    port = bun_opaque::opaque_deref(listener).get_local_port() as u16;
                 } else if Self::HAS_H3 {
                     if let Some(h3l) = self.h3_listener {
                         // S012: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
@@ -1465,16 +1465,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn set_flags(&self, require_host_header: bool, use_strict_method_validation: bool) {
         if let Some(app) = self.app {
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(app)
+            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &` deref.
+            bun_opaque::opaque_deref(app)
                 .set_flags(require_host_header, use_strict_method_validation);
         }
     }
 
     pub fn set_max_http_header_size(&self, max_header_size: u64) {
         if let Some(app) = self.app {
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(app).set_max_http_header_size(max_header_size);
+            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &` deref.
+            bun_opaque::opaque_deref(app).set_max_http_header_size(max_header_size);
         }
     }
 
@@ -1554,14 +1554,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if !abrupt {
             // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-            bun_opaque::opaque_deref_mut(listener).close();
+            bun_opaque::opaque_deref(listener).close();
         } else if !self.flags.contains(ServerFlags::TERMINATED) {
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;
             }
             self.flags.insert(ServerFlags::TERMINATED);
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(self.app.unwrap()).close();
+            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &` deref.
+            bun_opaque::opaque_deref(self.app.unwrap()).close();
         }
     }
 
@@ -1660,8 +1660,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // binding alive should not pin `dev.memory_cost()` bytes.
             if let Some(dev) = self.dev_server.take() {
                 if let Some(app) = self.app {
-                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).clear_routes();
+                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &` deref.
+                    bun_opaque::opaque_deref(app).clear_routes();
                 }
                 drop(dev); // dev.deinit()
             }
@@ -1690,8 +1690,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.flags.insert(ServerFlags::TERMINATED);
             let app = self.app.unwrap();
             vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(app, |app| {
-                // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).close();
+                // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &` deref.
+                bun_opaque::opaque_deref(app).close();
                 Ok(())
             }));
         }
@@ -1980,9 +1980,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     fn set_routes(&mut self) -> JSValue {
         use bun_http_types::Method as http_method;
         let mut route_list_value = JSValue::ZERO;
-        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &` deref.
         // set_routes is only called after `self.app = Some(..)` in listen().
-        let app = bun_opaque::opaque_deref_mut(self.app.unwrap());
+        let app = bun_opaque::opaque_deref(self.app.unwrap());
         let self_ptr: *mut Self = self;
         let any_server = AnyServer::from(self_ptr.cast_const());
         // reshaped for borrowck — `dev_server` is `Option<Box<..>>`;
@@ -2038,7 +2038,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if let Some(websocket) = self.config.websocket.as_mut() {
             websocket.global_object =
                 bun_ptr::BackRef::new(bun_opaque::opaque_deref(self.global_this));
-            websocket.handler.app = Some(std::ptr::from_mut(app).cast::<c_void>());
+            websocket.handler.app = Some(app.as_mut_ptr().cast::<c_void>());
             websocket
                 .handler
                 .flags
@@ -2437,7 +2437,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // compatibility layer for specific Node API routes, even if it's not
         // the main "/*" handler.
         if has_node_http {
-            ffi::NodeHTTP_assignOnNodeJSCompat(SSL, std::ptr::from_mut(app).cast::<c_void>());
+            ffi::NodeHTTP_assignOnNodeJSCompat(SSL, app.as_mut_ptr().cast::<c_void>());
         }
 
         route_list_value
@@ -2551,8 +2551,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // SAFETY: name_ptr/name_len were just extracted from the live
                 // `config.ssl_config.server_name` CString; valid + NUL-terminated.
                 let server_name = unsafe { bun_core::ffi::cstr(name_ptr) };
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                if bun_opaque::opaque_deref_mut(app)
+                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &` deref.
+                if bun_opaque::opaque_deref(app)
                     .add_server_name_with_options(server_name, &ssl_options)
                     .is_err()
                 {
@@ -2574,8 +2574,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 // SAFETY: server_name is a CStr; ZStr::from_raw upholds the NUL invariant.
                 let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).domain(z);
+                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &` deref.
+                bun_opaque::opaque_deref(app).domain(z);
                 if throw_ssl_error_if_necessary(global) {
                     // SAFETY: `this` is the live boxed server from `init()`, uniquely owned here.
                     Self::deinit(unsafe { bun_core::heap::take(this) });
@@ -2633,8 +2633,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         }
                     }
                 }
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                if bun_opaque::opaque_deref_mut(app)
+                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &` deref.
+                if bun_opaque::opaque_deref(app)
                     .add_server_name_with_options(sni_name, &sni_opts)
                     .is_err()
                 {
@@ -2648,8 +2648,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     Self::deinit(unsafe { bun_core::heap::take(this) });
                     return JSValue::ZERO;
                 }
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).domain(z);
+                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &` deref.
+                bun_opaque::opaque_deref(app).domain(z);
                 if throw_ssl_error_if_necessary(global) {
                     // SAFETY: `this` is the live boxed server from `init()`, uniquely owned here.
                     Self::deinit(unsafe { bun_core::heap::take(this) });
@@ -3517,7 +3517,7 @@ impl AnyServer {
         any_server_dispatch!(self, |s| match s.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
-            Some(app) => bun_opaque::opaque_deref_mut(app).num_subscribers(topic),
+            Some(app) => bun_opaque::opaque_deref(app).num_subscribers(topic),
             // Defensive 0
             // here for the post-stop window; assert in debug to catch misuse.
             None => {
@@ -3537,8 +3537,7 @@ impl AnyServer {
         any_server_dispatch!(self, |s| match s.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
-            Some(app) =>
-                bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
+            Some(app) => bun_opaque::opaque_deref(app).publish(topic, message, opcode, compress),
             // Defensive for the post-stop window; assert in debug to catch misuse.
             None => {
                 debug_assert!(false, "publish on server with no app");

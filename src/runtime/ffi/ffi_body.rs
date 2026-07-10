@@ -275,7 +275,7 @@ impl Source {
 
     pub(crate) fn add(
         &self,
-        state: &mut TCC::State,
+        state: &TCC::State,
         current_file_for_errors: &mut ZBox,
     ) -> Result<(), bun_core::Error> {
         match self {
@@ -346,7 +346,7 @@ mod stdarg {
             static FFI_STDERRP: AtomicPtr<c_void>;
         }
 
-        pub(super) fn inject(state: &mut TCC::State) {
+        pub(super) fn inject(state: &TCC::State) {
             // Taking addresses of process-global FILE* pointers; the statics
             // live for the process and we never form a Rust reference to them
             // (only a raw `*const c_void` for tcc_add_symbol).
@@ -368,10 +368,10 @@ mod stdarg {
     #[cfg(not(target_os = "macos"))]
     mod mac {
         use super::*;
-        pub(super) fn inject(_: &mut TCC::State) {}
+        pub(super) fn inject(_: &TCC::State) {}
     }
 
-    pub(super) fn inject(state: &mut TCC::State) {
+    pub(super) fn inject(state: &TCC::State) {
         state
             .add_symbols(&[
                 // printf family
@@ -645,9 +645,7 @@ impl CompileC {
                 return Err(bun_core::err!("DeferredErrors"));
             }
         };
-        // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`;
-        // we hold the only reference for the rest of this function.
-        let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
+        let state: &TCC::State = TCC::State::opaque_ref(state_ptr.as_ptr());
 
         if let Some(compiler_rt_dir) = CompilerRT::dir() {
             if state.add_sys_include_path(compiler_rt_dir).is_err() {
@@ -2010,8 +2008,7 @@ impl Function {
             // SAFETY: we own the state
             unsafe { TCC::State::destroy(s.as_ptr()) };
         });
-        // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`.
-        let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
+        let state: &TCC::State = TCC::State::opaque_ref(state_ptr.as_ptr());
 
         if let Some(env) = napi_env {
             // `env` is the live VM-owned napi env; process-lifetime.
@@ -2134,8 +2131,7 @@ impl Function {
             // SAFETY: we own the state
             unsafe { TCC::State::destroy(s.as_ptr()) };
         });
-        // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`.
-        let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
+        let state: &TCC::State = TCC::State::opaque_ref(state_ptr.as_ptr());
 
         if self.needs_napi_env() {
             if state
@@ -2627,7 +2623,7 @@ impl CompilerRT {
         }
     }
 
-    pub(crate) fn define(state: &mut TCC::State) {
+    pub(crate) fn define(state: &TCC::State) {
         #[cfg(target_arch = "x86_64")]
         {
             state.define_symbol(zstr!("NEEDS_COMPILER_RT_FUNCTIONS"), zstr!("1"));
@@ -2671,7 +2667,7 @@ impl CompilerRT {
         ]);
     }
 
-    pub(crate) fn inject(state: &mut TCC::State) {
+    pub(crate) fn inject(state: &TCC::State) {
         state
             .add_symbol(zstr!("memset"), Self::memset as *const c_void)
             .expect("unreachable");

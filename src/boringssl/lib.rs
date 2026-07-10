@@ -99,7 +99,7 @@ type SslCustomVerifyCb =
 
 unsafe extern "C" {
     fn SSL_CTX_set_custom_verify(
-        ctx: *mut boring::SSL_CTX,
+        ctx: *mut boring::sys::SSL_CTX,
         mode: c_int,
         callback: SslCustomVerifyCb,
     );
@@ -114,7 +114,7 @@ unsafe extern "C" fn noop_custom_verify(
 
 /// `Send + Sync` newtype around the process-lifetime client `SSL_CTX*` so it
 /// can sit inside a `OnceLock` (raw pointers opt out of `Send`/`Sync`).
-struct CtxStore(ptr::NonNull<boring::SSL_CTX>);
+struct CtxStore(ptr::NonNull<boring::sys::SSL_CTX>);
 // SAFETY: `SSL_CTX` is internally thread-safe per BoringSSL docs (its refcount
 // and method tables are guarded by `CRYPTO_MUTEX`); we only ever bump the
 // refcount and hand it to `SSL_new`, both of which BoringSSL documents as
@@ -138,11 +138,12 @@ std::thread_local! {
 ///
 /// # Safety
 /// `ctx` must be a live `SSL_CTX*`.
-pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
+pub unsafe fn ssl_ctx_setup(ctx: *mut boring::sys::SSL_CTX) {
+    let ctx = boring::sys::SSL_CTX::opaque_ref(ctx);
     AUTO_CRYPTO_BUFFER_POOL.with(|pool| {
-        // SAFETY: caller guarantees `ctx` is a live `SSL_CTX*`; the pool pointer
-        // is either freshly returned by `CRYPTO_BUFFER_POOL_new` or a previously
-        // stored thread-local pool, and `SSL_DEFAULT_CIPHER_LIST` is a valid C string.
+        // SAFETY: the pool pointer is either freshly returned by
+        // `CRYPTO_BUFFER_POOL_new` or a previously stored thread-local pool, and
+        // `SSL_DEFAULT_CIPHER_LIST` is a valid C string.
         unsafe {
             if pool.get().is_null() {
                 pool.set(CRYPTO_BUFFER_POOL_new());
@@ -159,7 +160,7 @@ pub fn init_client() -> *mut boring::SSL {
         // Bump the refcount on every call after the first; the first call's
         // `SSL_CTX_new` already returns refcount = 1.
         if let Some(stored) = CTX_STORE.get() {
-            let _ = boring::SSL_CTX_up_ref(stored.0.as_ptr());
+            let _ = boring::SSL_CTX_up_ref(boring::sys::SSL_CTX::opaque_ref(stored.0.as_ptr()));
         }
         let ctx = CTX_STORE
             .get_or_init(|| {
@@ -167,15 +168,17 @@ pub fn init_client() -> *mut boring::SSL {
                 //   1. SSL_CTX_new(TLS_with_buffers_method())
                 //   2. setCustomVerify(noop_custom_verify) → SSL_CTX_set_custom_verify(ctx, 0, cb)
                 //   3. setup() → CRYPTO_BUFFER_POOL_new + set0_buffer_pool + set_cipher_list("ALL")
-                let ctx = boring::SSL_CTX_new(boring::TLS_with_buffers_method());
-                SSL_CTX_set_custom_verify(ctx, 0, Some(noop_custom_verify));
-                ssl_ctx_setup(ctx);
-                CtxStore(ptr::NonNull::new(ctx).expect("SSL_CTX_new"))
+                let ctx =
+                    boring::SSL_CTX::new(boring::TLS_with_buffers_method()).expect("SSL_CTX_new");
+                SSL_CTX_set_custom_verify(ctx.as_ptr(), 0, Some(noop_custom_verify));
+                ssl_ctx_setup(ctx.as_ptr());
+                // Process-lifetime: this +1 is never given back.
+                CtxStore(ctx.leak())
             })
             .0
             .as_ptr();
 
-        let ssl = boring::SSL_new(ctx);
+        let ssl = boring::SSL_new(boring::sys::SSL_CTX::opaque_ref(ctx));
         boring::SSL_set_connect_state(ssl);
 
         ssl
@@ -353,7 +356,9 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                     None
                 };
 
-                if let Some(names) = boring::GeneralNames::from_raw(boring::X509V3_EXT_d2i(ext)) {
+                if let Some(names) =
+                    boring::struct_stack_st_GENERAL_NAME::from_raw(boring::X509V3_EXT_d2i(ext))
+                {
                     for name in names.iter() {
                         match name.name_type {
                             boring::GEN_URI => {

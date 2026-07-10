@@ -1025,6 +1025,7 @@ dependencies = [
  "bun_ast",
  "bun_collections",
  "bun_core",
+ "bun_opaque",
  "bun_semver",
  "bun_wyhash",
  "const_format",

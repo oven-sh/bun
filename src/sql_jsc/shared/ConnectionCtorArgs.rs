@@ -42,8 +42,8 @@ pub(crate) type TlsGuard = scopeguard::ScopeGuard<GuardState, fn(GuardState)>;
 pub(crate) fn guard_tls(secure: Option<*mut uws::SslCtx>, tls_config: SSLConfig) -> TlsGuard {
     fn free((secure, _tls_config): GuardState) {
         if let Some(s) = secure {
-            // SAFETY: `secure` holds one `ssl_ctx_cache` reference owned by the caller.
-            unsafe { bun_boringssl_sys::SSL_CTX_free(s) };
+            // `secure` holds one `ssl_ctx_cache` reference owned by the caller.
+            bun_boringssl_sys::SSL_CTX_free(uws::SslCtx::opaque_ref(s));
         }
     }
     scopeguard::guard((secure, tls_config), free as fn(GuardState))

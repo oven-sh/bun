@@ -12,7 +12,7 @@ use bun_ptr::IntrusiveRc;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
 // resolve `<SSL>` as a type arg (E0747). Use the qualified path instead.
-use bun_boringssl_sys::SSL_CTX;
+use bun_boringssl_sys::sys::SSL_CTX;
 use bun_collections::VecExt;
 use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
@@ -1165,7 +1165,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             if let Some(promise) = handlers.take_promise() {
                 // reject the promise on connect() error
-                let js_promise = jsc::JSPromise::opaque_mut(promise.as_promise().unwrap());
+                let js_promise = jsc::JSPromise::opaque_ref(promise.as_promise().unwrap());
                 let err_value = err.to_error_instance_with_async_stack(&global, js_promise);
                 js_promise.reject(&global, Ok(err_value))?;
             } else {
@@ -1199,7 +1199,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else if let Some(val) = handlers.take_promise() {
             // They've defined a `connectError` callback
             // The error is effectively handled, but we should still reject the promise.
-            let promise = jsc::JSPromise::opaque_mut(JSValue::as_promise(val).unwrap());
+            let promise = jsc::JSPromise::opaque_ref(JSValue::as_promise(val).unwrap());
             let err_ = err_for_promise
                 .take()
                 .to_error_instance_with_async_stack(&global, promise);
@@ -3051,8 +3051,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             drop(connection);
         }
         if let Some(ctx) = this_ref.owned_ssl_ctx.take() {
-            // SAFETY: BoringSSL FFI; we hold one owned ref.
-            unsafe { boringssl_sys::SSL_CTX_free(ctx) };
+            // We hold one owned ref; give it back.
+            boringssl_sys::SSL_CTX_free(SSL_CTX::opaque_ref(ctx));
         }
         // SAFETY: `this` was heap-allocated in `new()`.
         drop(unsafe { bun_core::heap::take(this) });
@@ -3211,7 +3211,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `tls:` options. Either way `owned_ctx` holds one ref we drop in
         // deinit; SSL_new() takes its own.
         //
-        let owned_ctx: Option<boringssl_sys::OwnedSslCtx>;
+        let owned_ctx: Option<boringssl_sys::SSL_CTX>;
         let mut ssl_opts: Option<SSLConfig> = None;
         // Drop frees ssl_opts.
 
@@ -3241,8 +3241,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             };
             // `borrow()` returns a +1 ref (it calls `SSL_CTX_up_ref`).
             // SAFETY: that ref is ours to release.
-            owned_ctx =
-                unsafe { boringssl_sys::OwnedSslCtx::from_raw(sc.borrow().cast::<SSL_CTX>()) };
+            owned_ctx = unsafe { boringssl_sys::SSL_CTX::adopt_ptr(sc.borrow()) };
             // servername / ALPN still come from the surrounding tls config.
             if let Some(t) = opts.get_truthy(global, "tls")? {
                 if !t.is_boolean() {
@@ -3284,7 +3283,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             };
             owned_ctx = match cache.with_mut(|c| c.get_or_create(cfg, &mut create_err)) {
                 // SAFETY: `get_or_create` hands back a +1 ref.
-                Some(c) => unsafe { boringssl_sys::OwnedSslCtx::from_raw(c.cast::<SSL_CTX>()) },
+                Some(c) => unsafe { boringssl_sys::SSL_CTX::adopt_ptr(c) },
                 None => {
                     // us_ssl_ctx_from_options only sets *err for the CA/cipher
                     // cases; bad cert/key/DH return NULL with err==.none and the
@@ -3316,7 +3315,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let vm = handlers.vm;
 
         // The +1 `SSL_CTX` ref transfers into `tls.owned_ssl_ctx` below.
-        let owned_ctx_taken = owned_ctx.map(|c| c.into_raw());
+        let owned_ctx_taken = owned_ctx.map(|c| c.leak().as_ptr());
 
         let cfg = ssl_opts.as_ref();
         let tls: bun_ptr::ThisPtr<TLSSocket> = TLSSocket::new(TLSSocket {
@@ -3449,7 +3448,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         tls.twin
             .set(Some(unsafe { IntrusiveRc::from_raw(raw.as_ptr()) }));
         // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(new_raw.as_ptr()).set_ssl_raw_tap(true);
+        bun_opaque::opaque_deref(new_raw.as_ptr()).set_ssl_raw_tap(true);
 
         let tls_js_value = tls.get_this_value(global);
         let raw_js_value = raw_ref.get_this_value(global);
@@ -3471,17 +3470,17 @@ impl<const SSL: bool> NewSocket<SSL> {
         // it before ext was repointed would have ALPN/onOpen land in the
         // dead TCPSocket.
         TLSSocket::on_open(tls, tls.socket.get());
-        bun_opaque::opaque_deref_mut(new_raw.as_ptr()).start_tls_handshake();
+        bun_opaque::opaque_deref(new_raw.as_ptr()).start_tls_handshake();
         // The socket being wrapped may have had its readable interest off (an
         // accepted socket nobody was reading yet — its ClientHello is still in
         // the kernel buffer); make sure the adopted TLS socket is reading so
         // the handshake can be driven. A no-op when it was already reading.
-        bun_opaque::opaque_deref_mut(new_raw.as_ptr()).resume();
+        bun_opaque::opaque_deref(new_raw.as_ptr()).resume();
         // Feed bytes that arrived before the upgrade (already pulled off the fd
         // by the plain-TCP layer) into the TLS engine exactly as if they had
         // just been received — for a server-side wrap this is the ClientHello.
         if !initial_data.is_empty() {
-            bun_opaque::opaque_deref_mut(new_raw.as_ptr()).tls_feed(initial_data.as_slice());
+            bun_opaque::opaque_deref(new_raw.as_ptr()).tls_feed(initial_data.as_slice());
         }
 
         let array = JSValue::create_empty_array(global, 2)?;
@@ -4130,8 +4129,8 @@ impl DuplexUpgradeContext {
         // Close raced ahead of StartTLS — drop the unconsumed config.
         self.ssl_config = None;
         if let Some(ctx) = self.owned_ctx.take() {
-            // SAFETY: BoringSSL FFI; we hold one owned ref.
-            unsafe { boringssl_sys::SSL_CTX_free(ctx) };
+            // We hold one owned ref; give it back.
+            boringssl_sys::SSL_CTX_free(SSL_CTX::opaque_ref(ctx));
         }
     }
 }
@@ -4191,7 +4190,7 @@ pub fn js_upgrade_duplex_to_tls(
     // duplex/named-pipe path shares one `SSL_CTX_new` with everyone else.
     // node:net wraps `[buntls]`'s return as `opts.tls.secureContext`; userland
     // may also pass it top-level. Same lookup as `upgradeTLS` above.
-    let mut owned_ctx: Option<boringssl_sys::OwnedSslCtx> = None;
+    let mut owned_ctx: Option<boringssl_sys::SSL_CTX> = None;
     let sc_js: JSValue = 'blk: {
         if let Some(v) = opts.get_truthy(global, "secureContext")? {
             break 'blk v;
@@ -4215,7 +4214,7 @@ pub fn js_upgrade_duplex_to_tls(
         };
         // `borrow()` returns a +1 ref (it calls `SSL_CTX_up_ref`).
         // SAFETY: that ref is ours to release.
-        owned_ctx = unsafe { boringssl_sys::OwnedSslCtx::from_raw(sc.borrow().cast::<SSL_CTX>()) };
+        owned_ctx = unsafe { boringssl_sys::SSL_CTX::adopt_ptr(sc.borrow()) };
     }
 
     // Still parse SSLConfig for servername/ALPN (those live on the JS-side
@@ -4267,7 +4266,7 @@ pub fn js_upgrade_duplex_to_tls(
     TLSSocket::data_set_cached(tls_js_value, global, default_data);
 
     // The +1 `SSL_CTX` ref transfers into `DuplexUpgradeContext.owned_ctx` below.
-    let owned_ctx_taken = owned_ctx.map(|c| c.into_raw());
+    let owned_ctx_taken = owned_ctx.map(|c| c.leak().as_ptr());
 
     // `DuplexUpgradeContext` is self-referential: `task.ctx` and
     // `upgrade.handlers.ctx` both point at the containing allocation, and

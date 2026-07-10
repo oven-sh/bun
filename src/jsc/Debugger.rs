@@ -731,7 +731,7 @@ bun_opaque::opaque_ffi! { pub struct TestReporterHandle; }
 // by-value scalars.
 unsafe extern "C" {
     safe fn Bun__TestReporterAgentReportTestFound(
-        agent: &mut TestReporterHandle,
+        agent: &TestReporterHandle,
         call_frame: &CallFrame,
         test_id: c_int,
         name: &mut BunString,
@@ -739,7 +739,7 @@ unsafe extern "C" {
         parent_id: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestFoundWithLocation(
-        agent: &mut TestReporterHandle,
+        agent: &TestReporterHandle,
         test_id: c_int,
         name: &mut BunString,
         item_type: TestType,
@@ -747,9 +747,9 @@ unsafe extern "C" {
         source_url: &mut BunString,
         line: c_int,
     );
-    safe fn Bun__TestReporterAgentReportTestStart(agent: &mut TestReporterHandle, test_id: c_int);
+    safe fn Bun__TestReporterAgentReportTestStart(agent: &TestReporterHandle, test_id: c_int);
     safe fn Bun__TestReporterAgentReportTestEnd(
-        agent: &mut TestReporterHandle,
+        agent: &TestReporterHandle,
         test_id: c_int,
         bun_test_status: TestStatus,
         elapsed: f64,
@@ -758,7 +758,7 @@ unsafe extern "C" {
 
 impl TestReporterHandle {
     pub fn report_test_found(
-        &mut self,
+        &self,
         call_frame: &CallFrame,
         test_id: i32,
         name: &mut BunString,
@@ -771,7 +771,7 @@ impl TestReporterHandle {
     }
 
     pub fn report_test_found_with_location(
-        &mut self,
+        &self,
         test_id: i32,
         name: &mut BunString,
         item_type: TestType,
@@ -784,11 +784,11 @@ impl TestReporterHandle {
         );
     }
 
-    pub fn report_test_start(&mut self, test_id: c_int) {
+    pub fn report_test_start(&self, test_id: c_int) {
         Bun__TestReporterAgentReportTestStart(self, test_id);
     }
 
-    pub fn report_test_end(&mut self, test_id: c_int, bun_test_status: TestStatus, elapsed: f64) {
+    pub fn report_test_end(&self, test_id: c_int, bun_test_status: TestStatus, elapsed: f64) {
         Bun__TestReporterAgentReportTestEnd(self, test_id, bun_test_status, elapsed);
     }
 }
@@ -827,16 +827,16 @@ pub fn test_reporter_agent_disable(_agent: *mut TestReporterHandle) {
 }
 
 impl TestReporterAgent {
-    /// Safe `&mut TestReporterHandle` accessor — `handle` is a live C++
+    /// Safe `&TestReporterHandle` accessor — `handle` is a live C++
     /// `Inspector::TestReporterAgent*` once the agent is enabled. Caller must
     /// ensure `is_enabled()` (handle != null).
     #[inline]
-    fn handle_mut(&mut self) -> &mut TestReporterHandle {
+    fn handle_ref(&self) -> &TestReporterHandle {
         debug_assert!(!self.handle.is_null());
         // Caller contract — `is_enabled()` checked; handle is a live C++ heap
         // allocation owned by the inspector backend. `TestReporterHandle` is an
-        // opaque ZST handle so the deref is the centralised `opaque_mut` proof.
-        TestReporterHandle::opaque_mut(self.handle)
+        // opaque ZST handle so the deref is the centralised `opaque_ref` proof.
+        TestReporterHandle::opaque_ref(self.handle)
     }
 
     /// Caller must ensure that it is enabled first.
@@ -851,20 +851,20 @@ impl TestReporterAgent {
         parent_id: i32,
     ) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestFound");
-        self.handle_mut()
+        self.handle_ref()
             .report_test_found(call_frame, test_id, name, item_type, parent_id);
     }
 
     /// Caller must ensure that it is enabled first.
     pub fn report_test_start(&mut self, test_id: i32) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestStart");
-        self.handle_mut().report_test_start(test_id);
+        self.handle_ref().report_test_start(test_id);
     }
 
     /// Caller must ensure that it is enabled first.
     pub fn report_test_end(&mut self, test_id: i32, bun_test_status: TestStatus, elapsed: f64) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestEnd");
-        self.handle_mut()
+        self.handle_ref()
             .report_test_end(test_id, bun_test_status, elapsed);
     }
 
@@ -886,30 +886,27 @@ bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
 // via `UnsafeCell`); `ZigException` is a `#[repr(C)]` out-param the C++ side
 // reads/fills in-place.
 unsafe extern "C" {
-    safe fn Bun__LifecycleAgentReportReload(agent: &mut LifecycleHandle);
-    safe fn Bun__LifecycleAgentReportError(
-        agent: &mut LifecycleHandle,
-        exception: &mut ZigException,
-    );
-    safe fn Bun__LifecycleAgentPreventExit(agent: &mut LifecycleHandle);
-    safe fn Bun__LifecycleAgentStopPreventingExit(agent: &mut LifecycleHandle);
+    safe fn Bun__LifecycleAgentReportReload(agent: &LifecycleHandle);
+    safe fn Bun__LifecycleAgentReportError(agent: &LifecycleHandle, exception: &mut ZigException);
+    safe fn Bun__LifecycleAgentPreventExit(agent: &LifecycleHandle);
+    safe fn Bun__LifecycleAgentStopPreventingExit(agent: &LifecycleHandle);
 }
 
 impl LifecycleHandle {
-    pub fn prevent_exit(&mut self) {
+    pub fn prevent_exit(&self) {
         Bun__LifecycleAgentPreventExit(self)
     }
 
-    pub fn stop_preventing_exit(&mut self) {
+    pub fn stop_preventing_exit(&self) {
         Bun__LifecycleAgentStopPreventingExit(self)
     }
 
-    pub fn report_reload(&mut self) {
+    pub fn report_reload(&self) {
         bun_core::scoped_log!(LifecycleAgent, "reportReload");
         Bun__LifecycleAgentReportReload(self)
     }
 
-    pub fn report_error(&mut self, exception: &mut ZigException) {
+    pub fn report_error(&self, exception: &mut ZigException) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
         Bun__LifecycleAgentReportError(self, exception)
     }
@@ -938,15 +935,15 @@ pub fn lifecycle_agent_disable(_agent: *mut LifecycleHandle) {
 impl LifecycleAgent {
     /// Safe optional accessor — wraps the null check + raw deref.
     #[inline]
-    fn handle_mut(&mut self) -> Option<&mut LifecycleHandle> {
+    fn handle_ref(&self) -> Option<&LifecycleHandle> {
         // `handle` is null or a live C++ heap allocation owned by the inspector
         // backend. `LifecycleHandle` is an opaque ZST handle so the deref is
-        // the centralised `opaque_mut` proof.
-        core::ptr::NonNull::new(self.handle).map(|p| LifecycleHandle::opaque_mut(p.as_ptr()))
+        // the centralised `opaque_ref` proof.
+        core::ptr::NonNull::new(self.handle).map(|p| LifecycleHandle::opaque_ref(p.as_ptr()))
     }
 
     pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
-        if let Some(h) = self.handle_mut() {
+        if let Some(h) = self.handle_ref() {
             h.report_error(exception);
         }
     }

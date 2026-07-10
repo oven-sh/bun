@@ -33,7 +33,7 @@ impl Params {
 
 #[derive(Default)]
 pub struct RareData {
-    libdeflate_decompressor: Option<libdeflate_sys::OwnedDecompressor>,
+    libdeflate_decompressor: Option<libdeflate_sys::Decompressor>,
     // PERF: a 128KB inline buffer reused as scratch for (de)compression
     // output could avoid per-call allocation — profile if hot.
 }
@@ -46,11 +46,11 @@ impl RareData {
         Vec::with_capacity(Self::STACK_BUFFER_SIZE)
     }
 
-    pub fn decompressor(&mut self) -> Option<&mut libdeflate_sys::Decompressor> {
+    pub fn decompressor(&mut self) -> Option<&libdeflate_sys::Decompressor> {
         if self.libdeflate_decompressor.is_none() {
-            self.libdeflate_decompressor = libdeflate_sys::OwnedDecompressor::new();
+            self.libdeflate_decompressor = libdeflate_sys::Decompressor::new();
         }
-        self.libdeflate_decompressor.as_deref_mut()
+        self.libdeflate_decompressor.as_ref()
     }
 }
 

@@ -56,17 +56,17 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
 // ────────────────────────────────────────────────────────────────────────────
 
 #[inline]
-fn as_dom_form_data<'a>(value: JSValue) -> Option<&'a mut DOMFormData> {
+fn as_dom_form_data<'a>(value: JSValue) -> Option<&'a DOMFormData> {
     // `DOMFormData` is an opaque C++ type without a `#[bun_jsc::JsClass]` derive;
     // route through the hand-written `from_js` (`DOMFormData.rs`) instead of
     // `value.as_::<DOMFormData>()`.
     DOMFormData::from_js(value)
 }
 #[inline]
-fn as_url_search_params<'a>(value: JSValue) -> Option<&'a mut URLSearchParams> {
+fn as_url_search_params<'a>(value: JSValue) -> Option<&'a URLSearchParams> {
     // See `as_dom_form_data` — opaque C++ type, hand-written `from_js`.
     // `URLSearchParams` is an opaque ZST FFI handle (S008) — safe deref.
-    URLSearchParams::from_js(value).map(|p| bun_opaque::opaque_deref_mut(p.as_ptr()))
+    URLSearchParams::from_js(value).map(|p| bun_opaque::opaque_deref(p.as_ptr()))
 }
 
 bun_core::declare_scope!(BodyValue, visible);

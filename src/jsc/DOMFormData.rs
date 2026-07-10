@@ -14,36 +14,32 @@ unsafe extern "C" {
         arg0: &JSGlobalObject,
         arg1: &ZigString,
     ) -> JSValue;
-    // safe: `DOMFormData` is an `opaque_ffi!` ZST handle (`&mut` is ABI-identical
-    // to a non-null `*mut`); `arg1` is an opaque round-trip pointer C++ only
-    // forwards to `arg2` (synchronous, never retained or dereferenced as Rust data).
+    // safe: `DOMFormData` is an `opaque_ffi!` ZST handle (`&` is ABI-identical to a
+    // non-null pointer and carries no `noalias`/`readonly`); `arg1` is an opaque
+    // round-trip pointer C++ only forwards to `arg2` (synchronous, never retained).
     safe fn WebCore__DOMFormData__toQueryString(
-        arg0: &mut DOMFormData,
+        arg0: &DOMFormData,
         arg1: *mut c_void,
         arg2: extern "C" fn(arg0: *mut c_void, arg1: *mut ZigString),
     );
     safe fn WebCore__DOMFormData__fromJS(js_value0: JSValue) -> *mut DOMFormData;
-    safe fn WebCore__DOMFormData__append(
-        arg0: &mut DOMFormData,
-        arg1: &ZigString,
-        arg2: &ZigString,
-    );
+    safe fn WebCore__DOMFormData__append(arg0: &DOMFormData, arg1: &ZigString, arg2: &ZigString);
     // safe: `DOMFormData`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST
     // handles; `&ZigString` is ABI-identical to non-null `*const ZigString` and
     // C++ only reads the named struct via `toStringCopy`. `arg3` is an opaque
     // `*Blob` C++ owns (never dereferenced as Rust data) — same round-trip
     // contract as `Zig__GlobalObject__resetModuleRegistryMap`'s `map` param.
     safe fn WebCore__DOMFormData__appendBlob(
-        arg0: &mut DOMFormData,
+        arg0: &DOMFormData,
         arg1: &JSGlobalObject,
         arg2: &ZigString,
         arg3: *mut c_void,
         arg4: &ZigString,
     );
-    safe fn WebCore__DOMFormData__count(arg0: &mut DOMFormData) -> usize;
+    safe fn WebCore__DOMFormData__count(arg0: &DOMFormData) -> usize;
 
     // safe: same opaque-handle/round-trip-ctx contract as `toQueryString` above.
-    safe fn DOMFormData__forEach(this: &mut DOMFormData, ctx: *mut c_void, cb: ForEachFunction);
+    safe fn DOMFormData__forEach(this: &DOMFormData, ctx: *mut c_void, cb: ForEachFunction);
 }
 
 impl DOMFormData {
@@ -63,7 +59,7 @@ impl DOMFormData {
 
     // The closure environment is the ctx pointer; the generic trampoline
     // below unwraps it and invokes the closure.
-    pub fn to_query_string<F>(&mut self, callback: &mut F)
+    pub fn to_query_string<F>(&self, callback: &mut F)
     where
         F: FnMut(ZigString),
     {
@@ -83,23 +79,20 @@ impl DOMFormData {
         );
     }
 
-    pub fn from_js<'a>(value: JSValue) -> Option<&'a mut DOMFormData> {
-        // Returned pointer is valid while `value` is kept alive on the stack
-        // (conservative GC scan). Null → None. `DOMFormData` is an opaque ZST
-        // handle, so `opaque_mut` is the centralised zero-byte deref proof.
-        // The unbounded `'a` cannot be expressed more tightly: the cell is
-        // GC-owned, so the caller must keep `value` stack-rooted for the
-        // lifetime of the returned reference.
+    pub fn from_js<'a>(value: JSValue) -> Option<&'a DOMFormData> {
+        // Valid while `value` stays stack-rooted (conservative GC scan); null → None.
+        // `opaque_ref` is the centralised zero-byte deref proof. `'a` is unbounded
+        // because the cell is GC-owned, not borrowed from `value`.
         let p = WebCore__DOMFormData__fromJS(value);
-        (!p.is_null()).then(|| DOMFormData::opaque_mut(p))
+        (!p.is_null()).then(|| DOMFormData::opaque_ref(p))
     }
 
-    pub fn append(&mut self, name_: &ZigString, value_: &ZigString) {
+    pub fn append(&self, name_: &ZigString, value_: &ZigString) {
         WebCore__DOMFormData__append(self, name_, value_)
     }
 
     pub fn append_blob(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         name_: &ZigString,
         blob: *mut c_void,
@@ -108,7 +101,7 @@ impl DOMFormData {
         WebCore__DOMFormData__appendBlob(self, global, name_, blob, filename_);
     }
 
-    pub fn count(&mut self) -> usize {
+    pub fn count(&self) -> usize {
         WebCore__DOMFormData__count(self)
     }
 
@@ -117,7 +110,7 @@ impl DOMFormData {
     // hands it as `*mut c_void`; this fn is generic over `B` so the caller (in
     // `bun_runtime`) names the concrete `Blob` type and gets a typed `&B`
     // borrow without `bun_jsc` ever seeing the layout.
-    pub fn for_each<B, F>(&mut self, callback: &mut F)
+    pub fn for_each<B, F>(&self, callback: &mut F)
     where
         F: FnMut(ZigString, FormDataEntry<'_, B>),
     {

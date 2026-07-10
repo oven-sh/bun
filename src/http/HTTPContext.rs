@@ -8,7 +8,7 @@ use crate::{
     self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, get_cert_error_from_no, h2,
 };
 use bun_boringssl::ssl_ctx_setup;
-use bun_boringssl_sys::SSL_CTX;
+use bun_boringssl_sys::sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
 use bun_core::{self, Error, FeatureFlags};
@@ -1108,8 +1108,7 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
         }
         if SSL {
             if let Some(c) = self.secure {
-                // SAFETY: we own one ref on the SSL_CTX.
-                unsafe { bun_boringssl_sys::SSL_CTX_free(c) };
+                bun_boringssl_sys::SSL_CTX_free(SSL_CTX::opaque_ref(c));
             }
         }
         // Note: `bun.default_allocator.destroy(this)` is the Box drop

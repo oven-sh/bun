@@ -6,7 +6,7 @@
 use core::ffi::{c_char, c_long};
 use core::ptr;
 
-use bun_boringssl_sys::SSL_CTX;
+use bun_boringssl_sys::sys::SSL_CTX;
 
 use crate::create_bun_socket_error_t;
 

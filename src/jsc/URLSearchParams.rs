@@ -12,11 +12,11 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     safe fn URLSearchParams__create(global_object: &JSGlobalObject, init: &ZigString) -> JSValue;
     safe fn URLSearchParams__fromJS(value: JSValue) -> Option<NonNull<URLSearchParams>>;
-    // safe: `URLSearchParams` is an `opaque_ffi!` ZST handle (`&mut` is
-    // ABI-identical to a non-null `*mut`); `ctx` is an opaque round-trip pointer
-    // C++ only forwards to `callback` (synchronous, never retained).
+    // safe: `URLSearchParams` is an `opaque_ffi!` ZST handle (`&` is ABI-identical
+    // to a non-null pointer and carries no `noalias`/`readonly`); `ctx` is an opaque
+    // round-trip pointer C++ only forwards to `callback` (synchronous, never retained).
     safe fn URLSearchParams__toString(
-        self_: &mut URLSearchParams,
+        self_: &URLSearchParams,
         ctx: *mut c_void,
         callback: extern "C" fn(ctx: *mut c_void, str: *const ZigString),
     );
@@ -33,7 +33,7 @@ impl URLSearchParams {
         URLSearchParams__fromJS(value)
     }
 
-    pub fn to_string<Ctx>(&mut self, ctx: &mut Ctx, callback: fn(ctx: &mut Ctx, str: ZigString)) {
+    pub fn to_string<Ctx>(&self, ctx: &mut Ctx, callback: fn(ctx: &mut Ctx, str: ZigString)) {
         // A fn pointer cannot be a const generic, so pack (ctx, callback) on the
         // stack and pass the pair through the C trampoline's void* context.
         struct Wrap<'a, Ctx> {

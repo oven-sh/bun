@@ -406,7 +406,7 @@ impl WindowsNamedPipeContext {
         global_this: &JSGlobalObject,
         fd: Fd,
         ssl_config: Option<SSLConfig>,
-        owned_ctx: Option<*mut boringssl::SSL_CTX>,
+        owned_ctx: Option<*mut boringssl::sys::SSL_CTX>,
         socket: SocketType,
     ) -> Result<*mut WindowsNamedPipe, bun_core::Error> {
         // TODO: reuse the same context for multiple connections when possibles
@@ -429,7 +429,7 @@ impl WindowsNamedPipeContext {
         global_this: &JSGlobalObject,
         path: &[u8],
         ssl_config: Option<SSLConfig>,
-        owned_ctx: Option<*mut boringssl::SSL_CTX>,
+        owned_ctx: Option<*mut boringssl::sys::SSL_CTX>,
         socket: SocketType,
     ) -> Result<*mut WindowsNamedPipe, bun_core::Error> {
         // TODO: reuse the same context for multiple connections when possibles

@@ -99,9 +99,9 @@ fn vt(s: *mut us_socket_t) -> &'static VTable {
 
 #[inline]
 fn vtc(c: *mut ConnectingSocket) -> &'static VTable {
-    // `ConnectingSocket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
+    // `ConnectingSocket` is an `opaque_ffi!` ZST — `opaque_ref` is the safe
     // deref (loop.c only dispatches live, non-null connecting sockets).
-    let c = ConnectingSocket::opaque_mut(c);
+    let c = ConnectingSocket::opaque_ref(c);
     let kind = c.kind();
     match kind {
         SocketKind::Invalid => {

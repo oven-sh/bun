@@ -48,7 +48,7 @@ impl Socket {
     }
 
     pub fn send(
-        &mut self,
+        &self,
         payloads: &[*const u8],
         lengths: &[usize],
         addresses: &[*const c_void],
@@ -66,60 +66,60 @@ impl Socket {
         }
     }
 
-    pub fn user(&mut self) -> *mut c_void {
+    pub fn user(&self) -> *mut c_void {
         us_udp_socket_user(self)
     }
 
     /// Get the bound port in host byte order
-    pub fn bound_port(&mut self) -> c_int {
+    pub fn bound_port(&self) -> c_int {
         us_udp_socket_bound_port(self)
     }
 
-    pub fn bound_ip(&mut self, buf: *mut u8, length: &mut i32) {
+    pub fn bound_ip(&self, buf: *mut u8, length: &mut i32) {
         // SAFETY: buf must point to at least *length bytes; thin FFI passthrough.
         unsafe { us_udp_socket_bound_ip(self, buf, length) }
     }
 
-    pub fn remote_ip(&mut self, buf: *mut u8, length: &mut i32) {
+    pub fn remote_ip(&self, buf: *mut u8, length: &mut i32) {
         // SAFETY: buf must point to at least *length bytes; thin FFI passthrough.
         unsafe { us_udp_socket_remote_ip(self, buf, length) }
     }
 
-    pub fn close(&mut self) {
+    pub fn close(&self) {
         us_udp_socket_close(self)
     }
 
-    pub fn connect(&mut self, hostname: *const c_char, port: c_uint) -> c_int {
+    pub fn connect(&self, hostname: *const c_char, port: c_uint) -> c_int {
         // SAFETY: thin FFI passthrough; hostname must be NUL-terminated per uSockets.
         unsafe { us_udp_socket_connect(self, hostname, port) }
     }
 
-    pub fn disconnect(&mut self) -> c_int {
+    pub fn disconnect(&self) -> c_int {
         us_udp_socket_disconnect(self)
     }
 
-    pub fn set_broadcast(&mut self, enabled: bool) -> c_int {
+    pub fn set_broadcast(&self, enabled: bool) -> c_int {
         us_udp_socket_set_broadcast(self, enabled as c_int)
     }
 
-    pub fn set_unicast_ttl(&mut self, ttl: i32) -> c_int {
+    pub fn set_unicast_ttl(&self, ttl: i32) -> c_int {
         us_udp_socket_set_ttl_unicast(self, ttl as c_int)
     }
 
-    pub fn set_multicast_ttl(&mut self, ttl: i32) -> c_int {
+    pub fn set_multicast_ttl(&self, ttl: i32) -> c_int {
         us_udp_socket_set_ttl_multicast(self, ttl as c_int)
     }
 
-    pub fn set_multicast_loopback(&mut self, enabled: bool) -> c_int {
+    pub fn set_multicast_loopback(&self, enabled: bool) -> c_int {
         us_udp_socket_set_multicast_loopback(self, enabled as c_int)
     }
 
-    pub fn set_multicast_interface(&mut self, iface: &sockaddr_storage) -> c_int {
+    pub fn set_multicast_interface(&self, iface: &sockaddr_storage) -> c_int {
         us_udp_socket_set_multicast_interface(self, iface)
     }
 
     pub fn set_membership(
-        &mut self,
+        &self,
         address: &sockaddr_storage,
         iface: Option<&sockaddr_storage>,
         drop: bool,
@@ -128,7 +128,7 @@ impl Socket {
     }
 
     pub fn set_source_specific_membership(
-        &mut self,
+        &self,
         source: &sockaddr_storage,
         group: &sockaddr_storage,
         iface: Option<&sockaddr_storage>,
@@ -138,6 +138,9 @@ impl Socket {
     }
 }
 
+// `Socket` is an `opaque_ffi!` ZST: `&Socket` is ABI-identical to a non-null
+// `us_udp_socket_t*` and carries no `noalias`/`readonly` — C owns the socket and
+// mutates it through the same pointer, so no shim takes `&mut Socket`.
 unsafe extern "C" {
     fn us_create_udp_socket(
         loop_: *mut Loop,
@@ -151,26 +154,26 @@ unsafe extern "C" {
         err: *mut c_int,
         user_data: *mut c_void,
     ) -> *mut Socket;
-    fn us_udp_socket_connect(socket: *mut Socket, hostname: *const c_char, port: c_uint) -> c_int;
-    safe fn us_udp_socket_disconnect(socket: &mut Socket) -> c_int;
+    fn us_udp_socket_connect(socket: &Socket, hostname: *const c_char, port: c_uint) -> c_int;
+    safe fn us_udp_socket_disconnect(socket: &Socket) -> c_int;
     fn us_udp_socket_send(
-        socket: *mut Socket,
+        socket: &Socket,
         payloads: *const *const u8,
         lengths: *const usize,
         addresses: *const *const c_void,
         num: c_int,
     ) -> c_int;
-    safe fn us_udp_socket_user(socket: &mut Socket) -> *mut c_void;
-    safe fn us_udp_socket_bound_port(socket: &mut Socket) -> c_int;
-    fn us_udp_socket_bound_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);
-    fn us_udp_socket_remote_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);
-    safe fn us_udp_socket_close(socket: &mut Socket);
-    safe fn us_udp_socket_set_broadcast(socket: &mut Socket, enabled: c_int) -> c_int;
-    safe fn us_udp_socket_set_ttl_unicast(socket: &mut Socket, ttl: c_int) -> c_int;
-    safe fn us_udp_socket_set_ttl_multicast(socket: &mut Socket, ttl: c_int) -> c_int;
-    safe fn us_udp_socket_set_multicast_loopback(socket: &mut Socket, enabled: c_int) -> c_int;
+    safe fn us_udp_socket_user(socket: &Socket) -> *mut c_void;
+    safe fn us_udp_socket_bound_port(socket: &Socket) -> c_int;
+    fn us_udp_socket_bound_ip(socket: &Socket, buf: *mut u8, length: *mut i32);
+    fn us_udp_socket_remote_ip(socket: &Socket, buf: *mut u8, length: *mut i32);
+    safe fn us_udp_socket_close(socket: &Socket);
+    safe fn us_udp_socket_set_broadcast(socket: &Socket, enabled: c_int) -> c_int;
+    safe fn us_udp_socket_set_ttl_unicast(socket: &Socket, ttl: c_int) -> c_int;
+    safe fn us_udp_socket_set_ttl_multicast(socket: &Socket, ttl: c_int) -> c_int;
+    safe fn us_udp_socket_set_multicast_loopback(socket: &Socket, enabled: c_int) -> c_int;
     safe fn us_udp_socket_set_multicast_interface(
-        socket: &mut Socket,
+        socket: &Socket,
         iface: &sockaddr_storage,
     ) -> c_int;
     // `Option<&sockaddr_storage>` is FFI-safe (null-pointer niche → `*const`);
@@ -178,13 +181,13 @@ unsafe extern "C" {
     // arg either a reference or a niche-optimized `Option<&T>`, the validity
     // proof is in the type signature — no remaining preconditions, so `safe fn`.
     safe fn us_udp_socket_set_membership(
-        socket: &mut Socket,
+        socket: &Socket,
         address: &sockaddr_storage,
         iface: Option<&sockaddr_storage>,
         drop: c_int,
     ) -> c_int;
     safe fn us_udp_socket_set_source_specific_membership(
-        socket: &mut Socket,
+        socket: &Socket,
         source: &sockaddr_storage,
         group: &sockaddr_storage,
         iface: Option<&sockaddr_storage>,
@@ -221,7 +224,7 @@ impl PacketBuffer {
         }
     }
 
-    pub fn get_truncated(&mut self, index: c_int) -> bool {
+    pub fn get_truncated(&self, index: c_int) -> bool {
         us_udp_packet_buffer_truncated(self, index) != 0
     }
 }
@@ -233,5 +236,5 @@ unsafe extern "C" {
     ) -> *mut sockaddr_storage;
     safe fn us_udp_packet_buffer_payload(buf: &mut PacketBuffer, index: c_int) -> *mut u8;
     safe fn us_udp_packet_buffer_payload_length(buf: &mut PacketBuffer, index: c_int) -> c_int;
-    safe fn us_udp_packet_buffer_truncated(buf: &mut PacketBuffer, index: c_int) -> c_int;
+    safe fn us_udp_packet_buffer_truncated(buf: &PacketBuffer, index: c_int) -> c_int;
 }

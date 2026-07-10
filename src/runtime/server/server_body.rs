@@ -1343,15 +1343,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         GlobalRef::from(bun_opaque::opaque_deref(self.global_this))
     }
 
-    /// `&mut` accessor for the live uws App. Only call from paths where the
+    /// `&` accessor for the live uws App. Only call from paths where the
     /// server is running (`self.app` set in `listen()`).
     #[inline]
-    fn app_mut(&mut self) -> &mut uws_sys::NewApp<SSL> {
-        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref via
-        // const-asserted `bun_opaque::opaque_deref_mut`. `self.app` is `Some`
+    fn app_ref(&self) -> &uws_sys::NewApp<SSL> {
+        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &` deref via
+        // const-asserted `bun_opaque::opaque_deref`. `self.app` is `Some`
         // for the lifetime of any JS-reachable `Server` (set in `listen()`,
         // freed in `deinit()` after the JS wrapper is gone).
-        bun_opaque::opaque_deref_mut(self.app.expect("server not listening"))
+        bun_opaque::opaque_deref(self.app.expect("server not listening"))
     }
 
     /// Unbounded so `deinit()` (in
@@ -1463,7 +1463,7 @@ where
         }
 
         Ok(JSValue::js_number(f64::from(
-            self.app_mut().num_subscribers(topic.slice()),
+            self.app_ref().num_subscribers(topic.slice()),
         )))
     }
 
@@ -1938,7 +1938,7 @@ where
             // `uws_sys::Request` here.
             // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref
             // (BACKREF; live while RequestContext.req is Some).
-            let r = bun_opaque::opaque_deref_mut(req_ptr.cast::<uws_sys::Request>());
+            let r = bun_opaque::opaque_deref(req_ptr.cast::<uws_sys::Request>());
             if sec_websocket_key_str.len == 0 {
                 sec_websocket_key_str =
                     ZigString::init(r.header(b"sec-websocket-key").unwrap_or(b""));
@@ -2128,7 +2128,7 @@ where
 
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
-        self.app_mut().clear_routes();
+        self.app_ref().clear_routes();
         if Self::HAS_H3 {
             if let Some(h3a) = self.h3_app {
                 bun_opaque::opaque_deref_mut(h3a).clear_routes();
@@ -2222,7 +2222,7 @@ where
             return Ok(false);
         }
         self.config = self.config.clone_for_reloading_static_routes()?;
-        self.app_mut().clear_routes();
+        self.app_ref().clear_routes();
         if Self::HAS_H3 {
             if let Some(h3a) = self.h3_app {
                 bun_opaque::opaque_deref_mut(h3a).clear_routes();
@@ -2452,7 +2452,7 @@ where
         if self.app.is_none() {
             return Ok(JSValue::UNDEFINED);
         }
-        self.app_mut().close_idle_connections();
+        self.app_ref().close_idle_connections();
         Ok(JSValue::UNDEFINED)
     }
 
@@ -2489,9 +2489,7 @@ where
 
         if let Some(listener) = self.listener {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-            return JSValue::js_number(
-                bun_opaque::opaque_deref_mut(listener).get_local_port() as f64
-            );
+            return JSValue::js_number(bun_opaque::opaque_deref(listener).get_local_port() as f64);
         }
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener {
@@ -2537,7 +2535,7 @@ where
 
                 if let Some(listener) = self.listener {
                     // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-                    let listener = bun_opaque::opaque_deref_mut(listener);
+                    let listener = bun_opaque::opaque_deref(listener);
                     port = u16::try_from(listener.get_local_port()).expect("int cast");
 
                     let mut buf = [0u8; 64];
@@ -2600,7 +2598,7 @@ where
             if let Some(listener) = self.listener {
                 let mut buf = [0u8; 1024];
                 // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-                if let Some(addr) = bun_opaque::opaque_deref_mut(listener)
+                if let Some(addr) = bun_opaque::opaque_deref(listener)
                     .socket()
                     .remote_address(&mut buf[..1024])
                 {
@@ -3618,8 +3616,8 @@ pub(super) fn server_set_on_client_error_(
                         // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
                         this.on_client_error_callback(bun_opaque::opaque_deref_mut(socket), error_code, packet);
                     }
-                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).on_client_error(thunk, core::ptr::from_ref::<$T>(this).cast::<c_void>().cast_mut());
+                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &` deref.
+                    bun_opaque::opaque_deref(app).on_client_error(thunk, core::ptr::from_ref::<$T>(this).cast::<c_void>().cast_mut());
                 }
                 return Ok(JSValue::UNDEFINED);
             }

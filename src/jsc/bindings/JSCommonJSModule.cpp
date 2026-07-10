@@ -1004,6 +1004,7 @@ void populateESMExports(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* exports = result.getObject()) {
+        bool exportsIsCallable = result.isCallable();
         bool hasESModuleMarker = false;
         if (!ignoreESModuleAnnotation) {
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
@@ -1057,6 +1058,9 @@ void populateESMExports(
 
                     // ignore constructor
                     if (property == vm.propertyNames->constructor)
+                        continue;
+
+                    if (exportsIsCallable && (property == vm.propertyNames->length || property == vm.propertyNames->name || property == vm.propertyNames->prototype))
                         continue;
 
                     JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
@@ -1115,6 +1119,11 @@ void populateESMExports(
 
                 // ignore constructor
                 if (property == vm.propertyNames->constructor)
+                    continue;
+
+                // When module.exports is a function/class, don't expose its own
+                // intrinsic properties (length, name, prototype) as named exports.
+                if (exportsIsCallable && (property == vm.propertyNames->length || property == vm.propertyNames->name || property == vm.propertyNames->prototype))
                     continue;
 
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);

@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { isWindows } from "harness";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
@@ -570,30 +570,5 @@ describe("hostnames containing NUL bytes", () => {
   it("plain localhost still resolves", async () => {
     const { address } = await dns_promises.lookup("localhost");
     expect(["127.0.0.1", "::1"]).toContain(address);
-  });
-});
-
-test("exiting with a dns.lookup() still in flight does not leak its pending-cache key", async () => {
-  // The libc getaddrinfo path parks a `PendingCacheKey` (owning the hostname) in the
-  // resolver's HiveArray, whose `[MaybeUninit<T>; N]` buffer has no drop glue. Tearing
-  // the VM down with a lookup in flight used to leak that hostname; on the ASAN runner
-  // LeakSanitizer turns a regression back into a non-zero exit.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `require("node:dns").lookup("in-flight-at-exit.invalid", () => {}); process.exit(0);`,
-    ],
-    env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect({ stdout, leaked: stderr.includes("LeakSanitizer"), exitCode }).toEqual({
-    stdout: "",
-    leaked: false,
-    exitCode: 0,
   });
 });

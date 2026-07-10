@@ -664,9 +664,8 @@ pub mod analyze_transpiled_module {
                 .contains(bun_ast::ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
                 && !record.path.is_file()
             {
-                let mut buf: Vec<u8> = Vec::with_capacity(
-                    record.path.namespace.len() + 1 + record.path.text.len(),
-                );
+                let mut buf: Vec<u8> =
+                    Vec::with_capacity(record.path.namespace.len() + 1 + record.path.text.len());
                 buf.extend_from_slice(record.path.namespace);
                 buf.push(b':');
                 buf.extend_from_slice(record.path.text);

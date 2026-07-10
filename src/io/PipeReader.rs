@@ -1503,10 +1503,8 @@ impl WindowsBufferedReader {
 
         if parent_ptr.is_null() {
             if file.state != crate::source::FileState::Closing {
-                // Detached via detach_borrowed_fd (parent owns the fd):
-                // complete() did not start a close, so reclaim the Box here.
-                // SAFETY: `file` is the unique &mut to the heap::into_raw'd
-                // Box<File>; no fs callback remains to reclaim it.
+                // detach_borrowed_fd path: no close scheduled, so reclaim here.
+                // SAFETY: sole &mut to the into_raw'd Box; no fs callback left.
                 drop(unsafe { bun_core::heap::take(core::ptr::from_mut(file)) });
             }
             // else: detach() set close_after_operation; on_close_complete frees.

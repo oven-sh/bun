@@ -1,7 +1,8 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
+import { join } from "node:path";
 
 // Cross-platform Bun.Terminal + Bun.spawn integration tests that don't rely
 // on POSIX-only behaviour (termios echo, SIGWINCH, cat/echo binaries). The
@@ -436,5 +437,187 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(terminal.localFlags & ICANON).not.toBe(0);
     expect(terminal.localFlags & ECHO).not.toBe(0);
     expect(exitCode).toBe(0);
+  });
+
+  // Regression test for a Windows-only use-after-free: cancelling a stdin
+  // stream while a cooked-mode console read is parked used to free the
+  // reader's buffer immediately (finish() shrink / Drop). libuv's line reads
+  // block a worker thread in ReadConsoleW and convert the result into the
+  // alloc_cb buffer from that thread; uv_read_stop cancels asynchronously by
+  // injecting a VK_RETURN, so the worker still writes "\r\n" through the
+  // stale pointer. The late write corrupted whatever mimalloc handed the
+  // freed 8 KiB block to next (seen in production as full-GC crashes in
+  // Heap::sweepArrayBuffers on clobbered ArrayBuffers). The child adopts the
+  // just-freed block with same-size ArrayBuffer probes and reports any
+  // mutation.
+  test.skipIf(!isWindows)("cancelling a parked console stdin read does not corrupt the heap", async () => {
+    using dir = tempDir("conpty-stdin-read-cancel", {
+      "child-fixture.ts": `
+        const reader = Bun.stdin.stream().getReader();
+        // Warm-up round-trip: arm a cooked-mode console line read and await
+        // the line the parent writes once it sees CHILD-READY. Resolving
+        // proves the whole line-read machinery (libuv worker thread
+        // included) works end to end before cancellation is tested.
+        const warmup = reader.read();
+        console.log("CHILD-READY");
+        await warmup;
+        // Arm the read under test; no more input arrives, so the libuv
+        // worker parks in ReadConsoleW with a pointer into the pipe
+        // reader's 8 KiB spare capacity.
+        reader.read().catch(() => {});
+        // The park itself is unobservable from JS; there is no condition to
+        // await. With the machinery proven warm above, a short delay makes
+        // it overwhelmingly likely the worker is inside ReadConsoleW. If it
+        // is not yet, cancellation traps the read before any write and the
+        // run is vacuous rather than wrong.
+        await Bun.sleep(150);
+        await reader.cancel();
+        // Immediately adopt the 8 KiB block the buggy teardown just freed;
+        // mimalloc serves freshly freed blocks of a size class first.
+        const probes: Uint8Array[] = [];
+        for (let i = 0; i < 32; i++) {
+          const probe = new Uint8Array(new ArrayBuffer(8192));
+          probe.fill(0xaa);
+          probes.push(probe);
+        }
+        // Bounded window for the cancelled console read's late write to land.
+        const deadline = Date.now() + 600;
+        let corrupted = false;
+        while (Date.now() < deadline && !corrupted) {
+          for (const probe of probes) {
+            for (let i = 0; i < 64; i++) {
+              if (probe[i] !== 0xaa) corrupted = true;
+            }
+          }
+          Bun.gc(true);
+          await Bun.sleep(20);
+        }
+        console.log(corrupted ? "PROBE-CORRUPTED" : "PROBE-CLEAN");
+        process.exit(corrupted ? 42 : 0);
+      `,
+    });
+
+    const ready = Promise.withResolvers<void>();
+    const probeReported = Promise.withResolvers<void>();
+    const decoder = new TextDecoder();
+    let output = "";
+    await using terminal = new Bun.Terminal({
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("CHILD-READY")) ready.resolve();
+        if (output.includes("PROBE-")) probeReported.resolve();
+      },
+    });
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "child-fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      terminal,
+    });
+    // Fail fast with the child's output if it dies before the handshake.
+    proc.exited.then(code => ready.reject(new Error(`child exited before handshake: ${code}\n${output}`)));
+
+    await ready.promise;
+    terminal.write("warmup\r");
+
+    const exitCode = await proc.exited;
+    // The exit IOCP and the final ConPTY pipe-data IOCP are independent, so
+    // the verdict line can arrive after proc.exited resolves. The child
+    // prints PROBE-* before exit(0)/exit(42) on both paths, so the marker is
+    // guaranteed to arrive for those codes; on any other exit (crash) the
+    // marker may never come, so don't wait for it.
+    if (exitCode === 0 || exitCode === 42) await probeReported.promise;
+    expect(output).toContain("PROBE-CLEAN");
+    expect(output).not.toContain("PROBE-CORRUPTED");
+    expect(exitCode).toBe(0);
+  });
+
+  // Regression test for the companion leak: the buffer a cancelled console
+  // line read retains cannot be freed at teardown (libuv never returns a
+  // cancelled read through read_cb), but the stdin tty it belongs to is a
+  // process-global handle with at most one read request in flight, so the
+  // buffer must be reclaimed at that handle's next alloc_cb instead of being
+  // forgotten once per torn-down reader.
+  test.skipIf(!isWindows)("cancelling console stdin readers repeatedly does not leak the read buffer", async () => {
+    using dir = tempDir("conpty-stdin-read-leak", {
+      "leak-fixture.ts": `
+        import { heapStats } from "bun:jsc";
+        // Bytes currently allocated from the native allocator, from
+        // mimalloc's own per-bin live counters. Exact (no RSS noise), but
+        // only populated when mimalloc keeps statistics (MI_STAT, on in
+        // debug builds); a build without them reports 0 throughout.
+        function nativeAllocated() {
+          Bun.gc(true);
+          let total = 0;
+          for (const bin of heapStats().mimalloc?.malloc_bins ?? []) {
+            total += bin.current * bin.block_size;
+          }
+          return total;
+        }
+        {
+          // Warm-up round-trip: prove the cooked-mode console line-read
+          // machinery works end to end before measuring (see the UAF test).
+          // Bun.file(0).stream() rather than Bun.stdin.stream(): the latter
+          // is cached, so only the former can make a fresh reader per cycle.
+          const reader = Bun.file(0).stream().getReader();
+          const warmup = reader.read();
+          console.log("CHILD-READY");
+          await warmup;
+          await reader.cancel();
+        }
+        // Arm a cooked-mode console line read and cancel it while it is in
+        // flight, tearing the stream down. libuv arms the read (taking a
+        // pointer into this reader's buffer) on the first event-loop turn
+        // after the previous cycle's cancelled request completes; that is
+        // not observable from JS, so a setImmediate turn stands in for it.
+        // A cycle whose read never got armed is vacuous rather than wrong.
+        async function cycle() {
+          const reader = Bun.file(0).stream().getReader();
+          reader.read().catch(() => {});
+          await new Promise(resolve => setImmediate(resolve));
+          await reader.cancel();
+        }
+        const cycles = 512;
+        for (let i = 0; i < 64; i++) await cycle();
+        const before = nativeAllocated();
+        for (let i = 0; i < cycles; i++) await cycle();
+        const growth = nativeAllocated() - before;
+        await Bun.write("leak-result.json", JSON.stringify({ before, growth }));
+        process.exit(0);
+      `,
+    });
+
+    const ready = Promise.withResolvers<void>();
+    const decoder = new TextDecoder();
+    let output = "";
+    await using terminal = new Bun.Terminal({
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("CHILD-READY")) ready.resolve();
+      },
+    });
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "leak-fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      terminal,
+    });
+    // Fail fast with the child's output if it dies before the handshake.
+    proc.exited.then(code => ready.reject(new Error(`child exited before handshake: ${code}\n${output}`)));
+
+    await ready.promise;
+    terminal.write("warmup\r");
+
+    const exitCode = await proc.exited;
+    expect({ exitCode, output }).toEqual({ exitCode: 0, output: expect.stringContaining("CHILD-READY") });
+    const result = await Bun.file(join(String(dir), "leak-result.json")).json();
+    // A debug build tracks mimalloc statistics; losing them would make this
+    // test vacuous, so fail loudly if that happens.
+    if (isDebug) expect(result.before).toBeGreaterThan(0);
+    // 512 cycles each used to forget one 8 KiB read buffer (>= 4 MiB of
+    // growth); the fix retains at most one buffer process-wide.
+    expect(result.growth).toBeLessThan(1024 * 1024);
   });
 });

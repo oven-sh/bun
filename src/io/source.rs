@@ -13,7 +13,37 @@ use bun_sys::ReturnCodeExt as _;
 bun_core::declare_scope!(PipeSource, hidden);
 
 pub type Pipe = uv::Pipe;
-pub type Tty = uv::uv_tty_t;
+
+/// A console handle plus the reader state that has to outlive its readers.
+///
+/// `uv` must remain the first field of this `#[repr(C)]` struct: libuv
+/// callbacks hand back the inner `uv_tty_t*`, which `Tty::from_uv` and the
+/// `Source::to_handle`/`to_stream` casts rely on being the same address
+/// (mirroring how `File` wraps its `uv::fs_t`).
+#[repr(C)]
+pub struct Tty {
+    pub uv: uv::uv_tty_t,
+
+    /// Read buffer parked here when the owning reader is torn down while a
+    /// cooked-mode console line read is still in flight: libuv's worker
+    /// thread keeps writing the typed (or cancellation-injected) line into
+    /// that allocation, and a read cancelled by `uv_read_stop` is never
+    /// handed back through `read_cb`, so the reader has no completion of its
+    /// own to free on. The tty outlives the read. libuv keeps at most one
+    /// read request in flight per handle, so the tty's next `alloc_cb`
+    /// proves the retaining request finished and frees the buffer
+    /// (`Source::release_retained_read_buffer`); a heap tty that is never
+    /// read again frees it with the `Box` in its close callback.
+    pub retained_read_buffer: Vec<u8>,
+}
+
+impl Tty {
+    /// Recover the owning `Tty` from the `uv_tty_t*` libuv hands back.
+    /// `uv` is the first `#[repr(C)]` field, so both are the same address.
+    pub fn from_uv(handle: *mut uv::uv_tty_t) -> *mut Tty {
+        handle.cast()
+    }
+}
 
 pub enum Source {
     Pipe(Box<Pipe>),
@@ -68,6 +98,13 @@ pub struct File {
 
     /// When true, file will close itself when the current operation completes.
     pub close_after_operation: bool,
+
+    /// Read buffer parked here when the owning reader is torn down while a
+    /// `uv_fs_read` is still operating/canceling on the threadpool: the
+    /// worker keeps writing through `iov` into this allocation until the
+    /// completion callback runs, so it must outlive the operation. Dropped
+    /// with the Box in `on_close_complete`.
+    pub retained_read_buffer: Vec<u8>,
 }
 
 #[repr(u8)]
@@ -94,6 +131,7 @@ impl Default for File {
             file: 0,
             state: FileState::Deinitialized,
             close_after_operation: false,
+            retained_read_buffer: Vec::new(),
         }
     }
 }
@@ -229,7 +267,7 @@ impl Source {
     /// guarantee (single-threaded uv loop, no other `&Tty` live), so this
     /// remains the one centralised `unsafe` for tty mutation.
     #[inline]
-    fn tty_mut(tty: &mut bun_ptr::BackRef<Tty>) -> &mut Tty {
+    pub(crate) fn tty_mut(tty: &mut bun_ptr::BackRef<Tty>) -> &mut Tty {
         // SAFETY: `BackRef` invariant guarantees liveness/alignment; the uv
         // loop is single-threaded and `&mut Source` (or the sole `BackRef`
         // returned from `open_tty`) is the only access path, so no `&Tty`
@@ -237,10 +275,23 @@ impl Source {
         unsafe { tty.get_mut() }
     }
 
+    /// Free a read buffer that a previous, torn-down reader of this tty
+    /// parked on it while a console line read was still in flight (see
+    /// `Tty::retained_read_buffer`). Called from `alloc_cb`: libuv keeps at
+    /// most one read request in flight per handle, so handing out a new
+    /// buffer proves the request that retained the old one has finished.
+    pub(crate) fn release_retained_read_buffer(&mut self) {
+        if let Source::Tty(tty) = self {
+            drop(core::mem::take(
+                &mut Self::tty_mut(tty).retained_read_buffer,
+            ));
+        }
+    }
+
     pub fn is_closed(&self) -> bool {
         match self {
             Source::Pipe(pipe) => pipe.is_closed(),
-            Source::Tty(tty) => tty.is_closed(),
+            Source::Tty(tty) => tty.uv.is_closed(),
             Source::SyncFile(file) | Source::File(file) => file.file == -1,
         }
     }
@@ -248,14 +299,15 @@ impl Source {
     pub fn is_active(&self) -> bool {
         match self {
             Source::Pipe(pipe) => pipe.is_active(),
-            Source::Tty(tty) => tty.is_active(),
+            Source::Tty(tty) => tty.uv.is_active(),
             Source::SyncFile(_) | Source::File(_) => true,
         }
     }
 
     pub fn get_handle(&mut self) -> *mut uv::Handle {
         match self {
-            // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_handle_t as their first member.
+            // SAFETY: uv::Pipe / `Tty` (via its first field, uv::uv_tty_t)
+            // embed uv_handle_t as their first member.
             // `&mut self` so the returned `*mut` carries write provenance.
             Source::Pipe(pipe) => core::ptr::from_mut::<Pipe>(pipe.as_mut()).cast(),
             Source::Tty(tty) => tty.as_ptr().cast(),
@@ -265,7 +317,8 @@ impl Source {
 
     pub fn to_stream(&mut self) -> *mut uv::uv_stream_t {
         match self {
-            // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_stream_t as their first member.
+            // SAFETY: uv::Pipe / `Tty` (via its first field, uv::uv_tty_t)
+            // embed uv_stream_t as their first member.
             // `&mut self` so the returned `*mut` carries write provenance.
             Source::Pipe(pipe) => core::ptr::from_mut::<Pipe>(pipe.as_mut()).cast(),
             Source::Tty(tty) => tty.as_ptr().cast(),
@@ -279,7 +332,7 @@ impl Source {
             // Windows); tag kind=system so callers can round-trip through
             // `Fd::native()`.
             Source::Pipe(pipe) => Fd::from_system(pipe.fd()),
-            Source::Tty(tty) => Fd::from_system(tty.fd()),
+            Source::Tty(tty) => Fd::from_system(tty.uv.fd()),
             Source::SyncFile(file) | Source::File(file) => Fd::from_uv(file.file),
         }
     }
@@ -287,7 +340,7 @@ impl Source {
     pub fn set_data(&mut self, data: *mut c_void) {
         match self {
             Source::Pipe(pipe) => pipe.data = data,
-            Source::Tty(tty) => Self::tty_mut(tty).data = data,
+            Source::Tty(tty) => Self::tty_mut(tty).uv.data = data,
             Source::SyncFile(file) | Source::File(file) => file.fs.data = data,
         }
     }
@@ -295,7 +348,7 @@ impl Source {
     pub fn get_data(&self) -> *mut c_void {
         match self {
             Source::Pipe(pipe) => pipe.data,
-            Source::Tty(tty) => tty.data,
+            Source::Tty(tty) => tty.uv.data,
             Source::SyncFile(file) | Source::File(file) => file.fs.data,
         }
     }
@@ -303,7 +356,7 @@ impl Source {
     pub fn ref_(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.ref_(),
-            Source::Tty(tty) => Self::tty_mut(tty).ref_(),
+            Source::Tty(tty) => Self::tty_mut(tty).uv.ref_(),
             Source::SyncFile(_) | Source::File(_) => {}
         }
     }
@@ -311,7 +364,7 @@ impl Source {
     pub fn unref(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.unref(),
-            Source::Tty(tty) => Self::tty_mut(tty).unref(),
+            Source::Tty(tty) => Self::tty_mut(tty).uv.unref(),
             Source::SyncFile(_) | Source::File(_) => {}
         }
     }
@@ -319,7 +372,7 @@ impl Source {
     pub fn has_ref(&self) -> bool {
         match self {
             Source::Pipe(pipe) => pipe.has_ref(),
-            Source::Tty(tty) => tty.has_ref(),
+            Source::Tty(tty) => tty.uv.has_ref(),
             Source::SyncFile(_) | Source::File(_) => false,
         }
     }
@@ -354,8 +407,11 @@ impl Source {
             return stdin_tty::get_stdin_tty(loop_);
         }
 
-        let mut tty: Box<Tty> = bun_core::boxed_zeroed();
-        if let Some(err) = tty.init(loop_, uv_fd).to_error(bun_sys::Tag::open) {
+        let mut tty: Box<Tty> = Box::new(Tty {
+            uv: bun_core::ffi::zeroed::<uv::uv_tty_t>(),
+            retained_read_buffer: Vec::new(),
+        });
+        if let Some(err) = tty.uv.init(loop_, uv_fd).to_error(bun_sys::Tag::open) {
             drop(tty);
             return bun_sys::Result::Err(err);
         }
@@ -419,6 +475,7 @@ impl Source {
         match self {
             Source::Tty(tty) => {
                 if let Some(err) = Self::tty_mut(tty)
+                    .uv
                     .set_mode(if value {
                         uv::TtyMode::Raw
                     } else {
@@ -446,14 +503,14 @@ pub mod stdin_tty {
 
     // PORTING.md §Global mutable state: init guarded by `LOCK` + `INITIALIZED`;
     // afterwards only accessed by uv on the loop thread. RacyCell.
-    static DATA: bun_core::RacyCell<MaybeUninit<uv::uv_tty_t>> =
+    static DATA: bun_core::RacyCell<MaybeUninit<Tty>> =
         bun_core::RacyCell::new(MaybeUninit::uninit());
     static LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
     #[inline]
-    pub(crate) fn value() -> *mut uv::uv_tty_t {
-        DATA.get().cast::<uv::uv_tty_t>()
+    pub(crate) fn value() -> *mut Tty {
+        DATA.get().cast::<Tty>()
     }
 
     pub(crate) fn is_stdin_tty(tty: *const Tty) -> bool {
@@ -467,8 +524,12 @@ pub mod stdin_tty {
         let _guard = LOCK.lock_guard();
 
         if !INITIALIZED.swap(true, Ordering::Relaxed) {
-            // SAFETY: value() points to static storage sized for uv_tty_t; lock held.
-            let rc = unsafe { uv::uv_tty_init(loop_, value(), 0, 0) };
+            // SAFETY: value() points to static storage sized for `Tty`; lock
+            // held. `ptr::write` initializes the non-uv field without reading
+            // or dropping the uninitialized bytes already there.
+            unsafe { (&raw mut (*value()).retained_read_buffer).write(Vec::new()) };
+            // SAFETY: as above; uv_tty_init takes the embedded handle.
+            let rc = unsafe { uv::uv_tty_init(loop_, &raw mut (*value()).uv, 0, 0) };
             if let Some(err) = rc.to_error(bun_sys::Tag::open) {
                 INITIALIZED.store(false, Ordering::Relaxed);
                 return bun_sys::Result::Err(err);
@@ -501,6 +562,7 @@ pub(crate) extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bo
     // process — same invariant the `Source::Tty` arm relies on, so reuse the
     // shared `tty_mut` accessor.
     if let Some(err) = Source::tty_mut(&mut tty)
+        .uv
         .set_mode(if raw {
             uv::TtyMode::Vt
         } else {

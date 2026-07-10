@@ -1241,11 +1241,11 @@ pub trait BaseWindowsPipeWriter {
             }
             Source::Tty(tty) => {
                 let p = tty.as_ptr();
-                // SAFETY: tty is heap-allocated (via open_tty heap::alloc) or the
+                // SAFETY: tty is heap-allocated (via open_tty) or the
                 // process-static stdin tty; freed in on_tty_close (gated on is_stdin_tty).
-                unsafe { (*p).data = p.cast::<c_void>() };
+                unsafe { (*p).uv.data = p.cast::<c_void>() };
                 // SAFETY: tty is a live uv handle; libuv calls on_tty_close after close completes.
-                unsafe { (*p).close(on_tty_close) };
+                unsafe { (*p).uv.close(on_tty_close) };
             }
         }
         *self.source_mut() = None;
@@ -1372,12 +1372,14 @@ extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
 
 #[cfg(windows)]
 extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
-    // `close()` set `handle.data = handle` and then called `uv_close(handle)`;
-    // libuv passes the same pointer back, so `handle` *is* the tty ptr.
+    // `close()` set `handle.uv.data = handle` and then called
+    // `uv_close(&handle.uv)`; libuv passes the embedded handle back, and
+    // `from_uv` recovers the owning `Tty`.
     // The stdin tty (fd 0) lives in static storage; never free it.
-    if !crate::source::stdin_tty::is_stdin_tty(handle) {
-        // SAFETY: non-stdin tty is heap-allocated (open_tty heap::alloc).
-        drop(unsafe { bun_core::heap::take(handle) });
+    let tty = crate::source::Tty::from_uv(handle);
+    if !crate::source::stdin_tty::is_stdin_tty(tty) {
+        // SAFETY: non-stdin tty is heap-allocated (open_tty).
+        drop(unsafe { bun_core::heap::take(tty) });
     }
 }
 

@@ -2511,8 +2511,12 @@ function generateRust(
     use super::*;
     bun_jsc::jsc_abi_extern! {
         safe fn ${symbolName(typeName, "fromJS")}(value: JSValue) -> *mut ${typeName};
-        safe fn ${symbolName(typeName, "fromJSDirect")}(value: JSValue) -> *mut ${typeName};
-        safe fn ${symbolName(typeName, "getConstructor")}(global: *mut JSGlobalObject) -> JSValue;
+        safe fn ${symbolName(typeName, "fromJSDirect")}(value: JSValue) -> *mut ${typeName};${
+          !noConstructor
+            ? `
+        safe fn ${symbolName(typeName, "getConstructor")}(global: *mut JSGlobalObject) -> JSValue;`
+            : ""
+        }
         safe fn ${symbolName(typeName, "create")}(global: *mut JSGlobalObject, ptr: *mut ${typeName}) -> JSValue;
         safe fn ${symbolName(typeName, "dangerouslySetPtr")}(value: JSValue, ptr: *mut ${typeName}) -> bool;
 ${cachedExterns}

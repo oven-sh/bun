@@ -1,4 +1,4 @@
-import { describe, expect, it, spyOn } from "bun:test";
+import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -1409,6 +1409,63 @@ it("mkdtemp() non-exist dir #2568", done => {
   });
 });
 
+describe("mkdtemp encoding option", () => {
+  const base = tmpdirSync();
+  const prefix = join(base, "mkenc-dé-");
+  const prefixBytes = Buffer.from(prefix, "utf8");
+
+  it("sync: 'buffer' returns a Buffer of the path bytes", () => {
+    const result = mkdtempSync(prefix, { encoding: "buffer" });
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(result.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
+    expect(result.length).toBe(prefixBytes.length + 6);
+    expect(existsSync(result)).toBe(true);
+  });
+
+  it("sync: string shorthand 'buffer'", () => {
+    const result = mkdtempSync(prefix, "buffer");
+    expect(Buffer.isBuffer(result)).toBe(true);
+  });
+
+  it.each(["hex", "base64", "base64url", "latin1"] as const)("sync: '%s' re-encodes the path", encoding => {
+    const result = mkdtempSync(prefix, { encoding });
+    expect(typeof result).toBe("string");
+    const decoded = Buffer.from(result, encoding);
+    expect(decoded.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
+    expect(decoded.length).toBe(prefixBytes.length + 6);
+    expect(existsSync(decoded)).toBe(true);
+  });
+
+  it("sync: default utf8 still returns a string", () => {
+    const result = mkdtempSync(prefix);
+    expect(typeof result).toBe("string");
+    expect(result.startsWith(prefix)).toBe(true);
+    expect(existsSync(result)).toBe(true);
+  });
+
+  it("callback: 'buffer' returns a Buffer", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    mkdtemp(prefix, { encoding: "buffer" }, (err, folder) => (err ? reject(err) : resolve(folder)));
+    const result = await promise;
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(existsSync(result)).toBe(true);
+  });
+
+  it("promises: 'hex' re-encodes the path", async () => {
+    const result = await promises.mkdtemp(prefix, "hex");
+    expect(typeof result).toBe("string");
+    const decoded = Buffer.from(result, "hex");
+    expect(decoded.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
+    expect(existsSync(decoded)).toBe(true);
+  });
+
+  it("promises: 'buffer' returns a Buffer", async () => {
+    const result = await promises.mkdtemp(prefix, { encoding: "buffer" });
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(existsSync(result)).toBe(true);
+  });
+});
+
 it("readdirSync on import.meta.dir with trailing slash", () => {
   const dirs = readdirSync(import.meta.dir + "/");
   expect(dirs.length > 0).toBe(true);
@@ -2363,6 +2420,33 @@ it("readlink", () => {
   symlinkSync(import.meta.path, actual);
 
   expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+describe("readlink encoding option", () => {
+  const base = tmpdirSync();
+  const link = join(base, "lnk");
+  let targetBytes: Buffer;
+  beforeAll(() => {
+    symlinkSync(join(base, "tgt-dé"), link);
+    targetBytes = readlinkSync(link, { encoding: "buffer" }) as Buffer;
+  });
+
+  it("'buffer' returns a Buffer", () => {
+    expect(Buffer.isBuffer(targetBytes)).toBe(true);
+    expect(targetBytes.includes(Buffer.from("tgt-dé", "utf8"))).toBe(true);
+  });
+
+  it.each(["hex", "base64", "base64url", "latin1"] as const)("'%s' re-encodes the target", encoding => {
+    const result = readlinkSync(link, { encoding });
+    expect(typeof result).toBe("string");
+    expect(result).toBe(targetBytes.toString(encoding));
+  });
+
+  it("default utf8 still returns a string", () => {
+    const result = readlinkSync(link);
+    expect(typeof result).toBe("string");
+    expect(result).toBe(targetBytes.toString("utf8"));
+  });
 });
 
 // On FUSE / some network filesystems a symlink target can exceed PATH_MAX,

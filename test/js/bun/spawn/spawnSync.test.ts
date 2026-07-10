@@ -48,7 +48,7 @@ describe("spawnSync", () => {
     const result = Bun.spawnSync({ cmd: echo("ok"), stdout: "pipe", stderr: "pipe", timeout: 1500 });
     expect({
       stdout: result.stdout.toString().trim(),
-      exitedDueToTimeout: !!result.exitedDueToTimeout,
+      exitedDueToTimeout: result.exitedDueToTimeout,
       exitCode: result.exitCode,
     }).toEqual({ stdout: "ok", exitedDueToTimeout: false, exitCode: 0 });
   });

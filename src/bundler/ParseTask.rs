@@ -1453,7 +1453,7 @@ pub mod parse_worker {
                             // the BundleV2 — both outlive the log's consumption.
                             file_path.text,
                         );
-                        if e == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             let _ = log.add_error_fmt(
                                 Some(&source),
                                 Loc::EMPTY,
@@ -1474,7 +1474,7 @@ pub mod parse_worker {
                                 ),
                             );
                         }
-                        return Err(e);
+                        return Err(e.into());
                     }
                 };
             }

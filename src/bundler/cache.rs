@@ -286,7 +286,7 @@ impl Fs {
                         bstr::BStr::new(err.name()),
                     ));
                 }
-                return Err(err);
+                return Err(err.into());
             }
         };
 
@@ -413,7 +413,7 @@ impl Fs {
                                 bstr::BStr::new(err.name()),
                             ));
                         }
-                        return Err(err);
+                        return Err(err.into());
                     }
                 }
             }
@@ -437,7 +437,7 @@ impl Fs {
                                 bstr::BStr::new(err.name()),
                             ));
                         }
-                        return Err(err);
+                        return Err(err.into());
                     }
                 }
             }
@@ -556,7 +556,7 @@ impl JavaScript {
         let res = parser.scan_imports(scan_pass_result);
         drop(parser);
         let _ = temp_log.append_to_maybe_recycled(log, source);
-        res
+        res.map_err(Into::into)
     }
 }
 

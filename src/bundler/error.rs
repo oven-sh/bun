@@ -40,6 +40,60 @@ pub enum Error {
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
+    #[error(transparent)]
+    Core(#[from] bun_core::Error),
+    #[error(transparent)]
+    JsPrinter(#[from] bun_js_printer::Error),
+    #[error(transparent)]
+    Resolver(#[from] bun_resolver::Error),
+    #[error(transparent)]
+    Dotenv(#[from] bun_dotenv::Error),
+    #[error(transparent)]
+    JsParser(#[from] bun_js_parser::Error),
+    #[error(transparent)]
+    Parsers(#[from] bun_parsers::Error),
+    #[error(transparent)]
+    Sourcemap(#[from] bun_sourcemap::Error),
+    #[error(transparent)]
+    Url(#[from] bun_url::Error),
+    #[error(transparent)]
+    OptionsTypes(#[from] bun_options_types::Error),
+    #[error(transparent)]
+    OutputFileList(#[from] crate::linker_context::output_file_list_builder::OutputFileListError),
+}
+
+impl From<std::io::Error> for Error {
+    fn from(_: std::io::Error) -> Self {
+        Self::WriteFailed
+    }
+}
+
+impl From<bun_sys::Error> for Error {
+    fn from(e: bun_sys::Error) -> Self {
+        Self::Sys(e.into())
+    }
+}
+
+impl From<Error> for bun_js_printer::Error {
+    fn from(e: Error) -> Self {
+        match e {
+            Error::JsPrinter(inner) => inner,
+            Error::Core(inner) => bun_js_printer::Error::Core(inner),
+            Error::Alloc(inner) => bun_js_printer::Error::Alloc(inner),
+            Error::WriteFailed => bun_js_printer::Error::WriteFailed,
+            _ => bun_js_printer::Error::Core(bun_core::Error::Unexpected),
+        }
+    }
+}
+
+impl From<crate::linker_context_mod::LinkError> for Error {
+    fn from(e: crate::linker_context_mod::LinkError) -> Self {
+        use crate::linker_context_mod::LinkError;
+        match e {
+            LinkError::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
+            LinkError::BuildFailed | LinkError::ImportResolutionFailed => Self::BuildFailed,
+        }
+    }
 }
 
 impl Error {
@@ -65,7 +119,29 @@ impl Error {
             Self::ResolveMessage => "ResolveMessage",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
+            Self::Core(e) => e.name(),
+            Self::JsPrinter(e) => e.name(),
+            Self::Resolver(e) => e.name(),
+            Self::Dotenv(e) => e.name(),
+            Self::JsParser(e) => e.name(),
+            Self::Parsers(e) => e.name(),
+            Self::Sourcemap(e) => e.name(),
+            Self::Url(e) => e.name(),
+            Self::OptionsTypes(e) => e.name(),
+            Self::OutputFileList(e) => <&'static str>::from(e),
         }
+    }
+}
+
+impl From<bun_parsers::yaml::YamlParseError> for Error {
+    fn from(e: bun_parsers::yaml::YamlParseError) -> Self {
+        Self::Parsers(e.into())
+    }
+}
+
+impl From<bun_parsers::json5::ExternalError> for Error {
+    fn from(e: bun_parsers::json5::ExternalError) -> Self {
+        Self::Parsers(e.into())
     }
 }
 

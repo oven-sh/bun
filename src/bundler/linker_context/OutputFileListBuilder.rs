@@ -39,7 +39,7 @@ pub struct OutputFileList {
     pub total_insertions: u32,
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum OutputFileListError {
     #[error("NoSourceMapsOrBytecode")]
     NoSourceMapsOrBytecode,

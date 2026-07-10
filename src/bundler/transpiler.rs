@@ -409,7 +409,7 @@ impl<'a> Transpiler<'a> {
     pub fn get_package_manager(
         &mut self,
     ) -> crate::Result<*mut dyn bun_resolver::install_types::AutoInstaller> {
-        self.resolver.get_package_manager()
+        self.resolver.get_package_manager().map_err(Into::into)
     }
 
     /// Reset the thread-local AST block stores (`Expr`/`Stmt`) and the side
@@ -470,7 +470,7 @@ impl<'a> Transpiler<'a> {
                     }
                     // return the original error
                 }
-                Err(err)
+                Err(err.into())
             }
         }
     }
@@ -1035,7 +1035,7 @@ fn init_file_system(
     // evaluated `!(0 > 254 && ..)` → always `true`, defeating directory-fd
     // caching, and the process never had its fd ulimit raised — large module
     // graphs could hit EMFILE where the spec build does not.
-    Fs::FileSystem::init(top_level_dir)
+    Fs::FileSystem::init(top_level_dir).map_err(Into::into)
 }
 
 /// Project this crate's `options::BundleOptions<'a>` into the
@@ -2472,6 +2472,7 @@ impl<'a> Transpiler<'a> {
                 ..Default::default()
             },
         )
+        .map_err(Into::into)
     }
 
     // PERF: cold thunk — see `print_with_source_map_maybe` comment. Body is
@@ -2516,6 +2517,7 @@ impl<'a> Transpiler<'a> {
             source,
             opts,
         )
+        .map_err(Into::into)
     }
 
     // PERF: cold thunk — see `print_with_source_map_maybe` comment. Wraps the
@@ -2612,6 +2614,7 @@ impl<'a> Transpiler<'a> {
             source,
             opts,
         )
+        .map_err(Into::into)
     }
 
     // PERF: `#[inline(never)]` + concrete `&mut BufferPrinter` (not

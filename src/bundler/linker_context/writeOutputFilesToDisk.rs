@@ -41,7 +41,7 @@ pub fn write_output_files_to_disk(
     let root_dir = match bun_sys::Dir::cwd().make_open_path(root_path, Default::default()) {
         Ok(dir) => dir,
         Err(e) => {
-            if e == crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) {
+            if e.get_errno() == bun_errno::SystemErrno::ENOTDIR {
                 c.log_mut()
                     .add_error_fmt(
                         None,
@@ -58,12 +58,12 @@ pub fn write_output_files_to_disk(
                     Loc::EMPTY,
                     format_args!(
                         "Failed to create output directory {} {}",
-                        e.name(),
+                        bstr::BStr::new(e.name()),
                         quote(root_path),
                     ),
                 );
             }
-            return Err(e);
+            return Err(e.into());
         }
     };
     // Optimization: when writing to disk, we can re-use the memory
@@ -110,12 +110,12 @@ pub fn write_output_files_to_disk(
                             Loc::EMPTY,
                             format_args!(
                                 "{} creating outdir {} while saving sourcemap {}",
-                                e.name(),
+                                bstr::BStr::new(e.name()),
                                 quote(rel_parent),
                                 quote(&*source_map_final_rel_path),
                             ),
                         );
-                        return Err(e);
+                        return Err(e.into());
                     }
                 }
 
@@ -210,12 +210,12 @@ pub fn write_output_files_to_disk(
                     Loc::EMPTY,
                     format_args!(
                         "{} creating outdir {} while saving chunk {}",
-                        e.name(),
+                        bstr::BStr::new(e.name()),
                         quote(rel_parent),
                         quote(&chunk.final_rel_path),
                     ),
                 );
-                return Err(e);
+                return Err(e.into());
             }
         }
         let mut display_size: usize = 0;
@@ -652,12 +652,12 @@ pub fn write_output_files_to_disk(
                         Loc::EMPTY,
                         format_args!(
                             "{} creating outdir {} while saving file {}",
-                            e.name(),
+                            bstr::BStr::new(e.name()),
                             quote(rel_parent),
                             quote(&*src.dest_path),
                         ),
                     );
-                    return Err(e);
+                    return Err(e.into());
                 }
             }
 

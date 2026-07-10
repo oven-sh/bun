@@ -342,7 +342,7 @@ impl Linker {
         // `fs_full::RealFS` are distinct types, so route through the
         // RealFS-agnostic `from_file` wrapper added alongside the `ModKey`
         // re-export.
-        Fs::ModKey::from_file(file)
+        Ok(Fs::ModKey::from_file(file)?)
     }
 
     pub fn get_hashed_filename(
@@ -601,7 +601,7 @@ impl Linker {
                     ),
                     import_record.path.text,
                     import_record.kind,
-                    crate::Error::ModuleNotFound,
+                    bun_ast::Error::ModuleNotFound,
                 );
             } else {
                 log.add_resolve_error(
@@ -613,7 +613,7 @@ impl Linker {
                     ),
                     import_record.path.text,
                     import_record.kind,
-                    crate::Error::ModuleNotFound,
+                    bun_ast::Error::ModuleNotFound,
                 );
             }
         } else {
@@ -626,7 +626,7 @@ impl Linker {
                 ),
                 import_record.path.text,
                 import_record.kind,
-                crate::Error::ModuleNotFound,
+                bun_ast::Error::ModuleNotFound,
             );
         }
         Ok(true)

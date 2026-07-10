@@ -2219,7 +2219,7 @@ pub mod bv2_impl {
                     Ok(r) => break r,
                     Err(err) => {
                         // Only perform directory busting when hot-reloading is enabled
-                        if err == crate::Error::ModuleNotFound {
+                        if err == _resolver::Error::ModuleNotFound {
                             if let Some(dev) = &self.dev_server {
                                 if !had_busted_dir_cache {
                                     // Only re-query if we previously had something cached.
@@ -2290,7 +2290,7 @@ pub mod bv2_impl {
                                 [import_record.importer_source_index as usize],
                         );
 
-                        if err == crate::Error::ModuleNotFound {
+                        if err == _resolver::Error::ModuleNotFound {
                             let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
                             let path_to_use = &import_record.specifier;
 
@@ -6105,7 +6105,7 @@ pub mod bv2_impl {
                             };
 
                             // Only perform directory busting when hot-reloading is enabled
-                            if err == crate::Error::ModuleNotFound {
+                            if err == _resolver::Error::ModuleNotFound {
                                 if self.bun_watcher.is_some() {
                                     if !had_busted_dir_cache {
                                         bun_core::scoped_log!(
@@ -6142,7 +6142,7 @@ pub mod bv2_impl {
                             // Rather than just the first one.
                             import_record.path.is_disabled = true;
 
-                            if err == crate::Error::ModuleNotFound {
+                            if err == _resolver::Error::ModuleNotFound {
                                 let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
 
                                 if !import_record
@@ -6150,7 +6150,7 @@ pub mod bv2_impl {
                                     .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
                                     && !self.transpiler.options.ignore_module_resolution_errors
                                 {
-                                    last_error = Some(err);
+                                    last_error = Some(err.into());
                                     if is_package_path(import_record.path.text) {
                                         if ctx.target == Target::Browser
                                             && options::is_node_builtin(import_record.path.text)
@@ -6248,7 +6248,7 @@ pub mod bv2_impl {
                                 }
                             } else {
                                 // assume other errors are already in the log
-                                last_error = Some(err);
+                                last_error = Some(err.into());
                             }
                             continue 'outer;
                         }
@@ -7534,7 +7534,7 @@ pub mod bv2_impl {
             } else {
                 path_clone.pretty = rel;
             }
-            path_clone.dupe_alloc_fix_pretty(bump)
+            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
         } else {
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
@@ -7546,7 +7546,7 @@ pub mod bv2_impl {
             let _ = fbs.write_all(path_clone.text);
             let written = fbs.pos;
             path_clone.pretty = &buf.0[..written];
-            path_clone.dupe_alloc_fix_pretty(bump)
+            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
         }
     }
 

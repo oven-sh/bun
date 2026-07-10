@@ -4,7 +4,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{Data, Loc, Log, Range, Source};
 use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt};
-use bun_core::{self as bun, Error as BunError, FeatureFlags, Output};
+use bun_core::{self as bun, FeatureFlags, Output};
+use crate::Error as BunError;
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_sourcemap::{
     self as SourceMap, DebugIDFormatter, LineOffsetTable, SourceMapPieces, SourceMapState,
@@ -836,7 +837,7 @@ impl<'a> LinkerContext<'a> {
             self.graph.propagate_async_dependencies()?;
         }
 
-        scan_imports_and_exports(self).map_err(BunError::from)?;
+        scan_imports_and_exports(self)?;
 
         // Stop now if there were errors
         if self.log().has_errors() {
@@ -1291,7 +1292,7 @@ impl From<BunError> for LinkError {
         // misreported as build failures. Everything else collapses to
         // `BuildFailed`; user-facing diagnostics flow through the bundler `Log`,
         // not this variant.
-        if e == BunError::OUT_OF_MEMORY {
+        if matches!(e, BunError::Alloc(_)) {
             LinkError::OutOfMemory
         } else {
             LinkError::BuildFailed

@@ -300,6 +300,9 @@ private:
                 if (asyncSocket->getBufferedAmount() == 0) {
                     asyncSocket->shutdown();
                     asyncSocket->close();
+                } else {
+                    /* Balance onData's us_socket_ref: the nullptr tail skips it. */
+                    us_socket_unref((us_socket_t *) s);
                 }
                 return nullptr;
             }

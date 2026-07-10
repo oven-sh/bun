@@ -253,7 +253,11 @@ function fatalErrorDispatch(er: any) {
     for (let i = 0; i < stack.length; i++) {
       const d = stack[i];
       if (typeof d.listenerCount === "function" && d.listenerCount("error") > 0) {
-        return active._errorHandler(er);
+        // Node discards captureFn's return value; passing this gate means the
+        // error is delivered (via the listener above or domain-aware emit
+        // routing to a parent), so report handled unconditionally.
+        active._errorHandler(er);
+        return true;
       }
     }
   }

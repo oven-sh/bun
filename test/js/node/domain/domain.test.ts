@@ -39,6 +39,20 @@ test("patching AsyncLocalStorage.prototype.getStore after loading node:domain do
   expect(r.exitCode).toBe(0);
 });
 
+test("child domain added to a parent routes error to the parent's listener without falling through to uncaughtException", async () => {
+  const r = await run(`
+    const domain = require("domain");
+    const parent = domain.create();
+    parent.on("error", e => console.log("parent-handled:" + e.message));
+    const child = domain.create();
+    parent.add(child);
+    process.on("uncaughtException", e => console.log("UNCAUGHT:" + e.message));
+    parent.run(() => child.run(() => { throw new Error("boom"); }));
+  `);
+  expect(r.stdout.trim()).toBe("parent-handled:boom");
+  expect(r.exitCode).toBe(0);
+});
+
 test("process.domain accessor is configurable (matches Node)", async () => {
   const r = await run(
     `require("domain"); console.log(Object.getOwnPropertyDescriptor(process, "domain").configurable)`,

@@ -1339,14 +1339,15 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             // node's workerOnGlobalUncaughtException catches, posts the
             // handler's error to the parent, and exits with code 1 — mirror
             // that via the caller's on_unhandled_rejection path.
-            Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             if (shouldAbortOnUncaughtException()) {
+                Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
                 abortOnUncaughtException();
             }
             if (!Bun__isMainThreadVM()) {
                 if (substituteError) *substituteError = JSValue::encode(JSValue(ex));
                 return false;
             }
+            Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             Bun__Process__exit(lexicalGlobalObject, 7);
             RELEASE_ASSERT_NOT_REACHED();
         }
@@ -1379,14 +1380,15 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             (void)scope.tryClearException();
             // An exception thrown in the capture callback is fatal — same
             // main-thread/Worker split as the domain-handler case above.
-            Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             if (shouldAbortOnUncaughtException()) {
+                Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
                 abortOnUncaughtException();
             }
             if (!Bun__isMainThreadVM()) {
                 if (substituteError) *substituteError = JSValue::encode(JSValue(ex));
                 return false;
             }
+            Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             Bun__Process__exit(lexicalGlobalObject, 7);
             RELEASE_ASSERT_NOT_REACHED();
         }

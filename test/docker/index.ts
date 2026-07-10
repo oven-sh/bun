@@ -12,6 +12,7 @@ export type ServiceName =
   | "postgres_auth"
   | "mysql_plain"
   | "mysql_native_password"
+  | "mysql_caching_sha2"
   | "mysql_tls"
   | "redis_plain"
   | "redis_unified"
@@ -50,6 +51,7 @@ const serviceMeta: Record<ServiceName, { ports: number[]; tls?: ServiceInfo["tls
   },
   mysql_plain: { ports: [3306] },
   mysql_native_password: { ports: [3306] },
+  mysql_caching_sha2: { ports: [3306] },
   mysql_tls: {
     ports: [3306],
     tls: {
@@ -406,6 +408,7 @@ class DockerComposeHelper {
 
       case "mysql_plain":
       case "mysql_native_password":
+      case "mysql_caching_sha2":
       case "mysql_tls":
         env.MYSQL_HOST = info.host;
         env.MYSQL_PORT = info.ports[3306].toString();
@@ -594,7 +597,7 @@ export async function withPostgres(
 }
 
 export async function withMySQL(
-  opts: { variant?: "plain" | "native_password" | "tls" },
+  opts: { variant?: "plain" | "native_password" | "caching_sha2" | "tls" },
   fn: (info: ServiceInfo & { url: string }) => Promise<void>,
 ): Promise<void> {
   const variant = opts.variant || "plain";

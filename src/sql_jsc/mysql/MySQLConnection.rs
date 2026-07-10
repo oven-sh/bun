@@ -666,7 +666,8 @@ impl MySQLConnection {
         self.auth_data.clear();
         self.auth_data.shrink_to_fit();
 
-        // Store auth data
+        // The wire nonce is NUL-terminated; that byte is not part of the
+        // scramble (#26195). Truncate by position, not by value.
         self.auth_data.reserve(
             handshake.auth_plugin_data_part_1.len() + handshake.auth_plugin_data_part_2.len(),
         );
@@ -674,6 +675,7 @@ impl MySQLConnection {
             .extend_from_slice(&handshake.auth_plugin_data_part_1[..]);
         self.auth_data
             .extend_from_slice(&handshake.auth_plugin_data_part_2[..]);
+        self.auth_data.truncate(Auth::SCRAMBLE_LENGTH);
 
         // Get auth plugin
         if !handshake.auth_plugin_name.slice().is_empty() {
@@ -901,7 +903,10 @@ impl MySQLConnection {
                 // Update auth plugin and data
                 let auth_method = AuthMethod::from_string(auth_switch.plugin_name.slice())
                     .ok_or(AnyMySQLError::UnsupportedAuthPlugin)?;
+                // Terminated the same way as the handshake's auth-plugin-data
+                // (see above); truncate by position, not by value (#26195).
                 let auth_data = auth_switch.plugin_data.slice();
+                let auth_data = &auth_data[..auth_data.len().min(Auth::SCRAMBLE_LENGTH)];
                 self.auth_plugin = Some(auth_method);
                 self.auth_data.clear();
                 self.auth_data.extend_from_slice(auth_data);

@@ -859,10 +859,6 @@ impl Request {
                     .header(b"host")
                     .filter(|host| Self::is_valid_host_header(host))
                 {
-                    // With `port: None`, HostFormatter always emits exactly `host`, so the
-                    // formatted byte-count is just `host.len()`. Avoid the `core::fmt::write`
-                    // vtable dispatch that `bun_fmt::count(format_args!(...))` incurs — this
-                    // runs once per request via JSC extra-memory accounting.
                     return self.get_protocol().len() + host.len() + req_url.len();
                 }
                 if let Some(base) = self.request_context.fallback_base_url() {
@@ -973,65 +969,51 @@ impl Request {
         debug_assert!(!req_url.is_empty() && req_url[0] == b'/');
 
         if let Some(host) = host.filter(|h| Self::is_valid_host_header(h)) {
-            // With `port: None`, HostFormatter always emits exactly `host`. Compute the
-            // length and assemble the URL with straight slice copies instead of going
-            // through `core::fmt::write` (which is not monomorphized and shows up in
-            // per-request profiles).
-            let protocol = self.get_protocol();
-            let url_bytelength = protocol.len() + host.len() + req_url.len();
-
-            if url_bytelength < 128 {
-                let mut buffer = [0u8; 128];
-                let url = {
-                    let mut at = 0;
-                    buffer[at..at + protocol.len()].copy_from_slice(protocol);
-                    at += protocol.len();
-                    buffer[at..at + host.len()].copy_from_slice(host);
-                    at += host.len();
-                    buffer[at..at + req_url.len()].copy_from_slice(req_url);
-                    at += req_url.len();
-                    &buffer[..at]
-                };
-
-                let href = bun_url::href_from_string(&BunString::from_bytes(url));
-                if !href.is_empty() {
-                    if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
-                        self.url.set(BunString::clone_latin1(&url[..href.length()]));
-                        href.deref();
-                    } else {
-                        self.url.set(href);
-                    }
-                    return;
-                }
-            } else {
-                if strings::is_all_ascii(host) && strings::is_all_ascii(req_url) {
-                    let (new_url, bytes) = BunString::create_uninitialized_latin1(url_bytelength);
-                    self.url.set(new_url);
-                    // exact space was counted above
-                    let (a, rest) = bytes.split_at_mut(protocol.len());
-                    let (b, c) = rest.split_at_mut(host.len());
-                    a.copy_from_slice(protocol);
-                    b.copy_from_slice(host);
-                    c.copy_from_slice(req_url);
-                } else {
-                    // slow path
-                    let mut temp_url: Vec<u8> = Vec::with_capacity(url_bytelength);
-                    temp_url.extend_from_slice(protocol);
-                    temp_url.extend_from_slice(host);
-                    temp_url.extend_from_slice(req_url);
-                    // `defer bun.default_allocator.free(temp_url)` → Vec drops at scope end
-                    self.url.set(BunString::clone_utf8(&temp_url));
-                }
-
-                let href = bun_url::href_from_string(&self.url.get());
-                if !href.is_empty() {
-                    self.url.set(href);
-                    return;
-                }
+            if self.try_set_url(&[self.get_protocol(), host, req_url]) {
+                return;
             }
         }
-
         self.set_url_from_fallback_authority(req_url);
+    }
+
+    /// Concatenate `parts`, run through the WHATWG URL parser, and on success
+    /// set `self.url` to the normalized href. Assembled with slice copies (no
+    /// `core::fmt::write`), using a stack buffer under 128 bytes and writing
+    /// straight into a `WTFStringImpl` for longer ASCII input so
+    /// `href_from_string`'s `toWTFString()` is a ref-bump rather than a copy.
+    fn try_set_url(&self, parts: &[&[u8]]) -> bool {
+        let len: usize = parts.iter().map(|p| p.len()).sum();
+        let concat = |dst: &mut [u8]| {
+            let mut at = 0;
+            for p in parts {
+                dst[at..at + p.len()].copy_from_slice(p);
+                at += p.len();
+            }
+        };
+
+        let href = if len < 128 {
+            let mut stack = [0u8; 128];
+            concat(&mut stack[..len]);
+            bun_url::href_from_string(&BunString::from_bytes(&stack[..len]))
+        } else if parts.iter().all(|p| strings::is_all_ascii(p)) {
+            let (s, bytes) = BunString::create_uninitialized_latin1(len);
+            concat(bytes);
+            let href = bun_url::href_from_string(&s);
+            s.deref();
+            href
+        } else {
+            let mut heap = Vec::with_capacity(len);
+            for p in parts {
+                heap.extend_from_slice(p);
+            }
+            bun_url::href_from_string(&BunString::from_bytes(&heap))
+        };
+
+        if href.is_empty() {
+            return false;
+        }
+        self.url.set(href);
+        true
     }
 
     /// Cold path for [`set_url_for_origin_form`]: the client sent no Host, a
@@ -1042,17 +1024,7 @@ impl Request {
     fn set_url_from_fallback_authority(&self, req_url: &[u8]) {
         if let Some(base) = self.request_context.fallback_base_url() {
             let origin = bun_url::origin_from_slice(base).unwrap_or(base);
-            let mut buf = Vec::with_capacity(origin.len() + req_url.len());
-            buf.extend_from_slice(origin);
-            buf.extend_from_slice(req_url);
-            let href = bun_url::href_from_string(&BunString::from_bytes(&buf));
-            if !href.is_empty() {
-                if core::ptr::eq(href.byte_slice().as_ptr(), buf.as_ptr()) {
-                    self.url.set(BunString::clone_latin1(&buf[..href.length()]));
-                    href.deref();
-                } else {
-                    self.url.set(href);
-                }
+            if self.try_set_url(&[origin, req_url]) {
                 return;
             }
         }

@@ -365,6 +365,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.visit_expr(&mut _tag);
                         break 'tagger _tag;
                     }
+                    if p.options.jsx.runtime == options::JSX::Runtime::Preserve
+                        || p.options.jsx.runtime == options::JSX::Runtime::Solid
+                    {
+                        break 'tagger p.new_expr(E::Missing {}, expr.loc);
+                    }
                     if p.options.jsx.runtime == options::JSX::Runtime::Classic {
                         // `jsx_strings_to_member_expression` wants `&[&'a [u8]]`.
                         // `options.jsx.fragment: Box<[Box<[u8]>]>` is OWNED by
@@ -403,17 +408,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                let runtime = if p.options.jsx.runtime == options::JSX::Runtime::Automatic {
-                    options::JSX::Runtime::Automatic
-                } else {
-                    options::JSX::Runtime::Classic
-                };
+                let runtime = p.options.jsx.runtime;
                 let is_key_after_spread = e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
                 let children_count = e_.children.len_u32();
 
                 // TODO: maybe we should split these into two different AST Nodes
                 // That would reduce the amount of allocations a little
-                if runtime == options::JSX::Runtime::Classic || is_key_after_spread {
+                if runtime == options::JSX::Runtime::Classic
+                    || (runtime == options::JSX::Runtime::Automatic && is_key_after_spread)
+                {
                     // Arguments to createElement()
                     let mut args = ExprNodeList::init_capacity(2 + children_count as usize);
                     VecExt::append(&mut args, tag);
@@ -679,6 +682,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                         expr.loc,
                     );
+                    return;
+                } else if runtime == options::JSX::Runtime::Preserve
+                    || runtime == options::JSX::Runtime::Solid
+                {
+                    // Preserve the JSX AST but still visit nested expressions so symbol
+                    // binding, minification, DCE, and source maps see the same tree.
+                    if e_.tag.is_some() {
+                        e_.tag = Some(tag);
+                    }
+
+                    let mut last_child: u32 = 0;
+                    for i in 0..children_count {
+                        let mut visited = e_.children.slice()[i as usize];
+                        p.visit_expr(&mut visited);
+                        if !matches!(visited.data, Data::EMissing(..)) {
+                            e_.children.slice_mut()[last_child as usize] = visited;
+                            last_child += 1;
+                        }
+                    }
+                    e_.children.truncate(last_child as usize);
+
+                    *e = expr;
                     return;
                 } else {
                     unreachable!();

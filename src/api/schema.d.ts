@@ -186,6 +186,7 @@ export const enum JSXRuntime {
   automatic = 1,
   classic = 2,
   solid = 3,
+  preserve = 4,
 }
 export const JSXRuntimeKeys: {
   1: "automatic";
@@ -194,6 +195,8 @@ export const JSXRuntimeKeys: {
   classic: "classic";
   3: "solid";
   solid: "solid";
+  4: "preserve";
+  preserve: "preserve";
 };
 export const enum ScanDependencyMode {
   app = 1,

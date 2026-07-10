@@ -471,6 +471,7 @@ pub mod api {
         Automatic = 1,
         Classic = 2,
         Solid = 3,
+        Preserve = 4,
     }
 
     /// JSX transform configuration (factory, fragment, runtime, …).

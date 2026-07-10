@@ -38,6 +38,7 @@ pub mod js_bundler {
             options::JSX::Runtime::Automatic => api::JsxRuntime::Automatic,
             options::JSX::Runtime::Classic => api::JsxRuntime::Classic,
             options::JSX::Runtime::Solid => api::JsxRuntime::Solid,
+            options::JSX::Runtime::Preserve => api::JsxRuntime::Preserve,
         }
     }
 
@@ -726,8 +727,9 @@ pub mod js_bundler {
                         }
                     } else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Invalid jsx.runtime: '{}'. Must be one of: 'classic', 'automatic', 'react', 'react-jsx', or 'react-jsxdev'",
-                            bstr::BStr::new(slice.slice())
+                            "Invalid jsx.runtime: '{}'. Must be one of: {}",
+                            bstr::BStr::new(slice.slice()),
+                            options::JSX::RUNTIME_LIST_FOR_DISPLAY
                         )));
                     }
                     drop(slice);

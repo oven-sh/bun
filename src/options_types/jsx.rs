@@ -23,6 +23,7 @@ pub enum Runtime {
     Automatic,
     Classic,
     Solid,
+    Preserve,
 }
 
 impl From<api::JsxRuntime> for Runtime {
@@ -31,6 +32,7 @@ impl From<api::JsxRuntime> for Runtime {
             api::JsxRuntime::_none => Runtime::_None,
             api::JsxRuntime::Classic => Runtime::Classic,
             api::JsxRuntime::Solid => Runtime::Solid,
+            api::JsxRuntime::Preserve => Runtime::Preserve,
             api::JsxRuntime::Automatic => Runtime::Automatic,
         }
     }
@@ -46,12 +48,17 @@ pub struct RuntimeDevelopmentPair {
 bun_core::comptime_string_map! {
     pub static RUNTIME_MAP: RuntimeDevelopmentPair = {
         b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-        b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: None },
         b"react" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-        b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(false) },
         b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        b"solid" => RuntimeDevelopmentPair { runtime: Runtime::Solid, development: None },
+        b"preserve" => RuntimeDevelopmentPair { runtime: Runtime::Preserve, development: None },
     };
 }
+
+pub const RUNTIME_LIST_FOR_DISPLAY: &str =
+    "'automatic', 'classic', 'solid', 'preserve', 'react', 'react-jsx', or 'react-jsxdev'";
 
 /// Member-expression list for `Pragma.{factory,fragment}`.
 ///
@@ -181,7 +188,7 @@ pub struct Pragma {
     /// Configuration Priority:
     /// - `--define=process.env.NODE_ENV=...`
     /// - `NODE_ENV=...`
-    /// - tsconfig.json's `compilerOptions.jsx` (`react-jsx` or `react-jsxdev`)
+    /// - tsconfig.json's `compilerOptions.jsx` (`react-jsx`, `react-jsxdev`, or `preserve`)
     pub development: bool,
     pub parse: bool,
     pub side_effects: bool,

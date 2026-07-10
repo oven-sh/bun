@@ -83,8 +83,8 @@ test("real timer heap is ticked against the real clock under useFakeTimers", asy
     env: { ...bunEnv, BUN_GC_TIMER_DISABLE: undefined, BUN_GC_TIMER_INTERVAL: undefined },
     stdout: "pipe",
     stderr: "pipe",
-    // Pre-fix the child spins in drain_timers at 100% CPU; bound it so the
-    // assertions below fail with a clean diff instead of a runner timeout.
+    // Pre-fix the child spins at 100% CPU; bound it so it doesn't outlive the
+    // runner by long when the parent test times out on the unfixed build.
     timeout: 20_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -93,4 +93,4 @@ test("real timer heap is ticked against the real clock under useFakeTimers", asy
   // null => exited on its own; non-null => killed by the spawn timeout (spun).
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
-}, 30_000);
+});

@@ -1,15 +1,10 @@
 import { jest, test } from "bun:test";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/pull/33359#discussion_r3556322148
 test("drain_timers terminates when mocked time > CLOCK_MONOTONIC uptime", async () => {
-  const f = join(tmpdir(), `gc-spin-probe-${process.pid}.txt`);
-  await Bun.write(f, "x");
-
   // Real event-loop ticks so the GcRepeating / WTFTimer / BunTest nodes are
   // armed (real-time deadlines) before fake timers are installed.
-  for (let i = 0; i < 4; i++) await Bun.file(f).text();
+  for (let i = 0; i < 4; i++) await Bun.file(import.meta.path).text();
 
   jest.useFakeTimers();
   try {
@@ -20,7 +15,7 @@ test("drain_timers terminates when mocked time > CLOCK_MONOTONIC uptime", async 
     // `now = AllowMockedTime`, so every allow_fake_timers()==false node
     // (GC, WTFTimer, test timeout) looked overdue; those that re-arm at
     // ForceRealTime on fire were re-inserted still "overdue" and the loop spun.
-    for (let i = 0; i < 4; i++) await Bun.file(f).text();
+    for (let i = 0; i < 4; i++) await Bun.file(import.meta.path).text();
   } finally {
     jest.useRealTimers();
   }

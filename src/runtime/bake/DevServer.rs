@@ -658,7 +658,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // needed for the `'static` it stores.
     let _fs = match bun_resolver::fs::FileSystem::init(Some(options.root.as_bytes())) {
         Ok(fs) => fs,
-        Err(err) => return Err(global.throw_error(err.into(), generic_action)),
+        Err(err) => return Err(global.throw_error(err, generic_action)),
     };
     let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
@@ -671,7 +671,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         Ok(w) => w,
         Err(err) => {
             return Err(global.throw_error(
-                err.into(),
+                err,
                 "while initializing file watcher for development server",
             ));
         }
@@ -720,7 +720,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             &bundler_options.server,
         ) {
             Ok(view) => bundler_framework_views.push(view),
-            Err(err) => return Err(global.throw_error(err.into(), generic_action)),
+            Err(err) => return Err(global.throw_error(err, generic_action)),
         }
         match framework.init_transpiler(
             arena,
@@ -731,7 +731,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             &bundler_options.client,
         ) {
             Ok(view) => bundler_framework_views.push(view),
-            Err(err) => return Err(global.throw_error(err.into(), generic_action)),
+            Err(err) => return Err(global.throw_error(err, generic_action)),
         }
         if separate_ssr_graph {
             match framework.init_transpiler(
@@ -743,7 +743,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 &bundler_options.ssr,
             ) {
                 Ok(view) => bundler_framework_views.push(view),
-                Err(err) => return Err(global.throw_error(err.into(), generic_action)),
+                Err(err) => return Err(global.throw_error(err, generic_action)),
             }
         } else {
             // Note: when `!separate_ssr_graph`, `ssr_transpiler` is never
@@ -790,7 +790,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     if let Err(err) = dev.bun_watcher.start() {
         return Err(global.throw_error(
-            err.into(),
+            err,
             "while initializing file watcher thread for development server",
         ));
     }

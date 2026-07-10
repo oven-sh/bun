@@ -101,7 +101,7 @@ use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
 /// context.
 #[inline]
 fn throw_core_error(global: &JSGlobalObject, e: crate::Error, ctx: &'static str) -> JsError {
-    global.throw_error(e.into(), ctx)
+    global.throw_error(e, ctx)
 }
 
 /// Erase the `'bump` lifetime of an arena-backed slice. Arena-erasure
@@ -183,7 +183,7 @@ impl UserOptions {
                         Ok(z) => arena_dupe_z(&arena, z.as_bytes()),
                         Err(e) => {
                             return Err(global.throw_error(
-                                e.to_zig_err().into(),
+                                e.to_zig_err(),
                                 "while querying current working directory",
                             ));
                         }
@@ -242,7 +242,7 @@ impl UserOptions {
                 Ok(z) => arena_dupe_z(&arena, z.as_bytes()).as_bytes(),
                 Err(e) => {
                     return Err(global.throw_error(
-                        e.to_zig_err().into(),
+                        e.to_zig_err(),
                         "while querying current working directory",
                     ));
                 }

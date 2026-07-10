@@ -514,7 +514,7 @@ impl fmt::Display for StatusCodeFormatter {
 // Response
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParseResponseError {
     #[strum(serialize = "Malformed_HTTP_Response")]
     MalformedHttpResponse,

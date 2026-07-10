@@ -702,7 +702,7 @@ impl PostgresSQLQuery {
                         drop(signature);
                         release_query_ref();
                         return Err(
-                            global_object.throw_error(err.into(), "failed to allocate statement")
+                            global_object.throw_error(crate::Error::from(err), "failed to allocate statement")
                         );
                     }
                 };

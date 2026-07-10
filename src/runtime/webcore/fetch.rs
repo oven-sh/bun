@@ -1449,7 +1449,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             Ok(n) => n,
             Err(err) => {
                 return Err(global_this.throw_error(
-                    bun_url::Error::from(err).into(),
+                    bun_url::Error::from(err),
                     "Failed to decode file url",
                 ));
             }
@@ -1509,7 +1509,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             Ok(p) => p,
                             Err(err) => {
                                 return Err(global_this
-                                    .throw_error(err.into(), "Failed to resolve file url"));
+                                    .throw_error(err, "Failed to resolve file url"));
                             }
                         };
                     }
@@ -1528,7 +1528,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     Ok(len) => &cwd_buf[..len],
                     Err(err) => {
                         return Err(
-                            global_this.throw_error(err.into(), "Failed to resolve file url")
+                            global_this.throw_error(err, "Failed to resolve file url")
                         );
                     }
                 };
@@ -1551,7 +1551,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         Ok(p) => p,
                         Err(err) => {
                             return Err(
-                                global_this.throw_error(err.into(), "Failed to resolve file url")
+                                global_this.throw_error(err, "Failed to resolve file url")
                             );
                         }
                     };

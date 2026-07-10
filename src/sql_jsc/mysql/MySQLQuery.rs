@@ -329,7 +329,7 @@ impl MySQLQuery {
                 Err(err) => {
                     // `err` is `bun_core::AllocError`; `throw_error` takes
                     // `crate::Error` (`From<AllocError>` → OutOfMemory).
-                    let _ = global_object.throw_error(err.into(), "failed to allocate statement");
+                    let _ = global_object.throw_error(crate::Error::from(err), "failed to allocate statement");
                     return Err(crate::Error::JSError);
                 }
             };

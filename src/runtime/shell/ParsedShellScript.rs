@@ -286,7 +286,7 @@ fn create_parsed_shell_script_impl(
                     return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))));
                 }
 
-                return Err(global.throw_error(err.into(), "failed to lex/parse shell"));
+                return Err(global.throw_error(err, "failed to lex/parse shell"));
             }
         }
     };

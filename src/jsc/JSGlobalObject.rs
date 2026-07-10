@@ -881,19 +881,20 @@ impl JSGlobalObject {
         self.throw_value(instance)
     }
 
-    pub fn throw_error(&self, err: crate::CrateError, fmt: &'static str) -> JsError {
-        if err == crate::CrateError::Alloc(bun_alloc::AllocError) {
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn throw_error(&self, err: impl bun_core::output::ErrName, fmt: &'static str) -> JsError {
+        if err.name() == b"OutOfMemory" {
             return self.throw_out_of_memory();
         }
 
         // If we're throwing JSError, that means either:
         // - We're throwing an exception while another exception is already active
         // - We're incorrectly returning JSError from a function that did not throw.
-        debug_assert!(err != crate::CrateError::JSError);
+        debug_assert!(err.name() != b"JSError");
 
         let mut buffer: Vec<u8> = Vec::new();
         use core::fmt::Write;
-        if write!(WriteVec(&mut buffer), "{} {}", err.name(), fmt).is_err() {
+        if write!(WriteVec(&mut buffer), "{} {}", bstr::BStr::new(err.name()), fmt).is_err() {
             return self.throw_out_of_memory();
         }
         let str = ZigString::init_utf8(&buffer);

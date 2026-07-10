@@ -39,7 +39,7 @@ impl TestingAPIs {
         let mut loop_ = bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop().cast());
         let diff = match git_diff_internal(old_folder.slice(), new_folder.slice(), &mut loop_) {
             Ok(d) => d,
-            Err(e) => return Err(global.throw_error(e.into(), "failed to make diff")),
+            Err(e) => return Err(global.throw_error(e, "failed to make diff")),
         };
         match diff {
             Ok(s) => {
@@ -91,10 +91,10 @@ impl TestingAPIs {
             Ok(p) => p,
             Err(e) => {
                 if e == ParseErr::hunk_header_integrity_check_failed {
-                    return Err(global.throw_error(bun_patch::Error::from(e).into(), "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)"));
+                    return Err(global.throw_error(bun_patch::Error::from(e), "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)"));
                 } else {
                     return Err(global.throw_error(
-                        bun_patch::Error::from(e).into(),
+                        bun_patch::Error::from(e),
                         "failed to parse patch file",
                     ));
                 }
@@ -170,7 +170,7 @@ impl TestingAPIs {
 
             drop(patchfile_src);
             return Err(global.throw_error(
-                bun_patch::Error::from(e).into(),
+                bun_patch::Error::from(e),
                 "failed to parse patchfile",
             ));
         }

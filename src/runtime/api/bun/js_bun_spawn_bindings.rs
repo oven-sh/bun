@@ -1217,7 +1217,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             // See EMFILE arm above.
             spawn_options.deinit();
             let _ = global_this
-                .throw_error(crate::Error::from(err).into(), ": failed to spawn process");
+                .throw_error(crate::Error::from(err), ": failed to spawn process");
             return Ok(JSValue::ZERO);
         }
         Ok(maybe) => match maybe {

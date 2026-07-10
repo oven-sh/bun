@@ -4405,10 +4405,18 @@ unsafe fn transpile_file(
                 debug_assert!(!promise.is_null());
                 return promise.cast::<c_void>();
             }
-            if matches!(err, crate::Error::PluginError) {
+            if matches!(
+                err,
+                crate::Error::PluginError | crate::Error::Bundler(bun_bundler::Error::Plugin)
+            ) {
                 return ptr::null_mut();
             }
-            if matches!(err, crate::Error::JSError) {
+            if matches!(
+                err,
+                crate::Error::JSError
+                    | crate::Error::Js(_)
+                    | crate::Error::Bundler(bun_bundler::Error::Js(_))
+            ) {
                 // `take_error` unwraps
                 // the JSC::Exception to its inner value; the C++ caller
                 // re-wraps via `JSC::Exception::create`, so storing the raw
@@ -4574,10 +4582,18 @@ unsafe fn transpile_virtual_module(
             true
         }
         Err(err) => {
-            if matches!(err, crate::Error::PluginError) {
+            if matches!(
+                err,
+                crate::Error::PluginError | crate::Error::Bundler(bun_bundler::Error::Plugin)
+            ) {
                 return true;
             }
-            if matches!(err, crate::Error::JSError) {
+            if matches!(
+                err,
+                crate::Error::JSError
+                    | crate::Error::Js(_)
+                    | crate::Error::Bundler(bun_bundler::Error::Js(_))
+            ) {
                 // `take_error` unwraps
                 // the JSC::Exception to its inner value (see same note in
                 // `transpile_file` above).

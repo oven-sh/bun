@@ -1169,7 +1169,7 @@ pub mod testing_apis {
                     LexerAscii::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
                 if let Err(err) = lexer.lex() {
                     return Err(
-                        global.throw_error(crate::Error::from(err).into(), "failed to lex shell")
+                        global.throw_error(crate::Error::from(err), "failed to lex shell")
                     );
                 }
                 break 'brk lexer.get_result();
@@ -1177,7 +1177,7 @@ pub mod testing_apis {
             let mut lexer = LexerUnicode::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
             if let Err(err) = lexer.lex() {
                 return Err(
-                    global.throw_error(crate::Error::from(err).into(), "failed to lex shell")
+                    global.throw_error(crate::Error::from(err), "failed to lex shell")
                 );
             }
             lexer.get_result()
@@ -1269,7 +1269,7 @@ pub mod testing_apis {
                     return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))));
                 }
 
-                return Err(global.throw_error(err.into(), "failed to lex/parse shell"));
+                return Err(global.throw_error(err, "failed to lex/parse shell"));
             }
         };
 

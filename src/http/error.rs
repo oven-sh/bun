@@ -113,6 +113,8 @@ pub enum Error {
     Brotli(bun_brotli::Error),
     #[error(transparent)]
     Zstd(bun_zstd::ZstdError),
+    #[error(transparent)]
+    Picohttp(bun_picohttp::ParseResponseError),
 }
 
 #[allow(non_camel_case_types)]
@@ -314,6 +316,7 @@ impl Error {
             Self::Zlib(e) => <&'static str>::from(e),
             Self::Brotli(e) => e.name(),
             Self::Zstd(e) => <&'static str>::from(e),
+            Self::Picohttp(e) => <&'static str>::from(e),
         }
     }
 }
@@ -358,8 +361,11 @@ impl From<bun_uws::ConnectError> for Error {
 }
 
 impl From<bun_picohttp::ParseResponseError> for Error {
-    fn from(_: bun_picohttp::ParseResponseError) -> Self {
-        Error::InvalidHTTPResponse
+    fn from(e: bun_picohttp::ParseResponseError) -> Self {
+        match e {
+            bun_picohttp::ParseResponseError::ShortRead => Error::ShortRead,
+            _ => Error::Picohttp(e),
+        }
     }
 }
 

@@ -1063,7 +1063,7 @@ impl ServerConfig {
                     // we need `&mut Resolver` for `Framework::auto`.
                     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
                     let framework = bb::Framework::auto(&arena, resolver, router_types)
-                        .map_err(|e| global.throw_error(e.into(), "Framework::auto"))?;
+                        .map_err(|e| global.throw_error(e, "Framework::auto"))?;
 
                     let mut user_options = crate::bake::UserOptions {
                         arena,

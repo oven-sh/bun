@@ -4,7 +4,7 @@
 //! thin wrappers over the `bsd_*` layer plus poll lifecycle management.
 
 use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
-use core::mem::zeroed;
+use core::mem::MaybeUninit;
 use core::ptr;
 
 use crate::bsd::{
@@ -195,7 +195,7 @@ unsafe fn copy_socket_ip(
     // SAFETY: `s` is live; `addr` is a stack local filled by `fetch`;
     // `length` is a valid in/out pointer (in = capacity, out = bytes written).
     unsafe {
-        let mut addr: bsd_addr_t = zeroed();
+        let mut addr: bsd_addr_t = MaybeUninit::zeroed().assume_init();
         let addr_p = &raw mut addr;
         if fetch(us_poll_fd(as_poll(s)), addr_p) != 0 || *length < bsd_addr_get_ip_length(addr_p) {
             *length = 0;
@@ -395,7 +395,7 @@ pub unsafe extern "C" fn us_create_udp_socket(
         let udp = p.cast::<us_udp_socket_t>();
 
         // Cache the bound port once.
-        let mut tmp: bsd_addr_t = zeroed();
+        let mut tmp: bsd_addr_t = MaybeUninit::zeroed().assume_init();
         bsd_local_addr(fd, &raw mut tmp);
         (*udp).port = bsd_addr_get_port(&raw mut tmp) as u16;
         (*udp).loop_ = loop_;

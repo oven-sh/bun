@@ -3,7 +3,7 @@
 //! (the `LIBUS_USE_KQUEUE` half) and `internal/eventing/epoll_kqueue.h`.
 
 use core::ffi::{c_int, c_longlong, c_uint, c_void};
-use core::mem::{size_of, zeroed};
+use core::mem::{size_of, MaybeUninit};
 use core::ptr;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -96,7 +96,7 @@ mod kq {
         }
         static ZERO_TS: timespec = timespec { tv_sec: 0, tv_nsec: 0 };
         if flags & KEVENT_FLAG_IMMEDIATE != 0 && timeout.is_null() {
-            timeout = &ZERO_TS;
+            timeout = &raw const ZERO_TS;
         }
         // SAFETY: caller guarantees changelist/eventlist point at `nchanges`/`nevents` entries.
         unsafe { libc::kevent(kq, changelist, nchanges, eventlist, nevents, timeout) }
@@ -120,7 +120,7 @@ unsafe fn ev_set64(
 ) {
     // SAFETY: caller guarantees `kev` is valid for write.
     unsafe {
-        *kev = zeroed();
+        *kev = MaybeUninit::zeroed().assume_init();
         (*kev).ident = ident as _;
         (*kev).filter = filter as _;
         (*kev).flags = flags as _;
@@ -142,7 +142,12 @@ unsafe fn ev_set64(
 #[inline(always)]
 unsafe fn get_ready_poll(loop_: *mut us_loop_t, index: c_int) -> *mut us_poll_t {
     // SAFETY: caller guarantees `index < num_ready_polls` within `ready_polls`.
-    unsafe { (*loop_).ready_polls[index as usize].udata as *mut us_poll_t }
+    unsafe {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        { (*loop_).ready_polls[index as usize].udata as *mut us_poll_t }
+        #[cfg(target_os = "freebsd")]
+        { (*loop_).ready_polls[index as usize].udata.cast::<us_poll_t>() }
+    }
 }
 
 #[inline(always)]
@@ -154,7 +159,7 @@ unsafe fn set_ready_poll(loop_: *mut us_loop_t, index: c_int, poll: *mut us_poll
     }
     #[cfg(target_os = "freebsd")]
     unsafe {
-        (*loop_).ready_polls[index as usize].udata = poll as *mut c_void;
+        (*loop_).ready_polls[index as usize].udata = poll.cast::<c_void>();
     }
 }
 
@@ -249,7 +254,7 @@ pub unsafe extern "C" fn us_loop_free(loop_: *mut us_loop_t) {
     unsafe {
         us_internal_loop_data_free(loop_);
         libc::close((*loop_).fd);
-        us_free(loop_ as *mut c_void);
+        us_free(loop_.cast::<c_void>());
     }
 }
 
@@ -263,7 +268,7 @@ pub unsafe extern "C" fn us_create_loop(
 ) -> *mut us_loop_t {
     // SAFETY: calloc-zeroed block large enough for us_loop_t + ext.
     unsafe {
-        let loop_ = us_calloc(1, size_of::<us_loop_t>() + ext_size as usize) as *mut us_loop_t;
+        let loop_ = us_calloc(1, size_of::<us_loop_t>() + ext_size as usize).cast::<us_loop_t>();
         if loop_.is_null() {
             Bun__outOfMemory();
         }
@@ -295,7 +300,7 @@ pub unsafe extern "C" fn us_create_poll(
         if fallthrough == 0 {
             (*loop_).num_polls += 1;
         }
-        let p = us_malloc(size_of::<us_poll_t>() + ext_size as usize) as *mut us_poll_t;
+        let p = us_malloc(size_of::<us_poll_t>() + ext_size as usize).cast::<us_poll_t>();
         clear_pointer_tag(p)
     }
 }
@@ -305,14 +310,14 @@ pub unsafe extern "C" fn us_poll_free(p: *mut us_poll_t, loop_: *mut us_loop_t) 
     // SAFETY: `p` was returned by us_create_poll; `loop_` is live.
     unsafe {
         (*loop_).num_polls -= 1;
-        us_free(p as *mut c_void);
+        us_free(p.cast::<c_void>());
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_ext(p: *mut us_poll_t) -> *mut c_void {
     // SAFETY: ext area is the bytes immediately after the struct.
-    unsafe { p.add(1) as *mut c_void }
+    unsafe { p.add(1).cast::<c_void>() }
 }
 
 #[unsafe(no_mangle)]
@@ -447,7 +452,7 @@ unsafe fn us_internal_dispatch_ready_polls(loop_: *mut us_loop_t) {
             if !poll.is_null() {
                 // Tagged pointers (FilePoll) go through Bun's own dispatch.
                 if clear_pointer_tag(poll) != poll {
-                    Bun__internal_dispatch_ready_poll(loop_ as *mut c_void, poll as *mut c_void);
+                    Bun__internal_dispatch_ready_poll(loop_.cast::<c_void>(), poll.cast::<c_void>());
                 } else {
                     let bits = coalesced[idx as usize];
                     if !bits.skip() {
@@ -543,8 +548,8 @@ pub unsafe extern "C" fn us_loop_run(loop_: *mut us_loop_t) {
             (*loop_).data.tick_depth += 1;
             us_internal_loop_pre(loop_);
 
-            let mut sweep_ts: timespec = zeroed();
-            let timeout = us_internal_clamp_to_sweep(loop_, ptr::null(), &mut sweep_ts);
+            let mut sweep_ts: timespec = MaybeUninit::zeroed().assume_init();
+            let timeout = us_internal_clamp_to_sweep(loop_, ptr::null(), &raw mut sweep_ts);
 
             loop {
                 (*loop_).num_ready_polls = kevent64(
@@ -584,7 +589,7 @@ pub unsafe extern "C" fn us_loop_run_bun_tick(loop_: *mut us_loop_t, mut timeout
 
         // loop_pre stores the soonest QUIC adv tick. The JS event loop folds
         // this in elsewhere; other callers pass NULL, so fold it here too.
-        let mut quic_ts: timespec = zeroed();
+        let mut quic_ts: timespec = MaybeUninit::zeroed().assume_init();
         if !(*loop_).data.quic_head.is_null() && (*loop_).data.quic_next_tick_us >= 0 {
             let us = (*loop_).data.quic_next_tick_us;
             let earlier = timeout.is_null()
@@ -594,12 +599,12 @@ pub unsafe extern "C" fn us_loop_run_bun_tick(loop_: *mut us_loop_t, mut timeout
             if earlier {
                 quic_ts.tv_sec = (us / 1_000_000) as libc::time_t;
                 quic_ts.tv_nsec = ((us % 1_000_000) * 1_000) as _;
-                timeout = &quic_ts;
+                timeout = &raw const quic_ts;
             }
         }
 
-        let mut sweep_ts: timespec = zeroed();
-        timeout = us_internal_clamp_to_sweep(loop_, timeout, &mut sweep_ts);
+        let mut sweep_ts: timespec = MaybeUninit::zeroed().assume_init();
+        timeout = us_internal_clamp_to_sweep(loop_, timeout, &raw mut sweep_ts);
 
         let had_wakeups = (*loop_).pending_wakeups.swap(0, Ordering::Acquire);
         let will_idle = had_wakeups == 0
@@ -671,7 +676,7 @@ pub(crate) unsafe fn kqueue_change(
 ) -> c_int {
     // SAFETY: `change_list` is local; kevent64 writes back errors into it.
     unsafe {
-        let mut change_list: [kevent64_s; 2] = zeroed();
+        let mut change_list: [kevent64_s; 2] = MaybeUninit::zeroed().assume_init();
         let mut change_len: c_int = 0;
 
         let is_readable = new_events & LIBUS_SOCKET_READABLE;
@@ -769,11 +774,11 @@ pub unsafe extern "C" fn us_poll_resize(
             return p;
         }
 
-        let new_p = us_calloc(1, new_size) as *mut us_poll_t;
+        let new_p = us_calloc(1, new_size).cast::<us_poll_t>();
         if new_p.is_null() {
             Bun__outOfMemory();
         }
-        ptr::copy_nonoverlapping(p as *const u8, new_p as *mut u8, old_size);
+        ptr::copy_nonoverlapping(p.cast::<u8>(), new_p.cast::<u8>(), old_size);
 
         // The old poll is freed separately which decrements; keep total correct.
         (*loop_).num_polls += 1;
@@ -785,7 +790,7 @@ pub unsafe extern "C" fn us_poll_resize(
             (*new_p).fd(),
             0,
             LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE,
-            new_p as *mut c_void,
+            new_p.cast::<c_void>(),
         );
         us_internal_loop_update_pending_ready_polls(loop_, p, new_p, events, events);
         new_p
@@ -805,7 +810,7 @@ pub unsafe extern "C" fn us_poll_start_rc(
             kind | (if events & LIBUS_SOCKET_READABLE != 0 { POLL_TYPE_POLLING_IN } else { 0 })
                 | (if events & LIBUS_SOCKET_WRITABLE != 0 { POLL_TYPE_POLLING_OUT } else { 0 }),
         );
-        kqueue_change((*loop_).fd, (*p).fd(), 0, events, p as *mut c_void)
+        kqueue_change((*loop_).fd, (*p).fd(), 0, events, p.cast::<c_void>())
     }
 }
 
@@ -828,7 +833,7 @@ pub unsafe extern "C" fn us_poll_change(p: *mut us_poll_t, loop_: *mut us_loop_t
                 kind | (if events & LIBUS_SOCKET_READABLE != 0 { POLL_TYPE_POLLING_IN } else { 0 })
                     | (if events & LIBUS_SOCKET_WRITABLE != 0 { POLL_TYPE_POLLING_OUT } else { 0 }),
             );
-            kqueue_change((*loop_).fd, (*p).fd(), old_events, events, p as *mut c_void);
+            kqueue_change((*loop_).fd, (*p).fd(), old_events, events, p.cast::<c_void>());
             us_internal_loop_update_pending_ready_polls(loop_, p, p, old_events, events);
         }
     }
@@ -950,7 +955,7 @@ pub unsafe extern "C" fn us_internal_create_async(
     // SAFETY: `loop_` is live; we allocate/zero a callback block + ext area.
     unsafe {
         let cb = us_calloc(1, size_of::<us_internal_callback_t>() + ext_size as usize)
-            as *mut us_internal_callback_t;
+            .cast::<us_internal_callback_t>();
         if cb.is_null() {
             Bun__outOfMemory();
         }
@@ -960,7 +965,7 @@ pub unsafe extern "C" fn us_internal_create_async(
 
         // us_internal_poll_set_type CHANGES the type, it does not set it.
         (*cb).p.set_poll_type(POLL_TYPE_POLLING_IN);
-        us_internal_poll_set_type(&mut (*cb).p, POLL_TYPE_CALLBACK);
+        us_internal_poll_set_type(&raw mut (*cb).p, POLL_TYPE_CALLBACK);
 
         if fallthrough == 0 {
             (*loop_).num_polls += 1;
@@ -971,7 +976,7 @@ pub unsafe extern "C" fn us_internal_create_async(
             Bun__outOfMemory();
         }
         let self_ = mach_task_self();
-        let kr = mach_port_allocate(self_, MACH_PORT_RIGHT_RECEIVE, &mut (*cb).port);
+        let kr = mach_port_allocate(self_, MACH_PORT_RIGHT_RECEIVE, &raw mut (*cb).port);
         if unlikely(kr != KERN_SUCCESS) {
             return ptr::null_mut();
         }
@@ -988,7 +993,7 @@ pub unsafe extern "C" fn us_internal_create_async(
             self_,
             (*cb).port,
             MACH_PORT_LIMITS_INFO,
-            (&raw mut limits) as *mut c_int,
+            (&raw mut limits).cast::<c_int>(),
             MACH_PORT_LIMITS_INFO_COUNT,
         );
         if unlikely(kr != KERN_SUCCESS) {
@@ -1005,26 +1010,26 @@ pub unsafe extern "C" fn us_internal_async_close(a: *mut us_internal_async) {
     use mach::*;
     // SAFETY: `a` was returned by us_internal_create_async.
     unsafe {
-        let cb = a as *mut us_internal_callback_t;
-        let mut event: kevent64_s = zeroed();
+        let cb = a.cast::<us_internal_callback_t>();
+        let mut event: kevent64_s = MaybeUninit::zeroed().assume_init();
         let ptr_ident = cb as u64;
         ev_set64(
-            &mut event,
+            &raw mut event,
             ptr_ident,
             libc::EVFILT_MACHPORT,
             libc::EV_DELETE,
             0,
             0,
-            cb as *mut c_void,
+            cb.cast::<c_void>(),
             0,
             0,
         );
         loop {
             let ret = kevent64(
                 (*(*cb).loop_).fd,
-                &event,
+                &raw const event,
                 1,
-                &mut event,
+                &raw mut event,
                 1,
                 KEVENT_FLAG_ERROR_EVENTS,
                 ptr::null(),
@@ -1038,7 +1043,7 @@ pub unsafe extern "C" fn us_internal_async_close(a: *mut us_internal_async) {
         us_free((*cb).machport_buf);
 
         // Regular sockets are the only polls not freed immediately.
-        us_poll_free(a as *mut us_poll_t, (*cb).loop_);
+        us_poll_free(a.cast::<us_poll_t>(), (*cb).loop_);
     }
 }
 
@@ -1051,11 +1056,11 @@ pub unsafe extern "C" fn us_internal_async_set(
     use mach::*;
     // SAFETY: `a` is a live us_internal_callback_t.
     unsafe {
-        let internal_cb = a as *mut us_internal_callback_t;
+        let internal_cb = a.cast::<us_internal_callback_t>();
         (*internal_cb).cb = cb;
 
         // EVFILT_MACHPORT benchmarks faster than EVFILT_USER across threads.
-        let mut event: kevent64_s = zeroed();
+        let mut event: kevent64_s = MaybeUninit::zeroed().assume_init();
         event.ident = (*internal_cb).port as u64;
         event.filter = libc::EVFILT_MACHPORT;
         event.flags = libc::EV_ADD | libc::EV_ENABLE;
@@ -1068,9 +1073,9 @@ pub unsafe extern "C" fn us_internal_async_set(
         loop {
             ret = kevent64(
                 (*(*internal_cb).loop_).fd,
-                &event,
+                &raw const event,
                 1,
-                &mut event,
+                &raw mut event,
                 1,
                 KEVENT_FLAG_ERROR_EVENTS,
                 ptr::null(),
@@ -1091,7 +1096,7 @@ pub unsafe extern "C" fn us_internal_async_wakeup(a: *mut us_internal_async) {
     use mach::*;
     // SAFETY: `a` is a live us_internal_callback_t with a valid send right.
     unsafe {
-        let internal_cb = a as *mut us_internal_callback_t;
+        let internal_cb = a.cast::<us_internal_callback_t>();
         let mut msg = mach_msg_header_t {
             msgh_bits: mach_msgh_bits(MACH_MSG_TYPE_COPY_SEND, 0),
             msgh_size: size_of::<mach_msg_header_t>() as c_uint,
@@ -1103,7 +1108,7 @@ pub unsafe extern "C" fn us_internal_async_wakeup(a: *mut us_internal_async) {
         // MACH_SEND_TIMED_OUT / MACH_SEND_NO_BUFFER both mean the queue is
         // already full → the loop will wake anyway. Ignore the return code.
         let _ = mach_msg(
-            &mut msg,
+            &raw mut msg,
             MACH_SEND_MSG | MACH_SEND_TIMEOUT,
             msg.msgh_size,
             0,
@@ -1124,7 +1129,7 @@ pub unsafe extern "C" fn us_internal_create_async(
     // SAFETY: calloc-zeroed; `loop_` is live.
     unsafe {
         let cb = us_calloc(1, size_of::<us_internal_callback_t>() + ext_size as usize)
-            as *mut us_internal_callback_t;
+            .cast::<us_internal_callback_t>();
         if cb.is_null() {
             Bun__outOfMemory();
         }
@@ -1133,7 +1138,7 @@ pub unsafe extern "C" fn us_internal_create_async(
         (*cb).leave_poll_ready = 0;
 
         (*cb).p.set_poll_type(POLL_TYPE_POLLING_IN);
-        us_internal_poll_set_type(&mut (*cb).p, POLL_TYPE_CALLBACK);
+        us_internal_poll_set_type(&raw mut (*cb).p, POLL_TYPE_CALLBACK);
 
         if fallthrough == 0 {
             (*loop_).num_polls += 1;
@@ -1147,25 +1152,25 @@ pub unsafe extern "C" fn us_internal_create_async(
 pub unsafe extern "C" fn us_internal_async_close(a: *mut us_internal_async) {
     // SAFETY: `a` was returned by us_internal_create_async.
     unsafe {
-        let cb = a as *mut us_internal_callback_t;
-        let mut event: kevent64_s = zeroed();
+        let cb = a.cast::<us_internal_callback_t>();
+        let mut event: kevent64_s = MaybeUninit::zeroed().assume_init();
         ev_set64(
-            &mut event,
+            &raw mut event,
             cb as usize as u64,
             libc::EVFILT_USER,
             libc::EV_DELETE,
             0,
             0,
-            cb as *mut c_void,
+            cb.cast::<c_void>(),
             0,
             0,
         );
         loop {
             let ret = kevent64(
                 (*(*cb).loop_).fd,
-                &event,
+                &raw const event,
                 1,
-                &mut event,
+                &raw mut event,
                 1,
                 KEVENT_FLAG_ERROR_EVENTS,
                 ptr::null(),
@@ -1174,7 +1179,7 @@ pub unsafe extern "C" fn us_internal_async_close(a: *mut us_internal_async) {
                 break;
             }
         }
-        us_poll_free(a as *mut us_poll_t, (*cb).loop_);
+        us_poll_free(a.cast::<us_poll_t>(), (*cb).loop_);
     }
 }
 
@@ -1186,18 +1191,18 @@ pub unsafe extern "C" fn us_internal_async_set(
 ) {
     // SAFETY: `a` is a live us_internal_callback_t.
     unsafe {
-        let internal_cb = a as *mut us_internal_callback_t;
+        let internal_cb = a.cast::<us_internal_callback_t>();
         (*internal_cb).cb = cb;
 
-        let mut event: kevent64_s = zeroed();
+        let mut event: kevent64_s = MaybeUninit::zeroed().assume_init();
         ev_set64(
-            &mut event,
+            &raw mut event,
             internal_cb as usize as u64,
             libc::EVFILT_USER,
             libc::EV_ADD | libc::EV_ENABLE | libc::EV_CLEAR,
             0,
             0,
-            internal_cb as *mut c_void,
+            internal_cb.cast::<c_void>(),
             0,
             0,
         );
@@ -1205,9 +1210,9 @@ pub unsafe extern "C" fn us_internal_async_set(
         loop {
             ret = kevent64(
                 (*(*internal_cb).loop_).fd,
-                &event,
+                &raw const event,
                 1,
-                &mut event,
+                &raw mut event,
                 1,
                 KEVENT_FLAG_ERROR_EVENTS,
                 ptr::null(),
@@ -1227,16 +1232,16 @@ pub unsafe extern "C" fn us_internal_async_set(
 pub unsafe extern "C" fn us_internal_async_wakeup(a: *mut us_internal_async) {
     // SAFETY: `a` is a live us_internal_callback_t registered with EVFILT_USER.
     unsafe {
-        let internal_cb = a as *mut us_internal_callback_t;
-        let mut event: kevent64_s = zeroed();
+        let internal_cb = a.cast::<us_internal_callback_t>();
+        let mut event: kevent64_s = MaybeUninit::zeroed().assume_init();
         ev_set64(
-            &mut event,
+            &raw mut event,
             internal_cb as usize as u64,
             libc::EVFILT_USER,
             0,
             libc::NOTE_TRIGGER,
             0,
-            internal_cb as *mut c_void,
+            internal_cb.cast::<c_void>(),
             0,
             0,
         );
@@ -1245,7 +1250,7 @@ pub unsafe extern "C" fn us_internal_async_wakeup(a: *mut us_internal_async) {
         loop {
             let ret = kevent64(
                 (*(*internal_cb).loop_).fd,
-                &event,
+                &raw const event,
                 1,
                 ptr::null_mut(),
                 0,
@@ -1270,11 +1275,11 @@ pub unsafe extern "C" fn us_socket_get_error(s: *mut us_socket_t) -> c_int {
         let mut error: c_int = 0;
         let mut len = size_of::<c_int>() as libc::socklen_t;
         if libc::getsockopt(
-            us_poll_fd(s as *mut us_poll_t),
+            us_poll_fd(s.cast::<us_poll_t>()),
             libc::SOL_SOCKET,
             libc::SO_ERROR,
-            (&raw mut error) as *mut c_void,
-            &mut len,
+            (&raw mut error).cast::<c_void>(),
+            &raw mut len,
         ) == -1
         {
             return *errno_location();

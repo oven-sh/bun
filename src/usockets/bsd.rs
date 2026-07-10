@@ -7,7 +7,7 @@
 #![allow(dead_code, unused_variables, unused_mut, clippy::missing_safety_doc)]
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
-use core::mem::{size_of, zeroed, MaybeUninit};
+use core::mem::{size_of, MaybeUninit};
 use core::ptr;
 
 use crate::types::{
@@ -85,6 +85,7 @@ unsafe fn libus_err() -> c_int {
     }
     #[cfg(not(windows))]
     {
+        // SAFETY: reads thread-local errno; always valid.
         unsafe { errno() }
     }
 }
@@ -98,6 +99,7 @@ unsafe fn is_eintr(rc: ssize_t) -> bool {
     }
     #[cfg(not(windows))]
     {
+        // SAFETY: reads thread-local errno; always valid.
         rc == -1 && unsafe { errno() } == libc::EINTR
     }
 }
@@ -111,6 +113,7 @@ unsafe fn is_eintr_fd(rc: LIBUS_SOCKET_DESCRIPTOR) -> bool {
     }
     #[cfg(not(windows))]
     {
+        // SAFETY: reads thread-local errno; always valid.
         rc == -1 && unsafe { errno() } == libc::EINTR
     }
 }
@@ -407,7 +410,7 @@ mod win {
     #[inline(always)]
     pub(super) unsafe fn sso(fd: SOCKET, level: c_int, opt: c_int, val: *const c_void, len: socklen_t) -> c_int {
         // SAFETY: thin setsockopt wrapper; caller provides valid optval/len.
-        unsafe { setsockopt(fd, level, opt, val as *const c_char, len) }
+        unsafe { setsockopt(fd, level, opt, val.cast::<c_char>(), len) }
     }
 }
 
@@ -490,6 +493,7 @@ mod debug_log {
     }
 
     pub(super) unsafe fn on_recv(buf: *const c_void, n: usize) {
+        // SAFETY: caller passes a buffer with at least `n` readable bytes.
         unsafe {
             init();
             let f = RECV_FILE.load(Ordering::Relaxed);
@@ -500,6 +504,7 @@ mod debug_log {
         }
     }
     pub(super) unsafe fn on_send(buf: *const c_void, n: usize) {
+        // SAFETY: caller passes a buffer with at least `n` readable bytes.
         unsafe {
             init();
             let f = SEND_FILE.load(Ordering::Relaxed);
@@ -587,8 +592,8 @@ pub unsafe extern "C" fn bsd_sendmmsg(
         let mut i = 0;
         while i < sb.num {
             loop {
-                let addr = *sb.addresses.add(i as usize) as *mut plat::sockaddr;
-                let payload = *sb.payloads.add(i as usize) as *const c_char;
+                let addr = (*sb.addresses.add(i as usize)).cast::<plat::sockaddr>();
+                let payload = (*sb.payloads.add(i as usize)).cast::<c_char>().cast_const();
                 let len = *sb.lengths.add(i as usize) as c_int;
                 let ret: c_int = if addr.is_null() || (*addr).sa_family as c_int == plat::AF_UNSPEC {
                     win::ws_send(fd, payload.cast(), len, flags)
@@ -614,6 +619,7 @@ pub unsafe extern "C" fn bsd_sendmmsg(
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
+    // SAFETY: FFI; caller guarantees `sendbuf` is a valid udp_sendbuf with `num` initialized entries.
     unsafe {
         let sb = &mut *sendbuf;
         let msgvec = udp_sendbuf::msgvec(sendbuf);
@@ -646,6 +652,7 @@ pub unsafe extern "C" fn bsd_sendmmsg(
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    // SAFETY: FFI; caller guarantees `sendbuf` is a valid udp_sendbuf with `num` initialized entries.
     unsafe {
         let sb = &mut *sendbuf;
         let msgvec = udp_sendbuf::msgvec(sendbuf);
@@ -674,7 +681,7 @@ pub unsafe extern "C" fn bsd_recvmmsg(
                 LIBUS_RECV_BUFFER_LENGTH as c_int,
                 flags,
                 (&raw mut (*recvbuf).addr).cast(),
-                &mut addr_len,
+                &raw mut addr_len,
             ) as isize;
             if ret < 0 {
                 let err = win::WSAGetLastError();
@@ -691,6 +698,7 @@ pub unsafe extern "C" fn bsd_recvmmsg(
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
+    // SAFETY: FFI; caller guarantees `recvbuf` is a valid udp_recvbuf set up via bsd_udp_setup_recvbuf.
     unsafe {
         if plat::Bun__doesMacOSVersionSupportSendRecvMsgX() != 0 {
             loop {
@@ -719,6 +727,7 @@ pub unsafe extern "C" fn bsd_recvmmsg(
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    // SAFETY: FFI; caller guarantees `recvbuf` is a valid udp_recvbuf set up via bsd_udp_setup_recvbuf.
     unsafe {
         loop {
             let ret = plat::recvmmsg(
@@ -747,13 +756,14 @@ pub unsafe extern "C" fn bsd_udp_setup_recvbuf(
         (*recvbuf).buflen = databuflen;
     }
     #[cfg(not(windows))]
+    // SAFETY: FFI; caller owns `recvbuf` and provides a `databuf` of LIBUS_UDP_RECV_COUNT*LIBUS_UDP_MAX_SIZE bytes.
     unsafe {
         ptr::write_bytes(recvbuf, 0, 1);
         let rb = &mut *recvbuf;
         for i in 0..LIBUS_UDP_RECV_COUNT {
             rb.iov[i].iov_base = databuf.cast::<c_char>().add(i * LIBUS_UDP_MAX_SIZE).cast();
             rb.iov[i].iov_len = LIBUS_UDP_MAX_SIZE;
-            let mut mh: libc::msghdr = zeroed();
+            let mut mh: libc::msghdr = MaybeUninit::zeroed().assume_init();
             mh.msg_name = (&raw mut rb.addr[i]).cast();
             mh.msg_namelen = size_of::<sockaddr_storage>() as _;
             mh.msg_iov = &raw mut rb.iov[i];
@@ -783,6 +793,7 @@ pub unsafe extern "C" fn bsd_udp_setup_sendbuf(
         return num;
     }
     #[cfg(not(windows))]
+    // SAFETY: FFI; caller owns `buf` (bufsize bytes) and `payloads`/`lengths`/`addresses` each have `num` entries.
     unsafe {
         (*buf).set_has_empty(false);
         // sendmsg_x docs state it does not support addresses.
@@ -797,7 +808,7 @@ pub unsafe extern "C" fn bsd_udp_setup_sendbuf(
         // iov array is laid out immediately after msgvec[count] in the same buffer.
         let iov = msgvec.add(count).cast::<libc::iovec>();
         for i in 0..count {
-            let addr = *addresses.add(i) as *mut plat::sockaddr;
+            let addr = (*addresses.add(i)).cast::<plat::sockaddr>();
             let mut addr_len: socklen_t = 0;
             if !addr.is_null() {
                 let fam = (*addr).sa_family as c_int;
@@ -849,6 +860,7 @@ pub unsafe extern "C" fn bsd_udp_packet_buffer_local_ip(
         return 0;
     }
     #[cfg(not(any(windows, target_os = "macos", target_os = "ios")))]
+    // SAFETY: FFI; `msgvec` is a valid recv buffer with at least `index+1` entries, `ip` has room for 16 bytes.
     unsafe {
         let mh: *mut libc::msghdr =
             &raw mut (*(msgvec.cast::<plat::mmsghdr>().add(index as usize))).msg_hdr;
@@ -857,25 +869,29 @@ pub unsafe extern "C" fn bsd_udp_packet_buffer_local_ip(
             if (*cmsg).cmsg_level == plat::IPPROTO_IP {
                 #[cfg(target_os = "linux")]
                 if (*cmsg).cmsg_type == plat::IP_PKTINFO {
-                    let pi = libc::CMSG_DATA(cmsg) as *const plat::in_pktinfo;
+                    // CMSG_DATA is aligned for the declared level/type payload.
+                    #[allow(clippy::cast_ptr_alignment)]
+                    let pi = libc::CMSG_DATA(cmsg).cast::<plat::in_pktinfo>();
                     ptr::copy_nonoverlapping(
-                        (&raw const (*pi).ipi_addr) as *const u8,
-                        ip as *mut u8,
+                        (&raw const (*pi).ipi_addr).cast::<u8>(),
+                        ip.cast::<u8>(),
                         4,
                     );
                     return 4;
                 }
                 #[cfg(target_os = "freebsd")]
                 if (*cmsg).cmsg_type == plat::IP_RECVDSTADDR {
-                    ptr::copy_nonoverlapping(libc::CMSG_DATA(cmsg), ip as *mut u8, 4);
+                    ptr::copy_nonoverlapping(libc::CMSG_DATA(cmsg), ip.cast::<u8>(), 4);
                     return 4;
                 }
             }
             if (*cmsg).cmsg_level == plat::IPPROTO_IPV6 && (*cmsg).cmsg_type == plat::IPV6_PKTINFO {
-                let pi6 = libc::CMSG_DATA(cmsg) as *const plat::in6_pktinfo;
+                // CMSG_DATA is aligned for the declared level/type payload.
+                #[allow(clippy::cast_ptr_alignment)]
+                let pi6 = libc::CMSG_DATA(cmsg).cast::<plat::in6_pktinfo>();
                 ptr::copy_nonoverlapping(
-                    (&raw const (*pi6).ipi6_addr) as *const u8,
-                    ip as *mut u8,
+                    (&raw const (*pi6).ipi6_addr).cast::<u8>(),
+                    ip.cast::<u8>(),
                     16,
                 );
                 return 16;
@@ -896,6 +912,7 @@ pub unsafe extern "C" fn bsd_udp_packet_buffer_peer(
         (&raw mut (*msgvec).addr).cast()
     }
     #[cfg(not(windows))]
+    // SAFETY: FFI; `msgvec` is a valid recv buffer with at least `index+1` entries.
     unsafe {
         (*(msgvec.cast::<plat::mmsghdr>().add(index as usize))).msg_hdr.msg_name.cast()
     }
@@ -911,6 +928,7 @@ pub unsafe extern "C" fn bsd_udp_packet_buffer_payload(
         (*msgvec).buf
     }
     #[cfg(not(windows))]
+    // SAFETY: FFI; `msgvec` is a valid recv buffer with at least `index+1` entries.
     unsafe {
         (*(*(msgvec.cast::<plat::mmsghdr>().add(index as usize))).msg_hdr.msg_iov).iov_base.cast()
     }
@@ -926,6 +944,7 @@ pub unsafe extern "C" fn bsd_udp_packet_buffer_payload_length(
         (*msgvec).recvlen as c_int
     }
     #[cfg(not(windows))]
+    // SAFETY: FFI; `msgvec` is a valid recv buffer with at least `index+1` entries.
     unsafe {
         // Clamp so a truncated datagram never reports more bytes than we
         // actually copied (Darwin recvmsg_x may report original length).
@@ -945,6 +964,7 @@ pub unsafe extern "C" fn bsd_udp_packet_buffer_truncated(
         0
     }
     #[cfg(not(windows))]
+    // SAFETY: FFI; `msgvec` is a valid recv buffer with at least `index+1` entries.
     unsafe {
         let flags = (*(msgvec.cast::<plat::mmsghdr>().add(index as usize))).msg_hdr.msg_flags;
         if flags & plat::MSG_TRUNC != 0 { 1 } else { 0 }
@@ -973,7 +993,7 @@ unsafe fn win32_set_nonblocking(fd: LIBUS_SOCKET_DESCRIPTOR) -> LIBUS_SOCKET_DES
         // libuv sets non-blocking at poll init; connect needs it earlier.
         let mut yes: u32 = 1;
         // SAFETY: valid SOCKET, FIONBIO writes through argp.
-        unsafe { win::ioctlsocket(fd, win::FIONBIO, &mut yes) };
+        unsafe { win::ioctlsocket(fd, win::FIONBIO, &raw mut yes) };
     }
     fd
 }
@@ -1013,10 +1033,12 @@ unsafe fn setsockopt_6_or_4(
     };
     #[cfg(not(windows))]
     let fallthrough = {
+        // SAFETY: reads thread-local errno; always valid.
         let e = unsafe { errno() };
         e == libc::ENOPROTOOPT || e == libc::EINVAL
     };
     if fallthrough {
+        // SAFETY: caller guarantees val/len validity.
         return unsafe { plat::sso(fd, plat::IPPROTO_IP, option4, val, len) };
     }
     res
@@ -1030,11 +1052,13 @@ pub unsafe extern "C" fn bsd_socket_nodelay(fd: LIBUS_SOCKET_DESCRIPTOR, enabled
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_broadcast(fd: LIBUS_SOCKET_DESCRIPTOR, enabled: c_int) -> c_int {
+    // SAFETY: optval is a live c_int.
     unsafe { plat::sso(fd, plat::SOL_SOCKET, plat::SO_BROADCAST, (&raw const enabled).cast(), size_of::<c_int>() as _) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_multicast_loopback(fd: LIBUS_SOCKET_DESCRIPTOR, enabled: c_int) -> c_int {
+    // SAFETY: optval is a live c_int.
     unsafe {
         setsockopt_6_or_4(
             fd,
@@ -1051,6 +1075,7 @@ pub unsafe extern "C" fn bsd_socket_multicast_interface(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     addr: *const sockaddr_storage,
 ) -> c_int {
+    // SAFETY: FFI; caller guarantees `addr` points to a valid sockaddr_storage.
     unsafe {
         #[cfg(windows)]
         if fd == win::SOCKET_ERROR as usize as LIBUS_SOCKET_DESCRIPTOR {
@@ -1059,7 +1084,7 @@ pub unsafe extern "C" fn bsd_socket_multicast_interface(
             return -1;
         }
         if (*addr).ss_family as c_int == plat::AF_INET {
-            let addr4 = addr as *const plat::sockaddr_in;
+            let addr4 = addr.cast::<plat::sockaddr_in>();
             let first_octet = ntohl((*addr4).sin_addr.s_addr) >> 24;
             // 224.0.0.0/4 is multicast — not a valid interface address.
             if !(224..=239).contains(&first_octet) {
@@ -1073,7 +1098,7 @@ pub unsafe extern "C" fn bsd_socket_multicast_interface(
             }
         }
         if (*addr).ss_family as c_int == plat::AF_INET6 {
-            let addr6 = addr as *const plat::sockaddr_in6;
+            let addr6 = addr.cast::<plat::sockaddr_in6>();
             return plat::sso(
                 fd,
                 plat::IPPROTO_IPV6,
@@ -1095,8 +1120,9 @@ unsafe fn bsd_socket_set_membership4(
     iface: *const plat::sockaddr_in,
     drop: c_int,
 ) -> c_int {
+    // SAFETY: caller guarantees `addr` is valid and `iface` is null or valid; ip_mreq is zeroable.
     unsafe {
-        let mut mreq: plat::ip_mreq = zeroed();
+        let mut mreq: plat::ip_mreq = MaybeUninit::zeroed().assume_init();
         mreq.imr_multiaddr.s_addr = (*addr).sin_addr.s_addr;
         mreq.imr_interface.s_addr = if iface.is_null() {
             htonl(plat::INADDR_ANY)
@@ -1114,8 +1140,9 @@ unsafe fn bsd_socket_set_membership6(
     iface: *const plat::sockaddr_in6,
     drop: c_int,
 ) -> c_int {
+    // SAFETY: caller guarantees `addr` is valid and `iface` is null or valid; ipv6_mreq is zeroable.
     unsafe {
-        let mut mreq: plat::ipv6_mreq = zeroed();
+        let mut mreq: plat::ipv6_mreq = MaybeUninit::zeroed().assume_init();
         mreq.ipv6mr_multiaddr = (*addr).sin6_addr;
         if !iface.is_null() {
             mreq.ipv6mr_interface = (*iface).sin6_scope_id as _;
@@ -1132,6 +1159,7 @@ pub unsafe extern "C" fn bsd_socket_set_membership(
     iface: *const sockaddr_storage,
     drop: c_int,
 ) -> c_int {
+    // SAFETY: FFI; caller guarantees `addr` is valid and `iface` is null or valid.
     unsafe {
         if !iface.is_null() && (*addr).ss_family != (*iface).ss_family {
             set_errno(libc::EINVAL);
@@ -1152,8 +1180,9 @@ unsafe fn bsd_socket_set_source_specific_membership4(
     iface: *const plat::sockaddr_in,
     drop: c_int,
 ) -> c_int {
+    // SAFETY: caller guarantees `source`/`group` are valid and `iface` is null or valid; ip_mreq_source is zeroable.
     unsafe {
-        let mut mreq: plat::ip_mreq_source = zeroed();
+        let mut mreq: plat::ip_mreq_source = MaybeUninit::zeroed().assume_init();
         mreq.imr_interface.s_addr = if iface.is_null() {
             htonl(plat::INADDR_ANY)
         } else {
@@ -1173,8 +1202,9 @@ unsafe fn bsd_socket_set_source_specific_membership6(
     iface: *const plat::sockaddr_in6,
     drop: c_int,
 ) -> c_int {
+    // SAFETY: caller guarantees `source`/`group` are valid and `iface` is null or valid; group_source_req is zeroable.
     unsafe {
-        let mut mreq: plat::group_source_req = zeroed();
+        let mut mreq: plat::group_source_req = MaybeUninit::zeroed().assume_init();
         if !iface.is_null() {
             mreq.gsr_interface = (*iface).sin6_scope_id;
         }
@@ -1193,6 +1223,7 @@ pub unsafe extern "C" fn bsd_socket_set_source_specific_membership(
     iface: *const sockaddr_storage,
     drop: c_int,
 ) -> c_int {
+    // SAFETY: FFI; caller guarantees `source`/`group` are valid and `iface` is null or valid.
     unsafe {
         if (*source).ss_family == (*group).ss_family
             && (iface.is_null() || (*group).ss_family == (*iface).ss_family)
@@ -1214,19 +1245,23 @@ unsafe fn bsd_socket_ttl_any(fd: LIBUS_SOCKET_DESCRIPTOR, ttl: c_int, ipv4: c_in
     if !(1..=255).contains(&ttl) {
         #[cfg(windows)]
         win::WSASetLastError(win::WSAEINVAL);
+        // SAFETY: writes thread-local errno; always valid.
         unsafe { set_errno(libc::EINVAL) };
         return -1;
     }
+    // SAFETY: optval is a live c_int.
     unsafe { setsockopt_6_or_4(fd, ipv4, ipv6, (&raw const ttl).cast(), size_of::<c_int>() as _) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_ttl_unicast(fd: LIBUS_SOCKET_DESCRIPTOR, ttl: c_int) -> c_int {
+    // SAFETY: thin setsockopt wrapper; no pointer arguments.
     unsafe { bsd_socket_ttl_any(fd, ttl, plat::IP_TTL, plat::IPV6_UNICAST_HOPS) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_ttl_multicast(fd: LIBUS_SOCKET_DESCRIPTOR, ttl: c_int) -> c_int {
+    // SAFETY: thin setsockopt wrapper; no pointer arguments.
     unsafe { bsd_socket_ttl_any(fd, ttl, plat::IP_MULTICAST_TTL, plat::IPV6_MULTICAST_HOPS) }
 }
 
@@ -1237,6 +1272,7 @@ pub unsafe extern "C" fn bsd_socket_keepalive(
     delay: c_uint,
 ) -> c_int {
     #[cfg(not(windows))]
+    // SAFETY: all optvals are live stack values; setsockopt only reads them.
     unsafe {
         if plat::sso(fd, plat::SOL_SOCKET, plat::SO_KEEPALIVE, (&raw const on).cast(), size_of::<c_int>() as _) != 0 {
             return errno();
@@ -1286,13 +1322,14 @@ pub unsafe extern "C" fn bsd_socket_keepalive(
 }
 
 unsafe fn bsd_socket_tos_level(fd: LIBUS_SOCKET_DESCRIPTOR, level: *mut c_int, option: *mut c_int) -> c_int {
+    // SAFETY: caller passes valid out-pointers for `level`/`option`; sockaddr_storage is zeroable.
     unsafe {
-        let mut storage: sockaddr_storage = zeroed();
+        let mut storage: sockaddr_storage = MaybeUninit::zeroed().assume_init();
         let mut addrlen: socklen_t = size_of::<sockaddr_storage>() as _;
         #[cfg(windows)]
-        let rc = win::getsockname(fd, (&raw mut storage).cast(), &mut addrlen);
+        let rc = win::getsockname(fd, (&raw mut storage).cast(), &raw mut addrlen);
         #[cfg(not(windows))]
-        let rc = plat::getsockname(fd, (&raw mut storage).cast(), &mut addrlen);
+        let rc = plat::getsockname(fd, (&raw mut storage).cast(), &raw mut addrlen);
         if rc != 0 {
             return -libus_err();
         }
@@ -1311,10 +1348,11 @@ unsafe fn bsd_socket_tos_level(fd: LIBUS_SOCKET_DESCRIPTOR, level: *mut c_int, o
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_set_tos(fd: LIBUS_SOCKET_DESCRIPTOR, tos: c_int) -> c_int {
+    // SAFETY: all optvals are live stack values.
     unsafe {
         let mut level = 0;
         let mut option = 0;
-        let err = bsd_socket_tos_level(fd, &mut level, &mut option);
+        let err = bsd_socket_tos_level(fd, &raw mut level, &raw mut option);
         if err != 0 {
             return err;
         }
@@ -1327,19 +1365,20 @@ pub unsafe extern "C" fn bsd_socket_set_tos(fd: LIBUS_SOCKET_DESCRIPTOR, tos: c_
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_get_tos(fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int {
+    // SAFETY: getsockopt writes into live stack `tos`/`len`.
     unsafe {
         let mut level = 0;
         let mut option = 0;
-        let err = bsd_socket_tos_level(fd, &mut level, &mut option);
+        let err = bsd_socket_tos_level(fd, &raw mut level, &raw mut option);
         if err != 0 {
             return err;
         }
         let mut tos: c_int = 0;
         let mut len: socklen_t = size_of::<c_int>() as _;
         #[cfg(windows)]
-        let rc = win::getsockopt(fd, level, option, (&raw mut tos).cast(), &mut len);
+        let rc = win::getsockopt(fd, level, option, (&raw mut tos).cast(), &raw mut len);
         #[cfg(not(windows))]
-        let rc = plat::getsockopt(fd, level, option, (&raw mut tos).cast(), &mut len);
+        let rc = plat::getsockopt(fd, level, option, (&raw mut tos).cast(), &raw mut len);
         if rc != 0 {
             return -libus_err();
         }
@@ -1350,6 +1389,7 @@ pub unsafe extern "C" fn bsd_socket_get_tos(fd: LIBUS_SOCKET_DESCRIPTOR) -> c_in
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_flush(fd: LIBUS_SOCKET_DESCRIPTOR) {
     #[cfg(target_os = "linux")]
+    // SAFETY: optval is a live c_int.
     unsafe {
         let enabled: c_int = 0;
         plat::sso(fd, plat::IPPROTO_TCP, plat::TCP_CORK, (&raw const enabled).cast(), size_of::<c_int>() as _);
@@ -1369,6 +1409,7 @@ pub unsafe extern "C" fn bsd_create_socket(
     protocol: c_int,
     err: *mut c_int,
 ) -> LIBUS_SOCKET_DESCRIPTOR {
+    // SAFETY: FFI; `err` is null or a valid out-pointer.
     unsafe {
         if !err.is_null() {
             *err = 0;
@@ -1407,6 +1448,7 @@ pub unsafe extern "C" fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR) {
     #[cfg(windows)]
     unsafe { win::closesocket(fd) };
     #[cfg(not(windows))]
+    // SAFETY: FFI; `fd` is a caller-owned descriptor.
     unsafe { plat::close(fd) };
 }
 
@@ -1415,6 +1457,7 @@ pub unsafe extern "C" fn bsd_shutdown_socket(fd: LIBUS_SOCKET_DESCRIPTOR) {
     #[cfg(windows)]
     unsafe { win::shutdown(fd, win::SD_SEND) };
     #[cfg(not(windows))]
+    // SAFETY: FFI; `fd` is a caller-owned descriptor.
     unsafe { plat::shutdown(fd, plat::SHUT_WR) };
 }
 
@@ -1423,6 +1466,7 @@ pub unsafe extern "C" fn bsd_shutdown_socket_read(fd: LIBUS_SOCKET_DESCRIPTOR) {
     #[cfg(windows)]
     unsafe { win::shutdown(fd, win::SD_RECEIVE) };
     #[cfg(not(windows))]
+    // SAFETY: FFI; `fd` is a caller-owned descriptor.
     unsafe { plat::shutdown(fd, plat::SHUT_RD) };
 }
 
@@ -1432,12 +1476,12 @@ pub unsafe extern "C" fn internal_finalize_bsd_addr(addr: *mut bsd_addr_t) {
     unsafe {
         let fam = (*addr).mem.ss_family as c_int;
         if fam == plat::AF_INET6 {
-            let a6 = addr as *mut plat::sockaddr_in6;
+            let a6 = addr.cast::<plat::sockaddr_in6>();
             (*addr).ip = (&raw mut (*a6).sin6_addr).cast();
             (*addr).ip_length = size_of::<plat::in6_addr>() as c_int;
             (*addr).port = ntohs((*a6).sin6_port) as c_int;
         } else if fam == plat::AF_INET {
-            let a4 = addr as *mut plat::sockaddr_in;
+            let a4 = addr.cast::<plat::sockaddr_in>();
             (*addr).ip = (&raw mut (*a4).sin_addr).cast();
             (*addr).ip_length = size_of::<plat::in_addr>() as c_int;
             (*addr).port = ntohs((*a4).sin_port) as c_int;
@@ -1450,12 +1494,13 @@ pub unsafe extern "C" fn internal_finalize_bsd_addr(addr: *mut bsd_addr_t) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_local_addr(fd: LIBUS_SOCKET_DESCRIPTOR, addr: *mut bsd_addr_t) -> c_int {
+    // SAFETY: FFI; caller guarantees `addr` is a valid bsd_addr_t out-pointer.
     unsafe {
         (*addr).len = size_of::<sockaddr_storage>() as _;
         #[cfg(windows)]
-        let rc = win::getsockname(fd, (&raw mut (*addr).mem).cast(), &mut (*addr).len);
+        let rc = win::getsockname(fd, (&raw mut (*addr).mem).cast(), &raw mut (*addr).len);
         #[cfg(not(windows))]
-        let rc = plat::getsockname(fd, (&raw mut (*addr).mem).cast(), &mut (*addr).len);
+        let rc = plat::getsockname(fd, (&raw mut (*addr).mem).cast(), &raw mut (*addr).len);
         if rc != 0 {
             return -1;
         }
@@ -1466,12 +1511,13 @@ pub unsafe extern "C" fn bsd_local_addr(fd: LIBUS_SOCKET_DESCRIPTOR, addr: *mut 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_remote_addr(fd: LIBUS_SOCKET_DESCRIPTOR, addr: *mut bsd_addr_t) -> c_int {
+    // SAFETY: FFI; caller guarantees `addr` is a valid bsd_addr_t out-pointer.
     unsafe {
         (*addr).len = size_of::<sockaddr_storage>() as _;
         #[cfg(windows)]
-        let rc = win::getpeername(fd, (&raw mut (*addr).mem).cast(), &mut (*addr).len);
+        let rc = win::getpeername(fd, (&raw mut (*addr).mem).cast(), &raw mut (*addr).len);
         #[cfg(not(windows))]
-        let rc = plat::getpeername(fd, (&raw mut (*addr).mem).cast(), &mut (*addr).len);
+        let rc = plat::getpeername(fd, (&raw mut (*addr).mem).cast(), &raw mut (*addr).len);
         if rc != 0 {
             return -1;
         }
@@ -1482,16 +1528,19 @@ pub unsafe extern "C" fn bsd_remote_addr(fd: LIBUS_SOCKET_DESCRIPTOR, addr: *mut
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_addr_get_ip(addr: *mut bsd_addr_t) -> *mut c_char {
+    // SAFETY: FFI; caller guarantees `addr` is a valid bsd_addr_t.
     unsafe { (*addr).ip }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_addr_get_ip_length(addr: *mut bsd_addr_t) -> c_int {
+    // SAFETY: FFI; caller guarantees `addr` is a valid bsd_addr_t.
     unsafe { (*addr).ip_length }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_addr_get_port(addr: *mut bsd_addr_t) -> c_int {
+    // SAFETY: FFI; caller guarantees `addr` is a valid bsd_addr_t.
     unsafe { (*addr).port }
 }
 
@@ -1500,10 +1549,11 @@ pub unsafe extern "C" fn bsd_accept_socket(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     addr: *mut bsd_addr_t,
 ) -> LIBUS_SOCKET_DESCRIPTOR {
+    // SAFETY: FFI; caller guarantees `addr` is a valid bsd_addr_t out-pointer.
     unsafe {
         let mut injected: ssize_t = 0;
         let mut unused: c_int = 0;
-        if us_fault_check(us_fault_syscall::US_FAULT_ACCEPT, fd, &mut injected, &mut unused) {
+        if us_fault_check(us_fault_syscall::US_FAULT_ACCEPT, fd, &raw mut injected, &raw mut unused) {
             return LIBUS_SOCKET_ERROR;
         }
 
@@ -1513,12 +1563,12 @@ pub unsafe extern "C" fn bsd_accept_socket(
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             let afd = plat::accept4(
                 fd,
-                addr as *mut plat::sockaddr,
-                &mut (*addr).len,
+                addr.cast::<plat::sockaddr>(),
+                &raw mut (*addr).len,
                 plat::SOCK_CLOEXEC | plat::SOCK_NONBLOCK,
             );
             #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-            let afd = plat::accept(fd, addr as *mut plat::sockaddr, &mut (*addr).len);
+            let afd = plat::accept(fd, addr.cast::<plat::sockaddr>(), &raw mut (*addr).len);
 
             if is_eintr_fd(afd) {
                 continue;
@@ -1562,9 +1612,10 @@ pub unsafe extern "C" fn bsd_recv(
     mut length: c_int,
     flags: c_int,
 ) -> ssize_t {
+    // SAFETY: FFI; caller guarantees `buf` has `length` writable bytes.
     unsafe {
         let mut injected: ssize_t = 0;
-        if us_fault_check(us_fault_syscall::US_FAULT_RECV, fd, &mut injected, &mut length) {
+        if us_fault_check(us_fault_syscall::US_FAULT_RECV, fd, &raw mut injected, &raw mut length) {
             return injected;
         }
         loop {
@@ -1591,10 +1642,11 @@ pub unsafe extern "C" fn bsd_recvmsg(
     msg: *mut libc::msghdr,
     flags: c_int,
 ) -> ssize_t {
+    // SAFETY: FFI; caller guarantees `msg` is a valid msghdr.
     unsafe {
         let mut injected: ssize_t = 0;
         let mut unused: c_int = 0;
-        if us_fault_check(us_fault_syscall::US_FAULT_RECVMSG, fd, &mut injected, &mut unused) {
+        if us_fault_check(us_fault_syscall::US_FAULT_RECVMSG, fd, &raw mut injected, &raw mut unused) {
             return injected;
         }
         loop {
@@ -1614,10 +1666,11 @@ pub unsafe extern "C" fn bsd_writev(
     mut count: c_int,
 ) -> ssize_t {
     #[cfg(not(windows))]
+    // SAFETY: FFI; caller guarantees `iov` points to `count` valid iovecs.
     unsafe {
         let mut injected: ssize_t = 0;
         let mut unused: c_int = 0;
-        if us_fault_check(us_fault_syscall::US_FAULT_WRITEV, fd, &mut injected, &mut unused) {
+        if us_fault_check(us_fault_syscall::US_FAULT_WRITEV, fd, &raw mut injected, &raw mut unused) {
             return injected;
         }
         // writev fails with EINVAL past IOV_MAX; cap and let the caller's
@@ -1661,10 +1714,11 @@ pub unsafe extern "C" fn bsd_write2(
     payload_length: c_int,
 ) -> ssize_t {
     #[cfg(not(windows))]
+    // SAFETY: FFI; caller guarantees `header`/`payload` are readable for their lengths.
     unsafe {
         let mut injected: ssize_t = 0;
         let mut unused: c_int = 0;
-        if us_fault_check(us_fault_syscall::US_FAULT_WRITEV, fd, &mut injected, &mut unused) {
+        if us_fault_check(us_fault_syscall::US_FAULT_WRITEV, fd, &raw mut injected, &raw mut unused) {
             return injected;
         }
         let chunks: [libc::iovec; 2] = [
@@ -1698,9 +1752,10 @@ pub unsafe extern "C" fn bsd_send(
     buf: *const c_char,
     mut length: c_int,
 ) -> ssize_t {
+    // SAFETY: FFI; caller guarantees `buf` has `length` readable bytes.
     unsafe {
         let mut injected: ssize_t = 0;
-        if us_fault_check(us_fault_syscall::US_FAULT_SEND, fd, &mut injected, &mut length) {
+        if us_fault_check(us_fault_syscall::US_FAULT_SEND, fd, &raw mut injected, &raw mut length) {
             return injected;
         }
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -1733,10 +1788,11 @@ pub unsafe extern "C" fn bsd_sendmsg(
     msg: *const libc::msghdr,
     flags: c_int,
 ) -> ssize_t {
+    // SAFETY: FFI; caller guarantees `msg` is a valid msghdr.
     unsafe {
         let mut injected: ssize_t = 0;
         let mut unused: c_int = 0;
-        if us_fault_check(us_fault_syscall::US_FAULT_SENDMSG, fd, &mut injected, &mut unused) {
+        if us_fault_check(us_fault_syscall::US_FAULT_SENDMSG, fd, &raw mut injected, &raw mut unused) {
             return injected;
         }
         loop {
@@ -1754,6 +1810,7 @@ pub unsafe extern "C" fn bsd_would_block() -> c_int {
     #[cfg(windows)]
     { (win::WSAGetLastError() == win::WSAEWOULDBLOCK) as c_int }
     #[cfg(not(windows))]
+    // SAFETY: reads thread-local errno; always valid.
     unsafe { (errno() == libc::EWOULDBLOCK) as c_int }
 }
 
@@ -1764,6 +1821,7 @@ pub unsafe extern "C" fn bsd_send_is_transient_error() -> c_int {
     #[cfg(windows)]
     { (win::WSAGetLastError() == win::WSAENOBUFS) as c_int }
     #[cfg(not(windows))]
+    // SAFETY: reads thread-local errno; always valid.
     unsafe {
         let e = errno();
         (e == libc::ENOBUFS || e == libc::ENOMEM) as c_int
@@ -1781,6 +1839,7 @@ unsafe fn us_internal_bind_and_listen(
     backlog: c_int,
     error: *mut c_int,
 ) -> c_int {
+    // SAFETY: caller guarantees `listen_addr` is valid for `listen_addr_len` bytes and `error` is writable.
     unsafe {
         let mut result;
         loop {
@@ -1803,10 +1862,12 @@ unsafe fn us_internal_bind_and_listen(
 unsafe fn bsd_set_reuseaddr(listen_fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int {
     let one: c_int = 1;
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+    // SAFETY: optval is a live c_int.
     unsafe {
         plat::sso(listen_fd, plat::SOL_SOCKET, libc::SO_REUSEPORT, (&raw const one).cast(), size_of::<c_int>() as _)
     }
     #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "freebsd")))]
+    // SAFETY: optval is a live c_int.
     unsafe {
         plat::sso(listen_fd, plat::SOL_SOCKET, plat::SO_REUSEADDR, (&raw const one).cast(), size_of::<c_int>() as _)
     }
@@ -1814,6 +1875,7 @@ unsafe fn bsd_set_reuseaddr(listen_fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int {
 
 unsafe fn bsd_set_reuseport(listen_fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int {
     #[cfg(all(not(windows), any(target_os = "linux", target_os = "macos", target_os = "ios", target_os = "freebsd")))]
+    // SAFETY: optval is a live c_int.
     unsafe {
         let one: c_int = 1;
         plat::sso(listen_fd, plat::SOL_SOCKET, libc::SO_REUSEPORT, (&raw const one).cast(), size_of::<c_int>() as _)
@@ -1827,6 +1889,7 @@ unsafe fn bsd_set_reuseport(listen_fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int {
 }
 
 unsafe fn bsd_set_reuse(listen_fd: LIBUS_SOCKET_DESCRIPTOR, options: c_int) -> c_int {
+    // SAFETY: calls setsockopt wrappers with live stack optvals only.
     unsafe {
         if options & LIBUS_LISTEN_EXCLUSIVE_PORT != 0 {
             #[cfg(windows)]
@@ -1868,6 +1931,7 @@ unsafe fn bsd_bind_listen_fd(
     options: c_int,
     error: *mut c_int,
 ) -> LIBUS_SOCKET_DESCRIPTOR {
+    // SAFETY: caller guarantees `listen_addr` is a valid addrinfo and `error` is writable.
     unsafe {
         if bsd_set_reuse(listen_fd, options) != 0 {
             return LIBUS_SOCKET_ERROR;
@@ -1895,14 +1959,15 @@ unsafe fn bsd_bind_listen_fd(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_set_defer_accept(listen_fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int {
     #[cfg(target_os = "linux")]
+    // SAFETY: optval is a live c_int.
     unsafe {
         let timeout: c_int = 1;
         (plat::sso(listen_fd, plat::IPPROTO_TCP, plat::TCP_DEFER_ACCEPT, (&raw const timeout).cast(), size_of::<c_int>() as _) == 0) as c_int
     }
     #[cfg(target_os = "freebsd")]
     unsafe {
-        let mut afa: plat::accept_filter_arg = zeroed();
-        let name = b"dataready\0";
+        let mut afa: plat::accept_filter_arg = MaybeUninit::zeroed().assume_init();
+        let name = c"dataready".to_bytes_with_nul();
         ptr::copy_nonoverlapping(name.as_ptr(), afa.af_name.as_mut_ptr().cast(), name.len());
         (plat::sso(listen_fd, plat::SOL_SOCKET, plat::SO_ACCEPTFILTER, (&raw const afa).cast(), size_of::<plat::accept_filter_arg>() as _) == 0) as c_int
     }
@@ -1925,8 +1990,9 @@ pub unsafe extern "C" fn bsd_create_listen_socket(
     options: c_int,
     error: *mut c_int,
 ) -> LIBUS_SOCKET_DESCRIPTOR {
+    // SAFETY: FFI; `host` is null or a NUL-terminated C string, `error` is writable; addrinfo is zeroable.
     unsafe {
-        let mut hints: plat::addrinfo = zeroed();
+        let mut hints: plat::addrinfo = MaybeUninit::zeroed().assume_init();
         hints.ai_flags = plat::AI_PASSIVE;
         hints.ai_family = plat::AF_UNSPEC;
         hints.ai_socktype = plat::SOCK_STREAM;
@@ -1935,7 +2001,7 @@ pub unsafe extern "C" fn bsd_create_listen_socket(
         port_to_cstr(port, &mut port_string);
 
         let mut result: *mut plat::addrinfo = ptr::null_mut();
-        if plat::getaddrinfo(host, port_string.as_ptr(), &hints, &mut result) != 0 {
+        if plat::getaddrinfo(host, port_string.as_ptr(), &raw const hints, &raw mut result) != 0 {
             return LIBUS_SOCKET_ERROR;
         }
 
@@ -1972,6 +2038,7 @@ unsafe fn bsd_create_unix_socket_address(
     server_address: *mut plat::sockaddr_un,
     addrlen: *mut usize,
 ) -> LIBUS_SOCKET_DESCRIPTOR {
+    // SAFETY: caller owns `server_address`/`addrlen`/`dirfd_out`; `path` has `path_len` readable bytes.
     unsafe {
         ptr::write_bytes(server_address, 0, 1);
         (*server_address).sun_family = plat::AF_UNIX as _;
@@ -2094,6 +2161,7 @@ unsafe fn internal_bsd_create_listen_socket_unix(
     addrlen: usize,
     error: *mut c_int,
 ) -> LIBUS_SOCKET_DESCRIPTOR {
+    // SAFETY: caller guarantees `server_address` is valid for `addrlen` bytes and `error` is writable.
     unsafe {
         let listen_fd = bsd_create_socket(plat::AF_UNIX, plat::SOCK_STREAM, 0, ptr::null_mut());
         if listen_fd == LIBUS_SOCKET_ERROR {
@@ -2120,11 +2188,12 @@ pub unsafe extern "C" fn bsd_create_listen_socket_unix(
     options: c_int,
     error: *mut c_int,
 ) -> LIBUS_SOCKET_DESCRIPTOR {
+    // SAFETY: FFI; `path` has `len` readable bytes, `error` is null or writable.
     unsafe {
         let mut dirfd: c_int = -1;
         let mut server_address = MaybeUninit::<plat::sockaddr_un>::uninit();
         let mut addrlen: usize = 0;
-        if bsd_create_unix_socket_address(path, len, &mut dirfd, server_address.as_mut_ptr(), &mut addrlen) != 0 {
+        if bsd_create_unix_socket_address(path, len, &raw mut dirfd, server_address.as_mut_ptr(), &raw mut addrlen) != 0 {
             if !error.is_null() && errno() != 0 {
                 *error = errno();
             }
@@ -2169,10 +2238,11 @@ pub unsafe extern "C" fn bsd_create_udp_socket(
     options: c_int,
     err: *mut c_int,
 ) -> LIBUS_SOCKET_DESCRIPTOR {
+    // SAFETY: FFI; `host` is null or a NUL-terminated C string, `err` is null or writable; addrinfo is zeroable.
     unsafe {
         if !err.is_null() { *err = 0; }
 
-        let mut hints: plat::addrinfo = zeroed();
+        let mut hints: plat::addrinfo = MaybeUninit::zeroed().assume_init();
         hints.ai_flags = plat::AI_PASSIVE;
         hints.ai_family = plat::AF_UNSPEC;
         hints.ai_socktype = plat::SOCK_DGRAM;
@@ -2181,7 +2251,7 @@ pub unsafe extern "C" fn bsd_create_udp_socket(
         port_to_cstr(port, &mut port_string);
 
         let mut result: *mut plat::addrinfo = ptr::null_mut();
-        let gai = plat::getaddrinfo(host, port_string.as_ptr(), &hints, &mut result);
+        let gai = plat::getaddrinfo(host, port_string.as_ptr(), &raw const hints, &raw mut result);
         if gai != 0 {
             if !err.is_null() { *err = -gai; }
             return LIBUS_SOCKET_ERROR;
@@ -2244,8 +2314,8 @@ pub unsafe extern "C" fn bsd_create_udp_socket(
             // they can't race a real packet in WSARecvFrom.
             let mut off: u32 = 0;
             let mut br: u32 = 0;
-            win::WSAIoctl(listen_fd, win::SIO_UDP_CONNRESET, (&raw mut off).cast(), size_of::<u32>() as u32, ptr::null_mut(), 0, &mut br, ptr::null_mut(), ptr::null_mut());
-            win::WSAIoctl(listen_fd, win::SIO_UDP_NETRESET, (&raw mut off).cast(), size_of::<u32>() as u32, ptr::null_mut(), 0, &mut br, ptr::null_mut(), ptr::null_mut());
+            win::WSAIoctl(listen_fd, win::SIO_UDP_CONNRESET, (&raw mut off).cast(), size_of::<u32>() as u32, ptr::null_mut(), 0, &raw mut br, ptr::null_mut(), ptr::null_mut());
+            win::WSAIoctl(listen_fd, win::SIO_UDP_NETRESET, (&raw mut off).cast(), size_of::<u32>() as u32, ptr::null_mut(), 0, &raw mut br, ptr::null_mut(), ptr::null_mut());
         }
 
         #[cfg(target_os = "linux")]
@@ -2277,8 +2347,9 @@ pub unsafe extern "C" fn bsd_connect_udp_socket(
     host: *const c_char,
     port: c_int,
 ) -> c_int {
+    // SAFETY: FFI; `host` is a NUL-terminated C string; addrinfo is zeroable.
     unsafe {
-        let mut hints: plat::addrinfo = zeroed();
+        let mut hints: plat::addrinfo = MaybeUninit::zeroed().assume_init();
         hints.ai_family = plat::AF_UNSPEC;
         hints.ai_socktype = plat::SOCK_DGRAM;
 
@@ -2286,7 +2357,7 @@ pub unsafe extern "C" fn bsd_connect_udp_socket(
         port_to_cstr(port, &mut port_string);
 
         let mut result: *mut plat::addrinfo = ptr::null_mut();
-        let gai = plat::getaddrinfo(host, port_string.as_ptr(), &hints, &mut result);
+        let gai = plat::getaddrinfo(host, port_string.as_ptr(), &raw const hints, &raw mut result);
         if gai != 0 {
             return gai;
         }
@@ -2308,13 +2379,14 @@ pub unsafe extern "C" fn bsd_connect_udp_socket(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_disconnect_udp_socket(fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int {
+    // SAFETY: `addr` is a live stack sockaddr; sockaddr is zeroable.
     unsafe {
-        let mut addr: plat::sockaddr = zeroed();
+        let mut addr: plat::sockaddr = MaybeUninit::zeroed().assume_init();
         addr.sa_family = plat::AF_UNSPEC as _;
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         { addr.sa_len = size_of::<plat::sockaddr>() as u8; }
 
-        let res = plat::connect(fd, &addr, size_of::<plat::sockaddr>() as socklen_t);
+        let res = plat::connect(fd, &raw const addr, size_of::<plat::sockaddr>() as socklen_t);
         // EAFNOSUPPORT is harmless — we only want to disconnect.
         #[cfg(windows)]
         let harmless = win::WSAGetLastError() == win::WSAEAFNOSUPPORT;
@@ -2333,10 +2405,11 @@ unsafe fn bsd_do_connect_raw(
     addr: *const plat::sockaddr,
     namelen: usize,
 ) -> c_int {
+    // SAFETY: caller guarantees `addr` is valid for `namelen` bytes.
     unsafe {
         let mut injected: ssize_t = 0;
         let mut unused: c_int = 0;
-        if us_fault_check(us_fault_syscall::US_FAULT_CONNECT, fd, &mut injected, &mut unused) {
+        if us_fault_check(us_fault_syscall::US_FAULT_CONNECT, fd, &raw mut injected, &raw mut unused) {
             return errno();
         }
         #[cfg(windows)]
@@ -2374,17 +2447,17 @@ unsafe fn bsd_do_connect_raw(
 unsafe fn convert_null_addr(addr: *const sockaddr_storage, result: *mut sockaddr_storage) -> c_int {
     unsafe {
         if (*addr).ss_family as c_int == plat::AF_INET {
-            let a4 = addr as *const plat::sockaddr_in;
+            let a4 = addr.cast::<plat::sockaddr_in>();
             if (*a4).sin_addr.s_addr == htonl(win::INADDR_ANY) {
                 ptr::copy_nonoverlapping(addr.cast::<u8>(), result.cast(), size_of::<plat::sockaddr_in>());
-                (*(result as *mut plat::sockaddr_in)).sin_addr.s_addr = htonl(win::INADDR_LOOPBACK);
+                (*result.cast::<plat::sockaddr_in>()).sin_addr.s_addr = htonl(win::INADDR_LOOPBACK);
                 return 1;
             }
         } else if (*addr).ss_family as c_int == plat::AF_INET6 {
-            let a6 = addr as *const plat::sockaddr_in6;
+            let a6 = addr.cast::<plat::sockaddr_in6>();
             if (*a6).sin6_addr.s6_addr == win::IN6ADDR_ANY {
                 ptr::copy_nonoverlapping(addr.cast::<u8>(), result.cast(), size_of::<plat::sockaddr_in6>());
-                (*(result as *mut plat::sockaddr_in6)).sin6_addr.s6_addr = win::IN6ADDR_LOOPBACK;
+                (*result.cast::<plat::sockaddr_in6>()).sin6_addr.s6_addr = win::IN6ADDR_LOOPBACK;
                 return 1;
             }
         }
@@ -2396,9 +2469,9 @@ unsafe fn convert_null_addr(addr: *const sockaddr_storage, result: *mut sockaddr
 unsafe fn is_loopback(addr: *const sockaddr_storage) -> c_int {
     unsafe {
         if (*addr).ss_family as c_int == plat::AF_INET {
-            ((*(addr as *const plat::sockaddr_in)).sin_addr.s_addr == htonl(win::INADDR_LOOPBACK)) as c_int
+            ((*addr.cast::<plat::sockaddr_in>()).sin_addr.s_addr == htonl(win::INADDR_LOOPBACK)) as c_int
         } else if (*addr).ss_family as c_int == plat::AF_INET6 {
-            ((*(addr as *const plat::sockaddr_in6)).sin6_addr.s6_addr == win::IN6ADDR_LOOPBACK) as c_int
+            ((*addr.cast::<plat::sockaddr_in6>()).sin6_addr.s6_addr == win::IN6ADDR_LOOPBACK) as c_int
         } else {
             0
         }
@@ -2411,6 +2484,7 @@ pub unsafe extern "C" fn bsd_create_connect_socket(
     local_addr: *mut sockaddr_storage,
     _options: c_int,
 ) -> LIBUS_SOCKET_DESCRIPTOR {
+    // SAFETY: FFI; caller guarantees `addr` is a valid sockaddr_storage and `local_addr` is null or valid.
     unsafe {
         let fd = bsd_create_socket((*addr).ss_family as c_int, plat::SOCK_STREAM, 0, ptr::null_mut());
         if fd == LIBUS_SOCKET_ERROR {
@@ -2445,14 +2519,14 @@ pub unsafe extern "C" fn bsd_create_connect_socket(
         {
             win32_set_nonblocking(fd);
             // Windows can't connect to 0.0.0.0/:: directly — rewrite to loopback.
-            let mut converted: sockaddr_storage = zeroed();
-            if convert_null_addr(addr, &mut converted) != 0 {
-                addr = &mut converted;
+            let mut converted: sockaddr_storage = MaybeUninit::zeroed().assume_init();
+            if convert_null_addr(addr, &raw mut converted) != 0 {
+                addr = &raw mut converted;
             }
             // Fail fast to localhost (matches libuv): avoid the default 2 s
             // retransmit when the IPv6 loopback isn't listening.
             if is_loopback(addr) != 0 {
-                let mut rto: win::TCP_INITIAL_RTO_PARAMETERS = zeroed();
+                let mut rto: win::TCP_INITIAL_RTO_PARAMETERS = MaybeUninit::zeroed().assume_init();
                 rto.Rtt = win::TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS as u16;
                 rto.MaxSynRetransmissions = win::TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS;
                 let mut bytes: u32 = 0;
@@ -2463,7 +2537,7 @@ pub unsafe extern "C" fn bsd_create_connect_socket(
                     size_of::<win::TCP_INITIAL_RTO_PARAMETERS>() as u32,
                     ptr::null_mut(),
                     0,
-                    &mut bytes,
+                    &raw mut bytes,
                     ptr::null_mut(),
                     ptr::null_mut(),
                 );
@@ -2490,6 +2564,7 @@ unsafe fn internal_bsd_create_connect_socket_unix(
     server_address: *mut plat::sockaddr_un,
     addrlen: usize,
 ) -> LIBUS_SOCKET_DESCRIPTOR {
+    // SAFETY: caller guarantees `server_address` is valid for `addrlen` bytes.
     unsafe {
         let fd = bsd_create_socket(plat::AF_UNIX, plat::SOCK_STREAM, 0, ptr::null_mut());
         if fd == LIBUS_SOCKET_ERROR {
@@ -2510,11 +2585,12 @@ pub unsafe extern "C" fn bsd_create_connect_socket_unix(
     len: usize,
     options: c_int,
 ) -> LIBUS_SOCKET_DESCRIPTOR {
+    // SAFETY: FFI; `server_path` has `len` readable bytes.
     unsafe {
         let mut server_address = MaybeUninit::<plat::sockaddr_un>::uninit();
         let mut addrlen: usize = 0;
         let mut dirfd: c_int = -1;
-        if bsd_create_unix_socket_address(server_path, len, &mut dirfd, server_address.as_mut_ptr(), &mut addrlen) != 0 {
+        if bsd_create_unix_socket_address(server_path, len, &raw mut dirfd, server_address.as_mut_ptr(), &raw mut addrlen) != 0 {
             return LIBUS_SOCKET_ERROR;
         }
 

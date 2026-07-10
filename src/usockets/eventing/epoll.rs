@@ -37,6 +37,7 @@ unsafe fn errno() -> c_int {
 
 #[inline(always)]
 unsafe fn is_eintr(rc: isize) -> bool {
+    // SAFETY: reads thread-local errno; always valid.
     rc == -1 && unsafe { errno() } == libc::EINTR
 }
 
@@ -328,7 +329,7 @@ pub unsafe extern "C" fn us_create_loop(
 ) -> *mut us_loop_t {
     // SAFETY: allocates and fully initializes a loop; caller owns it until `us_loop_free`.
     unsafe {
-        let loop_ = us_calloc(1, size_of::<us_loop_t>() + ext_size as usize) as *mut us_loop_t;
+        let loop_ = us_calloc(1, size_of::<us_loop_t>() + ext_size as usize).cast::<us_loop_t>();
         if loop_.is_null() {
             Bun__outOfMemory();
         }
@@ -407,7 +408,7 @@ unsafe fn us_internal_drain_ready_polls(loop_: *mut us_loop_t) {
                 (*loop_).fd,
                 ptr::addr_of_mut!((*loop_).ready_polls.0).cast(),
                 LIBUS_MAX_READY_POLLS as c_int,
-                &ZERO,
+                &raw const ZERO,
             );
             if (*loop_).num_ready_polls <= 0 {
                 (*loop_).num_ready_polls = 0;
@@ -433,13 +434,13 @@ unsafe fn us_internal_clamp_to_sweep(
         let sweep_sec = ns / 1_000_000_000;
         let sweep_nsec = ns % 1_000_000_000;
         if !timeout.is_null()
-            && ((*timeout).tv_sec < sweep_sec as libc::time_t
-                || ((*timeout).tv_sec == sweep_sec as libc::time_t
+            && (c_longlong::from((*timeout).tv_sec) < sweep_sec
+                || (c_longlong::from((*timeout).tv_sec) == sweep_sec
                     && (*timeout).tv_nsec <= sweep_nsec as libc::c_long))
         {
             return timeout;
         }
-        (*storage).tv_sec = sweep_sec as libc::time_t;
+        (*storage).tv_sec = sweep_sec as _;
         (*storage).tv_nsec = sweep_nsec as libc::c_long;
         storage
     }
@@ -499,7 +500,7 @@ pub unsafe extern "C" fn us_loop_run_bun_tick(
                     + (*timeout).tv_nsec as c_longlong / 1000
                     > us
             {
-                (*quic_ts.as_mut_ptr()).tv_sec = (us / 1_000_000) as libc::time_t;
+                (*quic_ts.as_mut_ptr()).tv_sec = (us / 1_000_000) as _;
                 (*quic_ts.as_mut_ptr()).tv_nsec = ((us % 1_000_000) * 1000) as libc::c_long;
                 timeout = quic_ts.as_ptr();
             }
@@ -575,7 +576,7 @@ pub unsafe extern "C" fn us_poll_resize(
             return p;
         }
 
-        let new_p = us_calloc(1, new_size) as *mut us_poll_t;
+        let new_p = us_calloc(1, new_size).cast::<us_poll_t>();
         if new_p.is_null() {
             Bun__outOfMemory();
         }
@@ -629,7 +630,7 @@ pub unsafe extern "C" fn us_poll_start_rc(
         };
         let mut ret: c_int;
         loop {
-            ret = libc::epoll_ctl((*loop_).fd, libc::EPOLL_CTL_ADD, (*p).fd(), &mut event);
+            ret = libc::epoll_ctl((*loop_).fd, libc::EPOLL_CTL_ADD, (*p).fd(), &raw mut event);
             if !is_eintr(ret as isize) {
                 break;
             }
@@ -669,7 +670,7 @@ pub unsafe extern "C" fn us_poll_change(
             u64: p as usize as u64,
         };
         loop {
-            let rc = libc::epoll_ctl((*loop_).fd, libc::EPOLL_CTL_MOD, (*p).fd(), &mut event);
+            let rc = libc::epoll_ctl((*loop_).fd, libc::EPOLL_CTL_MOD, (*p).fd(), &raw mut event);
             if !is_eintr(rc as isize) {
                 break;
             }
@@ -715,7 +716,7 @@ pub unsafe extern "C" fn us_internal_accept_poll_event(p: *mut us_poll_t) -> usi
         let fd = us_poll_fd(p);
         let mut buf: u64 = 0;
         loop {
-            let rc = libc::read(fd, (&mut buf as *mut u64).cast(), 8);
+            let rc = libc::read(fd, (&raw mut buf).cast(), 8);
             if !is_eintr(rc) {
                 break;
             }
@@ -749,7 +750,7 @@ pub unsafe extern "C" fn us_internal_create_async(
         }
         us_poll_init(p, efd, POLL_TYPE_CALLBACK);
 
-        let cb = p as *mut us_internal_callback_t;
+        let cb = p.cast::<us_internal_callback_t>();
         (*cb).loop_ = loop_;
         (*cb).cb_expects_the_loop = 1;
         // Edge-triggered: skip reading eventfd on wakeup.
@@ -762,11 +763,11 @@ pub unsafe extern "C" fn us_internal_create_async(
 pub unsafe extern "C" fn us_internal_async_close(a: *mut us_internal_async) {
     // SAFETY: `a` was returned by `us_internal_create_async`; frees eventfd and poll.
     unsafe {
-        let cb = a as *mut us_internal_callback_t;
+        let cb = a.cast::<us_internal_callback_t>();
         us_poll_stop(ptr::addr_of_mut!((*cb).p), (*cb).loop_);
         libc::close(us_poll_fd(ptr::addr_of_mut!((*cb).p)));
         // Regular sockets are the only polls not freed immediately.
-        us_poll_free(a as *mut us_poll_t, (*cb).loop_);
+        us_poll_free(a.cast::<us_poll_t>(), (*cb).loop_);
     }
 }
 
@@ -777,12 +778,12 @@ pub unsafe extern "C" fn us_internal_async_set(
 ) {
     // SAFETY: `a` is a live async; stores the callback and registers edge-triggered.
     unsafe {
-        let internal_cb = a as *mut us_internal_callback_t;
+        let internal_cb = a.cast::<us_internal_callback_t>();
         // `us_internal_async` is a type alias for `us_internal_callback_t`.
         (*internal_cb).cb = cb;
 
         us_poll_start(
-            a as *mut us_poll_t,
+            a.cast::<us_poll_t>(),
             (*internal_cb).loop_,
             LIBUS_SOCKET_READABLE,
         );
@@ -795,8 +796,8 @@ pub unsafe extern "C" fn us_internal_async_set(
         libc::epoll_ctl(
             (*(*internal_cb).loop_).fd,
             libc::EPOLL_CTL_MOD,
-            us_poll_fd(a as *mut us_poll_t),
-            &mut event,
+            us_poll_fd(a.cast::<us_poll_t>()),
+            &raw mut event,
         );
     }
 }
@@ -806,18 +807,18 @@ pub unsafe extern "C" fn us_internal_async_set(
 pub unsafe extern "C" fn us_internal_async_wakeup(a: *mut us_internal_async) {
     // SAFETY: `a` wraps a live eventfd; write is atomic and thread-safe.
     unsafe {
-        let fd = us_poll_fd(a as *mut us_poll_t);
+        let fd = us_poll_fd(a.cast::<us_poll_t>());
         let mut val: u64;
         loop {
             val = 1;
-            if libc::write(fd, (&val as *const u64).cast(), 8) >= 0 {
+            if libc::write(fd, (&raw const val).cast(), 8) >= 0 {
                 return;
             }
             match errno() {
                 libc::EINTR => continue,
                 libc::EAGAIN => {
                     // Counter overflow — drain and retry.
-                    if libc::read(fd, (&mut val as *mut u64).cast(), 8) > 0
+                    if libc::read(fd, (&raw mut val).cast(), 8) > 0
                         || errno() == libc::EAGAIN
                         || errno() == libc::EINTR
                     {
@@ -838,11 +839,11 @@ pub unsafe extern "C" fn us_socket_get_error(s: *mut us_socket_t) -> c_int {
         let mut error: c_int = 0;
         let mut len = size_of::<c_int>() as libc::socklen_t;
         if libc::getsockopt(
-            us_poll_fd(s as *mut us_poll_t),
+            us_poll_fd(s.cast::<us_poll_t>()),
             libc::SOL_SOCKET,
             libc::SO_ERROR,
-            (&mut error as *mut c_int).cast(),
-            &mut len,
+            (&raw mut error).cast(),
+            &raw mut len,
         ) == -1
         {
             return errno();

@@ -160,7 +160,7 @@ pub unsafe extern "C" fn sni_add(
             children.insert(label.into(), Box::new(SniNode::default()));
         }
         // Just ensured present; lookup cannot fail.
-        root = &mut **children.get_mut(label).unwrap();
+        root = ptr::from_mut(&mut **children.get_mut(label).unwrap());
     }
 
     // SAFETY: `root` is valid — tree root on empty hostname, else a leaf.

@@ -5,7 +5,6 @@ const { Socket: NetSocket } = require("node:net");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression,
-  continueExpression,
   validateHeaderName,
   validateHeaderValue,
   HTTPParser,
@@ -2588,7 +2587,6 @@ function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
 }
 
 const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
-const RE_CONN_UPGRADE = /(?:^|\W)upgrade(?:$|\W)/i;
 
 // Native dispatch bitfield: presence/token bits for the request headers the
 // dispatcher consults, computed in one native pass over the raw headers
@@ -3006,7 +3004,8 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // and will not throw or emit an error
     return true;
   }
-  if (headerState !== NodeHTTPHeaderState.sent) {
+  const sentState = NodeHTTPHeaderState.sent;
+  if (headerState !== sentState) {
     {
       const renderedHeaders = renderNativeHeaders(this);
       try {
@@ -3034,12 +3033,12 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
           code !== "ERR_INVALID_CHAR" &&
           !(e instanceof RangeError)
         ) {
-          this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+          this[headerStateSymbol] = sentState;
         }
         throw e;
       }
       releaseRenderedHeaders(renderedHeaders);
-      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+      this[headerStateSymbol] = sentState;
     }
   } else {
     // If there's no data but you already called end, then you're done.

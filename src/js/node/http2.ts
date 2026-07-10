@@ -6180,9 +6180,17 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     // A close-delimited response with no Connection pair means the user removed
     // it (Node's _removedConnection): write none rather than inventing
     // keep-alive on a connection that ends with the body.
+    // renderNativeHeaders reports its Connection decision through the
+    // auto-header bits (AUTO_HEADER_* in _http_server.ts / kAutoHeader* in
+    // NodeHTTP.cpp); honor an explicit close (res.shouldKeepAlive = false,
+    // the graceful-shutdown pattern) over the parser-derived flag.
+    const autoBits = head?.autoHeaderBits ?? 0;
     if (!hasConnection && !closeDelimited) {
-      if (shouldKeepAlive) {
-        out += `Connection: keep-alive\r\nKeep-Alive: timeout=${Math.floor((keepAliveTimeout || 5000) / 1000)}\r\n`;
+      if ((autoBits & 4) !== 0) {
+        out += "Connection: close\r\n";
+      } else if (shouldKeepAlive) {
+        const kaSecs = (autoBits & 8) !== 0 ? head.keepAliveTimeoutSecs : Math.floor((keepAliveTimeout || 5000) / 1000);
+        out += `Connection: keep-alive\r\nKeep-Alive: timeout=${kaSecs}\r\n`;
       } else {
         out += "Connection: close\r\n";
       }
@@ -6222,7 +6230,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     cork(callback) {
       return callback();
     },
-    writeHead(statusCode, statusMessage, headers) {
+    writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs) {
       const originalStatusCode = statusCode;
       statusCode |= 0;
       if (statusCode < 100 || statusCode > 999) {
@@ -6231,16 +6239,15 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (typeof statusMessage === "string" && checkInvalidHeaderChar(statusMessage)) {
         throw $ERR_INVALID_CHAR("statusMessage");
       }
-      head = { statusCode, statusMessage, headers };
+      head = { statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs };
     },
     flushHeaders() {
       writeHeadToSocket(null);
     },
-    writeHeadAndEnd(statusCode, statusMessage, headers, chunk, encoding, strictContentLength) {
+    writeHeadAndEnd(statusCode, statusMessage, headers, chunk, encoding, strictContentLength, autoHeaderBits, keepAliveTimeoutSecs) {
       // The native NodeHTTPResponse batches writeHead + end into one call;
-      // this fallback composes the same two steps (auto-header bits and the
-      // keep-alive timeout are rendered by writeHeadToSocket here).
-      this.writeHead(statusCode, statusMessage, headers);
+      // this fallback composes the same two steps.
+      this.writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs);
       return this.end(chunk, encoding, undefined, strictContentLength);
     },
     write(chunk, encoding, _callback, _strictContentLength) {

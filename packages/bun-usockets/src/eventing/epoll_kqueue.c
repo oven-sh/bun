@@ -119,15 +119,11 @@ struct us_loop_t *us_timer_loop(struct us_timer_t *t) {
 #include <signal.h>
 #include <errno.h>
 
-// OHOS seccomp blocks epoll_pwait2 (441) via SECCOMP_RET_TRAP → SIGSYS,
-// which kills the process before this file's ENOSYS/EPERM/EACCES fallback
-// can trigger. Force the fallback path by pretending the probe already
-// failed at startup. Loses nanosecond timeout precision (millisecond only).
-#if defined(__OHOS__)
-static int has_epoll_pwait2 = 0;
-#else
+// OHOS seccomp blocks epoll_pwait2 (441) via SECCOMP_RET_TRAP → SIGSYS.
+// The SIGSYS handler installed by ohos_setup_sigsys_handler() (c-bindings.cpp)
+// intercepts the signal so the syscall returns ENOSYS instead of killing the
+// process, making the runtime probe below safe on all platforms.
 static int has_epoll_pwait2 = -1;
-#endif
 
 #ifndef SYS_epoll_pwait2
 // It's consistent on multiple architectures

@@ -6184,12 +6184,19 @@ pub mod RTLD {
     pub const LOCAL: i32 = 0;
 }
 
+/// Case-insensitive check for .so or .node extension.
+fn is_signable_extension(bytes: &[u8]) -> bool {
+    let len = bytes.len();
+    (len > 3 && bytes[len - 3..].eq_ignore_ascii_case(b".so"))
+        || (len > 5 && bytes[len - 5..].eq_ignore_ascii_case(b".node"))
+}
+
 /// OHOS: sign a binary by path using the in-process ohos_sign crate.
-/// Idempotent: skips if the file already has a valid `.codesign` section.
+/// Idempotent: skips without I/O if the file already has a valid `.codesign` section.
 #[cfg(target_env = "ohos")]
 pub fn ohos_sign_binary(path: &ZStr) {
     let bytes = path.as_bytes();
-    if !bytes.ends_with(b".so") && !bytes.ends_with(b".node") {
+    if !is_signable_extension(bytes) {
         return;
     }
     let path_str = core::str::from_utf8(bytes).unwrap_or("");
@@ -6202,9 +6209,13 @@ pub fn ohos_sign_binary(path: &ZStr) {
 }
 
 /// OHOS: sign a binary by byte path (convenience wrapper).
+///
+/// # Safety
+/// `path` must be NUL-terminated (last byte must be `\0`). All current callers
+/// pass `path.as_bytes_with_nul()` which satisfies this precondition.
 #[cfg(target_env = "ohos")]
 pub fn ohos_sign_binary_bytes(path: &[u8]) {
-    // SAFETY: path bytes must be valid UTF-8 and NUL-terminated after the slice.
+    // SAFETY: caller guarantees NUL-termination (see doc comment above).
     let zstr = unsafe { ZStr::from_raw(path.as_ptr(), path.len()) };
     ohos_sign_binary(zstr);
 }
@@ -6222,7 +6233,7 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
         fn ensure_signed(path: &ZStr) {
             let bytes = path.as_bytes();
             // Only sign loadable modules — system libs (.so) already signed.
-            if !bytes.ends_with(b".so") && !bytes.ends_with(b".node") {
+            if !is_signable_extension(bytes) {
                 return;
             }
             let path_str = core::str::from_utf8(bytes).unwrap_or("");

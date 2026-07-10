@@ -2459,7 +2459,17 @@ pub(crate) fn ohos_sign_native_binaries(pkg_dir: &[u8]) {
         full.extend_from_slice(rel);
         let full_str = unsafe { core::str::from_utf8_unchecked(&full) };
         let p = std::path::Path::new(full_str);
-        if ohos_sign::has_codesign(&std::fs::read(p).unwrap_or_default()) {
+        let elf_bytes = match std::fs::read(p) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                errors += 1;
+                if verbose {
+                    bun_core::pretty_errorln!("<d>[sign]<r> <red>unreadable<r> {}", p.display());
+                }
+                continue;
+            }
+        };
+        if ohos_sign::has_codesign(&elf_bytes) {
             skipped += 1;
             if verbose {
                 bun_core::pretty_errorln!("<d>[sign]<r> <d>skip<r> {}", p.display());

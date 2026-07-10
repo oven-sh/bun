@@ -69,8 +69,9 @@ fn parse_header(elf: &[u8]) -> Result<(u64, u16, u16), SignError> {
     }
     let e_shoff = read_u64(elf, E_SHOFF);
     let e_shnum = read_u16(elf, E_SHNUM);
+    let e_shentsize = read_u16(elf, E_SHENTSIZE);
     let e_shstrndx = read_u16(elf, E_SHSTRNDX);
-    if e_shoff == 0 || e_shnum == 0 || e_shstrndx as u64 >= e_shnum as u64 {
+    if e_shoff == 0 || e_shnum == 0 || e_shentsize != 64 || e_shstrndx as u64 >= e_shnum as u64 {
         return Err(SignError::NoSectionHeaders);
     }
     Ok((e_shoff, e_shnum, e_shstrndx))

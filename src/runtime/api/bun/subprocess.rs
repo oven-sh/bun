@@ -50,8 +50,7 @@ pub use readable::Readable;
 pub mod writable;
 pub use writable::Writable;
 
-#[path = "subprocess/StaticPipeWriter.rs"]
-pub mod static_pipe_writer;
+pub use bun_spawn::static_pipe_writer;
 pub use static_pipe_writer::StaticPipeWriter as NewStaticPipeWriter;
 
 pub use bun_io::MaxBuf;

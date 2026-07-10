@@ -111,10 +111,6 @@ pub struct Watcher {
     // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
     // allocator field dropped — global mimalloc (see §Allocators)
-    /// Whether `thread_main` is running. Written by the watcher thread, read
-    /// by `start`/`shutdown` on the main thread. The actual `ThreadId` value
-    /// was never read — only `is_some()`/`is_none()` — so this is a `bool`.
-    pub watchloop_handle: bun_core::AtomicCell<bool>,
     pub cwd: &'static [u8],
     pub thread: Option<std::thread::JoinHandle<()>>,
     /// Main thread clears this in `shutdown`; watcher thread polls it in
@@ -196,7 +192,6 @@ impl Watcher {
             platform: Platform::default(),
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
-            watchloop_handle: bun_core::AtomicCell::new(false),
             thread: None,
             running: bun_core::AtomicCell::new(true),
             close_descriptors: bun_core::AtomicCell::new(false),
@@ -220,7 +215,7 @@ impl Watcher {
     }
 
     pub fn start(&mut self) -> Result<(), bun_core::Error> {
-        debug_assert!(!self.watchloop_handle.load());
+        debug_assert!(self.thread.is_none());
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
@@ -242,14 +237,24 @@ impl Watcher {
     // Per PORTING.md, `pub fn deinit` is never the public name; renamed to
     // `shutdown` (not `close(self)` because ownership may transfer to the
     // watcher thread instead of dropping here).
-    // TODO: ownership model — needs heap::take or an Arc to make this sound.
     /// # Safety
     /// `this` must be the unique heap pointer returned from `init()`; ownership
     /// transfers here on the no-thread path (the Box is reclaimed).
     pub unsafe fn shutdown(this: *mut Self, close_descriptors: bool) {
         // SAFETY: caller passes the unique heap pointer returned from init()
         let me = unsafe { &mut *this };
-        if me.watchloop_handle.load() {
+        // Once `start()` spawns the thread, `thread_main()` always reaches
+        // `heap::take(this)` and frees the allocation: it owns the struct.
+        // Freeing here in the window between spawn and the thread's first
+        // access (it may not have been scheduled yet) is a UAF.
+        if me.thread.is_some() {
+            // `running = false` must be inside the critical section: each
+            // platform's `watch_loop_cycle` reads `running` under this mutex
+            // and only enters `on_file_update(ctx)` while it holds true, so
+            // releasing the lock with `running` already cleared guarantees no
+            // callback can begin after this function returns (the caller is
+            // about to drop `ctx`). The fast-exit free is instead serialized
+            // by `thread_main()` taking this mutex before `heap::take`.
             me.mutex.lock();
             me.close_descriptors.store(close_descriptors);
             me.running.store(false);
@@ -287,7 +292,6 @@ impl Watcher {
             // SAFETY: caller contract — `this` is a valid, exclusively-accessed
             // heap allocation for the duration of this scope.
             let me = unsafe { &mut *this };
-            me.watchloop_handle.store(true);
             me.thread_lock.lock();
             Output::Source::configure_named_thread(zstr!("File Watcher"));
 
@@ -296,8 +300,11 @@ impl Watcher {
 
             match me.watch_loop() {
                 Err(err) => {
-                    me.watchloop_handle.store(false);
                     me.platform.stop();
+                    // Hold `me.mutex` so `shutdown()` can't return (and the
+                    // caller drop `ctx`) between the `running` check and
+                    // `on_error` returning.
+                    let _guard = me.mutex.lock_guard();
                     if me.running.load() {
                         (me.on_error)(me.ctx, err);
                     }
@@ -305,8 +312,18 @@ impl Watcher {
                 Ok(()) => {}
             }
 
-            // deinit and close descriptors if needed
-            if me.close_descriptors.load() {
+            // `close_descriptors` is written by `shutdown()` under `me.mutex`;
+            // read it under the same lock. On the fast-exit path (this thread
+            // was spawned but `running` was already false at `watch_loop()`'s
+            // first check) acquiring the lock here also guarantees the free
+            // below happens strictly after `shutdown()` leaves its critical
+            // section — without it, `heap::take(this)` could race
+            // `shutdown()`'s `me.mutex.unlock()`.
+            let close_descriptors = {
+                let _guard = me.mutex.lock_guard();
+                me.close_descriptors.load()
+            };
+            if close_descriptors {
                 let fds = me.watchlist.items_fd();
                 for &fd in fds {
                     let _ = bun_sys::close(fd);
@@ -323,7 +340,6 @@ impl Watcher {
         // SAFETY: `this` is the heap allocation from init(); the watcher thread
         // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
         // `me` above has ended).
-        // TODO: ownership model — see shutdown()
         drop(unsafe { bun_core::heap::take(this) });
         Ok(())
     }

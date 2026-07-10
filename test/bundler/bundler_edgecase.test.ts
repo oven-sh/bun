@@ -96,6 +96,27 @@ describe("bundler", () => {
       stdout: "undefined",
     },
   });
+  // Packages in DEFAULT_UNWRAP_COMMONJS_PACKAGES set FORCE_CJS_TO_ESM at parse
+  // time with exports_kind = Esm; a default import then makes the linker
+  // CJS-wrap them. Same symptom as above if wrapper_ref was never allocated.
+  itBundled("edgecase/HoistableOnlyUnwrapCommonJSPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        import Def from 'scheduler/empty.js';
+        console.log(typeof Def);
+      `,
+      "/node_modules/scheduler/empty.js": `function foo() {}\n`,
+      "/node_modules/scheduler/package.json": `{"name":"scheduler","version":"1.0.0"}`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").toContain("require_empty");
+    },
+    run: {
+      stdout: "object",
+    },
+  });
   itBundled("edgecase/NestedRedirectToABuiltin", {
     files: {
       "/entry.js": /* js */ `

@@ -7341,12 +7341,6 @@ declare module "bun" {
     signalCode?: string;
     exitedDueToTimeout?: boolean;
     exitedDueToMaxBuffer?: boolean;
-    /**
-     * Set when writing the buffered stdin (a `Uint8Array`, `Blob`, or
-     * string passed as `stdin`) failed, e.g. because the child closed its
-     * stdin before the whole buffer was written.
-     */
-    stdinWriteError?: { errno: number; code: string };
     pid: number;
   }
 

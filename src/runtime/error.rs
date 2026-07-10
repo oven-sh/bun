@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("SnapshotFailed")]
     SnapshotFailed,
@@ -388,6 +388,8 @@ pub enum Error {
     WriteFailed,
 
     #[error(transparent)]
+    Core(#[from] bun_core::Error),
+    #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
@@ -395,6 +397,159 @@ pub enum Error {
     ShellLexer(#[from] bun_shell_parser::LexerError),
     #[error(transparent)]
     ShellParse(#[from] bun_shell_parser::ParseError),
+    #[error(transparent)]
+    Shell(#[from] bun_shell_parser::Error),
+    #[error(transparent)]
+    Jsc(#[from] bun_jsc::CrateError),
+    #[error(transparent)]
+    Bundler(#[from] bun_bundler::Error),
+    #[error(transparent)]
+    Spawn(#[from] bun_spawn::Error),
+    #[error(transparent)]
+    Install(#[from] bun_install::Error),
+    #[error(transparent)]
+    Resolver(#[from] bun_resolver::Error),
+    #[error(transparent)]
+    Paths(#[from] bun_paths::Error),
+    #[error(transparent)]
+    Parsers(#[from] bun_parsers::Error),
+    #[error(transparent)]
+    Bunfig(#[from] bun_bunfig::Error),
+    #[error(transparent)]
+    JsParser(#[from] bun_js_parser::Error),
+    #[error(transparent)]
+    JsLexer(#[from] bun_js_parser::lexer::Error),
+    #[error(transparent)]
+    StdFmt(#[from] std::fmt::Error),
+    #[error(transparent)]
+    Clap(#[from] bun_clap::Error),
+    #[error(transparent)]
+    Zlib(#[from] bun_zlib::ZlibError),
+    #[error(transparent)]
+    Http(#[from] bun_http::Error),
+    #[error(transparent)]
+    Hpack(#[from] bun_http::lshpack::HpackError),
+    #[error(transparent)]
+    JsPrinter(#[from] bun_js_printer::Error),
+    #[error(transparent)]
+    StandaloneGraph(#[from] bun_standalone_graph::Error),
+    #[error(transparent)]
+    TerminalInit(crate::api::bun_terminal_body::InitError),
+    #[error("JSError")]
+    Js(bun_jsc::JsError),
+}
+
+impl From<bun_sys::Error> for Error {
+    fn from(e: bun_sys::Error) -> Self {
+        Self::Sys(e.into())
+    }
+}
+
+impl From<bun_uws::ConnectError> for Error {
+    #[inline]
+    fn from(_: bun_uws::ConnectError) -> Self {
+        Self::FailedToOpenSocket
+    }
+}
+
+impl From<bun_uws::ssl_wrapper::InitError> for Error {
+    #[inline]
+    fn from(e: bun_uws::ssl_wrapper::InitError) -> Self {
+        match e {
+            bun_uws::ssl_wrapper::InitError::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
+            bun_uws::ssl_wrapper::InitError::InvalidOptions => Self::InvalidOptions,
+        }
+    }
+}
+
+impl From<bun_libarchive::Error> for Error {
+    fn from(e: bun_libarchive::Error) -> Self {
+        match e {
+            bun_libarchive::Error::Sys(s) => Self::Sys(s),
+            bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
+            _ => Self::Unexpected,
+        }
+    }
+}
+
+impl From<Error> for bun_bundler::Error {
+    fn from(e: Error) -> Self {
+        match e {
+            Error::Bundler(inner) => inner,
+            Error::Sys(s) => bun_bundler::Error::Sys(s),
+            Error::Alloc(a) => bun_bundler::Error::Alloc(a),
+            Error::Core(c) => bun_bundler::Error::Core(c),
+            Error::Resolver(r) => bun_bundler::Error::Resolver(r),
+            _ => bun_bundler::Error::Core(bun_core::Error::Unexpected),
+        }
+    }
+}
+
+impl From<bun_jsc::JsError> for Error {
+    fn from(e: bun_jsc::JsError) -> Self {
+        Self::Js(e)
+    }
+}
+
+impl From<bun_shell_parser::braces::ParserError> for Error {
+    #[inline]
+    fn from(e: bun_shell_parser::braces::ParserError) -> Self {
+        Self::Shell(e.into())
+    }
+}
+
+impl From<bun_parsers::toml::lexer::Error> for Error {
+    #[inline]
+    fn from(e: bun_parsers::toml::lexer::Error) -> Self {
+        Self::Parsers(e.into())
+    }
+}
+
+impl From<bun_jsc::JsTerminated> for Error {
+    #[inline]
+    fn from(_: bun_jsc::JsTerminated) -> Self {
+        Self::JSTerminated
+    }
+}
+
+impl From<Error> for bun_jsc::JsError {
+    #[inline]
+    fn from(e: Error) -> Self {
+        match e {
+            Error::Alloc(_) => bun_jsc::JsError::OutOfMemory,
+            Error::Js(js) => js,
+            Error::Jsc(jsc) => jsc.into(),
+            _ => bun_jsc::JsError::Thrown,
+        }
+    }
+}
+
+impl From<Error> for bun_jsc::CrateError {
+    #[inline]
+    fn from(e: Error) -> Self {
+        match e {
+            Error::Sys(s) => Self::Sys(s),
+            Error::Alloc(a) => Self::Alloc(a),
+            Error::Core(c) => Self::Core(c),
+            Error::Resolver(r) => Self::Resolver(r),
+            Error::Bundler(b) => Self::Bundler(b),
+            Error::Install(i) => Self::Install(i),
+            Error::Jsc(j) => j,
+            Error::JSError | Error::Js(_) => Self::JSError,
+            _ => Self::Core(bun_core::Error::Unexpected),
+        }
+    }
+}
+
+impl From<Error> for bun_uws_sys::Error {
+    #[inline]
+    fn from(e: Error) -> Self {
+        match e {
+            Error::Alloc(a) => bun_uws_sys::Error::Alloc(a),
+            Error::Sys(s) => bun_uws_sys::Error::Sys(s),
+            _ => bun_uws_sys::Error::RequestBodyTooLarge,
+        }
+    }
 }
 
 impl Error {
@@ -593,17 +748,62 @@ impl Error {
             Self::Unexpected => "Unexpected",
             Self::BoringSSLError => "BoringSSLError",
             Self::WriteFailed => "WriteFailed",
+            Self::Core(e) => e.name(),
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::ShellLexer(e) => <&'static str>::from(e),
             Self::ShellParse(e) => <&'static str>::from(e),
+            Self::Shell(e) => e.name(),
+            Self::Jsc(e) => e.name(),
+            Self::Bundler(e) => e.name(),
+            Self::Spawn(e) => e.name(),
+            Self::Install(e) => e.name(),
+            Self::Resolver(e) => e.name(),
+            Self::Paths(e) => e.name(),
+            Self::Parsers(e) => e.name(),
+            Self::Bunfig(e) => e.name(),
+            Self::JsParser(e) => e.name(),
+            Self::JsLexer(e) => <&'static str>::from(e),
+            Self::StdFmt(_) => "FmtError",
+            Self::Clap(e) => e.name(),
+            Self::Zlib(e) => <&'static str>::from(e),
+            Self::Http(e) => e.name(),
+            Self::Hpack(e) => <&'static str>::from(e),
+            Self::JsPrinter(e) => e.name(),
+            Self::StandaloneGraph(e) => e.name(),
+            Self::TerminalInit(e) => <&'static str>::from(e),
+            Self::Js(_) => "JSError",
         }
+    }
+}
+
+impl From<Error> for bun_crash_handler::Error {
+    fn from(e: Error) -> Self {
+        use bun_crash_handler::Error as C;
+        match e {
+            Error::Alloc(a) => C::Alloc(a),
+            Error::Sys(s) => C::Sys(s),
+            Error::Core(c) => C::Core(c),
+            Error::InstallFailed => C::InstallFailed,
+            Error::SyntaxError => C::SyntaxError,
+            Error::MissingPackageJSON => C::MissingPackageJSON,
+            Error::Unexpected => C::Unexpected,
+            Error::Clap(bun_clap::Error::InvalidArgument) => C::InvalidArgument,
+            Error::Bunfig(_) => C::InvalidBunfig,
+            other => C::Named(other.name()),
+        }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(_: std::io::Error) -> Self {
+        Self::WriteFailed
     }
 }
 
 impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
-        (*self).name().as_bytes()
+        Error::name(self).as_bytes()
     }
 }
 

@@ -307,7 +307,7 @@ unsafe fn ssl_ctx_cache_get_or_create(
 unsafe fn init_runtime_state(
     vm: *mut VirtualMachine,
     opts: &mut InitOptions,
-) -> crate::Result<OpaqueRuntimeState> {
+) -> bun_jsc::CrateResult<OpaqueRuntimeState> {
     // Note: do NOT form `&mut *vm` here — the caller
     // (`VirtualMachine::init`) may still hold a `&mut VirtualMachine` to the
     // same allocation. Dereference per-field via the raw `vm` ptr if needed.
@@ -416,9 +416,24 @@ unsafe fn init_runtime_state(
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(ptr::addr_of_mut!((*vm).modules).cast()),
                         handler: Some(bun_jsc::async_module::Queue::on_wake_handler),
-                        on_dependency_error: Some(
-                            bun_jsc::async_module::Queue::on_dependency_error,
-                        ),
+                        on_dependency_error: Some({
+                            unsafe fn adapter(
+                                ctx: *mut core::ffi::c_void,
+                                dep: &bun_resolver::install_types::Dependency,
+                                id: bun_resolver::install_types::DependencyID,
+                                err: bun_core::Error,
+                            ) {
+                                unsafe {
+                                    bun_jsc::async_module::Queue::on_dependency_error(
+                                        ctx,
+                                        dep,
+                                        id,
+                                        err.into(),
+                                    )
+                                }
+                            }
+                            adapter
+                        }),
                     };
                     // Branch on `opts.graph` here — with a module graph,
                     // auto_jsx=true would
@@ -453,7 +468,7 @@ unsafe fn init_runtime_state(
                 drop(unsafe { bun_core::heap::take(state.cast::<RuntimeState>()) });
                 bun_ast::expr::data::Store::deinit();
                 bun_ast::stmt::data::Store::deinit();
-                return Err(e);
+                return Err(e.into());
             }
         }
     }
@@ -639,7 +654,7 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 /// `vm` is the live per-thread VM.
 unsafe fn load_preloads(
     vm: *mut VirtualMachine,
-) -> crate::Result<*mut JSInternalPromise> {
+) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
     // Note: reshaped for borrowck — `wait_for_promise` / `event_loop().tick()`
     // need `&mut VirtualMachine` while we're also iterating `vm.preload` and
     // touching `vm.transpiler.resolver` / `vm.log`. Dereference per-field via
@@ -722,7 +737,7 @@ unsafe fn load_preloads(
                             ),
                         );
                     }
-                    return Err(e);
+                    return Err(e.into());
                 }
                 ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
                     // SAFETY: see above.
@@ -759,7 +774,7 @@ unsafe fn load_preloads(
                 // The exception is
                 // already pending on `global`; bubble the tag so
                 // `reload_entry_point` forwards it.
-                return Err(crate::Error::JSError);
+                return Err(bun_jsc::CrateError::JSError);
             }
         };
 
@@ -1923,6 +1938,26 @@ fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::String {
         return s.dupe_ref();
     }
     bun_core::String::clone_utf8(other)
+}
+
+fn to_jsc_fetch_error(err: crate::Error) -> bun_jsc::CrateError {
+    match err {
+        crate::Error::Jsc(e) => e,
+        crate::Error::Bundler(e) => e.into(),
+        crate::Error::Resolver(e) => e.into(),
+        crate::Error::Install(e) => e.into(),
+        crate::Error::Core(e) => e.into(),
+        crate::Error::Sys(e) => e.into(),
+        crate::Error::Alloc(e) => e.into(),
+        crate::Error::UnexpectedPendingResolution => {
+            bun_jsc::CrateError::UnexpectedPendingResolution
+        }
+        crate::Error::ModuleNotFound => bun_jsc::CrateError::ModuleNotFound,
+        crate::Error::WriteFailed => bun_jsc::CrateError::WriteFailed,
+        crate::Error::JSError | crate::Error::Js(_) => bun_jsc::CrateError::JSError,
+        crate::Error::JSErrorObject => bun_jsc::CrateError::JSErrorObject,
+        _ => bun_jsc::CrateError::ParseError,
+    }
 }
 
 /// `ModuleLoader.transpileSourceCode(...)` — the runtime-transpiler path:
@@ -4400,7 +4435,7 @@ unsafe fn transpile_file(
                 &mut log,
                 // SAFETY: per fn contract — `ret` is a valid out-param.
                 unsafe { &mut *ret },
-                err,
+                to_jsc_fetch_error(err),
             );
             ptr::null_mut()
         }
@@ -4567,7 +4602,7 @@ unsafe fn transpile_virtual_module(
                 &mut log,
                 // SAFETY: per fn contract — `ret` is a valid out-param.
                 unsafe { &mut *ret },
-                err,
+                to_jsc_fetch_error(err),
             );
             true
         }
@@ -4857,7 +4892,7 @@ unsafe fn _resolve<'a>(
             )
         } {
             ResolveResultUnion::Success(r) => break r,
-            ResolveResultUnion::Failure(e) => return Err(e),
+            ResolveResultUnion::Failure(e) => return Err(e.into()),
             ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
                 if !retry_on_not_found {
                     return Err(crate::Error::ModuleNotFound);
@@ -4982,7 +5017,7 @@ unsafe fn resolve_hook(
         let printed = ResolveMessage::fmt(
             specifier_utf8.slice(),
             source_utf8.slice(),
-            crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
+            bun_jsc::CrateError::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
             import_kind,
         );
         let msg = bun_ast::Msg {
@@ -5088,7 +5123,7 @@ unsafe fn resolve_hook(
     let mut result_query: &[u8] = b"";
     // SAFETY: `vm` is the live per-thread VM; the slices borrow
     // `specifier_utf8`/`source_utf8` which outlive this call.
-    if let Err(mut err) = unsafe {
+    if let Err(err) = unsafe {
         _resolve(
             vm,
             specifier_utf8.slice(),
@@ -5103,8 +5138,7 @@ unsafe fn resolve_hook(
         // `.resolve`-tagged log msg, or fall back to `ResolveMessage::fmt`.
         let msg: bun_ast::Msg = 'brk: {
             for m in log.msgs.iter() {
-                if let bun_ast::Metadata::Resolve(r) = &m.metadata {
-                    err = r.err;
+                if let bun_ast::Metadata::Resolve(_) = &m.metadata {
                     break 'brk m.clone();
                 }
             }
@@ -5120,7 +5154,7 @@ unsafe fn resolve_hook(
             let printed = ResolveMessage::fmt(
                 specifier_utf8.slice(),
                 source_utf8.slice(),
-                err,
+                to_jsc_fetch_error(err),
                 import_kind,
             );
             bun_ast::Msg {
@@ -5128,7 +5162,7 @@ unsafe fn resolve_hook(
                 metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
                     specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
                     import_kind,
-                    err,
+                    err: bun_ast::Error::ModuleNotFound,
                 }),
                 ..Default::default()
             }

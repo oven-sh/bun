@@ -14,7 +14,7 @@ impl ScanCommand {
         {
             Ok(v) => v,
             Err(e) => {
-                if e == crate::Error::MissingPackageJSON {
+                if e == bun_install::Error::MissingPackageJSON {
                     Output::err_generic(
                         "No package.json found. 'bun pm scan' requires a lockfile to analyze dependencies.",
                         (),
@@ -22,7 +22,7 @@ impl ScanCommand {
                     bun_core::note!("Run \"bun install\" first to generate a lockfile");
                     Global::exit(1);
                 }
-                return Err(e);
+                return Err(e.into());
             }
         };
         // `defer ctx.allocator.free(cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.

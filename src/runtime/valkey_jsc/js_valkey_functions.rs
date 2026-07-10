@@ -84,11 +84,10 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
 /// 2. wraps the resulting `JSValue` in `Ok` for use in `JsResult<JSValue>`
 ///    host functions.
 #[inline]
-fn send_err_to_js<E>(global: &JSGlobalObject, message: &str, err: E) -> JsResult<JSValue>
-where
-    E: Into<bun_valkey::valkey_protocol::RedisError>,
-{
-    Ok(protocol::valkey_error_to_js(global, message, err.into()))
+fn send_err_to_js(global: &JSGlobalObject, message: &str, err: crate::Error) -> JsResult<JSValue> {
+    use bun_valkey::valkey_protocol::RedisError;
+    let redis_err = err.name().parse().unwrap_or(RedisError::ConnectionClosed);
+    Ok(protocol::valkey_error_to_js(global, message, redis_err))
 }
 
 /// `JSValkeyClient::send` returns a `*mut JSPromise`; route through the

@@ -6,6 +6,8 @@ pub enum Error {
     ModuleNotFound,
     #[error("BuildFailed")]
     BuildFailed,
+    #[error("CompilationFailed")]
+    CompilationFailed,
     #[error("Plugin")]
     Plugin,
     #[error("InvalidCssImport")]
@@ -102,6 +104,7 @@ impl Error {
             Self::InvalidRecordKind => "InvalidRecordKind",
             Self::ModuleNotFound => "ModuleNotFound",
             Self::BuildFailed => "BuildFailed",
+            Self::CompilationFailed => "CompilationFailed",
             Self::Plugin => "Plugin",
             Self::InvalidCssImport => "InvalidCssImport",
             Self::PrintError => "PrintError",

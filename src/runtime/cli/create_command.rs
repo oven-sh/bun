@@ -214,7 +214,7 @@ impl CreateOptions {
             Err(err) => {
                 // Report useful error and exit
                 let _ = diag.report(Output::error_writer(), err);
-                return Err(err);
+                return Err(err.into());
             }
         };
 
@@ -486,7 +486,7 @@ impl CreateCommand {
                         buf: Vec<u8>,
                     }
                     impl bun_libarchive::ArchiveAppender for OverwriteListAppender {
-                        fn append(&mut self, path: &[u8]) -> crate::Result<&[u8]> {
+                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_libarchive::Error> {
                             self.buf.clear();
                             self.buf.extend_from_slice(path);
                             Ok(&self.buf)
@@ -591,7 +591,7 @@ impl CreateCommand {
 
                         pretty_errorln!(
                             "<r><red>{}<r>: creating dir {}",
-                            err.name(),
+                            bstr::BStr::new(err.name()),
                             bstr::BStr::new(destination),
                         );
                         Global::exit(1);
@@ -2007,11 +2007,12 @@ impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer<'_> {
     fn on_analyze(
         &mut self,
         result: &mut bun_bundler::bundle_v2::DependenciesScannerResult<'_, '_>,
-    ) -> crate::Result<()> {
+    ) -> Result<(), bun_bundler::Error> {
         let this = self;
         this.node.end();
 
         SourceFileProjectGenerator::generate(this.ctx, this.example_tag, this.entry_point, result)
+            .map_err(Into::into)
     }
 }
 
@@ -2564,7 +2565,7 @@ impl Example {
         let response = match async_http.send_sync() {
             Ok(r) => r,
             Err(err) => {
-                if err == crate::Error::Sys(bun_errno::SystemErrno::EAGAIN) {
+                if err.name() == "EAGAIN" {
                     bun_core::pretty_errorln!(
                         "Request timed out while trying to fetch examples list. Please try again",
                     );

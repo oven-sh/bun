@@ -28,14 +28,14 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
     let cli = CommandLineArguments::parse(Subcommand::Unlink)?;
     let (manager, _original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Unlink) {
         Ok(v) => v,
-        Err(crate::Error::MissingPackageJSON) => {
+        Err(bun_install::Error::MissingPackageJSON) => {
             attempt_to_create_package_json()?;
             // Re-parse argv: `CommandLineArguments` is not `Clone`, and `parse`
             // is deterministic over process argv.
             let cli = CommandLineArguments::parse(Subcommand::Unlink)?;
             pm::init(&mut *ctx, cli, Subcommand::Unlink)?
         }
-        Err(e) => return Err(e),
+        Err(e) => return Err(e.into()),
     };
     // `defer ctx.allocator.free(original_cwd)` — `_original_cwd: Box<[u8]>` drops at scope exit.
 
@@ -158,7 +158,7 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
                     if manager.options.log_level != LogLevel::Silent {
                         bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create node_modules in global dir due to error {}",
-                            e.name(),
+                            BStr::new(e.name()),
                         );
                     }
                     Global::crash();
@@ -221,7 +221,7 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
             if manager.options.log_level != LogLevel::Silent {
                 bun_core::pretty_errorln!(
                     "<r><red>error:<r> failed to unlink package in global dir due to error {}",
-                    e.name(),
+                    BStr::new(e.name()),
                 );
             }
             Global::crash();

@@ -841,7 +841,7 @@ impl<'a> TransformTask<'a> {
         ) {
             Ok(n) => n,
             Err(err) => {
-                self.err = Some(err);
+                self.err = Some(err.into());
                 return;
             }
         };
@@ -1028,7 +1028,7 @@ impl JSTranspiler {
                         global.throw_value(log.to_js(global, "Failed to create transpiler")?)
                     );
                 }
-                return Err(global.throw_error(err, "Error creating transpiler"));
+                return Err(global.throw_error(err.into(), "Error creating transpiler"));
             }
         };
 
@@ -1063,7 +1063,7 @@ impl JSTranspiler {
             if (log.warnings + log.errors) > 0 {
                 return Err(global.throw_value(log.to_js(global, "Failed to load define")?));
             }
-            return Err(global.throw_error(err, "Failed to load define"));
+            return Err(global.throw_error(err.into(), "Failed to load define"));
         }
 
         if config.macro_map.count() > 0 {
@@ -1596,7 +1596,7 @@ impl JSTranspiler {
             Transpiler::transpiler::PrintFormat::EsmAscii,
         ) {
             self.buffer_writer.set(Some(printer.ctx));
-            return Err(global.throw_error(err, "Failed to print code"));
+            return Err(global.throw_error(err.into(), "Failed to print code"));
         }
 
         // TODO: benchmark if pooling this way is faster or moving is faster
@@ -1794,7 +1794,7 @@ impl JSTranspiler {
                 if (log.warnings + log.errors) > 0 {
                     return Err(global.throw_value(log.to_js(global, "Failed to scan imports")?));
                 }
-                return Err(global.throw_error(err, "Failed to scan imports"));
+                return Err(global.throw_error(err.into(), "Failed to scan imports"));
             }
 
             if (log.warnings + log.errors) > 0 {

@@ -1502,7 +1502,7 @@ fn extract_to_disk_filtered(
             bun_sys::FileKind::Directory => {
                 match dir_fd.make_path(pathname) {
                     // Directory already exists - don't count as extracted
-                    Err(crate::Error::PathAlreadyExists) => continue,
+                    Err(e) if e.get_errno() == bun_sys::E::EEXIST => continue,
                     Err(_) => continue,
                     Ok(()) => {}
                 }
@@ -1522,9 +1522,9 @@ fn extract_to_disk_filtered(
                 if let Some(parent_dir) = bun_core::dirname(pathname) {
                     match dir_fd.make_path(parent_dir) {
                         // Expected: directory already exists
-                        Err(crate::Error::PathAlreadyExists) => {}
+                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
                         // Permission errors: skip this file, will fail at openat
-                        Err(crate::Error::Sys(bun_errno::SystemErrno::EACCES)) => {}
+                        Err(e) if e.get_errno() == bun_sys::E::EACCES => {}
                         // Other errors: skip, will fail at openat
                         Err(_) => {}
                         Ok(()) => {}

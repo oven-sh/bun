@@ -4151,7 +4151,7 @@ impl StructuredCloneWriter {
 
 // Implement `bun_io::Write` so `write_int_le` / `write_all` work directly.
 impl bun_io::Write for StructuredCloneWriter {
-    fn write_all(&mut self, bytes: &[u8]) -> crate::Result<()> {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
         StructuredCloneWriter::write(self, bytes);
         Ok(())
     }
@@ -4161,7 +4161,7 @@ impl bun_io::Write for StructuredCloneWriter {
 // because Rust forbids `[u8; size_of::<F>()]`
 // without `generic_const_exprs`. Bit-cast → native-endian bytes.
 fn write_float<W: bun_io::Write>(value: f64, writer: &mut W) -> crate::Result<()> {
-    writer.write_all(&value.to_ne_bytes())
+    Ok(writer.write_all(&value.to_ne_bytes())?)
 }
 
 fn read_float<B: AsRef<[u8]>>(
@@ -4466,7 +4466,7 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
                     return Retry::Continue;
                 }
                 bun_sys::Result::Err(err2) => {
-                    this.set_errno_if_present(bun_core::errno_to_zig_err(err2.errno as i32));
+                    this.set_errno_if_present(bun_core::errno_to_zig_err(err2.errno as i32).into());
                     this.set_system_error(err.with_path(err_path).to_system_error());
                     this.set_opened_fd_if_present(Fd::INVALID);
                     return Retry::Fail;
@@ -7136,7 +7136,7 @@ pub trait FileOpener: Sized {
                             PathOrFileDescriptor::Path(p) => p.clone(),
                             PathOrFileDescriptor::Fd(_) => unreachable!(),
                         };
-                        self_.set_errno(bun_core::errno_to_zig_err(err_enum as i32));
+                        self_.set_errno(bun_core::errno_to_zig_err(err_enum as i32).into());
                         self_.set_system_error(
                             bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
                                 .with_path(path_string_2.slice())
@@ -7181,7 +7181,7 @@ pub trait FileOpener: Sized {
                 )
             };
             if let Some(errno) = rc.err_enum_e() {
-                self.set_errno(bun_core::errno_to_zig_err(errno as i32));
+                self.set_errno(bun_core::errno_to_zig_err(errno as i32).into());
                 self.set_system_error(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::open)
                         .with_path(path_string.slice())
@@ -7222,7 +7222,7 @@ pub trait FileOpener: Sized {
                                 Retry::No => {}
                             }
                         }
-                        self.set_errno(bun_core::errno_to_zig_err(err.errno as i32));
+                        self.set_errno(bun_core::errno_to_zig_err(err.errno as i32).into());
                         self.set_system_error(jsc::SysErrorJsc::to_system_error(
                             &err.with_path(path_string.slice()),
                         ));

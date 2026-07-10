@@ -52,10 +52,10 @@ impl BodyReaderHandler for ErrorReportRequest {
         this: *mut Self,
         body: &[u8],
         resp: AnyResponse,
-    ) -> crate::Result<()> {
+    ) -> bun_uws_sys::Result<()> {
         // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
         // pointer with full-allocation provenance and no live borrows.
-        unsafe { ErrorReportRequest::run_with_body(this, body, resp) }
+        unsafe { ErrorReportRequest::run_with_body(this, body, resp) }.map_err(Into::into)
     }
 
     unsafe fn on_error(this: *mut Self) {

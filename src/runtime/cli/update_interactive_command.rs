@@ -208,7 +208,7 @@ impl UpdateInteractiveCommand {
             },
         ) {
             Output::err_generic("Failed to serialize package.json: {s}", (err.name(),));
-            return Err(err);
+            return Err(err.into());
         }
 
         let new_package_json_source: Box<[u8]> =
@@ -258,7 +258,7 @@ impl UpdateInteractiveCommand {
             Ok(v) => v,
             Err(err) => {
                 if !silent {
-                    if err == crate::Error::MissingPackageJSON {
+                    if err == bun_install::Error::MissingPackageJSON {
                         Output::err_generic("missing package.json, nothing outdated", ());
                     }
                     Output::err_generic("failed to initialize bun install: {s}", (err.name(),));

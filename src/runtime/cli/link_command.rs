@@ -29,14 +29,14 @@ fn link(ctx: command::Context) -> crate::Result<()> {
     let cli = CommandLineArguments::parse(Subcommand::Link)?;
     let (manager, original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Link) {
         Ok(v) => v,
-        Err(crate::Error::MissingPackageJSON) => {
+        Err(bun_install::Error::MissingPackageJSON) => {
             attempt_to_create_package_json()?;
             // Re-parse argv: `CommandLineArguments` is not `Clone`, and `parse`
             // is deterministic over process argv.
             let cli = CommandLineArguments::parse(Subcommand::Link)?;
             pm::init(&mut *ctx, cli, Subcommand::Link)?
         }
-        Err(e) => return Err(e),
+        Err(e) => return Err(e.into()),
     };
     // `defer ctx.allocator.free(original_cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
 
@@ -136,7 +136,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
                     if manager.options.log_level != LogLevel::Silent {
                         bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create node_modules in global dir due to error {}",
-                            e.name(),
+                            BStr::new(e.name()),
                         );
                     }
                     Global::crash();
@@ -153,11 +153,11 @@ fn link(ctx: command::Context) -> crate::Result<()> {
             if name[0] == b'@' {
                 if let Some(i) = strings::index_of_char(name, b'/') {
                     if let Err(e) = node_modules.make_dir(&name[..i as usize]) {
-                        if e != crate::Error::PathAlreadyExists {
+                        if e != bun_sys::SystemErrno::EEXIST {
                             if manager.options.log_level != LogLevel::Silent {
                                 bun_core::pretty_errorln!(
                                     "<r><red>error:<r> failed to create scope in global dir due to error {}",
-                                    e.name(),
+                                    e,
                                 );
                             }
                             Global::crash();
@@ -207,7 +207,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
                     if manager.options.log_level != LogLevel::Silent {
                         bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create symlink to node_modules in global dir due to error {}",
-                            e.name(),
+                            BStr::new(e.name()),
                         );
                     }
                     Global::crash();

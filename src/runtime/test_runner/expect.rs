@@ -2718,7 +2718,7 @@ impl ExpectCustomAsymmetricMatcher {
         let printed = self
             .custom_print(callframe.this(), global_this, mutable_string.writer(), false)
             .map_err(|e| {
-                if e == crate::Error::Alloc(bun_alloc::AllocError) {
+                if matches!(e, crate::Error::Alloc(_)) {
                     global_this.throw_out_of_memory()
                 } else {
                     // exception already on the VM (see `maybe_clear` with dont_throw=false)

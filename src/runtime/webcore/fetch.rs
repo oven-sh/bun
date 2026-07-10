@@ -1448,7 +1448,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ) {
             Ok(n) => n,
             Err(err) => {
-                return Err(global_this.throw_error(err.into(), "Failed to decode file url"));
+                return Err(
+                    global_this.throw_error(bun_url::Error::from(err).into(), "Failed to decode file url")
+                );
             }
         };
         let url_path_decoded = &path_buf2[0..decoded_len as usize];

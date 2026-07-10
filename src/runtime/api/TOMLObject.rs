@@ -18,7 +18,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         |arena, log, source| {
             let parse_result = match TOML::parse(source, log, arena, false) {
                 Ok(v) => v,
-                Err(crate::Error::StackOverflow) => {
+                Err(bun_parsers::Error::StackOverflow) => {
                     return Err(global.throw_stack_overflow());
                 }
                 Err(_) => {

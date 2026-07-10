@@ -1179,7 +1179,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut spawned = match unsafe {
         spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
     } {
-        Err(err) if err == crate::Error::Sys(bun_errno::SystemErrno::EMFILE) || err == crate::Error::Sys(bun_errno::SystemErrno::ENFILE) => {
+        Err(err) if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) => {
             // Windows: close+free the heap `uv::Pipe` handles that
             // `as_spawn_option` allocated and `spawn_process_windows` may have
             // `uv_pipe_init`-registered on the spawn-sync loop. Skipping this
@@ -1194,7 +1194,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 ZStr::EMPTY
             };
             let mut systemerror = sys::Error::from_code(
-                if err == crate::Error::Sys(bun_errno::SystemErrno::EMFILE) {
+                if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
                     sys::Errno::EMFILE
                 } else {
                     sys::Errno::ENFILE
@@ -1203,7 +1203,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             )
             .with_path(display_path)
             .to_system_error();
-            systemerror.errno = if err == crate::Error::Sys(bun_errno::SystemErrno::EMFILE) {
+            systemerror.errno = if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
                 -UV_E::MFILE
             } else {
                 -UV_E::NFILE
@@ -1213,7 +1213,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         Err(err) => {
             // See EMFILE arm above.
             spawn_options.deinit();
-            let _ = global_this.throw_error(err, ": failed to spawn process");
+            let _ = global_this.throw_error(crate::Error::from(err).into(), ": failed to spawn process");
             return Ok(JSValue::ZERO);
         }
         Ok(maybe) => match maybe {

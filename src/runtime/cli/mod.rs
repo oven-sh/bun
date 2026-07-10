@@ -525,7 +525,7 @@ impl colon_list_type::ColonListValue for &'static [u8] {
 
 #[cold]
 pub(crate) fn invalid_target(diag: &mut bun_clap::Diagnostic, _target: &[u8]) -> ! {
-    let _ = diag.report(Output::error_writer(), crate::Error::InvalidTarget);
+    let _ = diag.report(Output::error_writer(), bun_clap::Error::InvalidArgument);
     Global::exit(1);
 }
 
@@ -579,7 +579,7 @@ pub mod cli {
             let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
                 bun_core::Output::error_writer(),
             ));
-            bun_crash_handler::handle_root_error(err, None);
+            bun_crash_handler::handle_root_error(err.into(), None);
         }
     }
 }
@@ -1911,7 +1911,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         // SAFETY: single-threaded CLI dispatch; `ctx.log` was populated by
         // `create_context_data` and no other `&mut Log` borrow is live for the
         // duration of this `Printer::print` call.
-        Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn)
+        Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn).map_err(Into::into)
     }
 
     #[cold]

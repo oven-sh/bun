@@ -471,7 +471,7 @@ impl Interpreter {
             unsafe { core::slice::from_raw_parts_mut(ptr, len) }
         };
         *out_parser = Some(Parser::new(arena, lex_result, jsobjs_raw)?);
-        out_parser.as_mut().unwrap().parse()
+        Ok(out_parser.as_mut().unwrap().parse()?)
     }
 
     /// Builds the root `ShellExecEnv` (export env from the event loop's

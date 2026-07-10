@@ -2540,12 +2540,6 @@ pub enum CalendarError {
     OutOfMemory,
 }
 
-impl From<CalendarError> for crate::Error {
-    fn from(e: CalendarError) -> Self {
-        crate::Error::from_name(<&'static str>::from(e))
-    }
-}
-
 pub fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarError> {
     let mut fields: [&[u8]; 5] = [b""; 5];
     let mut count: usize = 0;
@@ -2715,12 +2709,6 @@ pub enum TaskXmlError {
     TooManyTriggers,
     #[error("OutOfMemory")]
     OutOfMemory,
-}
-
-impl From<TaskXmlError> for crate::Error {
-    fn from(e: TaskXmlError) -> Self {
-        crate::Error::from_name(<&'static str>::from(e))
-    }
 }
 
 /// Build a Windows Task Scheduler XML definition from a parsed cron expression.

@@ -523,7 +523,11 @@ pub(crate) fn braces(
         let mut parser = Braces::Parser::init(&lexer_output.tokens[..], &arena);
         let ast_node = match parser.parse() {
             Ok(v) => v,
-            Err(err) => return Err(global.throw_error(err.into(), "failed to parse braces")),
+            Err(err) => {
+                return Err(
+                    global.throw_error(crate::Error::from(err).into(), "failed to parse braces"),
+                );
+            }
         };
         // NOTE: see `tokenize` arm — manual JSON encoder for the AST.
         let str = Braces::ast_to_json(&ast_node);
@@ -2540,7 +2544,9 @@ pub mod JSZlib {
                                 global_this.throw(format_args!("Zlib error: Invalid argument"))
                             );
                         }
-                        return Err(global_this.throw_error(err.into(), "Zlib error"));
+                        return Err(
+                            global_this.throw_error(crate::Error::from(err).into(), "Zlib error"),
+                        );
                     }
                 };
 
@@ -2681,7 +2687,9 @@ pub mod JSZlib {
                                 global_this.throw(format_args!("Zlib error: Invalid argument"))
                             );
                         }
-                        return Err(global_this.throw_error(err.into(), "Zlib error"));
+                        return Err(
+                            global_this.throw_error(crate::Error::from(err).into(), "Zlib error"),
+                        );
                     }
                 };
 

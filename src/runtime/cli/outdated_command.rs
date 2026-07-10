@@ -70,7 +70,7 @@ impl OutdatedCommand {
                 Ok(v) => v,
                 Err(err) => {
                     if !silent {
-                        if err == crate::Error::MissingPackageJSON {
+                        if err == bun_install::Error::MissingPackageJSON {
                             Output::err_generic("missing package.json, nothing outdated", ());
                         }
                         Output::err_generic("failed to initialize bun install: {s}", (err.name(),));

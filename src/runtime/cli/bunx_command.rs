@@ -503,7 +503,7 @@ impl BunxCommand {
         match Self::get_bin_name_from_project_directory(transpiler, toplevel_fd, package_name) {
             Ok(v) => Ok(v),
             Err(err) => {
-                if err == crate::Error::NoBinFound {
+                if matches!(err, crate::Error::NoBinFound) {
                     return Err(GetBinNameError::NoBinFound);
                 }
 
@@ -515,7 +515,7 @@ impl BunxCommand {
                 ) {
                     Ok(v) => Ok(v),
                     Err(err2) => {
-                        if err2 == crate::Error::NoBinFound {
+                        if matches!(err2, crate::Error::NoBinFound) {
                             return Err(GetBinNameError::NoBinFound);
                         }
 

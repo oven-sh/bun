@@ -314,7 +314,7 @@ pub mod visited {
     // `ObjectPool<T, ..>` requires `T: ObjectPoolType` — `INIT` allocates an empty map,
     // `reset` clears retaining capacity (handled by callers via `.clear()`).
     impl bun_collections::pool::ObjectPoolType for Map {
-        const INIT: Option<fn() -> crate::Result<Self>> =
+        const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
             Some(|| Ok(Map::default()));
         #[inline]
         fn reset(&mut self) {
@@ -1627,7 +1627,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    crate::Error::FmtError,
+                                    bun_core::Error::FmtError.into(),
                                     "failed to print Response",
                                 ));
                             }
@@ -1645,7 +1645,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    crate::Error::FmtError,
+                                    bun_core::Error::FmtError.into(),
                                     "failed to print Request",
                                 ));
                             }
@@ -1665,7 +1665,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    crate::Error::FmtError,
+                                    bun_core::Error::FmtError.into(),
                                     "failed to print BuildArtifact",
                                 ));
                             }
@@ -1683,7 +1683,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    crate::Error::FmtError,
+                                    bun_core::Error::FmtError.into(),
                                     "failed to print Blob",
                                 ));
                             }

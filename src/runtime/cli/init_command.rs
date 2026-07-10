@@ -367,7 +367,7 @@ impl InitCommand {
                 bun_core::pretty_errorln!(
                     "Failed to create directory {}: {}",
                     bstr::BStr::new(ifdir),
-                    err.name(),
+                    bstr::BStr::new(err.name()),
                 );
                 Global::exit(1);
             }
@@ -1410,7 +1410,12 @@ impl Template {
         });
         // SAFETY: object is arena-allocated and live for the command duration.
         let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
-        let mut scripts_json = object.get_or_put_object(key, bump)?;
+        let mut scripts_json = object
+            .get_or_put_object(key, bump)
+            .map_err(|e| match e {
+                bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
+                bun_ast::E::SetError::Clobber => Error::Unexpected,
+            })?;
         let the_scripts = self.scripts();
         let mut i: usize = 0;
         while i < the_scripts.len() {

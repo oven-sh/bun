@@ -1324,7 +1324,9 @@ pub enum PatternParseError {
 
 impl From<PatternParseError> for crate::Error {
     fn from(e: PatternParseError) -> Self {
-        crate::Error::intern(<&'static str>::from(&e))
+        match e {
+            PatternParseError::InvalidRoutePattern => crate::Error::InvalidRoutePattern,
+        }
     }
 }
 

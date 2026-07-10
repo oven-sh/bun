@@ -153,8 +153,8 @@ impl UntrustedCommand {
 
                 let maybe_scripts_list = match result {
                     Ok(v) => v,
-                    Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
-                    Err(e) => return Err(e),
+                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
+                    Err(e) => return Err(e.into()),
                 };
 
                 if let Some(scripts_list) = maybe_scripts_list {
@@ -390,8 +390,8 @@ impl TrustCommand {
 
                 let maybe_scripts_list = match result {
                     Ok(v) => v,
-                    Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
-                    Err(e) => return Err(e),
+                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
+                    Err(e) => return Err(e.into()),
                 };
 
                 if let Some(scripts_list) = maybe_scripts_list {

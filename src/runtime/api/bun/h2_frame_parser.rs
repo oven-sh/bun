@@ -5998,7 +5998,7 @@ impl bun_io::Write for DirectWriterStruct {
         if self.writer.write(data) {
             Ok(())
         } else {
-            Err(crate::Error::SocketClosed)
+            Err(bun_core::Error::WriteFailed)
         }
     }
 }

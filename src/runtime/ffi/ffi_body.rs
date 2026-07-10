@@ -625,7 +625,7 @@ impl CompileC {
             },
         }) {
             Ok(s) => s,
-            Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
+            Err(TCC::Error::Alloc(bun_alloc::AllocError)) => {
                 return Err(crate::Error::Alloc(bun_alloc::AllocError));
             }
             Err(_) => {
@@ -2131,7 +2131,7 @@ impl Function {
             },
         }) {
             Ok(s) => s,
-            Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
+            Err(TCC::Error::Alloc(bun_alloc::AllocError)) => {
                 return Err(crate::Error::TCCMissing);
             }
             // 1. .Memory is always a valid option, so InvalidOptions is

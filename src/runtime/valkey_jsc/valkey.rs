@@ -1578,7 +1578,7 @@ impl bun_io::Write for ValkeyClient {
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
         self.write_buffer
             .write(buf)
-            .map_err(|_| crate::Error::OUT_OF_MEMORY)
+            .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
     }
 }
 
@@ -1593,7 +1593,7 @@ impl bun_io::Write for WriteBufWriter<'_> {
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
         self.0
             .write(buf)
-            .map_err(|_| crate::Error::OUT_OF_MEMORY)
+            .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
     }
 }
 

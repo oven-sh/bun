@@ -333,7 +333,7 @@ impl From<CreatePtyError> for InitError {
 
 impl From<InitError> for crate::Error {
     fn from(e: InitError) -> Self {
-        crate::Error::from_name(<&'static str>::from(e))
+        crate::Error::TerminalInit(e)
     }
 }
 
@@ -770,7 +770,7 @@ pub enum CreatePtyError {
 
 impl From<CreatePtyError> for crate::Error {
     fn from(e: CreatePtyError) -> Self {
-        crate::Error::from_name(<&'static str>::from(e))
+        crate::Error::TerminalInit(e.into())
     }
 }
 

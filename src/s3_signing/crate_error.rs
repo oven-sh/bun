@@ -33,4 +33,20 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
+impl From<crate::credentials::SignError> for Error {
+    fn from(e: crate::credentials::SignError) -> Self {
+        use crate::credentials::SignError;
+        match e {
+            SignError::MissingCredentials => Self::MissingCredentials,
+            SignError::InvalidMethod => Self::InvalidMethod,
+            SignError::InvalidPath => Self::InvalidPath,
+            SignError::InvalidEndpoint => Self::InvalidEndpoint,
+            SignError::InvalidSessionToken => Self::InvalidSessionToken,
+            SignError::InvalidHeaderValue
+            | SignError::FailedToGenerateSignature
+            | SignError::NoSpaceLeft => Self::SignError,
+        }
+    }
+}
+
 pub type Result<T, E = Error> = core::result::Result<T, E>;

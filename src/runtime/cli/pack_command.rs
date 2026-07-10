@@ -47,7 +47,7 @@ fn dir_open_dir_z(
     path: &ZStr,
     opts: bun_sys::OpenDirOptions,
 ) -> crate::Result<Dir> {
-    dir.open_dir(path.as_bytes(), opts)
+    Ok(dir.open_dir(path.as_bytes(), opts)?)
 }
 
 /// Process-lifetime bump arena for `Expr::as_string*` / `E::EString` data
@@ -237,7 +237,7 @@ impl PackCommand {
             LoadResult::Err(cause) => 'err: {
                 match cause.step {
                     LoadStep::OpenFile => {
-                        if cause.value == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             break 'err None;
                         }
                         Output::err_generic(
@@ -329,7 +329,7 @@ impl PackCommand {
                 Ok(v) => v,
                 Err(err) => {
                     if !silent {
-                        if err == crate::Error::MissingPackageJSON {
+                        if err == bun_install::Error::MissingPackageJSON {
                             let mut cwd_buf = PathBuffer::uninit();
                             match bun_sys::getcwd_z(&mut cwd_buf) {
                                 Ok(cwd) => {
@@ -3592,7 +3592,7 @@ fn edit_root_package_json(
     ) {
         Ok(w) => w,
         Err(err) => {
-            if err == crate::Error::Alloc(bun_alloc::AllocError) {
+            if err == bun_js_printer::Error::Alloc(bun_alloc::AllocError) {
                 return Err(AllocError);
             }
             Output::err_generic(

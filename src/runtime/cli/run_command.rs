@@ -225,6 +225,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         script: &[u8],
     ) -> crate::Result<()> {
         bun_install::lifecycle_script_runner::replace_package_manager_run(copy_script, script)
+            .map_err(Into::into)
     }
 
     /// Spawns the script body via the bun-shell or system shell and exits on
@@ -638,7 +639,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         },
                     );
                     Output::flush();
-                    return Err(err);
+                    return Err(err.into());
                 }
                 Ok(None) => {
                     // SAFETY: see `Err` arm above.
@@ -1537,7 +1538,7 @@ impl Run {
                     log_clear_msgs(vm);
                 }
             }
-            Err(err) => entry_point_load_failed(vm, err),
+            Err(err) => entry_point_load_failed(vm, err.into()),
         }
 
         // don't run the GC if we don't actually need to
@@ -1886,6 +1887,7 @@ impl RunCommand {
         optional_bun_path: &mut &[u8],
     ) -> crate::Result<()> {
         bun_install::RunCommand::create_fake_temporary_node_executable(path, optional_bun_path)
+            .map_err(Into::into)
     }
 
     /// Prepends workspace
@@ -2574,7 +2576,7 @@ impl RunCommand {
         );
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
         // for this one resolve.
-        let resolution: ::core::result::crate::Result<bun_resolver::Result> = {
+        let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
             let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
             this_transpiler.resolver.opts.preserve_symlinks =
                 ctx.runtime_options.preserve_symlinks_main

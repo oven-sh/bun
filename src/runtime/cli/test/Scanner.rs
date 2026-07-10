@@ -147,7 +147,7 @@ impl<'a> Scanner<'a> {
 
         if let EntriesOption::Err(root_err) = root {
             let e = root_err.original_err;
-            if e == crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) || e == crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) {
+            if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOTDIR) {
                 if self.is_test_file(path) {
                     let stored = self
                         .fs()
@@ -157,7 +157,7 @@ impl<'a> Scanner<'a> {
                     let rel_path = Interned::from_static(stored);
                     self.test_files.push(rel_path);
                 }
-            } else if e == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+            } else if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 return Err(ScanError::DoesNotExist);
             } else {
                 scoped_log!(
@@ -266,7 +266,9 @@ impl<'a> Scanner<'a> {
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         let raw = handle.map(bun_sys::Dir::into_raw);
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
-        unsafe { &mut (*fs_ptr).fs }.read_directory_with_iterator(name, raw, 0, true, iter)
+        unsafe { &mut (*fs_ptr).fs }
+            .read_directory_with_iterator(name, raw, 0, true, iter)
+            .map_err(Into::into)
     }
 
     pub fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {

@@ -598,7 +598,7 @@ impl JSBundleCompletionTask {
                 // `this.result.value.deinit()` — owned fields drop with the
                 // overwrite below; `output_files` (moved out above) drops here.
                 drop(output_files);
-                this.result = BundleV2Result::Err(crate::Error::CompilationFailed);
+                this.result = BundleV2Result::Err(bun_bundler::Error::CompilationFailed);
             } else {
                 // Put the compacted output_files back.
                 match &mut this.result {
@@ -815,7 +815,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         &mut self,
         transpiler: &mut Transpiler<'a>,
         _bump: &'a Arena,
-    ) -> crate::Result<()> {
+    ) -> bun_bundler::Result<()> {
         let config = &mut self.config;
 
         transpiler.options.env.behavior = config.env_behavior;
@@ -1040,7 +1040,7 @@ impl CompletionStruct for JSBundleCompletionTask {
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
-    ) -> crate::Result<&'a mut Transpiler<'a>> {
+    ) -> bun_bundler::Result<&'a mut Transpiler<'a>> {
         let config = &self.config;
         let opts = api::TransformOptions {
             define: if config.define.count() > 0 {
@@ -1097,7 +1097,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler: &'a mut Transpiler<'a>,
         bump: &'a Arena,
         thread_pool: *mut bun_threading::ThreadPool,
-    ) -> crate::Result<()> {
+    ) -> bun_bundler::Result<()> {
         // `jsc.AnyEventLoop.init(allocator)` — Mini loop. Stack-owned (not
         // bump-allocated) so its `MiniEventLoop::tasks` queue is dropped at
         // scope exit; the bump bulk-free skips Drop. Declared before `bv2` so

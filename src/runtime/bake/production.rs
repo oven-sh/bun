@@ -223,7 +223,6 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     match build_with_vm(ctx, &cwd, vm_ptr, &mut pt) {
         Ok(()) => {}
         Err(crate::Error::JSError) => {
-            bun_crash_handler::handle_error_return_trace(e, None);
             // SAFETY: vm.global is live for VM lifetime.
             let global = unsafe { &*(*vm_ptr).global };
             let err_value = global.take_exception(jsc::JsError::Thrown);
@@ -320,7 +319,7 @@ pub(super) fn build_with_vm(
     ) {
         Ok(r) => r,
         Err(err) => {
-            if err == crate::Error::ModuleNotFound {
+            if err == bun_resolver::Error::ModuleNotFound {
                 if ctx.args.entry_points.is_empty() {
                     // Onboarding message
                     Output::err(
@@ -726,7 +725,7 @@ pub(super) fn build_with_vm(
                 bun_bundler::options::Side::Client => {
                     // Client-side resources will be written to disk for usage on the client side
                     if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
-                        bun_crash_handler::handle_error_return_trace(err, None);
+                        bun_core::handle_error_return_trace(err);
                         Output::err(
                             err,
                             "Failed to write {} to output directory",
@@ -737,7 +736,7 @@ pub(super) fn build_with_vm(
                 bun_bundler::options::Side::Server => {
                     if ctx.bundler_options.bake_debug_dump_server {
                         if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
-                            bun_crash_handler::handle_error_return_trace(err, None);
+                            bun_core::handle_error_return_trace(err);
                             Output::err(
                                 err,
                                 "Failed to write {} to output directory",
@@ -817,7 +816,7 @@ pub(super) fn build_with_vm(
         if any_client_chunks {
             let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];
             if let Err(err) = runtime_file.write_to_disk(root_dir.fd(), b".") {
-                bun_crash_handler::handle_error_return_trace(err, None);
+                bun_core::handle_error_return_trace(err);
                 Output::err(
                     err,
                     "Failed to write {} to output directory",

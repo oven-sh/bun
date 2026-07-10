@@ -58,7 +58,7 @@ pub struct NodeHTTPResponse {
     /// parse would otherwise overwrite it before this request's JS reads it.
     pub request_trailers: JsCell<Vec<u8>>,
     /// node:http: this request's header section captured at dispatch as
-    /// [u16 nameLen][u16 valueLen][name][value]... so req.rawHeaders /
+    /// [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
     /// req.headers materialize lazily (takeRawHeaders) instead of paying
     /// 2N JSStrings + a JSArray on every request. One-shot: emptied on first
     /// access.
@@ -201,7 +201,7 @@ unsafe extern "C" {
         use_insecure_http_parser: bool,
     ) -> JSValue;
     // Builds req.rawHeaders' flat [name, value, ...] JSArray from the header
-    // bytes captured at dispatch ([u16 nameLen][u16 valueLen][name][value]...).
+    // bytes captured at dispatch ([u32 nameLen][u32 valueLen][name][value]...).
     safe fn Bun__NodeHTTP__buildRawHeadersArray(
         global_object: &JSGlobalObject,
         data: *const u8,
@@ -946,6 +946,14 @@ impl NodeHTTPResponse {
             }
         }
 
+        // The C++ header writer can throw (invalid header characters, header
+        // conversion). When this runs inside writeHeadAndEnd there is no JS
+        // binding wrapper to observe the pending exception, so check here -
+        // otherwise the end phase would run with an exception pending.
+        if global_object.has_exception() {
+            return Err(jsc::JsError::Thrown);
+        }
+
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1026,7 +1034,9 @@ impl NodeHTTPResponse {
             }
         }
 
-        this.deref();
+        // Explicit `.get()` so the inherent refcount `NodeHTTPResponse::deref`
+        // is selected, matching cork() (see its note).
+        this.get().deref();
         result
     }
 }

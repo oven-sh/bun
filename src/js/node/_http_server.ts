@@ -1474,6 +1474,11 @@ function onSocketTimeoutTimerExpired(socket) {
       return;
     }
   }
+  // The timer has fired and is dead; drop the reference so the next
+  // response-finish re-arms via setTimeout instead of trusting a fired
+  // timer whose _idleTimeout still matches (a 'timeout' listener may keep
+  // the socket alive).
+  socket[kSocketTimeoutTimer] = undefined;
   socket._onTimeout();
 }
 
@@ -2185,8 +2190,12 @@ let renderedAutoHeaders = 0;
 let renderedKeepAliveSecs = 0;
 
 function renderNativeHeaders(res) {
-  renderedAutoHeaders = 0;
-  renderedKeepAliveSecs = 0;
+  // Computed in locals and published to the module out-params only at
+  // return: String(value) below can run user toString() code that
+  // re-enters this function, and |= on the shared slots would merge the
+  // nested render's bits into ours.
+  let autoHeaders = 0;
+  let keepAliveSecs = 0;
   const headersMap = res[kOutHeaders];
   let flat: string[];
   if (scratchFlatHeadersBusy) {
@@ -2236,7 +2245,7 @@ function renderNativeHeaders(res) {
   }
 
   if (res.sendDate && !hasDate) {
-    renderedAutoHeaders |= AUTO_HEADER_DATE;
+    autoHeaders |= AUTO_HEADER_DATE;
   }
 
   // RFC 2616 mandates that 204 and 304 responses MUST NOT have a body. A
@@ -2298,10 +2307,10 @@ function renderNativeHeaders(res) {
         flat.push("Connection", "keep-alive");
         flat.push("Keep-Alive", `timeout=${MathFloor(keepAliveTimeout / 1000)}, max=${maxRequestsPerSocket}`);
       } else {
-        renderedAutoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE;
+        autoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE;
         if (keepAliveTimeout && !hasKeepAlive) {
-          renderedAutoHeaders |= AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
-          renderedKeepAliveSecs = MathFloor(keepAliveTimeout / 1000);
+          autoHeaders |= AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
+          keepAliveSecs = MathFloor(keepAliveTimeout / 1000);
         }
       }
     } else {
@@ -2311,7 +2320,7 @@ function renderNativeHeaders(res) {
       if (res.shouldKeepAlive === false) {
         res[kMustCloseConnection] = true;
       }
-      renderedAutoHeaders |= AUTO_HEADER_CONN_CLOSE;
+      autoHeaders |= AUTO_HEADER_CONN_CLOSE;
     }
   }
 
@@ -2337,6 +2346,8 @@ function renderNativeHeaders(res) {
     flat.push("Transfer-Encoding", "chunked");
   }
 
+  renderedAutoHeaders = autoHeaders;
+  renderedKeepAliveSecs = keepAliveSecs;
   return flat;
 }
 

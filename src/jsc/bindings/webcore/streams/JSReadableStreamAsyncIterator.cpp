@@ -163,24 +163,39 @@ static JSPromise* runAsyncIteratorNextSteps(JSC::VM& vm, JSGlobalObject* globalO
 
     auto* reader = iterator->m_reader.get();
     ASSERT(reader);
+
+    // Publish the result promise as the ongoing promise BEFORE the user pull() can run
+    // below, so a reentrant next()/return() chains onto it — unless the current ongoing
+    // promise is still pending (it is already the guard; never rewind the chain tail).
+    auto* result = JSPromise::create(vm, globalObject->promiseStructure());
+    auto* currentOngoing = iterator->m_ongoingPromise.get();
+    if (!currentOngoing || currentOngoing->status() != JSPromise::Status::Pending)
+        iterator->m_ongoingPromise.set(vm, iterator, result);
+    auto clearOngoingIfOurs = [&]() -> JSPromise* {
+        if (iterator->m_ongoingPromise.get() == result)
+            iterator->m_ongoingPromise.clear();
+        return nullptr;
+    };
+
     // Queued chunk and nothing waiting: dequeue with no read request. The result promise
     // still settles in a microtask, as the spec's read-request chunk steps require.
     JSValue chunk = readableStreamDefaultReaderTryReadFromQueue(globalObject, reader);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (scope.exception()) [[unlikely]]
+        return clearOngoingIfOurs();
     if (chunk) {
-        auto* result = createIteratorResultObject(globalObject, chunk, false);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
-        queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), result, promise);
-        return promise;
+        auto* resultObject = createIteratorResultObject(globalObject, chunk, false);
+        if (scope.exception()) [[unlikely]]
+            return clearOngoingIfOurs();
+        queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), resultObject, result);
+        return result;
     }
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    auto* result = JSPromise::create(vm, globalObject->promiseStructure());
     auto* context = InternalFieldTuple::create(vm, domGlobalObject->internalFieldTupleStructure(), iterator, result);
     auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(domGlobalObject), ReadRequestKind::AsyncIterator, context);
     readableStreamDefaultReaderRead(globalObject, reader, readRequest);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (scope.exception()) [[unlikely]]
+        return clearOngoingIfOurs();
     return result;
 }
 
@@ -240,9 +255,10 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamAsyncIteratorPrototypeFunction_next, (J
         return JSValue::encode(chained);
     }
 
+    // The steps publish their result promise as m_ongoingPromise before running user JS;
+    // a reentrant caller may have chained past it — do NOT overwrite it here.
     auto* promise = runAsyncIteratorNextSteps(vm, globalObject, iterator);
     RETURN_IF_EXCEPTION(scope, {});
-    iterator->m_ongoingPromise.set(vm, iterator, promise);
     return JSValue::encode(promise);
 }
 

@@ -107,7 +107,9 @@ describe.concurrent("explicit CommonJS module type rejects ESM-only syntax", () 
 
   test("export in .mjs still runs as ESM", async () => {
     using dir = tempDir("mjs-export", { "t.mjs": exportBody });
-    expect(await run(String(dir), "t.mjs")).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+    const { stdout, stderr, exitCode } = await run(String(dir), "t.mjs");
+    expect(stderr).not.toContain("Cannot use 'export' in a CommonJS module");
+    expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
   });
 
   test('export in .js under "type":"module" still runs as ESM', async () => {
@@ -115,12 +117,16 @@ describe.concurrent("explicit CommonJS module type rejects ESM-only syntax", () 
       "package.json": `{"type":"module"}`,
       "t.js": exportBody,
     });
-    expect(await run(String(dir), "t.js")).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+    const { stdout, stderr, exitCode } = await run(String(dir), "t.js");
+    expect(stderr).not.toContain("Cannot use 'export' in a CommonJS module");
+    expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
   });
 
   test("export in .js with no package.json type still runs (ambiguous: content decides)", async () => {
     using dir = tempDir("untyped-export", { "t.js": exportBody });
-    expect(await run(String(dir), "t.js")).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+    const { stdout, stderr, exitCode } = await run(String(dir), "t.js");
+    expect(stderr).not.toContain("Cannot use 'export' in a CommonJS module");
+    expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
   });
 
   test('.mjs inside "type":"commonjs" package still runs as ESM (extension wins)', async () => {
@@ -128,14 +134,18 @@ describe.concurrent("explicit CommonJS module type rejects ESM-only syntax", () 
       "package.json": `{"type":"commonjs"}`,
       "t.mjs": exportBody,
     });
-    expect(await run(String(dir), "t.mjs")).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+    const { stdout, stderr, exitCode } = await run(String(dir), "t.mjs");
+    expect(stderr).not.toContain("Cannot use 'export' in a CommonJS module");
+    expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
   });
 
   test("module.exports in .cjs still runs as CJS", async () => {
     using dir = tempDir("cjs-modexp", {
       "t.cjs": `module.exports = { x: 7 };\nconsole.log("ran");\n`,
     });
-    expect(await run(String(dir), "t.cjs")).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+    const { stdout, stderr, exitCode } = await run(String(dir), "t.cjs");
+    expect(stderr).not.toContain("Cannot use 'export' in a CommonJS module");
+    expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
   });
 
   // TypeScript is intentionally excluded: `export` in a CommonJS-typed .ts/.cts

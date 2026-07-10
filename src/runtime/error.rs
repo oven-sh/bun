@@ -839,24 +839,6 @@ impl Error {
     }
 }
 
-impl From<Error> for bun_crash_handler::Error {
-    fn from(e: Error) -> Self {
-        use bun_crash_handler::Error as C;
-        match e {
-            Error::Alloc(a) => C::Alloc(a),
-            Error::Sys(s) => C::Sys(s),
-            Error::Core(c) => C::Core(c),
-            Error::InstallFailed => C::InstallFailed,
-            Error::SyntaxError => C::SyntaxError,
-            Error::MissingPackageJSON => C::MissingPackageJSON,
-            Error::Unexpected => C::Unexpected,
-            Error::Clap(bun_clap::Error::InvalidArgument) => C::InvalidArgument,
-            Error::Bunfig(_) => C::InvalidBunfig,
-            _ => C::Unexpected,
-        }
-    }
-}
-
 impl From<std::io::Error> for Error {
     fn from(_: std::io::Error) -> Self {
         Self::WriteFailed

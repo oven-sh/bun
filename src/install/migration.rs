@@ -1046,7 +1046,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                 // the `else` here is technically possible to hit
                                 let resolved_v = ref_pkg
                                     .get(b"resolved")
-                                    .ok_or({ crate::Error::LockfileWorkspaceMissingResolved })?;
+                                    .ok_or(crate::Error::LockfileWorkspaceMissingResolved)?;
                                 let resolved = resolved_v
                                     .as_str()
                                     .ok_or(crate::Error::InvalidNPMLockfile)?;
@@ -1238,7 +1238,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
                                             let hash_index =
                                                 strings::last_index_of_char(str.slice, b'#')
-                                                    .ok_or({ crate::Error::InvalidNPMLockfile })?;
+                                                    .ok_or(crate::Error::InvalidNPMLockfile)?;
 
                                             if !crate::repository::is_safe_resolved_tag(
                                                 &str.slice[hash_index + 1..],
@@ -1266,7 +1266,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
                                             let hash_index =
                                                 strings::last_index_of_char(str.slice, b'#')
-                                                    .ok_or({ crate::Error::InvalidNPMLockfile })?;
+                                                    .ok_or(crate::Error::InvalidNPMLockfile)?;
 
                                             if !crate::repository::is_safe_resolved_tag(
                                                 &str.slice[hash_index + 1..],

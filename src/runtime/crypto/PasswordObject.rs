@@ -544,7 +544,7 @@ impl PasswordOp for VerifyOp {
 
 /// Build the JS `Error` instance for a failed hash/verify, with `code` set
 /// to `PASSWORD_<SCREAMING_SNAKE_ERROR_NAME>`.
-fn password_error_instance(err: HashError, verb: &str, g: &JSGlobalObject) -> JSValue {
+fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> JSValue {
     let mut error_code: Vec<u8> = Vec::new();
     write!(
         &mut error_code,
@@ -645,7 +645,7 @@ impl<Op: PasswordOp> PasswordResult<Op> {
         r#ref.unref(bun_io::js_vm_ctx());
         match value {
             Err(err) => {
-                let error_instance = password_error_instance(err, Op::ERR_VERB, global);
+                let error_instance = password_error_instance(&err, Op::ERR_VERB, global);
                 promise.reject_with_async_stack(global, Ok(error_instance))?;
             }
             Ok(v) => {
@@ -673,7 +673,7 @@ impl JSPasswordObject {
         if SYNC {
             return match op.compute(&password) {
                 Err(err) => {
-                    let error_instance = password_error_instance(err, Op::ERR_VERB, global_object);
+                    let error_instance = password_error_instance(&err, Op::ERR_VERB, global_object);
                     Err(global_object.throw_value(error_instance))
                 }
                 Ok(v) => Ok(Op::to_js(v, global_object)),

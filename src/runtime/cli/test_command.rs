@@ -3002,7 +3002,7 @@ impl TestCommand {
                                 last: isolate,
                             },
                         ) {
-                            handle_top_level_test_error_before_javascript_start(err);
+                            handle_top_level_test_error_before_javascript_start(&err);
                         }
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
@@ -3026,7 +3026,7 @@ impl TestCommand {
                         last: true,
                     },
                 ) {
-                    handle_top_level_test_error_before_javascript_start(err);
+                    handle_top_level_test_error_before_javascript_start(&err);
                 }
             }
         }
@@ -3273,7 +3273,7 @@ impl TestCommand {
     }
 }
 
-pub(crate) fn handle_top_level_test_error_before_javascript_start(err: crate::Error) -> ! {
+pub(crate) fn handle_top_level_test_error_before_javascript_start(err: &crate::Error) -> ! {
     if cfg!(debug_assertions) {
         if !matches!(err, crate::Error::ModuleNotFound) {
             bun_core::debug_warn!("Unhandled error: {}", err.name());

@@ -7771,7 +7771,7 @@ impl NodeFS {
             let resolved = args.path.slice();
             if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::Directory)
             {
-                let mut errno: E = map_anyerror_to_errno(err);
+                let mut errno: E = map_anyerror_to_errno(&err);
                 if cfg!(windows) && errno == E::ENOTDIR {
                     errno = E::ENOENT;
                 }
@@ -7814,7 +7814,7 @@ impl NodeFS {
                     }
                     E::ENOENT
                 } else {
-                    map_anyerror_to_errno_rm_tree(err)
+                    map_anyerror_to_errno_rm_tree(&err)
                 };
                 return Err(sys::Error::from_code(errno, sys::Tag::rm).with_path(args.path.slice()));
             }
@@ -9618,7 +9618,7 @@ impl ReaddirEntry for Buffer {
 // collapsed them into one, which silently mapped AccessDenied→EPERM for `rm`
 // (Node returns EACCES there) and widened the narrow table. Split back out
 // per call site.
-fn map_anyerror_to_errno(err: crate::Error) -> E {
+fn map_anyerror_to_errno(err: &crate::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EPERM,
         "PermissionDenied" => E::EPERM,
@@ -9641,7 +9641,7 @@ fn map_anyerror_to_errno(err: crate::Error) -> E {
 
 // `rm` recursive (zig_delete_tree) — same shape as the rmdir table above except
 // AccessDenied maps to EACCES, not EPERM.
-fn map_anyerror_to_errno_rm_tree(err: crate::Error) -> E {
+fn map_anyerror_to_errno_rm_tree(err: &crate::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EACCES,
         "PermissionDenied" => E::EPERM,

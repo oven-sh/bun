@@ -251,7 +251,7 @@ impl<'a> GlobalJS<'a> {
     }
 
     #[inline]
-    pub fn handle_error(self, err: crate::Error, suffix: &str) -> ShellErr {
+    pub fn handle_error(self, err: &crate::Error, suffix: &str) -> ShellErr {
         let mut v = Vec::new();
         write!(&mut v, "{} {}", err.name(), suffix).expect("infallible: in-memory write");
         ShellErr::Custom(v.into_boxed_slice())
@@ -366,7 +366,7 @@ impl<'a> GlobalMini<'a> {
     }
 
     #[inline]
-    pub fn handle_error(self, err: crate::Error, suffix: &str) -> ShellErr {
+    pub fn handle_error(self, err: &crate::Error, suffix: &str) -> ShellErr {
         let mut v = Vec::new();
         write!(&mut v, "{} {}", err.name(), suffix).expect("infallible: in-memory write");
         ShellErr::Custom(v.into_boxed_slice())

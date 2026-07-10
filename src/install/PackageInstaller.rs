@@ -1776,7 +1776,11 @@ impl<'a> PackageInstaller<'a> {
                         // npm packages can declare `file:` paths missing from the published
                         // tarball (e.g. excluded by `files`); nothing to link is not a failure.
                         if let package_install::InstallResult::Failure(f) = &result {
-                            if f.err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                            if matches!(
+                                f.err,
+                                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                                    | crate::Error::FileNotFound
+                            ) {
                                 break 'result package_install::InstallResult::Success;
                             }
                         }

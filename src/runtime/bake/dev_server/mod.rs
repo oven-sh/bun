@@ -1137,7 +1137,7 @@ bun_bundler::link_impl_DevServerHandle! {
         },
         handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
             (*this)
-                .handle_parse_task_failure(err.into(), graph, abs_path, &*log, &mut *bv2)
+                .handle_parse_task_failure(&err.into(), graph, abs_path, &*log, &mut *bv2)
                 .map_err(Into::into)
         },
         put_or_overwrite_asset(path, contents, content_hash) => {

@@ -641,7 +641,7 @@ mod draft {
         StackOverflow,
 
         /// Either `main` returned an error, or somewhere else in the code a trace string is printed.
-        ZigError(crate::Error),
+        ZigError(&'static [u8]),
 
         OutOfMemory,
     }
@@ -686,8 +686,8 @@ mod draft {
                 }
                 CrashReason::DatatypeMisalignment => writer.write_str("Unaligned memory access"),
                 CrashReason::StackOverflow => writer.write_str("Stack overflow"),
-                CrashReason::ZigError(err) => {
-                    write!(writer, "error.{}", bstr::BStr::new(err.name()))
+                CrashReason::ZigError(err_name) => {
+                    write!(writer, "error.{}", bstr::BStr::new(err_name))
                 }
                 CrashReason::OutOfMemory => writer.write_str("Bun ran out of memory"),
             }
@@ -1331,7 +1331,11 @@ mod draft {
 
     /// This is called when `main` returns an error.
     /// We don't want to treat it as a crash under certain error codes.
-    pub fn handle_root_error(err: crate::Error, error_return_trace: Option<&StackTrace>) -> ! {
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn handle_root_error(
+        err: impl bun_core::output::ErrName,
+        error_return_trace: Option<&StackTrace>,
+    ) -> ! {
         use bun_core::{err_generic, pretty_error};
 
         /// bun_sys::posix has no rlimit yet —
@@ -1349,21 +1353,24 @@ mod draft {
         }
 
         let mut show_trace = Environment::SHOW_CRASH_TRACE;
-        let name = err.name();
+        let name: &[u8] = err.name();
 
-        if name == "OutOfMemory" {
+        if name == b"OutOfMemory" {
             super::out_of_memory();
-        } else if matches!(name, "InvalidArgument" | "Invalid Bunfig" | "InstallFailed") {
+        } else if matches!(
+            name,
+            b"InvalidArgument" | b"Invalid Bunfig" | b"InstallFailed"
+        ) {
             if !show_trace {
                 Global::exit(1);
             }
-        } else if name == "SyntaxError" {
+        } else if name == b"SyntaxError" {
             Output::err("SyntaxError", "An error occurred while parsing code", ());
-        } else if name == "CurrentWorkingDirectoryUnlinked" {
+        } else if name == b"CurrentWorkingDirectoryUnlinked" {
             err_generic!(
                 "The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
             );
-        } else if name == "SystemFdQuotaExceeded" {
+        } else if name == b"SystemFdQuotaExceeded" {
             #[cfg(unix)]
             {
                 let limit = getrlimit_nofile().map(|l| l.rlim_cur);
@@ -1406,7 +1413,7 @@ mod draft {
                     "<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>",
                 );
             }
-        } else if name == "ProcessFdQuotaExceeded" {
+        } else if name == b"ProcessFdQuotaExceeded" {
             #[cfg(unix)]
             {
                 let limit = getrlimit_nofile().map(|l| l.rlim_cur);
@@ -1449,7 +1456,7 @@ mod draft {
                     "<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>",
                 );
             }
-        } else if matches!(name, "NotOpenForReading" | "Unexpected") {
+        } else if matches!(name, b"NotOpenForReading" | b"Unexpected") {
             // The file descriptor problem may show up as other errors
             #[cfg(unix)]
             {
@@ -1497,13 +1504,13 @@ mod draft {
                 );
                 show_trace = true;
             }
-        } else if matches!(name, "ENOENT" | "FileNotFound") {
+        } else if matches!(name, b"ENOENT" | b"FileNotFound") {
             Output::err(
                 "ENOENT",
                 "Bun could not find a file, and the code that produces this error is missing a better error.",
                 (),
             );
-        } else if name == "MissingPackageJSON" {
+        } else if name == b"MissingPackageJSON" {
             err_generic!("Bun could not find a package.json file to install from");
             bun_core::note!("Run \"bun init\" to initialize a project");
         } else {
@@ -1522,7 +1529,7 @@ mod draft {
 
         if show_trace {
             VERBOSE_ERROR_TRACE.store(show_trace, Ordering::Relaxed);
-            handle_error_return_trace_extra::<true>(err, error_return_trace);
+            handle_error_return_trace_extra::<true>(name, error_return_trace);
         }
 
         Global::exit(1);
@@ -1966,7 +1973,7 @@ mod draft {
                 "View Debug Trace: {}",
                 TraceString {
                     action: TraceStringAction::ViewTrace,
-                    reason: CrashReason::ZigError(crate::Error::DumpStackTrace),
+                    reason: CrashReason::ZigError(b"DumpStackTrace"),
                     trace: &stack,
                 }
             );
@@ -2665,9 +2672,9 @@ mod draft {
             CrashReason::DatatypeMisalignment => writer.write_byte(b'6')?,
             CrashReason::StackOverflow => writer.write_byte(b'7')?,
 
-            CrashReason::ZigError(err) => {
+            CrashReason::ZigError(err_name) => {
                 writer.write_byte(b'8')?;
-                writer.write_all(err.name().as_bytes())?;
+                writer.write_all(err_name)?;
             }
 
             CrashReason::OutOfMemory => writer.write_byte(b'9')?,
@@ -2971,7 +2978,7 @@ mod draft {
 
     #[cold]
     #[inline(never)]
-    fn cold_handle_error_return_trace<const IS_ROOT: bool>(err: crate::Error, trace: &StackTrace) {
+    fn cold_handle_error_return_trace<const IS_ROOT: bool>(err_name: &[u8], trace: &StackTrace) {
         // The format of the panic trace is slightly different in debug
         // builds Mainly, we demangle the backtrace immediately instead
         // of using a trace string.
@@ -2997,15 +3004,18 @@ mod draft {
             } else {
                 bun_core::pretty_errorln!(
                     "<blue>note<r><d>:<r> caught error.{}:",
-                    bstr::BStr::new(err.name())
+                    bstr::BStr::new(err_name)
                 );
             }
             Output::flush();
             dump_stack_trace(trace, WriteStackTraceLimits::default());
         } else {
+            // SAFETY: `err_name` outlives the local `TraceString` it is formatted through.
+            let reason =
+                CrashReason::ZigError(unsafe { bun_collections::detach_lifetime(err_name) });
             let ts = TraceString {
                 trace,
-                reason: CrashReason::ZigError(err),
+                reason,
                 action: TraceStringAction::ViewTrace,
             };
             if IS_ROOT {
@@ -3016,7 +3026,7 @@ mod draft {
             } else {
                 bun_core::pretty_errorln!(
                     "<cyan>trace<r>: error.{}: <d>{}<r>",
-                    bstr::BStr::new(err.name()),
+                    bstr::BStr::new(err_name),
                     ts,
                 );
             }
@@ -3025,7 +3035,7 @@ mod draft {
 
     #[inline]
     fn handle_error_return_trace_extra<const IS_ROOT: bool>(
-        err: crate::Error,
+        err_name: &[u8],
         maybe_trace: Option<&StackTrace>,
     ) {
         // Rust has no error-return tracing; `HAVE_ERROR_RETURN_TRACING` is const
@@ -3039,7 +3049,7 @@ mod draft {
         }
 
         if let Some(trace) = maybe_trace {
-            cold_handle_error_return_trace::<IS_ROOT>(err, trace);
+            cold_handle_error_return_trace::<IS_ROOT>(err_name, trace);
         }
     }
 
@@ -3051,8 +3061,8 @@ mod draft {
     /// In release builds with error return tracing enabled, this is also exposed.
     /// You can test if this feature is available by checking `bun --help` for the flag.
     #[inline]
-    pub fn handle_error_return_trace(err: crate::Error, maybe_trace: Option<&StackTrace>) {
-        handle_error_return_trace_extra::<false>(err, maybe_trace);
+    pub fn handle_error_return_trace(err_name: &[u8], maybe_trace: Option<&StackTrace>) {
+        handle_error_return_trace_extra::<false>(err_name, maybe_trace);
     }
 
     unsafe extern "C" {
@@ -3071,7 +3081,7 @@ mod draft {
                 "View Debug Trace: {}",
                 TraceString {
                     action: TraceStringAction::ViewTrace,
-                    reason: CrashReason::ZigError(crate::Error::DumpStackTrace),
+                    reason: CrashReason::ZigError(b"DumpStackTrace"),
                     trace,
                 }
             );

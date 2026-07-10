@@ -1078,7 +1078,7 @@ where
     pub fn render_default_error(
         &mut self,
         log: &mut bun_ast::Log,
-        err: crate::Error,
+        err: &crate::Error,
         exceptions: &[Api::JsException],
         fmt: core::fmt::Arguments<'_>,
     ) {
@@ -3494,7 +3494,7 @@ where
             );
             self.render_default_error(
                 log,
-                crate::Error::ExceptionOcurred,
+                &crate::Error::ExceptionOcurred,
                 &exception_list,
                 format_args!("{}", msg),
             );

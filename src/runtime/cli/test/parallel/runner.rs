@@ -613,7 +613,7 @@ impl<'a> WorkerLoop<'a> {
                     last: true,
                 },
             ) {
-                test_command::handle_top_level_test_error_before_javascript_start(err);
+                test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
             crate::jsc_hooks::close_isolation_handles(vm);
             vm.swap_global_for_test_isolation();

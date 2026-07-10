@@ -5059,7 +5059,7 @@ impl DevServer {
     /// Note: The log is not consumed here
     pub fn handle_parse_task_failure(
         &mut self,
-        err: crate::Error,
+        err: &crate::Error,
         graph: bake::Graph,
         abs_path: &[u8],
         log: &Log,
@@ -5075,10 +5075,7 @@ impl DevServer {
             log.msgs.len(),
         );
 
-        if matches!(
-            err,
-            crate::Error::Sys(bun_errno::SystemErrno::ENOENT) | crate::Error::ModuleNotFound
-        ) {
+        if matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound") {
             // Special-case files being deleted.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {

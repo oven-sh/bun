@@ -25,16 +25,13 @@ pub fn update_package_json_and_install_catch_error(
 ) -> Result<(), Error> {
     match update_package_json_and_install(ctx, subcommand) {
         Ok(()) => Ok(()),
-        Err(e)
-            if matches!(
-                e,
-                crate::Error::InstallFailed
-                    | crate::Error::InvalidPackageJSON
-                    | crate::Error::Install(
-                        bun_install::Error::InstallFailed | bun_install::Error::InvalidPackageJSON
-                    )
-            ) =>
-        {
+        Err(
+            crate::Error::InstallFailed
+            | crate::Error::InvalidPackageJSON
+            | crate::Error::Install(
+                bun_install::Error::InstallFailed | bun_install::Error::InvalidPackageJSON,
+            ),
+        ) => {
             // SAFETY: `Cli::LOG_` is initialised once during single-threaded startup in
             // `Cli::start()` before any command (including this one) is dispatched; we
             // are on the single CLI thread in the install error path and no other

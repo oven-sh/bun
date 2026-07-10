@@ -1538,7 +1538,7 @@ impl Run {
                     log_clear_msgs(vm);
                 }
             }
-            Err(err) => entry_point_load_failed(vm, err.into()),
+            Err(err) => entry_point_load_failed(vm, &err.into()),
         }
 
         // don't run the GC if we don't actually need to
@@ -1722,7 +1722,7 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn entry_point_load_failed(vm: &mut VirtualMachine, err: crate::Error) -> ! {
+fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
     if log_has_msgs(vm) {
         dump_build_error(vm);
         log_clear_msgs(vm);

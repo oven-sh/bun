@@ -423,6 +423,7 @@ unsafe fn init_runtime_state(
                                 id: bun_resolver::install_types::DependencyID,
                                 err: &'static str,
                             ) {
+                                // SAFETY: `ctx` is the `WakeHandler::context` set just above to `&mut (*vm).modules` (a live `Queue`).
                                 unsafe {
                                     bun_jsc::async_module::Queue::on_dependency_error(
                                         ctx, dep, id, err,
@@ -1935,15 +1936,15 @@ fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::String {
     bun_core::String::clone_utf8(other)
 }
 
-fn to_jsc_fetch_error(err: crate::Error) -> bun_jsc::CrateError {
+fn to_jsc_fetch_error(err: &crate::Error) -> bun_jsc::CrateError {
     match err {
-        crate::Error::Jsc(e) => e,
-        crate::Error::Bundler(e) => e.into(),
-        crate::Error::Resolver(e) => e.into(),
-        crate::Error::Install(e) => e.into(),
-        crate::Error::Core(e) => e.into(),
-        crate::Error::Sys(e) => e.into(),
-        crate::Error::Alloc(e) => e.into(),
+        crate::Error::Jsc(e) => *e,
+        crate::Error::Bundler(e) => (*e).into(),
+        crate::Error::Resolver(e) => (*e).into(),
+        crate::Error::Install(e) => (*e).into(),
+        crate::Error::Core(e) => (*e).into(),
+        crate::Error::Sys(e) => (*e).into(),
+        crate::Error::Alloc(e) => (*e).into(),
         crate::Error::UnexpectedPendingResolution => {
             bun_jsc::CrateError::UnexpectedPendingResolution
         }
@@ -4430,7 +4431,7 @@ unsafe fn transpile_file(
                 &mut log,
                 // SAFETY: per fn contract — `ret` is a valid out-param.
                 unsafe { &mut *ret },
-                to_jsc_fetch_error(err),
+                to_jsc_fetch_error(&err),
             );
             ptr::null_mut()
         }
@@ -4597,7 +4598,7 @@ unsafe fn transpile_virtual_module(
                 &mut log,
                 // SAFETY: per fn contract — `ret` is a valid out-param.
                 unsafe { &mut *ret },
-                to_jsc_fetch_error(err),
+                to_jsc_fetch_error(&err),
             );
             true
         }
@@ -5149,7 +5150,7 @@ unsafe fn resolve_hook(
             let printed = ResolveMessage::fmt(
                 specifier_utf8.slice(),
                 source_utf8.slice(),
-                to_jsc_fetch_error(err),
+                to_jsc_fetch_error(&err),
                 import_kind,
             );
             bun_ast::Msg {

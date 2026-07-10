@@ -1402,7 +1402,7 @@ impl Value {
         Ok(())
     }
 
-    pub fn to_error(&mut self, err: crate::Error, global: &JSGlobalObject) -> JsTerminated<()> {
+    pub fn to_error(&mut self, err: &crate::Error, global: &JSGlobalObject) -> JsTerminated<()> {
         self.to_error_instance(
             ValueError::Message(BunString::create_format(format_args!(
                 "Error reading file {}",

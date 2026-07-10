@@ -2531,7 +2531,7 @@ where
         if !body_decides_framing {
             if let Some(headers) = response.get_init_headers_mut() {
                 // first respect the headers
-                if !HTTP3 {
+                if !HTTP3 && !resp.from_ancient_request() {
                     if let Some(transfer_encoding) =
                         headers.fast_get(jsc::HTTPHeaderName::TransferEncoding)
                     {

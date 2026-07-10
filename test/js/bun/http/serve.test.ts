@@ -1651,21 +1651,32 @@ describe("response framing", () => {
 
     // RFC 9112 §6.1: a server MUST NOT send Transfer-Encoding unless the
     // request indicates HTTP/1.1 or later. uWS's GET write path already skips
-    // chunked framing for HTTP/1.0 requests; HEAD for a streamed body was
-    // writing the header unconditionally, advertising a framing that the GET
-    // of the same resource would never use.
-    it("a streamed body on HEAD/1.0 carries no Transfer-Encoding, same as GET/1.0", async () => {
-      const mkStream = () =>
-        new ReadableStream({
-          pull(c) {
-            c.enqueue(new TextEncoder().encode("hi"));
-            c.close();
-          },
-        });
+    // chunked framing for HTTP/1.0 requests; HEAD was writing the header
+    // unconditionally on two arms (a streamed body, and a handler-supplied
+    // Transfer-Encoding on a bodiless Response), advertising a framing that
+    // the GET of the same resource would never use.
+    it.each([
+      [
+        "a streamed body",
+        () =>
+          new Response(
+            new ReadableStream({
+              pull(c) {
+                c.enqueue(new TextEncoder().encode("hi"));
+                c.close();
+              },
+            }),
+          ),
+      ],
+      [
+        "a handler-supplied Transfer-Encoding on a null body",
+        () => new Response(null, { headers: { "Transfer-Encoding": "chunked" } }),
+      ],
+    ])("%s on HEAD/1.0 carries no Transfer-Encoding, same as GET/1.0", async (_, makeResponse) => {
       using server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
-        fetch: () => new Response(mkStream()),
+        fetch: makeResponse,
       });
 
       const head10 = await rawRequest(server.port, "HEAD", "1.0");

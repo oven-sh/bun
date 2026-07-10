@@ -1617,13 +1617,21 @@ impl<'a> Resolver<'a> {
 
         let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
+        // `primary_side_effects_data` describes `path_pair.primary` (the path the
+        // bundler actually parses); the secondary is only carried for the
+        // dual-package-hazard rewrite and gets its own resolve result when it is
+        // reached via `require()`. Evaluating the sideEffects map against the
+        // secondary path here would overwrite the primary's classification.
+        let mut side_effects_done = false;
         while let Some(path) = iter.next() {
             let name = path.name();
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
                 continue;
             };
-            let mut needs_side_effects = true;
-            if let Some(existing) = Result::deref_package_json(result.package_json) {
+            let mut needs_side_effects = !side_effects_done;
+            if let Some(existing) = Result::deref_package_json(result.package_json)
+                && !side_effects_done
+            {
                 // if we don't have it here, they might put it in a sideEfffects
                 // map of the parent package.json
                 // TODO: check if webpack also does this parent lookup
@@ -1702,6 +1710,7 @@ impl<'a> Resolver<'a> {
                     };
                 }
             }
+            side_effects_done = true;
 
             if let Some(tsconfig) = dir.enclosing_tsconfig_json {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));

@@ -23,6 +23,7 @@ public:
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_iterator, m_controller, m_pullPromise.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -39,12 +40,12 @@ public:
     JSC::WriteBarrier<JSC::JSObject> m_controller;
     // The single promise returned to every pull() while the iterator runs.
     JSC::WriteBarrier<JSC::JSPromise> m_pullPromise;
-    bool m_cancelled { false };
-    bool m_done { false };
-    bool m_running { false };
+    bool m_cancelled : 1 { false };
+    bool m_done : 1 { false };
+    bool m_running : 1 { false };
     // {done:true, value} still writes the value first; this remembers the done across a
     // backpressure suspension on that final write.
-    bool m_iteratorDone { false };
+    bool m_iteratorDone : 1 { false };
 
 private:
     JSAsyncIteratorSourceOperation(JSC::VM&, JSC::Structure*);

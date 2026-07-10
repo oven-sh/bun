@@ -8,6 +8,8 @@ pub enum Error {
     PartialWrite,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
+    #[error(transparent)]
+    Core(#[from] bun_core::Error),
 }
 
 impl Error {
@@ -17,6 +19,7 @@ impl Error {
             Self::StackOverflow => "StackOverflow",
             Self::PartialWrite => "PartialWrite",
             Self::Alloc(_) => "OutOfMemory",
+            Self::Core(e) => e.name(),
         }
     }
 }

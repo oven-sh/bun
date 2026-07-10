@@ -7347,7 +7347,7 @@ pub trait WriterTrait {
 
 pub struct StdWriterAdapter<'a, W: ?Sized>(&'a mut W);
 impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
-    fn write_all(&mut self, bytes: &[u8]) -> crate::Result<()> {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
         self.0.print_slice(bytes);
         Ok(())
     }
@@ -7640,7 +7640,7 @@ impl BufferWriter {
     }
 
     pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> crate::Result<()> {
-        Write::write_fmt(&mut self.buffer.list, format_args!("{}", args))
+        Ok(Write::write_fmt(&mut self.buffer.list, format_args!("{}", args))?)
     }
 
     pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> crate::Result<()> {
@@ -8125,7 +8125,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 .as_ref()
                 .unwrap()
                 .as_deserialized()
-                .serialize(&mut srlz_res)?;
+                .serialize(&mut srlz_res)
+                .map_err(|_| crate::Error::WriteFailed)?;
         }
         // SAFETY: caller guarantees the cache outlives the print call.
         unsafe { &mut *cache.as_ptr() }.put(

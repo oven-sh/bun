@@ -499,7 +499,7 @@ pub mod Runtime {
             preload: &[u8],
             entry_point: &[u8],
             writer: &mut impl bun_io::Write,
-        ) -> crate::CrateResult<()> {
+        ) -> bun_io::Result<()> {
             // The embedded template uses `{[name]s}`-style named placeholders;
             // substitute by scanning it byte-for-byte.
             let blob = Base64FallbackMessage { msg };
@@ -516,7 +516,7 @@ pub mod Runtime {
         pub fn render_backend(
             msg: &api::FallbackMessageContainer,
             writer: &mut impl bun_io::Write,
-        ) -> crate::CrateResult<()> {
+        ) -> bun_io::Result<()> {
             let blob = Base64FallbackMessage { msg };
             let bun_error_css = Self::error_css();
             let bun_error = Self::error_js();
@@ -542,8 +542,8 @@ pub mod Runtime {
     fn render_named_template<W: bun_io::Write>(
         writer: &mut W,
         template: &'static [u8],
-        subst: &mut dyn FnMut(&mut W, &[u8]) -> crate::CrateResult<()>,
-    ) -> crate::CrateResult<()> {
+        subst: &mut dyn FnMut(&mut W, &[u8]) -> bun_io::Result<()>,
+    ) -> bun_io::Result<()> {
         let mut i = 0usize;
         let mut last = 0usize;
         let bytes = template;
@@ -1442,7 +1442,7 @@ impl StringVoidMap {
         entry.found_existing
     }
 
-    fn init() -> crate::CrateResult<StringVoidMap> {
+    fn init() -> Result<StringVoidMap, bun_core::Error> {
         Ok(StringVoidMap {
             map: StringHashMap::default(),
         })
@@ -1462,7 +1462,7 @@ impl StringVoidMap {
 }
 
 impl bun_collections::pool::ObjectPoolType for StringVoidMap {
-    const INIT: Option<fn() -> crate::CrateResult<Self>> = Some(StringVoidMap::init);
+    const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(StringVoidMap::init);
     #[inline]
     fn reset(&mut self) {
         StringVoidMap::reset(self)

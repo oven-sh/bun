@@ -11,6 +11,8 @@ pub enum Error {
     #[error(transparent)]
     Lexer(#[from] crate::lexer::Error),
     #[error(transparent)]
+    Alloc(#[from] bun_alloc::AllocError),
+    #[error(transparent)]
     Core(#[from] bun_core::Error),
 }
 
@@ -22,6 +24,7 @@ impl Error {
             Self::Backtrack => "Backtrack",
             Self::MacroFailed => "MacroFailed",
             Self::Lexer(e) => <&'static str>::from(e),
+            Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),
         }
     }

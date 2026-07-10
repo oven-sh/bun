@@ -1925,6 +1925,7 @@ name = "bun_spawn"
 version = "0.0.0"
 dependencies = [
  "bstr",
+ "bun_alloc",
  "bun_analytics",
  "bun_core",
  "bun_crash_handler",

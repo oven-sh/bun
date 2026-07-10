@@ -10,7 +10,7 @@ use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
 use bun_collections::VecExt;
-use bun_core::Error;
+use crate::Error;
 
 // `ListManaged(Stmt)` in the parser is arena-backed (`p.arena`).
 type StmtList<'bump> = BumpVec<'bump, Stmt>;

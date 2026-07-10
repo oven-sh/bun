@@ -1386,35 +1386,15 @@ static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
     bun_threading::Condvar::new(),
 );
 
-struct ShutdownReclaim {
-    ctx: *mut c_void,
-    drop_fn: unsafe fn(*mut c_void),
-}
-// SAFETY: pushed from the HTTP thread, drained from the JS thread once the
-// HTTP thread is parked; `ctx` is an exclusive heap allocation handed off
-// between the two.
-unsafe impl Send for ShutdownReclaim {}
-
-static SHUTDOWN_RECLAIMS: bun_threading::Guarded<Vec<ShutdownReclaim>> =
-    bun_threading::Guarded::new(Vec::new());
-
-/// Park `(ctx, drop_fn)` until [`shutdown_for_exit`] has waited the HTTP
-/// thread out of its loop. The drop is applied on the JS thread once the
-/// daemon is parked, so callers can hand off allocations whose teardown is
-/// not safe while a `tick()` is still on the HTTP-thread stack.
-pub fn defer_shutdown_reclaim(ctx: *mut c_void, drop_fn: unsafe fn(*mut c_void)) {
-    SHUTDOWN_RECLAIMS
-        .lock()
-        .push(ShutdownReclaim { ctx, drop_fn });
-}
-
 /// Called from `bun_jsc::VirtualMachine::global_exit()` on the JS thread,
 /// before `~VM`. Asks the HTTP daemon thread to reclaim every in-flight
 /// `ThreadlocalAsyncHTTP` box and waits (with a short timeout) for it to ack.
-/// No-op if the HTTP thread was never started.
-pub fn shutdown_for_exit() {
+/// Returns `true` once the daemon is parked (or was never started), i.e. no
+/// further cross-thread callbacks can fire; `false` if the wait timed out and
+/// the daemon may still be inside `tick()`.
+pub fn shutdown_for_exit() -> bool {
     if !crate::HTTP_THREAD_INIT.load(Ordering::Acquire) {
-        return;
+        return true;
     }
     // SAFETY: `HTTP_THREAD_INIT == true` ⇒ `HTTP_THREAD` is fully written.
     // `get_unchecked` so the `ThreadCell` owner assert is skipped on this
@@ -1429,7 +1409,7 @@ pub fn shutdown_for_exit() {
     if !thread.has_awoken.load(Ordering::Acquire) {
         // `on_start` hasn't published the loop yet — no `start_queued_task`
         // can have run, so no boxes exist.
-        return;
+        return true;
     }
     SHUTDOWN_REQUESTED.store(true, Ordering::Release);
     thread.wakeup();
@@ -1450,21 +1430,7 @@ pub fn shutdown_for_exit() {
     }
     let acked = *done;
     drop(done);
-    if !acked {
-        // Timed out without an ack: the HTTP thread may still be inside
-        // `tick()` and could touch parked allocations. Leak them — the
-        // process is exiting and a leak beats a use-after-free.
-        return;
-    }
-
-    // The daemon is parked; no further callbacks will fire. Reclaim boxes
-    // that result-callback handlers parked here while the calling stack
-    // still aliased their contents.
-    for r in core::mem::take(&mut *SHUTDOWN_RECLAIMS.lock()) {
-        // SAFETY: `drop_fn` is paired with `ctx` by `defer_shutdown_reclaim`;
-        // each entry is pushed exactly once and drained exactly once here.
-        unsafe { (r.drop_fn)(r.ctx) };
-    }
+    acked
 }
 
 // dispatch_deps bridge removed — real impls now live in

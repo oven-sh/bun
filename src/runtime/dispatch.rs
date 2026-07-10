@@ -1162,13 +1162,13 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
         // `callback` (HTTP thread) won the `has_schedule_callback` CAS and
         // posted this entry, then deref'd its own +1 if final; the JS-side
         // +1 it expected `on_progress_update` to drop is the one we release
-        // here. Runs on the JS thread, so the plain `deref` (→ `deinit` on
-        // 1→0) is the right teardown path; the HTTP daemon is already
-        // parked (`shutdown_for_exit` precedes `destroy`), so the
-        // `Box<AsyncHTTP>` and any `metadata` it owns are exclusively ours.
+        // here. Runs on the owning VM's JS thread — from `global_exit` (HTTP
+        // daemon already parked) or the worker fetch drain (daemon live) —
+        // and the plain `deref` is the right teardown path either way: a
+        // 1→0 transition proves the HTTP side already dropped its ref, so
+        // `deinit`'s `Box<AsyncHTTP>`/`metadata` access is exclusive.
         task_tag::FetchTasklet => {
-            // SAFETY: `task.ptr` is the live heap `FetchTasklet`; HTTP daemon is
-            // already parked so we hold the sole reference.
+            // SAFETY: `task.ptr` is the live heap `FetchTasklet`; see above.
             FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
             true
         }

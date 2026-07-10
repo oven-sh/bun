@@ -494,11 +494,19 @@ impl FetchTasklet {
     }
 
     /// SAFETY: `this` must be the last reference (ref_count == 0) and have been allocated via heap::alloc.
+    /// Always runs on the owning VM's JS thread.
     unsafe fn deinit(this: *mut FetchTasklet) {
         bun_output::scoped_log!(FetchTasklet, "deinit");
 
         // SAFETY: caller contract — `this` is live with ref_count == 0.
         unsafe { (*this).ref_count.assert_no_refs() };
+
+        // SAFETY: `this` is live (freed below); JS thread of the owning VM.
+        if let Some(registry) = Self::registry_of(unsafe { (*this).javascript_vm }) {
+            if let Some(i) = registry.iter().position(|p| p.as_ptr() == this) {
+                registry.swap_remove(i);
+            }
+        }
 
         // SAFETY: this was allocated via heap::alloc in `get()`; ref_count == 0 so exclusive
         let mut boxed = unsafe { bun_core::heap::take(this) };
@@ -516,11 +524,13 @@ impl FetchTasklet {
     ///     (`on_response_finalize`) registered against `this`, so freeing the
     ///     box before `destructOnExit` sweeps the Response is a UAF.
     ///
-    /// Park the intact box on the JS thread via
-    /// `bun_http::defer_shutdown_reclaim`; the drain runs from
-    /// `global_exit()` after the HTTP thread has parked but before
-    /// `destructOnExit`, so `deinit()` there can release every handle on the
-    /// right thread and the Weak is cleared before its referent is finalized.
+    /// Park the intact box on the owning VM via
+    /// `VirtualMachine::defer_shutdown_reclaim`. The drain runs on that VM's
+    /// JS thread — from `global_exit()` after the HTTP thread has parked
+    /// (main VM), or from [`drain_in_flight_for_vm_shutdown`] in
+    /// `WebWorker::shutdown` (workers) — before JSC teardown, so `deinit()`
+    /// there can release every handle on the right thread and the Weak is
+    /// cleared before its referent is finalized.
     ///
     /// SAFETY: `this` must be the last reference (ref_count == 0) and have
     /// been allocated via heap::alloc.
@@ -528,12 +538,15 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "deallocForShutdown");
         // SAFETY: caller contract — `this` is live with ref_count == 0.
         unsafe { (*this).ref_count.assert_no_refs() };
-        http::defer_shutdown_reclaim(this.cast(), FetchTasklet::deinit_erased);
+        // SAFETY: ref_count == 0 ⇒ exclusive; the VM allocation is alive (the
+        // worker drain gates its `dealloc` on this parked entry being drained).
+        unsafe { (*this).javascript_vm }
+            .defer_shutdown_reclaim(this.cast(), FetchTasklet::deinit_erased);
     }
 
     unsafe fn deinit_erased(this: *mut c_void) {
         // SAFETY: parked by `dealloc_for_shutdown` with ref_count == 0; runs
-        // on the JS thread after the HTTP daemon has parked.
+        // on the owning VM's JS thread before JSC teardown.
         unsafe { FetchTasklet::deinit(this.cast()) };
     }
 
@@ -1841,8 +1854,10 @@ impl FetchTasklet {
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> Result<*mut FetchTasklet, BunError> {
-        // SAFETY: bun_vm() returns the FFI `*mut VirtualMachine`; the VM outlives
-        // this tasklet (process-lifetime singleton on the JS thread).
+        // SAFETY: bun_vm() returns the FFI `*mut VirtualMachine`; the VM
+        // allocation outlives this tasklet — process-lifetime for the main
+        // thread, and `WebWorker::shutdown` drains the in-flight registry
+        // (see `drain_in_flight_for_vm_shutdown`) before freeing a worker VM.
         let jsc_vm: &'static VirtualMachine = global_this.bun_vm();
         let mut fetch_tasklet = Box::new(FetchTasklet {
             sink: None,
@@ -2266,6 +2281,25 @@ impl FetchTasklet {
         }
     }
 
+    /// Registry of this VM's in-flight tasklets (`RuntimeState.fetch_tasklets`,
+    /// JS-thread-only). Registered in [`Self::queue`], removed in
+    /// [`Self::deinit`], walked by [`drain_in_flight_for_vm_shutdown`]. `None`
+    /// only before `init_runtime_state` has run.
+    fn registry_of(
+        vm: &VirtualMachine,
+    ) -> Option<&'static mut Vec<core::ptr::NonNull<FetchTasklet>>> {
+        // SAFETY: `vm` is a live VM whose `runtime_state` was installed by
+        // `init_runtime_state`; raw-place read, no `&VirtualMachine` re-formed.
+        let state =
+            unsafe { crate::jsc_hooks::runtime_state_of(core::ptr::from_ref(vm).cast_mut()) };
+        if state.is_null() {
+            return None;
+        }
+        // SAFETY: live boxed per-thread `RuntimeState`; single JS thread, and
+        // every caller uses the borrow as a single expression (no re-entry).
+        Some(unsafe { &mut (*state).fetch_tasklets })
+    }
+
     pub(crate) fn queue(
         global: &JSGlobalObject,
         fetch_options: FetchOptions,
@@ -2281,6 +2315,12 @@ impl FetchTasklet {
 
         // increment ref so we can keep it alive until the http client is done
         node_ref.ref_();
+        // Register before the HTTP thread can see the request, so a
+        // `Worker.terminate()` racing this fetch finds it in the registry.
+        if let Some(registry) = Self::registry_of(node_ref.javascript_vm) {
+            // SAFETY: `node` came from `heap::into_raw` in `get()` — non-null.
+            registry.push(unsafe { core::ptr::NonNull::new_unchecked(node) });
+        }
         http::HTTPThread::schedule(batch);
 
         Ok(node)
@@ -2473,6 +2513,69 @@ impl FetchTasklet {
             // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
             FetchTasklet::deref_from_thread(task);
         }
+    }
+}
+
+/// Worker-teardown barrier for in-flight `fetch()`: every in-flight request
+/// holds a raw pointer back into `vm` on the HTTP thread
+/// (`FetchTasklet.javascript_vm`), so `WebWorker::shutdown` must not free the
+/// VM until they are all gone. Aborts every registered tasklet, then drains
+/// queued fetch tasks and parked reclaims until the registry empties. Returns
+/// `false` on timeout — the caller must then leak the VM (a leak beats a
+/// use-after-free).
+///
+/// Completion is prompt in practice: the aborts close the sockets on the HTTP
+/// thread, whose final result callbacks observe `is_shutting_down` and hand
+/// each tasklet back via `dealloc_for_shutdown` or the queued-task release.
+///
+/// # Safety
+/// `vm` is the live per-thread VM on its own JS thread, with
+/// `is_shutting_down` already set (so no drained task re-enters JS),
+/// `runtime_state` still installed, and the JSC heap not yet swept.
+pub(crate) unsafe fn drain_in_flight_for_vm_shutdown(
+    vm: *mut VirtualMachine,
+    timeout_ms: u64,
+) -> bool {
+    // SAFETY: per fn contract — live VM on its own JS thread.
+    let vm_ref = unsafe { &mut *vm };
+    debug_assert!(vm_ref.is_shutting_down);
+    // Snapshot: `abort_task` → `did_cancel` can re-enter the inspector, which
+    // may settle a fetch and shrink the registry mid-walk.
+    let snapshot = FetchTasklet::registry_of(vm_ref)
+        .map(|r| r.clone())
+        .unwrap_or_default();
+    if snapshot.is_empty() {
+        return true;
+    }
+    bun_output::scoped_log!(
+        FetchTasklet,
+        "drainInFlightForVMShutdown: {} in flight",
+        snapshot.len()
+    );
+    for node in snapshot {
+        if FetchTasklet::registry_of(vm_ref).is_some_and(|r| r.contains(&node)) {
+            // SAFETY: registry entries stay live until `deinit` removes them;
+            // this thread owns the JS side of the tasklet.
+            unsafe { (*node.as_ptr()).abort_task() };
+        }
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    loop {
+        // Parked boxes (the HTTP thread dropped the last ref while
+        // `is_shutting_down`): deinit them here, on the owning thread.
+        vm_ref.drain_shutdown_reclaims();
+        // Queued-but-never-dispatched fetch tasks own the JS-side ref; this
+        // drops it (a 1→0 transition runs `deinit` right here).
+        vm_ref.event_loop_mut().release_queued_tasks_for_shutdown();
+        // Registry entries are removed only by `deinit`, so an empty registry
+        // also proves the reclaim list is empty and stays that way.
+        if FetchTasklet::registry_of(vm_ref).is_none_or(|r| r.is_empty()) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_micros(100));
     }
 }
 

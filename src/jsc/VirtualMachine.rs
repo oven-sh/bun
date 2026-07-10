@@ -209,6 +209,12 @@ pub struct VirtualMachine {
 
     pub is_printing_plugin: bool,
     pub is_shutting_down: bool,
+    /// Boxes parked by cross-thread producers (`FetchTasklet::dealloc_for_shutdown`
+    /// on the HTTP thread) whose teardown must run on this VM's JS thread while
+    /// JSC is still alive. Drained by [`Self::drain_shutdown_reclaims`] from
+    /// `global_exit` (main VM) and the in-flight-fetch drain in
+    /// `WebWorker::shutdown` (workers).
+    pub shutdown_reclaims: bun_threading::Guarded<Vec<ShutdownReclaim>>,
     /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
     /// After this point the cleanup-hook list is never iterated again, so
     /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
@@ -744,6 +750,26 @@ impl VirtualMachine {
         // SAFETY: `event_loop` points at a sibling field of this VM; non-null
         // after `init()`; single-JS-thread invariant per `unsafe impl Sync`.
         unsafe { &mut *self.event_loop }
+    }
+
+    /// Park `(ctx, drop_fn)` until this VM's JS thread drains the list (see
+    /// the `shutdown_reclaims` field doc). Callable from any thread while the
+    /// VM allocation is alive.
+    pub fn defer_shutdown_reclaim(&self, ctx: *mut c_void, drop_fn: unsafe fn(*mut c_void)) {
+        self.shutdown_reclaims
+            .lock()
+            .push(ShutdownReclaim { ctx, drop_fn });
+    }
+
+    /// Run every parked reclaim on this (the VM's JS) thread. Must run before
+    /// JSC teardown so the reclaimed boxes can drop their JSC handles against
+    /// a live HandleSet.
+    pub fn drain_shutdown_reclaims(&mut self) {
+        for r in core::mem::take(&mut *self.shutdown_reclaims.lock()) {
+            // SAFETY: `drop_fn` is paired with `ctx` by `defer_shutdown_reclaim`;
+            // each entry is pushed exactly once and drained exactly once here.
+            unsafe { (r.drop_fn)(r.ctx) };
+        }
     }
 
     /// Safe `&EventLoop` accessor — shared variant of [`Self::event_loop_mut`].
@@ -1577,7 +1603,14 @@ impl VirtualMachine {
             // The HTTP daemon thread holds a `Box<ThreadlocalAsyncHTTP>` per
             // in-flight request; with the JS thread exiting those never reach
             // a terminal state. Ask it to reclaim them now (waits up to 1s).
-            bun_http::shutdown_for_exit();
+            if bun_http::shutdown_for_exit() {
+                // The daemon is parked; no further reclaims will be posted.
+                // Deinit tasklet boxes parked by `dealloc_for_shutdown` while
+                // JSC is still alive (before `destructOnExit`). On timeout the
+                // daemon may still be inside `tick()` touching them — leak
+                // instead (a leak beats a use-after-free).
+                self.drain_shutdown_reclaims();
+            }
 
             // The HTTP daemon is parked. Release any task it posted to our
             // queue before observing `is_shutting_down` (the read is
@@ -1622,6 +1655,17 @@ extern crate alloc;
 /// allocator, …). Stored as `*mut c_void` in `VirtualMachine`; the high tier
 /// casts back on the other side of each hook.
 pub type RuntimeState = *mut c_void;
+
+/// One parked allocation in `VirtualMachine::shutdown_reclaims`: an exclusive
+/// heap box handed off from the thread that dropped the last reference to the
+/// VM's JS thread for teardown.
+pub struct ShutdownReclaim {
+    ctx: *mut c_void,
+    drop_fn: unsafe fn(*mut c_void),
+}
+// SAFETY: pushed from the HTTP thread, drained from the VM's JS thread; `ctx`
+// is an exclusive heap allocation handed off between the two.
+unsafe impl Send for ShutdownReclaim {}
 
 pub struct RuntimeHooks {
     /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
@@ -1803,6 +1847,18 @@ pub struct RuntimeHooks {
     /// `vm` is the live per-thread VM; `runtime_state` must still be installed
     /// and the JSC heap must not have been swept yet.
     pub cancel_all_timers: unsafe fn(vm: *mut VirtualMachine),
+    /// Abort every in-flight `fetch()` whose `FetchTasklet` targets `vm` and
+    /// wait (bounded by `timeout_ms`) until the HTTP thread has dropped every
+    /// reference into the VM. Returns `false` on timeout, in which case the
+    /// caller must leak the VM instead of freeing it. `FetchTasklet` lives in
+    /// `bun_runtime` (forward-dep); the caller (`WebWorker::shutdown`) is in
+    /// this crate.
+    ///
+    /// # Safety
+    /// `vm` is the live per-thread VM on its own JS thread, with
+    /// `is_shutting_down` already set, `runtime_state` still installed, and
+    /// the JSC heap not yet swept.
+    pub drain_in_flight_fetches: unsafe fn(vm: *mut VirtualMachine, timeout_ms: u64) -> bool,
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
@@ -2080,6 +2136,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).preload).write(Vec::new());
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
+            addr_of_mut!((*vm).shutdown_reclaims).write(bun_threading::Guarded::new(Vec::new()));
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
@@ -4465,6 +4522,12 @@ impl VirtualMachine {
         // Drops all `Arc`-held
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
         drop(core::mem::take(&mut self.proxy_env_storage));
+
+        // Drained by `global_exit` / the worker fetch drain before we get
+        // here; this only reclaims the Vec storage (the VM box is raw-
+        // `dealloc`'d so field `Drop`s never run). Any entry still parked is
+        // deliberately leaked (its teardown window has passed).
+        drop(core::mem::take(&mut *self.shutdown_reclaims.lock()));
 
         // The VM box is `dealloc`'d raw by the worker (see `web_worker.rs`
         // section 5) so field `Drop`s never run; reclaim the boxed

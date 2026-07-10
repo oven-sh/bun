@@ -1216,6 +1216,10 @@ impl WebWorker {
         // ---- 2. User exit handlers -----------------------------------------
         let mut exit_code: i32 = 0;
         let mut global_object: Option<*const JSGlobalObject> = None;
+        // False iff the in-flight-fetch drain below timed out; step 5 then
+        // leaks the VM and its loops instead of freeing memory the HTTP
+        // thread may still dereference.
+        let mut fetches_drained = true;
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr valid; unpublished above under vm_lock, so no
             // other thread can dereference it now — `&mut` is exclusive.
@@ -1254,6 +1258,20 @@ impl WebWorker {
             }
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
+
+            // In-flight `fetch()` requests on the shared HTTP thread hold raw
+            // pointers back into this VM (`FetchTasklet.javascript_vm`); abort
+            // them and wait for the HTTP thread to drop every reference before
+            // the VM is freed in step 5. Runs after `on_exit` so fetches
+            // started by user 'exit' handlers are drained too, and before
+            // `teardownJSCVM` so each tasklet's JSC handles drop against a
+            // live HandleSet.
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: `vm_ptr` was unpublished under `vm_lock` above (sole
+                // owner); `is_shutting_down` was set before `on_exit`, and
+                // `runtime_state` is torn down later, in `destroy()`.
+                fetches_drained = unsafe { (hooks.drain_in_flight_fetches)(vm_ptr, 1_000) };
+            }
         }
 
         // ---- 3. JSC VM teardown --------------------------------------------
@@ -1283,6 +1301,25 @@ impl WebWorker {
         if let Some(loop_) = loop_ {
             // SAFETY: loop owned by this thread's VM; no concurrent access.
             unsafe { (*loop_).internal_loop_data.jsc_vm = core::ptr::null_mut() };
+        }
+        if !fetches_drained {
+            // The in-flight-fetch drain timed out: the HTTP thread may still
+            // hold pointers into this VM and wake its event loop. Leak the VM,
+            // the uws/libuv loops, and the parked tasklets — a bounded leak
+            // beats a use-after-free (same policy as `shutdown_for_exit`).
+            virtual_machine::VMHolder::set_vm(None);
+            if !env_loader.is_null() {
+                // SAFETY: `heap::alloc`'d in `start_vm`; sole owner; the VM is
+                // leaked so its raw `transpiler.env` borrow is never used again.
+                drop(unsafe { bun_core::heap::take(env_loader) });
+            }
+            if !env_map.is_null() {
+                // SAFETY: `heap::alloc`'d in `start_vm`; sole owner.
+                drop(unsafe { bun_core::heap::take(env_map) });
+            }
+            bun_core::delete_all_pools_for_thread_exit();
+            drop(arena.take());
+            return;
         }
         #[cfg(windows)]
         {

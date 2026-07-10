@@ -96,6 +96,11 @@ pub struct RuntimeState {
     /// — far too large to construct on the stack inside `Box::new(RuntimeState{..})`.
     pub body_value_pool: Box<crate::webcore::body::HiveAllocator>,
     pub isolation_handles: IsolationHandles,
+    /// In-flight `fetch()` tasklets created on this VM (registered in
+    /// `FetchTasklet::queue`, removed in `FetchTasklet::deinit`). Walked by
+    /// [`drain_in_flight_fetches`] so worker teardown can abort and drain them
+    /// before the VM is freed.
+    pub fetch_tasklets: Vec<ptr::NonNull<crate::webcore::fetch::fetch_tasklet::FetchTasklet>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -328,6 +333,7 @@ unsafe fn init_runtime_state(
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
         body_value_pool: Box::new(crate::webcore::body::HiveAllocator::init()),
         isolation_handles: IsolationHandles::default(),
+        fetch_tasklets: Vec::new(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -1414,6 +1420,7 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     terminate_all_workers_and_wait,
     retroactively_report_discovered_tests,
     cancel_all_timers,
+    drain_in_flight_fetches,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1545,6 +1552,19 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     unsafe {
         crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
     }
+}
+
+/// `RuntimeHooks::drain_in_flight_fetches` — abort and drain every in-flight
+/// `FetchTasklet` targeting `vm` before `WebWorker::shutdown` frees the VM.
+/// `FetchTasklet` lives in this crate; the caller is in `bun_jsc`, hence the
+/// hook.
+///
+/// # Safety
+/// See the `RuntimeHooks` slot doc: `vm` is the live per-thread VM on its own
+/// JS thread, `is_shutting_down` set, `runtime_state` installed, JSC alive.
+unsafe fn drain_in_flight_fetches(vm: *mut VirtualMachine, timeout_ms: u64) -> bool {
+    // SAFETY: per fn contract.
+    unsafe { crate::webcore::fetch::fetch_tasklet::drain_in_flight_for_vm_shutdown(vm, timeout_ms) }
 }
 
 pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {

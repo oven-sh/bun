@@ -119,3 +119,70 @@ test(
   },
   timeout,
 );
+
+// Regression: Worker.terminate() freed the worker's VirtualMachine while the
+// shared HTTP thread still held a pointer to it from an in-flight fetch();
+// when the fetch later failed, the HTTP thread read the freed VM
+// (FetchTasklet::callback -> is_shutting_down) and pushed onto its freed
+// concurrent task queue. https://github.com/oven-sh/bun/issues/33911
+test(
+  "terminating a worker with in-flight fetch() does not touch the freed VM",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // Local server that accepts connections and never responds, so the
+        // worker's fetches are still in flight when the worker is terminated.
+        const pending = [];
+        let onOpen = null;
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(socket) { pending.push(socket); if (onOpen) { onOpen(); onOpen = null; } },
+            data() {},
+            close() {},
+          },
+        });
+
+        const workerCode =
+          'self.addEventListener("message", e => {' +
+          '  for (let i = 0; i < 3; i++) fetch("http://127.0.0.1:" + e.data + "/").catch(() => {});' +
+          '  self.postMessage("fired");' +
+          '});';
+
+        for (let i = 0; i < 10; i++) {
+          const worker = new Worker("data:text/javascript," + encodeURIComponent(workerCode));
+          const opened = new Promise(r => { onOpen = r; });
+          await new Promise(r => worker.addEventListener("open", r, { once: true }));
+          worker.postMessage(server.port);
+          await new Promise(r => worker.addEventListener("message", r, { once: true }));
+          await opened; // the HTTP thread has connected to our server
+          await worker.terminate(); // worker VM torn down with the fetches in flight
+          // The VM is freed slightly after terminate() resolves (the close
+          // event is dispatched before the worker thread's final teardown
+          // step); there is no JS-observable signal for that, so give the
+          // worker thread a moment before forcing the failure callbacks.
+          await Bun.sleep(100);
+          // RST every held connection: the HTTP thread now fails the fetches
+          // and delivers the results to the (previously freed) worker VM.
+          for (const s of pending.splice(0)) s.terminate();
+          await Bun.sleep(100);
+        }
+        server.stop(true);
+        console.log("done");
+        process.exit(0);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "done\n", exitCode: 0 });
+  },
+  timeout,
+);

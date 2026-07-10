@@ -1005,6 +1005,11 @@ void populateESMExports(
 
     if (auto* exports = result.getObject()) {
         bool exportsIsCallable = result.isCallable();
+        // When module.exports is callable, skip its intrinsic length/name/prototype.
+        // This also drops explicit `module.exports.prototype = ...` which Node's lexer exports.
+        auto isFilteredCallableIntrinsic = [&](const auto& key) -> bool {
+            return exportsIsCallable && (key == vm.propertyNames->length || key == vm.propertyNames->name || key == vm.propertyNames->prototype);
+        };
         bool hasESModuleMarker = false;
         if (!ignoreESModuleAnnotation) {
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
@@ -1036,7 +1041,7 @@ void populateESMExports(
                     if (key->isSymbol() || key == esModuleMarker)
                         return true;
 
-                    if (exportsIsCallable && (key == vm.propertyNames->length || key == vm.propertyNames->name || key == vm.propertyNames->prototype))
+                    if (isFilteredCallableIntrinsic(key))
                         return true;
 
                     needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
@@ -1063,7 +1068,7 @@ void populateESMExports(
                     if (property == vm.propertyNames->constructor)
                         continue;
 
-                    if (exportsIsCallable && (property == vm.propertyNames->length || property == vm.propertyNames->name || property == vm.propertyNames->prototype))
+                    if (isFilteredCallableIntrinsic(property))
                         continue;
 
                     JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
@@ -1102,7 +1107,7 @@ void populateESMExports(
                 if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
                     return true;
 
-                if (exportsIsCallable && (key == vm.propertyNames->length || key == vm.propertyNames->name || key == vm.propertyNames->prototype))
+                if (isFilteredCallableIntrinsic(key))
                     return true;
 
                 JSValue value = exports->getDirect(entry.offset());
@@ -1127,10 +1132,7 @@ void populateESMExports(
                 if (property == vm.propertyNames->constructor)
                     continue;
 
-                // When module.exports is a function/class, skip its intrinsic
-                // length/name/prototype. This also drops explicit
-                // `module.exports.prototype = ...` which Node's lexer exports.
-                if (exportsIsCallable && (property == vm.propertyNames->length || property == vm.propertyNames->name || property == vm.propertyNames->prototype))
+                if (isFilteredCallableIntrinsic(property))
                     continue;
 
                 JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);

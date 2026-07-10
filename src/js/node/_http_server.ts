@@ -807,11 +807,24 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
         socket[kEnableStreaming](false);
 
-        const http_res = new ResponseClass(http_req, {
-          [kHandle]: handle,
-          highWaterMark: socket.writableHighWaterMark,
-          [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
-        });
+        // The builtin ServerResponse consumes its options synchronously, so a
+        // reusable scratch object avoids one allocation per request. User
+        // subclasses (options.ServerResponse) might retain options, so they
+        // keep getting a fresh object.
+        let http_res;
+        if (ResponseClass === ServerResponse) {
+          scratchResponseOptions[kHandle] = handle;
+          scratchResponseOptions.highWaterMark = socket.writableHighWaterMark;
+          scratchResponseOptions[kRejectNonStandardBodyWrites] = server.rejectNonStandardBodyWrites;
+          http_res = new ResponseClass(http_req, scratchResponseOptions);
+          scratchResponseOptions[kHandle] = undefined;
+        } else {
+          http_res = new ResponseClass(http_req, {
+            [kHandle]: handle,
+            highWaterMark: socket.writableHighWaterMark,
+            [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
+          });
+        }
         http_res._keepAliveTimeout = server.keepAliveTimeout;
         // Only stamp the symbol when the server actually set `uniqueHeaders`:
         // unconditionally adding it (even as undefined) forced a hidden-class
@@ -851,7 +864,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
-        handle.onabort = onServerRequestEvent.bind(socket);
+        handle.onabort = (socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket));
         // start buffering data if any, the user will need to resume() or .on("data") to read it
         if (hasBody) {
           handle.pause();
@@ -1347,6 +1360,14 @@ function detachSocketListenersForHandoff(socket) {
 }
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");
+// Scratch options object for the builtin ServerResponse (see the dispatcher).
+const scratchResponseOptions = {
+  [kHandle]: undefined,
+  highWaterMark: 0,
+  [kRejectNonStandardBodyWrites]: false,
+};
+// Per-socket cached bound abort handler (the socket outlives its requests).
+const kBoundOnAbort = Symbol("kBoundOnAbort");
 const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
 // When the keep-alive idle period on a connection started (the last response
 // finish). onResponseFinishHandleSocket records this instead of rescheduling
@@ -1466,6 +1487,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   timeout = 0;
   parser = null;
   [kStreamingEnabled] = false;
+  [kBoundOnAbort] = null;
   [kBytesWritten] = 0;
   [kHandle];
   [kUpgradeIncoming] = undefined;
@@ -2137,9 +2159,34 @@ $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 // Like Node.js's _storeHeader(), the defaults never touch kOutHeaders, so
 // getHeaders()/getHeaderNames()/hasHeader() keep reporting only the headers
 // the user actually set, even after the headers have been flushed.
+// Reusable backing array for renderNativeHeaders. The native writeHead
+// consumes the array synchronously, so it can be reused across requests;
+// the busy flag covers re-entrancy (a user toString() on a header value
+// dispatching another response) and exception paths by degrading to a
+// fresh array, which is exactly the previous behavior.
+const scratchFlatHeaders: string[] = [];
+let scratchFlatHeadersBusy = false;
+
+function releaseRenderedHeaders(flat) {
+  if (flat === scratchFlatHeaders) scratchFlatHeadersBusy = false;
+}
+
+// Cache for the Keep-Alive header value: keepAliveTimeout is a per-server
+// constant, so the common (no maxRequestsPerSocket) string is identical for
+// every response.
+let cachedKeepAliveTimeout = -1;
+let cachedKeepAliveValue = "";
+
 function renderNativeHeaders(res) {
   const headersMap = res[kOutHeaders];
-  const flat: string[] = [];
+  let flat: string[];
+  if (scratchFlatHeadersBusy) {
+    flat = [];
+  } else {
+    scratchFlatHeadersBusy = true;
+    scratchFlatHeaders.length = 0;
+    flat = scratchFlatHeaders;
+  }
   let hasDate = false;
   let hasConnection = false;
   let hasKeepAlive = false;
@@ -2238,12 +2285,16 @@ function renderNativeHeaders(res) {
       flat.push("Connection", "keep-alive");
       const keepAliveTimeout = res._keepAliveTimeout;
       if (keepAliveTimeout && !hasKeepAlive) {
-        let max = "";
         const maxRequestsPerSocket = res._maxRequestsPerSocket;
         if (~~maxRequestsPerSocket > 0) {
-          max = `, max=${maxRequestsPerSocket}`;
+          flat.push("Keep-Alive", `timeout=${MathFloor(keepAliveTimeout / 1000)}, max=${maxRequestsPerSocket}`);
+        } else {
+          if (keepAliveTimeout !== cachedKeepAliveTimeout) {
+            cachedKeepAliveTimeout = keepAliveTimeout;
+            cachedKeepAliveValue = `timeout=${MathFloor(keepAliveTimeout / 1000)}`;
+          }
+          flat.push("Keep-Alive", cachedKeepAliveValue);
         }
-        flat.push("Keep-Alive", `timeout=${MathFloor(keepAliveTimeout / 1000)}${max}`);
       }
     } else {
       // Like Node's shouldSendKeepAlive/_last handling: a user-cleared
@@ -2951,11 +3002,13 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
   if (headerState !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
+      const renderedHeaders = renderNativeHeaders(this);
       handle.writeHead(
         this[kSnapshotStatusCode] ?? this.statusCode,
         this[kSnapshotStatusMessage] ?? this.statusMessage,
-        renderNativeHeaders(this),
+        renderedHeaders,
       );
+      releaseRenderedHeaders(renderedHeaders);
 
       // If handle.writeHead throws, we don't want headersSent to be set to true.
       // So we set it here.
@@ -3097,11 +3150,13 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
 
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
+      const renderedHeaders = renderNativeHeaders(this);
       handle.writeHead(
         this[kSnapshotStatusCode] ?? this.statusCode,
         this[kSnapshotStatusMessage] ?? this.statusMessage,
-        renderNativeHeaders(this),
+        renderedHeaders,
       );
+      releaseRenderedHeaders(renderedHeaders);
 
       // If handle.writeHead throws, we don't want headersSent to be set to true.
       // So we set it here.
@@ -3272,11 +3327,13 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
 
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
+      const renderedHeaders = renderNativeHeaders(this);
       handle.writeHead(
         this[kSnapshotStatusCode] ?? this.statusCode,
         this[kSnapshotStatusMessage] ?? this.statusMessage,
-        renderNativeHeaders(this),
+        renderedHeaders,
       );
+      releaseRenderedHeaders(renderedHeaders);
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
       handle.write(data, encoding, callback, strictContentLength(this));
     });
@@ -3381,11 +3438,13 @@ ServerResponse.prototype.flushHeaders = function () {
     if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
 
+      const renderedHeaders = renderNativeHeaders(this);
       handle.writeHead(
         this[kSnapshotStatusCode] ?? this.statusCode,
         this[kSnapshotStatusMessage] ?? this.statusMessage,
-        renderNativeHeaders(this),
+        renderedHeaders,
       );
+      releaseRenderedHeaders(renderedHeaders);
     }
     handle.flushHeaders();
   } else {

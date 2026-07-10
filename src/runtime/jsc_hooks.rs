@@ -2656,19 +2656,18 @@ fn transpile_source_code_inner(
                     }));
                 }
 
-                // Empty .cjs/.cts: synthetic `(function(){})`.
-                if parse_result.empty && matches!(loader, L::Js | L::Ts) {
-                    let ext = bun_paths::extension(source.path.text);
-                    if ext == b".cjs" || ext == b".cts" {
-                        return Ok(OwnedResolvedSource::from(ResolvedSource {
-                            source_code: bun_core::String::static_(b"(function(){})"),
-                            specifier: input_specifier.dupe_ref(),
-                            source_url: create_if_different(input_specifier, path.text),
-                            is_commonjs_module: true,
-                            tag: ResolvedSourceTag::Javascript,
-                            ..Default::default()
-                        }));
-                    }
+                // Empty file declared as CommonJS (`.cjs`/`.cts`, or `.js`/`.ts`
+                // under `"type":"commonjs"`): synthetic `(function(){})` so the
+                // CJS evaluator sees a valid factory.
+                if parse_result.empty && module_type_only_for_wrappables == ModuleType::Cjs {
+                    return Ok(OwnedResolvedSource::from(ResolvedSource {
+                        source_code: bun_core::String::static_(b"(function(){})"),
+                        specifier: input_specifier.dupe_ref(),
+                        source_url: create_if_different(input_specifier, path.text),
+                        is_commonjs_module: true,
+                        tag: ResolvedSourceTag::Javascript,
+                        ..Default::default()
+                    }));
                 }
 
                 // RuntimeTranspilerCache hit: skip print.
@@ -4216,6 +4215,7 @@ unsafe fn transpile_file(
                     (*referrer).dupe_ref(),
                     concurrent_loader,
                     lr.package_json,
+                    module_type,
                 )
             };
         }

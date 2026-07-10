@@ -310,6 +310,7 @@ impl RuntimeTranspilerStore {
         referrer: String,
         loader: Loader,
         package_json: Option<&PackageJSON>,
+        module_type: ModuleType,
     ) -> *mut c_void {
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
         // heap::take on `path.text`.
@@ -352,6 +353,7 @@ impl RuntimeTranspilerStore {
                 vm,
                 log: bun_ast::Log::init(),
                 loader,
+                module_type,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 poll_ref: KeepAlive::default(),
                 fetcher: Fetcher::File,
@@ -401,6 +403,10 @@ pub struct TranspilerJob {
     pub non_threadsafe_input_specifier: OwnedString,
     pub non_threadsafe_referrer: OwnedString,
     pub loader: Loader,
+    /// File's declared format (extension, then package.json `type` for `.js`/
+    /// `.ts`). Fed to the parser; distinct from `resolved_source.tag`, which
+    /// carries the enclosing package.json `type` for `ignoreESModuleAnnotation`.
+    pub module_type: ModuleType,
     pub promise: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
     // raw pointers/BackRefs are used (BACKREF — VM owns the
@@ -816,11 +822,7 @@ impl TranspilerJob {
             && vm_main_hash == hash
             && strings::eql_long(vm_main, path.text, false);
 
-        let module_type: ModuleType = match this_tag {
-            ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
-            ResolvedSourceTag::PackageJsonTypeModule => ModuleType::Esm,
-            _ => ModuleType::Unknown,
-        };
+        let module_type = self.module_type;
 
         let mut parse_options = ParseOptions {
             arena: &arena,
@@ -958,6 +960,18 @@ impl TranspilerJob {
                     );
                 }
             }
+        }
+
+        // Empty .cjs/.cts: synthetic `(function(){})` so the CJS evaluator
+        // sees a valid factory. Mirrors the sync path in jsc_hooks.rs.
+        if parse_result.empty && module_type == ModuleType::Cjs {
+            self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
+                source_code: String::static_(b"(function(){})"),
+                is_commonjs_module: true,
+                tag: this_tag,
+                ..Default::default()
+            });
+            return;
         }
 
         // SAFETY: leaf scalar field read; see `vm` note above. Inlined

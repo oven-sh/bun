@@ -1187,48 +1187,46 @@ impl All {
         let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
 
-        {
-            // SAFETY: `this` is the live per-thread `All` (JS thread only).
-            let roots = unsafe { [(*this).timers.0.root, (*this).fake_timers.timers.0.root] };
-            for root in roots {
-                if !root.is_null() {
-                    stack.push(root);
-                }
+        // SAFETY: `this` is the live per-thread `All` (JS thread only).
+        let roots = unsafe { [(*this).timers.0.root, (*this).fake_timers.timers.0.root] };
+        for root in roots {
+            if !root.is_null() {
+                stack.push(root);
             }
-            while let Some(node) = stack.pop() {
-                // SAFETY: intrusive-heap invariant — every node reachable from a
-                // root is a live `EventLoopTimer` while linked. Read-only walk.
-                let (tag, child, next) =
-                    unsafe { ((*node).tag, (*node).heap.child, (*node).heap.next) };
-                if !child.is_null() {
-                    stack.push(child);
+        }
+        while let Some(node) = stack.pop() {
+            // SAFETY: intrusive-heap invariant — every node reachable from a
+            // root is a live `EventLoopTimer` while linked. Read-only walk.
+            let (tag, child, next) =
+                unsafe { ((*node).tag, (*node).heap.child, (*node).heap.next) };
+            if !child.is_null() {
+                stack.push(child);
+            }
+            if !next.is_null() {
+                stack.push(next);
+            }
+            match tag {
+                EventLoopTimerTag::TimeoutObject => {
+                    // SAFETY: tag invariant — `node` IS the `event_loop_timer`
+                    // field of a live `TimeoutObject`.
+                    let parent = unsafe { TimeoutObject::from_timer_ptr(node) };
+                    // SAFETY: `parent` points at the live `TimeoutObject` recovered
+                    // above; `addr_of!` projects the in-bounds `internals` field.
+                    to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
                 }
-                if !next.is_null() {
-                    stack.push(next);
+                EventLoopTimerTag::ImmediateObject => {
+                    // SAFETY: tag invariant — see above.
+                    let parent = unsafe { ImmediateObject::from_timer_ptr(node) };
+                    // SAFETY: `parent` points at the live `ImmediateObject` recovered
+                    // above; `addr_of!` projects the in-bounds `internals` field.
+                    to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
                 }
-                match tag {
-                    EventLoopTimerTag::TimeoutObject => {
-                        // SAFETY: tag invariant — `node` IS the `event_loop_timer`
-                        // field of a live `TimeoutObject`.
-                        let parent = unsafe { TimeoutObject::from_timer_ptr(node) };
-                        // SAFETY: `parent` points at the live `TimeoutObject` recovered
-                        // above; `addr_of!` projects the in-bounds `internals` field.
-                        to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
-                    }
-                    EventLoopTimerTag::ImmediateObject => {
-                        // SAFETY: tag invariant — see above.
-                        let parent = unsafe { ImmediateObject::from_timer_ptr(node) };
-                        // SAFETY: `parent` points at the live `ImmediateObject` recovered
-                        // above; `addr_of!` projects the in-bounds `internals` field.
-                        to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
-                    }
-                    EventLoopTimerTag::AbortSignalTimeout => {
-                        // SAFETY: tag invariant — `node` IS the `event_loop_timer`
-                        // field of a live boxed `abort_signal::Timeout`.
-                        signal_timeouts.push(unsafe { AbortSignalTimeout::from_timer_ptr(node) });
-                    }
-                    _ => {}
+                EventLoopTimerTag::AbortSignalTimeout => {
+                    // SAFETY: tag invariant — `node` IS the `event_loop_timer`
+                    // field of a live boxed `abort_signal::Timeout`.
+                    signal_timeouts.push(unsafe { AbortSignalTimeout::from_timer_ptr(node) });
                 }
+                _ => {}
             }
         }
 

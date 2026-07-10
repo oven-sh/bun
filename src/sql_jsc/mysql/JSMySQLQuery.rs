@@ -165,6 +165,10 @@ impl JSMySQLQuery {
         }
         this.set_target(target);
         if let Err(err) = this.run(connection) {
+            // The thrown exception propagates out of this host function and
+            // internal/sql/query.ts rejects the promise, so the native query is
+            // marked terminal here rather than in run()'s errguard (see there).
+            this.mark_as_failed();
             if !global_object.has_exception() {
                 return Err(global_object.throw_value(mysql_error_to_js(
                     global_object,
@@ -411,8 +415,10 @@ impl JSMySQLQuery {
         // value, mutation is `JsCell`-backed, and `into_inner` disarms on the
         // success path below.
         let errguard = scopeguard::guard(self, |s| {
+            // `query.fail()` is deliberately not here (PostgresSQLQuery::run
+            // matches): the advance()-driven caller settles the promise via
+            // `reject_with_js_value`, whose once-guard no-ops on a failed query.
             s.this_value.with_mut(|v| v.downgrade());
-            let _ = s.query.with_mut(|q| q.fail());
         });
 
         let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);

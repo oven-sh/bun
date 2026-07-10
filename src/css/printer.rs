@@ -412,16 +412,42 @@ impl<'a> Printer<'a> {
         };
         let record = &import_info.import_records[import_record_idx as usize];
         if record.source_index.is_valid() {
-            // It has an inlined url for CSS
+            // A `url()`'s `?query`/`#fragment` (e.g. `url(sprites.svg#icon)`) is
+            // stripped by the resolver to find the file; re-append it to the
+            // rewritten reference so the fragment still addresses the element.
+            let suffix: &[u8] = if record.kind == bun_ast::ImportKind::Url {
+                match bun_core::strings::index_of_any(record.original_path, b"?#") {
+                    Some(i) => &record.original_path[i..],
+                    None => b"",
+                }
+            } else {
+                b""
+            };
+            let arena = self.arena;
+            let with_suffix = |url: &'a [u8], suffix: &[u8]| -> &'a [u8] {
+                if suffix.is_empty() {
+                    return url;
+                }
+                let buf = arena.alloc_slice_fill_copy(url.len() + suffix.len(), 0u8);
+                buf[..url.len()].copy_from_slice(url);
+                buf[url.len()..].copy_from_slice(suffix);
+                buf
+            };
+            // It has an inlined data: URL for CSS. A `?query` here lands in the
+            // base64 body and fails decoding, so keep only the `#fragment`.
             let urls_for_css = import_info.ast_urls_for_css[record.source_index.get() as usize];
             if !urls_for_css.is_empty() {
-                return Ok(urls_for_css);
+                let fragment: &[u8] = match bun_core::strings::index_of_char(suffix, b'#') {
+                    Some(i) => &suffix[i as usize..],
+                    None => b"",
+                };
+                return Ok(with_suffix(urls_for_css, fragment));
             }
-            // It is a chunk URL
+            // It is a chunk URL (copied asset): keep the full `?query#fragment`.
             let unique_key_for_additional_file =
                 import_info.ast_unique_key_for_additional_file[record.source_index.get() as usize];
             if !unique_key_for_additional_file.is_empty() {
-                return Ok(unique_key_for_additional_file);
+                return Ok(with_suffix(unique_key_for_additional_file, suffix));
             }
         }
         // External URL stays as-is

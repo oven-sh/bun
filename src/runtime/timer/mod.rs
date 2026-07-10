@@ -801,8 +801,11 @@ impl All {
             // deref and fire via raw deref (mirroring `drain_timers`).
             let (min_next_sec, min_next_nsec, min_tag) =
                 unsafe { ((*min).next.sec, (*min).next.nsec, (*min).tag) };
+            // Real clock: `self.timers` is the opt-out-of-fake-timers set, all
+            // armed in real-time units. Comparing against the mocked clock made
+            // internal pacing (GC, WTFTimer, test timeouts) spin on re-arm.
             let now =
-                *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::AllowMockedTime));
+                *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
 
             // bun_event_loop carries its own Timespec stub; compare field-wise.
             let min_next = Timespec {
@@ -870,7 +873,8 @@ impl All {
         let out = (|| {
             let timer = self.timers.peek()?;
             if !*has_set_now {
-                *now = Timespec::now(TimespecMockMode::AllowMockedTime);
+                // Real clock: this heap is the opt-out-of-fake-timers set.
+                *now = Timespec::now(TimespecMockMode::ForceRealTime);
                 *has_set_now = true;
             }
             // SAFETY: peek returns a live heap node

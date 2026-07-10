@@ -893,32 +893,6 @@ impl PathOrBuffer {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct CallbackTask<Result> {
-    pub callback: jsc::C::JSObjectRef,
-    pub option: CallbackTaskOption<Result>,
-}
-
-pub enum CallbackTaskOption<Result> {
-    Err(Box<bun_sys::SystemError>),
-    Result(Result),
-}
-
-impl<Result> Default for CallbackTask<Result>
-where
-    CallbackTaskOption<Result>: Default,
-{
-    fn default() -> Self {
-        // Zero the callback handle
-        // and lean on the `CallbackTaskOption<Result>: Default` bound.
-        Self {
-            callback: core::ptr::null_mut(),
-            option: Default::default(),
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
 // LAYERING: single nominal `PathLike`/`PathOrFileDescriptor` live in
 // `bun_jsc::node_path` so `bun_jsc::webcore_types::store::File::pathlike`
 // and the `Store`/`Blob` constructors here share one type. This module

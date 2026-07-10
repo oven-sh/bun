@@ -36,7 +36,13 @@ typedef void* zig_mutex_t;
 struct us_quic_socket_context_s;
 
 struct us_internal_loop_data_t {
+#ifdef LIBUS_USE_LIBUV
     struct us_timer_t *sweep_timer;
+#else
+    /* Absolute monotonic ns of the next sweep, or -1. Folded into the poll
+     * timeout — no timerfd, no EVFILT_TIMER. */
+    long long sweep_next_tick_ns;
+#endif
     int sweep_timer_count;
     struct us_internal_async *wakeup_async;
     struct us_socket_group_t *head;

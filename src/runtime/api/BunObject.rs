@@ -869,13 +869,11 @@ pub(crate) fn register_macro(
         .get_or_put(id)
         .expect("unreachable");
     if get_or_put_result.found_existing {
-        // `value_ptr` is `&mut JSObjectRef` (`*mut OpaqueJSValue`); recover the
-        // protected JSValue and unprotect it before overwriting.
-        JSValue::c(*get_or_put_result.value_ptr).unprotect();
+        get_or_put_result.value_ptr.unprotect();
     }
 
     arguments[1].protect();
-    *get_or_put_result.value_ptr = arguments[1].as_object_ref();
+    *get_or_put_result.value_ptr = arguments[1];
 
     Ok(JSValue::UNDEFINED)
 }

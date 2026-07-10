@@ -285,7 +285,6 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "scopeguard",
  "strum",
 ]
 
@@ -1081,20 +1080,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_js"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_js_parser"
 version = "0.0.0"
 dependencies = [
@@ -1658,7 +1643,6 @@ dependencies = [
  "bun_install_types",
  "bun_io",
  "bun_iocp",
- "bun_js",
  "bun_js_parser",
  "bun_js_parser_jsc",
  "bun_js_printer",

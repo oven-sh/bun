@@ -934,12 +934,15 @@ where
         let _ref = RequestContextRef(std::ptr::from_mut::<Self>(ctx));
 
         let err = arguments.ptr[0];
+        // Pass the rejection reason through verbatim (including `null` and
+        // `undefined`) so `error()` sees the same value the already-settled
+        // path delivers. Only an empty JSValue is normalized.
         Self::handle_reject(
             ctx,
-            if !err.is_empty_or_undefined_or_null() {
-                err
-            } else {
+            if err.is_empty() {
                 JSValue::UNDEFINED
+            } else {
+                err
             },
         );
         Ok(JSValue::UNDEFINED)
@@ -953,6 +956,32 @@ where
         let resp = ctx.resp.expect("infallible: resp bound");
         // SAFETY: FFI handle, just checked Some
         let has_responded = resp.has_responded();
+
+        // The status line is already committed (a direct ReadableStream's
+        // pull() threw synchronously after do_render_stream wrote headers).
+        // error() cannot replace a response whose status is on the wire;
+        // report the failure and terminate the body so the client observes an
+        // incomplete message instead of a second header block spliced into
+        // the chunked body.
+        if !has_responded && ctx.flags.has_written_status() {
+            if !value.is_empty_or_undefined_or_null()
+                && let Some(server) = ctx.server
+            {
+                // SAFETY: BACKREF; see drain_microtasks() re: the const→mut cast.
+                unsafe {
+                    (*std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut())
+                        .run_error_handler(value, None);
+                }
+            }
+            let state = resp.state();
+            if state.is_http_write_called() && state.is_response_pending() {
+                ctx.force_close();
+            } else {
+                ctx.end_stream(ctx.should_close_connection());
+            }
+            return;
+        }
+
         if !has_responded {
             let original_state = ctx.defer_deinit_until_callback_completes;
             let should_deinit_context = core::cell::Cell::new(match original_state {
@@ -2135,6 +2164,11 @@ where
                 match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                     jsc::PromiseResult::Pending => {
                         stream_log!("promise still Pending");
+                        // The sink now owns a raw `resp` pointer and the pump
+                        // promise holds a ref on this context. Marking pending
+                        // keeps `handle_reject` from ending the response out
+                        // from under the sink while the stream is in flight.
+                        this.flags.set_has_marked_pending(true);
                         if !this.flags.has_written_status() {
                             response_stream.sink.on_first_write = None;
                             response_stream.sink.ctx = None;
@@ -2598,6 +2632,17 @@ where
                     // SAFETY: FFI handle
                     resp.write_header(b"transfer-encoding", b"chunked");
                 }
+                // HEAD never transmits the body: cancel the stream so the
+                // source's cancel() runs and its resources are released.
+                // SAFETY: sole `&mut Response`; render_metadata's reborrow ended.
+                let response = unsafe { &mut *response_ptr };
+                if let Some(stream) = response.get_body_readable_stream(global_this) {
+                    let _keep = jsc::EnsureStillAlive(stream.value);
+                    response.detach_readable_stream(global_this);
+                    // Unread stream has no reader; `cancel()` would no-op.
+                    stream.cancel_with_reason(global_this, JSValue::UNDEFINED);
+                }
+                *response.get_body_value() = Body::Value::Used;
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
@@ -3193,6 +3238,10 @@ where
                                 return;
                             }
                             this.ref_();
+                            // Same as do_render_stream's Pending branch: the
+                            // body is in flight, so `handle_reject` must not
+                            // fall through to render_missing() and end it.
+                            this.flags.set_has_marked_pending(true);
                             byte_stream.pipe.set(WebCore::Wrap::<Self>::init(this));
                             // Deinit the old Strong reference before creating a new one
                             // to avoid leaking the Strong.Impl memory

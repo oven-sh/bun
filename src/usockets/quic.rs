@@ -359,10 +359,7 @@ struct lsquic_engine_api {
 // Layout asserts against vendor/lsquic/include/lsquic.h. `es_handshake_to` /
 // `es_idle_conn_to` are `unsigned long`, so settings is 8 bytes smaller on LLP64.
 const _: () = {
-    assert!(
-        size_of::<lsquic_engine_settings>()
-            == if cfg!(windows) { 328 } else { 336 }
-    );
+    assert!(size_of::<lsquic_engine_settings>() == if cfg!(windows) { 328 } else { 336 });
     assert!(size_of::<lsquic_engine_api>() == 192);
     assert!(size_of::<lsquic_out_spec>() == 56);
     assert!(size_of::<lsquic_stream_if>() == 112);

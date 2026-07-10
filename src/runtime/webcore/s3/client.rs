@@ -176,7 +176,7 @@ pub(crate) fn list_objects(
     // The struct owns `Utf8Slice`s and is not
     // `Clone`, but this fn only reads fields synchronously to build the
     // search-params string — borrow so the caller (Store::S3::
-    // list_objects) can retain ownership in its async Wrapper for `Drop`.
+    // list_objects) can retain ownership in its async task for `Drop`.
     list_options: &S3ListObjectsOptions,
     callback: Callback,
     proxy_url: Option<&[u8]>,

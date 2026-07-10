@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 use core::marker::PhantomData;
 
+use crate::error::ThrowSqlError;
 use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 use bun_core::String as BunString;
 
@@ -315,10 +316,7 @@ impl MySQLQuery {
                 Ok(s) => s,
                 Err(err) => {
                     if !global_object.has_exception() {
-                        // `Signature::generate` returns a wider `crate::Error`. Use
-                        // `throw_error` (which builds an `Error` instance from the error
-                        // name + message) instead of forcing into the MySQL enum.
-                        let _ = global_object.throw_error(err, "failed to generate signature");
+                        let _ = global_object.throw_sql_error(err, "failed to generate signature");
                     }
                     return Err(crate::Error::JSError);
                 }
@@ -424,7 +422,7 @@ impl MySQLQuery {
                         None => self.query.to_utf8(),
                     };
                     if let Err(err) = mysql_request::prepare_request(query.slice(), writer) {
-                        let _ = global_object.throw_error(err, "failed to prepare query");
+                        let _ = global_object.throw_sql_error(err.into(), "failed to prepare query");
                         return Err(crate::Error::JSError);
                     }
                     // `self.statement` was set in both branches above; route

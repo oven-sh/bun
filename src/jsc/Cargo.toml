@@ -47,6 +47,7 @@ bun_ast.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
 bun_ptr.workspace = true
+bun_patch.workspace = true
 bun_resolve_builtins.workspace = true
 bun_resolver.workspace = true
 bun_s3_signing.workspace = true

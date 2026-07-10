@@ -11,7 +11,7 @@
 // directly this whole module becomes `pub use bun_jsc as jsc;` with no
 // callsite churn.
 pub mod error;
-pub use error::{Error, Result};
+pub use error::{Error, Result, ThrowSqlError};
 
 pub mod jsc;
 pub use jsc::{CallFrame, JSGlobalObject, JSValue};

@@ -137,7 +137,7 @@ impl MacroContext {
                 bun_ast::ImportKind::Stmt,
             ) {
                 Ok(r) => r,
-                Err(e) if e == crate::Error::ModuleNotFound => {
+                Err(e) if e == bun_resolver::Error::ModuleNotFound => {
                     log.add_resolve_error(
                         Some(source),
                         import_range,
@@ -147,7 +147,7 @@ impl MacroContext {
                         ),
                         import_record_path,
                         bun_ast::ImportKind::Stmt,
-                        e,
+                        bun_ast::Error::ModuleNotFound,
                     );
                     return Err(crate::Error::MacroNotFound);
                 }
@@ -161,7 +161,7 @@ impl MacroContext {
                             bstr::BStr::new(import_record_path)
                         ),
                     );
-                    return Err(e);
+                    return Err(e.into());
                 }
             };
             // The resolver's `Result` owns its path strings via the global `DirnameStore`

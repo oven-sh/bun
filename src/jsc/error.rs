@@ -86,6 +86,8 @@ pub enum Error {
     InvalidDebugInfo,
     #[error("EndOfFile")]
     EndOfFile,
+    #[error("FailedToOpenSocket")]
+    FailedToOpenSocket,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -106,6 +108,10 @@ pub enum Error {
     Install(#[from] bun_install::Error),
     #[error(transparent)]
     Ast(#[from] bun_ast::Error),
+    #[error(transparent)]
+    Patch(#[from] bun_patch::Error),
+    #[error(transparent)]
+    ToJS(#[from] bun_ast::ToJSError),
     #[error("{0}")]
     ErrorCode(crate::error_code::ErrorCode),
 }
@@ -156,6 +162,7 @@ impl Error {
             Self::MissingDebugInfo => "MissingDebugInfo",
             Self::InvalidDebugInfo => "InvalidDebugInfo",
             Self::EndOfFile => "EndOfFile",
+            Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),
@@ -166,6 +173,8 @@ impl Error {
             Self::Watcher(e) => e.name(),
             Self::Install(e) => e.name(),
             Self::Ast(e) => e.name(),
+            Self::Patch(e) => e.name(),
+            Self::ToJS(e) => <&'static str>::from(e),
             Self::ErrorCode(e) => <&'static str>::from(*e),
         }
     }
@@ -188,6 +197,13 @@ impl From<bun_sys::Error> for Error {
     #[inline]
     fn from(e: bun_sys::Error) -> Self {
         Self::Sys(e.get_errno())
+    }
+}
+
+impl From<bun_uws::ConnectError> for Error {
+    #[inline]
+    fn from(_: bun_uws::ConnectError) -> Self {
+        Self::FailedToOpenSocket
     }
 }
 

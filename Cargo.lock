@@ -1196,6 +1196,7 @@ dependencies = [
  "bun_jsc_macros",
  "bun_opaque",
  "bun_options_types",
+ "bun_patch",
  "bun_paths",
  "bun_ptr",
  "bun_resolve_builtins",

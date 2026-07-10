@@ -2377,11 +2377,9 @@ impl PostgresSQLConnection {
         message_type: MessageType,
         mut reader: protocol::NewReader<Context>,
     ) -> Result<(), AnyPostgresError> {
-        // protocol `decode_internal` returns `crate::Error`;
-        // round-trip through the name-based `From` impl.
         #[inline(always)]
         fn pg_err(e: crate::Error) -> AnyPostgresError {
-            AnyPostgresError::from(e)
+            e.name().parse().unwrap_or(AnyPostgresError::JSError)
         }
         debug!("on({})", <&'static str>::from(message_type));
 
@@ -2547,7 +2545,7 @@ impl PostgresSQLConnection {
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
 
                 let mut cmd: protocol::CommandComplete = Default::default();
-                cmd.decode_internal(reader.reborrow()).map_err(pg_err)?;
+                cmd.decode_internal(reader.reborrow())?;
                 debug!("-> {}", bstr::BStr::new(cmd.command_tag.slice()));
 
                 request.on_result(
@@ -2687,7 +2685,7 @@ impl PostgresSQLConnection {
                             return Err(AnyPostgresError::InvalidMessage);
                         }
 
-                        let iteration_count = cont.iteration_count().map_err(pg_err)?;
+                        let iteration_count = cont.iteration_count()?;
                         // RFC 7677 §4: SCRAM-SHA-256 requires a minimum of 4096
                         // iterations. Cap the upper bound to avoid a CPU-burn DoS
                         // from a malicious/MITM'd server sending i ≈ u32::MAX.
@@ -2730,7 +2728,8 @@ impl PostgresSQLConnection {
                             &server_salt_decoded_base64,
                             iteration_count,
                             password,
-                        )?;
+                        )
+                        .map_err(pg_err)?;
                         drop(server_salt_decoded_base64);
 
                         let mut auth_string: Vec<u8> = Vec::new();
@@ -2746,7 +2745,7 @@ impl PostgresSQLConnection {
                                 bstr::BStr::new(cont.r.slice()),
                             );
                         }
-                        sasl.compute_server_signature(&auth_string)?;
+                        sasl.compute_server_signature(&auth_string).map_err(pg_err)?;
 
                         let client_key = sasl.client_key();
                         let client_key_signature =

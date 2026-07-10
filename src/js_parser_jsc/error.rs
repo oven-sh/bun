@@ -14,6 +14,16 @@ pub enum Error {
     JSError,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
+    #[error(transparent)]
+    Core(#[from] bun_core::Error),
+    #[error(transparent)]
+    Jsc(#[from] bun_jsc::CrateError),
+    #[error(transparent)]
+    Bundler(#[from] bun_bundler::Error),
+    #[error(transparent)]
+    Resolver(#[from] bun_resolver::Error),
+    #[error(transparent)]
+    ToJs(#[from] bun_ast::ToJSError),
 }
 
 impl Error {
@@ -26,6 +36,11 @@ impl Error {
             Self::JSTerminated => "JSTerminated",
             Self::JSError => "JSError",
             Self::Alloc(_) => "OutOfMemory",
+            Self::Core(e) => e.name(),
+            Self::Jsc(e) => e.name(),
+            Self::Bundler(e) => e.name(),
+            Self::Resolver(e) => e.name(),
+            Self::ToJs(e) => e.into(),
         }
     }
 }

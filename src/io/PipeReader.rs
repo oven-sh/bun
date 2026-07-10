@@ -1752,13 +1752,18 @@ impl WindowsBufferedReader {
     pub fn close_impl<const CALL_DONE: bool>(&mut self) {
         if let Some(source) = self.source.take() {
             match source {
-                Source::SyncFile(file) | Source::File(file) => {
+                Source::SyncFile(mut file) | Source::File(mut file) => {
                     // Detach - file will close itself after operation completes.
                     // Hand the Box off to libuv: detach() leaves either an
                     // in-flight uv_fs_read (on_file_read) or a scheduled
                     // uv_fs_close (on_close_complete) pending; the callback
                     // reclaims the allocation via heap::take. Dropping the
                     // Box here would free the uv_fs_t out from under libuv.
+                    if !self.flags.contains(WindowsFlags::CLOSE_HANDLE) {
+                        // The parent owns and closes this fd. uv_fs_close(-1)
+                        // is a no-op whose callback still fires to free the Box.
+                        file.file = -1;
+                    }
                     let raw = bun_core::heap::into_raw(file);
                     // SAFETY: raw is a live heap File*; the pending fs callback
                     // is the sole reclaimer (heap::take in on_close_complete).

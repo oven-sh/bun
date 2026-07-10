@@ -498,10 +498,9 @@ describe("corrupt compressed responses", () => {
   }
 
   it("redirect with a malformed chunked body: follow succeeds, manual surfaces the body error", async () => {
-    // Redirects are followed on the response head (WHATWG HTTP-redirect
-    // fetch); the 3xx body is discarded, so a parse failure in it must not
-    // affect redirect:"follow". Under redirect:"manual" the 302 *is* the
-    // caller's Response and reading its body surfaces the error.
+    // Redirects are followed on the response head (WHATWG HTTP-redirect fetch),
+    // so a parse failure in the discarded 3xx body must not affect redirect:
+    // "follow"; under redirect:"manual" the 302 body surfaces the error.
     await using final = Bun.serve({ port: 0, fetch: () => new Response("FINAL") });
     const location = `${final.url.origin}/final`;
     const srv = createNetServer(sock => {

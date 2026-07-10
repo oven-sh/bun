@@ -1,6 +1,5 @@
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::MaybeUninit;
-use core::ptr::NonNull;
 use std::sync::Once;
 
 #[repr(C)]
@@ -34,10 +33,6 @@ pub mod sys {
         pub struct Decompressor;
     }
 }
-
-// `libdeflate_alloc_compressor[_ex]` allocates and hands back the object. One
-// `Compressor` handle owns exactly that one allocation.
-bun_opaque::foreign_owned!(sys::Compressor, libdeflate_free_compressor);
 
 unsafe extern "C" {
     // Allocation: scalar arg, no preconditions; returns null on OOM.
@@ -110,51 +105,16 @@ pub fn load() {
     LOADED_ONCE.call_once(load_once);
 }
 
-/// Owned handle to a libdeflate compressor; `Drop` frees it.
-///
-/// Every method takes `&self`: `sys::Compressor` is `UnsafeCell`-backed, so a
-/// `&` carries no `noalias`/`readonly` and libdeflate freely mutates the
-/// compressor's scratch state through it. `#[repr(transparent)]` over `NonNull`,
-/// so `Option<Compressor>` is pointer-sized with all-zero = `None`.
-#[repr(transparent)]
-pub struct Compressor(bun_opaque::ForeignRef<sys::Compressor>);
-
-/// Ownership plumbing.
-impl Compressor {
-    /// Adopt an allocation returned by libdeflate.
+// `libdeflate_alloc_compressor[_ex]` allocates and hands back the object. One
+// `Compressor` handle owns exactly that one allocation.
+bun_opaque::foreign_handle! {
+    /// Owned handle to a libdeflate compressor; `Drop` frees it.
     ///
-    /// # Safety
-    /// `ptr` must come from `libdeflate_alloc_compressor[_ex]` and must not be
-    /// freed by any other handle.
-    #[inline]
-    pub unsafe fn adopt(ptr: NonNull<sys::Compressor>) -> Self {
-        // SAFETY: caller transfers the allocation.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// Adopt a nullable allocation; `None` on OOM.
-    #[inline]
-    fn adopt_ptr(ptr: *mut sys::Compressor) -> Option<Self> {
-        // SAFETY: libdeflate returns a fresh allocation or null.
-        NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
-    }
-
-    /// The libdeflate pointer, still owned by `self`.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut sys::Compressor {
-        self.0.as_ptr()
-    }
-
-    /// Hand the allocation to a foreign owner. Pairs with a later [`Self::adopt`].
-    #[inline]
-    pub fn leak(self) -> NonNull<sys::Compressor> {
-        self.0.leak()
-    }
-
-    #[inline]
-    fn raw(&self) -> &sys::Compressor {
-        &self.0
-    }
+    /// Every method takes `&self`: `sys::Compressor` is `UnsafeCell`-backed, so a
+    /// `&` carries no `noalias`/`readonly` and libdeflate freely mutates the
+    /// compressor's scratch state through it. `#[repr(transparent)]` over `NonNull`,
+    /// so `Option<Compressor>` is pointer-sized with all-zero = `None`.
+    pub struct Compressor(sys::Compressor) via libdeflate_free_compressor;
 }
 
 /// Constructors. libdeflate allocates; each returns an owned handle.
@@ -162,7 +122,8 @@ impl Compressor {
     /// Allocate a compressor at `level` (0..=12). Returns `None` on OOM.
     #[inline]
     pub fn new(level: c_int) -> Option<Self> {
-        Self::adopt_ptr(libdeflate_alloc_compressor(level))
+        // SAFETY: `libdeflate_alloc_compressor` transfers the sole ownership unit, or null.
+        unsafe { Self::adopt_ptr(libdeflate_alloc_compressor(level)) }
     }
 
     /// # Safety
@@ -170,9 +131,11 @@ impl Compressor {
     /// callbacks — libdeflate writes through their return values.
     pub unsafe fn new_ex(level: c_int, options: Option<&Options>) -> Option<Self> {
         // SAFETY: caller upholds the callback contract; `Option<&T>` → `*const T` is NPO-compatible.
-        Self::adopt_ptr(unsafe {
+        let ptr = unsafe {
             libdeflate_alloc_compressor_ex(level, options.map_or(core::ptr::null(), |o| o))
-        })
+        };
+        // SAFETY: `libdeflate_alloc_compressor_ex` transfers the sole ownership unit, or null.
+        unsafe { Self::adopt_ptr(ptr) }
     }
 }
 
@@ -309,53 +272,14 @@ impl Compressor {
 
 // `libdeflate_alloc_decompressor[_ex]` allocates and hands back the object. One
 // `Decompressor` handle owns exactly that one allocation.
-bun_opaque::foreign_owned!(sys::Decompressor, libdeflate_free_decompressor);
-
-/// Owned handle to a libdeflate decompressor; `Drop` frees it.
-///
-/// Every method takes `&self`: `sys::Decompressor` is `UnsafeCell`-backed, so a
-/// `&` carries no `noalias`/`readonly` and libdeflate freely mutates the
-/// decompressor's scratch state through it. `#[repr(transparent)]` over `NonNull`,
-/// so `Option<Decompressor>` is pointer-sized with all-zero = `None`.
-#[repr(transparent)]
-pub struct Decompressor(bun_opaque::ForeignRef<sys::Decompressor>);
-
-/// Ownership plumbing.
-impl Decompressor {
-    /// Adopt an allocation returned by libdeflate.
+bun_opaque::foreign_handle! {
+    /// Owned handle to a libdeflate decompressor; `Drop` frees it.
     ///
-    /// # Safety
-    /// `ptr` must come from `libdeflate_alloc_decompressor[_ex]` and must not be
-    /// freed by any other handle.
-    #[inline]
-    pub unsafe fn adopt(ptr: NonNull<sys::Decompressor>) -> Self {
-        // SAFETY: caller transfers the allocation.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// Adopt a nullable allocation; `None` on OOM.
-    #[inline]
-    fn adopt_ptr(ptr: *mut sys::Decompressor) -> Option<Self> {
-        // SAFETY: libdeflate returns a fresh allocation or null.
-        NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
-    }
-
-    /// The libdeflate pointer, still owned by `self`.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut sys::Decompressor {
-        self.0.as_ptr()
-    }
-
-    /// Hand the allocation to a foreign owner. Pairs with a later [`Self::adopt`].
-    #[inline]
-    pub fn leak(self) -> NonNull<sys::Decompressor> {
-        self.0.leak()
-    }
-
-    #[inline]
-    fn raw(&self) -> &sys::Decompressor {
-        &self.0
-    }
+    /// Every method takes `&self`: `sys::Decompressor` is `UnsafeCell`-backed, so a
+    /// `&` carries no `noalias`/`readonly` and libdeflate freely mutates the
+    /// decompressor's scratch state through it. `#[repr(transparent)]` over `NonNull`,
+    /// so `Option<Decompressor>` is pointer-sized with all-zero = `None`.
+    pub struct Decompressor(sys::Decompressor) via libdeflate_free_decompressor;
 }
 
 /// Constructor. libdeflate allocates; returns an owned handle.
@@ -363,7 +287,8 @@ impl Decompressor {
     /// Allocate a decompressor. Returns `None` on OOM.
     #[inline]
     pub fn new() -> Option<Self> {
-        Self::adopt_ptr(libdeflate_alloc_decompressor())
+        // SAFETY: libdeflate_alloc_decompressor transfers a fresh allocation, or null.
+        unsafe { Self::adopt_ptr(libdeflate_alloc_decompressor()) }
     }
 }
 

@@ -17,10 +17,6 @@ pub mod sys {
     }
 }
 
-// `Bun__StrongRef__new` allocates a HandleSlot from the VM's HandleSet and
-// hands back its sole owner. One `Impl` handle owns exactly that one slot.
-bun_opaque::foreign_owned!(sys::Impl, strong_ref_delete);
-
 /// A corrupted slot pointer segfaults inside JSC's `HandleBlock::handleSet`,
 /// which loses the Rust caller frame; panicking here names the exact owner.
 /// `0x10000` is Windows' null-page guard — real slots are bmalloc'd far above.
@@ -34,41 +30,14 @@ fn strong_ref_delete(slot: &sys::Impl) {
     Bun__StrongRef__delete(slot)
 }
 
-/// Owned handle to one `JSC::HandleSet` slot rooting a `JSValue`.
-///
-/// `Drop` deallocates the slot. Every method takes `&self`: JSC writes the slot
-/// through the same pointer, and deallocating it is not exclusive access.
-#[repr(transparent)]
-pub struct Impl(bun_opaque::ForeignRef<sys::Impl>);
-
-/// Ownership plumbing.
-impl Impl {
-    /// Adopt a slot allocated by C++.
+// `Bun__StrongRef__new` allocates a HandleSlot from the VM's HandleSet and
+// hands back its sole owner. One `Impl` handle owns exactly that one slot.
+bun_opaque::foreign_handle! {
+    /// Owned handle to one `JSC::HandleSet` slot rooting a `JSValue`.
     ///
-    /// # Safety
-    /// `ptr` must be a live slot that no other handle will deallocate.
-    #[inline]
-    pub unsafe fn adopt(ptr: NonNull<sys::Impl>) -> Self {
-        // SAFETY: caller transfers the allocation.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// The slot pointer, still owned by `self`.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut sys::Impl {
-        self.0.as_ptr()
-    }
-
-    /// Hand the slot to a foreign owner. Pairs with a later [`Self::adopt`].
-    #[inline]
-    pub fn leak(self) -> NonNull<sys::Impl> {
-        self.0.leak()
-    }
-
-    #[inline]
-    fn raw(&self) -> &sys::Impl {
-        &self.0
-    }
+    /// `Drop` deallocates the slot. Every method takes `&self`: JSC writes the slot
+    /// through the same pointer, and deallocating it is not exclusive access.
+    pub struct Impl(sys::Impl) via strong_ref_delete;
 }
 
 /// Slot lifecycle and access. `&self` throughout: JSC mutates the slot.

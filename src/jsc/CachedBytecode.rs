@@ -17,15 +17,14 @@ pub mod sys {
 // `JSC::encodeCodeBlock` allocates and the C++ generator does an explicit
 // `->ref()` before leaking the pointer through the out-param, so Rust receives
 // a `+1`. One `CachedBytecode` handle owns exactly that one ref.
-bun_opaque::foreign_owned!(sys::CachedBytecode, CachedBytecode__deref);
-
-/// Owned handle to a C++ `JSC::CachedBytecode`.
-///
-/// Holds one ref on the WTF intrusive refcount; `Drop` gives it back, freeing
-/// the bytecode buffer at zero. There is no `&mut self` and no `DerefMut`: a
-/// refcount is shared by definition, and a decrement is not exclusive access.
-#[repr(transparent)]
-pub struct CachedBytecode(bun_opaque::ForeignRef<sys::CachedBytecode>);
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C++ `JSC::CachedBytecode`.
+    ///
+    /// Holds one ref on the WTF intrusive refcount; `Drop` gives it back, freeing
+    /// the bytecode buffer at zero. There is no `&mut self` and no `DerefMut`: a
+    /// refcount is shared by definition, and a decrement is not exclusive access.
+    pub struct CachedBytecode(sys::CachedBytecode) via CachedBytecode__deref;
+}
 
 unsafe extern "C" {
     fn generateCachedModuleByteCodeFromSourceCode(
@@ -50,38 +49,6 @@ unsafe extern "C" {
     // refcount decrement is not exclusive access — other refs exist by
     // definition — so the receiver is `&`, not `&mut`.
     safe fn CachedBytecode__deref(this: &sys::CachedBytecode);
-}
-
-/// Ownership plumbing.
-impl CachedBytecode {
-    /// Adopt a `+1` returned by C++.
-    ///
-    /// # Safety
-    /// `ptr` must carry exactly one ref that no other handle will release.
-    #[inline]
-    pub unsafe fn adopt(ptr: NonNull<sys::CachedBytecode>) -> Self {
-        // SAFETY: caller transfers the +1.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// Adopt a nullable `+1`; `None` on null.
-    #[inline]
-    fn adopt_ptr(ptr: Option<NonNull<sys::CachedBytecode>>) -> Option<Self> {
-        // SAFETY: the C++ generators `->ref()` before writing the out-param.
-        ptr.map(|p| unsafe { Self::adopt(p) })
-    }
-
-    /// The C++ pointer, still owned by `self`.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut sys::CachedBytecode {
-        self.0.as_ptr()
-    }
-
-    /// Hand our `+1` to a foreign owner. Pairs with a later [`Self::adopt`].
-    #[inline]
-    pub fn leak(self) -> NonNull<sys::CachedBytecode> {
-        self.0.leak()
-    }
 }
 
 /// Bytecode generation. Each successful call returns the `+1` C++ handed us.
@@ -113,7 +80,11 @@ impl CachedBytecode {
             // and the slice is valid for `input_code_size` bytes until release.
             let slice =
                 unsafe { bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size) };
-            let handle = Self::adopt_ptr(this).expect("bytecode generated but handle is null");
+            let ptr = this.map_or(core::ptr::null_mut(), |p| p.as_ptr());
+            // SAFETY: the C++ generator `->ref()`s before writing the out-param,
+            // transferring that `+1` to us; no other handle will release it.
+            let handle =
+                unsafe { Self::adopt_ptr(ptr) }.expect("bytecode generated but handle is null");
             return Some((slice, handle));
         }
 
@@ -143,7 +114,11 @@ impl CachedBytecode {
             // and the slice is valid for `input_code_size` bytes until release.
             let slice =
                 unsafe { bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size) };
-            let handle = Self::adopt_ptr(this).expect("bytecode generated but handle is null");
+            let ptr = this.map_or(core::ptr::null_mut(), |p| p.as_ptr());
+            // SAFETY: the C++ generator `->ref()`s before writing the out-param,
+            // transferring that `+1` to us; no other handle will release it.
+            let handle =
+                unsafe { Self::adopt_ptr(ptr) }.expect("bytecode generated but handle is null");
             return Some((slice, handle));
         }
 

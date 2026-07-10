@@ -17,15 +17,14 @@ pub mod sys {
 
 // C++ `newTextCodec(encoding).release()` hands back the sole owning pointer;
 // `Bun__deleteTextCodec` `delete`s it. One handle owns exactly one codec.
-bun_opaque::foreign_owned!(sys::TextCodec, Bun__deleteTextCodec);
-
-/// Owned handle to a C++ `PAL::TextCodec`.
-///
-/// `Drop` deletes the codec. Every method takes `&self`: C++ mutates the codec
-/// through the same pointer, and giving the object back is not exclusive
-/// access, so there is no `&mut self` and no `DerefMut`.
-#[repr(transparent)]
-pub struct TextCodec(bun_opaque::ForeignRef<sys::TextCodec>);
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C++ `PAL::TextCodec`.
+    ///
+    /// `Drop` deletes the codec. Every method takes `&self`: C++ mutates the codec
+    /// through the same pointer, and giving the object back is not exclusive
+    /// access, so there is no `&mut self` and no `DerefMut`.
+    pub struct TextCodec(sys::TextCodec) via Bun__deleteTextCodec;
+}
 
 // `&sys::TextCodec` is ABI-identical to the `void*` the C++ shims declare. Shims
 // that also take raw `*const u8` / out-pointers stay `unsafe fn`: safe Rust can
@@ -60,49 +59,14 @@ pub struct DecodeResult {
     pub saw_error: bool,
 }
 
-/// Ownership plumbing.
-impl TextCodec {
-    /// Adopt the owning pointer C++ released to us.
-    ///
-    /// # Safety
-    /// `ptr` must be a live codec that no other handle will delete.
-    #[inline]
-    pub unsafe fn adopt(ptr: NonNull<sys::TextCodec>) -> Self {
-        // SAFETY: caller transfers ownership.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// Adopt a nullable owning pointer; `None` on null.
-    #[inline]
-    fn adopt_ptr(ptr: *mut sys::TextCodec) -> Option<Self> {
-        // SAFETY: C++ returns a freshly `new`ed codec or null.
-        NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
-    }
-
-    /// The C++ pointer, still owned by `self`.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut sys::TextCodec {
-        self.0.as_ptr()
-    }
-
-    /// Hand the codec to a foreign owner. Pairs with a later [`Self::adopt`].
-    #[inline]
-    pub fn leak(self) -> NonNull<sys::TextCodec> {
-        self.0.leak()
-    }
-
-    #[inline]
-    fn raw(&self) -> &sys::TextCodec {
-        &self.0
-    }
-}
-
 impl TextCodec {
     /// `None` when `encoding` does not name a valid WebKit encoding.
     pub fn create(encoding: &[u8]) -> Option<Self> {
         mark_binding!();
-        // SAFETY: encoding.ptr is valid for encoding.len bytes.
-        Self::adopt_ptr(unsafe { Bun__createTextCodec(encoding.as_ptr(), encoding.len()) })
+        // SAFETY: encoding.ptr is valid for encoding.len bytes; C++
+        // `newTextCodec(encoding).release()` transfers us the sole owning
+        // pointer, or null.
+        unsafe { Self::adopt_ptr(Bun__createTextCodec(encoding.as_ptr(), encoding.len())) }
     }
 
     pub fn decode(&self, data: &[u8], flush: bool, stop_on_error: bool) -> DecodeResult {

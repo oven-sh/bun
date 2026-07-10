@@ -25,14 +25,13 @@ pub(crate) mod sys {
 
 // C++ `new Bun::WeakRef` hands back the allocation. One `WeakImpl` handle owns
 // exactly that one allocation; `Drop` gives it back.
-bun_opaque::foreign_owned!(sys::WeakImpl, Bun__WeakRef__delete);
-
-/// Owned handle to a C++ `Bun::WeakRef`.
-///
-/// Every method takes `&self`: C++ mutates the `JSC::Weak` slot through the
-/// same pointer, so there is no `&mut self` to have.
-#[repr(transparent)]
-pub(crate) struct WeakImpl(bun_opaque::ForeignRef<sys::WeakImpl>);
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C++ `Bun::WeakRef`.
+    ///
+    /// Every method takes `&self`: C++ mutates the `JSC::Weak` slot through the
+    /// same pointer, so there is no `&mut self` to have.
+    pub(crate) struct WeakImpl(sys::WeakImpl) via Bun__WeakRef__delete;
+}
 
 // `JSGlobalObject`/`sys::WeakImpl` are ZST handles: `&T` is ABI-identical to a
 // non-null `*const T`, and C++ writing the slot through it is interior mutation.
@@ -54,31 +53,6 @@ unsafe extern "C" {
     safe fn Bun__WeakRef__clear(this: &sys::WeakImpl);
 }
 
-/// Ownership plumbing.
-impl WeakImpl {
-    /// Adopt the allocation C++ just handed back.
-    ///
-    /// # Safety
-    /// `ptr` must be a live `Bun::WeakRef` that no other handle will delete.
-    #[inline]
-    unsafe fn adopt(ptr: NonNull<sys::WeakImpl>) -> Self {
-        // SAFETY: caller transfers the allocation.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// Adopt a nullable allocation; `None` on null.
-    #[inline]
-    fn adopt_ptr(ptr: *mut sys::WeakImpl) -> Option<Self> {
-        // SAFETY: `Bun__WeakRef__new` returns a fresh allocation or null.
-        NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
-    }
-
-    #[inline]
-    fn raw(&self) -> &sys::WeakImpl {
-        &self.0
-    }
-}
-
 impl WeakImpl {
     fn new(
         global_this: &JSGlobalObject,
@@ -96,7 +70,8 @@ impl WeakImpl {
                 ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr()),
             )
         };
-        Self::adopt_ptr(ptr).expect("Bun__WeakRef__new returned null")
+        // SAFETY: `Bun__WeakRef__new` transfers a fresh allocation, or null.
+        unsafe { Self::adopt_ptr(ptr) }.expect("Bun__WeakRef__new returned null")
     }
 
     /// Read the weakly-held `JSValue` (or `JSValue::ZERO` if collected).

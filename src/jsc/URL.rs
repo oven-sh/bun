@@ -1,5 +1,3 @@
-use core::ptr::NonNull;
-
 use bun_core::String;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
@@ -16,15 +14,14 @@ pub mod sys {
 // C++ allocates (`new WTF::URL(...)`) and hands the allocation to Rust;
 // `URL__deinit` is an unconditional `delete`. One `URL` handle owns exactly
 // that one allocation.
-bun_opaque::foreign_owned!(sys::URL, URL__deinit);
-
-/// Owned handle to a C++ heap `WTF::URL`.
-///
-/// `Drop` `delete`s the allocation. Every method takes `&self`: the C++ side
-/// never mutates the `WTF::URL` on read, and destroying it is not exclusive
-/// access in Rust's sense.
-#[repr(transparent)]
-pub struct URL(bun_opaque::ForeignRef<sys::URL>);
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C++ heap `WTF::URL`.
+    ///
+    /// `Drop` `delete`s the allocation. Every method takes `&self`: the C++ side
+    /// never mutates the `WTF::URL` on read, and destroying it is not exclusive
+    /// access in Rust's sense.
+    pub struct URL(sys::URL) via URL__deinit;
+}
 
 // Getters take `&sys::URL` (a non-null `WTF::URL*` at the C ABI; BunString.cpp
 // never mutates it on read); `&mut String` is ABI-identical to `*mut String`.
@@ -50,44 +47,6 @@ unsafe extern "C" {
     safe fn URL__pathFromFileURL(input: &mut String) -> String;
     safe fn URL__hash(url: &sys::URL) -> String;
     safe fn URL__fragmentIdentifier(url: &sys::URL) -> String;
-}
-
-/// Ownership plumbing.
-impl URL {
-    /// Adopt a heap `WTF::URL` returned by C++.
-    ///
-    /// # Safety
-    /// `ptr` must be a live `new`-allocated `WTF::URL` that no other handle
-    /// will `delete`.
-    #[inline]
-    pub unsafe fn adopt(ptr: NonNull<sys::URL>) -> Self {
-        // SAFETY: caller transfers the allocation.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// Adopt a nullable allocation; `None` on null (invalid URL).
-    #[inline]
-    fn adopt_ptr(ptr: *mut sys::URL) -> Option<Self> {
-        // SAFETY: the C++ `from*` shims return a fresh `new WTF::URL` or null.
-        NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
-    }
-
-    /// The C++ pointer, still owned by `self`.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut sys::URL {
-        self.0.as_ptr()
-    }
-
-    /// Hand the allocation to a foreign owner. Pairs with a later [`Self::adopt`].
-    #[inline]
-    pub fn leak(self) -> NonNull<sys::URL> {
-        self.0.leak()
-    }
-
-    #[inline]
-    fn raw(&self) -> &sys::URL {
-        &self.0
-    }
 }
 
 impl URL {
@@ -132,7 +91,9 @@ impl URL {
     /// C++ `new WTF::URL` on success; `None` if the URL is invalid.
     #[track_caller]
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Self>> {
-        crate::call_check_slow(global, || URL__fromJS(value, global)).map(Self::adopt_ptr)
+        // SAFETY: `URL__fromJS` transfers a fresh `new WTF::URL` (or null) to us.
+        crate::call_check_slow(global, || URL__fromJS(value, global))
+            .map(|p| unsafe { Self::adopt_ptr(p) })
     }
 
     pub fn from_utf8(input: &[u8]) -> Option<Self> {
@@ -141,7 +102,8 @@ impl URL {
 
     pub fn from_string(str: String) -> Option<Self> {
         let mut input = str;
-        Self::adopt_ptr(URL__fromString(&mut input))
+        // SAFETY: `URL__fromString` transfers a fresh `new WTF::URL` (or null) to us.
+        unsafe { Self::adopt_ptr(URL__fromString(&mut input)) }
     }
 
     pub fn protocol(&self) -> String {

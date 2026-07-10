@@ -295,40 +295,19 @@ unsafe extern "C" {
 
 // `SSL_CTX_new` / `SSL_CTX_up_ref` hand back a `+1` on the context's
 // `CRYPTO_refcount_t`. One `SSL_CTX` handle owns exactly that one ref.
-::bun_opaque::foreign_owned!(sys::SSL_CTX, SSL_CTX_free);
-
-/// Owned handle to a BoringSSL `SSL_CTX`.
-///
-/// Holds one ref on the C refcount; `Drop` gives it back. Every method takes
-/// `&self`: the context is shared with every `SSL` created from it, and
-/// BoringSSL mutates it (refcount, session cache) through the same pointer.
-///
-/// A context borrowed from C (`SSL_get_SSL_CTX`, the weak `SSLContextCache`
-/// slot) took no ref and stays a raw `*mut sys::SSL_CTX`.
-#[repr(transparent)]
-pub struct SSL_CTX(::bun_opaque::ForeignRef<sys::SSL_CTX>);
+bun_opaque::foreign_handle! {
+    /// Owned handle to a BoringSSL `SSL_CTX`.
+    ///
+    /// Holds one ref on the C refcount; `Drop` gives it back. Every method takes
+    /// `&self`: the context is shared with every `SSL` created from it, and
+    /// BoringSSL mutates it (refcount, session cache) through the same pointer.
+    ///
+    /// A context borrowed from C (`SSL_get_SSL_CTX`, the weak `SSLContextCache`
+    /// slot) took no ref and stays a raw `*mut sys::SSL_CTX`.
+    pub struct SSL_CTX(sys::SSL_CTX) via SSL_CTX_free;
+}
 
 impl SSL_CTX {
-    /// Adopt a `+1` returned by C.
-    ///
-    /// # Safety
-    /// `ptr` must carry exactly one ref that no other handle will release.
-    #[inline]
-    pub unsafe fn adopt(ptr: core::ptr::NonNull<sys::SSL_CTX>) -> Self {
-        // SAFETY: caller transfers the +1.
-        Self(unsafe { ::bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// Adopt a nullable `+1`; `None` on null.
-    ///
-    /// # Safety
-    /// `ptr` must be null or carry a ref the caller is giving up.
-    #[inline]
-    pub unsafe fn adopt_ptr(ptr: *mut sys::SSL_CTX) -> Option<Self> {
-        // SAFETY: caller transfers the +1.
-        core::ptr::NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
-    }
-
     /// `SSL_CTX_new` returns a fresh `+1`; `None` on allocation failure.
     ///
     /// # Safety
@@ -338,18 +317,6 @@ impl SSL_CTX {
         unsafe { Self::adopt_ptr(SSL_CTX_new(method)) }
     }
 
-    /// The C pointer, still owned by `self`.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut sys::SSL_CTX {
-        self.0.as_ptr()
-    }
-
-    /// Hand our `+1` to a foreign owner. Pairs with a later [`Self::adopt`].
-    #[inline]
-    pub fn leak(self) -> core::ptr::NonNull<sys::SSL_CTX> {
-        self.0.leak()
-    }
-
     /// Take a second ref on the same context.
     #[inline]
     pub fn up_ref(&self) -> Self {
@@ -357,16 +324,11 @@ impl SSL_CTX {
         // SAFETY: the call above added exactly the ref this handle takes.
         unsafe { Self::adopt(self.0.as_non_null()) }
     }
-
-    #[inline]
-    fn raw(&self) -> &sys::SSL_CTX {
-        &self.0
-    }
 }
 
 // `X509V3_EXT_d2i` allocates the stack and every `GENERAL_NAME` in it, then
 // hands back the sole owner. One handle owns exactly that one allocation.
-bun_opaque::foreign_owned!(sys::struct_stack_st_GENERAL_NAME, general_name_stack_free);
+// The `foreign_owned!` impl is emitted by the `foreign_handle!` invocation below.
 
 /// Frees every `GENERAL_NAME` element, then the stack itself.
 fn general_name_stack_free(sk: &sys::struct_stack_st_GENERAL_NAME) {
@@ -385,27 +347,22 @@ fn general_name_stack_free(sk: &sys::struct_stack_st_GENERAL_NAME) {
     }
 }
 
-/// Owned handle to the `STACK_OF(GENERAL_NAME)` that `X509V3_EXT_d2i` returns
-/// for a subjectAltName extension.
-///
-/// Holds the one allocation BoringSSL handed us; `Drop` frees the elements and
-/// then the stack. Every method takes `&self`: BoringSSL mutates the stack's
-/// bookkeeping through the same pointer, so there is no `&mut self` to have.
-#[repr(transparent)]
-pub struct struct_stack_st_GENERAL_NAME(bun_opaque::ForeignRef<sys::struct_stack_st_GENERAL_NAME>);
-
-/// Ownership plumbing.
-impl struct_stack_st_GENERAL_NAME {
-    /// Adopt a stack the caller is giving up.
+bun_opaque::foreign_handle! {
+    /// Owned handle to the `STACK_OF(GENERAL_NAME)` that `X509V3_EXT_d2i` returns
+    /// for a subjectAltName extension.
     ///
-    /// # Safety
-    /// `ptr` must be live and freed by no other handle.
-    pub unsafe fn adopt(ptr: core::ptr::NonNull<sys::struct_stack_st_GENERAL_NAME>) -> Self {
-        // SAFETY: caller transfers ownership.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
+    /// Holds the one allocation BoringSSL handed us; `Drop` frees the elements and
+    /// then the stack. Every method takes `&self`: BoringSSL mutates the stack's
+    /// bookkeeping through the same pointer, so there is no `&mut self` to have.
+    pub struct struct_stack_st_GENERAL_NAME(sys::struct_stack_st_GENERAL_NAME) via general_name_stack_free;
+}
 
+/// Ownership plumbing the macro does not emit.
+impl struct_stack_st_GENERAL_NAME {
     /// Takes ownership of a `STACK_OF(GENERAL_NAME)`; `None` when `raw` is null.
+    ///
+    /// Not [`Self::adopt_ptr`]: this takes the untyped `*mut c_void` that
+    /// `X509V3_EXT_d2i` returns and casts it here.
     ///
     /// # Safety
     /// `raw` must be null or a stack the caller owns and does not free itself.
@@ -413,20 +370,6 @@ impl struct_stack_st_GENERAL_NAME {
         // SAFETY: caller contract.
         core::ptr::NonNull::new(raw.cast::<sys::struct_stack_st_GENERAL_NAME>())
             .map(|p| unsafe { Self::adopt(p) })
-    }
-
-    /// The C pointer, still owned by `self`.
-    pub fn as_ptr(&self) -> *mut sys::struct_stack_st_GENERAL_NAME {
-        self.0.as_ptr()
-    }
-
-    /// Hand the stack to a foreign owner. Pairs with a later [`Self::adopt`].
-    pub fn leak(self) -> core::ptr::NonNull<sys::struct_stack_st_GENERAL_NAME> {
-        self.0.leak()
-    }
-
-    fn raw(&self) -> &sys::struct_stack_st_GENERAL_NAME {
-        &self.0
     }
 
     /// The untyped view every `sk_*` entry point takes.

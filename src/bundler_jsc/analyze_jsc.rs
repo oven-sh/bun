@@ -7,8 +7,6 @@
 //! higher-tier type this crate cannot depend on, and the C++ caller only needs
 //! the symbol at link time, not a particular crate.
 
-use core::ptr::NonNull;
-
 use crate::{JSGlobalObject, VM};
 
 use analyze::{ModuleInfoDeserialized, RecordKind, RequestedModuleValue, StringID};
@@ -244,15 +242,14 @@ pub mod sys {
 
 // C++ allocates (`new Identifier[len]`) and hands back the array. One
 // `IdentifierArray` handle owns that whole allocation.
-bun_opaque::foreign_owned!(sys::IdentifierArray, JSC__IdentifierArray__destroy);
-
-/// Owned handle to a C++ `JSC::Identifier[]`.
-///
-/// The pointer is the base of the array, so the handle owns every element
-/// (`delete[]`), not one. Every method takes `&self`: C++ writes elements
-/// through the same pointer, so there is no `&mut self` to have.
-#[repr(transparent)]
-pub struct IdentifierArray(bun_opaque::ForeignRef<sys::IdentifierArray>);
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C++ `JSC::Identifier[]`.
+    ///
+    /// The pointer is the base of the array, so the handle owns every element
+    /// (`delete[]`), not one. Every method takes `&self`: C++ writes elements
+    /// through the same pointer, so there is no `&mut self` to have.
+    pub struct IdentifierArray(sys::IdentifierArray) via JSC__IdentifierArray__destroy;
+}
 
 unsafe extern "C" {
     safe fn JSC__IdentifierArray__create(len: usize) -> *mut sys::IdentifierArray;
@@ -270,48 +267,13 @@ unsafe extern "C" {
     );
 }
 
-/// Ownership plumbing.
-impl IdentifierArray {
-    /// Adopt an array allocated by C++.
-    ///
-    /// # Safety
-    /// `ptr` must be a live `new Identifier[]` allocation that no other handle frees.
-    #[inline]
-    pub unsafe fn adopt(ptr: NonNull<sys::IdentifierArray>) -> Self {
-        // SAFETY: caller transfers the allocation.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// Adopt a nullable allocation; `None` on null.
-    #[inline]
-    fn adopt_ptr(ptr: *mut sys::IdentifierArray) -> Option<Self> {
-        // SAFETY: `JSC__IdentifierArray__create` returns a fresh `new[]` allocation.
-        NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
-    }
-
-    /// The C++ pointer, still owned by `self`.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut sys::IdentifierArray {
-        self.0.as_ptr()
-    }
-
-    /// Hand the allocation to a foreign owner. Pairs with a later [`Self::adopt`].
-    #[inline]
-    pub fn leak(self) -> NonNull<sys::IdentifierArray> {
-        self.0.leak()
-    }
-
-    #[inline]
-    fn raw(&self) -> &sys::IdentifierArray {
-        &self.0
-    }
-}
-
 impl IdentifierArray {
     /// `new Identifier[len]` on the C++ side.
     #[inline]
     pub fn create(len: usize) -> Self {
-        Self::adopt_ptr(JSC__IdentifierArray__create(len))
+        // SAFETY: `JSC__IdentifierArray__create` transfers a fresh `new Identifier[len]`
+        // allocation to us; no other handle frees it.
+        unsafe { Self::adopt_ptr(JSC__IdentifierArray__create(len)) }
             .expect("JSC__IdentifierArray__create returned null")
     }
 

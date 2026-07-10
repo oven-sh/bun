@@ -15,10 +15,6 @@ pub mod sys {
     }
 }
 
-// C++ `new EventLoopTask` (`ScriptExecutionContext::postTask*`) hands Rust the
-// sole owner. `delete` gives it back; so does `performTask` (`delete this`).
-bun_opaque::foreign_owned!(sys::CppTask, Bun__deleteEventLoopTask);
-
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
@@ -35,38 +31,18 @@ impl Taskable for sys::CppTask {
     const TAG: TaskTag = task_tag::CppTask;
 }
 
-/// Owned handle to a C++ `WebCore::EventLoopTask` — a task posted from C++,
-/// usually via `ScriptExecutionContext`.
-///
-/// Holds the sole owner of the heap task; `Drop` deletes it without running.
-/// [`Self::run`] takes `self` instead: `performTask` does `delete this`.
-#[repr(transparent)]
-pub struct CppTask(bun_opaque::ForeignRef<sys::CppTask>);
+// C++ `new EventLoopTask` (`ScriptExecutionContext::postTask*`) hands Rust the
+// sole owner. `delete` gives it back; so does `performTask` (`delete this`).
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C++ `WebCore::EventLoopTask` — a task posted from C++,
+    /// usually via `ScriptExecutionContext`.
+    ///
+    /// Holds the sole owner of the heap task; `Drop` deletes it without running.
+    /// [`Self::run`] takes `self` instead: `performTask` does `delete this`.
+    pub struct CppTask(sys::CppTask) via Bun__deleteEventLoopTask;
+}
 
 impl CppTask {
-    /// Adopt the owner C++ (or the task queue) hands over.
-    ///
-    /// # Safety
-    /// `ptr` must be a live `EventLoopTask*` carrying the sole ownership unit,
-    /// which no other handle will give back.
-    #[inline]
-    pub unsafe fn adopt(ptr: NonNull<sys::CppTask>) -> Self {
-        // SAFETY: caller transfers the owner.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// The C++ pointer, still owned by `self`.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut sys::CppTask {
-        self.0.as_ptr()
-    }
-
-    /// Hand ownership to a foreign owner. Pairs with a later [`Self::adopt`].
-    #[inline]
-    pub fn leak(self) -> NonNull<sys::CppTask> {
-        self.0.leak()
-    }
-
     /// Run the task. Consumes `self`: C++ `performTask` does `delete this`,
     /// on the throwing path too, so the owner is given back exactly once.
     pub fn run(self, global: &JSGlobalObject) -> JsResult<()> {

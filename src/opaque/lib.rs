@@ -446,6 +446,34 @@ pub unsafe trait ForeignOwned: Sized {
     unsafe fn release(this: ::core::ptr::NonNull<Self>);
 }
 
+/// How a [`ForeignRef`] gives its unit back.
+///
+/// A foreign object can have more than one ownership discipline: libarchive's
+/// `struct archive` is freed by `archive_read_free` when it was opened for
+/// reading and `archive_write_free` when opened for writing. [`ForeignOwned`]
+/// admits one release per type, so the second discipline names a marker instead.
+///
+/// # Safety
+/// `release` must give back exactly one unit of `T`, exactly once per handle.
+pub unsafe trait ForeignRelease<T> {
+    /// # Safety
+    /// `this` must be live and carry a unit the caller is giving up.
+    unsafe fn release(this: ::core::ptr::NonNull<T>);
+}
+
+/// The release of `T`'s own [`ForeignOwned`] impl. The default for [`ForeignRef`],
+/// so `ForeignRef<T>` keeps meaning exactly what it did before markers existed.
+pub struct DefaultRelease;
+
+// SAFETY: forwards to `T`'s own release, whose contract is identical.
+unsafe impl<T: ForeignOwned> ForeignRelease<T> for DefaultRelease {
+    #[inline(always)]
+    unsafe fn release(this: ::core::ptr::NonNull<T>) {
+        // SAFETY: caller gives up the unit.
+        unsafe { T::release(this) }
+    }
+}
+
 /// Owned handle to a foreign object.
 ///
 /// `T` : `ForeignRef<T>` :: `Path` : `PathBuf` — the borrowed opaque and its
@@ -458,10 +486,19 @@ pub unsafe trait ForeignOwned: Sized {
 ///
 /// Not `Clone` — duplicating an ownership unit is a per-type decision. Not
 /// `Send`/`Sync` — inherited from `NonNull`.
+/// `R` selects the release; it defaults to `T`'s own [`ForeignOwned`] impl, so
+/// `ForeignRef<T>` needs no marker. Name one only for a foreign object with two
+/// ownership disciplines — see [`foreign_release!`].
 #[repr(transparent)]
-pub struct ForeignRef<T: ForeignOwned>(::core::ptr::NonNull<T>);
+pub struct ForeignRef<T, R = DefaultRelease>
+where
+    R: ForeignRelease<T>,
+{
+    ptr: ::core::ptr::NonNull<T>,
+    _r: ::core::marker::PhantomData<R>,
+}
 
-impl<T: ForeignOwned> ForeignRef<T> {
+impl<T, R: ForeignRelease<T>> ForeignRef<T, R> {
     /// Adopt an ownership unit the caller is transferring in.
     ///
     /// # Safety
@@ -469,17 +506,20 @@ impl<T: ForeignOwned> ForeignRef<T> {
     /// handle will give back.
     #[inline(always)]
     pub const unsafe fn adopt(ptr: ::core::ptr::NonNull<T>) -> Self {
-        Self(ptr)
+        Self {
+            ptr,
+            _r: ::core::marker::PhantomData,
+        }
     }
 
     #[inline(always)]
     pub const fn as_ptr(&self) -> *mut T {
-        self.0.as_ptr()
+        self.ptr.as_ptr()
     }
 
     #[inline(always)]
     pub const fn as_non_null(&self) -> ::core::ptr::NonNull<T> {
-        self.0
+        self.ptr
     }
 
     /// Hand the ownership unit to a foreign owner (a callback context, a C++
@@ -488,24 +528,24 @@ impl<T: ForeignOwned> ForeignRef<T> {
     pub fn leak(self) -> ::core::ptr::NonNull<T> {
         // `ManuallyDrop`, not `mem::forget`: `clippy::mem_forget` is denied here,
         // and forgetting a `Drop` type reads as a bug even when it is the point.
-        ::core::mem::ManuallyDrop::new(self).0
+        ::core::mem::ManuallyDrop::new(self).ptr
     }
 }
 
-impl<T: ForeignOwned> ::core::ops::Deref for ForeignRef<T> {
+impl<T, R: ForeignRelease<T>> ::core::ops::Deref for ForeignRef<T, R> {
     type Target = T;
     #[inline(always)]
     fn deref(&self) -> &T {
-        // SAFETY: `self.0` is non-null and live for `self`'s lifetime.
-        unsafe { opaque_deref_nn(self.0.as_ptr()) }
+        // SAFETY: `self.ptr` is non-null and live for `self`'s lifetime.
+        unsafe { opaque_deref_nn(self.ptr.as_ptr()) }
     }
 }
 
-impl<T: ForeignOwned> Drop for ForeignRef<T> {
+impl<T, R: ForeignRelease<T>> Drop for ForeignRef<T, R> {
     #[inline(always)]
     fn drop(&mut self) {
         // SAFETY: we own exactly one unit; `adopt`/`leak` maintain that.
-        unsafe { T::release(self.0) }
+        unsafe { R::release(self.ptr) }
     }
 }
 
@@ -527,6 +567,119 @@ macro_rules! foreign_owned {
             #[inline(always)]
             unsafe fn release(this: ::core::ptr::NonNull<Self>) {
                 $release($crate::opaque_deref(this.as_ptr()))
+            }
+        }
+    };
+}
+
+/// Declare a *second* release discipline for an already-[`ForeignOwned`] type.
+///
+/// `ForeignOwned` admits one release per type. A foreign object with two — a
+/// libarchive `struct archive` freed by `archive_read_free` or
+/// `archive_write_free` depending on how it was opened — names a marker for the
+/// other, and spells the handle `ForeignRef<T, Marker>`.
+///
+/// ```ignore
+/// foreign_release!(pub WriteFree => sys::Archive, archive_write_free_release);
+/// pub struct WriteArchive(bun_opaque::ForeignRef<sys::Archive, WriteFree>);
+/// ```
+#[macro_export]
+macro_rules! foreign_release {
+    ($(#[$m:meta])* $v:vis $marker:ident => $t:ty, $release:path) => {
+        $(#[$m])*
+        $v enum $marker {}
+        // SAFETY: `$release` gives back exactly one ownership unit of `$t`.
+        unsafe impl $crate::ForeignRelease<$t> for $marker {
+            #[inline(always)]
+            unsafe fn release(this: ::core::ptr::NonNull<$t>) {
+                $release($crate::opaque_deref(this.as_ptr()))
+            }
+        }
+    };
+}
+
+/// Emit an owning handle over an [`opaque_ffi!`] ZST: the newtype, its
+/// `ForeignOwned` impl, and the ownership plumbing every handle needs.
+///
+/// Hand-writing `adopt`/`adopt_ptr`/`as_ptr`/`leak`/`raw` per type means a
+/// missing `mem::forget` in one copy is a double-free the other copies do not
+/// reveal. Declare inherent methods in a separate `impl` block as usual.
+///
+/// ```ignore
+/// opaque_ffi! { pub struct FetchHeaders; }   // in `mod sys`
+/// foreign_handle! {
+///     /// Owned handle to a C++ `WebCore::FetchHeaders`.
+///     pub struct FetchHeaders(sys::FetchHeaders) via WebCore__FetchHeaders__deref;
+/// }
+/// ```
+///
+/// For a type with a second discipline, name the marker instead:
+/// ```ignore
+/// foreign_release!(pub WriteFree => sys::Archive, archive_write_free_release);
+/// foreign_handle! { pub struct WriteArchive(sys::Archive) via marker WriteFree; }
+/// ```
+#[macro_export]
+macro_rules! foreign_handle {
+    ($(#[$m:meta])* $v:vis struct $name:ident($sys:ty) via $release:path;) => {
+        $crate::foreign_owned!($sys, $release);
+        $crate::__foreign_handle!($(#[$m])* $v $name, $sys, $crate::ForeignRef<$sys>);
+    };
+    ($(#[$m:meta])* $v:vis struct $name:ident($sys:ty) via marker $marker:ty;) => {
+        $crate::__foreign_handle!($(#[$m])* $v $name, $sys, $crate::ForeignRef<$sys, $marker>);
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __foreign_handle {
+    ($(#[$m:meta])* $v:vis $name:ident, $sys:ty, $inner:ty) => {
+        $(#[$m])*
+        #[repr(transparent)]
+        $v struct $name($inner);
+
+        impl $name {
+            /// Adopt an ownership unit the caller is transferring in.
+            ///
+            /// # Safety
+            /// `ptr` must be live and carry the sole unit; no other handle may
+            /// give it back.
+            #[inline]
+            #[allow(dead_code)]
+            $v unsafe fn adopt(ptr: ::core::ptr::NonNull<$sys>) -> Self {
+                // SAFETY: caller transfers the sole unit.
+                Self(unsafe { <$inner>::adopt(ptr) })
+            }
+
+            /// Adopt a nullable owning pointer; `None` on null.
+            ///
+            /// # Safety
+            /// A non-null `ptr` must satisfy [`Self::adopt`]'s contract.
+            #[inline]
+            #[allow(dead_code)]
+            $v unsafe fn adopt_ptr(ptr: *mut $sys) -> ::core::option::Option<Self> {
+                // SAFETY: caller contract.
+                ::core::ptr::NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
+            }
+
+            /// The foreign pointer, still owned by `self`.
+            #[inline]
+            #[allow(dead_code)]
+            $v fn as_ptr(&self) -> *mut $sys {
+                self.0.as_ptr()
+            }
+
+            /// Hand the unit to a foreign owner. Pairs with a later [`Self::adopt`].
+            #[inline]
+            #[allow(dead_code)]
+            $v fn leak(self) -> ::core::ptr::NonNull<$sys> {
+                self.0.leak()
+            }
+
+            /// Borrow the foreign object. `&$sys` carries no `noalias`.
+            #[inline]
+            #[allow(dead_code)]
+            fn raw(&self) -> &$sys {
+                &self.0
             }
         }
     };

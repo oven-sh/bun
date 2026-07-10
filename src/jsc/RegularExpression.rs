@@ -16,18 +16,17 @@ pub mod sys {
 
 // C++ hands back a `new RegularExpression` (a `+1`); one `RegularExpression`
 // handle owns exactly that allocation, and `deinit` (`delete re`) gives it back.
-bun_opaque::foreign_owned!(sys::RegularExpression, Yarr__RegularExpression__deinit);
-
-/// Owned handle to a C++ `JSC::Yarr::RegularExpression`.
-///
-/// Owns one allocation; `Drop` deletes it. Every method takes `&self`: the ZST is
-/// `UnsafeCell`-backed and C++ advances the match cursor through the same pointer,
-/// so there is no `&mut self` to have.
-///
-/// A handle borrowed from a pointer someone else owns (see [`Self::borrow_leaked`])
-/// is a `ManuallyDrop<RegularExpression>` - dropping it would free their regex.
-#[repr(transparent)]
-pub struct RegularExpression(bun_opaque::ForeignRef<sys::RegularExpression>);
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C++ `JSC::Yarr::RegularExpression`.
+    ///
+    /// Owns one allocation; `Drop` deletes it. Every method takes `&self`: the ZST is
+    /// `UnsafeCell`-backed and C++ advances the match cursor through the same pointer,
+    /// so there is no `&mut self` to have.
+    ///
+    /// A handle borrowed from a pointer someone else owns (see [`Self::borrow_leaked`])
+    /// is a `ManuallyDrop<RegularExpression>` - dropping it would free their regex.
+    pub struct RegularExpression(sys::RegularExpression) via Yarr__RegularExpression__deinit;
+}
 
 #[repr(u16)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -74,25 +73,9 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-/// Ownership plumbing.
+/// Construction and queries. `&self` throughout: C++ mutates the match cursor
+/// through the same pointer.
 impl RegularExpression {
-    /// Adopt an allocation returned by C++.
-    ///
-    /// # Safety
-    /// `ptr` must be a live regex that no other handle will free.
-    #[inline]
-    pub unsafe fn adopt(ptr: NonNull<sys::RegularExpression>) -> Self {
-        // SAFETY: caller transfers the allocation.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// Adopt a nullable allocation; `None` on null.
-    #[inline]
-    fn adopt_ptr(ptr: *mut sys::RegularExpression) -> Option<Self> {
-        // SAFETY: C++ `init` returns a fresh allocation or null.
-        NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
-    }
-
     /// Borrow a regex handed to a foreign owner by [`Self::leak`].
     ///
     /// Takes **no** ownership, hence `ManuallyDrop`: dropping this would free an
@@ -106,33 +89,14 @@ impl RegularExpression {
         ManuallyDrop::new(unsafe { Self::adopt(ptr) })
     }
 
-    /// The C++ pointer, still owned by `self`.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut sys::RegularExpression {
-        self.0.as_ptr()
-    }
-
-    /// Hand our allocation to a foreign owner. Pairs with a later [`Self::adopt`].
-    #[inline]
-    pub fn leak(self) -> NonNull<sys::RegularExpression> {
-        self.0.leak()
-    }
-
-    #[inline]
-    fn raw(&self) -> &sys::RegularExpression {
-        &self.0
-    }
-}
-
-/// Construction and queries. `&self` throughout: C++ mutates the match cursor
-/// through the same pointer.
-impl RegularExpression {
     /// C++ `new`s the regex. On an invalid pattern the handle drops here, so the
     /// allocation is freed before the `Err` reaches the caller.
     #[inline]
     pub fn init(pattern: BunString, flags: Flags) -> Result<Self, RegularExpressionError> {
-        let regex = Self::adopt_ptr(Yarr__RegularExpression__init(pattern, flags as u16))
-            .expect("Yarr__RegularExpression__init returned null");
+        // SAFETY: C++ `init` transfers a fresh `+1` allocation (or null) to us.
+        let regex =
+            unsafe { Self::adopt_ptr(Yarr__RegularExpression__init(pattern, flags as u16)) }
+                .expect("Yarr__RegularExpression__init returned null");
         if !regex.is_valid() {
             return Err(RegularExpressionError::InvalidRegExp);
         }

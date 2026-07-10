@@ -164,55 +164,22 @@ pub mod lib {
 
     // libarchive allocates in `archive_read_new()` and hands back the object.
     // One `Archive` handle owns exactly that one allocation.
-    bun_opaque::foreign_owned!(sys::Archive, archive_free_release);
-
-    /// Owned handle to a libarchive `struct archive` from `archive_read_new()`.
-    ///
-    /// `Drop` gives the allocation back. Every method reached through this handle
-    /// takes `&self`: libarchive mutates the archive through the same pointer, so
-    /// there is no `&mut self` to have and no `DerefMut`.
-    #[repr(transparent)]
-    pub struct Archive(bun_opaque::ForeignRef<sys::Archive>);
+    bun_opaque::foreign_handle! {
+        /// Owned handle to a libarchive `struct archive` from `archive_read_new()`.
+        ///
+        /// `Drop` gives the allocation back. Every method reached through this handle
+        /// takes `&self`: libarchive mutates the archive through the same pointer, so
+        /// there is no `&mut self` to have and no `DerefMut`.
+        pub struct Archive(sys::Archive) via archive_free_release;
+    }
 
     impl Archive {
-        /// Adopt a handle libarchive allocated.
-        ///
-        /// # Safety
-        /// `ptr` must be live and owned by no other handle.
-        #[inline]
-        pub unsafe fn adopt(ptr: core::ptr::NonNull<sys::Archive>) -> Self {
-            // SAFETY: caller transfers ownership.
-            Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-        }
-
-        /// Adopt a nullable handle; `None` on null.
-        #[inline]
-        fn adopt_ptr(ptr: *mut sys::Archive) -> Option<Self> {
-            // SAFETY: `archive_read_new` returns a fresh allocation or null.
-            core::ptr::NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
-        }
-
         /// `archive_read_new()` — libarchive allocates; this handle owns it.
         #[inline]
         pub fn read_new() -> Self {
-            Self::adopt_ptr(sys::Archive::read_new()).expect("archive_read_new returned NULL (OOM)")
-        }
-
-        /// The C pointer, still owned by `self`.
-        #[inline]
-        pub fn as_ptr(&self) -> *mut sys::Archive {
-            self.0.as_ptr()
-        }
-
-        /// Hand the allocation to a foreign owner. Pairs with a later [`Self::adopt`].
-        #[inline]
-        pub fn leak(self) -> core::ptr::NonNull<sys::Archive> {
-            self.0.leak()
-        }
-
-        #[inline]
-        fn raw(&self) -> &sys::Archive {
-            &self.0
+            // SAFETY: `archive_read_new` hands back the sole ownership unit.
+            unsafe { Self::adopt_ptr(sys::Archive::read_new()) }
+                .expect("archive_read_new returned NULL (OOM)")
         }
     }
 
@@ -561,76 +528,65 @@ pub mod lib {
         }
     }
 
-    // The read side is [`Archive`] (a `ForeignRef<sys::Archive>`); the write side
-    // keeps its own owner. Both free routines are the same `archive_free()` vtable
-    // entry — the pairing with `archive_write_new()` is what the type documents.
+    // `sys::Archive` has two ownership disciplines: `archive_read_free`, claimed by
+    // its `ForeignOwned` impl and used by `Archive`, and `archive_write_free`, which
+    // names a marker. Both are the same `archive_free()` vtable entry — the pairing
+    // with `archive_write_new()` is what the type documents.
+    fn archive_write_free_release(a: &sys::Archive) {
+        let _ = archive_write_free(a);
+    }
+    bun_opaque::foreign_release!(pub WriteFree => sys::Archive, archive_write_free_release);
 
-    /// Owns a `*mut sys::Archive` opened with [`sys::Archive::write_new`]; calls
-    /// `archive_write_free` on drop. Derefs to `&sys::Archive`.
-    pub struct WriteArchive(core::ptr::NonNull<sys::Archive>);
+    bun_opaque::foreign_handle! {
+        /// Owns an archive opened with [`sys::Archive::write_new`]; `Drop` calls
+        /// `archive_write_free`. Derefs to `&sys::Archive`.
+        pub struct WriteArchive(sys::Archive) via marker WriteFree;
+    }
     impl WriteArchive {
         #[inline]
         pub fn new() -> Self {
-            Self(
-                core::ptr::NonNull::new(sys::Archive::write_new())
-                    .expect("archive_write_new returned null"),
-            )
-        }
-        #[inline]
-        pub fn as_ptr(&self) -> *mut sys::Archive {
-            self.0.as_ptr()
+            // SAFETY: `archive_write_new` hands back the sole ownership unit.
+            unsafe { Self::adopt_ptr(sys::Archive::write_new()) }
+                .expect("archive_write_new returned null")
         }
     }
     impl core::ops::Deref for WriteArchive {
         type Target = sys::Archive;
         #[inline]
         fn deref(&self) -> &sys::Archive {
-            // SAFETY: handle is live until Drop; libarchive owns the storage.
-            unsafe { self.0.as_ref() }
-        }
-    }
-    impl Drop for WriteArchive {
-        #[inline]
-        fn drop(&mut self) {
-            // SAFETY: handle came from archive_write_new() and is freed exactly once.
-            let _ = archive_write_free(unsafe { self.0.as_ref() });
+            self.raw()
         }
     }
 
-    /// Owns a `*mut Entry` created with [`Entry::new`] / [`Entry::new2`];
-    /// calls `archive_entry_free` on drop. Derefs to `&Entry`.
-    pub struct OwnedEntry(core::ptr::NonNull<Entry>);
+    fn entry_free_release(e: &Entry) {
+        // SAFETY: `e` is live and carries the unit `Drop` is giving back.
+        unsafe { archive_entry_free(e.as_mut_ptr()) };
+    }
+
+    bun_opaque::foreign_handle! {
+        /// Owns an entry created with [`Entry::new`] / [`Entry::new2`]; `Drop` calls
+        /// `archive_entry_free`. Derefs to `&Entry`.
+        pub struct OwnedEntry(Entry) via entry_free_release;
+    }
     impl OwnedEntry {
         #[inline]
         pub fn new() -> Self {
-            Self(core::ptr::NonNull::new(Entry::new()).expect("archive_entry_new returned null"))
+            // SAFETY: `archive_entry_new` hands back the sole ownership unit.
+            unsafe { Self::adopt_ptr(Entry::new()) }.expect("archive_entry_new returned null")
         }
         /// `archive` is a live handle from `read_new()`/`write_new()`.
         #[inline]
         pub fn new2(archive: &Archive) -> Self {
-            Self(
-                core::ptr::NonNull::new(Entry::new2(archive))
-                    .expect("archive_entry_new2 returned null"),
-            )
-        }
-        #[inline]
-        pub fn as_ptr(&self) -> *mut Entry {
-            self.0.as_ptr()
+            // SAFETY: `archive_entry_new2` hands back the sole ownership unit.
+            unsafe { Self::adopt_ptr(Entry::new2(archive)) }
+                .expect("archive_entry_new2 returned null")
         }
     }
     impl core::ops::Deref for OwnedEntry {
         type Target = Entry;
         #[inline]
         fn deref(&self) -> &Entry {
-            // SAFETY: handle is live until Drop; libarchive owns the storage.
-            unsafe { self.0.as_ref() }
-        }
-    }
-    impl Drop for OwnedEntry {
-        #[inline]
-        fn drop(&mut self) {
-            // SAFETY: handle came from archive_entry_new()/new2() and is freed exactly once.
-            unsafe { archive_entry_free(self.0.as_ptr()) };
+            self.raw()
         }
     }
 

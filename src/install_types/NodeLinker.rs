@@ -73,8 +73,6 @@ pub mod npm {
 // (`__bun_regex_*`) defined `#[no_mangle]` in `bun_jsc::regular_expression`.
 // ══════════════════════════════════════════════════════════════════════════
 
-use core::ptr::NonNull;
-
 use bun_alloc::Arena;
 use bun_ast as ast;
 use bun_core::escape_reg_exp::escape_reg_exp_for_package_name_matching;
@@ -94,10 +92,6 @@ pub mod sys {
     }
 }
 
-// `__bun_regex_compile` allocates and hands back the sole owning pointer. One
-// `RegularExpression` handle owns exactly that allocation.
-bun_opaque::foreign_owned!(sys::RegularExpression, __bun_regex_drop);
-
 // LAYERING: the bodies live `#[no_mangle]` in the higher-tier
 // `bun_jsc::regular_expression`; declared `extern "Rust"`, resolved at link time.
 // `&sys::RegularExpression` is ABI-identical to the pointer they take.
@@ -111,51 +105,15 @@ unsafe extern "Rust" {
     safe fn __bun_regex_drop(regex: &sys::RegularExpression);
 }
 
-/// Owned handle to a JSC `Yarr::RegularExpression`.
-///
-/// Holds the one ownership unit `__bun_regex_compile` produced; `Drop` gives it
-/// back. [`Self::matches`] takes `&self`: Yarr mutates its match state through
-/// the same pointer, so there is no `&mut self` to have.
-#[repr(transparent)]
-pub struct RegularExpression(bun_opaque::ForeignRef<sys::RegularExpression>);
-
-/// Ownership plumbing.
-impl RegularExpression {
-    /// Adopt the allocation returned by `__bun_regex_compile`.
+// `__bun_regex_compile` allocates and hands back the sole owning pointer. One
+// `RegularExpression` handle owns exactly that allocation.
+bun_opaque::foreign_handle! {
+    /// Owned handle to a JSC `Yarr::RegularExpression`.
     ///
-    /// # Safety
-    /// `ptr` must be live and carry the sole ownership unit, which no other
-    /// handle will give back.
-    #[inline]
-    pub unsafe fn adopt(ptr: NonNull<sys::RegularExpression>) -> Self {
-        // SAFETY: caller transfers ownership.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// Adopt a nullable owning pointer; `None` on null.
-    #[inline]
-    fn adopt_ptr(ptr: *mut sys::RegularExpression) -> Option<Self> {
-        // SAFETY: `__bun_regex_compile` returns a fresh allocation or null; it
-        // already freed the handle on the invalid-pattern path.
-        NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
-    }
-
-    /// The JSC pointer, still owned by `self`.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut sys::RegularExpression {
-        self.0.as_ptr()
-    }
-
-    /// Hand our allocation to a foreign owner. Pairs with a later [`Self::adopt`].
-    #[inline]
-    pub fn leak(self) -> NonNull<sys::RegularExpression> {
-        self.0.leak()
-    }
-
-    #[inline]
-    fn raw(&self) -> &sys::RegularExpression {
-        &self.0
-    }
+    /// Holds the one ownership unit `__bun_regex_compile` produced; `Drop` gives it
+    /// back. [`Self::matches`] takes `&self`: Yarr mutates its match state through
+    /// the same pointer, so there is no `&mut self` to have.
+    pub struct RegularExpression(sys::RegularExpression) via __bun_regex_drop;
 }
 
 /// Matching. `&self`: Yarr mutates through the same pointer.
@@ -172,7 +130,10 @@ impl RegularExpression {
 /// §extern-Rust-ban).
 #[inline]
 pub(crate) fn compile_regex(pattern: BunString) -> Option<RegularExpression> {
-    RegularExpression::adopt_ptr(__bun_regex_compile(pattern))
+    // SAFETY: `__bun_regex_compile` leaks a fresh `+1` to us, or returns null on an
+    // invalid pattern — having already freed the regex it allocated, so there is
+    // nothing for us to adopt.
+    unsafe { RegularExpression::adopt_ptr(__bun_regex_compile(pattern)) }
 }
 
 pub struct PnpmMatcher {

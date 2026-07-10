@@ -211,28 +211,21 @@ fn free_dstream(zds: &sys::ZSTD_DStream) {
     let _ = c::ZSTD_freeDStream(zds);
 }
 
-bun_opaque::foreign_owned!(sys::ZSTD_DStream, free_dstream);
-
-/// Owned handle to a C `ZSTD_DStream` (`== ZSTD_DCtx`).
-///
-/// `Drop` frees the context. Every method takes `&self`: zstd mutates the
-/// context through the same pointer on every call, so there is no `&mut self`
-/// to have, and freeing is not exclusive access either.
-#[repr(transparent)]
-#[allow(non_camel_case_types)]
-pub struct ZSTD_DStream(bun_opaque::ForeignRef<sys::ZSTD_DStream>);
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C `ZSTD_DStream` (`== ZSTD_DCtx`).
+    ///
+    /// `Drop` frees the context. Every method takes `&self`: zstd mutates the
+    /// context through the same pointer on every call, so there is no `&mut self`
+    /// to have, and freeing is not exclusive access either.
+    #[allow(non_camel_case_types)]
+    pub struct ZSTD_DStream(sys::ZSTD_DStream) via free_dstream;
+}
 
 impl ZSTD_DStream {
-    /// Adopt a fresh context from `ZSTD_createDStream()`; `None` on null.
-    #[inline]
-    fn adopt_ptr(ptr: *mut sys::ZSTD_DStream) -> Option<Self> {
-        // SAFETY: `ZSTD_createDStream` returns a solely-owned context or null.
-        core::ptr::NonNull::new(ptr).map(|p| Self(unsafe { bun_opaque::ForeignRef::adopt(p) }))
-    }
-
     /// `ZSTD_createDStream()` + `ZSTD_initDStream()`.
     pub fn create() -> core::result::Result<Self, ZstdError> {
-        let zds = Self::adopt_ptr(c::ZSTD_createDStream())
+        // SAFETY: `ZSTD_createDStream` transfers the sole ownership unit, or null.
+        let zds = unsafe { Self::adopt_ptr(c::ZSTD_createDStream()) }
             .ok_or(ZstdError::ZstdFailedToCreateInstance)?;
         zds.init();
         Ok(zds)
@@ -257,11 +250,6 @@ impl ZSTD_DStream {
     ) -> usize {
         // SAFETY: caller contract; both buffer structs are live `&mut`s.
         unsafe { c::ZSTD_decompressStream(self.raw(), &raw mut *output, &raw mut *input) }
-    }
-
-    #[inline]
-    fn raw(&self) -> &sys::ZSTD_DStream {
-        &self.0
     }
 }
 

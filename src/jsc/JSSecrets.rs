@@ -1,5 +1,3 @@
-use core::ptr::NonNull;
-
 use crate::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject, JSValue, JsResult, Strong};
 
 /// The C++ object itself. Only the extern declarations below name this type;
@@ -16,16 +14,15 @@ pub mod sys {
 // C++ `SecretsJobOptions::fromJS` does a plain `new`, handing Rust the sole
 // ownership unit. `deinit` is the matching `delete`; the dtor memsets the
 // service/name/password buffers, so dropping is load-bearing, not just free.
-bun_opaque::foreign_owned!(sys::SecretsJobOptions, Bun__SecretsJobOptions__deinit);
-
-/// Owned handle to a C++ `SecretsJobOptions`.
-///
-/// Holds one heap allocation; `Drop` runs the C++ `delete`, which zeroes the
-/// secret buffers. Every method takes `&self`: the ZST is `UnsafeCell`-backed,
-/// so C++ mutates the job's result fields through `&` and there is no `&mut`
-/// exclusivity to claim — the work pool and the C++ side share the object.
-#[repr(transparent)]
-pub struct SecretsJobOptions(bun_opaque::ForeignRef<sys::SecretsJobOptions>);
+bun_opaque::foreign_handle! {
+    /// Owned handle to a C++ `SecretsJobOptions`.
+    ///
+    /// Holds one heap allocation; `Drop` runs the C++ `delete`, which zeroes the
+    /// secret buffers. Every method takes `&self`: the ZST is `UnsafeCell`-backed,
+    /// so C++ mutates the job's result fields through `&` and there is no `&mut`
+    /// exclusivity to claim — the work pool and the C++ side share the object.
+    pub struct SecretsJobOptions(sys::SecretsJobOptions) via Bun__SecretsJobOptions__deinit;
+}
 
 // safe fn: `sys::SecretsJobOptions` and `JSGlobalObject` are `opaque_ffi!` ZST
 // handles (`!Freeze` via `UnsafeCell`), so `&T` is ABI-identical to a non-null
@@ -41,47 +38,6 @@ unsafe extern "C" {
     // is `&`. Reachable only via `ForeignRef`'s `Drop`, which owns the one unit
     // it gives back — that pairing is the double-free proof.
     safe fn Bun__SecretsJobOptions__deinit(opts: &sys::SecretsJobOptions);
-}
-
-/// Ownership plumbing.
-impl SecretsJobOptions {
-    /// Adopt the allocation returned by C++ `new SecretsJobOptions`.
-    ///
-    /// # Safety
-    /// `ptr` must be live and carry the sole ownership unit — no other handle
-    /// may `delete` it.
-    #[inline]
-    pub unsafe fn adopt(ptr: NonNull<sys::SecretsJobOptions>) -> Self {
-        // SAFETY: caller transfers the sole unit.
-        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
-    }
-
-    /// Adopt a nullable owning pointer; `None` on null.
-    ///
-    /// # Safety
-    /// A non-null `ptr` must satisfy [`Self::adopt`]'s contract.
-    #[inline]
-    unsafe fn adopt_ptr(ptr: *mut sys::SecretsJobOptions) -> Option<Self> {
-        // SAFETY: caller contract.
-        NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
-    }
-
-    /// The C++ pointer, still owned by `self`.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut sys::SecretsJobOptions {
-        self.0.as_ptr()
-    }
-
-    /// Hand the allocation to a foreign owner. Pairs with a later [`Self::adopt`].
-    #[inline]
-    pub fn leak(self) -> NonNull<sys::SecretsJobOptions> {
-        self.0.leak()
-    }
-
-    #[inline]
-    fn raw(&self) -> &sys::SecretsJobOptions {
-        &self.0
-    }
 }
 
 /// Job body. `&self` throughout: C++ writes the result fields through the same

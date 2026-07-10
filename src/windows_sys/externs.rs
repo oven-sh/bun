@@ -405,7 +405,6 @@ impl FILE_INFORMATION_CLASS {
     pub const FileDispositionInformationEx: Self = Self(64);
 }
 
-
 /// `FILE_END_OF_FILE_INFORMATION` (`ntifs.h`) — payload for
 /// `NtSetInformationFile(.., FileEndOfFileInformation)`.
 #[repr(C)]

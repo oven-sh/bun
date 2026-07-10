@@ -216,7 +216,6 @@ pub const fn from_sys_time(nt_time: i64) -> i128 {
     (nt_time as i128 - EPOCH_DIFFERENCE_100NS as i128) * 100
 }
 
-
 pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
 
 pub const NT_OBJECT_PREFIX: [u16; 4] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16];

@@ -223,9 +223,9 @@ JSPromise* transformStreamDefaultSinkWriteAlgorithm(JSGlobalObject* globalObject
         auto* backpressureChangePromise = stream->m_backpressureChangePromise.get();
         ASSERT(backpressureChangePromise);
         auto* result = JSPromise::create(vm, globalObject->promiseStructure());
-        auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), stream, chunk);
+        stream->m_pendingWriteChunk.set(vm, stream, chunk);
         auto* runtime = JSStreamsRuntime::from(globalObject);
-        backpressureChangePromise->performPromiseThenWithContext(vm, globalObject, runtime->onTSSinkWriteBackpressureChangeFulfilled(), jsUndefined(), result, context);
+        backpressureChangePromise->performPromiseThenWithContext(vm, globalObject, runtime->onTSSinkWriteBackpressureChangeFulfilled(), jsUndefined(), result, stream);
         return result;
     }
     RELEASE_AND_RETURN(scope, transformStreamDefaultControllerPerformTransform(globalObject, controller, chunk));
@@ -312,9 +312,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkWriteBackpressureChangeFulf
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1));
-    const auto* stream = uncheckedDowncast<JSTransformStream>(context->getInternalField(0));
-    JSValue chunk = context->getInternalField(1);
+    auto* stream = uncheckedDowncast<JSTransformStream>(callFrame->argument(1));
+    JSValue chunk = stream->m_pendingWriteChunk.get();
+    stream->m_pendingWriteChunk.clear();
 
     const auto* writable = stream->m_writable.get();
     if (writable->m_state == WritableStreamState::Erroring) {

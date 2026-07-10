@@ -11,6 +11,7 @@
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use crate::api::socket::{TCPSocket, TLSSocket};
@@ -1228,7 +1229,13 @@ thread_local! {
     // Reused iovec scratch for the vectored flush.
     static BATCH_IOVECS: RefCell<Vec<bun_uws_sys::UsIoVec>> = const { RefCell::new(Vec::new()) };
     static CORKED_H2: Cell<Option<*mut H2FrameParser>> = const { Cell::new(None) };
-    static POOL: RefCell<Option<Box<H2FrameParserHiveAllocator>>> = const { RefCell::new(None) };
+    // `ManuallyDrop` inside the `Box`: the TLS destructor runs after
+    // `WebWorker::destroy` has raw-deallocated the VM, so `HiveArray::Drop`
+    // on any leaked parser would touch freed JSC/uws state. Skip slot
+    // teardown (a leaked parser is a bug anyway) while still freeing the
+    // pool allocation itself.
+    static POOL: RefCell<Option<Box<ManuallyDrop<H2FrameParserHiveAllocator>>>> =
+        const { RefCell::new(None) };
     static SHARED_REQUEST_BUFFER: RefCell<Box<[u8; 16384]>> = RefCell::new(Box::new([0u8; 16384]));
 }
 
@@ -9255,8 +9262,16 @@ impl H2FrameParser {
                 let pool = pool.get_or_insert_with(|| {
                     // SAFETY: `new_boxed` returns a `Box::leak`ed, fully
                     // initialized allocation; `from_raw` reclaims that exact
-                    // pointer back into an owning `Box`.
-                    unsafe { Box::from_raw(H2FrameParserHiveAllocator::new_boxed().as_ptr()) }
+                    // pointer back into an owning `Box`. `ManuallyDrop<T>` is
+                    // `repr(transparent)` over `T`, so the pointer cast is a
+                    // layout no-op.
+                    unsafe {
+                        Box::from_raw(
+                            H2FrameParserHiveAllocator::new_boxed()
+                                .as_ptr()
+                                .cast::<ManuallyDrop<H2FrameParserHiveAllocator>>(),
+                        )
+                    }
                 });
                 pool.get_init(init).as_ptr()
             })

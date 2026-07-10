@@ -134,8 +134,8 @@ class JSDirectStreamController;
     V(onWSSinkWriteRejected)
 
 // owner: TransformStreamOperations.cpp. context = the JSTransformStream, EXCEPT
-// onTSSinkWriteBackpressureChangeFulfilled, whose context is an
-// InternalFieldTuple{transformStream, chunk}.
+// onTSSinkAbortCancel{Fulfilled,Rejected} and onTSSourceCancel{Fulfilled,Rejected},
+// whose context is an InternalFieldTuple{transformStream, reason}.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_OPERATIONS(V) \
     V(onTSSinkWriteBackpressureChangeFulfilled)                \
     V(onTSSinkAbortCancelFulfilled)                            \
@@ -165,10 +165,12 @@ class JSDirectStreamController;
     V(onNativePullRejected)                                 \
     V(onNativeSourceCallCloseMicrotask)                     \
     V(onReadStreamIntoSinkReadManyFulfilled)                \
-    V(onReadStreamIntoSinkReadFulfilled)                    \
+    V(onReadStreamIntoSinkChunk)                            \
+    V(onReadStreamIntoSinkClose)                            \
     V(onReadStreamIntoSinkFlushFulfilled)                   \
     V(onReadStreamIntoSinkRejected)                         \
-    V(onResumableSinkReadFulfilled)                         \
+    V(onResumableSinkChunk)                                 \
+    V(onResumableSinkClose)                                 \
     V(onResumableSinkReadRejected)                          \
     V(onResumableSinkEndMicrotask)
 

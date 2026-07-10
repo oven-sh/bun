@@ -288,6 +288,10 @@ pub struct NewSocket<const SSL: bool> {
     // a uws ext slot (FFI) and is intrusively refcounted — PORTING.md mandates
     // IntrusiveRc, never Rc, when *T crosses FFI.
     pub twin: JsCell<Option<IntrusiveRc<Self>>>,
+    /// Owned copy of the handshake verify error, so `getAuthorizationError()`
+    /// keeps its verdict after detach (the live error borrows the `SSL`, and
+    /// EPROTO reasons are stack-copied in uSockets).
+    pub verify_error: JsCell<Option<StoredVerifyError>>,
 }
 
 /// Associated `Socket` handler type.
@@ -1346,6 +1350,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
+    /// TLS role: `upgradeTLS({ isServer: true })` sockets act as the server
+    /// even though their `Handlers` mode is `Client`.
+    pub fn acts_as_tls_server(&self) -> bool {
+        self.is_server() || self.flags.get().contains(Flags::TLS_SERVER_ROLE)
+    }
+
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`:
     /// `resolve_promise`/`callback.call` re-enter JS which can mutate this
     /// socket via `m_ptr`.
@@ -1635,6 +1645,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(());
         }
+        // Keep the socket alive across the callbacks below (which re-enter JS)
+        // and across `reject_unauthorized_connection`, whose close may
+        // otherwise drop the last reference.
+        let _keepalive = this.ref_guard();
         let handlers = this.get_handlers();
         log!(
             "onHandshake {} ({})",
@@ -1648,8 +1662,9 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let mut authorized = success == 1;
         let mut hostname_mismatch = false;
+        let mut hostname_mismatch_message: Option<Box<[u8]>> = None;
 
-        if SSL && authorized && !handlers.mode.is_server() {
+        if SSL && authorized && !this.acts_as_tls_server() {
             if let Some(ssl_ptr) = this.socket.get().ssl() {
                 let hostname: &[u8] = if let Some(server_name) = this.server_name.get() {
                     &server_name[..]
@@ -1668,19 +1683,64 @@ impl<const SSL: bool> NewSocket<SSL> {
                 {
                     authorized = false;
                     hostname_mismatch = true;
+                    let mut message =
+                        String::from("Hostname/IP does not match certificate's altnames: ");
+                    // Infallible: the writer is a `String`.
+                    let _ = bun_boringssl::write_server_identity_mismatch_reason(
+                        boringssl_sys::SSL::opaque_mut(ssl_ptr),
+                        hostname,
+                        &mut message,
+                    );
+                    hostname_mismatch_message = Some(message.into_bytes().into_boxed_slice());
                 }
             }
         }
 
-        this.update_flags(|f| {
-            f.set(Flags::AUTHORIZED, authorized);
-            f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
+        let verify_failed = SSL && ssl_error.error_no != 0;
+
+        this.verify_error.set(if verify_failed {
+            Some(StoredVerifyError {
+                code: Box::from(ssl_error.code_bytes()),
+                reason: Box::from(ssl_error.reason_bytes()),
+            })
+        } else {
+            hostname_mismatch_message.map(|message| StoredVerifyError {
+                code: Box::from(&b"ERR_TLS_CERT_ALTNAME_INVALID"[..]),
+                reason: message,
+            })
         });
+
+        // node:tls sockets defer the hostname verdict: their JS layer applies
+        // `checkServerIdentity` (default or user override) itself.
+        let flags = this.flags.get();
+        let reject_unauthorized = success == 1
+            && flags.contains(Flags::REJECT_UNAUTHORIZED)
+            && (verify_failed
+                || (hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)));
+
+        // `REJECTED` is set before the callback runs so no write path can
+        // deliver application data to a peer that is about to be rejected —
+        // including the raw twin of an `upgradeTLS` pair, which shares the fd.
+        this.update_flags(|f| {
+            f.set(Flags::AUTHORIZED, authorized && !verify_failed);
+            f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
+            f.set(Flags::REJECTED, reject_unauthorized);
+        });
+        if reject_unauthorized {
+            if let Some(twin) = this.twin.get().as_ref() {
+                twin.update_flags(|f| f.insert(Flags::REJECTED));
+            }
+        }
 
         let mut callback = handlers.on_handshake();
         let mut is_open = false;
 
         if handlers.vm.is_shutting_down() {
+            // `on_close` skips its JS dispatch during shutdown, so the native
+            // close is still safe here.
+            if reject_unauthorized {
+                this.reject_unauthorized_connection();
+            }
             return Ok(());
         }
 
@@ -1688,6 +1748,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callback.is_empty() {
             callback = handlers.on_open();
             if callback.is_empty() {
+                if reject_unauthorized {
+                    this.reject_unauthorized_connection();
+                }
                 return Ok(());
             }
             is_open = true;
@@ -1719,7 +1782,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             // call handhsake callback with authorized and authorization error if has one
             let authorization_error: JSValue = if ssl_error.error_no == 0 {
-                JSValue::NULL
+                // node:tls (DEFERS) builds its own identity error in JS.
+                if hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY) {
+                    this.stored_verify_error_to_js(&global)
+                        .unwrap_or(JSValue::NULL)
+                } else {
+                    JSValue::NULL
+                }
             } else {
                 match super::uws_jsc::verify_error_to_js(&ssl_error, &global) {
                     Ok(v) => v,
@@ -1727,6 +1796,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                         // `Scope` has no Drop — balance event_loop().enter() and
                         // active_connections before propagating.
                         this.exit_scope(scope);
+                        if reject_unauthorized {
+                            // Take the pending exception before `on_close` re-enters JS.
+                            let pending = global.take_exception(e);
+                            this.reject_unauthorized_connection();
+                            return Err(global.throw_value(pending));
+                        }
                         return Err(e);
                     }
                 }
@@ -1746,7 +1821,35 @@ impl<const SSL: bool> NewSocket<SSL> {
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         }
         this.exit_scope(scope);
+        if reject_unauthorized {
+            this.reject_unauthorized_connection();
+        }
         Ok(())
+    }
+
+    /// Stamps the resolved client `rejectUnauthorized` policy on a fresh or
+    /// reused (reconnect) wrapper, clearing any previous handshake verdict.
+    pub(crate) fn reset_client_tls_flags(&self, reject_unauthorized: bool) {
+        self.verify_error.set(None);
+        self.update_flags(|f| {
+            f.remove(
+                Flags::HANDSHAKE_COMPLETE
+                    | Flags::AUTHORIZED
+                    | Flags::HOSTNAME_MISMATCH
+                    | Flags::REJECTED,
+            );
+            f.set(Flags::REJECT_UNAUTHORIZED, reject_unauthorized);
+        });
+    }
+
+    /// Callers hold `on_handshake`'s ref guard, which outlives the
+    /// synchronous `on_close` dispatch of this close.
+    fn reject_unauthorized_connection(&self) {
+        let socket = self.socket.get();
+        if socket.is_detached() || socket.is_closed() {
+            return;
+        }
+        self.close_and_detach(uws::CloseCode::FastShutdown);
     }
 
     /// A new resumable TLS session arrived (the peer's NewSessionTicket was
@@ -2086,6 +2189,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(JSValue::UNDEFINED)
     }
 
+    fn stored_verify_error_to_js(&self, global: &JSGlobalObject) -> Option<JSValue> {
+        self.verify_error.get().as_ref().map(|stored| {
+            let err = SystemError {
+                errno: 0,
+                code: BunString::clone_utf8(&stored.code),
+                message: BunString::clone_utf8(&stored.reason),
+                path: BunString::EMPTY,
+                syscall: BunString::EMPTY,
+                hostname: BunString::EMPTY,
+                fd: c_int::MIN,
+                dest: BunString::EMPTY,
+            };
+            err.to_error_instance(global)
+        })
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn get_authorization_error(
         this: &Self,
@@ -2095,27 +2214,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
 
         if this.socket.get().is_detached() {
-            return Ok(JSValue::NULL);
+            // The verdict must survive the forced close.
+            return Ok(this
+                .stored_verify_error_to_js(global)
+                .unwrap_or(JSValue::NULL));
         }
 
         // this error can change if called in different stages of hanshake
         // is very usefull to have this feature depending on the user workflow
         let ssl_error = this.socket.get().get_verify_error();
         if ssl_error.error_no == 0 {
-            if this.flags.get().contains(Flags::HOSTNAME_MISMATCH) {
-                let mismatch = SystemError {
-                    errno: 0,
-                    code: BunString::clone_utf8(b"HOSTNAME_MISMATCH"),
-                    message: BunString::clone_utf8(b"Hostname mismatch"),
-                    path: BunString::EMPTY,
-                    syscall: BunString::EMPTY,
-                    hostname: BunString::EMPTY,
-                    fd: c_int::MIN,
-                    dest: BunString::EMPTY,
-                };
-                return Ok(mismatch.to_error_instance(global));
-            }
-            return Ok(JSValue::NULL);
+            return Ok(this
+                .stored_verify_error_to_js(global)
+                .unwrap_or(JSValue::NULL));
         }
 
         let code: &[u8] = ssl_error.code_bytes();
@@ -2288,6 +2399,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if socket.is_shutdown() || socket.is_closed() {
             return -1;
         }
+        if SSL && self.flags.get().contains(Flags::REJECTED) {
+            return -1;
+        }
         let res = socket.raw_writev(iov);
         let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
         self.bytes_written
@@ -2300,12 +2414,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         if socket.is_shutdown() || socket.is_closed() {
             return -1;
         }
+        let flags = self.flags.get();
+        if SSL && flags.contains(Flags::REJECTED) {
+            return -1;
+        }
 
         // The raw [raw, tls] upgrade twin shares the TLS half's us_socket_t
         // (`s->ssl` is set) but must write raw bytes: write_check_error would
         // route it through the SSL-encrypting us_socket_write, and its fatal
         // signal is never set for TLS sockets anyway.
-        if self.flags.get().contains(Flags::BYPASS_TLS) {
+        if flags.contains(Flags::BYPASS_TLS) {
             let res = self.do_socket_write(buffer);
             let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
             self.bytes_written
@@ -2797,6 +2915,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// the contract can be re-landed once the Windows fatal-write detection
     /// is verified.
     fn internal_flush(&self) -> bool {
+        if SSL && self.flags.get().contains(Flags::REJECTED) {
+            return true;
+        }
         // R-2: every mutated field is `Cell`/`JsCell`, so `&self` carries no
         // `noalias` for them and the previous `black_box` launder (which
         // mitigated ASM-verified PROVEN_CACHED stale loads of
@@ -3164,7 +3285,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
+        let args = callframe.arguments_old::<1>();
+        if args.len < 1 {
+            return Err(global.throw(format_args!("Expected 1 arguments")));
+        }
+        Self::upgrade_tls_impl(this, global, args.ptr[0], false)
+    }
 
+    /// `defers_server_identity`: node:tls owns hostname policy in its JS layer
+    /// (`checkServerIdentity`), so its internal entry point sets it; the public
+    /// `upgradeTLS` never does.
+    pub(crate) fn upgrade_tls_impl(
+        this: &Self,
+        global: &JSGlobalObject,
+        opts: JSValue,
+        defers_server_identity: bool,
+    ) -> JsResult<JSValue> {
         if SSL {
             return Ok(JSValue::UNDEFINED);
         }
@@ -3178,11 +3314,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 "upgradeTLS requires an established socket"
             )));
         };
-        let args = callframe.arguments_old::<1>();
-        if args.len < 1 {
-            return Err(global.throw(format_args!("Expected 1 arguments")));
-        }
-        let opts = args.ptr[0];
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw(format_args!("Expected options object")));
         }
@@ -3282,7 +3413,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     tls_js,
                 )?;
             } else if tls_js.to_boolean() {
-                ssl_opts = Some(SSLConfig::default());
+                ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm));
             }
             let cfg = ssl_opts
                 .as_mut()
@@ -3334,22 +3465,26 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let vm = handlers.vm;
 
-        // The +1 `SSL_CTX` ref transfers into `tls.owned_ssl_ctx` below.
-        let owned_ctx_taken = owned_ctx.map(|c| c.into_raw());
-
         let cfg = ssl_opts.as_ref();
+        let reject_unauthorized =
+            upgrade_reject_policy(vm, cfg, is_server, owned_ctx.as_ref().map(|c| c.as_ptr()));
+        let mut initial_flags = Flags::initial(reject_unauthorized);
+        initial_flags.set(Flags::DEFERS_SERVER_IDENTITY, defers_server_identity);
+        initial_flags.set(Flags::TLS_SERVER_ROLE, is_server);
         let tls: bun_ptr::ThisPtr<TLSSocket> = TLSSocket::new(TLSSocket {
             ref_count: bun_ptr::RefCount::init(),
             handlers: JsCell::new(Some(handlers)),
             socket: Cell::new(SocketHandler::<true>::DETACHED),
-            owned_ssl_ctx: Cell::new(owned_ctx_taken),
+            // Ownership of the +1 `SSL_CTX` ref transfers here; the
+            // `OwnedSslCtx` guard stays armed until this point.
+            owned_ssl_ctx: Cell::new(owned_ctx.map(|c| c.into_raw())),
             connection: JsCell::new(this.connection.get().clone()),
             local_binding: JsCell::new(None),
             protos: JsCell::new(cfg.and_then(|c| c.protos_bytes().map(Box::<[u8]>::from))),
             server_name: JsCell::new(
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
-            flags: Cell::new(this.flags.get() & Flags::IS_PIPE),
+            flags: Cell::new(initial_flags | (this.flags.get() & Flags::IS_PIPE)),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3357,6 +3492,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
+            verify_error: JsCell::new(None),
         });
         // Never shadow this with a long-lived borrow: it would alias the
         // reference dispatch materialises from the ext slot during
@@ -3463,6 +3599,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
+            verify_error: JsCell::new(None),
         });
         let raw_ref = raw;
         raw_ref.ref_();
@@ -3834,6 +3971,11 @@ enum WriteResult {
     Success { wrote: i32, total: usize },
 }
 
+pub struct StoredVerifyError {
+    pub code: Box<[u8]>,
+    pub reason: Box<[u8]>,
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Flags
 // ──────────────────────────────────────────────────────────────────────────
@@ -3855,12 +3997,57 @@ bitflags::bitflags! {
         /// `us_socket_raw_write` (bypassing the SSL layer) so node:net can pipe
         /// pre-handshake bytes / read the underlying TCP stream.
         const BYPASS_TLS           = 1 << 9;
+        /// The peer failed verification under an enforcing policy: the socket
+        /// refuses writes and is closed right after the handshake callback.
+        const REJECTED             = 1 << 10;
+        const HOSTNAME_MISMATCH    = 1 << 11;
+        const REJECT_UNAUTHORIZED  = 1 << 12;
+        /// Set only by the node:net / node:tls socket constructors: their JS
+        /// layer owns server-identity policy (`checkServerIdentity`), so a
+        /// hostname mismatch alone is reported but never enforced natively.
+        const DEFERS_SERVER_IDENTITY = 1 << 13;
+        /// `upgradeTLS({ isServer: true })`: the socket acts as the TLS server
+        /// even though its `Handlers` mode is `Client` (no listener), so the
+        /// client-only server-identity check must not run against its peer.
+        const TLS_SERVER_ROLE      = 1 << 14;
         /// AF_UNIX / Windows named-pipe socket. `set_active_flag` routes these
         /// to the `pipes` counter so `getActiveResourcesInfo()` reports
         /// "PipeWrap" like Node instead of lumping them under TCPSocketWrap.
-        const IS_PIPE              = 1 << 10;
-        const HOSTNAME_MISMATCH    = 1 << 11;
+        const IS_PIPE              = 1 << 15;
     }
+}
+
+impl Flags {
+    fn initial(reject_unauthorized: bool) -> Flags {
+        let mut flags = Flags::default();
+        flags.set(Flags::REJECT_UNAUTHORIZED, reject_unauthorized);
+        flags
+    }
+}
+
+/// Reject policy for an `upgradeTLS`/duplex socket: a parsed config wins.
+fn upgrade_reject_policy(
+    vm: &VirtualMachine,
+    cfg: Option<&SSLConfig>,
+    is_server: bool,
+    ctx: Option<*mut SSL_CTX>,
+) -> bool {
+    if cfg.is_none() && is_server {
+        server_ctx_rejects_unauthorized(ctx)
+    } else {
+        crate::socket::resolve_reject_unauthorized(vm, cfg, is_server)
+    }
+}
+
+/// A bare server-side `secureContext` carries no parsed config, so the policy
+/// comes from the ctx itself: `us_ssl_ctx_from_options` sets
+/// `FAIL_IF_NO_PEER_CERT` iff the context was created with `rejectUnauthorized`.
+fn server_ctx_rejects_unauthorized(ctx: Option<*mut SSL_CTX>) -> bool {
+    let Some(ctx) = ctx else { return false };
+    const MODE: c_int =
+        boringssl_sys::SSL_VERIFY_PEER | boringssl_sys::SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
+    // SAFETY: `ctx` is the +1 `SSL_CTX` ref held for this socket; read-only.
+    unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & MODE == MODE }
 }
 
 impl Default for Flags {
@@ -4181,6 +4368,24 @@ impl DuplexUpgradeContext {
 // Free-standing host functions
 // ──────────────────────────────────────────────────────────────────────────
 
+/// node:tls's `tls.connect({ socket })` entry point: same upgrade as the
+/// public `upgradeTLS`, but hostname policy stays with node's JS layer.
+#[bun_jsc::host_fn]
+pub fn js_upgrade_tls_deferred(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+    let [socket, opts] = callframe.arguments_as_array::<2>();
+    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+        return NewSocket::<false>::upgrade_tls_impl(this, global, opts, true);
+    }
+    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+        return NewSocket::<true>::upgrade_tls_impl(this, global, opts, true);
+    }
+    Err(global.throw(format_args!("Expected a socket instance")))
+}
+
 #[bun_jsc::host_fn]
 pub fn js_upgrade_duplex_to_tls(
     global: &JSGlobalObject,
@@ -4265,9 +4470,9 @@ pub fn js_upgrade_duplex_to_tls(
     // Drop frees ssl_opts on error.
     if let Some(tls) = opts.get_truthy(global, "tls")? {
         if !tls.is_boolean() {
-            ssl_opts = SSLConfig::from_js(VirtualMachine::get().as_mut(), global, tls)?;
+            ssl_opts = SSLConfig::from_js(handlers.vm, global, tls)?;
         } else if tls.to_boolean() {
-            ssl_opts = Some(SSLConfig::default());
+            ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm));
         }
     }
     if owned_ctx.is_none() && ssl_opts.is_none() {
@@ -4281,6 +4486,21 @@ pub fn js_upgrade_duplex_to_tls(
         default_data.ensure_still_alive();
     }
 
+    let reject_unauthorized = upgrade_reject_policy(
+        handlers.vm,
+        socket_config,
+        is_server,
+        owned_ctx.as_ref().map(|c| c.as_ptr()),
+    );
+    // Client duplex upgrades come from net.ts, whose JS layer owns
+    // server-identity policy; http2's server upgrade also lands here, where
+    // the deferral is meaningless.
+    let initial_flags = Flags::initial(reject_unauthorized)
+        | if is_server {
+            Flags::empty()
+        } else {
+            Flags::DEFERS_SERVER_IDENTITY
+        };
     let tls = TLSSocket::new(TLSSocket {
         ref_count: bun_ptr::RefCount::init(),
         handlers: JsCell::new(Some(handlers)),
@@ -4294,7 +4514,7 @@ pub fn js_upgrade_duplex_to_tls(
         server_name: JsCell::new(
             socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         ),
-        flags: Cell::new(Flags::default()),
+        flags: Cell::new(initial_flags),
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),
         ref_pollref_on_connect: Cell::new(true),
@@ -4302,6 +4522,7 @@ pub fn js_upgrade_duplex_to_tls(
         bytes_written: Cell::new(0),
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
+        verify_error: JsCell::new(None),
     });
     let tls_ref = tls;
     let tls_js_value = tls_ref.get_this_value(global);

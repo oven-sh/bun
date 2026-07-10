@@ -1164,12 +1164,6 @@ mod _async_tasks {
             Ok(crate::node::types::FdJsc::to_js(*self, global))
         }
     }
-    impl FsReturn for ZigString {
-        #[inline]
-        fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(bun_jsc::ZigStringJsc::to_js(self, global))
-        }
-    }
     impl FsReturn for StringOrBuffer {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -4623,7 +4617,7 @@ pub mod ret {
     pub type Link = ();
     pub type Lstat = StatOrNotFound;
     pub type Mkdir = StringOrUndefined;
-    pub type Mkdtemp = ZigString;
+    pub type Mkdtemp = StringOrBuffer;
     pub type Open = FD;
     pub type WriteFile = ();
     pub type Readv = Read;
@@ -4817,6 +4811,25 @@ impl Default for NodeFS {
 // containing module level instead so `NodeFS::ReturnType::Foo` callers (none
 // yet in-tree) keep working via `node::fs::ReturnType::Foo`.
 pub use ret as ReturnType;
+
+/// Encode a path returned by the OS (`mkdtemp`/`readlink`/`realpath`) using the
+/// caller's `encoding` option, matching Node.js: `"buffer"` yields a `Buffer`
+/// of the raw bytes, any other encoding is `Buffer.from(bytes).toString(enc)`.
+fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer {
+    match encoding {
+        Encoding::Buffer => {
+            StringOrBuffer::Buffer(Buffer::from_string(bytes).expect("unreachable"))
+        }
+        Encoding::Utf8 => StringOrBuffer::String(node::SliceWithUnderlyingString {
+            underlying: BunString::clone_utf8(bytes),
+            ..Default::default()
+        }),
+        enc => StringOrBuffer::String(node::SliceWithUnderlyingString {
+            underlying: webcore::encoding::to_bun_string(bytes, enc),
+            ..Default::default()
+        }),
+    }
+}
 
 impl NodeFS {
     pub fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
@@ -6082,10 +6095,8 @@ impl NodeFS {
             // SAFETY: on success libuv populates `req.path` with a NUL-terminated
             // UTF-8 string owned by the request; `UvFsReq::drop` runs
             // `uv_fs_req_cleanup` in place after we've copied the bytes out.
-            return Ok(
-                ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(req.path) }.to_bytes())
-                    .expect("oom"),
-            );
+            let bytes = unsafe { bun_core::ffi::cstr(req.path) }.to_bytes();
+            return Ok(encode_path_result(bytes, args.encoding));
         }
 
         #[cfg(not(windows))]
@@ -6097,7 +6108,7 @@ impl NodeFS {
                 // SAFETY: `rc` is non-null and points back into `prefix_buf`, which is
                 // NUL-terminated and outlives this borrow.
                 let bytes = unsafe { bun_core::ffi::cstr(rc) }.to_bytes();
-                return Ok(ZigString::dupe_for_js(bytes).expect("oom"));
+                return Ok(encode_path_result(bytes, args.encoding));
             }
 
             let errno = sys::last_errno();
@@ -7569,22 +7580,14 @@ impl NodeFS {
             Ok(result) => result,
         };
         let link_path: &[u8] = &outbuf[..link_len];
-        Ok(match args.encoding {
-            Encoding::Buffer => {
-                StringOrBuffer::Buffer(Buffer::from_string(link_path).expect("unreachable"))
-            }
-            _ => {
-                if let PathLike::SliceWithUnderlyingString(s) = &args.path {
-                    if strings::eql_long(s.slice(), link_path, true) {
-                        return Ok(StringOrBuffer::String(s.dupe_ref()));
-                    }
+        if args.encoding == Encoding::Utf8 {
+            if let PathLike::SliceWithUnderlyingString(s) = &args.path {
+                if strings::eql_long(s.slice(), link_path, true) {
+                    return Ok(StringOrBuffer::String(s.dupe_ref()));
                 }
-                StringOrBuffer::String(node::SliceWithUnderlyingString {
-                    underlying: BunString::clone_utf8(link_path),
-                    ..Default::default()
-                })
             }
-        })
+        }
+        Ok(encode_path_result(link_path, args.encoding))
     }
 
     pub fn realpath_non_native(
@@ -7667,26 +7670,14 @@ impl NodeFS {
                     buf = &buf[..buf.len() - 1];
                 }
             }
-            return Ok(match args.encoding {
-                Encoding::Buffer => {
-                    StringOrBuffer::Buffer(Buffer::from_string(buf).expect("unreachable"))
-                }
-                Encoding::Utf8 => {
-                    if let PathLike::SliceWithUnderlyingString(s) = &args.path {
-                        if strings::eql_long(s.slice(), buf, true) {
-                            return Ok(StringOrBuffer::String(s.dupe_ref()));
-                        }
+            if args.encoding == Encoding::Utf8 {
+                if let PathLike::SliceWithUnderlyingString(s) = &args.path {
+                    if strings::eql_long(s.slice(), buf, true) {
+                        return Ok(StringOrBuffer::String(s.dupe_ref()));
                     }
-                    StringOrBuffer::String(node::SliceWithUnderlyingString {
-                        underlying: BunString::clone_utf8(buf),
-                        ..Default::default()
-                    })
                 }
-                enc => StringOrBuffer::String(node::SliceWithUnderlyingString {
-                    underlying: webcore::encoding::to_bun_string(buf, enc),
-                    ..Default::default()
-                }),
-            });
+            }
+            return Ok(encode_path_result(buf, args.encoding));
         }
 
         #[cfg(not(windows))]
@@ -7732,26 +7723,14 @@ impl NodeFS {
             };
 
             let _ = variant;
-            Ok(match args.encoding {
-                Encoding::Buffer => {
-                    StringOrBuffer::Buffer(Buffer::from_string(buf).expect("unreachable"))
-                }
-                Encoding::Utf8 => {
-                    if let PathLike::SliceWithUnderlyingString(s) = &args.path {
-                        if strings::eql_long(s.slice(), buf, true) {
-                            return Ok(StringOrBuffer::String(s.dupe_ref()));
-                        }
+            if args.encoding == Encoding::Utf8 {
+                if let PathLike::SliceWithUnderlyingString(s) = &args.path {
+                    if strings::eql_long(s.slice(), buf, true) {
+                        return Ok(StringOrBuffer::String(s.dupe_ref()));
                     }
-                    StringOrBuffer::String(node::SliceWithUnderlyingString {
-                        underlying: BunString::clone_utf8(buf),
-                        ..Default::default()
-                    })
                 }
-                enc => StringOrBuffer::String(node::SliceWithUnderlyingString {
-                    underlying: webcore::encoding::to_bun_string(buf, enc),
-                    ..Default::default()
-                }),
-            })
+            }
+            Ok(encode_path_result(buf, args.encoding))
         }
     }
 

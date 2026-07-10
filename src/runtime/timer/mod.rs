@@ -750,7 +750,13 @@ impl All {
             // https://github.com/nodejs/node/blob/f552c86fecd6c2ba9e832ea129b731dd63abdbe2/src/env.cc#L1512
             let wait_ms = core::cmp::max(1, wait.ms_unsigned());
 
-            self.uv_timer.start(wait_ms, 0, Some(Self::on_uv_timer));
+            // SAFETY: `uv_timer_init` ran above; the handle is live.
+            let due_in = unsafe { uv::uv_timer_get_due_in(&self.uv_timer) };
+            // Restarting an overdue handle shifts the wakeup out by 1ms. Done
+            // on every insert, the already-due callback never runs.
+            if !(self.uv_timer.is_active() && due_in <= wait_ms) {
+                self.uv_timer.start(wait_ms, 0, Some(Self::on_uv_timer));
+            }
 
             if self.active_timer_count > 0 {
                 self.uv_timer.ref_();
@@ -914,8 +920,11 @@ impl All {
             // deref and fire via raw deref (mirroring `drain_timers`).
             let (min_next_sec, min_next_nsec, min_tag) =
                 unsafe { ((*min).next.sec, (*min).next.nsec, (*min).tag) };
+            // Real clock: `self.timers` is the opt-out-of-fake-timers set, all
+            // armed in real-time units. Comparing against the mocked clock made
+            // internal pacing (GC, WTFTimer, test timeouts) spin on re-arm.
             let now =
-                *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::AllowMockedTime));
+                *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
 
             // bun_event_loop carries its own Timespec stub; compare field-wise.
             let min_next = Timespec {
@@ -983,7 +992,8 @@ impl All {
         let out = (|| {
             let timer = self.timers.peek()?;
             if !*has_set_now {
-                *now = Timespec::now(TimespecMockMode::AllowMockedTime);
+                // Real clock: this heap is the opt-out-of-fake-timers set.
+                *now = Timespec::now(TimespecMockMode::ForceRealTime);
                 *has_set_now = true;
             }
             // SAFETY: peek returns a live heap node

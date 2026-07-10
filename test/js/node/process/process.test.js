@@ -1790,9 +1790,6 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
   expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
 });
 
-// Windows uses a different TZ format and the upstream Node test-process-env-tz.js
-// skips Windows entirely; the JSEnvironmentVariableMap deleteProperty override that
-// resets the timezone is POSIX-only.
 it("delete process.env.TZ invalidates existing Date instances", async () => {
   await using proc = Bun.spawn({
     cmd: [

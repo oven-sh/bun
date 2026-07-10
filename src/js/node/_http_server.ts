@@ -708,7 +708,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // token bits for the headers the dispatcher consults, so no header
         // object or array is materialized unless user code reads them.
         dispatchBits: number,
-        headersArray: string[],
         handle,
         hasBody: boolean,
         socketHandle,
@@ -744,7 +743,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           socket._unrefTimer();
         }
 
-        const http_req = new RequestClass(kHandle, url, method, undefined, headersArray, handle, hasBody, socket);
+        const http_req = new RequestClass(kHandle, url, method, undefined, undefined, handle, hasBody, socket);
         if (isAncientHTTP) {
           http_req.httpVersion = "1.0";
           http_req.httpVersionMajor = 1;
@@ -2361,7 +2360,11 @@ function stopServerResponsePerf(this: any) {
 // NOT `this.socket`, which is the response's own transport facade and has no
 // `.server`. So a single shared function needs no per-request state at all.
 function emitResponseFinishHandleSocket() {
-  const socket = this.req?.socket;
+  // req.socket is nulled by the stream destroyer (pipeline/compose cleanup
+  // does `stream.socket = null` for server requests); the response's own
+  // socket - set by assignSocket and cleared only by detachSocket - still
+  // references the connection then.
+  const socket = this.req?.socket ?? this.socket;
   onResponseFinishHandleSocket(socket?.server, socket, this);
 }
 
@@ -2369,7 +2372,10 @@ function emitResponseFinishHandleSocket() {
 // in the same order as the two separate listeners this replaces.
 // advanceResponsePipeline already bails on a missing socket.
 function emitAsyncResponseFinish() {
-  const socket = this.req?.socket;
+  // Same destroyer-null fallback as emitResponseFinishHandleSocket: without
+  // it a destroyed request leaves socket._httpMessage assigned and the next
+  // kept-alive request fails with ERR_HTTP_SOCKET_ASSIGNED.
+  const socket = this.req?.socket ?? this.socket;
   if (socket != null) this.detachSocket(socket);
   advanceResponsePipeline(socket?.server, socket);
 }
@@ -3181,14 +3187,19 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);
-      handle.writeHead(
-        this[kSnapshotStatusCode] ?? this.statusCode,
-        this[kSnapshotStatusMessage] ?? this.statusMessage,
-        renderedHeaders,
-        renderedAutoHeaders,
-        renderedKeepAliveSecs,
-      );
-      releaseRenderedHeaders(renderedHeaders);
+      try {
+        handle.writeHead(
+          this[kSnapshotStatusCode] ?? this.statusCode,
+          this[kSnapshotStatusMessage] ?? this.statusMessage,
+          renderedHeaders,
+          renderedAutoHeaders,
+          renderedKeepAliveSecs,
+        );
+      } finally {
+        // A throwing writeHead (status validation) must not leave the shared
+        // scratch array marked busy for the rest of the process.
+        releaseRenderedHeaders(renderedHeaders);
+      }
 
       // If handle.writeHead throws, we don't want headersSent to be set to true.
       // So we set it here.
@@ -3360,14 +3371,19 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);
-      handle.writeHead(
-        this[kSnapshotStatusCode] ?? this.statusCode,
-        this[kSnapshotStatusMessage] ?? this.statusMessage,
-        renderedHeaders,
-        renderedAutoHeaders,
-        renderedKeepAliveSecs,
-      );
-      releaseRenderedHeaders(renderedHeaders);
+      try {
+        handle.writeHead(
+          this[kSnapshotStatusCode] ?? this.statusCode,
+          this[kSnapshotStatusMessage] ?? this.statusMessage,
+          renderedHeaders,
+          renderedAutoHeaders,
+          renderedKeepAliveSecs,
+        );
+      } finally {
+        // A throwing writeHead (status validation) must not leave the shared
+        // scratch array marked busy for the rest of the process.
+        releaseRenderedHeaders(renderedHeaders);
+      }
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
       handle.write(data, encoding, callback, strictContentLength(this));
     });
@@ -3473,14 +3489,19 @@ ServerResponse.prototype.flushHeaders = function () {
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
 
       const renderedHeaders = renderNativeHeaders(this);
-      handle.writeHead(
-        this[kSnapshotStatusCode] ?? this.statusCode,
-        this[kSnapshotStatusMessage] ?? this.statusMessage,
-        renderedHeaders,
-        renderedAutoHeaders,
-        renderedKeepAliveSecs,
-      );
-      releaseRenderedHeaders(renderedHeaders);
+      try {
+        handle.writeHead(
+          this[kSnapshotStatusCode] ?? this.statusCode,
+          this[kSnapshotStatusMessage] ?? this.statusMessage,
+          renderedHeaders,
+          renderedAutoHeaders,
+          renderedKeepAliveSecs,
+        );
+      } finally {
+        // A throwing writeHead (status validation) must not leave the shared
+        // scratch array marked busy for the rest of the process.
+        releaseRenderedHeaders(renderedHeaders);
+      }
     }
     handle.flushHeaders();
   } else {

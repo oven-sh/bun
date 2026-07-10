@@ -2343,6 +2343,8 @@ pub unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
 ) {
     // SAFETY: see the function-level contract above.
     let response = unsafe { &*response };
+    // SAFETY: `data`/`length` describe a caller-owned buffer valid for the
+    // call (function-level contract above).
     let bytes = unsafe { core::slice::from_raw_parts(data, length) };
     response
         .raw_request_headers

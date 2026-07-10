@@ -202,9 +202,10 @@ static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
             continue;
         if (!svEqualsIgnoreCase(value.substr(i, m), lowerToken))
             continue;
-        bool leftOk = i == 0 || !isASCIIAlphanumeric(value[i - 1]);
+        // \W in the JS regexes this mirrors treats '_' as a word character.
+        bool leftOk = i == 0 || !(isASCIIAlphanumeric(value[i - 1]) || value[i - 1] == '_');
         size_t end = i + m;
-        bool rightOk = end >= n || !isASCIIAlphanumeric(value[end]);
+        bool rightOk = end >= n || !(isASCIIAlphanumeric(value[end]) || value[end] == '_');
         if (leftOk && rightOk)
             return true;
         i = end - 1;
@@ -234,20 +235,27 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         args.append(methodString);
     }
 
+    // Deliberate: the bitfield scans every header the parser accepted, like
+    // the parser's own Host/Expect handling, while req.rawHeaders/req.headers
+    // still apply the server.maxHeadersCount truncation on materialization.
     uint32_t bits = 0;
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
         const std::string_view name = pair.first;
         const std::string_view value = pair.second;
 
-        // Header name/value lengths are parser-bounded well below 64 KiB.
-        const uint16_t nameLen = static_cast<uint16_t>(name.length());
-        const uint16_t valueLen = static_cast<uint16_t>(value.length());
-        uint8_t lens[4] = {
-            static_cast<uint8_t>(nameLen & 0xff), static_cast<uint8_t>(nameLen >> 8),
-            static_cast<uint8_t>(valueLen & 0xff), static_cast<uint8_t>(valueLen >> 8)
+        // u32 length prefixes: header sizes are usually tiny, but maxHeaderSize
+        // is user-configurable with no upper bound, so a u16 would silently
+        // truncate a >64 KiB value and desync the buffer.
+        const uint32_t nameLen = static_cast<uint32_t>(name.length());
+        const uint32_t valueLen = static_cast<uint32_t>(value.length());
+        uint8_t lens[8] = {
+            static_cast<uint8_t>(nameLen & 0xff), static_cast<uint8_t>((nameLen >> 8) & 0xff),
+            static_cast<uint8_t>((nameLen >> 16) & 0xff), static_cast<uint8_t>(nameLen >> 24),
+            static_cast<uint8_t>(valueLen & 0xff), static_cast<uint8_t>((valueLen >> 8) & 0xff),
+            static_cast<uint8_t>((valueLen >> 16) & 0xff), static_cast<uint8_t>(valueLen >> 24)
         };
-        flatHeaders.append(std::span<const uint8_t> { lens, 4 });
+        flatHeaders.append(std::span<const uint8_t> { lens, 8 });
         flatHeaders.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(name.data()), name.length() });
         flatHeaders.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(value.data()), value.length() });
 
@@ -289,10 +297,9 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         }
     }
 
-    // The headers-object slot now carries the dispatch bitfield; the
-    // rawHeaders slot is materialized lazily from the captured bytes.
+    // The headers-object slot now carries the dispatch bitfield; rawHeaders
+    // materialize lazily from the captured bytes, so no array is passed.
     args.append(jsNumber(bits));
-    args.append(jsUndefined());
 }
 
 // Builds the rawHeaders flat array [name, value, ...] from the bytes captured
@@ -307,10 +314,12 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObjec
     HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
 
     size_t offset = 0;
-    while (offset + 4 <= length) {
-        const uint16_t nameLen = static_cast<uint16_t>(data[offset]) | (static_cast<uint16_t>(data[offset + 1]) << 8);
-        const uint16_t valueLen = static_cast<uint16_t>(data[offset + 2]) | (static_cast<uint16_t>(data[offset + 3]) << 8);
-        offset += 4;
+    while (offset + 8 <= length) {
+        const uint32_t nameLen = static_cast<uint32_t>(data[offset]) | (static_cast<uint32_t>(data[offset + 1]) << 8)
+            | (static_cast<uint32_t>(data[offset + 2]) << 16) | (static_cast<uint32_t>(data[offset + 3]) << 24);
+        const uint32_t valueLen = static_cast<uint32_t>(data[offset + 4]) | (static_cast<uint32_t>(data[offset + 5]) << 8)
+            | (static_cast<uint32_t>(data[offset + 6]) << 16) | (static_cast<uint32_t>(data[offset + 7]) << 24);
+        offset += 8;
         if (offset + nameLen + valueLen > length) [[unlikely]]
             break;
         StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(data + offset), nameLen });
@@ -845,7 +854,11 @@ static std::string_view cachedDateHeaderLine()
     if (now != cachedSecond) {
         cachedSecond = now;
         struct tm t;
+#ifdef _WIN32
+        gmtime_s(&t, &now);
+#else
         gmtime_r(&now, &t);
+#endif
         static constexpr const char days[7][4] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
         static constexpr const char months[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
         len = static_cast<size_t>(snprintf(buf, sizeof(buf), "Date: %s, %02d %s %04d %02d:%02d:%02d GMT\r\n",
@@ -925,7 +938,7 @@ static void NodeHTTPServer__writeHead(
         if (auto* fetchHeaders = dynamicDowncast<WebCore::JSFetchHeaders>(headersObject)) {
             writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
             if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-            return;
+            RELEASE_AND_RETURN(scope, void());
         }
 
         // A flat [name, value, name, value, ...] array. Used by node:http's
@@ -976,7 +989,7 @@ static void NodeHTTPServer__writeHead(
                 writeResponseHeader<isSSL>(response, name, value);
             }
             if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
-            return;
+            RELEASE_AND_RETURN(scope, void());
         }
 
         if (headersObject->hasNonReifiedStaticProperties()) [[unlikely]] {

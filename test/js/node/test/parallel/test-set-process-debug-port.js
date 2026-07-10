@@ -12,9 +12,6 @@ const assert = require('assert');
 const kMinPort = 1024;
 const kMaxPort = 65535;
 
-// Main-thread default before any assignment.
-assert.strictEqual(process.debugPort, 9229);
-
 function check(value, expected) {
   process.debugPort = value;
   assert.strictEqual(process.debugPort, expected);

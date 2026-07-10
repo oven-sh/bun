@@ -1377,8 +1377,8 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
 
   // node roots a main-founded SHARE_ENV tree at its RealEnvStore, so a worker writing
   // through it reaches the real environment a child process inherits; a snapshot
-  // worker's store is private and never does. (On Windows this is what the
-  // SetEnvironmentVariableW write-through in JSSharedEnvMap keeps true.)
+  // worker's store is private and never does. (child_process enumerates the JS
+  // process.env, so this checks the store, not the OS environment.)
   it.each([
     ["SHARE_ENV", "written-by-worker"],
     ["snapshot", "absent"],
@@ -1592,29 +1592,49 @@ test("workerData is not unwrapped for a non-node globalThis.Worker", async () =>
   });
 });
 
-test.skipIf(process.platform !== "win32")(
-  "SHARE_ENV founding thread on Windows still writes through to the OS environment",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { Worker, SHARE_ENV } = require("worker_threads");
-         const cp = require("child_process");
-         new Worker("1", { eval: true, env: SHARE_ENV }).on("exit", () => {
-           process.env.BUN_SHARE_ENV_WRITE_THROUGH = "yes";
-           // A spawned child sees the OS env, not the JS map.
-           const out = cp.execFileSync(process.execPath, [
-             "-e", "process.stdout.write(process.env.BUN_SHARE_ENV_WRITE_THROUGH || 'unset')",
-           ]).toString();
-           console.log(out);
-         });`,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("yes");
-    expect(exitCode).toBe(0);
-  },
-);
+// Founding a SHARE_ENV tree replaces the founding thread's process.env object. If the
+// replacement were orphaned, the founder's later writes would go nowhere. child_process
+// enumerates the JS process.env (a var deleted from the map is invisible to the child),
+// so this guards the swap -- it cannot observe Windows' SetEnvironmentVariableW, which
+// has no JS-visible reader.
+// process.debugPort defaults to 9229 on the main thread (node parity). Lives here, not
+// in the vendored test/js/node/test/parallel/test-set-process-debug-port.js, which should
+// stay byte-identical to upstream.
+test("process.debugPort defaults to 9229 on the main thread", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "console.log(process.debugPort)"],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("9229");
+  expect(exitCode).toBe(0);
+});
+
+test("the SHARE_ENV founding thread's process.env stays live after the swap", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker, SHARE_ENV } = require("worker_threads");
+       const cp = require("child_process");
+       new Worker("1", { eval: true, env: SHARE_ENV }).on("exit", () => {
+         process.env.BUN_SHARE_ENV_SET = "yes";
+         process.env.BUN_SHARE_ENV_DEL = "yes";
+         delete process.env.BUN_SHARE_ENV_DEL;
+         const out = cp
+           .execFileSync(process.execPath, [
+             "-e",
+             "process.stdout.write((process.env.BUN_SHARE_ENV_SET || 'unset') + ',' + (process.env.BUN_SHARE_ENV_DEL || 'unset'))",
+           ])
+           .toString();
+         console.log(out);
+       });`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("yes,unset");
+  expect(exitCode).toBe(0);
+});

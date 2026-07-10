@@ -4257,6 +4257,12 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 PathOrFileDescriptorSerializeTag::Path => {
                     let path_len = reader.read_int_le::<u32>()?;
                     let path = read_slice(reader, path_len as usize)?;
+                    // Same constraint the JS entry (`Valid::path_null_bytes`)
+                    // enforces: a NUL-embedded path cannot be handed to the
+                    // syscall layer (`ZStr::as_cstr` would truncate / panic).
+                    if strings::index_of_char(&path, 0).is_some() {
+                        return Err(bun_core::err!("InvalidValue"));
+                    }
                     // The owned `CowSlice`
                     // adopts the `Box<[u8]>` so the store frees it in
                     // `PathLike::drop`; borrowing here would drop `path` at scope

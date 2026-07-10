@@ -459,6 +459,69 @@ describe("structuredClone with Blob and File", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("file-backed Blob path with interior NUL is rejected at deserialize", async () => {
+      // A crafted Blob wire image whose File store path contains an interior
+      // NUL must be rejected as a JS error at deserialize time; it must never
+      // reach the syscall layer where the C-string view would truncate (and
+      // debug builds abort in ZStr::as_cstr). Build the image by round-tripping
+      // a real file-backed blob and overwriting the path bytes, so the outer
+      // serializer framing and the Blob record layout stay whatever the current
+      // build emits.
+      const probe = Buffer.alloc(16, 0x5a);
+      const good = Buffer.from(serialize(Bun.file(probe.toString("latin1"))));
+      const at = good.indexOf(probe);
+      expect(at).toBeGreaterThan(0);
+      // Sanity: both entry points accept the unmodified image.
+      expect(deserialize(good)).toBeInstanceOf(Blob);
+      expect(v8.deserialize(good)).toBeInstanceOf(Blob);
+
+      const bad = Buffer.from(good);
+      bad.set(Buffer.from("/e\0tc/host\0s____", "latin1"), at);
+
+      // Run in a child so that if the reader ever aborts on these bytes the
+      // test runner survives. The assertion is on the deserialize step: it
+      // must throw, so no Blob carrying a NUL-embedded path ever exists.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { deserialize } = require("bun:jsc");
+            const v8 = require("node:v8");
+            const bad = Buffer.from(process.argv[1], "base64");
+            for (const [name, de] of [["bun:jsc", deserialize], ["node:v8", b => v8.deserialize(b)]]) {
+              let threw = null;
+              try {
+                de(bad);
+              } catch (e) {
+                threw = { name: e?.constructor?.name, message: String(e?.message ?? e) };
+              }
+              process.stdout.write(JSON.stringify({ entry: name, threw }) + "\\n");
+            }
+          `,
+          bad.toString("base64"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const lines = stdout
+        .split("\n")
+        .filter(Boolean)
+        .map(l => JSON.parse(l));
+      expect({ lines, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        lines: [
+          { entry: "bun:jsc", threw: { name: "TypeError", message: "Unable to deserialize data." } },
+          { entry: "node:v8", threw: { name: "TypeError", message: "Unable to deserialize data." } },
+        ],
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
     test("in-process: offset at store boundary yields empty view", async () => {
       // offset == store length stays within the allocation on any build, so
       // this is safe to assert in-process and covers the boundary directly.

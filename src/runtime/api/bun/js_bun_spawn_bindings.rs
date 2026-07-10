@@ -1211,17 +1211,24 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                         };
                         // posix_spawn collapses chdir(cwd) and execve(argv[0]) failures
                         // into a single errno. When the user passed an explicit cwd and
-                        // it is not an existing directory, blame the cwd so the error
-                        // points at the actual problem instead of argv[0].
-                        let display_path: &[u8] = if user_specified_cwd
+                        // a stat positively confirms it is not a usable directory, blame
+                        // the cwd so the error points at the actual problem. Any other
+                        // stat result (including EUNKNOWN/EACCES) falls through to
+                        // argv[0] so ambiguous cases keep the previous behaviour.
+                        let cwd_confirmed_bad = user_specified_cwd
                             && matches!(errno, sys::Errno::ENOENT | sys::Errno::ENOTDIR)
-                            && !matches!(
-                                sys::exists_at_type(
-                                    sys::Fd::cwd(),
-                                    ZBox::from_bytes(cwd).as_zstr(),
-                                ),
-                                Ok(sys::ExistsAtType::Directory)
+                            && match sys::exists_at_type(
+                                sys::Fd::cwd(),
+                                ZBox::from_bytes(cwd).as_zstr(),
                             ) {
+                                Ok(sys::ExistsAtType::File) => true,
+                                Err(e) => matches!(
+                                    e.get_errno(),
+                                    sys::Errno::ENOENT | sys::Errno::ENOTDIR
+                                ),
+                                Ok(sys::ExistsAtType::Directory) => false,
+                            };
+                        let display_path: &[u8] = if cwd_confirmed_bad {
                             cwd
                         } else {
                             argv0_path.as_bytes()

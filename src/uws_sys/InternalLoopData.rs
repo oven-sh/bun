@@ -55,7 +55,16 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    /// See `nested_dispatch_ticks` in `loop_data.h` (oven-sh/bun#33261).
+    /// Only the debug (`BUN_DEBUG`) POSIX tick increments it.
+    pub nested_dispatch_ticks: c_int,
 }
+
+/// Checked against `sizeof(struct us_internal_loop_data_t)` in
+/// `us_internal_loop_data_init` (loop.c) so C/Rust drift in this mirror panics
+/// at startup. Size-only: it cannot see drift that hides in padding.
+#[unsafe(no_mangle)]
+pub(crate) static Bun__internal_loop_data__size: usize = core::mem::size_of::<InternalLoopData>();
 
 impl InternalLoopData {
     const LIBUS_RECV_BUFFER_LENGTH: usize = 524288;

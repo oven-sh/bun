@@ -41,6 +41,7 @@
 
 #if ASSERT_ENABLED
 extern const size_t Bun__lock__size;
+extern const size_t Bun__internal_loop_data__size;
 #endif
 
 extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop);
@@ -83,6 +84,11 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
 #if ASSERT_ENABLED
     if (Bun__lock__size != sizeof(loop->data.mutex)) {
         BUN_PANIC("The size of the mutex must match the size of the lock");
+    }
+    /* The Rust mirror (src/uws_sys/InternalLoopData.rs) must stay
+     * layout-identical to this struct (size-only check). */
+    if (Bun__internal_loop_data__size != sizeof(loop->data)) {
+        BUN_PANIC("us_internal_loop_data_t layout differs between C and Rust");
     }
 #endif
 }

@@ -216,6 +216,8 @@ unsafe extern "C" {
         status_message: *const u8,
         status_message_length: usize,
         headers_object_value: JSValue,
+        auto_header_bits: u32,
+        keep_alive_timeout_secs: u32,
         response: *mut c_void,
     );
 
@@ -224,6 +226,8 @@ unsafe extern "C" {
         status_message: *const u8,
         status_message_length: usize,
         headers_object_value: JSValue,
+        auto_header_bits: u32,
+        keep_alive_timeout_secs: u32,
         response: *mut c_void,
     );
 }
@@ -765,15 +769,35 @@ impl NodeHTTPResponse {
         // path. The borrowed `arguments()` slice (ptr+len, 16 bytes) carries the
         // same information; missing / `null` slots are padded to `undefined`
         // inline below exactly as the `Arguments<3>` form did.
-        self.write_head_impl(global_object, callframe.arguments())
+        let arguments = callframe.arguments();
+        let auto_header_bits = arguments
+            .get(3)
+            .copied()
+            .filter(|v| v.is_number())
+            .map_or(0, |v| v.to_int32() as u32);
+        let keep_alive_timeout_secs = arguments
+            .get(4)
+            .copied()
+            .filter(|v| v.is_number())
+            .map_or(0, |v| v.to_int32() as u32);
+        self.write_head_impl(
+            global_object,
+            arguments,
+            auto_header_bits,
+            keep_alive_timeout_secs,
+        )
     }
 
     /// Shared body of `writeHead` (also the write-head phase of
-    /// `writeHeadAndEnd`): args are (statusCode, statusMessage, headersArray).
+    /// `writeHeadAndEnd`): args are (statusCode, statusMessage, headersArray),
+    /// plus the auto-header bits + keep-alive timeout the C++ side renders
+    /// natively (kAutoHeader* in NodeHTTP.cpp).
     fn write_head_impl(
         &self,
         global_object: &JSGlobalObject,
         arguments: &[JSValue],
+        auto_header_bits: u32,
+        keep_alive_timeout_secs: u32,
     ) -> JsResult<JSValue> {
         if self.is_requested_completed_or_ended() {
             return err_throw(
@@ -872,6 +896,8 @@ impl NodeHTTPResponse {
                         global_object,
                         status_message,
                         headers_object_value,
+                        auto_header_bits,
+                        keep_alive_timeout_secs,
                     );
                     break 'do_it;
                 }
@@ -900,6 +926,8 @@ impl NodeHTTPResponse {
                     global_object,
                     &stack_buf[..n],
                     headers_object_value,
+                    auto_header_bits,
+                    keep_alive_timeout_secs,
                 );
             } else {
                 // Heap fallback for absurdly long status messages (> 252 bytes).
@@ -907,7 +935,14 @@ impl NodeHTTPResponse {
                 heap.extend_from_slice(code);
                 heap.push(b' ');
                 heap.extend_from_slice(message);
-                write_head_internal(&raw_response, global_object, &heap, headers_object_value);
+                write_head_internal(
+                    &raw_response,
+                    global_object,
+                    &heap,
+                    headers_object_value,
+                    auto_header_bits,
+                    keep_alive_timeout_secs,
+                );
             }
         }
 
@@ -941,6 +976,16 @@ impl NodeHTTPResponse {
         }
 
         let head_len = arguments.len().min(3);
+        let auto_header_bits = arguments
+            .get(6)
+            .copied()
+            .filter(|v| v.is_number())
+            .map_or(0, |v| v.to_int32() as u32);
+        let keep_alive_timeout_secs = arguments
+            .get(7)
+            .copied()
+            .filter(|v| v.is_number())
+            .map_or(0, |v| v.to_int32() as u32);
         // write_or_end::<true> reads (chunk, encoding, _, strictContentLength).
         let end_args = [
             arguments.get(3).copied().unwrap_or(JSValue::UNDEFINED),
@@ -960,7 +1005,12 @@ impl NodeHTTPResponse {
         let mut result: JsResult<JSValue> = Ok(JSValue::UNDEFINED);
         {
             let run = || -> JsResult<JSValue> {
-                this.write_head_impl(global_object, &arguments[..head_len])?;
+                this.write_head_impl(
+                    global_object,
+                    &arguments[..head_len],
+                    auto_header_bits,
+                    keep_alive_timeout_secs,
+                )?;
                 this.resume_socket();
                 this.write_or_end::<true>(global_object, &end_args, this_value)
             };
@@ -986,6 +1036,8 @@ fn write_head_internal(
     global_object: &JSGlobalObject,
     status_message: &[u8],
     headers: JSValue,
+    auto_header_bits: u32,
+    keep_alive_timeout_secs: u32,
 ) {
     scoped_log!(
         NodeHTTPResponse,
@@ -998,6 +1050,8 @@ fn write_head_internal(
             status_message.as_ptr(),
             status_message.len(),
             headers,
+            auto_header_bits,
+            keep_alive_timeout_secs,
             (*tcp).cast::<c_void>(),
         ),
         uws::AnyResponse::SSL(ssl) => NodeHTTPServer__writeHead_https(
@@ -1005,6 +1059,8 @@ fn write_head_internal(
             status_message.as_ptr(),
             status_message.len(),
             headers,
+            auto_header_bits,
+            keep_alive_timeout_secs,
             (*ssl).cast::<c_void>(),
         ),
         uws::AnyResponse::H3(_) => {

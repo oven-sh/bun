@@ -63,7 +63,6 @@ const {
   getMaxHTTPHeaderSize,
   fakeSocketSymbol,
   noBodySymbol,
-  utcDate,
   kOutHeaders,
   validateMsecs,
 } = require("internal/http");
@@ -2172,13 +2171,22 @@ function releaseRenderedHeaders(flat) {
   if (flat === scratchFlatHeaders) scratchFlatHeadersBusy = false;
 }
 
-// Cache for the Keep-Alive header value: keepAliveTimeout is a per-server
-// constant, so the common (no maxRequestsPerSocket) string is identical for
-// every response.
-let cachedKeepAliveTimeout = -1;
-let cachedKeepAliveValue = "";
+// Auto-header bits (kAutoHeader* in src/jsc/bindings/NodeHTTP.cpp - keep in
+// sync): renderNativeHeaders reports the framework headers (Date, Connection,
+// Keep-Alive) through these instead of pushing strings into the flat array;
+// the native side writes them from cached byte blobs.
+const AUTO_HEADER_DATE = 1 << 0;
+const AUTO_HEADER_CONN_KEEP_ALIVE = 1 << 1;
+const AUTO_HEADER_CONN_CLOSE = 1 << 2;
+const AUTO_HEADER_KEEP_ALIVE_TIMEOUT = 1 << 3;
+// Out-parameters of renderNativeHeaders, read by its callers in the same
+// tick (no JS can run in between).
+let renderedAutoHeaders = 0;
+let renderedKeepAliveSecs = 0;
 
 function renderNativeHeaders(res) {
+  renderedAutoHeaders = 0;
+  renderedKeepAliveSecs = 0;
   const headersMap = res[kOutHeaders];
   let flat: string[];
   if (scratchFlatHeadersBusy) {
@@ -2228,7 +2236,7 @@ function renderNativeHeaders(res) {
   }
 
   if (res.sendDate && !hasDate) {
-    flat.push("Date", utcDate());
+    renderedAutoHeaders |= AUTO_HEADER_DATE;
   }
 
   // RFC 2616 mandates that 204 and 304 responses MUST NOT have a body. A
@@ -2283,18 +2291,17 @@ function renderNativeHeaders(res) {
       res.shouldKeepAlive !== false &&
       requestShouldKeepAlive(res.req)
     ) {
-      flat.push("Connection", "keep-alive");
       const keepAliveTimeout = res._keepAliveTimeout;
-      if (keepAliveTimeout && !hasKeepAlive) {
-        const maxRequestsPerSocket = res._maxRequestsPerSocket;
-        if (~~maxRequestsPerSocket > 0) {
-          flat.push("Keep-Alive", `timeout=${MathFloor(keepAliveTimeout / 1000)}, max=${maxRequestsPerSocket}`);
-        } else {
-          if (keepAliveTimeout !== cachedKeepAliveTimeout) {
-            cachedKeepAliveTimeout = keepAliveTimeout;
-            cachedKeepAliveValue = `timeout=${MathFloor(keepAliveTimeout / 1000)}`;
-          }
-          flat.push("Keep-Alive", cachedKeepAliveValue);
+      const maxRequestsPerSocket = res._maxRequestsPerSocket;
+      if (keepAliveTimeout && !hasKeepAlive && ~~maxRequestsPerSocket > 0) {
+        // Rare path (maxRequestsPerSocket set): render both lines in JS.
+        flat.push("Connection", "keep-alive");
+        flat.push("Keep-Alive", `timeout=${MathFloor(keepAliveTimeout / 1000)}, max=${maxRequestsPerSocket}`);
+      } else {
+        renderedAutoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE;
+        if (keepAliveTimeout && !hasKeepAlive) {
+          renderedAutoHeaders |= AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
+          renderedKeepAliveSecs = MathFloor(keepAliveTimeout / 1000);
         }
       }
     } else {
@@ -2304,7 +2311,7 @@ function renderNativeHeaders(res) {
       if (res.shouldKeepAlive === false) {
         res[kMustCloseConnection] = true;
       }
-      flat.push("Connection", "close");
+      renderedAutoHeaders |= AUTO_HEADER_CONN_CLOSE;
     }
   }
 
@@ -3018,6 +3025,8 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
           chunk,
           encoding,
           strictContentLength(this),
+          renderedAutoHeaders,
+          renderedKeepAliveSecs,
         );
       } catch (e) {
         releaseRenderedHeaders(renderedHeaders);
@@ -3176,6 +3185,8 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
         this[kSnapshotStatusCode] ?? this.statusCode,
         this[kSnapshotStatusMessage] ?? this.statusMessage,
         renderedHeaders,
+        renderedAutoHeaders,
+        renderedKeepAliveSecs,
       );
       releaseRenderedHeaders(renderedHeaders);
 
@@ -3353,6 +3364,8 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
         this[kSnapshotStatusCode] ?? this.statusCode,
         this[kSnapshotStatusMessage] ?? this.statusMessage,
         renderedHeaders,
+        renderedAutoHeaders,
+        renderedKeepAliveSecs,
       );
       releaseRenderedHeaders(renderedHeaders);
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
@@ -3464,6 +3477,8 @@ ServerResponse.prototype.flushHeaders = function () {
         this[kSnapshotStatusCode] ?? this.statusCode,
         this[kSnapshotStatusMessage] ?? this.statusMessage,
         renderedHeaders,
+        renderedAutoHeaders,
+        renderedKeepAliveSecs,
       );
       releaseRenderedHeaders(renderedHeaders);
     }

@@ -165,7 +165,7 @@ export default [
       },
       writeHeadAndEnd: {
         fn: "writeHeadAndEnd",
-        length: 6,
+        length: 8,
       },
       dumpRequestBody: {
         fn: "dumpRequestBody",

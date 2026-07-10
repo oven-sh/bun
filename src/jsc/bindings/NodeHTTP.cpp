@@ -825,12 +825,78 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
     }
 }
 
+// Auto-header bits (kAutoHeader* in src/js/node/_http_server.ts - keep in
+// sync). The JS side passes these instead of pushing the corresponding
+// framework headers into the flat array, so the per-request cost is two
+// integers instead of up to six string conversions.
+static constexpr uint32_t kAutoHeaderDate = 1 << 0;
+static constexpr uint32_t kAutoHeaderConnKeepAlive = 1 << 1;
+static constexpr uint32_t kAutoHeaderConnClose = 1 << 2;
+static constexpr uint32_t kAutoHeaderKeepAliveTimeout = 1 << 3;
+
+// "Date: <IMF-fixdate>\r\n", rebuilt at most once per second. Hand-rolled
+// (not strftime) so the day/month names are locale-independent.
+static std::string_view cachedDateHeaderLine()
+{
+    static thread_local time_t cachedSecond = 0;
+    static thread_local char buf[48];
+    static thread_local size_t len = 0;
+    time_t now = time(nullptr);
+    if (now != cachedSecond) {
+        cachedSecond = now;
+        struct tm t;
+        gmtime_r(&now, &t);
+        static constexpr const char days[7][4] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+        static constexpr const char months[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+        len = static_cast<size_t>(snprintf(buf, sizeof(buf), "Date: %s, %02d %s %04d %02d:%02d:%02d GMT\r\n",
+            days[t.tm_wday], t.tm_mday, months[t.tm_mon], t.tm_year + 1900, t.tm_hour, t.tm_min, t.tm_sec));
+    }
+    return { buf, len };
+}
+
+// "Connection: keep-alive\r\nKeep-Alive: timeout=N\r\n" as one buffer write;
+// N is a per-server constant, so cache the rendered blob by value.
+static std::string_view keepAliveHeaderBlob(uint32_t timeoutSecs)
+{
+    static thread_local uint32_t cachedTimeout = ~0u;
+    static thread_local char buf[64];
+    static thread_local size_t len = 0;
+    if (timeoutSecs != cachedTimeout) {
+        cachedTimeout = timeoutSecs;
+        len = static_cast<size_t>(snprintf(buf, sizeof(buf), "Connection: keep-alive\r\nKeep-Alive: timeout=%u\r\n", timeoutSecs));
+    }
+    return { buf, len };
+}
+
+template<bool isSSL>
+static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHeaderBits, uint32_t keepAliveTimeoutSecs)
+{
+    if (autoHeaderBits & kAutoHeaderDate) {
+        auto line = cachedDateHeaderLine();
+        response->uWS::template AsyncSocket<isSSL>::write(line.data(), (int)line.length());
+    }
+    if (autoHeaderBits & kAutoHeaderConnKeepAlive) {
+        if (autoHeaderBits & kAutoHeaderKeepAliveTimeout) {
+            auto blob = keepAliveHeaderBlob(keepAliveTimeoutSecs);
+            response->uWS::template AsyncSocket<isSSL>::write(blob.data(), (int)blob.length());
+        } else {
+            static constexpr const char ka[] = "Connection: keep-alive\r\n";
+            response->uWS::template AsyncSocket<isSSL>::write(ka, sizeof(ka) - 1);
+        }
+    } else if (autoHeaderBits & kAutoHeaderConnClose) {
+        static constexpr const char cl[] = "Connection: close\r\n";
+        response->uWS::template AsyncSocket<isSSL>::write(cl, sizeof(cl) - 1);
+    }
+}
+
 template<bool isSSL>
 static void NodeHTTPServer__writeHead(
     JSC::JSGlobalObject* globalObject,
     const char* statusMessage,
     size_t statusMessageLength,
     JSValue headersObjectValue,
+    uint32_t autoHeaderBits,
+    uint32_t keepAliveTimeoutSecs,
     uWS::HttpResponse<isSSL>* response)
 {
     auto& vm = globalObject->vm();
@@ -858,6 +924,7 @@ static void NodeHTTPServer__writeHead(
     if (headersObject) {
         if (auto* fetchHeaders = dynamicDowncast<WebCore::JSFetchHeaders>(headersObject)) {
             writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
+            if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
             return;
         }
 
@@ -908,6 +975,7 @@ static void NodeHTTPServer__writeHead(
 
                 writeResponseHeader<isSSL>(response, name, value);
             }
+            if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
             return;
         }
 
@@ -955,6 +1023,8 @@ static void NodeHTTPServer__writeHead(
         }
     }
 
+    if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
+
     RELEASE_AND_RETURN(scope, void());
 }
 
@@ -963,9 +1033,11 @@ extern "C" void NodeHTTPServer__writeHead_http(
     const char* statusMessage,
     size_t statusMessageLength,
     JSValue headersObjectValue,
+    uint32_t autoHeaderBits,
+    uint32_t keepAliveTimeoutSecs,
     uWS::HttpResponse<false>* response)
 {
-    return NodeHTTPServer__writeHead<false>(globalObject, statusMessage, statusMessageLength, headersObjectValue, response);
+    return NodeHTTPServer__writeHead<false>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
 }
 
 extern "C" void NodeHTTPServer__writeHead_https(
@@ -973,9 +1045,11 @@ extern "C" void NodeHTTPServer__writeHead_https(
     const char* statusMessage,
     size_t statusMessageLength,
     JSValue headersObjectValue,
+    uint32_t autoHeaderBits,
+    uint32_t keepAliveTimeoutSecs,
     uWS::HttpResponse<true>* response)
 {
-    return NodeHTTPServer__writeHead<true>(globalObject, statusMessage, statusMessageLength, headersObjectValue, response);
+    return NodeHTTPServer__writeHead<true>(globalObject, statusMessage, statusMessageLength, headersObjectValue, autoHeaderBits, keepAliveTimeoutSecs, response);
 }
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(

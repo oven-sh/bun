@@ -2135,6 +2135,10 @@ impl Drop for GlobalData {
             // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
             unsafe { c_ares::Channel::destroy(channel) };
         }
+        // The resolver is a value field, so it drops here regardless of its refcount —
+        // an in-flight libc lookup's key would go with it. Must follow the channel
+        // teardown, whose callbacks drain the c-ares caches.
+        self.resolver.drop_pending_native_host_keys();
     }
 }
 
@@ -4054,6 +4058,22 @@ impl Resolver {
                 c_ares::Channel::destroy(channel);
             }
             drop(bun_core::heap::take(this));
+        }
+    }
+
+    /// Free the keys of libc/libinfo lookups still parked in the native host cache.
+    ///
+    /// `ares_destroy` drains the c-ares caches through their callbacks, but the libc
+    /// path has no channel, and a `HiveArray`'s `[MaybeUninit<T>; N]` buffer has no
+    /// drop glue. Only `name` is owned here; `lookup` is a borrowed raw pointer.
+    fn drop_pending_native_host_keys(&self) {
+        const FIELD: PendingCacheField = PendingCacheField::PendingHostCacheNative;
+        loop {
+            // Bind first: the `&mut` borrow must end before `get_key_host` re-derives it.
+            let next = self.pending_host_cache(FIELD).used.find_first_set();
+            let Some(index) = next else { return };
+            // Moves the key out and clears its `used` bit, so this terminates.
+            drop(self.get_key_host(index as u8, FIELD));
         }
     }
 

@@ -534,6 +534,8 @@ pub enum VolumeName {
     #[default]
     Dos,
     Nt,
+    /// `VOLUME_NAME_NONE`: the path relative to the volume root, no device.
+    None,
 }
 
 #[derive(Copy, Clone, Debug, Default)]

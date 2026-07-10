@@ -497,15 +497,17 @@ describe("corrupt compressed responses", () => {
     }
   }
 
-  it("followed redirect with a malformed chunked body rejects fetch()", async () => {
-    // The intermediate 3xx head is not the caller's Response under
-    // redirect:"follow", so a body parse failure there must reject fetch()
-    // rather than resolving with the 302.
+  it("redirect with a malformed chunked body: follow succeeds, manual surfaces the body error", async () => {
+    // Redirects are followed on the response head (WHATWG HTTP-redirect fetch),
+    // so a parse failure in the discarded 3xx body must not affect redirect:
+    // "follow"; under redirect:"manual" the 302 body surfaces the error.
+    await using final = Bun.serve({ port: 0, fetch: () => new Response("FINAL") });
+    const location = `${final.url.origin}/final`;
     const srv = createNetServer(sock => {
       sock.on("error", () => {});
       sock.end(
         "HTTP/1.1 302 Found\r\n" +
-          "Location: http://127.0.0.1:1/unreached\r\n" +
+          `Location: ${location}\r\n` +
           "Transfer-Encoding: chunked\r\n" +
           "Connection: close\r\n\r\n" +
           "ZZ\r\n",
@@ -513,18 +515,19 @@ describe("corrupt compressed responses", () => {
     });
     const port = await listen(srv);
     try {
-      const followErr = await fetch(`http://127.0.0.1:${port}/`, { redirect: "follow" }).then(
-        r => ({ status: r.status }),
-        e => e,
-      );
-      expect(followErr).toBeInstanceOf(Error);
-      expect((followErr as { code?: string }).code).toBe("InvalidHTTPResponse");
+      const res = await fetch(`http://127.0.0.1:${port}/`, { redirect: "follow" });
+      expect({ status: res.status, redirected: res.redirected, url: res.url, body: await res.text() }).toEqual({
+        status: 200,
+        redirected: true,
+        url: location,
+        body: "FINAL",
+      });
 
       // With redirect:"manual" the 302 *is* the final response.
-      const res = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
-      expect(res.status).toBe(302);
-      expect(res.headers.get("location")).toBe("http://127.0.0.1:1/unreached");
-      const bodyErr = await res.arrayBuffer().then(
+      const manual = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
+      expect(manual.status).toBe(302);
+      expect(manual.headers.get("location")).toBe(location);
+      const bodyErr = await manual.arrayBuffer().then(
         () => null,
         e => e,
       );
@@ -562,6 +565,223 @@ describe("corrupt compressed responses", () => {
       expect((err as { code?: string }).code).toBe("TooManyRedirects");
     } finally {
       srv.close();
+    }
+  });
+});
+
+// RFC 1952 §2.2: a gzip file is a sequence of members. Concatenated members
+// (cat a.gz b.gz, bgzf, pigz, pre-compressed segment stitching) must all be
+// decoded. Previously fetch() silently returned only the first member.
+describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
+  const P1 = Buffer.alloc(18000, "The quick brown fox jumps over the lazy dog. ");
+  const P2 = Buffer.alloc(14000, "SECOND-MEMBER-");
+  const M1 = gzipSync(P1);
+  const M2 = gzipSync(P2);
+  const BODY = Buffer.concat([M1, M2]);
+  const EXPECT = Buffer.concat([P1, P2]).toString("utf8");
+
+  type Case = [label: string, pieces: Buffer[], chunked: boolean];
+  const cases: Case[] = [
+    ["content-length, one write", [BODY], false],
+    [
+      "content-length, split mid member #1 trailer",
+      [BODY.subarray(0, M1.length - 5), BODY.subarray(M1.length - 5)],
+      false,
+    ],
+    ["content-length, split at member boundary", [M1, M2], false],
+    ["chunked, one chunk", [BODY], true],
+    ["chunked, one chunk per member", [M1, M2], true],
+    // gzip padding: trailing zeros after the last member must be tolerated.
+    ["content-length, trailing zero padding", [Buffer.concat([BODY, Buffer.alloc(8)])], false],
+    // Trailing non-gzip-magic bytes after the last member must be tolerated
+    // as garbage (not treated as another member), matching browsers/curl/Go.
+    ["content-length, trailing CRLF garbage", [Buffer.concat([BODY, Buffer.from("\r\n")])], false],
+  ];
+
+  describe.each(["0", "1"])("BUN_FEATURE_FLAG_NO_LIBDEFLATE=%s", noLibdeflate => {
+    it.concurrent.each(cases)("%s", async (_label, pieces, chunked) => {
+      const total = pieces.reduce((n, p) => n + p.length, 0);
+      const server = createNetServer(socket => {
+        socket.on("error", () => {});
+        socket.setNoDelay(true);
+        const head = chunked
+          ? "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+          : `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ${total}\r\nConnection: close\r\n\r\n`;
+        socket.write(head);
+        (async () => {
+          for (const p of pieces) {
+            if (chunked) {
+              socket.write(p.length.toString(16) + "\r\n");
+              socket.write(p);
+              socket.write("\r\n");
+            } else {
+              socket.write(p);
+            }
+            await new Promise(r => setImmediate(r));
+          }
+          socket.end(chunked ? "0\r\n\r\n" : undefined);
+        })().catch(() => socket.destroy());
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      try {
+        const { port } = server.address() as import("node:net").AddressInfo;
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const res = await fetch(process.argv[1]);
+             const buf = Buffer.from(await res.arrayBuffer());
+             process.stdout.write(buf);`,
+            `http://127.0.0.1:${port}/`,
+          ],
+          env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate },
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ len: stdout.length, stdout, stderr, exitCode }).toEqual({
+          len: EXPECT.length,
+          stdout: EXPECT,
+          stderr: expect.not.stringContaining("error"),
+          exitCode: 0,
+        });
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  // A single valid gzip member followed by non-gzip-magic trailing bytes
+  // must still decode successfully (prior Bun behavior, and what browsers /
+  // curl / Go do). The multi-member loop only resumes on 0x1f so stray
+  // CRLF/footer junk from misconfigured origins does not fail the fetch.
+  it.concurrent.each(["0", "1"])("single member with trailing garbage (NO_LIBDEFLATE=%s)", async noLibdeflate => {
+    const body = Buffer.concat([M1, Buffer.from("\r\ngarbage")]);
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.end(
+        Buffer.concat([
+          Buffer.from(
+            `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
+          ),
+          body,
+        ]),
+      );
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const res = await fetch(process.argv[1]);
+           process.stdout.write(Buffer.from(await res.arrayBuffer()));`,
+          `http://127.0.0.1:${port}/`,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ len: stdout.length, stdout, stderr, exitCode }).toEqual({
+        len: P1.length,
+        stdout: P1.toString(),
+        stderr: expect.not.stringContaining("error"),
+        exitCode: 0,
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  // Last member's ISIZE trailer > 512 KiB (LibdeflateState::shared_buffer) so
+  // the libdeflate fast path takes the decompress_to_vec branch, which must
+  // also detect unconsumed input and fall through.
+  it.concurrent("content-length, last member > 512 KiB (decompress_to_vec branch)", async () => {
+    const big = Buffer.alloc(600 * 1024, "BIG-LAST-MEMBER-");
+    const body = Buffer.concat([M1, gzipSync(big)]);
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.end(
+        Buffer.concat([
+          Buffer.from(
+            `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
+          ),
+          body,
+        ]),
+      );
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const expected = Buffer.concat([P1, big]);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const res = await fetch(process.argv[1]);
+           const buf = Buffer.from(await res.arrayBuffer());
+           console.log(buf.length, Bun.hash(buf).toString(16));`,
+          `http://127.0.0.1:${port}/`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: `${expected.length} ${Bun.hash(expected).toString(16)}`,
+        stderr: expect.not.stringContaining("error"),
+        exitCode: 0,
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  // Streaming body path (ResponseBodyStreaming signal set): exercises the
+  // per-chunk Decompressor::decompress_chunk path with a member boundary
+  // between chunks.
+  it.concurrent("streaming body, member boundary between chunks", async () => {
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.setNoDelay(true);
+      socket.write(
+        "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+      );
+      (async () => {
+        for (const p of [M1, M2]) {
+          socket.write(p.length.toString(16) + "\r\n");
+          socket.write(p);
+          socket.write("\r\n");
+          await new Promise(r => setImmediate(r));
+        }
+        socket.end("0\r\n\r\n");
+      })().catch(() => socket.destroy());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const res = await fetch(process.argv[1]);
+           const chunks = [];
+           for await (const c of res.body) chunks.push(c);
+           process.stdout.write(Buffer.concat(chunks));`,
+          `http://127.0.0.1:${port}/`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ len: stdout.length, stdout, stderr, exitCode }).toEqual({
+        len: EXPECT.length,
+        stdout: EXPECT,
+        stderr: expect.not.stringContaining("error"),
+        exitCode: 0,
+      });
+    } finally {
+      server.close();
     }
   });
 });

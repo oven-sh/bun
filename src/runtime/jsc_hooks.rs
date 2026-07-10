@@ -94,7 +94,12 @@ pub struct RuntimeState {
     /// (`Request.body` payloads).
     /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
     /// — far too large to construct on the stack inside `Box::new(RuntimeState{..})`.
-    pub body_value_pool: Box<crate::webcore::body::HiveAllocator>,
+    /// `ManuallyDrop` inside the `Box`: `deinit_runtime_state` runs after
+    /// `event_loop.deinit()`, so `HiveArray::Drop` on a leaked body would run
+    /// `Value::drop` (which touches `Blob`/`readable` state) at a point that
+    /// has not been proven safe; keep the prior behavior of leaking any
+    /// still-occupied slot while still freeing the pool allocation itself.
+    pub body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
     pub isolation_handles: IsolationHandles,
 }
 
@@ -326,7 +331,9 @@ unsafe fn init_runtime_state(
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
-        body_value_pool: Box::new(crate::webcore::body::HiveAllocator::init()),
+        body_value_pool: Box::new(core::mem::ManuallyDrop::new(
+            crate::webcore::body::HiveAllocator::init(),
+        )),
         isolation_handles: IsolationHandles::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));

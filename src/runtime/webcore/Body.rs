@@ -555,7 +555,7 @@ pub(crate) fn hive_alloc(value: Value) -> BodyHiveHandle {
     debug_assert!(!state.is_null(), "hive_alloc before init_runtime_state");
     // SAFETY: `state` is the live boxed RuntimeState; `body_value_pool` is a
     // heap-stable `Box<HiveAllocator>` for the VM lifetime.
-    let pool = unsafe { &raw const *(*state).body_value_pool };
+    let pool = unsafe { &raw const **(*state).body_value_pool };
     // SAFETY: `pool` outlives every handle (process lifetime).
     unsafe { BodyHiveHandle::new(value, pool) }
 }

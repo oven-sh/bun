@@ -1441,8 +1441,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onBufferedFastPathRejected, (JSGlob
     auto* stream = uncheckedDowncast<JSReadableStream>(callFrame->uncheckedArgument(1));
     JSValue error = callFrame->argument(0);
     stream->m_lockedWithoutReader = false;
-    Bun::WebStreams::readableStreamCancel(globalObject, stream, error);
+    auto* cancelPromise = Bun::WebStreams::readableStreamCancel(globalObject, stream, error);
     RETURN_IF_EXCEPTION(scope, {});
+    if (cancelPromise)
+        Bun::WebStreams::markPromiseAsHandled(vm, cancelPromise);
     Bun::WebStreams::readableStreamCloseIfPossible(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     throwException(globalObject, scope, error);

@@ -302,11 +302,9 @@ describe("bundler", () => {
       },
     ],
   });
-  // A non-ASCII basename char must collapse to a single "_" in the generated
-  // CommonJS wrapper symbol, not one "_" per UTF-8 byte. Regressed to
-  // `require_caf__utils` (the 2 bytes of "é" walked individually) because the
-  // identifier formatter resolved to a stub that never decoded multi-byte
-  // sequences (width always 1).
+  // A non-ASCII ID_Continue basename char is preserved in the generated
+  // CommonJS wrapper symbol, not replaced per-code-point (nor per-UTF-8-byte,
+  // which once regressed to `require_caf__utils`).
   itBundled("naming/NonAsciiSourceFilenameSymbol", {
     files: {
       "/entry.js": /* js */ `
@@ -319,8 +317,10 @@ describe("bundler", () => {
     },
     target: "bun",
     onAfterBundle(api) {
-      api.expectFile("/out.js").toContain("require_caf_utils");
+      // target: "bun" prints identifiers ASCII-only, so "é" is escaped.
+      api.expectFile("/out.js").toContain("require_caf\\u{e9}_utils");
       api.expectFile("/out.js").not.toContain("require_caf__utils");
+      api.expectFile("/out.js").not.toContain("require_caf_utils");
     },
     run: { stdout: "1" },
   });

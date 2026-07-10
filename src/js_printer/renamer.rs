@@ -870,8 +870,8 @@ pub enum UnusedName {
 
 /// Fast-path for `MutableString::ensure_valid_identifier`: returns `true` iff
 /// `s` is a non-empty ASCII identifier (`[A-Za-z_$][A-Za-z0-9_$]*`). This is
-/// the exact condition under which `MutableString::ensure_valid_identifier`
-/// returns the input unchanged (modulo the strict-mode-reserved-word remap,
+/// a sufficient condition for `MutableString::ensure_valid_identifier` to
+/// return the input unchanged (modulo the strict-mode-reserved-word remap,
 /// handled by the caller). That function currently always allocates
 /// a `Box<[u8]>` even on the borrow path, so hoisting
 /// this check into the renamer keeps zero-alloc behaviour for the
@@ -993,10 +993,10 @@ impl NumberScope {
         //
         // `name` may still equal `input_name` bytewise even when `normalized`
         // is true: `ensure_valid_identifier` returns the input bytes unchanged
-        // for an identifier whose first codepoint is a non-ASCII ID_Start
-        // (e.g. `é`, `π`), since only `is_simple_ascii_identifier` is
-        // ASCII-restricted. The hot ASCII path skips the byte compare via
-        // `!normalized`; the rare non-ASCII path falls back to it.
+        // for any already-valid identifier (e.g. `Café`, `π`), since only
+        // `is_simple_ascii_identifier` is ASCII-restricted. The hot ASCII path
+        // skips the byte compare via `!normalized`; the rare non-ASCII path
+        // falls back to it.
         if !collided && (!normalized || strings::eql_long(name, input_name, true)) {
             // `input_name` is `Symbol::original_name.slice()` — an AST-arena
             // slice that outlives the renamer (see [`NameKey`] doc). No copy.

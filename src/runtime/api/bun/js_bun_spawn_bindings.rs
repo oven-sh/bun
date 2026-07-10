@@ -463,6 +463,18 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 let argv0_str = argv0_.get_zig_string(global_this)?;
                 if argv0_str.len > 0 {
                     let owned = argv0_str.to_owned_slice_z();
+                    // Check for null bytes in argv0 (security: prevent null byte injection)
+                    if strings::index_of_char(owned.as_bytes(), 0).is_some() {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::INVALID_ARG_VALUE,
+                                format_args!(
+                                    "The property 'options.argv0' must be a string without null bytes. Received {}",
+                                    bun_fmt::quote(owned.as_bytes())
+                                ),
+                            )
+                            .throw());
+                    }
                     argv0 = Some(owned.as_ptr());
                     cstr_storage.push(owned);
                 }
@@ -473,6 +485,18 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 let cwd_str = cwd_.get_zig_string(global_this)?;
                 if cwd_str.len > 0 {
                     cwd_owned = cwd_str.to_owned_slice_z();
+                    // Check for null bytes in cwd (security: prevent null byte injection)
+                    if strings::index_of_char(cwd_owned.as_bytes(), 0).is_some() {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::INVALID_ARG_VALUE,
+                                format_args!(
+                                    "The property 'options.cwd' must be a string without null bytes. Received {}",
+                                    bun_fmt::quote(cwd_owned.as_bytes())
+                                ),
+                            )
+                            .throw());
+                    }
                     // `cwd_owned` is never mutated again, so this borrow is valid
                     // for every read of `cwd` below.
                     cwd = cwd_owned.as_bytes();

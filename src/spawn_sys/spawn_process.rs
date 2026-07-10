@@ -461,8 +461,9 @@ pub struct PosixSpawnResult {
 
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.
 pub enum ExtraPipe {
-    /// We created this fd (e.g. socketpair for `"pipe"`); expose it via
-    /// `Subprocess.stdio[N]` and close it in `finalizeStreams`.
+    /// We created this fd (e.g. socketpair for `"pipe"`); `finalizeStreams`
+    /// closes it. Downgraded to `UnownedFd` once `.stdio` is read (the caller
+    /// then owns the raw number and is responsible for closing it).
     OwnedFd(Fd),
     /// The caller supplied this fd in the stdio array; expose it via
     /// `Subprocess.stdio[N]` but never close it — the caller retains ownership.

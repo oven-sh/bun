@@ -1519,27 +1519,12 @@ impl Run {
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
-                    // When --hot/--watch is on, keep the process alive
-                    // instead of hard-exiting on a rejected entry.
-                    if vm.hot_reload != 0 {
+                    // When --hot/--watch is on (or a user
+                    // `uncaughtException` handler swallowed the error), keep the
+                    // process alive instead of hard-exiting on a rejected entry.
+                    // The core run-loop below does the actual waiting.
+                    if vm.hot_reload != 0 || handled {
                         vm.add_main_to_watcher_if_needed();
-                        // SAFETY: `event_loop` is a self-pointer into this VM;
-                        // uniquely accessed here.
-                        vm.event_loop_ref().tick();
-                        // SAFETY: as above — `event_loop` is a self-pointer into
-                        // this VM; uniquely accessed here.
-                        vm.event_loop_ref().tick_possibly_forever();
-                    } else if handled {
-                        // A user `uncaughtException` listener (or domain error
-                        // handler) swallowed the entry error: drain whatever it
-                        // scheduled, then fall through to the regular run-loop
-                        // below, which finishes remaining work and exits once
-                        // the event loop is empty. Do NOT tick_possibly_forever
-                        // here: it arms the ref'd four-minute forever timer,
-                        // and on Windows (libuv) the tick blocks in
-                        // uv_run(UV_RUN_ONCE) until that timer fires while the
-                        // timer keeps uv_loop_alive() true, so the run-loop
-                        // below never exits and the process hangs.
                         // SAFETY: `event_loop` is a self-pointer into this VM;
                         // uniquely accessed here.
                         vm.event_loop_ref().tick();

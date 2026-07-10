@@ -1190,11 +1190,11 @@ export async function describeWithContainer(
       _port = info.ports[servicePort];
       console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
       readyResolver!();
-      // Cold container start is bounded by `compose up --wait-timeout 60` plus
+      // Cold container start is bounded by `compose up --wait-timeout 180` plus
       // a `compose build` step; the default 5s hook timeout fires first and the
       // runner's auto-killer then SIGTERMs the in-flight compose subprocesses,
       // surfacing as bogus `Failed to start service X: ... Creating` errors.
-    }, 120_000);
+    }, 240_000);
 
     fn(containerDescriptor);
   });

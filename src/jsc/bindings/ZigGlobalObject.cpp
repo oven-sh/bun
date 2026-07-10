@@ -115,6 +115,7 @@
 #include "JSMessageEvent.h"
 #include "JSMessagePort.h"
 #include "JSNextTickQueue.h"
+#include "JSSocketHandlers.h"
 #include "JSPerformance.h"
 #include "JSPerformanceEntry.h"
 #include "JSPerformanceMark.h"
@@ -1515,6 +1516,38 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
     return {};
 }
 
+extern "C" JSC::EncodedJSValue Bun__createTypedArrayForCopy(JSC::JSGlobalObject* globalObject, TypedArrayType ty, const void* ptr, size_t byteLength)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    RefPtr<ArrayBuffer> buffer = ArrayBuffer::tryCreateUninitialized(byteLength, 1);
+    if (!buffer) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    if (byteLength > 0 && ptr != nullptr)
+        memcpy(buffer->data(), ptr, byteLength);
+
+    unsigned elementByteSize = elementSize(ty);
+    size_t offset = 0;
+    size_t length = byteLength / elementByteSize;
+    bool isResizableOrGrowableShared = buffer->isResizableOrGrowableShared();
+
+    switch (ty) {
+#define JSC_TYPED_ARRAY_COPY_FACTORY(type) \
+    case Type##type:                       \
+        RELEASE_AND_RETURN(scope, JSValue::encode(JS##type##Array::create(globalObject, globalObject->typedArrayStructure(Type##type, isResizableOrGrowableShared), WTF::move(buffer), offset, length)));
+        FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(JSC_TYPED_ARRAY_COPY_FACTORY)
+#undef JSC_TYPED_ARRAY_COPY_FACTORY
+    case NotTypedArray:
+    case TypeDataView:
+        ASSERT_NOT_REACHED();
+    }
+
+    return {};
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer);
 JSC_DEFINE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -2297,6 +2330,11 @@ void GlobalObject::finishCreation(VM& vm)
     this->m_pendingVirtualModuleResultStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::PendingVirtualModuleResult::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    this->m_JSSocketHandlersStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::JSSocketHandlers::createStructure(init.vm, init.owner, JSC::jsNull()));
         });
 
     m_bunObject.initLater(

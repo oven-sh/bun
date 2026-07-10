@@ -18,6 +18,10 @@ pub enum Error {
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
+    #[error(transparent)]
+    Core(#[from] bun_core::Error),
+    #[error(transparent)]
+    Overflow(#[from] bun_core::bounded_array::OverflowError),
 }
 
 impl Error {
@@ -32,6 +36,20 @@ impl Error {
             Self::ParseErrorAlreadyLogged => "ParseErrorAlreadyLogged",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
+            Self::Core(e) => e.name(),
+            Self::Overflow(_) => "Overflow",
+        }
+    }
+
+    pub fn into_core(self) -> bun_core::Error {
+        match self {
+            Self::Alloc(a) => bun_core::Error::Alloc(a),
+            Self::Core(e) => e,
+            Self::Sys(bun_errno::SystemErrno::ENOENT) => bun_core::Error::FileNotFound,
+            Self::Sys(bun_errno::SystemErrno::EACCES) => bun_core::Error::AccessDenied,
+            Self::Sys(bun_errno::SystemErrno::ENAMETOOLONG) => bun_core::Error::NameTooLong,
+            Self::Sys(bun_errno::SystemErrno::ENOSPC) => bun_core::Error::NoSpaceLeft,
+            _ => bun_core::Error::Unexpected,
         }
     }
 }

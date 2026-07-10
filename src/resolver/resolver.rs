@@ -3032,7 +3032,7 @@ impl<'a> Resolver<'a> {
                             ),
                             import_path,
                             kind,
-                            err,
+                            bun_ast::Error::ModuleNotFound,
                         );
                         if let Some(d) = self.debug_logs.as_mut() {
                             d.decrease_indent();
@@ -3198,7 +3198,7 @@ impl<'a> Resolver<'a> {
                     Ok(p) => p,
                     Err(err) => {
                         // if it's missing, we need to install it
-                        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        if err == bun_core::Error::FileNotFound {
                             match manager!().get_preinstall_state(resolved_package_id) {
                                 Install::PreinstallState::Done => {
                                     // NOTE: `MatchResult.path_pair` is `Path<'static>`;
@@ -3253,7 +3253,7 @@ impl<'a> Resolver<'a> {
                                             if let Some(d) = self.debug_logs.as_mut() {
                                                 d.decrease_indent();
                                             }
-                                            return MatchStatus::Failure(enqueue_download_err);
+                                            return MatchStatus::Failure(enqueue_download_err.into());
                                         }
                                     }
 
@@ -3276,7 +3276,7 @@ impl<'a> Resolver<'a> {
                         if let Some(d) = self.debug_logs.as_mut() {
                             d.decrease_indent();
                         }
-                        return MatchStatus::Failure(err);
+                        return MatchStatus::Failure(err.into());
                     }
                 };
 
@@ -3692,14 +3692,14 @@ impl<'a> Resolver<'a> {
                     },
                 ) {
                     Ok(id) => id,
-                    Err(err) => return DependencyToResolve::Failure(err),
+                    Err(err) => return DependencyToResolve::Failure(err.into()),
                 };
                 package_json.package_manager_package_id = id;
             } else {
                 // we're resolving an unknown package
                 // the unknown package is the root package
                 if let Err(err) = pm!().lockfile_append_root_stub() {
-                    return DependencyToResolve::Failure(err);
+                    return DependencyToResolve::Failure(err.into());
                 }
             }
         }
@@ -3740,7 +3740,7 @@ impl<'a> Resolver<'a> {
                     return DependencyToResolve::NotFound;
                 }
                 Install::EnqueueResult::Failure(err) => {
-                    return DependencyToResolve::Failure(err);
+                    return DependencyToResolve::Failure(err.into());
                 }
             }
         }

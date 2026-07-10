@@ -2042,14 +2042,14 @@ pub mod dir_entry_accessor {
             Syscall::lstat(path)
         }
 
-        fn open(path: &ZStr) -> crate::CrateResult<Maybe<DirEntryHandle>> {
+        fn open(path: &ZStr) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {
             Self::openat(DirEntryHandle::EMPTY, path)
         }
 
         fn openat(
             handle: DirEntryHandle,
             path_: &ZStr,
-        ) -> crate::CrateResult<Maybe<DirEntryHandle>> {
+        ) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {
             let mut buf = PathBuffer::uninit();
             let mut path: &[u8] = path_.as_bytes();
 
@@ -2064,7 +2064,10 @@ pub mod dir_entry_accessor {
             // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
             // The glob implementation specifically checks for this error when dealing with symlinks
             // return Err(SysError::from_code(E::NOTDIR, Syscall::Tag::open));
-            let res = FS::instance().fs.read_directory(path, None, 0, false)?;
+            let res = FS::instance()
+                .fs
+                .read_directory(path, None, 0, false)
+                .map_err(crate::Error::into_core)?;
             match res {
                 EntriesOption::Entries(entry) => {
                     let p: *const DirEntry = &raw const **entry;
@@ -2073,7 +2076,7 @@ pub mod dir_entry_accessor {
                     let value = unsafe { &*p };
                     Ok(Ok(DirEntryHandle { value: Some(value) }))
                 }
-                EntriesOption::Err(err) => Err(err.original_err),
+                EntriesOption::Err(err) => Err(err.original_err.into_core()),
             }
         }
 

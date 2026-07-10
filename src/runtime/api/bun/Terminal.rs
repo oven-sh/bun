@@ -175,8 +175,9 @@ bitflags::bitflags! {
         const WRITER_DONE    = 1 << 6;
         /// Set when an inline-created terminal has been attached to a subprocess
         /// via spawn; prevents reusing the same inline terminal for a second
-        /// spawn (which on Windows would be silently killed by ClosePseudoConsole
-        /// when the first subprocess exits, and on POSIX has no slave_fd left).
+        /// spawn. On Windows the first exit's ClosePseudoConsole would silently
+        /// kill the second; on Linux `slave_fd` is already closed; on macOS
+        /// `slave_fd` is held until the first exit (see `close_slave_fd`).
         const INLINE_SPAWNED = 1 << 7;
     }
 }
@@ -662,11 +663,35 @@ impl Terminal {
         self.hpcon.get()
     }
 
-    /// Close the parent's copy of slave_fd after fork
-    /// The child process has its own copy - closing the parent's ensures
-    /// EOF is received on the master side when the child exits
+    /// Close the parent's copy of slave_fd after spawn. The child holds its
+    /// own; closing ours lets the master observe EOF when the child exits.
+    ///
+    /// On macOS this is deferred: xnu's `ptsclose` → `ttyclose` → `ttyflush`
+    /// flushes the pty output queue when the last slave closes, so if a short
+    /// lived child writes and exits before we poll kqueue, closing our slave
+    /// here would drop that output. Subprocess::on_process_exit closes it via
+    /// `drain_and_close_slave_fd` instead.
     pub(crate) fn close_slave_fd(&self) {
         self.update_flags(|f| f.insert(Flags::INLINE_SPAWNED));
+        #[cfg(not(target_os = "macos"))]
+        {
+            let fd = self.slave_fd.get();
+            if fd != Fd::INVALID {
+                fd.close();
+                self.slave_fd.set(Fd::INVALID);
+            }
+        }
+    }
+
+    /// macOS: synchronously drain the master (delivering any buffered output
+    /// via the data callback) and then release our slave_fd so the next read
+    /// observes EOF. Called from Subprocess::on_process_exit on the JS thread.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn drain_and_close_slave_fd(&self) {
+        let flags = self.flags.get();
+        if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+            self.reader.with_mut(|r| r.read());
+        }
         let fd = self.slave_fd.get();
         if fd != Fd::INVALID {
             fd.close();

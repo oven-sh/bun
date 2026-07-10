@@ -1413,8 +1413,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         IS_SYNC,
     ));
 
-    // For inline terminal options: close parent's slave_fd so EOF is received when child exits
-    // For existing terminal: keep slave_fd open so terminal can be reused for more spawns
+    // For inline terminal options: release parent's slave_fd so EOF reaches the
+    // master when the child exits (deferred to on_process_exit on macOS; see
+    // Terminal::close_slave_fd). Existing terminals keep slave_fd for reuse.
     if let Some(info) = terminal_info.take() {
         terminal_js_value = info.js_value;
         // Spawn succeeded so the child holds its own copy of the slave fd.

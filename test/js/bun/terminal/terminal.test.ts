@@ -1227,4 +1227,35 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     const output = Buffer.concat(dataChunks).toString();
     expect(output).toContain("hello");
   });
+
+  // On macOS, xnu flushes the pty output queue when the last slave fd closes
+  // (ptsclose -> ttyclose -> ttyflush). If a short-lived child writes and
+  // exits before the parent's event loop reads the master, the output is
+  // dropped and only the exit callback fires. Spawning many terminals back to
+  // back keeps the parent busy long enough to hit that window on slow hosts.
+  // Not `test.concurrent`: these run concurrently inside the test body, and we
+  // want the serial `Bun.spawn` loop to be the only contention.
+  test("many fast-exiting subprocesses all deliver pty output", async () => {
+    const N = isWindows ? 8 : 20;
+    const outcomes: string[] = [];
+    const one = async () => {
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let got = "";
+      const proc = Bun.spawn([bunExe(), "-e", "console.log('hello from terminal')"], {
+        env: bunEnv,
+        terminal: {
+          data: (_t, d) => {
+            got += Buffer.from(d).toString();
+            if (got.includes("hello from terminal")) resolve("data");
+          },
+          exit: () => resolve(got.includes("hello from terminal") ? "data" : "exit-no-data"),
+        },
+      });
+      outcomes.push(await promise);
+      proc.terminal?.close();
+      await proc.exited;
+    };
+    await Promise.all(Array.from({ length: N }, one));
+    expect(outcomes).toEqual(Array.from({ length: N }, () => "data"));
+  });
 });

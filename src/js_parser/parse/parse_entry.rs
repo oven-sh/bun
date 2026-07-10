@@ -1654,10 +1654,16 @@ impl<'a> Parser<'a> {
                     )
                 };
                 let ext = p.source.path.name().ext;
-                let why: &'static [u8] = if ext == b".cjs" {
-                    b"This file is CommonJS because of its \".cjs\" extension"
+                let (why, how): (&'static [u8], &'static [u8]) = if ext == b".cjs" {
+                    (
+                        b"This file is CommonJS because of its \".cjs\" extension",
+                        b"To use ES module syntax, change the file extension to '.mjs'",
+                    )
                 } else {
-                    b"This file is CommonJS because the nearest package.json sets \"type\": \"commonjs\""
+                    (
+                        b"This file is CommonJS because the nearest package.json sets \"type\": \"commonjs\"",
+                        b"To use ES module syntax, change the file extension to '.mjs' or set \"type\": \"module\" in package.json",
+                    )
                 };
                 p.log().add_range_error_with_notes(
                     Some(p.source),
@@ -1669,9 +1675,7 @@ impl<'a> Parser<'a> {
                             ..Default::default()
                         },
                         bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"To use ES module syntax, change the file extension to '.mjs' or set \"type\": \"module\" in package.json",
-                            ),
+                            text: std::borrow::Cow::Borrowed(how),
                             ..Default::default()
                         },
                     ]),

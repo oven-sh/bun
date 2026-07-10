@@ -2317,22 +2317,22 @@ pub mod parse_worker {
             UseDirective::None
         };
 
-        if (use_directive == UseDirective::Client
-        && task.known_target != options::Target::ServerComponentsSsr
-        && worker_ctx.framework.is_some()
-        && worker_ctx
-            .framework
-            .as_ref()
-            .unwrap()
-            .server_components
-            .as_ref()
-            .unwrap()
-            .separate_ssr_graph)
-        ||
-        // set the target to the client when bundling client-side files
-        ((topts.server_components || topts.has_dev_server())
-            && task.known_target == options::Target::Browser)
-        {
+        let will_use_browser_transpiler = (use_directive == UseDirective::Client
+            && task.known_target != options::Target::ServerComponentsSsr
+            && worker_ctx.framework.is_some()
+            && worker_ctx
+                .framework
+                .as_ref()
+                .unwrap()
+                .server_components
+                .as_ref()
+                .unwrap()
+                .separate_ssr_graph)
+            ||
+            // set the target to the client when bundling client-side files
+            ((topts.server_components || topts.has_dev_server())
+                && task.known_target == options::Target::Browser);
+        if will_use_browser_transpiler {
             // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
             // this is not done when there is one server graph because it is easier for plugins to deal with.
             // SAFETY: route through `worker_raw` (see top-of-function note)
@@ -2389,8 +2389,15 @@ pub mod parse_worker {
                     .separate_ssr_graph
             {
                 options::Target::ServerComponentsSsr
-            } else {
+            } else if will_use_browser_transpiler {
                 topts.target
+            } else {
+                // Propagate the importer's target (which is how this file was
+                // keyed in `Graph.build_graphs`) so its own imports dedupe in
+                // that same map. `topts.target` can differ here when the entry's
+                // `#!/usr/bin/env bun` hashbang flipped the chain to Bun but the
+                // worker transpiler is still the build-target one.
+                task.known_target
             }
         });
 

@@ -2698,6 +2698,86 @@ describe("bundler", () => {
       `);
     },
   });
+  for (const target of ["node", "browser"] as const) {
+    // When the entrypoint's `#!/usr/bin/env bun` hashbang flips its per-file
+    // target to Bun while the build target is Node/Browser, modules reachable
+    // from both the entry and a non-entry importer must still be emitted once.
+    itBundled(`edgecase/HashbangBunEntryTarget${target[0].toUpperCase()}${target.slice(1)}SharedImport`, {
+      files: {
+        "/entry.ts": `#!/usr/bin/env bun
+          import { Shared } from "./shared.ts";
+          import { ReExported } from "./reexport.ts";
+          console.log(Shared === ReExported, new Shared() instanceof ReExported);
+        `,
+        "/shared.ts": `
+          export class Shared { #p = 1; read() { return this.#p; } }
+        `,
+        "/reexport.ts": `
+          import { Shared } from "./shared.ts";
+          export const ReExported = Shared;
+        `,
+      },
+      target,
+      outdir: "/out",
+      sourceMap: "external",
+      run: { stdout: "true true" },
+      onAfterBundle(api) {
+        const js = api.readFile("/out/entry.js");
+        expect([...js.matchAll(/class Shared\w*/g)].map(m => m[0])).toEqual(["class Shared"]);
+        const map = JSON.parse(api.readFile("/out/entry.js.map"));
+        expect(map.sources).toEqual([...new Set(map.sources)]);
+      },
+    });
+    itBundled(`edgecase/HashbangBunEntryTarget${target[0].toUpperCase()}${target.slice(1)}ExportStar`, {
+      files: {
+        "/entry.ts": `#!/usr/bin/env bun
+          import { Shared } from "./shared.ts";
+          import { Other } from "./barrel.ts";
+          console.log(Other, new Shared().read());
+        `,
+        "/shared.ts": `
+          export class Shared { #p = 1; read() { return this.#p; } }
+        `,
+        "/barrel.ts": `
+          export const Other = "other";
+          export * from "./shared.ts";
+        `,
+      },
+      target,
+      outdir: "/out",
+      sourceMap: "external",
+      run: { stdout: "other 1" },
+      onAfterBundle(api) {
+        const js = api.readFile("/out/entry.js");
+        expect([...js.matchAll(/class Shared\w*/g)].map(m => m[0])).toEqual(["class Shared"]);
+        const map = JSON.parse(api.readFile("/out/entry.js.map"));
+        expect(map.sources).toEqual([...new Set(map.sources)]);
+      },
+    });
+    itBundled(`edgecase/HashbangBunEntryTarget${target[0].toUpperCase()}${target.slice(1)}CircularEntry`, {
+      files: {
+        "/entry.ts": `#!/usr/bin/env bun
+          import { helper } from "./helper.ts";
+          export const CONFIG = { x: 1 };
+          console.log(helper() === CONFIG);
+        `,
+        "/helper.ts": `
+          import { CONFIG } from "./entry.ts";
+          export function helper() { return CONFIG; }
+        `,
+      },
+      target,
+      outdir: "/out",
+      sourceMap: "external",
+      run: { stdout: "true" },
+      onAfterBundle(api) {
+        const js = api.readFile("/out/entry.js");
+        expect([...js.matchAll(/CONFIG\w* = {/g)].map(m => m[0])).toEqual(["CONFIG = {"]);
+        const map = JSON.parse(api.readFile("/out/entry.js.map"));
+        expect(map.sources).toEqual([...new Set(map.sources)]);
+      },
+    });
+  }
 });
 
 for (const backend of ["api", "cli"] as const) {

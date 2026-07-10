@@ -1521,6 +1521,9 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   // pass()/fail() precede afterEach).
   node.passed = failure === undefined;
   node.error = failure ?? null;
+  // Mark finished before hooks so a late t.test() from an after/afterEach
+  // hook hits addTest()'s parentAlreadyFinished path (Node cancels these).
+  node.finished = true;
 
   for (let i = ancestors.length - 1; i >= 0; i--) {
     const ancestor = ancestors[i];
@@ -1547,7 +1550,6 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     failure ??= err;
   }
 
-  node.finished = true;
   node.passed = failure === undefined;
   node.error = failure ?? null;
   return failure;

@@ -550,12 +550,13 @@ pub(crate) fn js_node_test_mark_result(
     };
     // SAFETY: `dcb` is the live `*mut DoneCallback` from `from_js`; single-
     // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
-    let bound = match unsafe { (*dcb).r#ref.as_deref() } {
+    let (dcb_ref, dcb_called) = unsafe { ((*dcb).r#ref.as_deref(), (*dcb).called) };
+    let bound = match dcb_ref {
         Some(refdata) => refdata.phase.clone(),
         // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
         // drain before it stamps the DoneCallback — the runner has not moved
         // on, so the live index IS the intended sequence.
-        None if unsafe { !(*dcb).called } => buntest.get_current_state_data(),
+        None if !dcb_called => buntest.get_current_state_data(),
         // done() already ran and reported — nothing left to mark.
         None => return Ok(JSValue::UNDEFINED),
     };

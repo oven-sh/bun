@@ -13,7 +13,7 @@
 //! this simplifies management of the file descriptor.
 
 use bun_collections::VecExt;
-use core::cell::UnsafeCell;
+use bun_jsc::JsCell;
 #[cfg(not(windows))]
 use core::ffi::c_void;
 
@@ -202,7 +202,7 @@ impl IOWriter {
     }
 }
 
-/// Mutable state. Wrapped in `UnsafeCell` so `Arc<IOWriter>`-shared callers can
+/// Mutable state. Wrapped in `JsCell` so `Arc<IOWriter>`-shared callers can
 /// mutate via `&self` (single-threaded shell).
 struct State {
     writer: WriterImpl,
@@ -236,7 +236,7 @@ struct State {
 }
 
 pub struct IOWriter {
-    state: UnsafeCell<State>,
+    state: JsCell<State>,
 }
 
 // SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
@@ -247,15 +247,15 @@ unsafe impl Send for IOWriter {}
 unsafe impl Sync for IOWriter {}
 
 impl IOWriter {
-    /// SAFETY: single-threaded; no overlapping `&mut State` may be live across
-    /// a re-entrant `enqueue` from a child callback (the `Yield` trampoline
-    /// runs child callbacks after the borrow is dropped).
+    /// # Safety
+    /// Single-threaded only, and no other `&mut State` for this `IOWriter` may
+    /// be live. Re-derive after anything that can re-enter: `run_yield`,
+    /// `__start`, `set_writing`, `bump`, `skip_dead`, child callbacks.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn state(&self) -> &mut State {
-        // SAFETY: single-threaded; callers uphold the no-overlapping-`&mut State`
-        // invariant documented on this fn (re-derive across re-entrant calls).
-        unsafe { &mut *self.state.get() }
+    unsafe fn state(&self) -> &mut State {
+        // SAFETY: caller upholds the no-overlapping-`&mut State` contract.
+        unsafe { self.state.get_mut() }
     }
 
     /// Bump our own Arc strong count. Held across re-entrant `run_yield` calls
@@ -263,7 +263,8 @@ impl IOWriter {
     /// mid-method; the stack-held strong ref prevents that.
     #[inline]
     fn keepalive(&self) -> std::sync::Arc<IOWriter> {
-        self.state()
+        self.state
+            .get()
             .self_weak
             .upgrade()
             .expect("IOWriter::keepalive after last Arc dropped")
@@ -273,7 +274,7 @@ impl IOWriter {
     /// `ShellSubprocess::spawn` to decide `no_sigpipe`).
     #[inline]
     pub fn is_socket(&self) -> bool {
-        self.state().flags.is_socket
+        self.state.get().flags.is_socket
     }
 
     pub fn init(fd: Fd, flags: Flags, evtloop: EventLoopHandle) -> std::sync::Arc<IOWriter> {
@@ -288,7 +289,7 @@ impl IOWriter {
             writer.owns_fd = false;
         }
         let this = std::sync::Arc::new_cyclic(|w| IOWriter {
-            state: UnsafeCell::new(State {
+            state: JsCell::new(State {
                 writer,
                 fd,
                 writers: Writers::new(),
@@ -311,10 +312,11 @@ impl IOWriter {
         // because the `BufferedWriterParent` callback ABI is `*mut Self`. The
         // pointer is never used to materialize `&mut IOWriter` — every callback
         // (`on_write`/`on_error`/`get_buffer`/…) re-enters via `&*this` and
-        // mutates solely through `UnsafeCell<State>` (`state()`), which carries
+        // mutates solely through `JsCell<State>` (`state()`), which carries
         // its own write provenance. No const→mut UB.
         let parent: *mut IOWriter = std::sync::Arc::as_ptr(&this).cast_mut();
-        this.state().writer.set_parent(parent);
+        // SAFETY: `this` was just constructed; no other `&mut State` is live.
+        unsafe { this.state() }.writer.set_parent(parent);
         crate::shell_log!("IOWriter(0x{:x}, fd={}) init", parent as usize, fd);
         this
     }
@@ -330,22 +332,23 @@ impl IOWriter {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn set_interp(&self, interp: *mut Interpreter) {
-        // SAFETY: caller contract above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
+        // SAFETY: caller contract above; `from_nullable_mut` does not re-enter.
+        let parent = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
+        self.state.with_mut(|s| s.interp = parent);
     }
 
     #[inline]
     pub fn fd(&self) -> Fd {
-        self.state().fd
+        self.state.get().fd
     }
 
     #[inline]
     pub fn evtloop(&self) -> EventLoopHandle {
-        self.state().evtloop
+        self.state.get().evtloop
     }
 
     pub fn memory_cost(&self) -> usize {
-        let s = self.state();
+        let s = self.state.get();
         let mut cost = core::mem::size_of::<IOWriter>();
         cost += s.buf.capacity();
         #[cfg(windows)]
@@ -364,15 +367,15 @@ impl IOWriter {
     #[cfg(not(windows))]
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
-        // type-erasure; vtable consumers treat the pointee as read-only
-        self.state().evtloop.as_event_loop_ctx()
+        self.state.get().evtloop.as_event_loop_ctx()
     }
 
     // ── start ────────────────────────────────────────────────────────────
 
     fn __start(&self) -> sys::Result<()> {
-        let s = self.state();
+        // SAFETY: no other `&mut State` is live on entry. Dropped before the
+        // recursive `__start()` calls below, which re-derive.
+        let s = unsafe { self.state() };
         crate::shell_log!("IOWriter(fd={}) __start()", s.fd);
         if let Err(e) = s.writer.start(s.fd, s.flags.pollable) {
             #[cfg(not(windows))]
@@ -454,10 +457,9 @@ impl IOWriter {
         #[cfg(not(windows))]
         {
             use bun_io::FilePollFlag;
-            // NOTE: re-derive `state()` — the EINVAL/EPERM fallback paths
-            // above re-enter `__start()` and mutate `writer.handle`, which
-            // invalidates `s` under Stacked Borrows.
-            let s = self.state();
+            // SAFETY: the earlier `s` is dead. The EINVAL/EPERM fallbacks above
+            // re-enter `__start()` and mutate `writer.handle`, so re-derive.
+            let s = unsafe { self.state() };
             if let Some(poll) = s.writer.get_poll() {
                 if s.flags.nonblock {
                     poll.set_flag(FilePollFlag::Nonblocking);
@@ -482,7 +484,9 @@ impl IOWriter {
     /// error completion has to bounce off it (`on_sync_error`) instead of
     /// re-entering `Yield::run` (see `DbgDepthGuard`).
     fn write(&self) -> WriteOutcome {
-        let s = self.state();
+        // SAFETY: no other `&mut State` is live on entry; dropped before the
+        // `__start()` call below, which re-derives.
+        let s = unsafe { self.state() };
         #[cfg(not(windows))]
         debug_assert!(s.flags.pollable);
 
@@ -496,10 +500,9 @@ impl IOWriter {
             }
             #[cfg(not(windows))]
             {
-                // NOTE: `__start()` re-derives `state()` (and may mutate
-                // `writer.handle` on the EINVAL/EPERM fallback paths), which
-                // invalidates the `s` borrow under Stacked Borrows. Re-derive.
-                let s = self.state();
+                // SAFETY: the outer `s` is dead. `__start()` re-derived and may
+                // have mutated `writer.handle`, so re-derive here.
+                let s = unsafe { self.state() };
                 // if `handle == .fd` it means it's a file which does not
                 // support polling for writeability and we should just write to it
                 if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Fd(_)) {
@@ -549,7 +552,8 @@ impl IOWriter {
 
     /// Cancel the chunks enqueued by the given child by marking them as dead.
     pub fn cancel_chunks(&self, ptr: ChildPtr) {
-        let s = self.state();
+        // SAFETY: no other `&mut State` is live; nothing below re-enters.
+        let s = unsafe { self.state() };
         if s.writers.is_empty() {
             return;
         }
@@ -567,7 +571,8 @@ impl IOWriter {
     /// Skips over dead children and increments `total_bytes_written` by the
     /// amount they would have written so the buf is skipped as well.
     fn skip_dead(&self) {
-        let s = self.state();
+        // SAFETY: no other `&mut State` is live; nothing below re-enters.
+        let s = unsafe { self.state() };
         while s.writer_idx < s.writers.len() {
             let w = &s.writers[s.writer_idx];
             if w.is_dead() {
@@ -580,7 +585,7 @@ impl IOWriter {
     }
 
     fn wrote_everything(&self) -> bool {
-        let s = self.state();
+        let s = self.state.get();
         s.total_bytes_written >= s.buf.len()
     }
 
@@ -589,7 +594,7 @@ impl IOWriter {
     fn set_writing(&self, writing: bool) {
         #[cfg(windows)]
         {
-            self.state().is_writing = writing;
+            self.state.with_mut(|s| s.is_writing = writing);
         }
         let _ = writing;
     }
@@ -602,7 +607,9 @@ impl IOWriter {
         let result = self.get_buffer_impl();
         #[cfg(windows)]
         {
-            let s = self.state();
+            // SAFETY: `get_buffer_impl`'s `&mut State` is dead; `result` points
+            // into `buf`'s heap allocation, disjoint from `State`.
+            let s = unsafe { self.state() };
             s.winbuf.clear();
             s.winbuf.extend_from_slice(result);
             // `state()` ties `s` to `&self`, so the slice borrow already has
@@ -614,10 +621,11 @@ impl IOWriter {
     }
 
     fn get_buffer_impl(&self) -> &[u8] {
-        // NOTE: reshaped for borrowck — re-derive `state()` after
-        // `skip_dead()` instead of holding one `&mut State` across it.
+        // Scoped so the first `&mut State` dies before `skip_dead()` re-derives.
         {
-            let s = self.state();
+            // SAFETY: no other `&mut State` is live; `s` is dropped before
+            // `skip_dead()` takes its own.
+            let s = unsafe { self.state() };
             if s.writer_idx >= s.writers.len() {
                 return &[];
             }
@@ -626,7 +634,8 @@ impl IOWriter {
                 self.skip_dead();
             }
         }
-        let s = self.state();
+        // SAFETY: the scoped `s` above and `skip_dead()`'s borrow are both dead.
+        let s = unsafe { self.state() };
         if s.writer_idx >= s.writers.len() {
             return &[];
         }
@@ -647,11 +656,10 @@ impl IOWriter {
     /// Advance past `current_writer`, shrinking `buf` if appropriate, and
     /// return the `Yield` for the child's `on_io_writer_chunk` callback.
     fn bump(&self, current_idx: usize) -> Yield {
-        // NOTE: reshaped for borrowck — `skip_dead()` re-derives `state()`,
-        // so we must drop `s` before calling it and re-derive after, otherwise
-        // two `&mut State` are live simultaneously (UB under Stacked Borrows).
+        // Scoped so each `&mut State` dies before `skip_dead()` re-derives.
         let (is_dead, written, child_ptr) = {
-            let s = self.state();
+            // SAFETY: no other `&mut State` is live; `s` dies with this scope.
+            let s = unsafe { self.state() };
             let w = &s.writers[current_idx];
             (w.is_dead(), w.written, w.ptr)
         };
@@ -659,12 +667,14 @@ impl IOWriter {
         if is_dead {
             self.skip_dead();
         } else {
-            let s = self.state();
+            // SAFETY: the scoped `s` above is dead; nothing here re-enters.
+            let s = unsafe { self.state() };
             debug_assert!(s.writers[current_idx].written == s.writers[current_idx].len);
             s.writer_idx += 1;
         }
 
-        let s = self.state();
+        // SAFETY: the borrows above (and `skip_dead()`'s) are all dead.
+        let s = unsafe { self.state() };
         if s.writer_idx >= s.writers.len() {
             s.buf.clear();
             s.writer_idx = 0;
@@ -697,7 +707,7 @@ impl IOWriter {
     #[cfg(not(windows))]
     fn do_file_write(&self, child: ChildPtr) -> Yield {
         {
-            let s = self.state();
+            let s = self.state.get();
             debug_assert!(!s.flags.pollable);
             debug_assert!(s.writer_idx < s.writers.len());
         }
@@ -705,8 +715,9 @@ impl IOWriter {
         scopeguard::defer! { self.set_writing(false); }
         self.skip_dead();
 
-        let idx = self.state().writer_idx;
-        debug_assert!(!self.state().writers[idx].is_dead());
+        // `skip_dead()`'s borrow is already dead.
+        let idx = self.state.get().writer_idx;
+        debug_assert!(!self.state.get().writers[idx].is_dead());
 
         let buf = self.get_buffer();
         debug_assert!(!buf.is_empty());
@@ -725,7 +736,9 @@ impl IOWriter {
             // error completion is returned, not `Yield::run` from here.
             bun_io::WriteResult::Err(e) => return self.on_sync_error(child, &e),
         };
-        let s = self.state();
+        // SAFETY: `get_buffer()`'s and `drain_buffered_data()`'s borrows are
+        // dead; nothing below re-enters before `bump()` re-derives.
+        let s = unsafe { self.state() };
         let lo = s.total_bytes_written;
         s.writers[idx].tee(&s.buf[lo..lo + amt]);
         s.total_bytes_written += amt;
@@ -745,11 +758,12 @@ impl IOWriter {
     /// The `BufferedWriter.onWrite` hook. Runs on the event loop when the fd
     /// is writable.
     fn on_write_pollable(&self, amount: usize, status: bun_io::WriteStatus) {
-        // NOTE: `set_writing` re-derives `state()` on Windows, which would
-        // invalidate `s` under Stacked Borrows; do it before binding `s`
-        // (matches the ordering in `on_error`).
+        // NOTE: `set_writing` re-derives `state()` on Windows, so it must run
+        // before `s` is bound (matches the ordering in `on_error`).
         self.set_writing(false);
-        let s = self.state();
+        // SAFETY: `set_writing`'s borrow is dead. `s` is dropped before every
+        // `bump()`/`run_yield()` below, each of which re-derives.
+        let s = unsafe { self.state() };
         #[cfg(not(windows))]
         debug_assert!(s.flags.pollable);
 
@@ -790,7 +804,8 @@ impl IOWriter {
         }
 
         let wrote_everything = self.wrote_everything();
-        let s = self.state();
+        // SAFETY: every borrow above (incl. `run_yield`'s JS re-entry) is dead.
+        let s = unsafe { self.state() };
         if !wrote_everything && s.writer_idx < s.writers.len() {
             #[cfg(windows)]
             {
@@ -810,7 +825,9 @@ impl IOWriter {
     }
 
     fn broken_pipe_for_writers(&self) {
-        let s = self.state();
+        // SAFETY: no other `&mut State` is live; `s` is dropped before the
+        // `run_yield()`/`cancel_chunks()` loop below, which can re-enter.
+        let s = unsafe { self.state() };
         debug_assert!(s.flags.broken_pipe);
         // NOTE: reshaped for borrowck — collect targets first so we don't
         // hold `&mut s.writers` across `cancel_chunks`/`run_yield`.
@@ -832,7 +849,9 @@ impl IOWriter {
             });
             self.cancel_chunks(ptr);
         }
-        let s = self.state();
+        // SAFETY: the `run_yield()` JS re-entry and `cancel_chunks()` borrows
+        // are dead; re-derive after the loop.
+        let s = unsafe { self.state() };
         s.total_bytes_written = 0;
         s.writers.clear();
         s.buf.clear();
@@ -845,7 +864,9 @@ impl IOWriter {
     /// re-enqueueing from its callback is not wiped afterwards.
     fn fail_pending_writers(&self, err: &sys::Error) -> Vec<ChildPtr> {
         self.set_writing(false);
-        let s = self.state();
+        // SAFETY: `set_writing`'s borrow is dead; nothing below re-enters (the
+        // completions are returned to the caller, not run here).
+        let s = unsafe { self.state() };
         if err.get_errno() == E::EPIPE {
             s.flags.broken_pipe = true;
         }
@@ -930,7 +951,8 @@ impl IOWriter {
     /// Drive a `Yield` from inside an async poll callback. Requires `interp`
     /// to have been set; if not, the chunk-complete is dropped (debug-asserts).
     fn run_yield(&self, y: Yield) {
-        let Some(interp) = self.state().interp else {
+        // Read out here; the borrow dies before `y.run()` re-enters.
+        let Some(interp) = self.state.get().interp else {
             debug_assert!(
                 matches!(y, Yield::Done),
                 "IOWriter async callback fired without interp backref"
@@ -955,7 +977,9 @@ impl IOWriter {
     /// flavor of the same thing. Report the error to the child instead of
     /// queueing the chunk.
     fn handle_dead_writer(&self, ptr: ChildPtr) -> Option<Yield> {
-        let s = self.state();
+        // SAFETY: callers drop any live `&mut State` first; nothing here
+        // re-enters (the `Yield` is returned, not run).
+        let s = unsafe { self.state() };
         if s.flags.broken_pipe {
             let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
             return Some(Yield::OnIoWriterChunk {
@@ -978,7 +1002,9 @@ impl IOWriter {
 
     #[cfg(not(windows))]
     fn enqueue_file(&self, child: ChildPtr) -> Yield {
-        let s = self.state();
+        // SAFETY: no other `&mut State` is live; `s` is dropped before
+        // `set_writing()`/`do_file_write()`, which re-derive.
+        let s = unsafe { self.state() };
         if s.is_writing {
             return Yield::suspended();
         }
@@ -992,10 +1018,11 @@ impl IOWriter {
     /// You MUST have already added the data to `self.buf`!
     /// `child` is the writer that was just pushed (see `on_sync_error`).
     fn enqueue_internal(&self, child: ChildPtr) -> Yield {
-        debug_assert!(!self.state().flags.broken_pipe);
-        debug_assert!(self.state().err.is_none());
+        // `enqueue`'s borrow is already dead.
+        debug_assert!(!self.state.get().flags.broken_pipe);
+        debug_assert!(self.state.get().err.is_none());
         #[cfg(not(windows))]
-        if !self.state().flags.pollable {
+        if !self.state.get().flags.pollable {
             return self.enqueue_file(child);
         }
         match self.write() {
@@ -1019,7 +1046,9 @@ impl IOWriter {
                 err: None,
             };
         }
-        let s = self.state();
+        // SAFETY: `handle_dead_writer`'s borrow is dead; `s` is dropped before
+        // `enqueue_internal()`, which re-derives.
+        let s = unsafe { self.state() };
         s.buf.extend_from_slice(buf);
         s.writers.push(Writer {
             ptr: child,
@@ -1039,7 +1068,9 @@ impl IOWriter {
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
         use std::io::Write as _;
-        let s = self.state();
+        // SAFETY: no other `&mut State` is live; `s` is dropped before
+        // `enqueue_internal()`, which re-derives.
+        let s = unsafe { self.state() };
         let start = s.buf.len();
         if let Some(k) = kind {
             let _ = write!(&mut s.buf, "{}: ", k.as_str());
@@ -1164,7 +1195,8 @@ fn drain_buffered_data(
     };
     let mut drained: usize = 0;
     while drained < trimmed.len() {
-        match try_write_with_write_fn(parent.state().fd, buf, sys::write) {
+        let fd = parent.state.get().fd;
+        match try_write_with_write_fn(fd, buf, sys::write) {
             bun_io::WriteResult::Pending(pending) => {
                 drained += pending;
                 return bun_io::WriteResult::Pending(drained);
@@ -1199,7 +1231,8 @@ impl Drop for IOWriter {
         // Arc drops (possible via re-entrant child deinit), we need the async
         // hop. Revisit once `bun_event_loop::EventLoopTask` is wired to the
         // shell's `EventLoopHandle` shim.
-        let s = self.state.get_mut();
+        // SAFETY: `&mut self` in `drop` — unique access, no other borrow.
+        let s = unsafe { self.state.get_mut() };
         crate::shell_log!("IOWriter(fd={}) deinit", s.fd);
         #[cfg(not(windows))]
         {

@@ -130,7 +130,7 @@ impl Archive {
 }
 
 /// Configure archive for reading tar/tar.gz
-fn configure_archive_reader(archive: &libarchive::lib::Archive) {
+fn configure_archive_reader(archive: &libarchive::lib::sys::Archive) {
     let _ = archive.read_support_format_tar();
     let _ = archive.read_support_format_gnutar();
     let _ = archive.read_support_filter_gzip();
@@ -148,7 +148,7 @@ fn entry_pathname_utf8(entry: &libarchive::lib::Entry) -> Result<Vec<u8>, bun_al
 /// Count the number of files in an archive
 fn count_files_in_archive(data: &[u8]) -> u32 {
     use libarchive::lib;
-    let archive = lib::ReadArchive::new();
+    let archive = lib::Archive::read_new();
     configure_archive_reader(&archive);
 
     if archive.read_open_memory(data) != lib::Result::Ok {
@@ -302,7 +302,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     // errdefer growing_buffer.deinit() — handled by Drop on Vec<u8>
 
     let archive = lib::WriteArchive::new();
-    let archive_ref: &lib::Archive = &archive;
+    let archive_ref: &lib::sys::Archive = &archive;
 
     if archive_ref.write_set_format_pax_restricted() != lib::Result::Ok {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -755,19 +755,14 @@ impl<C: TaskContext> AsyncTask<C> {
         }
     }
 
-    /// # Safety
-    /// `this` must be the live `heap::into_raw` allocation produced by
-    /// [`create`](Self::create), called exactly once on the JS thread after
-    /// `run_callback` enqueues it. Takes ownership of the allocation.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
-        // SAFETY: see fn-level safety contract.
-        let mut owned = unsafe { bun_core::heap::take(this) };
-        owned.keep_alive.unref(bun_io::js_vm_ctx());
+    /// Consumes the allocation produced by [`create`](Self::create); called
+    /// exactly once on the JS thread after `run_callback` enqueues it.
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    pub fn run_from_js(mut self: Box<Self>) -> Result<(), bun_jsc::JsTerminated> {
+        self.keep_alive.unref(bun_io::js_vm_ctx());
 
-        // `defer { ctx.deinit; destroy(this) }` — handled by `owned: Box<Self>` dropping at scope
+        // `defer { ctx.deinit; destroy(this) }` — handled by `self: Box<Self>` dropping at scope
         // exit (ctx implements Drop).
 
         let vm = VirtualMachine::get();
@@ -776,8 +771,8 @@ impl<C: TaskContext> AsyncTask<C> {
         }
 
         let global = vm.global();
-        let promise = owned.promise.swap();
-        let result = match owned.ctx.run_from_js(global) {
+        let promise = self.promise.swap();
+        let result = match self.ctx.run_from_js(global) {
             Ok(r) => r,
             Err(e) => {
                 // JSError means exception is already pending
@@ -1145,7 +1140,7 @@ pub struct FilesContext {
 }
 
 impl FilesContext {
-    fn clone_error_string(archive: &libarchive::lib::Archive) -> Option<CString> {
+    fn clone_error_string(archive: &libarchive::lib::sys::Archive) -> Option<CString> {
         let err_str = archive.error_string();
         if err_str.is_empty() {
             return None;
@@ -1155,7 +1150,7 @@ impl FilesContext {
 
     fn do_run(&mut self) -> Result<FilesResult, bun_alloc::AllocError> {
         use libarchive::lib;
-        let archive = lib::ReadArchive::new();
+        let archive = lib::Archive::read_new();
         configure_archive_reader(&archive);
 
         if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
@@ -1254,7 +1249,7 @@ impl TaskContext for FilesContext {
         match &mut self.result {
             FilesResult::Success(entries) => {
                 let map = JSMap::create(global);
-                let Some(mut map_ptr) = JSMap::from_js(map) else {
+                let Some(map_ptr) = JSMap::from_js(map) else {
                     return Ok(PromiseResult::Reject(
                         global.create_error_instance(format_args!("Failed to create Map")),
                     ));
@@ -1265,15 +1260,14 @@ impl TaskContext for FilesContext {
                     let blob_ptr =
                         Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
                     // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
-                    let blob = unsafe { &mut *blob_ptr };
+                    let blob = unsafe { &*blob_ptr };
                     blob.is_jsdom_file.set(true);
                     blob.name.set(bun_core::String::clone_utf8(&entry.path));
                     blob.last_modified.set((entry.mtime * 1000) as f64);
 
                     let name_js = blob.name.get().to_js(global)?;
                     let blob_js = blob.to_js(global);
-                    // SAFETY: map_ptr came from JSMap::from_js on a live value.
-                    unsafe { map_ptr.as_mut() }.set(global, name_js, blob_js)?;
+                    JSMap::opaque_ref(map_ptr.as_ptr()).set(global, name_js, blob_js)?;
                 }
 
                 Ok(PromiseResult::Resolve(map))
@@ -1349,8 +1343,8 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
     use bun_libdeflate_sys::libdeflate;
     libdeflate::load();
 
-    let mut compressor =
-        libdeflate::OwnedCompressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;
+    let compressor =
+        libdeflate::Compressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;
 
     let max_size = compressor.max_bytes_needed(data, libdeflate::Encoding::Gzip);
 
@@ -1435,7 +1429,7 @@ fn extract_to_disk_filtered(
     glob_patterns: Option<&[Box<[u8]>]>,
 ) -> Result<u32, bun_core::Error> {
     use libarchive::lib;
-    let archive = lib::ReadArchive::new();
+    let archive = lib::Archive::read_new();
     configure_archive_reader(&archive);
 
     if archive.read_open_memory(file_buffer) != lib::Result::Ok {

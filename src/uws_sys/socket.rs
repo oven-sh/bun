@@ -122,7 +122,8 @@ impl InternalSocket {
 fn sock<'a>(p: *mut us_socket_t) -> &'a mut us_socket_t {
     bun_opaque::opaque_deref_mut(p)
 }
-/// Reborrow the `InternalSocket::Connecting` payload.
+/// Reborrow the `InternalSocket::Connecting` payload. `&mut`, mirroring `sock`:
+/// `ext` hands out a `&mut T` into the socket's real trailing ext storage.
 #[inline(always)]
 fn conn<'a>(p: *mut ConnectingSocket) -> &'a mut ConnectingSocket {
     bun_opaque::opaque_deref_mut(p)
@@ -558,8 +559,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             _ => {
                 // The socket is gone; release the reference the caller handed us.
                 if !ctx.is_null() {
-                    // SAFETY: the caller passed an owned SSL_CTX reference.
-                    unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
+                    bun_boringssl_sys::SSL_CTX_free(crate::SslCtx::opaque_ref(ctx));
                 }
             }
         }

@@ -528,12 +528,6 @@ impl EditorContext {
 
     pub fn detect_editor(&mut self, env: &mut dot_env::Loader) {
         let mut buf = PathBuffer::uninit();
-        // Note: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime
-        // to `&'a mut buf`. On the `false` path NLL conservatively keeps `buf` borrowed
-        // (Polonius case). Re-borrow through a raw pointer at each call site; on a hit
-        // we return immediately so only one `&mut` is ever live.
-        let buf_ptr: *mut PathBuffer = &raw mut buf;
-        let mut out: &[u8] = b"";
 
         // first: choose from user preference
         if !self.name.is_empty() {
@@ -547,11 +541,11 @@ impl EditorContext {
 
             // "vscode"
             if let Some(editor_) = Editor::by_name(bun_paths::basename(self.name)) {
+                let mut out: &[u8] = b"";
                 if Editor::by_path_for_editor(
                     env,
                     editor_,
-                    // SAFETY: see note above — exclusive per-call reborrow.
-                    unsafe { &mut *buf_ptr },
+                    &mut buf,
                     Fs::FileSystem::instance().top_level_dir,
                     &mut out,
                 ) {
@@ -578,11 +572,11 @@ impl EditorContext {
 
         // EDITOR=code
         if let Some(editor_) = Editor::detect(env) {
+            let mut out: &[u8] = b"";
             if Editor::by_path_for_editor(
                 env,
                 editor_,
-                // SAFETY: see note above — exclusive per-call reborrow.
-                unsafe { &mut *buf_ptr },
+                &mut buf,
                 Fs::FileSystem::instance().top_level_dir,
                 &mut out,
             ) {
@@ -607,10 +601,10 @@ impl EditorContext {
         }
 
         // Don't know, so we will just guess based on what exists
+        let mut out: &[u8] = b"";
         if let Some(editor_) = Editor::by_fallback(
             env,
-            // SAFETY: see note above — exclusive per-call reborrow.
-            unsafe { &mut *buf_ptr },
+            &mut buf,
             Fs::FileSystem::instance().top_level_dir,
             &mut out,
         ) {

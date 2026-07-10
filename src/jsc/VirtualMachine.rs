@@ -178,13 +178,13 @@ pub struct VirtualMachine {
     /// both types are owned by `bun_runtime` (forward dep). Access goes through
     /// [`RuntimeHooks::timer_insert`] / [`RuntimeHooks::body_value_hive_ref`].
     pub runtime_state: *mut c_void,
-    pub event_loop_handle: Option<*mut PlatformEventLoop>,
+    pub event_loop_handle: Option<bun_ptr::BackRef<PlatformEventLoop>>,
     /// Pending `unref` count drained by the event-loop thread. Atomic because
     /// `KeepAlive::unref_on_next_tick_concurrently` increments it from OTHER
     /// threads.
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
-    pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
+    pub unhandled_pending_rejection_to_capture: Option<NonNull<Cell<JSValue>>>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the
     // `bun_resolver::StandaloneModuleGraph` trait; we hold the same trait
@@ -298,7 +298,9 @@ pub struct VirtualMachine {
 
     pub on_unhandled_rejection: OnUnhandledRejection,
     pub on_unhandled_rejection_ctx: Option<*mut c_void>,
-    pub on_unhandled_rejection_exception_list: Option<NonNull<ExceptionList>>,
+    /// BACKREF — a caller-owned `ExceptionList` stashed for the duration of a
+    /// single `on_unhandled_rejection` dispatch; restored by the caller.
+    pub on_unhandled_rejection_exception_list: Option<bun_ptr::BackRef<ExceptionList>>,
     pub unhandled_error_counter: usize,
     pub is_handling_uncaught_exception: bool,
     pub exit_on_uncaught_exception: bool,
@@ -855,14 +857,12 @@ impl VirtualMachine {
         self.fs().top_level_dir
     }
 
-    /// Safe `&mut Debugger` accessor — the [`JsCell`] escape hatch applied to
-    /// the optional boxed `Debugger`. Same single-JS-thread soundness
-    /// contract as [`Self::as_mut`]; keep the borrow short and do not hold
-    /// across reentrant JS calls.
+    /// Shared accessor for the optional boxed `Debugger`. Every field the JS
+    /// thread mutates through this borrow is a `Cell`, so the reference stays
+    /// valid across reentrant JS.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub fn debugger_mut(&self) -> Option<&mut crate::debugger::Debugger> {
-        self.as_mut().debugger.as_deref_mut()
+    pub fn debugger(&self) -> Option<&crate::debugger::Debugger> {
+        self.debugger.as_deref()
     }
 
     /// Safe `&mut uws::Loop` accessor for the per-VM uSockets loop. Same
@@ -892,7 +892,7 @@ impl VirtualMachine {
         // `ensure_waker()` to the live per-VM uws/uv loop and remains valid
         // for the VM lifetime. Single-JS-thread invariant per `unsafe impl
         // Sync` — only the owning JS thread reborrows mutably.
-        self.event_loop_handle.map(|h| unsafe { &mut *h })
+        self.event_loop_handle.map(|h| unsafe { &mut *h.as_ptr() })
     }
 
     /// Read-then-zero `pending_unref_counter`. `swap(0)` so a concurrent
@@ -1019,7 +1019,7 @@ impl VirtualMachine {
             );
             // SAFETY: set in `init()` on the JS thread before any host_fn /
             // event-loop tick runs; never cleared while the VM is live.
-            unsafe { self.event_loop_handle.unwrap_unchecked() }
+            unsafe { self.event_loop_handle.unwrap_unchecked() }.as_ptr()
         }
         #[cfg(not(unix))]
         {
@@ -1076,8 +1076,9 @@ impl VirtualMachine {
         this.unhandled_error_counter += 1;
         value.ensure_still_alive();
         if let Some(ptr) = this.unhandled_pending_rejection_to_capture {
-            // SAFETY: caller passed &mut stack_var (see LIFETIMES.tsv)
-            unsafe { *ptr = value };
+            // SAFETY: points at the live `Cell<JSValue>` stack local of the
+            // frame that installed the capture slot.
+            unsafe { ptr.as_ref() }.set(value);
         }
     }
 
@@ -1104,7 +1105,7 @@ impl VirtualMachine {
         // SAFETY: BORROW_PARAM ptr set by caller; outlives this call.
         let list = this
             .on_unhandled_rejection_exception_list
-            .map(|mut p| unsafe { p.as_mut() });
+            .map(|p| unsafe { &mut *p.as_ptr() });
         this.run_error_handler(value, list);
     }
 
@@ -1822,7 +1823,7 @@ fn vm_from_owner<'a>(owner: *mut ()) -> &'a mut VirtualMachine {
 
 bun_io::link_impl_EventLoopCtx! {
     Js for VirtualMachine => |this| {
-        platform_event_loop_ptr() => vm_from_owner(this.cast()).uws_loop(),
+        platform_event_loop_ptr() => bun_ptr::ParentRef::from_raw_mut(vm_from_owner(this.cast()).uws_loop()),
         file_polls_ptr() => {
             let rare = vm_from_owner(this.cast()).rare_data();
             &raw mut **rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init()))
@@ -3151,11 +3152,12 @@ impl VirtualMachine {
         {
             return self
                 .event_loop_handle
-                .expect("libuv event_loop_handle is null");
+                .expect("libuv event_loop_handle is null")
+                .as_ptr();
         }
         #[cfg(not(debug_assertions))]
         {
-            self.event_loop_handle.unwrap()
+            self.event_loop_handle.unwrap().as_ptr()
         }
     }
 
@@ -3593,9 +3595,11 @@ impl VirtualMachine {
     }
 
     /// Enqueues a task from another thread onto this VM's event loop.
+    /// Takes `&self`: the push is a lock-free intrusive queue op reached via
+    /// `event_loop_mut()`, and callers are on a foreign thread.
     #[inline]
     pub fn enqueue_task_concurrent(
-        &mut self,
+        &self,
         task: core::ptr::NonNull<crate::event_loop::ConcurrentTaskItem>,
     ) {
         self.event_loop_mut().enqueue_task_concurrent(task);
@@ -5223,14 +5227,6 @@ impl VirtualMachine {
             enable_source_code_preview: &enable_source_code_preview,
             source_code_slice,
         };
-        // SAFETY: re-borrow through the guard's raw ptrs; `_tail` does not
-        // touch them until Drop, so no aliasing during the body.
-        let exception: &mut ZigException = unsafe { &mut *_tail.exception };
-        // SAFETY: as above — re-borrow through the guard's raw ptr; `_tail`
-        // does not touch `source_code_slice` until Drop.
-        let source_code_slice: &mut Option<bun_core::ZigStringSlice> =
-            unsafe { &mut *_tail.source_code_slice.cast_mut() };
-
         fn is_noisy_builtin(name: &bun_core::String) -> bool {
             name.eql_comptime("asyncModuleEvaluation")
                 || name.eql_comptime("link")
@@ -5578,9 +5574,13 @@ impl VirtualMachine {
         let exception: *mut ZigException = exception_holder.zig_exception();
         let mut source_code_slice: Option<bun_core::ZigStringSlice> = None;
 
+        // SAFETY: `exception` points at `exception_holder.zig_exception`; the
+        // sibling `&mut exception_holder.need_to_clear_parser_arena_on_deinit`
+        // below covers a disjoint field, so this reborrow stays live across it.
+        let exception = unsafe { &mut *exception };
+
         self.remap_zig_exception(
-            // SAFETY: `exception` points into stack-local `exception_holder`.
-            unsafe { &mut *exception },
+            exception,
             error_instance,
             exception_list,
             &mut exception_holder.need_to_clear_parser_arena_on_deinit,
@@ -5590,8 +5590,7 @@ impl VirtualMachine {
         error_instance.ensure_still_alive();
 
         let result = self.print_error_instance_body(
-            // SAFETY: see above.
-            unsafe { &mut *exception },
+            exception,
             error_instance,
             None, // Note: `exception_list` was already
             // consumed by `remap_zig_exception` above (only writer).
@@ -5785,7 +5784,7 @@ impl VirtualMachine {
         });
         let code: Option<&[u8]> = if is_error_instance {
             // SAFETY: `is_error_instance` ⇒ `get_object()` is `Some`.
-            let obj = unsafe { &mut *error_instance.get_object().unwrap_unchecked() };
+            let obj = unsafe { &*error_instance.get_object().unwrap_unchecked() };
             if let Some(code_value) = obj.get_code_property_vm_inquiry(global_ref) {
                 if code_value.is_string() {
                     match code_value.to_bun_string(global_ref) {

@@ -178,10 +178,10 @@ impl<'a> BundleV2<'a> {
     /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
     /// `AnyEventLoop` that owns this bundle pass and outlives it.
     #[inline]
-    pub fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop<'static> {
-        // BACKREF deref centralised in `LinkerContext::any_loop_mut`.
+    pub fn any_loop(&self) -> &bun_event_loop::AnyEventLoop<'static> {
+        // BACKREF deref centralised in `LinkerContext::any_loop`.
         self.linker
-            .any_loop_mut()
+            .any_loop()
             .expect("BundleV2.linker.loop must be set before plugins run")
     }
 
@@ -1112,7 +1112,7 @@ pub mod bv2_impl {
             /// are the real lower-tier `bun_event_loop` types, so `dispatch()` /
             /// `run_on_js_thread()` are implemented inherently (no T6 hook).
             pub struct Resolve {
-                pub bv2: *mut BundleV2<'static>,
+                pub bv2: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
                 pub import_record: MiniImportRecord,
                 pub value: ResolveValue,
                 pub js_task: bun_event_loop::AnyTask::AnyTask,
@@ -1122,7 +1122,7 @@ pub mod bv2_impl {
             impl Default for Resolve {
                 fn default() -> Self {
                     Self {
-                    bv2: core::ptr::null_mut(),
+                    bv2: None,
                     import_record: MiniImportRecord::default(),
                     value: ResolveValue::Pending,
                     js_task: bun_event_loop::AnyTask::AnyTask::default(),
@@ -1133,9 +1133,13 @@ pub mod bv2_impl {
             impl Resolve {
                 pub fn init(bv2: &mut BundleV2<'_>, record: MiniImportRecord) -> Self {
                     Self {
-                    // SAFETY: lifetime erased — Resolve is owned by the dispatch
-                    // chain and never outlives `bv2`.
-                    bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
+                    // SAFETY: write provenance from `ptr::from_mut`; the bundle
+                    // outlives the dispatch chain that owns this `Resolve`.
+                    bv2: Some(unsafe {
+                        bun_ptr::ParentRef::from_raw_mut(
+                            std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
+                        )
+                    }),
                     import_record: record,
                     value: ResolveValue::Pending,
                     js_task: bun_event_loop::AnyTask::AnyTask::default(),
@@ -1152,29 +1156,29 @@ pub mod bv2_impl {
                     };
                     let task =
                         bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
-                    // SAFETY: `bv2` is a valid backref set by `init`; plugins is
-                    // Some (asserted by `enqueue_on_js_loop_for_plugins`).
-                    unsafe { (*self.bv2).enqueue_on_js_loop_for_plugins(task) };
+                    // SAFETY: backref set by `init`; no other borrow of the bundle is
+                    // live, and enqueueing a task cannot re-enter JS.
+                    unsafe { self.bv2.expect("bv2").assume_mut() }
+                        .enqueue_on_js_loop_for_plugins(task);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
                     // reshaped for borrowck — capture the erased self
                     // pointer before borrowing fields immutably for the FFI call.
                     let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
-                    // SAFETY: `bv2` is a valid backref set by `init`; the plugin
-                    // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
-                    // returned by `plugins_mut()` does not alias the
-                    // `&self.import_record.*` borrows below.
-                    unsafe { &mut *self.bv2 }
-                        .plugins_mut()
-                        .expect("plugins")
-                        .match_on_resolve(
-                            &self.import_record.specifier,
-                            &self.import_record.namespace,
-                            &self.import_record.source_file,
-                            self_ptr,
-                            kind,
-                        );
+                    // Copy the plugin backref out and drop the `&BundleV2`: the call
+                    // below re-enters JS, which re-derives `&mut BundleV2` from `bv2`.
+                    let bv2 = self.bv2.expect("bv2");
+                    let mut plugins = bv2.get().plugins.expect("plugins");
+                    // SAFETY: opaque C++ object owned by the completion task /
+                    // DevServer; a distinct allocation from `self` and the bundle.
+                    unsafe { plugins.as_mut() }.match_on_resolve(
+                        &self.import_record.specifier,
+                        &self.import_record.namespace,
+                        &self.import_record.source_file,
+                        self_ptr,
+                        kind,
+                    );
                 }
                 fn run_on_js_thread_wrap(
                     ctx: *mut core::ffi::c_void,
@@ -1210,7 +1214,7 @@ pub mod bv2_impl {
 
             /// Task driving an onLoad plugin invocation for one source file.
             pub struct Load {
-                pub bv2: *mut BundleV2<'static>,
+                pub bv2: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
                 pub source_index: bun_ast::Index,
                 pub default_loader: Loader,
                 pub path: Box<[u8]>,
@@ -1234,7 +1238,13 @@ pub mod bv2_impl {
                         .loader(&bv2.transpiler.options.loaders)
                         .unwrap_or(Loader::Js);
                     Self {
-                    bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
+                    // SAFETY: write provenance from `ptr::from_mut`; the bundle
+                    // outlives the dispatch chain that owns this `Load`.
+                    bv2: Some(unsafe {
+                        bun_ptr::ParentRef::from_raw_mut(
+                            std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
+                        )
+                    }),
                     parse_task: bun_ptr::BackRef::new_mut(parse),
                     source_index: parse.source_index,
                     default_loader,
@@ -1257,7 +1267,7 @@ pub mod bv2_impl {
                 /// must keep the raw deref + SAFETY note locally.
                 #[inline]
                 pub fn bv2_ptr(&self) -> *mut BundleV2<'static> {
-                    self.bv2
+                    self.bv2.expect("bv2").as_mut_ptr()
                 }
                 /// Shared access to the heap-allocated `ParseTask` this load wraps.
                 ///
@@ -1294,11 +1304,10 @@ pub mod bv2_impl {
                     };
                     let concurrent_task =
                         bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
-                    // SAFETY: `bv2` is a valid backref; plugins is Some (asserted
-                    // by `enqueue_on_js_loop_for_plugins`).
-                    unsafe {
-                        (*self.bv2).enqueue_on_js_loop_for_plugins(concurrent_task);
-                    }
+                    // SAFETY: backref set by `init`; no other borrow of the bundle is
+                    // live, and enqueueing a task cannot re-enter JS.
+                    unsafe { self.bv2.expect("bv2").assume_mut() }
+                        .enqueue_on_js_loop_for_plugins(concurrent_task);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
@@ -1306,20 +1315,19 @@ pub mod bv2_impl {
                     // reshaped for borrowck — capture the erased self
                     // pointer before borrowing fields immutably for the FFI call.
                     let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
-                    // SAFETY: `bv2` is a valid backref set by `init`; the plugin
-                    // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
-                    // returned by `plugins_mut()` does not alias the
-                    // `&self.path` / `&self.namespace` borrows below.
-                    unsafe { &mut *self.bv2 }
-                        .plugins_mut()
-                        .expect("plugins")
-                        .match_on_load(
-                            &self.path,
-                            &self.namespace,
-                            self_ptr,
-                            default_loader,
-                            is_server_side,
-                        );
+                    // Copy the plugin backref out and drop the `&BundleV2`: the call
+                    // below re-enters JS, which re-derives `&mut BundleV2` from `bv2`.
+                    let bv2 = self.bv2.expect("bv2");
+                    let mut plugins = bv2.get().plugins.expect("plugins");
+                    // SAFETY: opaque C++ object owned by the completion task /
+                    // DevServer; a distinct allocation from `self` and the bundle.
+                    unsafe { plugins.as_mut() }.match_on_load(
+                        &self.path,
+                        &self.namespace,
+                        self_ptr,
+                        default_loader,
+                        is_server_side,
+                    );
                 }
                 fn run_on_js_thread_wrap(
                     ctx: *mut core::ffi::c_void,
@@ -1563,8 +1571,8 @@ pub mod bv2_impl {
             }
             // From bake where the loop running the bundle is also the loop running
             // the plugins.
-            // `any_loop_mut` centralises the BACKREF deref of `linker.r#loop`.
-            match &*self.any_loop_mut() {
+            // `any_loop` centralises the BACKREF deref of `linker.r#loop`.
+            match self.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { owner } => {
                     owner.enqueue_task_concurrent(task);
                 }
@@ -3572,10 +3580,8 @@ pub mod bv2_impl {
                 self.transpiler_for_target(known_target).options.jsx.clone()
             };
             let tree_shaking = self.linker.options.tree_shaking;
-            // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
-            // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
-            // `arena()` ends before we take `&mut self` below.
-            let task: *mut ParseTask = self.arena().alloc(ParseTask {
+            // Arena-owned; freed on heap reset.
+            let task: &mut ParseTask = self.arena_create(ParseTask {
                 path: task_path,
                 contents_or_fd: parse_task::ContentsOrFd::Contents(contents),
                 side_effects: bun_ast::SideEffects::HasSideEffects,
@@ -3589,21 +3595,20 @@ pub mod bv2_impl {
                 known_target,
                 ..Default::default()
             });
-            // SAFETY: `task` was just arena-allocated above; no other references exist yet.
-            unsafe {
-                // BACKREF — lifetime erased per ParseTask::ctx convention.
-                (*task).ctx = Some(bun_ptr::ParentRef::from_raw_mut(
+            // BACKREF — lifetime erased per ParseTask::ctx convention.
+            // SAFETY: write provenance from `ptr::from_mut`; bundle outlives the task.
+            task.ctx = Some(unsafe {
+                bun_ptr::ParentRef::from_raw_mut(
                     std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
-                ));
-                (*task).task.node.next = core::ptr::null_mut();
-                (*task).io_task.node.next = core::ptr::null_mut();
-            }
+                )
+            });
+            task.task.node.next = core::ptr::null_mut();
+            task.io_task.node.next = core::ptr::null_mut();
 
             self.increment_scan_counter();
 
             // Handle onLoad plugins
-            // SAFETY: `task` lives in the bundle-pass arena; sole reference until scheduled.
-            if !self.enqueue_on_load_plugin_if_needed(unsafe { &mut *task }) {
+            if !self.enqueue_on_load_plugin_if_needed(task) {
                 if loader.should_copy_for_bundling() {
                     let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
@@ -4203,22 +4208,22 @@ pub mod bv2_impl {
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
             // `on_load` must land there — not on the JS plugin loop — or it will
             // mutate `graph` / allocate from `graph.heap` off-thread.
-            match self.any_loop_mut() {
+            match self.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { owner } => {
                     owner.enqueue_task_concurrent(
                         bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                             std::ptr::from_mut(load),
-                            on_load_from_js_loop_raw,
+                            run_task_from_js_loop::<jsc_api::JSBundler::Load>,
                         ),
                     );
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `load` is a valid &mut for the duration of the enqueue;
-                    // the mini loop dispatches `on_load_mini` on the bundler thread.
+                    // the mini loop dispatches the trampoline on the bundler thread.
                     unsafe {
                         mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2<'static>>(
                             std::ptr::from_mut(load),
-                            on_load_mini,
+                            run_task_mini::<jsc_api::JSBundler::Load>,
                             core::mem::offset_of!(jsc_api::JSBundler::Load, task),
                         );
                     }
@@ -4228,22 +4233,22 @@ pub mod bv2_impl {
 
         pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
             // See `on_load_async` — must dispatch on the bundler's own loop.
-            match self.any_loop_mut() {
+            match self.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { owner } => {
                     owner.enqueue_task_concurrent(
                         bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                             std::ptr::from_mut(resolve),
-                            on_resolve_from_js_loop_raw,
+                            run_task_from_js_loop::<jsc_api::JSBundler::Resolve>,
                         ),
                     );
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `resolve` is a valid &mut for the duration of the enqueue;
-                    // the mini loop dispatches `on_resolve_mini` on the bundler thread.
+                    // the mini loop dispatches the trampoline on the bundler thread.
                     unsafe {
                         mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2<'static>>(
                             std::ptr::from_mut(resolve),
-                            on_resolve_mini,
+                            run_task_mini::<jsc_api::JSBundler::Resolve>,
                             core::mem::offset_of!(jsc_api::JSBundler::Resolve, task),
                         );
                     }
@@ -4252,29 +4257,46 @@ pub mod bv2_impl {
         }
     }
 
-    fn on_load_mini(load: *mut jsc_api::JSBundler::Load, this: *mut BundleV2<'static>) {
-        // SAFETY: callback contract — `load` is the ctx passed to
+    /// One-deref recovery of a raw event-loop `ctx` back into a bundler task.
+    trait BundlerTask: Sized {
+        fn bundle(&self) -> bun_ptr::ParentRef<BundleV2<'static>>;
+        fn run_with_bundle(&mut self, this: &mut BundleV2<'static>);
+    }
+
+    impl BundlerTask for jsc_api::JSBundler::Load {
+        fn bundle(&self) -> bun_ptr::ParentRef<BundleV2<'static>> {
+            self.bv2.expect("bv2")
+        }
+        fn run_with_bundle(&mut self, this: &mut BundleV2<'static>) {
+            BundleV2::on_load(self, this);
+        }
+    }
+
+    impl BundlerTask for jsc_api::JSBundler::Resolve {
+        fn bundle(&self) -> bun_ptr::ParentRef<BundleV2<'static>> {
+            self.bv2.expect("bv2")
+        }
+        fn run_with_bundle(&mut self, this: &mut BundleV2<'static>) {
+            BundleV2::on_resolve(self, this);
+        }
+    }
+
+    /// Mini-loop `(ctx, ParentContext)` trampoline — the single deref site.
+    fn run_task_mini<T: BundlerTask>(ctx: *mut T, this: *mut BundleV2<'static>) {
+        // SAFETY: callback contract — `ctx` is the pointer passed to
         // `enqueue_task_concurrent_with_extra_ctx`; `this` is the BundleV2 the
-        // mini loop's `tick` supplies as ParentContext.
-        BundleV2::on_load(unsafe { &mut *load }, unsafe { &mut *this });
+        // mini loop's `tick` supplies as ParentContext. Distinct allocations.
+        T::run_with_bundle(unsafe { &mut *ctx }, unsafe { &mut *this });
     }
 
-    fn on_resolve_mini(resolve: *mut jsc_api::JSBundler::Resolve, this: *mut BundleV2<'static>) {
-        // SAFETY: see `on_load_mini`.
-        BundleV2::on_resolve(unsafe { &mut *resolve }, unsafe { &mut *this });
-    }
-
-    pub(crate) fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
-        // SAFETY: `bv2` is a live backref set in `Load::init`.
-        let bv2 = unsafe { &mut *load.bv2 };
-        BundleV2::on_load(load, bv2);
-    }
-
-    fn on_load_from_js_loop_raw(
-        load: *mut jsc_api::JSBundler::Load,
-    ) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `load` is a valid pointer set up by `from_callback`.
-        on_load_from_js_loop(unsafe { &mut *load });
+    /// JS-loop `from_callback` trampoline — the single deref site.
+    fn run_task_from_js_loop<T: BundlerTask>(ctx: *mut T) -> bun_event_loop::JsResult<()> {
+        // SAFETY: `ctx` is the pointer passed to `from_callback`.
+        let task = unsafe { &mut *ctx };
+        let bundle = task.bundle();
+        // SAFETY: the bundle outlives the task, lives in a distinct allocation,
+        // and no other borrow of it is live on this thread.
+        task.run_with_bundle(unsafe { bundle.assume_mut() });
         Ok(())
     }
 
@@ -4452,20 +4474,6 @@ pub mod bv2_impl {
                 | jsc_api::JSBundler::LoadValue::Consumed => unreachable!(),
             }
         }
-    }
-
-    pub(crate) fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
-        // SAFETY: `bv2` is a live backref set in `Resolve::init`.
-        let bv2 = unsafe { &mut *resolve.bv2 };
-        BundleV2::on_resolve(resolve, bv2);
-    }
-
-    fn on_resolve_from_js_loop_raw(
-        resolve: *mut jsc_api::JSBundler::Resolve,
-    ) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `resolve` is a valid pointer set up by `from_callback`.
-        on_resolve_from_js_loop(unsafe { &mut *resolve });
-        Ok(())
     }
 
     impl<'a> BundleV2<'a> {
@@ -5389,7 +5397,7 @@ pub mod bv2_impl {
 
             // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
             for entry_point in start.css_entry_points.keys() {
-                let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, self.graph.heap, &[*entry_point]);
+                let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&self.linker, self.graph.heap, &[*entry_point]);
                 let order_len = order.len() as usize;
                 chunks.push(Chunk {
                     entry_point: chunk::EntryPoint::new(
@@ -5427,10 +5435,7 @@ pub mod bv2_impl {
             // Arena-owned; the
             // `DevServerOutput` lifetime is documented as "tied to the bundler's
             // arena". `alloc_slice_fill_iter` moves each `Chunk` into the bump.
-            let chunks: *mut [Chunk] =
-                std::ptr::from_mut::<[Chunk]>(self.arena().alloc_slice_fill_iter(chunks));
-            // SAFETY: arena outlives this fn and the `DevServerOutput` it produces.
-            let chunks: &mut [Chunk] = unsafe { &mut *chunks };
+            let chunks: &mut [Chunk] = self.arena().alloc_slice_fill_iter(chunks);
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -6728,23 +6733,24 @@ pub mod bv2_impl {
                 )
             };
 
-            // Extract raw pointers so the `&mut self` borrow from
-            // `transpiler_for_target` doesn't overlap `self.arena()` below.
-            // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler /
-            // BACKREF set in `BundleV2::init`).
-            let (define_ptr, log_ptr): (*mut bun_js_parser::Define, *mut bun_ast::Log) = {
+            // `new_lazy_export_ast` returns an `Ast<'a>` that is appended to
+            // `self.graph.ast`, so `define` must be `&'a mut` — longer than the
+            // `&mut self` borrow. Take a raw pointer so that borrow ends here.
+            let (define, log) = {
                 let transpiler = self.transpiler_for_target(target);
-                (&raw mut *transpiler.options.define, transpiler.log)
+                // `log_mut()` detaches its lifetime from the transpiler borrow.
+                let log = transpiler.log_mut();
+                let define: *mut bun_js_parser::Define = &raw mut *transpiler.options.define;
+                (define, log)
             };
 
             let ast_for_html_entrypoint = JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
                     heap,
-                    // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
-                    unsafe { &mut *define_ptr },
+                    // SAFETY: `define` is owned by the Transpiler, live for `'a`.
+                    unsafe { &mut *define },
                     js_parser_options,
-                    // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
-                    unsafe { &mut *log_ptr },
+                    log,
                     Expr::init(
                         E::EString {
                             data: unique_key.into(),
@@ -7693,13 +7699,11 @@ pub mod bv2_impl {
         // (Could implement `bun_alloc::Allocator` instead of the manual vtable.)
 
         fn free(ext_free_function: *mut c_void, _: &mut [u8], _: bun_alloc::Alignment, _: usize) {
-            // SAFETY: ptr was created by ExternalFreeFunctionAllocator::create
-            let info: &mut ExternalFreeFunctionAllocator =
-                unsafe { &mut *ext_free_function.cast::<ExternalFreeFunctionAllocator>() };
+            // SAFETY: ptr was heap-allocated by ExternalFreeFunctionAllocator::create
+            let this = unsafe { bun_core::heap::take(ext_free_function.cast::<Self>()) };
             // SAFETY: free_callback is a valid C fn provided by plugin
-            unsafe { (info.free_callback)(info.context) };
-            // SAFETY: info was heap-allocated in create()
-            drop(unsafe { bun_core::heap::take(info) });
+            unsafe { (this.free_callback)(this.context) };
+            // `this` drops here, releasing the allocation.
         }
     }
 

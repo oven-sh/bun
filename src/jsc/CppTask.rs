@@ -4,37 +4,78 @@ use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
+/// The C++ object itself. Only the extern declarations below name this type;
+/// all Rust code uses the owning [`CppTask`] handle.
+pub mod sys {
+    bun_opaque::opaque_ffi! {
+        /// `WebCore::EventLoopTask`. `&Self` is ABI-identical to a non-null
+        /// `WebCore::EventLoopTask*`, and carries no `noalias`/`readonly` —
+        /// C++ runs and destroys the captured `WTF::Function` through it.
+        pub struct CppTask;
+    }
+}
+
+// C++ `new EventLoopTask` (`ScriptExecutionContext::postTask*`) hands Rust the
+// sole owner. `delete` gives it back; so does `performTask` (`delete this`).
+bun_opaque::foreign_owned!(sys::CppTask, Bun__deleteEventLoopTask);
+
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
     safe fn Bun__EventLoopTaskNoContext__createdInBunVm(
         task: &EventLoopTaskNoContext,
     ) -> *mut VirtualMachine;
+    // safe: C++ `delete task`, without running it. Destroying is not exclusive
+    // access in Rust's sense, so the receiver is `&`, matching `UnsafeCell`.
+    safe fn Bun__deleteEventLoopTask(task: &sys::CppTask);
 }
 
-bun_opaque::opaque_ffi! {
-    /// A task created from C++ code, usually via ScriptExecutionContext.
-    pub struct CppTask;
-}
-
-impl Taskable for CppTask {
+// The tag describes the C++ pointee stored in `Task.ptr`, not the Rust handle.
+impl Taskable for sys::CppTask {
     const TAG: TaskTag = task_tag::CppTask;
 }
 
+/// Owned handle to a C++ `WebCore::EventLoopTask` — a task posted from C++,
+/// usually via `ScriptExecutionContext`.
+///
+/// Holds the sole owner of the heap task; `Drop` deletes it without running.
+/// [`Self::run`] takes `self` instead: `performTask` does `delete this`.
+#[repr(transparent)]
+pub struct CppTask(bun_opaque::ForeignRef<sys::CppTask>);
+
 impl CppTask {
-    pub fn run(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+    /// Adopt the owner C++ (or the task queue) hands over.
+    ///
+    /// # Safety
+    /// `ptr` must be a live `EventLoopTask*` carrying the sole ownership unit,
+    /// which no other handle will give back.
+    #[inline]
+    pub unsafe fn adopt(ptr: NonNull<sys::CppTask>) -> Self {
+        // SAFETY: caller transfers the owner.
+        Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
+    }
+
+    /// The C++ pointer, still owned by `self`.
+    #[inline]
+    pub fn as_ptr(&self) -> *mut sys::CppTask {
+        self.0.as_ptr()
+    }
+
+    /// Hand ownership to a foreign owner. Pairs with a later [`Self::adopt`].
+    #[inline]
+    pub fn leak(self) -> NonNull<sys::CppTask> {
+        self.0.leak()
+    }
+
+    /// Run the task. Consumes `self`: C++ `performTask` does `delete this`,
+    /// on the throwing path too, so the owner is given back exactly once.
+    pub fn run(self, global: &JSGlobalObject) -> JsResult<()> {
         crate::mark_binding!();
-        // SAFETY: self is a valid C++ EventLoopTask; global outlives the call.
-        //
-        // `Bun__performTask` is `[[ZIG_EXPORT(check_slow)]]` — the task body
-        // (a `ScriptExecutionContext::postTask` lambda) may declare its own
-        // throw scope (e.g. `JSUint8Array::create`, `JSC::call`) without an
-        // enclosing one, so we must go through the generated `cpp::` wrapper
-        // (which opens a `TopExceptionScope` and `return_if_exception`s) rather
-        // than the raw FFI. Calling the raw extern left the simulated throw
-        // unchecked, which then tripped `drainMicrotasks`'s scope ctor under
-        // `BUN_JSC_validateExceptionChecks=1`.
-        unsafe { crate::cpp::Bun__performTask(global, std::ptr::from_mut::<CppTask>(self)) }
+        let task = self.leak();
+        // The task body may open a throw scope with no enclosing one, so go through
+        // the generated `cpp::` wrapper, which opens a `TopExceptionScope`.
+        // SAFETY: `task` is the live owner we just gave up; C++ deletes it.
+        unsafe { crate::cpp::Bun__performTask(global, task.as_ptr().cast()) }
     }
 }
 

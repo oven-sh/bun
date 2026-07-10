@@ -38,7 +38,7 @@ impl Drop for PendingConnect {
 }
 
 impl PendingConnect {
-    /// Mutable access to the owned `quic::PendingConnect` C handle.
+    /// Shared access to the owned `quic::PendingConnect` C handle.
     ///
     /// INVARIANT: `pc` is set once in [`register`] to a live
     /// `us_quic_pending_connect_t` and is consumed by exactly one of
@@ -47,9 +47,9 @@ impl PendingConnect {
     /// every caller. Centralises the raw `(*this.pc)` upgrade repeated at
     /// each consume site.
     #[inline]
-    fn pc_mut<'a>(&self) -> &'a mut quic::PendingConnect {
+    fn pc(&self) -> &quic::PendingConnect {
         // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.pc }
+        unsafe { &*self.pc }
     }
 
     pub fn register(session: *mut ClientSession, pc: *mut quic::PendingConnect, l: *mut uws::Loop) {
@@ -62,9 +62,9 @@ impl PendingConnect {
             pc,
             loop_ptr: l,
         });
-        // Route the addrinfo read through the existing [`pc_mut`] accessor
+        // Route the addrinfo read through the existing [`pc`] accessor
         // (centralised raw upgrade) instead of an open-coded `(*pc)` deref.
-        let addrinfo = self_.pc_mut().addrinfo();
+        let addrinfo = self_.pc().addrinfo();
         let self_ = bun_core::heap::into_raw(self_);
         // SAFETY: `self_` is the Box we just leaked above and is consumed by
         // `on_dns_resolved` (via the global cache's notify path).
@@ -88,23 +88,24 @@ impl PendingConnect {
         let s = session_mut(session);
         if s.closed || s.pending.is_empty() {
             // Every waiter was aborted while DNS was in flight; don't open a
-            // connection nobody will use. `pc_mut` upgrades the owned C
+            // connection nobody will use. `pc` upgrades the owned C
             // handle; `cancel()` consumes it.
-            this.pc_mut().cancel();
+            this.pc().cancel();
             if !s.closed {
                 Self::fail_session(session, bun_core::err!("Aborted"));
             }
             return;
         }
-        // `pc_mut` upgrades the owned C handle; `resolved()` consumes it and
+        // `pc` upgrades the owned C handle; `resolved()` consumes it and
         // returns the connected quic socket or None on DNS failure.
-        let Some(qs) = this.pc_mut().resolved() else {
+        let Some(qs) = this.pc().resolved() else {
             Self::fail_session(session, bun_core::err!("DNSResolutionFailed"));
             return;
         };
-        s.qsocket = Some(NonNull::from(&mut *qs));
-        // qs.ext() returns the per-socket user storage slot for ClientSession.
-        *qs.ext::<ClientSession>() = NonNull::new(session);
+        s.qsocket = Some(qs);
+        // `ext()` hands back the per-socket user storage slot, so it needs the
+        // exclusive borrow; `opaque_mut` is the centralised non-null deref.
+        *quic::Socket::opaque_mut(qs.as_ptr()).ext::<ClientSession>() = NonNull::new(session);
     }
 
     /// DNS worker may call from off the HTTP thread; mirror

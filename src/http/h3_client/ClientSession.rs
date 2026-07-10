@@ -73,30 +73,26 @@ impl ClientSession {
     ///
     /// INVARIANT: `qsocket` is set by `ClientContext::connect` once
     /// `us_quic_connect_addr` returns and remains valid until
-    /// `callbacks::on_conn_close` (which sets `closed = true`). The
-    /// `quic::Socket` is an FFI-owned allocation distinct from `self`, so the
-    /// returned `&mut` does not alias `self`. HTTP-thread-only.
+    /// `callbacks::on_conn_close` (which sets `closed = true`). Exclusivity of
+    /// the returned `&mut` is enforced by `&mut self`. HTTP-thread-only.
     #[inline]
-    pub(super) fn qsocket_mut<'s>(&self) -> Option<&'s mut quic::Socket> {
+    pub(super) fn qsocket_mut(&mut self) -> Option<&mut quic::Socket> {
         // Route through the shared [`quic_socket_mut`] accessor; see INVARIANT.
         self.qsocket.map(|qs| quic_socket_mut(qs.as_ptr()))
     }
 
-    pub fn has_headroom(&self) -> bool {
+    pub fn has_headroom(&mut self) -> bool {
         if self.closed {
             return false;
         }
-        let Some(qs) = self.qsocket_mut() else {
-            return self.pending.len() < 64;
-        };
         // After handshake every pending entry has had make_stream called, so
         // lsquic's n_avail_streams already accounts for them — comparing
         // against pending.len would double-subtract. Before handshake nothing
         // is counted yet, so cap optimistically at the default MAX_STREAMS.
-        if !self.handshake_done {
+        if self.qsocket.is_none() || !self.handshake_done {
             return self.pending.len() < 64;
         }
-        qs.streams_avail() > 0
+        self.qsocket_mut().unwrap().streams_avail() > 0
     }
 
     /// Queue `client` for a stream on this connection. The lsquic stream is
@@ -136,8 +132,10 @@ impl ClientSession {
             if let crate::HTTPRequestBody::Stream(s) = &mut client.state.original_request_body {
                 s.ended = ended;
             }
-            if let Some(qs) = stream.qstream_mut() {
-                encode::drain_send_body(stream, qs);
+            // `drain_send_body` needs `&mut Stream` and `&quic::Stream` at once;
+            // they are disjoint objects, so bypass `Stream::qstream_ref`.
+            if let Some(qs) = stream.qstream {
+                encode::drain_send_body(stream, quic_stream_ref(qs.as_ptr()));
             }
             return;
         }
@@ -153,7 +151,7 @@ impl ClientSession {
                 continue;
             }
             if core::mem::take(&mut stream.read_paused) {
-                if let Some(qs) = stream.qstream_mut() {
+                if let Some(qs) = stream.qstream_ref() {
                     qs.want_read(true);
                 }
             }
@@ -169,8 +167,8 @@ impl ClientSession {
         }
         st.client = None;
         let request_body_done = st.request_body_done;
-        if let Some(qs) = st.qstream_mut() {
-            *qs.ext::<Stream>() = None;
+        if let Some(qs) = st.qstream_ref() {
+            qs.ext::<Stream>().set(None);
             // The success path can reach here while the request body is still
             // being written (server responded early). FIN would be a
             // content-length violation; RESET_STREAM(H3_REQUEST_CANCELLED)
@@ -414,16 +412,18 @@ pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket
     unsafe { &mut *qs }
 }
 
-/// Upgrade a non-null `*mut quic::Stream` lsquic FFI handle to `&mut`.
+/// Upgrade a non-null `*mut quic::Stream` lsquic FFI handle to `&`.
 ///
 /// Same INVARIANT as [`quic_socket_mut`] — lsquic-owned, live for the
 /// borrow's duration (callback argument, or `Stream.qstream` set in
 /// `on_stream_open` and nulled in `on_stream_close` / `detach`), FFI
-/// allocation distinct from any Rust holder, HTTP-thread-only.
+/// allocation distinct from any Rust holder, HTTP-thread-only. `quic::Stream`
+/// is an opaque FFI ZST whose methods all take `&self`, so there is no `&mut`
+/// to hand out — lsquic mutates the real stream through the handle.
 #[inline(always)]
-pub(super) fn quic_stream_mut<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {
+pub(super) fn quic_stream_ref<'a>(s: *mut quic::Stream) -> &'a quic::Stream {
     // SAFETY: see [`quic_socket_mut`] INVARIANT.
-    unsafe { &mut *s }
+    unsafe { &*s }
 }
 
 /// Upgrade a `*mut Stream` (a `self.pending` entry, or one just removed from

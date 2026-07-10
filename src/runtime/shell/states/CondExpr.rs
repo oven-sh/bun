@@ -326,16 +326,12 @@ impl CondExpr {
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (matches `on_io_writer_chunk`).
         if let OutKind::Pipe = &interp.as_condexpr(this).io.stderr {
-            // SAFETY: single trampoline frame; no other borrow of the env's
-            // (or its parent's) stderr buffer is live.
-            let stderr = unsafe {
-                interp
-                    .as_condexpr_mut(this)
-                    .base
-                    .shell_mut()
-                    .buffered_stderr_mut()
-            };
-            stderr.extend_from_slice(&buf);
+            interp
+                .as_condexpr(this)
+                .base
+                .shell()
+                .buffered_stderr()
+                .with_mut(|stderr| stderr.extend_from_slice(&buf));
         }
         let parent = interp.as_condexpr(this).base.parent;
         interp.child_done(parent, this, 1)

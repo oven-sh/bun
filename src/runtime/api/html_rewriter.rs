@@ -16,7 +16,6 @@ use bun_jsc::{
 // owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
 use bun_jsc::virtual_machine::VirtualMachine;
 
-use crate::webcore::response::HeadersRef;
 use crate::webcore::{self, Response};
 use bun_core::String as BunString;
 // `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
@@ -445,23 +444,22 @@ impl HTMLRewriter {
 
         if kind != ResponseKind::Other {
             let body_value = webcore::body::extract(global, response_value)?;
-            let resp = bun_core::heap::into_raw(Box::new(Response::init(
-                webcore::response::Init {
-                    status_code: 200,
-                    ..Default::default()
-                },
-                body_value,
-                BunString::empty(),
-                false,
-            )));
-            let _resp_guard = scopeguard::guard(resp, |r| {
-                // SAFETY: `r` is the `heap::into_raw` allocation from just
-                // above; finalize takes ownership and frees it exactly once.
-                Response::finalize(unsafe { Box::from_raw(r) })
-            });
+            // Owned `Box`; the guard hands it to `finalize` (which releases the
+            // intrusive +1) on every exit path, including `?`.
+            let mut resp = scopeguard::guard(
+                Box::new(Response::init(
+                    webcore::response::Init {
+                        status_code: 200,
+                        ..Default::default()
+                    },
+                    body_value,
+                    BunString::empty(),
+                    false,
+                )),
+                Response::finalize,
+            );
 
-            // SAFETY: `resp` is a live `heap::into_raw` allocation, never null.
-            let out_response_value = self.begin_transform(global, unsafe { &mut *resp })?;
+            let out_response_value = self.begin_transform(global, &mut resp)?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out_response_value.to_error() {
                 return Err(global.throw_value(err));
@@ -547,10 +545,10 @@ pub struct BufferOutputSink {
     // Intrusive RefCount; *Self is the `SinkRef` carried inside `rewriter`.
     ref_count: Cell<u32>,
     pub global: GlobalRef, // JSC_BORROW
-    pub bytes: MutableString,
+    pub bytes: JsCell<MutableString>,
     // Heap-allocated (never held by value): `run_output_sink` must reach the
     // rewriter through a raw pointer, never a `&mut` of `*sink`, because the
-    // output sink re-enters `&mut *sink` while the rewriter runs.
+    // output sink re-enters `&*sink` while the rewriter runs.
     pub rewriter: *mut lol_html::HtmlRewriter<'static, SinkRef>, // null when unset
     pub context: Rc<RefCell<LOLHTMLContext>>,
     pub response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
@@ -591,7 +589,7 @@ impl BufferOutputSink {
         let sink = bun_core::heap::into_raw(Box::new(BufferOutputSink {
             ref_count: Cell::new(1),
             global: GlobalRef::from(global),
-            bytes: MutableString::init_empty(),
+            bytes: JsCell::new(MutableString::init_empty()),
             rewriter: core::ptr::null_mut(),
             context,
             response: core::ptr::null_mut(),
@@ -642,7 +640,7 @@ impl BufferOutputSink {
         // caller.
         let scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
-        vm.unhandled_pending_rejection_to_capture = Some(sink_error_ptr);
+        vm.unhandled_pending_rejection_to_capture = Some(NonNull::from(&sink_error));
         // SAFETY: sink is a live heap allocation (refcount >= 1); sink_error_ptr
         // is non-null (addr of stack local).
         unsafe { (*sink).tmp_sync_error = Some(NonNull::new_unchecked(sink_error_ptr)) };
@@ -686,7 +684,9 @@ impl BufferOutputSink {
                 enable_esi_tags: false,
                 adjust_charset_on_meta_tag: false,
             },
-            SinkRef(sink),
+            // SAFETY: `sink` is the `heap::into_raw` root (refcount >= 1) and
+            // outlives the rewriter that is stored back onto it below.
+            SinkRef(unsafe { bun_ptr::ParentRef::from_raw_mut(sink) }),
         )));
         // SAFETY: sink is a live heap allocation (refcount >= 1).
         unsafe { (*sink).rewriter = rewriter };
@@ -701,12 +701,9 @@ impl BufferOutputSink {
             );
 
             // https://github.com/oven-sh/bun/issues/3334
-            // Note: `clone_this` takes `&mut self`, so use the `_mut`
-            // accessor (original is `*mut Response`). `clone_this` only reads
-            // `self` (FFI mutates a freshly-allocated clone, not the receiver).
-            if let Some(headers) = (*original).get_init_headers_mut() {
+            if let Some(headers) = (*original).headers() {
                 let cloned = headers.clone_this(global)?;
-                (*result).set_init_headers(cloned.map(|p| HeadersRef::adopt(p)));
+                (*result).set_init_headers(cloned);
             }
         }
 
@@ -885,7 +882,9 @@ impl BufferOutputSink {
         // invariant). Read fields into locals before the rewriter calls so no
         // borrow of `*sink` is live across the re-entrant output sink.
         let (global, response, rewriter) = unsafe {
-            let _ = (*sink).bytes.grow_by(bytes.len()); // OOM/capacity: fire-and-forget
+            (*sink).bytes.with_mut(|b| {
+                let _ = b.grow_by(bytes.len()); // OOM/capacity: fire-and-forget
+            });
             ((*sink).global, (*sink).response, (*sink).rewriter)
         };
 
@@ -928,38 +927,40 @@ impl BufferOutputSink {
         None
     }
 
-    pub fn done(&mut self) {
+    pub fn done(&self) {
+        // Take the buffer out of the cell before `resolve` below reaches JS.
+        let list = self.bytes.replace(MutableString::init_empty()).list;
+        let (response, global) = (self.response, self.global);
         // SAFETY: self.response is kept alive by self.response_value (Strong
         // root) for the lifetime of this sink.
-        let body_value = unsafe { (*self.response).get_body_value() };
+        let body_value = unsafe { (*response).get_body_value() };
         let mut prev_value = core::mem::replace(
             body_value,
             webcore::body::Value::InternalBlob(webcore::InternalBlob {
-                bytes: core::mem::replace(&mut self.bytes, MutableString::init_empty()).list,
+                bytes: list,
                 was_string: false,
             }),
         );
 
-        let _ = webcore::body::Value::resolve(&mut prev_value, body_value, &self.global, None);
+        let _ = webcore::body::Value::resolve(&mut prev_value, body_value, &global, None);
         // TODO: properly propagate exception upwards
     }
 
-    pub fn write(&mut self, bytes: &[u8]) {
-        let _ = self.bytes.append(bytes); // OOM/capacity: fire-and-forget
+    pub fn write(&self, bytes: &[u8]) {
+        self.bytes.with_mut(|b| {
+            let _ = b.append(bytes); // OOM/capacity: fire-and-forget
+        });
     }
 }
 
 /// `lol_html::OutputSink` for the rewriter built in [`BufferOutputSink::init`].
-/// Carries a raw `*mut BufferOutputSink` (never a reference) so the rewriter
-/// stored on the sink does not self-borrow.
-pub struct SinkRef(*mut BufferOutputSink);
+/// Non-owning back-pointer to the sink that owns the rewriter; `handle_chunk`
+/// only ever forms `&BufferOutputSink`, so it cannot alias the raw writers.
+pub struct SinkRef(bun_ptr::ParentRef<BufferOutputSink>);
 
 impl lol_html::OutputSink for SinkRef {
     fn handle_chunk(&mut self, chunk: &[u8]) {
-        // SAFETY: `self.0` is the sink that owns this rewriter (refcount > 0
-        // inside `run_output_sink`), and no other `&mut *sink` is live —
-        // `run_output_sink` reads its fields into locals before the call.
-        let sink = unsafe { &mut *self.0 };
+        let sink = self.0.get();
         // lol-html signals end-of-output with a zero-length final chunk.
         if chunk.is_empty() {
             sink.done();
@@ -1270,8 +1271,9 @@ where
                 // mechanism if it's available (this is the same mechanism used
                 // by BufferOutputSink)
                 if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
-                    // SAFETY: VM-owned pointer set by BufferOutputSink::init.
-                    unsafe { *err_ptr = exc_value };
+                    // SAFETY: points at the live `Cell<JSValue>` stack local of
+                    // the frame that installed the capture slot.
+                    unsafe { err_ptr.as_ref() }.set(exc_value);
                     exc_value.protect();
                 }
             }
@@ -1288,8 +1290,9 @@ where
         let exc_value = JSValue::from_cell(exc.as_ptr());
         // Store the exception in the VM's unhandled rejection capture mechanism
         if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
-            // SAFETY: VM-owned pointer set by BufferOutputSink::init.
-            unsafe { *err_ptr = exc_value };
+            // SAFETY: points at the live `Cell<JSValue>` stack local of the
+            // frame that installed the capture slot.
+            unsafe { err_ptr.as_ref() }.set(exc_value);
             exc_value.protect();
         }
         // Clear the exception to prevent assertion failures
@@ -1427,12 +1430,13 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
     // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this call.
     let vm: &VirtualMachine = global.bun_vm();
     if let Some(err_ptr) = vm.unhandled_pending_rejection_to_capture {
-        // SAFETY: VM-owned pointer; valid while VM lives.
-        let slot = unsafe { &mut *err_ptr };
-        if !slot.is_empty() {
+        // SAFETY: points at the live `Cell<JSValue>` stack local of the frame
+        // that installed the capture slot; `Cell` hands out no reference.
+        let slot = unsafe { err_ptr.as_ref() };
+        let result = slot.get();
+        if !result.is_empty() {
             // it's a promise rejection
-            let result = *slot;
-            *slot = JSValue::ZERO;
+            slot.set(JSValue::ZERO);
             return result;
         }
     }
@@ -1820,7 +1824,6 @@ type RawAttributeIterator = core::slice::Iter<'static, lol_html::html_content::A
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = AttributeIterator::destroy_on_zero)]
 pub struct AttributeIterator {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
@@ -1828,21 +1831,16 @@ pub struct AttributeIterator {
     pub iterator: Cell<*mut RawAttributeIterator>,
 }
 
+/// Runs from `CellRefCounted::destroy`'s default (`drop(Box::from_raw(this))`)
+/// when the refcount hits zero. `detach()` is idempotent.
+impl Drop for AttributeIterator {
+    fn drop(&mut self) {
+        self.detach();
+    }
+}
+
 impl AttributeIterator {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
-
-    /// `CellRefCounted::destroy` target — detach the lol-html iterator before
-    /// freeing the Box.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destroy` upholds the sole-owner contract.
-    fn destroy_on_zero(this: *mut Self) {
-        // SAFETY: refcount hit zero; sole owner of a `heap::alloc`'d `Self`.
-        unsafe {
-            (*this).detach();
-            drop(bun_core::heap::take(this));
-        }
-    }
 
     fn detach(&self) {
         let iterator = self.iterator.replace(core::ptr::null_mut());
@@ -1911,7 +1909,6 @@ impl AttributeIterator {
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Element::destroy_on_zero)]
 pub struct Element {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
@@ -1928,21 +1925,17 @@ pub struct Element {
     pub attribute_iterators: JsCell<Vec<*mut AttributeIterator>>,
 }
 
+/// Detach borrowed sub-objects before the fields are freed. Runs from the
+/// derived `CellRefCounted::destroy` at refcount zero; `invalidate()` is
+/// idempotent, so the handler-return call at the scopeguard is harmless.
+impl Drop for Element {
+    fn drop(&mut self) {
+        self.invalidate();
+    }
+}
+
 impl Element {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
-
-    /// `CellRefCounted::destroy` target — invalidate borrowed sub-objects
-    /// before freeing the Box.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destroy` upholds the sole-owner contract.
-    fn destroy_on_zero(this: *mut Self) {
-        // SAFETY: refcount hit zero; sole owner of a `heap::alloc`'d `Self`.
-        unsafe {
-            (*this).invalidate();
-            drop(bun_core::heap::take(this));
-        }
-    }
 
     pub fn init(element: *mut RawElement) -> *mut Element {
         bun_core::heap::into_raw(Box::new(Element {

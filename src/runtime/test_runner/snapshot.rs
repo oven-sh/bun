@@ -522,24 +522,11 @@ impl<'a> Snapshots<'a> {
                     }
                     next_start += fn_name.len();
 
-                    // `Lexer.initWithoutReading` and `TSXParser.init` both need the same
-                    // `Log`, but Rust forbids two live `&'a mut Log`;
-                    // derive a raw pointer so borrowck doesn't track the lexer/parser borrow,
-                    // matching the pattern in `js_parser::Parser::init`. The unique `&mut`
-                    // logically lives inside `parser.lexer`; `log.add_error_fmt` calls below
-                    // reborrow via the scopeguard between parser uses.
-                    // SAFETY: `log` outlives the `'blk` block; lexer/parser are dropped at
-                    // block exit (or `continue 'ils`). See Parser.rs:214 for the provenance
-                    // discussion.
-                    let log_ptr: *mut bun_ast::Log = &raw mut *log;
-                    let mut lexer = js_lexer::Lexer::init_without_reading(
-                        // SAFETY: `log_ptr` derived from `&raw mut *log` just above; `log`
-                        // outlives `'blk` and no other `&mut Log` is live until `lexer` is
-                        // moved into `parser` below.
-                        unsafe { &mut *log_ptr },
-                        &source,
-                        &arena,
-                    );
+                    // `init_without_reading` borrows `log` only for the duration of the
+                    // call (it stores a `NonNull`), so the reborrow ends here and the
+                    // `log.add_error_fmt` calls below can reborrow the scopeguard again.
+                    let mut lexer =
+                        js_lexer::Lexer::init_without_reading(&mut *log, &source, &arena);
                     if next_start > 0 {
                         // equivalent to lexer.consumeRemainderBytes(next_start)
                         lexer.current += next_start - (lexer.current - lexer.end);
@@ -561,10 +548,14 @@ impl<'a> Snapshots<'a> {
                     // `P::init` writes a fully-initialized value on `Ok`. On `Err` we
                     // `?`-return before arming the drop guard, so the slot stays
                     // uninitialized and untouched.
+                    // Copy the lexer's `NonNull<Log>` so `P.log` and `Lexer.log` share one
+                    // provenance chain and neither aliases the other foreignly, exactly as
+                    // `js_parser::Parser::init` does.
+                    let log_ptr = lexer.log;
                     js_parser::TSXParser::init(
                         &mut __parser_slot,
                         &arena,
-                        core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
+                        log_ptr,
                         &source,
                         &vm.transpiler.options.define,
                         lexer,

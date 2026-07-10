@@ -215,9 +215,15 @@ impl Blob {
     /// Heap-promote and mark as
     /// heap-allocated so `deinit` knows to free the heap box.
     #[inline]
-    pub fn new(mut blob: Blob) -> *mut Blob {
+    pub fn new(blob: Blob) -> *mut Blob {
+        bun_core::heap::into_raw(Self::new_boxed(blob))
+    }
+
+    /// Same as [`Blob::new`], but ownership stays in the returned `Box`.
+    #[inline]
+    pub fn new_boxed(mut blob: Blob) -> Box<Blob> {
         blob.ref_count = bun_ptr::RawRefCount::init(1);
-        bun_core::heap::into_raw(Box::new(blob))
+        Box::new(blob)
     }
 
     /// JS-wrapper finalizer (codegen `BlobClass__finalize` thunk). Releases the
@@ -519,7 +525,9 @@ pub mod store {
     #[derive(bun_ptr::ThreadSafeRefCounted)]
     pub struct Store {
         pub data: Data,
-        pub mime_type: MimeType,
+        /// Written through a shared `&Store` (via `StoreRef: Deref`) on the JS
+        /// thread; `JsCell` is `#[repr(transparent)]` so layout is unchanged.
+        pub mime_type: JsCell<MimeType>,
         pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
         pub is_all_ascii: Option<bool>,
     }
@@ -528,7 +536,7 @@ pub mod store {
         fn default() -> Self {
             Self {
                 data: Data::Bytes(Bytes::default()),
-                mime_type: bun_http_types::MimeType::NONE,
+                mime_type: JsCell::new(bun_http_types::MimeType::NONE),
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
             }
@@ -916,7 +924,7 @@ pub mod store {
         pub fn init(bytes: Vec<u8>) -> StoreRef {
             StoreRef::from(Store::new(Store {
                 data: Data::Bytes(Bytes::init(bytes)),
-                mime_type: bun_http_types::MimeType::NONE,
+                mime_type: JsCell::new(bun_http_types::MimeType::NONE),
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
             }))

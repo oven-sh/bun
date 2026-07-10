@@ -421,14 +421,12 @@ impl PackageJSON {
     ) -> Option<PackageJSON> {
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
-        // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
-        // (see `Resolver::fs()` note in lib.rs). `fs` and `log` are DISTINCT
-        // singletons so the two `&mut` projections below do not alias each other,
-        // and no other `&mut *r.fs` / `&mut *r.log` retag occurs while they are
-        // live in this function. Caller upholds the single-thread `Resolver`
-        // aliasing contract.
-        let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs() };
-        // SAFETY: see above — `r.log()` points to a distinct singleton from `r.fs()`.
+        // BACKREF — the `FileSystem` singleton outlives the `Resolver`; every use
+        // below is a shared read, and the detached back-pointer leaves `r.caches`
+        // free to borrow mutably.
+        let r_fs: bun_ptr::BackRef<fs::FileSystem> = bun_ptr::BackRef::new(r.fs_ref());
+        // SAFETY: BACKREF — `r.log()` is the owner-allocated `Log`, a distinct
+        // singleton from `r.fs()`; no other `&mut *r.log()` retag is live here.
         let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
 
         // TODO: remove this extra copy
@@ -444,7 +442,7 @@ impl PackageJSON {
         // (allocator dropped — global mimalloc)
 
         let mut entry = match r.caches.fs.read_file_with_allocator(
-            r_fs,
+            &*r_fs,
             package_json_path,
             dirname_fd,
             false,
@@ -659,7 +657,7 @@ impl PackageJSON {
                         // import of "foo", but that's actually not a bug. Or arguably it's a
                         // bug in Browserify but we have to replicate this bug because packages
                         // do this in the wild.
-                        let key: Box<[u8]> = FileSystemPackageJsonExt::normalize(r_fs, _key_str);
+                        let key: Box<[u8]> = FileSystemPackageJsonExt::normalize(&*r_fs, _key_str);
 
                         match &prop.value {
                             js_ast::E::JsonValue::String(str) => {

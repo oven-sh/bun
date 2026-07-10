@@ -12,7 +12,7 @@ use bun_dotenv as dotenv;
 use bun_http as http;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
-use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
+use bun_libarchive::lib::{ArchiveIterator, IteratorResult as ArchiveIterResult, sys::Archive};
 use bun_parsers::json as json_mod;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
 use bun_paths::{self as path, PathBuffer};
@@ -464,13 +464,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         manager: &'a mut PackageManager,
     ) -> Result<Context<'static, true>, FromWorkspaceError> {
         let mut lockfile = Lockfile::default();
-        let manager_ptr: *mut PackageManager = manager;
         let log: &mut bun_ast::Log = manager.log_mut();
-        // SAFETY: `manager_ptr` was just derived from `manager: &'a mut PackageManager`;
-        // `log` borrows the disjoint `.log` field, so the re-derived `&mut`
-        // never touches memory the live `log` borrow covers.
-        let load_from_disk_result =
-            lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
+        let load_from_disk_result = lockfile.load_from_cwd::<false>(Some(&mut *manager), log);
 
         let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
             LoadResult::Ok(ok) => Some(&*ok.lockfile),
@@ -507,18 +502,11 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
         // Note: capture the package.json path before constructing
         // `pack::Context` so the `&mut PackageManager` borrow doesn't conflict.
-        // SAFETY: `manager_ptr` came from `&'a mut PackageManager`.
-        let abs_pkg_json = bun_core::ZBox::from_bytes(
-            unsafe { &*manager_ptr }
-                .original_package_json_path
-                .as_bytes(),
-        );
+        let abs_pkg_json =
+            bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
 
         let mut pack_ctx = pack::Context {
-            // SAFETY: `manager_ptr` came from `&'a mut PackageManager`;
-            // `lockfile_ref` borrows the local `lockfile`, not the manager,
-            // so the re-derived `&mut` is the only live manager borrow.
-            manager: unsafe { &mut *manager_ptr },
+            manager,
             command_ctx: ctx,
             lockfile: lockfile_ref,
             bundled_deps: Vec::new(),
@@ -555,7 +543,6 @@ impl PublishCommand {
                 }
             };
         drop(original_cwd);
-        let manager_ptr: *mut PackageManager = manager;
 
         if cli.positionals.len() > 1 {
             let context = match Context::<false>::from_tarball_path(
@@ -587,8 +574,8 @@ impl PublishCommand {
                             );
                         }
                         FromTarballError::InvalidPackageJSON => {
-                            // SAFETY: `manager.log` is set once at init.
-                            let _ = unsafe { &mut *(*manager_ptr).log }
+                            let _ = PackageManager::get()
+                                .log_mut()
                                 .print(std::ptr::from_mut(Output::error_writer()));
                             Output::err_generic("failed to parse tarball package.json", ());
                         }
@@ -714,23 +701,17 @@ impl PublishCommand {
                 .put(b"npm_command", b"publish")
                 .map_err(|_| err!(OutOfMemory))?;
 
-            // Note: reshaped for borrowck — `command_ctx: &mut ContextData`
-            // is held by `context`; `run_package_script_foreground` needs
-            // `&mut ContextData` too. Re-derive from the raw pointer.
-            let cmd_ctx_ptr: *mut crate::cli::command::ContextData = context.command_ctx;
-
             if let Some(publish_script) = &context.publish_script {
+                let use_system_shell = context.command_ctx.debug.use_system_shell;
                 if let Err(e) = Run::run_package_script_foreground(
-                    // SAFETY: see above.
-                    unsafe { &mut *cmd_ctx_ptr },
+                    &mut *context.command_ctx,
                     publish_script,
                     b"publish",
                     &abs_workspace_path,
                     script_env,
                     &[],
                     context.manager.options.log_level == LogLevel::Silent,
-                    // SAFETY: see above.
-                    unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
+                    use_system_shell,
                 ) {
                     if e == err!("MissingShell") {
                         Output::err_generic(
@@ -744,17 +725,16 @@ impl PublishCommand {
             }
 
             if let Some(postpublish_script) = &context.postpublish_script {
+                let use_system_shell = context.command_ctx.debug.use_system_shell;
                 if let Err(e) = Run::run_package_script_foreground(
-                    // SAFETY: see above.
-                    unsafe { &mut *cmd_ctx_ptr },
+                    &mut *context.command_ctx,
                     postpublish_script,
                     b"postpublish",
                     &abs_workspace_path,
                     script_env,
                     &[],
                     context.manager.options.log_level == LogLevel::Silent,
-                    // SAFETY: see above.
-                    unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
+                    use_system_shell,
                 ) {
                     if e == err!("MissingShell") {
                         Output::err_generic(

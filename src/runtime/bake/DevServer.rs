@@ -1706,7 +1706,10 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         }
         let dw = bun_core::heap::into_raw(HmrSocket::new(this, res));
         let _ = this.active_websocket_connections.insert(dw, ());
-        let _ = res.upgrade(
+        // Fully qualified: `ResponseLike::upgrade` is also in scope for this type
+        // and would box `dw` a second time. The inherent one takes the raw pointer.
+        let _ = bun_uws_sys::NewAppResponse::<SSL>::upgrade(
+            res,
             dw,
             req.header(b"sec-websocket-key").unwrap_or(b""),
             req.header(b"sec-websocket-protocol").unwrap_or(b""),
@@ -1920,9 +1923,8 @@ fn on_memory_visualizer_corked(resp: AnyResponse) {
 }
 
 struct RequestEnsureRouteBundledCtx {
-    // Note: erased to raw pointer — a `&mut DevServer` field would alias the
-    // caller's borrow.
-    dev: *mut DevServer,
+    // Non-owning backref: the DevServer outlives this stack-local ctx.
+    dev: bun_ptr::ParentRef<DevServer>,
     req: ReqOrSaved,
     resp: AnyResponse,
     kind: deferred_request::HandlerKind,
@@ -1930,15 +1932,15 @@ struct RequestEnsureRouteBundledCtx {
 }
 
 impl RequestEnsureRouteBundledCtx {
-    /// Reborrow the erased `dev` pointer.
+    /// Exclusive borrow of the parent DevServer.
     /// # Safety
-    /// `self.dev` is set from a live `&mut DevServer` at ctx construction and
-    /// outlives the ctx (the ctx is stack-local in the request handler scope).
+    /// No other borrow of the DevServer may overlap the returned one; the ctx
+    /// is stack-local in the request handler scope.
     #[inline]
     fn dev_mut(&mut self) -> &mut DevServer {
-        // SAFETY: `self.dev` was set from a live `&mut DevServer` at ctx
-        // construction and outlives this stack-local ctx.
-        unsafe { &mut *self.dev }
+        // SAFETY: `dev` was built by `from_raw_mut` from a live `&mut DevServer`
+        // that outlives this stack-local ctx.
+        unsafe { self.dev.assume_mut() }
     }
 
     fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
@@ -2294,8 +2296,8 @@ impl DevServer {
                     // erase to `c_void` and cast back inside the trampoline.
                     resp.on_aborted(
                         |p: *mut c_void, r: AnyResponse| {
-                            // SAFETY: p is the &mut deferred.data registered below; lifetime erased
-                            unsafe { &mut *p.cast::<DeferredRequest>() }.on_abort(r)
+                            // SAFETY: `p` is the `deferred.data` ctx registered below.
+                            unsafe { bun_ptr::callback_ctx::<DeferredRequest>(p) }.on_abort(r)
                         },
                         deferred_data_ptr,
                     );
@@ -2342,10 +2344,9 @@ impl DevServer {
                             data: unsafe { ::core::ptr::NonNull::new_unchecked(deferred_data_ptr) },
                             deref_fn: {
                                 fn deref_fn(ptr: *mut c_void) {
-                                    // SAFETY: ptr is &mut DeferredRequest from above
-                                    let self_: &mut DeferredRequest =
-                                        unsafe { &mut *ptr.cast::<DeferredRequest>() };
-                                    self_.weak_deref();
+                                    // SAFETY: `ptr` is the `deferred.data` ctx registered above.
+                                    unsafe { bun_ptr::callback_ctx::<DeferredRequest>(ptr) }
+                                        .weak_deref();
                                 }
                                 deref_fn
                             },
@@ -2817,13 +2818,8 @@ impl DevServer {
         resp: AnyResponse,
         method: Method,
     ) {
-        // Note: erase `self` to a raw pointer so the `route_bundle` borrow
-        // doesn't conflict with the `&mut self` calls below. Per docs/PORTING.md §Global mutable state: hold
-        // `*mut T` and deref per-access; do not bind a long-lived `&mut`.
-        let self_ptr = std::ptr::from_mut::<Self>(self);
-        // SAFETY: `route_bundles` is not reallocated for the duration of this fn.
         let route_bundle: *mut RouteBundle =
-            &raw mut unsafe { &mut *self_ptr }.route_bundles[route_bundle_index.get() as usize];
+            &raw mut self.route_bundles[route_bundle_index.get() as usize];
         debug_assert!(matches!(
             // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in this fn.
             unsafe { &(*route_bundle).data },
@@ -2834,10 +2830,10 @@ impl DevServer {
         let blob: *mut StaticRoute = match unsafe { (*route_bundle).data.html().cached_response } {
             Some(b) => b.as_ptr(),
             None => 'generate: {
-                // SAFETY: `generate_html_payload` reads `route_bundle.data` /
-                // `client_graph` and never reallocates `route_bundles`. No
+                // SAFETY: `route_bundle` points into `self.route_bundles`, which
+                // `generate_html_payload` neither reallocates nor mutates. No
                 // `&mut` into `*route_bundle` is live across this call.
-                let payload = unsafe { &mut *self_ptr }
+                let payload = self
                     .generate_html_payload(route_bundle_index, unsafe { &*route_bundle })
                     .expect("oom");
 
@@ -2845,8 +2841,7 @@ impl DevServer {
                     crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::HTML),
-                        // SAFETY: `self_ptr` is `&mut self` erased; live for this fn body.
-                        server: unsafe { &*self_ptr }.server,
+                        server: self.server,
                         ..Default::default()
                     },
                 );
@@ -3036,8 +3031,7 @@ impl DevServer {
         // Note: erase `self` to a raw pointer so `route_bundle` borrow
         // doesn't conflict with `generate_client_bundle(&mut self, ..)`.
         let self_ptr = std::ptr::from_mut::<Self>(self);
-        // SAFETY: `self_ptr` accesses below touch disjoint fields of `*self`.
-        let route_bundle = unsafe { &mut *self_ptr }.route_bundle_ptr(bundle_index);
+        let route_bundle = self.route_bundle_ptr(bundle_index);
         let client_bundle: *mut StaticRoute = match route_bundle.client_bundle {
             Some(cb) => cb.as_ptr(),
             None => 'generate: {
@@ -5235,7 +5229,8 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
             .expect("oom");
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev: std::ptr::from_mut::<DevServer>(dev),
+            // SAFETY: `dev` outlives the stack-local ctx; write provenance kept.
+            dev: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<DevServer>(dev)) },
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::ServerHandler,
@@ -5285,7 +5280,10 @@ impl DevServer {
                 .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
                 .expect("oom");
             let mut ctx = RequestEnsureRouteBundledCtx {
-                dev: std::ptr::from_mut::<DevServer>(self),
+                // SAFETY: `self` outlives the stack-local ctx; write provenance kept.
+                dev: unsafe {
+                    bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<DevServer>(self))
+                },
                 req: ReqOrSaved::Saved(saved_request),
                 resp,
                 kind: deferred_request::HandlerKind::ServerHandler,
@@ -5322,7 +5320,8 @@ impl DevServer {
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
             .map_err(|_| AllocError)?;
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev: std::ptr::from_mut::<DevServer>(self),
+            // SAFETY: `self` outlives the stack-local ctx; write provenance kept.
+            dev: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<DevServer>(self)) },
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::BundledHtmlPage,
@@ -5531,11 +5530,7 @@ impl DevServer {
                 if headers.get(b"etag").is_none() && !any_blob.slice().is_empty() {
                     bun_http::headers::append_etag(any_blob.slice(), &mut headers);
                 }
-                let fetch_headers = bun_http_jsc::headers_jsc::to_fetch_headers(&headers, global)?;
-                // SAFETY: `to_fetch_headers` returns a fresh +1 `FetchHeaders*`;
-                // ownership is transferred to `HeadersRef`.
-                let headers_ref =
-                    unsafe { crate::webcore::response::HeadersRef::adopt(fetch_headers) };
+                let headers_ref = bun_http_jsc::headers_jsc::to_fetch_headers(&headers, global)?;
                 let response: Response = Response::init(
                     crate::webcore::response::Init {
                         status_code: 500,
@@ -6079,16 +6074,17 @@ impl DevServer {
         // SAFETY: see above; `kinds` is a disjoint SoA column owned by `watchlist`.
         let kinds = unsafe { &*kinds };
 
-        let ev_ptr = self.watcher_atomics.watcher_acquire_event();
-        // SAFETY: `watcher_acquire_event` returns a valid `*mut HotReloadEvent`
-        // into `self.watcher_atomics.events`; exclusive on the watcher thread.
+        let ev_index = self.watcher_atomics.watcher_acquire_event();
+        let ev_ptr: *mut HotReloadEvent = &raw mut self.watcher_atomics.events[ev_index as usize];
+        // SAFETY: the watcher thread exclusively owns `events[ev_index]` until the
+        // deferred `watcher_release_and_submit_event` below.
         let ev = unsafe { &mut *ev_ptr };
         // Note: erase `self` to a raw ptr in the deferred closures so the
         // loop body can keep using `self.bun_watcher`.
         let self_ptr: *mut Self = self;
         scopeguard::defer! {
             // SAFETY: `self_ptr` is live for the entire fn body; guard runs at scope exit.
-            unsafe { (*self_ptr).watcher_atomics.watcher_release_and_submit_event(ev_ptr) }
+            unsafe { (*self_ptr).watcher_atomics.watcher_release_and_submit_event(ev_index) }
         };
 
         // SAFETY: see `self_ptr` SAFETY above.
@@ -6612,9 +6608,9 @@ impl DevServer {
 /// Problem statement documented on `SCRIPT_UNREF_PAYLOAD`
 /// Takes 8 bytes: The generation ID in hex.
 struct UnrefSourceMapRequest {
-    // BACKREF: DevServer outlives the request; raw ptr avoids the `'static`
-    // bound on `BodyReaderHandler` that a borrowed `&mut DevServer` would violate.
-    dev: *mut DevServer,
+    // BACKREF: DevServer outlives the request; a non-owning `ParentRef` avoids the
+    // `'static` bound on `BodyReaderHandler` that `&mut DevServer` would violate.
+    dev: bun_ptr::ParentRef<DevServer>,
     body: uws::BodyReaderMixin<Self>,
 }
 
@@ -6646,7 +6642,8 @@ impl UnrefSourceMapRequest {
             .expect("server bound")
             .on_pending_request();
         let ctx = Box::new(UnrefSourceMapRequest {
-            dev: std::ptr::from_mut::<DevServer>(dev),
+            // SAFETY: DevServer outlives the request; write provenance kept.
+            dev: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<DevServer>(dev)) },
             body: uws::BodyReaderMixin::init(),
         });
         let raw = bun_core::heap::into_raw(ctx);
@@ -6659,14 +6656,12 @@ impl UnrefSourceMapRequest {
         // SAFETY: caller contract — ctx is the original Box allocation; no
         // live borrow of *ctx exists.
         let ctx = unsafe { bun_core::heap::take(ctx) };
-        // SAFETY: dev outlives the request
-        unsafe {
-            (*ctx.dev)
-                .server
-                .as_mut()
-                .unwrap()
-                .on_static_request_complete()
-        };
+        // SAFETY: DevServer outlives the request; no other borrow of it is live.
+        unsafe { ctx.dev.assume_mut() }
+            .server
+            .as_mut()
+            .unwrap()
+            .on_static_request_complete();
         drop(ctx);
     }
 
@@ -6686,8 +6681,8 @@ impl UnrefSourceMapRequest {
             .map_err(|_| bun_core::err!(InvalidRequest))?;
         let generation = u32::from_ne_bytes(generation_bytes);
         let source_map_key = source_map_store::Key::init((generation as u64) << 32);
-        // SAFETY: ctx is live (caller contract); dev outlives the request.
-        let _ = unsafe { &mut *(*ctx).dev }
+        // SAFETY: `ctx` is live (caller contract); DevServer outlives the request.
+        let _ = unsafe { (*ctx).dev.assume_mut() }
             .source_maps
             .remove_or_upgrade_weak_ref(
                 source_map_key,
@@ -6739,9 +6734,9 @@ pub(crate) fn get_deinit_count_for_testing() -> usize {
 }
 
 struct PromiseEnsureRouteBundledCtx<'a> {
-    // Note: raw ptr — `dev` is re-borrowed across the ctx while also passed
+    // Non-owning backref: `dev` is re-borrowed across the ctx while also passed
     // as `&mut` into `ensure_route_is_bundled`.
-    dev: *mut DevServer,
+    dev: bun_ptr::ParentRef<DevServer>,
     global: &'a JSGlobalObject,
     promise: Option<jsc::JSPromiseStrong>,
     p: Option<*mut jsc::JSPromise>, // BORROW_FIELD: from sibling self.promise
@@ -6749,14 +6744,14 @@ struct PromiseEnsureRouteBundledCtx<'a> {
 }
 
 impl<'a> PromiseEnsureRouteBundledCtx<'a> {
-    /// Reborrow the erased `dev` pointer.
-    /// SAFETY: `self.dev` is set from a live `&mut DevServer` at ctx
-    /// construction; the ctx is stack-local in the request handler scope.
+    /// Exclusive borrow of the parent DevServer.
+    /// SAFETY: no other borrow of the DevServer overlaps the returned one; the
+    /// ctx is stack-local in the request handler scope.
     #[inline]
     fn dev_mut(&mut self) -> &mut DevServer {
-        // SAFETY: `self.dev` was set from a live `&mut DevServer` at ctx
-        // construction and outlives this stack-local ctx.
-        unsafe { &mut *self.dev }
+        // SAFETY: `dev` was built by `from_raw_mut` from a live `&mut DevServer`
+        // that outlives this stack-local ctx.
+        unsafe { self.dev.assume_mut() }
     }
 
     /// Reborrow the GC-heap `JSPromise` recorded in `self.p`. Single `unsafe`
@@ -6969,12 +6964,11 @@ fn bundle_new_route_js_function_impl(
     };
     // SAFETY: JS-thread single-writer; `dev_server_mut` returns the
     // `Box<DevServer>` slot in `NewServer` populated by `set_routes`.
-    let dev: &mut DevServer = unsafe { &mut *dev_ptr };
+    let dev: &mut DevServer = unsafe { dev_ptr.assume_mut() };
 
     let route_bundle_index = dev
         .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
         .expect("oom");
-    let dev_ptr: *mut DevServer = dev;
     let mut ctx = PromiseEnsureRouteBundledCtx {
         dev: dev_ptr,
         global,
@@ -6984,9 +6978,9 @@ fn bundle_new_route_js_function_impl(
     };
 
     let rbi = ctx.route_bundle_index;
-    // SAFETY: `ctx.dev` aliases the same DevServer. Reborrow via raw ptr to
-    // satisfy borrowck while ctx is also &mut-borrowed.
-    ensure_route_is_bundled(unsafe { &mut *dev_ptr }, rbi, &mut ctx)?;
+    // SAFETY: `ctx.dev` aliases the same DevServer. Re-derive from the backref
+    // to satisfy borrowck while ctx is also &mut-borrowed.
+    ensure_route_is_bundled(unsafe { dev_ptr.assume_mut() }, rbi, &mut ctx)?;
 
     let array = JSValue::create_empty_array(global, 2)?;
 
@@ -7083,7 +7077,7 @@ fn new_route_params_for_bundle_promise_for_js(
     };
     // SAFETY: JS-thread single-writer; `dev_server_mut` returns the
     // `Box<DevServer>` slot in `NewServer` populated by `set_routes`.
-    let dev: &mut DevServer = unsafe { &mut *dev_ptr };
+    let dev: &mut DevServer = unsafe { dev_ptr.assume_mut() };
 
     let route_bundle_index = route_bundle::Index::init(
         u32::try_from(route_bundle_index_js.to_int32()).expect("int cast"),

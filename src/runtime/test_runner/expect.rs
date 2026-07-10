@@ -560,8 +560,7 @@ impl Expect {
         let mut length: usize = 0;
         let mut curr_scope = execution_entry.base.parent;
         while let Some(scope) = curr_scope {
-            // SAFETY: `parent` is a live `*mut DescribeScope` owned by the BunTest arena.
-            let scope = unsafe { &*scope };
+            let scope = scope.get();
             if let Some(name) = scope.base.name.as_deref() {
                 if !name.is_empty() {
                     length += name.len() + 1;
@@ -590,8 +589,7 @@ impl Expect {
         // copy describe scopes in reverse order
         curr_scope = execution_entry.base.parent;
         while let Some(scope) = curr_scope {
-            // SAFETY: `parent` is a live `*mut DescribeScope` owned by the BunTest arena.
-            let scope = unsafe { &*scope };
+            let scope = scope.get();
             if let Some(name) = scope.base.name.as_deref() {
                 if !name.is_empty() {
                     index -= name.len() + 1;
@@ -827,14 +825,16 @@ impl Expect {
             return Err(global_this.throw(format_args!("Expected value must be a function")));
         }
 
-        let mut return_value: JSValue = JSValue::ZERO;
+        // `Cell` so the slot handed to the VM stays writable while this frame
+        // keeps reading it; no `&mut` ever spans `value.call` below.
+        let return_value: Cell<JSValue> = Cell::new(JSValue::ZERO);
 
         // Drain existing unhandled rejections
         vm.global().handle_rejected_promises();
 
         let scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
-        vm.unhandled_pending_rejection_to_capture = Some(&raw mut return_value);
+        vm.unhandled_pending_rejection_to_capture = Some(core::ptr::NonNull::from(&return_value));
         vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
         return_value_from_function = match value.call(global_this, JSValue::UNDEFINED, &[]) {
             Ok(v) => v,
@@ -844,11 +844,11 @@ impl Expect {
 
         vm.global().handle_rejected_promises();
 
-        if return_value.is_empty() {
-            return_value = return_value_from_function;
+        if return_value.get().is_empty() {
+            return_value.set(return_value_from_function);
         }
 
-        if let Some(promise) = return_value.as_any_promise() {
+        if let Some(promise) = return_value.get().as_any_promise() {
             vm.wait_for_promise(promise);
             scope.apply(vm);
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
@@ -863,7 +863,7 @@ impl Expect {
             }
         }
 
-        if return_value != return_value_from_function {
+        if return_value.get() != return_value_from_function {
             if let Some(existing) = return_value_from_function.as_any_promise() {
                 existing.set_handled(global_this.vm());
             }
@@ -872,7 +872,7 @@ impl Expect {
         scope.apply(vm);
 
         Ok((
-            return_value.to_error().or_else(|| return_value_from_function.to_error()),
+            return_value.get().to_error().or_else(|| return_value_from_function.to_error()),
             return_value_from_function,
         ))
     }

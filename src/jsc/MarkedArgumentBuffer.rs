@@ -28,16 +28,13 @@ impl MarkedArgumentBuffer {
             f: Option<F>,
             r: Option<R>,
         }
-        extern "C" fn run<F, R>(ctx: *mut Ctx<F, R>, args: *mut MarkedArgumentBuffer)
+        extern "C" fn run<F, R>(ctx: &mut Ctx<F, R>, args: &mut MarkedArgumentBuffer)
         where
             F: FnOnce(&mut MarkedArgumentBuffer) -> R,
         {
-            // SAFETY: `ctx` is the `&mut ctx` passed to `run` below.
-            let ctx = unsafe { &mut *ctx };
             let f = ctx.f.take().unwrap();
-            // SAFETY: `args` is the live stack-allocated `MarkedArgumentBuffer` C++
-            // hands us for the duration of this callback.
-            ctx.r = Some(f(unsafe { &mut *args }));
+            let r = f(args);
+            ctx.r = Some(r);
         }
         let mut ctx = Ctx {
             f: Some(f),
@@ -47,11 +44,11 @@ impl MarkedArgumentBuffer {
         ctx.r.unwrap()
     }
 
-    pub fn append(&mut self, value: JSValue) {
+    pub fn append(&self, value: JSValue) {
         MarkedArgumentBuffer__append(self, value)
     }
 
-    pub fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer)) {
+    pub fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: &mut T, args: &mut MarkedArgumentBuffer)) {
         // `MarkedArgumentBuffer__run` round-trips `ctx` opaquely back to `func`,
         // and `func`'s ABI is identical modulo the
         // pointee types (both params are thin pointers).
@@ -61,7 +58,7 @@ impl MarkedArgumentBuffer {
             // thin-pointer params; ABI-identical modulo pointee type.
             unsafe {
                 bun_ptr::cast_fn_ptr::<
-                    extern "C" fn(*mut T, *mut MarkedArgumentBuffer),
+                    extern "C" fn(&mut T, &mut MarkedArgumentBuffer),
                     extern "C" fn(*mut c_void, *mut c_void),
                 >(func)
             },
@@ -85,15 +82,12 @@ macro_rules! marked_argument_buffer_wrap {
                 callframe: &'a $crate::CallFrame,
             }
             extern "C" fn run(
-                this: *mut Context<'_>,
-                marked_argument_buffer: *mut $crate::MarkedArgumentBuffer,
+                this: &mut Context<'_>,
+                marked_argument_buffer: &mut $crate::MarkedArgumentBuffer,
             ) {
-                // SAFETY: `this` is the `&mut ctx` passed to `MarkedArgumentBuffer::run` below;
-                // `marked_argument_buffer` is the live stack-allocated buffer C++ hands us.
-                let this = unsafe { &mut *this };
-                this.result = $function(this.global_this, this.callframe, unsafe {
-                    &mut *marked_argument_buffer
-                });
+                let (global_this, callframe) = (this.global_this, this.callframe);
+                let result = $function(global_this, callframe, marked_argument_buffer);
+                this.result = result;
             }
 
             let mut ctx = Context {

@@ -566,8 +566,8 @@ impl UpgradeCommand {
     fn _exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
         HTTP::http_thread::init(&Default::default());
 
-        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
+        fs::FileSystem::init(None)?;
+        let filesystem = fs::FileSystem::instance();
         let mut env_loader: DotEnv::Loader = {
             // Allocate in the process-lifetime CLI arena.
             DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init()))

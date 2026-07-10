@@ -32,14 +32,20 @@ pub mod lib {
     pub type la_int64_t = i64;
     type time_t = isize;
 
+    /// The C object itself. Only the extern declarations below name this type;
+    /// owning Rust code uses the [`Archive`] handle.
+    pub mod sys {
+        bun_opaque::opaque_ffi! {
+            /// libarchive `struct archive`. `&Self` is ABI-identical to a non-null
+            /// `struct archive*` and carries no `noalias`/`readonly` — libarchive
+            /// mutates through every call.
+            pub struct Archive;
+        }
+    }
+
     bun_opaque::opaque_ffi! {
-        /// Opaque libarchive `struct archive`. Always used behind `*mut Archive`.
-        /// Contains `UnsafeCell` so that `&Archive` does not assert immutability
-        /// (libarchive mutates through every call), making `&self -> *mut Self`
-        /// sound under Stacked Borrows.
-        pub struct Archive;
         /// Opaque libarchive `struct archive_entry`. Always used behind `*mut Entry`.
-        /// Contains `UnsafeCell` for the same reason as `Archive` — the C side
+        /// Contains `UnsafeCell` for the same reason as `sys::Archive` — the C side
         /// mutates through getter/setter calls that take `&self` here.
         pub struct Entry;
     }
@@ -70,28 +76,32 @@ pub mod lib {
     // so it is ABI-compatible with the C `int` return values.
     unsafe extern "C" {
         // read side
-        fn archive_read_new() -> *mut Archive;
-        fn archive_read_close(a: *mut Archive) -> Result;
-        fn archive_read_free(a: *mut Archive) -> Result;
-        fn archive_read_support_format_tar(a: *mut Archive) -> Result;
-        fn archive_read_support_format_gnutar(a: *mut Archive) -> Result;
-        fn archive_read_support_filter_gzip(a: *mut Archive) -> Result;
-        fn archive_read_set_options(a: *mut Archive, opts: *const c_char) -> Result;
-        fn archive_read_open_memory(a: *mut Archive, buf: *const c_void, size: usize) -> Result;
-        fn archive_read_next_header(a: *mut Archive, entry: *mut *mut Entry) -> Result;
-        fn archive_read_data(a: *mut Archive, buf: *mut c_void, size: usize) -> la_ssize_t;
+        safe fn archive_read_new() -> *mut sys::Archive;
+        safe fn archive_read_close(a: &sys::Archive) -> Result;
+        // safe: `archive_read_free` is `archive_free()` — vtable dispatch on
+        // `a->vtable->archive_free`, the one release for any `struct archive`.
+        // Freeing is not exclusive access, so the receiver is `&`, not `&mut`.
+        safe fn archive_read_free(a: &sys::Archive) -> Result;
+        safe fn archive_read_support_format_tar(a: &sys::Archive) -> Result;
+        safe fn archive_read_support_format_gnutar(a: &sys::Archive) -> Result;
+        safe fn archive_read_support_filter_gzip(a: &sys::Archive) -> Result;
+        fn archive_read_set_options(a: &sys::Archive, opts: *const c_char) -> Result;
+        fn archive_read_open_memory(a: &sys::Archive, buf: *const c_void, size: usize) -> Result;
+        fn archive_read_next_header(a: &sys::Archive, entry: *mut *mut Entry) -> Result;
+        fn archive_read_data(a: &sys::Archive, buf: *mut c_void, size: usize) -> la_ssize_t;
         fn archive_read_data_block(
-            a: *mut Archive,
+            a: &sys::Archive,
             buff: *mut *const c_void,
             size: *mut usize,
             offset: *mut la_int64_t,
         ) -> Result;
-        fn archive_error_string(a: *mut Archive) -> *const c_char;
+        safe fn archive_error_string(a: &sys::Archive) -> *const c_char;
         // streaming-read setup (used by TarballStream's resumable extractor)
-        pub fn archive_read_set_format(a: *mut Archive, code: c_int) -> c_int;
-        pub fn archive_read_append_filter(a: *mut Archive, code: c_int) -> c_int;
+        pub safe fn archive_read_set_format(a: &sys::Archive, code: c_int) -> c_int;
+        pub safe fn archive_read_append_filter(a: &sys::Archive, code: c_int) -> c_int;
+        // NOT `safe fn`: the registered callbacks dereference `client_data`.
         pub fn archive_read_open(
-            a: *mut Archive,
+            a: &sys::Archive,
             client_data: *mut c_void,
             open: Option<archive_open_callback>,
             read: Option<archive_read_callback>,
@@ -99,25 +109,25 @@ pub mod lib {
         ) -> c_int;
 
         // write side
-        fn archive_write_new() -> *mut Archive;
-        fn archive_write_free(a: *mut Archive) -> Result;
-        fn archive_write_close(a: *mut Archive) -> Result;
-        fn archive_write_set_format_pax_restricted(a: *mut Archive) -> Result;
-        fn archive_write_add_filter_gzip(a: *mut Archive) -> Result;
+        safe fn archive_write_new() -> *mut sys::Archive;
+        safe fn archive_write_free(a: &sys::Archive) -> Result;
+        safe fn archive_write_close(a: &sys::Archive) -> Result;
+        safe fn archive_write_set_format_pax_restricted(a: &sys::Archive) -> Result;
+        safe fn archive_write_add_filter_gzip(a: &sys::Archive) -> Result;
         fn archive_write_set_filter_option(
-            a: *mut Archive,
+            a: &sys::Archive,
             module: *const c_char,
             option: *const c_char,
             value: *const c_char,
         ) -> Result;
-        fn archive_write_set_options(a: *mut Archive, opts: *const c_char) -> Result;
-        fn archive_write_open_filename(a: *mut Archive, filename: *const c_char) -> Result;
-        fn archive_write_header(a: *mut Archive, entry: *mut Entry) -> Result;
-        fn archive_write_data(a: *mut Archive, data: *const c_void, size: usize) -> la_ssize_t;
-        fn archive_write_finish_entry(a: *mut Archive) -> Result;
+        fn archive_write_set_options(a: &sys::Archive, opts: *const c_char) -> Result;
+        fn archive_write_open_filename(a: &sys::Archive, filename: *const c_char) -> Result;
+        fn archive_write_header(a: &sys::Archive, entry: *mut Entry) -> Result;
+        fn archive_write_data(a: &sys::Archive, data: *const c_void, size: usize) -> la_ssize_t;
+        safe fn archive_write_finish_entry(a: &sys::Archive) -> Result;
         #[link_name = "archive_write_open2"]
         fn archive_write_open2_raw(
-            a: *mut Archive,
+            a: &sys::Archive,
             client_data: *mut c_void,
             open: Option<archive_open_callback>,
             write: Option<archive_write_callback>,
@@ -127,7 +137,7 @@ pub mod lib {
 
         // entry
         fn archive_entry_new() -> *mut Entry;
-        fn archive_entry_new2(a: *mut Archive) -> *mut Entry;
+        fn archive_entry_new2(a: &sys::Archive) -> *mut Entry;
         fn archive_entry_free(e: *mut Entry);
         fn archive_entry_clear(e: *mut Entry) -> *mut Entry;
         fn archive_entry_pathname(e: *mut Entry) -> *const c_char;
@@ -146,6 +156,74 @@ pub mod lib {
         fn archive_entry_set_mtime(e: *mut Entry, secs: time_t, nsecs: c_long);
     }
 
+    /// `ForeignOwned::release` returns `()`; libarchive's status is not actionable
+    /// once the allocation is gone.
+    fn archive_free_release(a: &sys::Archive) {
+        let _ = archive_read_free(a);
+    }
+
+    // libarchive allocates in `archive_read_new()` and hands back the object.
+    // One `Archive` handle owns exactly that one allocation.
+    bun_opaque::foreign_owned!(sys::Archive, archive_free_release);
+
+    /// Owned handle to a libarchive `struct archive` from `archive_read_new()`.
+    ///
+    /// `Drop` gives the allocation back. Every method reached through this handle
+    /// takes `&self`: libarchive mutates the archive through the same pointer, so
+    /// there is no `&mut self` to have and no `DerefMut`.
+    #[repr(transparent)]
+    pub struct Archive(bun_opaque::ForeignRef<sys::Archive>);
+
+    impl Archive {
+        /// Adopt a handle libarchive allocated.
+        ///
+        /// # Safety
+        /// `ptr` must be live and owned by no other handle.
+        #[inline]
+        pub unsafe fn adopt(ptr: core::ptr::NonNull<sys::Archive>) -> Self {
+            // SAFETY: caller transfers ownership.
+            Self(unsafe { bun_opaque::ForeignRef::adopt(ptr) })
+        }
+
+        /// Adopt a nullable handle; `None` on null.
+        #[inline]
+        fn adopt_ptr(ptr: *mut sys::Archive) -> Option<Self> {
+            // SAFETY: `archive_read_new` returns a fresh allocation or null.
+            core::ptr::NonNull::new(ptr).map(|p| unsafe { Self::adopt(p) })
+        }
+
+        /// `archive_read_new()` — libarchive allocates; this handle owns it.
+        #[inline]
+        pub fn read_new() -> Self {
+            Self::adopt_ptr(sys::Archive::read_new()).expect("archive_read_new returned NULL (OOM)")
+        }
+
+        /// The C pointer, still owned by `self`.
+        #[inline]
+        pub fn as_ptr(&self) -> *mut sys::Archive {
+            self.0.as_ptr()
+        }
+
+        /// Hand the allocation to a foreign owner. Pairs with a later [`Self::adopt`].
+        #[inline]
+        pub fn leak(self) -> core::ptr::NonNull<sys::Archive> {
+            self.0.leak()
+        }
+
+        #[inline]
+        fn raw(&self) -> &sys::Archive {
+            &self.0
+        }
+    }
+
+    impl core::ops::Deref for Archive {
+        type Target = sys::Archive;
+        #[inline]
+        fn deref(&self) -> &sys::Archive {
+            self.raw()
+        }
+    }
+
     /// One block from `archive_read_data_block`. `bytes` borrows libarchive's
     /// internal buffer (valid until the next read call on the owning archive).
     pub struct Block<'a> {
@@ -154,65 +232,56 @@ pub mod lib {
         pub result: Result,
     }
 
-    impl Archive {
-        pub fn read_new() -> *mut Archive {
-            // SAFETY: FFI call with no preconditions.
-            let p = unsafe { archive_read_new() };
+    impl sys::Archive {
+        /// Raw `archive_read_new()`. Prefer [`Archive::read_new`]; this exists for
+        /// the callers that keep a `*mut sys::Archive` and free it by hand.
+        pub fn read_new() -> *mut sys::Archive {
+            let p = archive_read_new();
             // libarchive's `archive_read_new()` returns NULL on calloc failure.
-            // Every caller immediately dereferences the result (forming
-            // `&Archive`), so fail loudly here instead of invoking UB at the
-            // first accessor call.
+            // Every caller immediately dereferences the result, so fail loudly
+            // here instead of invoking UB at the first accessor call.
             assert!(!p.is_null(), "archive_read_new returned NULL (OOM)");
             p
         }
         pub fn read_close(&self) -> Result {
-            // SAFETY: self came from archive_read_new().
-            unsafe { archive_read_close(self.as_mut_ptr()) }
+            archive_read_close(self)
         }
         pub fn read_free(&self) -> Result {
-            // SAFETY: self came from archive_read_new(); not used after this.
-            unsafe { archive_read_free(self.as_mut_ptr()) }
+            archive_read_free(self)
         }
         pub fn read_support_format_tar(&self) -> Result {
-            // SAFETY: self valid.
-            unsafe { archive_read_support_format_tar(self.as_mut_ptr()) }
+            archive_read_support_format_tar(self)
         }
         pub fn read_support_format_gnutar(&self) -> Result {
-            // SAFETY: self valid.
-            unsafe { archive_read_support_format_gnutar(self.as_mut_ptr()) }
+            archive_read_support_format_gnutar(self)
         }
         pub fn read_support_filter_gzip(&self) -> Result {
-            // SAFETY: self valid.
-            unsafe { archive_read_support_filter_gzip(self.as_mut_ptr()) }
+            archive_read_support_filter_gzip(self)
         }
         pub fn read_set_options(&self, opts: &core::ffi::CStr) -> Result {
-            // SAFETY: self valid; opts is NUL-terminated.
-            unsafe { archive_read_set_options(self.as_mut_ptr(), opts.as_ptr()) }
+            // SAFETY: opts is NUL-terminated.
+            unsafe { archive_read_set_options(self, opts.as_ptr()) }
         }
         pub fn read_open_memory(&self, buf: &[u8]) -> Result {
-            // SAFETY: self valid; buf outlives the archive (caller contract,
-            // see `BufferReadStream::buf` field comment).
-            unsafe { archive_read_open_memory(self.as_mut_ptr(), buf.as_ptr().cast(), buf.len()) }
+            // SAFETY: buf outlives the archive (caller contract, see
+            // `BufferReadStream::buf` field comment).
+            unsafe { archive_read_open_memory(self, buf.as_ptr().cast(), buf.len()) }
         }
         pub fn read_next_header(&self, entry: &mut *mut Entry) -> Result {
-            // SAFETY: self valid; entry is a valid out-ptr.
-            unsafe {
-                archive_read_next_header(self.as_mut_ptr(), std::ptr::from_mut::<*mut Entry>(entry))
-            }
+            // SAFETY: entry is a valid out-ptr.
+            unsafe { archive_read_next_header(self, std::ptr::from_mut::<*mut Entry>(entry)) }
         }
         pub fn read_data(&self, buf: &mut [u8]) -> isize {
-            // SAFETY: self valid; buf writable for buf.len().
-            unsafe { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
+            // SAFETY: buf writable for buf.len().
+            unsafe { archive_read_data(self, buf.as_mut_ptr().cast(), buf.len()) }
         }
 
         /// `archive_read_data_block` — returns `None` on EOF.
         pub fn next(&self, offset: &mut i64) -> Option<Block<'_>> {
             let mut buff: *const c_void = core::ptr::null();
             let mut size: usize = 0;
-            // SAFETY: self valid; out-ptrs are valid stack locations.
-            let r = unsafe {
-                archive_read_data_block(self.as_mut_ptr(), &raw mut buff, &raw mut size, offset)
-            };
+            // SAFETY: out-ptrs are valid stack locations.
+            let r = unsafe { archive_read_data_block(self, &raw mut buff, &raw mut size, offset) };
             if r == Result::Eof {
                 return None;
             }
@@ -346,12 +415,8 @@ pub mod lib {
             Result::Ok
         }
 
-        // `self` must be a live archive handle from `archive_{read,write}_new()`.
-        // `Archive` is `opaque_ffi!`-backed (UnsafeCell), so `&self → *mut Self`
-        // is sound; libarchive never returns null from `*_new()`.
         pub fn error_string(&self) -> &'static [u8] {
-            // SAFETY: `self` is a live archive handle.
-            let p = unsafe { archive_error_string(self.as_mut_ptr()) };
+            let p = archive_error_string(self);
             if p.is_null() {
                 return b"";
             }
@@ -363,25 +428,20 @@ pub mod lib {
         }
 
         // ── write side ─────────────────────────────────────────────────────
-        pub fn write_new() -> *mut Archive {
-            // SAFETY: FFI call with no preconditions.
-            unsafe { archive_write_new() }
+        pub fn write_new() -> *mut sys::Archive {
+            archive_write_new()
         }
         pub fn write_free(&self) -> Result {
-            // SAFETY: self came from archive_write_new(); not used after this.
-            unsafe { archive_write_free(self.as_mut_ptr()) }
+            archive_write_free(self)
         }
         pub fn write_close(&self) -> Result {
-            // SAFETY: self valid.
-            unsafe { archive_write_close(self.as_mut_ptr()) }
+            archive_write_close(self)
         }
         pub fn write_set_format_pax_restricted(&self) -> Result {
-            // SAFETY: self valid.
-            unsafe { archive_write_set_format_pax_restricted(self.as_mut_ptr()) }
+            archive_write_set_format_pax_restricted(self)
         }
         pub fn write_add_filter_gzip(&self) -> Result {
-            // SAFETY: self valid.
-            unsafe { archive_write_add_filter_gzip(self.as_mut_ptr()) }
+            archive_write_add_filter_gzip(self)
         }
         pub fn write_set_filter_option(
             &self,
@@ -389,10 +449,10 @@ pub mod lib {
             option: &ZStr,
             value: &ZStr,
         ) -> Result {
-            // SAFETY: self valid; ZStr guarantees NUL-termination.
+            // SAFETY: ZStr guarantees NUL-termination.
             unsafe {
                 archive_write_set_filter_option(
-                    self.as_mut_ptr(),
+                    self,
                     module.map_or(core::ptr::null(), |m| m.as_ptr().cast()),
                     option.as_ptr().cast(),
                     value.as_ptr().cast(),
@@ -400,25 +460,24 @@ pub mod lib {
             }
         }
         pub fn write_set_options(&self, opts: &ZStr) -> Result {
-            // SAFETY: self valid; ZStr guarantees NUL-termination.
-            unsafe { archive_write_set_options(self.as_mut_ptr(), opts.as_ptr().cast()) }
+            // SAFETY: ZStr guarantees NUL-termination.
+            unsafe { archive_write_set_options(self, opts.as_ptr().cast()) }
         }
         pub fn write_open_filename(&self, filename: &ZStr) -> Result {
-            // SAFETY: self valid; ZStr guarantees NUL-termination.
-            unsafe { archive_write_open_filename(self.as_mut_ptr(), filename.as_ptr().cast()) }
+            // SAFETY: ZStr guarantees NUL-termination.
+            unsafe { archive_write_open_filename(self, filename.as_ptr().cast()) }
         }
         pub fn write_header(&self, entry: &Entry) -> Result {
-            // SAFETY: self valid; entry came from Entry::new()/read_next_header().
+            // SAFETY: entry came from Entry::new()/read_next_header().
             // `Entry` has interior mutability so `&Entry -> *mut Entry` is sound.
-            unsafe { archive_write_header(self.as_mut_ptr(), entry.as_mut_ptr()) }
+            unsafe { archive_write_header(self, entry.as_mut_ptr()) }
         }
         pub fn write_data(&self, data: &[u8]) -> isize {
-            // SAFETY: self valid; data readable for data.len().
-            unsafe { archive_write_data(self.as_mut_ptr(), data.as_ptr().cast(), data.len()) }
+            // SAFETY: data readable for data.len().
+            unsafe { archive_write_data(self, data.as_ptr().cast(), data.len()) }
         }
         pub fn write_finish_entry(&self) -> Result {
-            // SAFETY: self valid.
-            unsafe { archive_write_finish_entry(self.as_mut_ptr()) }
+            archive_write_finish_entry(self)
         }
     }
 
@@ -462,9 +521,9 @@ pub mod lib {
         /// `archive_entry_new2(archive)` — ties the entry to the archive's
         /// charset-conversion context (preferred over `new()` when an archive
         /// is available). `archive` is a live handle from `read_new()`/`write_new()`.
-        pub fn new2(archive: &Archive) -> *mut Entry {
-            // SAFETY: `archive` is a live handle (opaque_ffi! `&self → *mut Self`).
-            unsafe { archive_entry_new2(archive.as_mut_ptr()) }
+        pub fn new2(archive: &sys::Archive) -> *mut Entry {
+            // SAFETY: `archive` is a live handle.
+            unsafe { archive_entry_new2(archive) }
         }
         pub fn free(&self) {
             // SAFETY: self came from Entry::new(); not used after this.
@@ -502,64 +561,30 @@ pub mod lib {
         }
     }
 
-    // ── RAII owners ────────────────────────────────────────────────────────
-    //
-    // The raw `*mut Archive` / `*mut Entry` constructors above mirror the C
-    // API. These thin owners pair them with the matching `*_free` on `Drop`
-    // so callers stop hand-rolling `defer { (*archive).read_free() }`.
+    // The read side is [`Archive`] (a `ForeignRef<sys::Archive>`); the write side
+    // keeps its own owner. Both free routines are the same `archive_free()` vtable
+    // entry — the pairing with `archive_write_new()` is what the type documents.
 
-    /// Owns a `*mut Archive` opened with [`Archive::read_new`]; calls
-    /// `archive_read_free` on drop. Derefs to `&Archive`.
-    pub struct ReadArchive(core::ptr::NonNull<Archive>);
-    impl ReadArchive {
-        #[inline]
-        pub fn new() -> Self {
-            Self(
-                core::ptr::NonNull::new(Archive::read_new())
-                    .expect("archive_read_new returned null"),
-            )
-        }
-        #[inline]
-        pub fn as_ptr(&self) -> *mut Archive {
-            self.0.as_ptr()
-        }
-    }
-    impl core::ops::Deref for ReadArchive {
-        type Target = Archive;
-        #[inline]
-        fn deref(&self) -> &Archive {
-            // SAFETY: handle is live until Drop; libarchive owns the storage.
-            unsafe { self.0.as_ref() }
-        }
-    }
-    impl Drop for ReadArchive {
-        #[inline]
-        fn drop(&mut self) {
-            // SAFETY: handle came from archive_read_new() and is freed exactly once.
-            let _ = unsafe { archive_read_free(self.0.as_ptr()) };
-        }
-    }
-
-    /// Owns a `*mut Archive` opened with [`Archive::write_new`]; calls
-    /// `archive_write_free` on drop. Derefs to `&Archive`.
-    pub struct WriteArchive(core::ptr::NonNull<Archive>);
+    /// Owns a `*mut sys::Archive` opened with [`sys::Archive::write_new`]; calls
+    /// `archive_write_free` on drop. Derefs to `&sys::Archive`.
+    pub struct WriteArchive(core::ptr::NonNull<sys::Archive>);
     impl WriteArchive {
         #[inline]
         pub fn new() -> Self {
             Self(
-                core::ptr::NonNull::new(Archive::write_new())
+                core::ptr::NonNull::new(sys::Archive::write_new())
                     .expect("archive_write_new returned null"),
             )
         }
         #[inline]
-        pub fn as_ptr(&self) -> *mut Archive {
+        pub fn as_ptr(&self) -> *mut sys::Archive {
             self.0.as_ptr()
         }
     }
     impl core::ops::Deref for WriteArchive {
-        type Target = Archive;
+        type Target = sys::Archive;
         #[inline]
-        fn deref(&self) -> &Archive {
+        fn deref(&self) -> &sys::Archive {
             // SAFETY: handle is live until Drop; libarchive owns the storage.
             unsafe { self.0.as_ref() }
         }
@@ -568,7 +593,7 @@ pub mod lib {
         #[inline]
         fn drop(&mut self) {
             // SAFETY: handle came from archive_write_new() and is freed exactly once.
-            let _ = unsafe { archive_write_free(self.0.as_ptr()) };
+            let _ = archive_write_free(unsafe { self.0.as_ref() });
         }
     }
 
@@ -620,7 +645,7 @@ pub mod lib {
     /// Generic result type used by [`ArchiveIterator`].
     pub enum IteratorResult<T> {
         Err {
-            archive: *mut Archive,
+            archive: *mut sys::Archive,
             message: &'static [u8],
         },
         Result(T),
@@ -628,7 +653,7 @@ pub mod lib {
 
     impl<T> IteratorResult<T> {
         #[inline]
-        pub fn init_err(arch: *mut Archive, msg: &'static [u8]) -> Self {
+        pub fn init_err(arch: *mut sys::Archive, msg: &'static [u8]) -> Self {
             Self::Err {
                 message: msg,
                 archive: arch,
@@ -643,7 +668,7 @@ pub mod lib {
     /// Iterates over the entries of an open archive, skipping entries whose
     /// file kind has its bit set in `filter`.
     pub struct ArchiveIterator {
-        pub archive: *mut Archive,
+        pub archive: *mut sys::Archive,
         // A u16 bitmask over
         // `bun_sys::FileKind` variants.
         pub filter: u16,
@@ -660,16 +685,16 @@ pub mod lib {
         ///
         /// SAFETY (invariant): `self.archive` is set to a fresh non-null
         /// handle by `Archive::read_new()` in [`init`] and remains valid
-        /// until `read_free()` in [`close`]. All `Archive` methods take
+        /// until `read_free()` in [`close`]. All `sys::Archive` methods take
         /// `&self` (FFI interior mutability), so a shared borrow suffices.
         #[inline]
-        fn archive(&self) -> &Archive {
+        fn archive(&self) -> &sys::Archive {
             // SAFETY: see doc comment — non-null for the lifetime of `self`.
             unsafe { &*self.archive }
         }
 
         pub fn init(tarball_bytes: &[u8]) -> IteratorResult<Self> {
-            let archive = Archive::read_new();
+            let archive = sys::Archive::read_new();
             // SAFETY: archive_read_new() returns a non-null handle owned by libarchive.
             let a = unsafe { &*archive };
 
@@ -766,7 +791,7 @@ pub mod lib {
         /// live handle this `NextEntry` was yielded from.
         pub fn read_entry_data(
             &self,
-            archive: &Archive,
+            archive: &sys::Archive,
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
             // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
             let size = unsafe { (*self.entry).size() };
@@ -790,29 +815,29 @@ pub mod lib {
     }
 
     // ── write-open callback surface (libarchive `archive_write_open2`) ─────
-    pub type archive_open_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
+    pub type archive_open_callback = unsafe extern "C" fn(*mut sys::Archive, *mut c_void) -> c_int;
     pub type archive_read_callback =
-        unsafe extern "C" fn(*mut Archive, *mut c_void, *mut *const c_void) -> la_ssize_t;
+        unsafe extern "C" fn(*mut sys::Archive, *mut c_void, *mut *const c_void) -> la_ssize_t;
     pub type archive_write_callback =
-        unsafe extern "C" fn(*mut Archive, *mut c_void, *const c_void, usize) -> la_ssize_t;
-    pub type archive_close_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
-    pub type archive_free_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
+        unsafe extern "C" fn(*mut sys::Archive, *mut c_void, *const c_void, usize) -> la_ssize_t;
+    pub type archive_close_callback = unsafe extern "C" fn(*mut sys::Archive, *mut c_void) -> c_int;
+    pub type archive_free_callback = unsafe extern "C" fn(*mut sys::Archive, *mut c_void) -> c_int;
 
     /// `a` is a live `archive_write_new()` handle. `client_data` is forwarded
     /// opaquely to the callbacks (never dereferenced here); its lifetime must
     /// outlast the registered callbacks.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn archive_write_open2(
-        a: &Archive,
+        a: &sys::Archive,
         client_data: *mut c_void,
         open: Option<archive_open_callback>,
         write: Option<archive_write_callback>,
         close: Option<archive_close_callback>,
         free: Option<archive_free_callback>,
     ) -> c_int {
-        // SAFETY: `a` is a live handle (`opaque_ffi!` `&self → *mut Self`);
-        // `client_data` is opaque to libarchive until a callback dereferences it.
-        unsafe { archive_write_open2_raw(a.as_mut_ptr(), client_data, open, write, close, free) }
+        // SAFETY: `client_data` is opaque to libarchive until a callback
+        // dereferences it.
+        unsafe { archive_write_open2_raw(a, client_data, open, write, close, free) }
     }
 
     /// Growing memory buffer for archive writes with libarchive callbacks.
@@ -837,7 +862,7 @@ pub mod lib {
         }
 
         pub unsafe extern "C" fn open_callback(
-            _a: *mut Archive,
+            _a: *mut sys::Archive,
             client_data: *mut c_void,
         ) -> c_int {
             // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
@@ -848,7 +873,7 @@ pub mod lib {
         }
 
         pub unsafe extern "C" fn write_callback(
-            _a: *mut Archive,
+            _a: *mut sys::Archive,
             client_data: *mut c_void,
             buff: *const c_void,
             length: usize,
@@ -869,7 +894,7 @@ pub mod lib {
         }
 
         pub unsafe extern "C" fn close_callback(
-            _a: *mut Archive,
+            _a: *mut sys::Archive,
             _client_data: *mut c_void,
         ) -> c_int {
             0
@@ -884,7 +909,7 @@ pub mod lib {
     /// Error payload for [`IterResult`]: the archive handle (for
     /// `error_string()`) plus a static description.
     pub struct IteratorError {
-        pub archive: *mut Archive,
+        pub archive: *mut sys::Archive,
         pub message: &'static [u8],
     }
     impl IteratorError {
@@ -906,6 +931,7 @@ pub mod lib {
         pub entry: *mut Entry,
         pub kind: bun_sys::FileKind,
     }
+
     impl IteratorEntry {
         /// Borrow the libarchive entry. Valid until the next `next()` call.
         #[inline]
@@ -920,7 +946,7 @@ pub mod lib {
         /// `archive` is the live handle this entry was yielded from.
         pub fn read_entry_data(
             &self,
-            archive: &Archive,
+            archive: &sys::Archive,
         ) -> core::result::Result<IterResult<Vec<u8>>, bun_core::OOM> {
             let size = self.entry().size();
             if size < 0 || size > 64 * 1024 * 1024 {
@@ -945,7 +971,7 @@ pub mod lib {
     /// Streaming reader over an in-memory tarball; yields one
     /// [`IteratorEntry`] per archive entry via [`Iterator::next`].
     pub struct Iterator {
-        pub archive: *mut Archive,
+        pub archive: *mut sys::Archive,
         // No filter field: every caller would leave it empty;
         // re-add if a caller
         // ever needs it.
@@ -955,10 +981,10 @@ pub mod lib {
         ///
         /// SAFETY (invariant): `self.archive` is set to a fresh non-null
         /// handle by `Archive::read_new()` in [`init`] and remains valid
-        /// until `read_free()` in [`deinit`]. All `Archive` methods take
+        /// until `read_free()` in [`deinit`]. All `sys::Archive` methods take
         /// `&self` (FFI interior mutability), so a shared borrow suffices.
         #[inline]
-        fn archive(&self) -> &Archive {
+        fn archive(&self) -> &sys::Archive {
             // SAFETY: see doc comment — non-null for the lifetime of `self`.
             unsafe { &*self.archive }
         }
@@ -966,8 +992,8 @@ pub mod lib {
         /// Opens `tarball_bytes` as a
         /// gzip-compressed (gnu)tar archive.
         pub fn init(tarball_bytes: &[u8]) -> IterResult<Self> {
-            let archive = Archive::read_new();
-            // SAFETY: `archive` is a fresh non-null `*mut Archive`.
+            let archive = sys::Archive::read_new();
+            // SAFETY: `archive` is a fresh non-null `*mut sys::Archive`.
             let a = unsafe { &*archive };
 
             match a.read_support_format_tar() {
@@ -1074,7 +1100,7 @@ pub mod lib {
     }
 }
 
-use lib::Archive;
+use lib::{Archive, sys};
 
 #[repr(i32)] // c_int
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -1091,7 +1117,7 @@ pub struct BufferReadStream {
 
     block_size: usize,
 
-    archive: *mut Archive,
+    archive: Archive,
     reading: bool,
 }
 
@@ -1117,15 +1143,9 @@ impl BufferReadStream {
     }
 
     /// Borrow the underlying libarchive handle.
-    ///
-    /// SAFETY (invariant): `self.archive` is set to a fresh non-null handle by
-    /// `Archive::read_new()` in `init()` (asserted there) and remains valid
-    /// until `read_free()` in `Drop`. All `Archive` methods take `&self`
-    /// (FFI interior mutability), so a shared borrow is sufficient.
     #[inline]
-    fn archive(&self) -> &Archive {
-        // SAFETY: see doc comment — non-null for the lifetime of `self`.
-        unsafe { &*self.archive }
+    fn archive(&self) -> &sys::Archive {
+        &self.archive
     }
 
     /// Borrow the input buffer.
@@ -1181,7 +1201,7 @@ impl BufferReadStream {
         ctx.cast::<Self>()
     }
 
-    pub extern "C" fn archive_close_callback(_: *mut Archive, _: *mut c_void) -> c_int {
+    pub extern "C" fn archive_close_callback(_: *mut sys::Archive, _: *mut c_void) -> c_int {
         0
     }
 
@@ -1189,7 +1209,7 @@ impl BufferReadStream {
     /// libarchive C callback: `ctx_` is the `*mut BufferReadStream` registered
     /// via `archive_read_set_callback_data`; `buffer` is a non-null out-param.
     pub unsafe extern "C" fn archive_read_callback(
-        _: *mut Archive,
+        _: *mut sys::Archive,
         ctx_: *mut c_void,
         buffer: *mut *const c_void,
     ) -> lib::la_ssize_t {
@@ -1211,7 +1231,7 @@ impl BufferReadStream {
     /// libarchive C callback: `ctx_` is the `*mut BufferReadStream` registered
     /// via `archive_read_set_callback_data`.
     pub unsafe extern "C" fn archive_skip_callback(
-        _: *mut Archive,
+        _: *mut sys::Archive,
         ctx_: *mut c_void,
         offset: lib::la_int64_t,
     ) -> lib::la_int64_t {
@@ -1231,7 +1251,7 @@ impl BufferReadStream {
     /// libarchive C callback: `ctx_` is the `*mut BufferReadStream` registered
     /// via `archive_read_set_callback_data`.
     pub unsafe extern "C" fn archive_seek_callback(
-        _: *mut Archive,
+        _: *mut sys::Archive,
         ctx_: *mut c_void,
         offset: lib::la_int64_t,
         whence: c_int,
@@ -1304,8 +1324,8 @@ impl BufferReadStream {
 
 impl Drop for BufferReadStream {
     fn drop(&mut self) {
+        // The `archive` field's `Drop` runs next and calls `archive_read_free`.
         let _ = self.archive().read_close();
-        let _ = self.archive().read_free();
     }
 }
 
@@ -1557,7 +1577,7 @@ impl Archiver {
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
         let mut stream = unsafe { BufferReadStream::init(file_buffer) };
         let _ = stream.open_read();
-        let archive = stream.archive;
+        let archive: &lib::sys::Archive = &stream.archive;
 
         // Uses the bun_sys directory-fd helpers (open_dir_absolute / open_dir_at).
         let dir: Fd = 'brk: {
@@ -1581,8 +1601,7 @@ impl Archiver {
         let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
 
         'loop_: loop {
-            // SAFETY: archive valid for stream lifetime
-            let r = unsafe { (*archive).read_next_header(&mut entry) };
+            let r = archive.read_next_header(&mut entry);
 
             match r {
                 lib::Result::Eof => break 'loop_,
@@ -1693,7 +1712,7 @@ impl Archiver {
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
         let mut stream = unsafe { BufferReadStream::init(file_buffer) };
         let _ = stream.open_read();
-        let archive = stream.archive;
+        let archive: &lib::sys::Archive = &stream.archive;
         let mut count: u32 = 0;
         let dir_fd = dir;
 
@@ -1711,8 +1730,7 @@ impl Archiver {
         let mut use_lseek = true;
 
         'loop_: loop {
-            // SAFETY: archive valid for stream lifetime
-            let r = unsafe { (*archive).read_next_header(&mut entry) };
+            let r = archive.read_next_header(&mut entry);
 
             match r {
                 lib::Result::Eof => break 'loop_,
@@ -2143,12 +2161,8 @@ impl Archiver {
                                             plucker_.contents.inflate(size)?;
                                             let cap = plucker_.contents.list.capacity();
                                             plucker_.contents.list.resize(cap, 0);
-                                            // SAFETY: archive valid
-                                            let read = unsafe {
-                                                (*archive).read_data(
-                                                    plucker_.contents.list.as_mut_slice(),
-                                                )
-                                            };
+                                            let read = archive
+                                                .read_data(plucker_.contents.list.as_mut_slice());
                                             plucker_.contents.inflate(
                                                 usize::try_from(read).expect("int cast"),
                                             )?;
@@ -2175,14 +2189,11 @@ impl Archiver {
                                 let mut retries_remaining: u8 = 5;
 
                                 'possibly_retry: while retries_remaining != 0 {
-                                    // SAFETY: archive valid
-                                    match unsafe {
-                                        (*archive).read_data_into_fd(
-                                            *file_handle,
-                                            &mut use_pwrite,
-                                            &mut use_lseek,
-                                        )
-                                    } {
+                                    match archive.read_data_into_fd(
+                                        *file_handle,
+                                        &mut use_pwrite,
+                                        &mut use_lseek,
+                                    ) {
                                         lib::Result::Eof => break 'loop_,
                                         lib::Result::Ok => break 'possibly_retry,
                                         lib::Result::Retry => {
@@ -2203,12 +2214,8 @@ impl Archiver {
                                         }
                                         _ => {
                                             if options.log {
-                                                // SAFETY: `archive` is the live
-                                                // `read_new()` handle this
-                                                // extraction loop is iterating.
-                                                let archive_error = slice_to_nul(
-                                                    unsafe { &*archive }.error_string(),
-                                                );
+                                                let archive_error =
+                                                    slice_to_nul(archive.error_string());
                                                 Output::err(
                                                     "libarchive error",
                                                     "extracting {}: {}",

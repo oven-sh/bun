@@ -416,7 +416,7 @@ pub struct TestOptions {
     // back-edge. High tier owns construction/destruction; this field only
     // stores the pointer. LIFETIMES.tsv says OWNED, so the high-tier setter is
     // responsible for freeing any previous value.
-    pub test_filter_regex: Option<core::ptr::NonNull<()>>, // SAFETY: erased *mut bun_jsc::RegularExpression
+    pub test_filter_regex: Option<core::ptr::NonNull<()>>, // SAFETY: erased *mut bun_jsc::regular_expression::sys::RegularExpression
     pub max_concurrency: u32,
     /// `bun test --isolate`: run each test file in a fresh global object on
     /// the same VM, force-closing leaked handles between files.
@@ -459,8 +459,9 @@ pub struct Reporters {
 }
 
 impl TestOptions {
-    /// Returns the erased `*mut bun_jsc::RegularExpression`. Caller (high tier)
-    /// casts back: `unsafe { &*ptr.cast::<bun_jsc::RegularExpression>() }`.
+    /// Returns the erased pointer to the C++ regex. Caller (high tier) casts back to
+    /// `NonNull<bun_jsc::regular_expression::sys::RegularExpression>` and borrows it
+    /// with `RegularExpression::borrow_leaked` - never to the owning handle.
     #[inline]
     pub fn test_filter_regex(&self) -> Option<core::ptr::NonNull<()>> {
         // SAFETY: erased bun_jsc::RegularExpression — see field decl.

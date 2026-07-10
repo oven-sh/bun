@@ -35,9 +35,7 @@ fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
     blob.content_type
         .set(crate::webcore::blob::BlobContentType::from_mime(&mime));
     if let Some(store) = blob.store.get().as_ref() {
-        // SAFETY: `store` is the freshly-allocated backing store uniquely owned
-        // by `blob`; no other borrow exists yet.
-        unsafe { (*store.as_ptr()).mime_type = mime };
+        store.mime_type.set(mime);
     }
 }
 

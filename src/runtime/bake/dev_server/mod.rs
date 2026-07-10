@@ -757,7 +757,7 @@ pub struct WatcherAtomics {
     pub pending_event: Option<u8>,
     // Debug fields to ensure methods are being called in the right order.
     #[cfg(debug_assertions)]
-    pub dbg_watcher_event: Option<*mut HotReloadEvent>,
+    pub dbg_watcher_event: Option<u8>,
     #[cfg(debug_assertions)]
     pub dbg_server_event: Option<*mut HotReloadEvent>,
 }
@@ -843,12 +843,12 @@ impl WatcherAtomics {
         Some(event)
     }
 
-    /// Atomically get a `*mut HotReloadEvent` that is not in use by the
-    /// DevServer thread. Call `watcher_release_and_submit_event` when it is
-    /// filled with files.
+    /// Atomically get the index of a `HotReloadEvent` that is not in use by
+    /// the DevServer thread. Call `watcher_release_and_submit_event` when it
+    /// is filled with files.
     ///
     /// Called from watcher thread.
-    pub fn watcher_acquire_event(&mut self) -> *mut HotReloadEvent {
+    pub fn watcher_acquire_event(&mut self) -> u8 {
         let mut available = [true; 3];
         if let Some(i) = self.current_event {
             available[i as usize] = false;
@@ -865,7 +865,7 @@ impl WatcherAtomics {
             }
             unreachable!()
         };
-        let ev: *mut HotReloadEvent = &raw mut self.events[index];
+        let index = u8::try_from(index).unwrap();
 
         #[cfg(debug_assertions)]
         {
@@ -873,12 +873,12 @@ impl WatcherAtomics {
                 self.dbg_watcher_event.is_none(),
                 "must call `watcherReleaseEvent` before calling `watcherAcquireEvent` again",
             );
-            self.dbg_watcher_event = Some(ev);
+            self.dbg_watcher_event = Some(index);
         }
 
-        // SAFETY: `ev` points into `self.events[index]`, which the watcher thread has exclusive
-        // access to (it is neither `current_event` nor `pending_event`).
-        let ev_ref = unsafe { &mut *ev };
+        // The watcher thread has exclusive access to `events[index]`
+        // (it is neither `current_event` nor `pending_event`).
+        let ev_ref = &mut self.events[index as usize];
 
         // Initialize the timer if it is empty.
         if ev_ref.is_empty() {
@@ -891,54 +891,43 @@ impl WatcherAtomics {
         #[cfg(debug_assertions)]
         debug_assert!(ev_ref.debug_mutex.try_lock());
 
-        ev
+        index
     }
 
-    /// Release the pointer from `watcher_acquire_event`, submitting the event
+    /// Release the index from `watcher_acquire_event`, submitting the event
     /// if it contains new files.
     ///
     /// Called from watcher thread.
-    ///
-    /// # Safety
-    /// `ev` must be the pointer returned by the matching
-    /// `watcher_acquire_event` call (a slot in `self.events`), and the watcher
-    /// thread must still hold exclusive access to it.
     // `&(...)` is deliberate — sidesteps dangerous_implicit_autorefs.
     #[allow(clippy::needless_borrow)]
-    pub(crate) fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
-        // SAFETY: per this function's contract.
-        let ev_ref = unsafe { &mut *ev };
-
-        ev_ref.assert_watcher_thread_locked();
+    pub(crate) fn watcher_release_and_submit_event(&mut self, ev_index: u8) {
+        self.events[ev_index as usize].assert_watcher_thread_locked();
 
         #[cfg(debug_assertions)]
         {
-            let Some(dbg_event) = self.dbg_watcher_event else {
+            let Some(dbg_index) = self.dbg_watcher_event else {
                 panic!("must call `watcherAcquireEvent` before `watcherReleaseAndSubmitEvent`");
             };
             debug_assert!(
-                dbg_event == ev,
+                dbg_index == ev_index,
                 "watcherReleaseAndSubmitEvent: event is not from last `watcherAcquireEvent` call \
-                 (expected {:p}, got {:p})",
-                dbg_event,
-                ev,
+                 (expected {}, got {})",
+                dbg_index,
+                ev_index,
             );
             self.dbg_watcher_event = None;
         }
 
         #[cfg(debug_assertions)]
         {
-            ev_ref.debug_mutex.unlock();
+            self.events[ev_index as usize].debug_mutex.unlock();
         }
 
-        if ev_ref.is_empty() {
+        if self.events[ev_index as usize].is_empty() {
             return;
         }
         // There are files to be processed.
 
-        // SAFETY: `ev` points into `self.events`; both are within the same allocation.
-        let ev_index: u8 =
-            u8::try_from(unsafe { ev.offset_from(self.events.as_ptr().cast_mut()) }).unwrap();
         let old_next = NextEvent(self.next_event.swap(ev_index, Ordering::AcqRel));
         match old_next {
             NextEvent::DONE => {
@@ -956,8 +945,14 @@ impl WatcherAtomics {
                         "no event should be running right now",
                     );
                     // Not atomic because the dev server is not running events right now.
-                    self.dbg_server_event = Some(ev);
+                    self.dbg_server_event = Some(&raw mut self.events[ev_index as usize]);
                 }
+                // `ev` must be the parent of `ev_ref`: the pointer stored in the
+                // task is written through below, and a child write would disable a
+                // sibling raw.
+                let ev: *mut HotReloadEvent = &raw mut self.events[ev_index as usize];
+                // SAFETY: the watcher thread still exclusively owns this slot.
+                let ev_ref = unsafe { &mut *ev };
                 ev_ref.concurrent_task = bun_event_loop::ConcurrentTask::ConcurrentTask {
                     task: bun_event_loop::Task::init(ev),
                     ..Default::default()

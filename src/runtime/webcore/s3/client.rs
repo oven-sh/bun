@@ -602,17 +602,11 @@ impl S3UploadStreamWrapper {
     }
 
     /// Exclusive borrow of the `MultiPartUpload` this wrapper holds a counted
-    /// ref on (released in `Drop`). Detached lifetime so the borrow does not
-    /// conflict with disjoint `&mut self` field access at call sites — `task`
-    /// is a separate heap allocation, not inside `*self`.
-    ///
-    /// SAFETY (encapsulated): `task` is set once at construction from
-    /// `MultiPartUpload::create` and intrusive-ref'd for this wrapper's entire
-    /// lifetime; single-threaded JS — no overlapping `&mut` from elsewhere.
+    /// ref on (released in `Drop`). `task` is set once at construction and stays
+    /// live for this wrapper's entire lifetime.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn task_mut<'r>(&self) -> &'r mut MultiPartUpload {
-        // SAFETY: see doc comment — counted ref keeps pointee live; sole writer.
+    fn task_mut(&mut self) -> &mut MultiPartUpload {
+        // SAFETY: the counted ref keeps the pointee live; `&mut self` bounds the borrow.
         unsafe { &mut *self.task }
     }
 
@@ -1241,14 +1235,12 @@ pub fn readable_stream(
 
     // Ownership of the heap-allocated NewSource transfers to the JS wrapper (m_ctx) via
     // `to_readable_stream()`/`to_js()`; the wrapper's finalize() reclaims it.
-    let reader: *mut crate::webcore::byte_stream::Source =
-        crate::webcore::byte_stream::Source::new(crate::webcore::readable_stream::NewSource {
+    let reader_mut =
+        crate::webcore::byte_stream::Source::new_mut(crate::webcore::readable_stream::NewSource {
             context: ByteStream::default(),
             global_this: Some(bun_ptr::BackRef::new(global_this)),
             ..Default::default()
         });
-    // SAFETY: freshly heap-allocated via TrivialNew; exclusive access until handed to JS below.
-    let reader_mut = unsafe { &mut *reader };
 
     reader_mut.context.setup();
     let readable_value = reader_mut.to_readable_stream(global_this)?;

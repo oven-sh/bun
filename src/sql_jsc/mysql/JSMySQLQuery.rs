@@ -37,7 +37,6 @@ bun_core::define_scoped_log!(debug, MySQLQuery);
 // shim still emits `this: &mut JSMySQLQuery` — `&mut T` auto-derefs to `&T`
 // so the impls below compile against either.
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLQuery {
     this_value: JsCell<JsRef>,
     // unfortunately we cannot use #ref_count here
@@ -49,8 +48,14 @@ pub struct JSMySQLQuery {
 }
 
 // Intrusive refcount (bun.ptr.RefCount): `ref_()`/`deref()` provided by
-// `#[derive(CellRefCounted)]`; `destroy` routes to `Self::deinit` via the
-// struct-level `#[ref_count(destroy = …)]` attribute.
+// `#[derive(CellRefCounted)]`; the default `destroy` is `heap::take(this)`,
+// which runs the `Drop` below before freeing.
+
+impl Drop for JSMySQLQuery {
+    fn drop(&mut self) {
+        self.query.with_mut(|q| q.cleanup());
+    }
+}
 
 impl JSMySQLQuery {
     /// RAII `ref()`/`deref()` bracket around `self`. One audited
@@ -75,15 +80,6 @@ impl JSMySQLQuery {
     ) -> JsResult<*mut Self> {
         Err(global_this
             .throw_invalid_arguments(format_args!("MySQLQuery cannot be constructed directly")))
-    }
-
-    fn deinit(this: *mut Self) {
-        // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
-        // `this` is the sole live owner of its `heap::alloc` allocation.
-        unsafe {
-            (*this).query.with_mut(|q| q.cleanup());
-            drop(bun_core::heap::take(this));
-        }
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -269,8 +265,8 @@ impl JSMySQLQuery {
         js_tag.ensure_still_alive();
 
         let Some(function) = self
-            .vm_mut()
-            .sql_state()
+            .vm()
+            .sql_state_ref()
             .mysql_context
             .on_query_resolve_fn
             .get()
@@ -364,8 +360,8 @@ impl JSMySQLQuery {
         debug_assert!(!js_error.is_empty(), "js_error is zero");
         js_error.ensure_still_alive();
         let Some(function) = self
-            .vm_mut()
-            .sql_state()
+            .vm()
+            .sql_state_ref()
             .mysql_context
             .on_query_reject_fn
             .get()
@@ -570,10 +566,6 @@ impl JSMySQLQuery {
     #[inline]
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
-    }
-    #[inline]
-    fn vm_mut(&self) -> &'static mut VirtualMachine {
-        VirtualMachine::get_mut()
     }
     /// `&mut EventLoop` for `run_callback`. Routes through the inherent safe
     /// `VirtualMachine::event_loop_mut` accessor — the loop is a disjoint heap

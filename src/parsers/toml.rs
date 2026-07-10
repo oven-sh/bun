@@ -135,8 +135,7 @@ impl<'a> TOML<'a> {
             },
             next: core::ptr::null_mut(),
         });
-        let head: *mut Rope = rope;
-        let mut rope: *mut Rope = rope;
+        let mut cur: *mut Rope = rope;
 
         // Hard cap on dotted-key segments. The rope is consumed by `set_rope`,
         // `get_or_put_array`, and `get_or_put_object`, each of which recurses
@@ -156,15 +155,14 @@ impl<'a> TOML<'a> {
                     .add_default_error(b"Dotted key has too many segments")?;
                 return Err(bun_core::err!("SyntaxError"));
             }
-            // SAFETY: `rope` points into `bump` and is live for this call; we are
-            // the sole mutator. Raw pointers used to avoid stacked &mut reborrows.
+            // SAFETY: `cur` points into `bump` and is live for this call; we are
+            // the sole mutator.
             unsafe {
-                rope = (*rope).append(seg, bump)?;
+                cur = (*cur).append(seg, bump)?;
             }
         }
 
-        // SAFETY: `head` was just allocated from `bump` above and is non-null.
-        Ok(unsafe { &mut *head })
+        Ok(rope)
     }
 
     fn run_parser(&mut self) -> Result<Expr, bun_core::Error> {

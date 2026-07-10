@@ -225,11 +225,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             }
         };
 
-        // Reshaped for borrowck — `pm: &mut PackageManager`;
-        // several call sites need `pm` and `pm.lockfile` simultaneously. Hold a
-        // raw pointer for those re-entry points.
-        let pm_ptr: *mut PackageManager = pm;
-
         let mut subcommand: &[u8] = if is_direct_whoami {
             b"whoami"
         } else {
@@ -334,8 +329,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
 
-            // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
-            let pm = unsafe { &mut *pm_ptr };
             let _ = pm
                 .lockfile
                 .has_meta_hash_changed(false, pm.lockfile.packages.len())?;
@@ -360,8 +353,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
 
-            // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
-            let pm = unsafe { &mut *pm_ptr };
             let _ = pm
                 .lockfile
                 .has_meta_hash_changed(true, pm.lockfile.packages.len())?;
@@ -652,8 +643,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             // Reshaped for borrowck —
             // `detect_and_load_other_lockfile(&pm.lockfile, .cwd(), pm, ctx.log)`
             // is a self-referential split borrow. Derive both halves through
-            // `pm` (not the raw `pm_ptr`) so the outer borrow stays on the
-            // Stacked-Borrows stack.
+            // `pm`, so both raw pointers stay children of the outer borrow's
+            // tag under Tree Borrows.
             let pm_raw: *mut PackageManager = pm;
             // SAFETY: `pm.lockfile` is `Box<Lockfile>` whose pointee lives in a
             // separate heap allocation; `&mut Lockfile` and `&mut PackageManager`

@@ -59,20 +59,14 @@ pub unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Tas
     }
 
     let result = {
-        // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
-        // contract is documented on `pending_part_range_prologue`. The `&mut`
-        // borrows below are scoped to the impl call so they do not overlap the
-        // raw slot write that follows. (Peer tasks still hold their own `&mut`
-        // views into the same `LinkerContext`/`Chunk` for read-only printer use —
-        // see the renamer caveat / SAFETY note on `unsafe impl Sync for
-        // Chunk` in Chunk.rs.)
+        // SAFETY: `c_ptr` carries mutable provenance; the disjoint-write contract is
+        // documented on `pending_part_range_prologue`. The borrow is scoped to the
+        // impl call so it does not overlap the raw slot write that follows.
         let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
-        // SAFETY: same mutable-provenance / disjoint-write contract as `c_ptr` above.
-        let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
         generate_compile_result_for_js_chunk_impl(
             &mut **worker,
             c_mut,
-            chunk_mut,
+            part_range.ctx.chunk,
             part_range.part_range,
         )
     };
@@ -86,7 +80,7 @@ pub unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Tas
 fn generate_compile_result_for_js_chunk_impl(
     worker: &mut Worker,
     c: &mut LinkerContext,
-    chunk: &mut Chunk,
+    chunk: bun_ptr::BackRef<Chunk>,
     part_range: PartRange,
 ) -> CompileResult {
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkJS");
@@ -162,18 +156,18 @@ fn generate_compile_result_for_js_chunk_impl(
     // `worker.temporary_arena` / `worker.stmt_list` borrowed `&mut` above, so
     // a direct shared borrow is fine. Heap is pinned; see `Worker::arena`.
     let worker_alloc = worker.arena.get();
-    // SAFETY: split borrow of `chunk` — `generate_code_for_file_in_chunk_js` never
-    // touches `chunk.renamer` through its `chunk` parameter; take a raw-ptr view so borrowck doesn't
-    // see two overlapping `&mut chunk` borrows.
-    let renamer_ptr: *mut crate::bun_renamer::ChunkRenamer = core::ptr::addr_of_mut!(chunk.renamer);
+    // SAFETY: `chunk` is a `BackRef` built with write provenance (`new_mut`); the
+    // pointee is live for the link step and the callee only reads `*chunk`.
+    let renamer_ptr: *mut crate::bun_renamer::ChunkRenamer =
+        unsafe { core::ptr::addr_of_mut!((*chunk.as_ptr()).renamer) };
     let result = generate_code_for_file_in_chunk_js(
         c,
         &mut buffer_writer,
-        // SAFETY: split borrow of `*chunk` — `renamer_ptr` aliases only
-        // `chunk.renamer`, which the callee never touches via its `chunk`
-        // parameter, so this deref does not overlap the `chunk` reborrow below.
+        // SAFETY: `renamer_ptr` aliases only `chunk.renamer`, which the callee
+        // never touches through its `chunk` parameter. See the renamer caveat on
+        // `unsafe impl Sync for Chunk` in Chunk.rs.
         unsafe { (*renamer_ptr).as_renamer() },
-        chunk,
+        chunk.get(),
         part_range,
         to_common_js_ref,
         to_esm_ref,

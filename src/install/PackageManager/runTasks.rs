@@ -176,14 +176,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
             if C::PROGRESS_BAR {
                 let completed_items = (manager.total_tasks - manager.pending_task_count()) as usize;
-                // SAFETY: `downloads_node` set by `start_progress_bar_if_none`;
-                // points into `manager.progress` which is live.
+                let total_tasks = manager.total_tasks as usize;
                 let node = manager.downloads_node_mut();
                 if completed_items != node.unprotected_completed_items.load(Ordering::Relaxed)
                     || has_updated_this_run.get()
                 {
                     node.set_completed_items(completed_items);
-                    node.set_estimated_total_items(manager.total_tasks as usize);
+                    node.set_estimated_total_items(total_tasks);
                 }
             }
             manager.downloads_node_mut().activate();
@@ -298,7 +297,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         false,
                         Some(InstallCtx {
                             entry_id,
-                            installer: installer_ptr,
+                            // SAFETY: `installer_ptr` is the live installer owned by this
+                            // loop; it outlives every subprocess it spawns.
+                            installer: unsafe { bun_ptr::BackRef::from_raw(installer_ptr) },
                         }),
                     );
                     if let Err(err) = spawn_res {
@@ -359,8 +360,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let is_extended_manifest = *is_extended_manifest;
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
+                        manager.set_downloads_node_name::<true>(
                             name,
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                         );
@@ -889,8 +889,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
+                        manager.set_downloads_node_name::<true>(
                             extract.name.slice(),
                             ProgressStrings::EXTRACT_EMOJI.as_bytes(),
                         );
@@ -1024,8 +1023,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 )?;
 
                 if let Some(name) = progress_name {
-                    manager.set_node_name::<true>(
-                        manager.downloads_node_mut(),
+                    manager.set_downloads_node_name::<true>(
                         &name,
                         ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                     );
@@ -1246,8 +1244,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
+                        manager.set_downloads_node_name::<true>(
                             alias,
                             ProgressStrings::EXTRACT_EMOJI.as_bytes(),
                         );
@@ -1370,8 +1367,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let repo = git.repo.slice(string_buf);
 
                     use crate::repository_real::RepositoryExt as _;
+                    // SAFETY: sole live loader borrow; `log` is a disjoint field.
                     let resolved = crate::repository_real::Repository::find_commit(
-                        manager.env_mut(),
+                        unsafe { manager.env_mut() },
                         manager.log_mut(),
                         repo_fd,
                         dep_name,
@@ -1415,8 +1413,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
+                        manager.set_downloads_node_name::<true>(
                             name,
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                         );
@@ -1547,8 +1544,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
+                        manager.set_downloads_node_name::<true>(
                             alias.slice(),
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                         );
@@ -1947,15 +1943,12 @@ fn process_dependency_list_for_ctx<C: RunTasksCallbacks>(
     extract_ctx: &mut C::Ctx,
     install_peer: bool,
 ) -> Result<(), bun_core::Error> {
-    let ctx_ptr: *mut C::Ctx = extract_ctx;
     manager.process_dependency_list(
         dependency_list,
         (),
         if C::HAS_ON_RESOLVE {
             Some(move |()| {
-                // SAFETY: `ctx_ptr` derived from a unique `&mut` that outlives
-                // this closure; `process_dependency_list` does not alias it.
-                C::on_resolve(unsafe { &mut *ctx_ptr });
+                C::on_resolve(extract_ctx);
             })
         } else {
             None

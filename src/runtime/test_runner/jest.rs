@@ -6,9 +6,7 @@ use crate::cli::test_command::CommandLineReporter;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
-};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
 
@@ -143,10 +141,10 @@ pub struct TestRunner<'a> {
     pub test_options: &'a TestOptions,
 
     /// Used for --test-name-pattern to reduce allocations.
-    /// Raw `*mut` because `RegularExpression::matches` mutates its internal
-    /// cursor through C++ — storing `&'a RegularExpression` and casting back to
-    /// `*mut` at the use site would launder shared provenance into a write (UB).
-    pub filter_regex: Option<core::ptr::NonNull<RegularExpression>>,
+    /// Points at the C++ regex (`sys`), not the owning `RegularExpression` handle:
+    /// `cli::Arguments` leaked the allocation into `TestOptions`, so this is a
+    /// non-owning borrow, taken with `RegularExpression::borrow_leaked`.
+    pub filter_regex: Option<NonNull<jsc::regular_expression::sys::RegularExpression>>,
 
     pub unhandled_errors_between_tests: u32,
     pub summary: Summary,

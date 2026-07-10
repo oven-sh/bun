@@ -31,8 +31,9 @@ pub const LIBUS_SOCKET_IPV6_ONLY: core::ffi::c_int = 8;
 pub const LIBUS_LISTEN_REUSE_ADDR: core::ffi::c_int = 16;
 pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: core::ffi::c_int = 32;
 
-/// BoringSSL `SSL_CTX` (alias so callers don't need a direct boringssl dep).
-pub type SslCtx = bun_boringssl_sys::SSL_CTX;
+/// The BoringSSL `SSL_CTX` C object (alias so callers don't need a direct
+/// boringssl dep). The owning handle is `bun_boringssl_sys::SSL_CTX`.
+pub type SslCtx = bun_boringssl_sys::sys::SSL_CTX;
 
 /// `struct us_bun_verify_error_t` — TLS handshake verification result.
 ///

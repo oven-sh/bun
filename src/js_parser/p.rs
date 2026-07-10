@@ -3025,20 +3025,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // a child of the live `&mut P` at the call site rather than a stale
             // tag captured here. The transposer shims need no wiring at all —
             // call sites invoke `P::maybe_transpose_if_*` etc. directly.
-            self.to_expr_wrapper_namespace =
-                bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
-                    // SAFETY: `ctx` was derived from the caller's live `&mut P`
-                    // immediately before `Binding::to_expr`; no other `&mut P`
-                    // borrow is active for the duration of this call.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
-                    p.wrap_identifier_namespace(loc, ref_)
-                });
-            self.to_expr_wrapper_hoisted =
-                bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
-                    // SAFETY: same as above.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
+            // Typed trampoline: derefs the erased `ctx` once, then dispatches
+            // to a safe `&mut P` method. `HOISTED` picks which one.
+            fn wrap_identifier_tramp<const TS: bool, const SCAN: bool, const HOISTED: bool>(
+                ctx: *mut core::ffi::c_void,
+                loc: bun_ast::Loc,
+                ref_: Ref,
+            ) -> Expr {
+                // SAFETY: `ctx` was derived from the caller's live `&mut P`
+                // immediately before `Binding::to_expr`; no other `&mut P`
+                // borrow is active for the duration of this call.
+                let p = unsafe { &mut *ctx.cast::<P<'_, TS, SCAN>>() };
+                if HOISTED {
                     p.wrap_identifier_hoisting(loc, ref_)
-                });
+                } else {
+                    p.wrap_identifier_namespace(loc, ref_)
+                }
+            }
+
+            self.to_expr_wrapper_namespace = bun_ast::binding::ToExprWrapper::new(
+                self.arena,
+                wrap_identifier_tramp::<TYPESCRIPT, SCAN_ONLY, false>,
+            );
+            self.to_expr_wrapper_hoisted = bun_ast::binding::ToExprWrapper::new(
+                self.arena,
+                wrap_identifier_tramp::<TYPESCRIPT, SCAN_ONLY, true>,
+            );
         }
 
         {

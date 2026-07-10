@@ -200,14 +200,10 @@ impl hooks::AutoInstaller for PackageManager {
         // `PackageJsonView` interface so this impl does not need to name
         // `bun_resolver::PackageJSON` directly.
 
-        // Reshaped for borrowck — `string_builder!` borrows
-        // `self.lockfile` mutably while `dep.clone_in` needs `&mut self`.
-        // Use a raw pointer for the disjoint reborrow (same approach as
-        // `Package::from_package_json`).
-        let pm: *mut PackageManager = self;
-        // SAFETY: `pm` derives from `&mut self`; reborrows below are disjoint
-        // from `string_builder`'s borrow of `lockfile.{string_bytes,string_pool}`.
-        let lockfile: &mut lockfile::Lockfile = unsafe { &mut *(*pm).lockfile };
+        // `string_builder!` borrows `lockfile.{string_bytes,string_pool}`,
+        // while `dep.clone_in` only needs the `NpmAliasRegistry` half of
+        // `self` — `known_npm_aliases`, a disjoint field.
+        let lockfile: &mut lockfile::Lockfile = &mut *self.lockfile;
 
         let mut package = Package::default();
         let mut string_builder = crate::string_builder!(lockfile);
@@ -251,10 +247,7 @@ impl hooks::AutoInstaller for PackageManager {
             if !dep.behavior.is_enabled(features) {
                 continue;
             }
-            // SAFETY: `pm` is the unique owner; `string_builder` borrows
-            // disjoint lockfile fields.
-            let pm_ref: &mut PackageManager = unsafe { &mut *pm };
-            match dep.clone_in(pm_ref, source_buf, &mut string_builder) {
+            match dep.clone_in(&mut self.known_npm_aliases, source_buf, &mut string_builder) {
                 Ok(cloned) => dependencies[0] = cloned,
                 Err(e) => {
                     // `string_builder.clamp()` must run on the

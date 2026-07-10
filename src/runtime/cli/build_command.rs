@@ -65,7 +65,8 @@ impl BuildCommand {
         let log = ctx.log;
         // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
         // and never freed for the duration of the command body.
-        let log_ref: &mut bun_ast::Log = unsafe { &mut *log };
+        let log_ref: bun_ptr::ParentRef<bun_ast::Log> =
+            unsafe { bun_ptr::ParentRef::from_raw_mut(log) };
         let user_requested_browser_target =
             ctx.args.target.is_some() && ctx.args.target.unwrap() == api::Target::Browser;
         if ctx.bundler_options.compile || ctx.bundler_options.bytecode {
@@ -519,8 +520,11 @@ impl BuildCommand {
                             raw.insert(key.as_ref(), value.clone());
                         }
                         let drop: Vec<&[u8]> = ctx.args.drop.iter().map(|d| d.as_ref()).collect();
+                        // SAFETY: no other borrow of the CLI `Log` is live here, and
+                        // `from_input` never reaches JS.
+                        let log = unsafe { log_ref.assume_mut() };
                         Some(bun_bundler::defines::DefineData::from_input(
-                            &raw, &drop, log_ref, arena,
+                            &raw, &drop, log, arena,
                         )?)
                     }
                     None => None,
@@ -576,7 +580,9 @@ impl BuildCommand {
         let opt_output_format = this_transpiler.options.output_format;
         let opt_source_map = this_transpiler.options.source_map;
         let opt_transform_only = this_transpiler.options.transform_only;
-        let env_ptr = this_transpiler.env;
+        // SAFETY: `Transpiler::init` leaves `env` non-null (loader singleton);
+        // `from_raw_mut` keeps the write provenance `assume_mut` needs below.
+        let env_ptr = unsafe { bun_ptr::ParentRef::from_raw_mut(this_transpiler.env) };
 
         let mut output_files: Vec<options::OutputFile> = 'brk: {
             if ctx.bundler_options.transform_only {
@@ -867,8 +873,9 @@ impl BuildCommand {
                     root_dir.fd,
                     &opt_public_path,
                     outfile,
-                    // SAFETY: `env` is a process-lifetime singleton.
-                    unsafe { &mut *env_ptr },
+                    // SAFETY: no other borrow of the env loader is live for this
+                    // call, and `to_executable` never reaches JS.
+                    unsafe { env_ptr.assume_mut() },
                     opt_output_format,
                     &ctx.bundler_options.windows,
                     ctx.bundler_options

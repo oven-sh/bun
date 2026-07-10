@@ -2,7 +2,7 @@ use crate::Command;
 use bun_core::{Global, Output, err};
 use bun_install::lockfile::LoadResult;
 use bun_install::package_manager::{self, security_scanner};
-use bun_install::{CommandLineArguments, Lockfile, PackageManager, Subcommand};
+use bun_install::{CommandLineArguments, PackageManager, Subcommand};
 
 pub struct ScanCommand;
 
@@ -54,36 +54,19 @@ impl ScanCommand {
         );
         Output::flush();
 
-        // Reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
-        // Some(manager), log)` would alias `&mut *manager.lockfile` with `&mut *manager`.
-        // Project disjoint raw pointers from the singleton first; `load_from_cwd` only
-        // reads `manager.options`/migration helpers and never re-borrows `manager.lockfile`.
-        {
-            let pm_ptr: *mut PackageManager = manager;
-            // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
-            let log: &mut bun_ast::Log = unsafe { &mut *(*pm_ptr).log };
-            // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
-            // no other live `&mut Lockfile` exists at this point.
-            let lockfile: &mut Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
-            match lockfile.load_from_cwd::<true>(
-                // SAFETY: see comment above — `load_from_cwd` accesses `manager`
-                // fields disjoint from `lockfile`.
-                Some(unsafe { &mut *pm_ptr }),
-                log,
-            ) {
-                LoadResult::NotFound => {
-                    Output::err_generic(
-                        "Lockfile not found. Run 'bun install' first to generate a lockfile.",
-                        (),
-                    );
-                    Global::exit(1);
-                }
-                LoadResult::Err(e) => {
-                    Output::err_generic("Error loading lockfile: {s}", (e.value.name(),));
-                    Global::exit(1);
-                }
-                LoadResult::Ok(_) => {}
+        match manager.load_lockfile_from_cwd::<true>() {
+            LoadResult::NotFound => {
+                Output::err_generic(
+                    "Lockfile not found. Run 'bun install' first to generate a lockfile.",
+                    (),
+                );
+                Global::exit(1);
             }
+            LoadResult::Err(e) => {
+                Output::err_generic("Error loading lockfile: {s}", (e.value.name(),));
+                Global::exit(1);
+            }
+            LoadResult::Ok(_) => {}
         }
 
         let security_scan_results =

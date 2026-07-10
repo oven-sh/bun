@@ -7,7 +7,7 @@ use crate::jsc::{
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
-use bun_ptr::AsCtxPtr;
+use bun_ptr::{AsCtxPtr, RefPtr};
 
 use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
@@ -38,7 +38,9 @@ pub use js::to_js;
 // previous `from_mut(self)` raw-pointer dances papered over.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLQuery {
-    pub statement: Cell<Option<*mut PostgresSQLStatement>>,
+    // Owned strong ref. `RefPtr` has no `Drop`: the ref is discharged by
+    // `release_statement`, which `Drop for PostgresSQLQuery` calls.
+    pub statement: JsCell<Option<RefPtr<PostgresSQLStatement>>>,
     pub query: BunString,
     pub cursor_name: BunString,
 
@@ -69,7 +71,7 @@ impl Drop for PostgresSQLQuery {
 impl Default for PostgresSQLQuery {
     fn default() -> Self {
         Self {
-            statement: Cell::new(None),
+            statement: JsCell::new(None),
             query: BunString::empty(),
             cursor_name: BunString::empty(),
             this_value: JsCell::new(JsRef::empty()),
@@ -133,36 +135,34 @@ impl PostgresSQLQuery {
         unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
     }
 
-    /// Dereference the intrusive `statement` pointer as `&mut`. Mirrors
-    /// [`MySQLQuery::get_statement`]: one unchecked deref here replaces N inline
-    /// raw-pointer derefs at every protocol dispatch site in
+    /// The `&mut` view of the owned `statement`: one audited deref replaces the
+    /// inline raw-pointer derefs at every dispatch site in
     /// `PostgresSQLConnection::on`.
     ///
-    /// SAFETY (encapsulated): when `Some`, the pointer is a live `heap::alloc`
-    /// payload kept alive by the intrusive ref this query holds (`ref_()` taken
-    /// at `statement.set(Some(_))`). All mutation is single-JS-thread so the
-    /// `&mut` is exclusive for the borrow's lifetime; callers must not hold two
-    /// results live simultaneously (the request FIFO never does).
+    /// SAFETY (encapsulated): the owned `RefPtr` keeps the pointee alive, and
+    /// `RefPtr::as_ptr` is its sanctioned mutation path (a `&mut` accessor would
+    /// alias every other handle). Single-JS-thread ⇒ exclusive for the borrow's
+    /// lifetime; callers must not hold two results live simultaneously (the
+    /// request FIFO never does), nor hold one across a call that re-enters JS.
     #[inline]
-    #[allow(clippy::mut_from_ref)] // intrusive raw pointer; see SAFETY in doc comment
+    #[allow(clippy::mut_from_ref)] // shared-ownership handle; see SAFETY in doc comment
     pub fn statement_mut(&self) -> Option<&mut PostgresSQLStatement> {
-        // SAFETY: see doc comment — intrusive ref held by `self` keeps the
-        // pointee alive; single-JS-thread exclusivity.
-        self.statement.get().map(|p| unsafe { &mut *p })
+        // SAFETY: see doc comment.
+        self.statement
+            .get()
+            .as_ref()
+            .map(|stmt| unsafe { &mut *stmt.as_ptr() })
     }
 
-    /// Release the intrusive ref this query holds on its `statement`, clearing
-    /// the field. One audited deref here replaces the per-site
-    /// `this.statement.set(None)` + `PostgresSQLStatement::deref(stmt)` pair on
-    /// `Drop` and `do_run`'s error paths (6 callers).
+    /// Release the ref this query owns on its `statement`, clearing the field.
+    /// `RefPtr` has no `Drop`, so this is the sole discharge point: `Drop` and
+    /// `do_run`'s error paths (6 callers).
     #[inline]
     pub fn release_statement(&self) {
-        if let Some(stmt) = self.statement.take() {
-            // SAFETY: when `Some`, `stmt` is a live `heap::alloc` payload kept
-            // alive by the intrusive ref this query took when it was stored
-            // into `self.statement` (`ref_()` / `init_exact_refs`). This
-            // releases exactly that ref; may free if no other refs remain.
-            unsafe { PostgresSQLStatement::deref(stmt) };
+        // The `&mut Option<_>` is confined to the closure; the `deref()` (which
+        // may run `PostgresSQLStatement::drop`) runs after that borrow ends.
+        if let Some(stmt) = self.statement.with_mut(|s| s.take()) {
+            stmt.deref();
         }
     }
 
@@ -518,11 +518,11 @@ impl PostgresSQLQuery {
             // hand ownership to `this.statement` (count = 1).
             // NOTE: PostgresSQLStatement implements Drop, so functional-record-update
             // (`..Default::default()`) is forbidden (E0509). Build + mutate instead.
-            let stmt: *mut PostgresSQLStatement = {
+            let stmt = {
                 let mut s = PostgresSQLStatement::default();
                 s.signature = Signature::empty();
                 s.status = StatementStatus::Parsing;
-                bun_core::heap::into_raw(Box::new(s))
+                RefPtr::new(s)
             };
             // Query is simple and it's the only owner of the statement
             this.statement.set(Some(stmt));
@@ -623,22 +623,25 @@ impl PostgresSQLQuery {
                     .get(&signature.name[..])
                     .copied();
                 if let Some(stmt_ptr) = existing_stmt {
-                    this.statement.set(Some(stmt_ptr));
-                    // Route the `&mut` through the audited `statement_mut()`
-                    // accessor (just set above ⇒ `Some`); `stmt_ptr` is kept
-                    // only for the explicit `deref(stmt_ptr)` cleanup below.
-                    let stmt = this.statement_mut().expect("statement set above");
-                    stmt.ref_();
+                    // SAFETY: `stmt_ptr` is a live entry of `connection.statements`;
+                    // `init_ref` takes the ref this query owns until `release_statement`.
+                    this.statement
+                        .set(Some(unsafe { RefPtr::init_ref(stmt_ptr) }));
+                    // Shared borrow only: `bind_and_execute` below reaches JS, so no
+                    // `&mut` to the statement may be live across it.
+                    let stmt = this
+                        .statement
+                        .get()
+                        .as_deref()
+                        .expect("statement set above");
                     drop(signature);
 
                     match stmt.status {
                         StatementStatus::Failed => {
-                            this.statement.set(None);
                             // `error_response` is `Some` when status == Failed.
                             let error_response =
                                 stmt.error_response.as_ref().unwrap().to_js(global_object)?;
-                            // SAFETY: drop the ref we took above.
-                            unsafe { PostgresSQLStatement::deref(stmt_ptr) };
+                            this.release_statement();
                             // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                             unsafe { Self::deref(this_ptr) };
                             return Err(global_object.throw_value(error_response));
@@ -795,21 +798,21 @@ impl PostgresSQLQuery {
                     let stmt = {
                         let mut s = PostgresSQLStatement::default();
                         s.signature = signature;
-                        s.init_exact_refs(2);
                         s.status = if did_write {
                             StatementStatus::Parsing
                         } else {
                             StatementStatus::Pending
                         };
-                        bun_core::heap::into_raw(Box::new(s))
+                        RefPtr::new(s)
                     };
-                    this.statement.set(Some(stmt));
 
                     // SAFETY: `entry_value` points into `connection.statements` and the map has
                     // not been mutated since `get_or_put`. `get_or_put` runs only after the
                     // existing-entry probe missed, so the slot it hands back was
                     // default-initialised to null and a plain store is fine.
-                    unsafe { *entry_value = stmt };
+                    // `dupe_ref().into_raw()` hands the map its own owned ref.
+                    unsafe { *entry_value = stmt.dupe_ref().into_raw() };
+                    this.statement.set(Some(stmt));
                 } else {
                     let stmt = {
                         let mut s = PostgresSQLStatement::default();
@@ -819,7 +822,7 @@ impl PostgresSQLQuery {
                         } else {
                             StatementStatus::Pending
                         };
-                        bun_core::heap::into_raw(Box::new(s))
+                        RefPtr::new(s)
                     };
                     this.statement.set(Some(stmt));
                 }

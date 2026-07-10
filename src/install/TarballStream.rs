@@ -103,7 +103,7 @@ pub struct TarballStream {
     reading: Vec<u8>,
     read_pos: usize,
 
-    archive: Option<*mut lib::Archive>,
+    archive: Option<*mut lib::sys::Archive>,
 
     /// Where we are in the per-entry state machine between drain
     /// invocations. libarchive preserves everything else (filter buffers,
@@ -585,7 +585,7 @@ impl TarballStream {
     /// lifetime of the archive — see `step()` # Safety for the provenance
     /// requirement.
     unsafe fn open_archive(this: *mut Self) -> Result<(), bun_core::Error> {
-        let archive = lib::Archive::read_new();
+        let archive = lib::sys::Archive::read_new();
         let guard = scopeguard::guard(archive, |a| {
             // SAFETY: errdefer cleanup — archive is a valid handle from read_new().
             unsafe {
@@ -593,19 +593,18 @@ impl TarballStream {
                 let _ = (*a).read_free();
             }
         });
+        // SAFETY: `read_new()` asserts non-null; the handle outlives `a`.
+        let a: &lib::sys::Archive = unsafe { &*archive };
         // Bypass bidding entirely: the stream is always gzip → tar, and
         // bidding would try to read-ahead before any bytes have arrived.
         // ARCHIVE_FILTER_GZIP = 1, ARCHIVE_FORMAT_TAR = 0x30000.
-        // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
-        if unsafe { lib::archive_read_append_filter(archive, 1) } != 0 {
+        if lib::archive_read_append_filter(a, 1) != 0 {
             return Err(bun_core::err!("Fail"));
         }
-        // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
-        if unsafe { lib::archive_read_set_format(archive, 0x30000) } != 0 {
+        if lib::archive_read_set_format(a, 0x30000) != 0 {
             return Err(bun_core::err!("Fail"));
         }
-        // SAFETY: archive is a valid handle.
-        let _ = unsafe { (*archive).read_set_options(c"read_concatenated_archives") };
+        let _ = a.read_set_options(c"read_concatenated_archives");
 
         // SAFETY: archive is a valid handle; `this` outlives the archive
         // (freed only in `Drop` after `read_free`). See fn-level # Safety
@@ -613,7 +612,7 @@ impl TarballStream {
         // `&mut self`-derived pointer.
         let rc_raw: c_int = unsafe {
             lib::archive_read_open(
-                archive,
+                a,
                 this.cast::<c_void>(),
                 None,
                 Some(archive_read_callback),
@@ -644,8 +643,7 @@ impl TarballStream {
                 bun_output::scoped_log!(
                     TarballStream,
                     "archive_read_open: {}",
-                    // SAFETY: archive is a valid handle (guard not yet dropped).
-                    bstr::BStr::new(unsafe { (*archive).error_string() })
+                    bstr::BStr::new(a.error_string())
                 );
                 return Err(bun_core::err!("Fail"));
             }
@@ -927,7 +925,7 @@ impl TarballStream {
             if block.offset > self.entry_actual_offset {
                 let zero_count: usize =
                     usize::try_from(block.offset - self.entry_actual_offset).expect("int cast");
-                match lib::Archive::write_zeros_to_file(file, zero_count) {
+                match lib::sys::Archive::write_zeros_to_file(file, zero_count) {
                     lib::Result::Ok => {
                         self.entry_actual_offset = block.offset;
                     }
@@ -1231,7 +1229,7 @@ fn drain_callback(task: *mut thread_pool::Task) {
 /// in that setup, so there is no caller-side precondition to encode in the
 /// signature. The fn-pointer still coerces to the binding's expected type.
 extern "C" fn archive_read_callback(
-    _a: *mut lib::Archive,
+    _a: *mut lib::sys::Archive,
     ctx: *mut c_void,
     out_buffer: *mut *const c_void,
 ) -> lib::la_ssize_t {

@@ -136,7 +136,7 @@ pub type SymbolCallback =
     unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, val: *const Symbol);
 
 bun_opaque::opaque_ffi! {
-    /// Opaque TinyCC compilation state. Always handled via `*mut State` / `&mut State`.
+    /// Opaque TinyCC compilation state. Always handled via `*mut State` / `&State`.
     pub struct State;
 }
 
@@ -185,8 +185,7 @@ impl State {
             // SAFETY: p was returned by tcc_new and has not yet been deleted.
             unsafe { tcc_delete(p.as_ptr()) }
         });
-        // SAFETY: state_ptr is valid and uniquely owned for the duration of this fn.
-        let state: &mut State = unsafe { &mut *state_ptr.as_ptr() };
+        let state: &State = State::opaque_ref(state_ptr.as_ptr());
 
         // setOutputType has side effects that are conditional on existing
         // options, so this must be called after setOptions
@@ -232,14 +231,14 @@ impl State {
     }
 
     /// Set `CONFIG_TCCDIR` at runtime
-    pub fn set_lib_path(&mut self, path: &ZStr) {
-        // SAFETY: self is a valid *mut TCCState; path is NUL-terminated.
-        unsafe { tcc_set_lib_path(self, path.as_ptr()) }
+    pub fn set_lib_path(&self, path: &ZStr) {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; path is NUL-terminated.
+        unsafe { tcc_set_lib_path(self.as_mut_ptr(), path.as_ptr()) }
     }
 
     /// Set error/warning display callback
     pub fn set_error_func<Context>(
-        &mut self,
+        &self,
         error_opaque: Option<*mut Context>,
         error_func: ErrorFunc<Context>,
     ) {
@@ -253,8 +252,8 @@ impl State {
             >(error_func)
         });
         let opaque = error_opaque.map_or(core::ptr::null_mut(), |p| p.cast::<c_void>());
-        // SAFETY: self is a valid *mut TCCState.
-        unsafe { tcc_set_error_func(self, opaque, erased) }
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState.
+        unsafe { tcc_set_error_func(self.as_mut_ptr(), opaque, erased) }
     }
 
     // NOTE: get_error_func / get_error_opaque wrappers removed — the underlying
@@ -262,9 +261,9 @@ impl State {
     // libtcc.h and would fail to link if referenced.
 
     /// Set options as from command line (multiple supported)
-    pub fn set_options(&mut self, str_: &ZStr) -> Result<(), Error> {
-        // SAFETY: self is a valid *mut TCCState; str_ is NUL-terminated.
-        if unsafe { tcc_set_options(self, str_.as_ptr()) } != 0 {
+    pub fn set_options(&self, str_: &ZStr) -> Result<(), Error> {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; str_ is NUL-terminated.
+        if unsafe { tcc_set_options(self.as_mut_ptr(), str_.as_ptr()) } != 0 {
             return Err(Error::InvalidOptions);
         }
         Ok(())
@@ -273,18 +272,18 @@ impl State {
     // ======================== Preprocessor ========================
 
     /// Add include path
-    pub fn add_include_path(&mut self, pathname: &ZStr) -> Result<(), Error> {
-        // SAFETY: self is a valid *mut TCCState; pathname is NUL-terminated.
-        if unsafe { tcc_add_include_path(self, pathname.as_ptr()) } != 0 {
+    pub fn add_include_path(&self, pathname: &ZStr) -> Result<(), Error> {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; pathname is NUL-terminated.
+        if unsafe { tcc_add_include_path(self.as_mut_ptr(), pathname.as_ptr()) } != 0 {
             return Err(Error::InvalidIncludePath);
         }
         Ok(())
     }
 
     /// Add in system include path
-    pub fn add_sys_include_path(&mut self, pathname: &ZStr) -> Result<(), Error> {
-        // SAFETY: self is a valid *mut TCCState; pathname is NUL-terminated.
-        if unsafe { tcc_add_sysinclude_path(self, pathname.as_ptr()) } != 0 {
+    pub fn add_sys_include_path(&self, pathname: &ZStr) -> Result<(), Error> {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; pathname is NUL-terminated.
+        if unsafe { tcc_add_sysinclude_path(self.as_mut_ptr(), pathname.as_ptr()) } != 0 {
             return Err(Error::InvalidIncludePath);
         }
         Ok(())
@@ -295,9 +294,9 @@ impl State {
     /// ```c
     /// #define sym value
     /// ```
-    pub fn define_symbol(&mut self, sym: &ZStr, value: &ZStr) {
-        // SAFETY: self is a valid *mut TCCState; sym/value are NUL-terminated.
-        unsafe { tcc_define_symbol(self, sym.as_ptr(), value.as_ptr()) }
+    pub fn define_symbol(&self, sym: &ZStr, value: &ZStr) {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; sym/value are NUL-terminated.
+        unsafe { tcc_define_symbol(self.as_mut_ptr(), sym.as_ptr(), value.as_ptr()) }
     }
 
     /// Define multiple preprocessor symbols with integer values.
@@ -306,7 +305,7 @@ impl State {
     /// ```ignore
     /// state.define_symbols(&[("foo", 1), ("baz", 42)]);
     /// ```
-    pub fn define_symbols(&mut self, symbols: &[(&str, i64)]) {
+    pub fn define_symbols(&self, symbols: &[(&str, i64)]) {
         let mut buf = [0u8; 256];
         for &(name, value) in symbols {
             // Copy the name into the stack buffer to NUL-terminate it for the C ABI.
@@ -325,9 +324,9 @@ impl State {
             buf[val_end] = 0;
             let val_ptr = buf[val_off..].as_ptr().cast::<c_char>();
 
-            // SAFETY: self is a valid *mut TCCState; both buffer regions are NUL-terminated and
-            // outlive the FFI call (tcc_define_symbol copies its arguments).
-            unsafe { tcc_define_symbol(self, sym_ptr, val_ptr) }
+            // SAFETY: as_mut_ptr() yields a valid *mut TCCState; both buffer regions are
+            // NUL-terminated and outlive the FFI call (tcc_define_symbol copies its arguments).
+            unsafe { tcc_define_symbol(self.as_mut_ptr(), sym_ptr, val_ptr) }
         }
     }
 
@@ -336,9 +335,9 @@ impl State {
     /// ```c
     /// #undef sym
     /// ```
-    pub fn undefine_symbol(&mut self, sym: &ZStr) {
-        // SAFETY: self is a valid *mut TCCState; sym is NUL-terminated.
-        unsafe { tcc_undefine_symbol(self, sym.as_ptr()) }
+    pub fn undefine_symbol(&self, sym: &ZStr) {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; sym is NUL-terminated.
+        unsafe { tcc_undefine_symbol(self.as_mut_ptr(), sym.as_ptr()) }
     }
 
     // ======================== Compiling ========================
@@ -348,18 +347,18 @@ impl State {
     /// ## Errors
     /// - File not found
     /// - Syntax/formatting error
-    pub fn add_file(&mut self, filename: &ZStr) -> Result<(), Error> {
-        // SAFETY: self is a valid *mut TCCState; filename is NUL-terminated.
-        if unsafe { tcc_add_file(self, filename.as_ptr()) } != 0 {
+    pub fn add_file(&self, filename: &ZStr) -> Result<(), Error> {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; filename is NUL-terminated.
+        if unsafe { tcc_add_file(self.as_mut_ptr(), filename.as_ptr()) } != 0 {
             return Err(Error::CompileError);
         }
         Ok(())
     }
 
     /// Compile a string containing a C source.
-    pub fn compile_string(&mut self, buf: &ZStr) -> Result<(), Error> {
-        // SAFETY: self is a valid *mut TCCState; buf is NUL-terminated.
-        if unsafe { tcc_compile_string(self, buf.as_ptr()) } != 0 {
+    pub fn compile_string(&self, buf: &ZStr) -> Result<(), Error> {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; buf is NUL-terminated.
+        if unsafe { tcc_compile_string(self.as_mut_ptr(), buf.as_ptr()) } != 0 {
             return Err(Error::CompileError);
         }
         Ok(())
@@ -368,27 +367,27 @@ impl State {
     // ======================== Linking Commands ========================
 
     /// Set output type. MUST BE CALLED before any compilation
-    pub fn set_output_type(&mut self, output_type: OutputFormat) -> Result<(), Error> {
-        // SAFETY: self is a valid *mut TCCState.
-        if unsafe { tcc_set_output_type(self, output_type as c_int) } == -1 {
+    pub fn set_output_type(&self, output_type: OutputFormat) -> Result<(), Error> {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState.
+        if unsafe { tcc_set_output_type(self.as_mut_ptr(), output_type as c_int) } == -1 {
             return Err(Error::InvalidOutputType);
         }
         Ok(())
     }
 
     /// Add a library. Equivalent to `-Lpath` option
-    pub fn add_library_path(&mut self, pathname: &ZStr) -> Result<(), Error> {
-        // SAFETY: self is a valid *mut TCCState; pathname is NUL-terminated.
-        if unsafe { tcc_add_library_path(self, pathname.as_ptr()) } != 0 {
+    pub fn add_library_path(&self, pathname: &ZStr) -> Result<(), Error> {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; pathname is NUL-terminated.
+        if unsafe { tcc_add_library_path(self.as_mut_ptr(), pathname.as_ptr()) } != 0 {
             return Err(Error::InvalidLibraryPath);
         }
         Ok(())
     }
 
     /// Add a library. The library name is the same as the argument of the `-l` option
-    pub fn add_library(&mut self, libraryname: &ZStr) -> Result<(), Error> {
-        // SAFETY: self is a valid *mut TCCState; libraryname is NUL-terminated.
-        if unsafe { tcc_add_library(self, libraryname.as_ptr()) } != 0 {
+    pub fn add_library(&self, libraryname: &ZStr) -> Result<(), Error> {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; libraryname is NUL-terminated.
+        if unsafe { tcc_add_library(self.as_mut_ptr(), libraryname.as_ptr()) } != 0 {
             return Err(Error::InvalidLibraryPath);
         }
         Ok(())
@@ -398,9 +397,10 @@ impl State {
     /// address and never dereferenced here; it must remain valid for any JIT'd
     /// code that calls it (same precondition as `add_symbols`).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn add_symbol(&mut self, name: &ZStr, val: *const c_void) -> Result<(), Error> {
-        // SAFETY: self is a valid *mut TCCState; name is NUL-terminated; val is an opaque address.
-        if unsafe { tcc_add_symbol(self, name.as_ptr(), val) } != 0 {
+    pub fn add_symbol(&self, name: &ZStr, val: *const c_void) -> Result<(), Error> {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; name is NUL-terminated; val is an
+        // opaque address.
+        if unsafe { tcc_add_symbol(self.as_mut_ptr(), name.as_ptr(), val) } != 0 {
             return Err(Error::InvalidSymbol);
         }
         Ok(())
@@ -415,7 +415,7 @@ impl State {
     ///     ("sub", sub as *const c_void),
     /// ])?;
     /// ```
-    pub fn add_symbols(&mut self, symbols: &[(&str, *const c_void)]) -> Result<(), Error> {
+    pub fn add_symbols(&self, symbols: &[(&str, *const c_void)]) -> Result<(), Error> {
         // Copy each name into a stack buffer to NUL-terminate it for the C ABI.
         let mut buf = [0u8; 256];
         for &(name, val) in symbols {
@@ -423,9 +423,10 @@ impl State {
             debug_assert!(len < buf.len());
             buf[..len].copy_from_slice(name.as_bytes());
             buf[len] = 0;
-            // SAFETY: self is a valid *mut TCCState; buf[..=len] is NUL-terminated and outlives
-            // the FFI call (tcc_add_symbol copies the name); val is an opaque address.
-            if unsafe { tcc_add_symbol(self, buf.as_ptr().cast::<c_char>(), val) } != 0 {
+            // SAFETY: as_mut_ptr() yields a valid *mut TCCState; buf[..=len] is NUL-terminated and
+            // outlives the FFI call (tcc_add_symbol copies the name); val is an opaque address.
+            if unsafe { tcc_add_symbol(self.as_mut_ptr(), buf.as_ptr().cast::<c_char>(), val) } != 0
+            {
                 return Err(Error::InvalidSymbol);
             }
         }
@@ -433,9 +434,9 @@ impl State {
     }
 
     /// Output an executable, library or object file. DO NOT call `relocate` before.
-    pub fn output_file(&mut self, filename: &ZStr) -> Result<(), Error> {
-        // SAFETY: self is a valid *mut TCCState; filename is NUL-terminated.
-        if unsafe { tcc_output_file(self, filename.as_ptr()) } == -1 {
+    pub fn output_file(&self, filename: &ZStr) -> Result<(), Error> {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; filename is NUL-terminated.
+        if unsafe { tcc_output_file(self.as_mut_ptr(), filename.as_ptr()) } == -1 {
             return Err(Error::OutputError);
         }
         Ok(())
@@ -443,18 +444,18 @@ impl State {
 
     /// Link and run `main()` function and return its value. DO NOT call `relocate` before.
     /// Returns the status code returned by the program's `main()` function.
-    pub fn run(&mut self, argc: c_int, argv: *const *const c_char) -> c_int {
-        // SAFETY: self is a valid *mut TCCState; argv points to argc NUL-terminated C strings.
-        // Cast const away to match the C ABI (tcc does not mutate argv).
-        unsafe { tcc_run(self, argc, argv as *mut *mut c_char) }
+    pub fn run(&self, argc: c_int, argv: *const *const c_char) -> c_int {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; argv points to argc NUL-terminated C
+        // strings. Cast const away to match the C ABI (tcc does not mutate argv).
+        unsafe { tcc_run(self.as_mut_ptr(), argc, argv as *mut *mut c_char) }
     }
 
     /// Do all relocations (needed before using `get_symbol`)
     /// Memory is allocated and managed internally by TinyCC.
     /// Returns Ok on success, error on failure.
-    pub fn relocate(&mut self) -> Result<(), Error> {
-        // SAFETY: self is a valid *mut TCCState.
-        let ret = unsafe { tcc_relocate(self) };
+    pub fn relocate(&self) -> Result<(), Error> {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState.
+        let ret = unsafe { tcc_relocate(self.as_mut_ptr()) };
         if ret < 0 {
             return Err(Error::RelocationError);
         }
@@ -462,16 +463,16 @@ impl State {
     }
 
     /// Return symbol value or NULL if not found
-    pub fn get_symbol(&mut self, name: &ZStr) -> Option<NonNull<Symbol>> {
-        // SAFETY: self is a valid *mut TCCState; name is NUL-terminated.
-        NonNull::new(unsafe { tcc_get_symbol(self, name.as_ptr()) }.cast::<Symbol>())
+    pub fn get_symbol(&self, name: &ZStr) -> Option<NonNull<Symbol>> {
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState; name is NUL-terminated.
+        NonNull::new(unsafe { tcc_get_symbol(self.as_mut_ptr(), name.as_ptr()) }.cast::<Symbol>())
     }
 
     /// Return symbol value or NULL if not found.
     /// `ctx` is forwarded opaquely to `symbol_cb`; it must be valid for every
     /// callback invocation (or null if `symbol_cb` ignores it).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn list_symbols(&mut self, ctx: *mut c_void, symbol_cb: Option<SymbolCallback>) {
+    pub fn list_symbols(&self, ctx: *mut c_void, symbol_cb: Option<SymbolCallback>) {
         // SAFETY: SymbolCallback is ABI-identical to the extern's callback type
         // (`*const Symbol` vs `*const c_void` in the last param).
         let erased = symbol_cb.map(|f| unsafe {
@@ -480,7 +481,7 @@ impl State {
                 unsafe extern "C" fn(*mut c_void, *const c_char, *const c_void),
             >(f)
         });
-        // SAFETY: self is a valid *mut TCCState.
-        unsafe { tcc_list_symbols(self, ctx, erased) }
+        // SAFETY: as_mut_ptr() yields a valid *mut TCCState.
+        unsafe { tcc_list_symbols(self.as_mut_ptr(), ctx, erased) }
     }
 }

@@ -110,29 +110,29 @@ bun_opaque::opaque_ffi! {
 
 impl Heap {
     #[inline]
-    pub fn delete(&mut self) {
-        // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
-        unsafe { mi_heap_delete(self) }
+    pub fn delete(&self) {
+        // SAFETY: `self` is a live `Heap` obtained from mimalloc.
+        unsafe { mi_heap_delete(self.as_mut_ptr()) }
     }
 
     #[inline]
-    pub fn malloc(&mut self, size: usize) -> *mut c_void {
-        // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
-        unsafe { mi_heap_malloc(self, size) }
+    pub fn malloc(&self, size: usize) -> *mut c_void {
+        // SAFETY: `self` is a live `Heap` obtained from mimalloc.
+        unsafe { mi_heap_malloc(self.as_mut_ptr(), size) }
     }
 
     #[inline]
-    pub fn calloc(&mut self, count: usize, size: usize) -> *mut c_void {
-        // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
-        unsafe { mi_heap_calloc(self, count, size) }
+    pub fn calloc(&self, count: usize, size: usize) -> *mut c_void {
+        // SAFETY: `self` is a live `Heap` obtained from mimalloc.
+        unsafe { mi_heap_calloc(self.as_mut_ptr(), count, size) }
     }
 
     /// # Safety
     /// `p` must be null or a pointer previously allocated by this heap.
     #[inline]
-    pub unsafe fn realloc(&mut self, p: *mut c_void, newsize: usize) -> *mut c_void {
-        // SAFETY: `self` is a live `*mut Heap`; caller upholds `p` contract.
-        unsafe { mi_heap_realloc(self, p, newsize) }
+    pub unsafe fn realloc(&self, p: *mut c_void, newsize: usize) -> *mut c_void {
+        // SAFETY: `self` is a live `Heap`; caller upholds `p` contract.
+        unsafe { mi_heap_realloc(self.as_mut_ptr(), p, newsize) }
     }
 
     // `p` is only address-range-tested (never dereferenced) — there is no

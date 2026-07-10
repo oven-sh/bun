@@ -4,6 +4,8 @@
 //! needs to be evaluated at runtime — this state node walks the atom and
 //! produces zero or more output strings.
 
+use bun_jsc::JsCell;
+
 use crate::shell::ast;
 use crate::shell::interpreter::{
     EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
@@ -128,15 +130,11 @@ impl Expansion {
     /// `child_done` advances `word_idx`.
     pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         loop {
-            // Split-borrow: `me` from `nodes`, `vm_args_utf8` from its own
-            // field, so `expand_simple_no_io` can expand `$N` without aliasing.
-            // R-2: both are `JsCell`-backed; `as_ptr()`/`node_mut()` project
-            // disjoint `&mut` from `&Interpreter`.
             let event_loop = interp.event_loop;
             let command_ctx = interp.command_ctx;
-            // SAFETY: single-JS-thread; `vm_args_utf8` and `nodes` are
-            // disjoint `JsCell` fields (no aliasing between the two borrows).
-            let vm_args_utf8 = unsafe { &mut *interp.vm_args_utf8.as_ptr() };
+            // Passed as `&JsCell` so the `&mut Vec` lives only inside the
+            // `with_mut` in `expand_simple_no_io`, not across child spawns.
+            let vm_args_utf8 = &interp.vm_args_utf8;
             let me = interp.as_expansion_mut(this);
             match me.state {
                 ExpansionState::Idle => {
@@ -174,7 +172,6 @@ impl Expansion {
                 me.word_idx = 1;
             }
 
-            let shell_ptr: *mut ShellExecEnv = me.base.shell;
             while me.word_idx < atoms_len {
                 let simple: &ast::SimpleAtom = match atom {
                     ast::Atom::Simple(s) => s,
@@ -211,9 +208,9 @@ impl Expansion {
                     stdout: OutKind::Pipe,
                     stderr: interp.root_io().stderr.clone(),
                 };
-                // SAFETY: `shell_ptr` is a live env owned by the parent state
-                // node and outlives this expansion.
-                let duped = match unsafe { &mut *shell_ptr }
+                let duped = match me
+                    .base
+                    .shell_mut()
                     .dupe_for_subshell(&io, ShellExecEnvKind::CmdSubst)
                 {
                     Ok(d) => d,
@@ -464,7 +461,7 @@ impl Expansion {
         expand_tilde: bool,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
-        vm_args_utf8: &mut Vec<bun_core::ZigStringSlice>,
+        vm_args_utf8: &JsCell<Vec<bun_core::ZigStringSlice>>,
     ) -> bool {
         use crate::shell::env_str::EnvStr;
         match atom {
@@ -488,8 +485,11 @@ impl Expansion {
                 }
             }
             ast::SimpleAtom::VarArgv(int) => {
-                // SAFETY: `command_ctx` is the live VM ctx; `vm_args_utf8` borrows it.
-                Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
+                // `command_ctx` is the live VM ctx. Nothing in `append_var_argv`
+                // reaches JS, so the `&mut Vec` cannot be re-entered here.
+                vm_args_utf8.with_mut(|v| {
+                    Interpreter::append_var_argv(out, *int, event_loop, command_ctx, v);
+                });
             }
             ast::SimpleAtom::Asterisk => {
                 meta_offsets.push(out.len() as u32);
@@ -597,16 +597,13 @@ impl Expansion {
         // Child is a Script (command substitution). Its captured stdout lives
         // in the duped `ShellExecEnv` it owns; read it before deinit.
         debug_assert!(matches!(interp.node(child).kind(), StateKind::Script));
-        // SAFETY: single trampoline frame; the child script's env (and its
-        // parent buffer in the `Borrowed` case) has no other live borrow.
-        let stdout = unsafe {
-            interp
-                .as_script_mut(child)
-                .base
-                .shell_mut()
-                .buffered_stdout_mut()
-        }
-        .clone();
+        let stdout = interp
+            .as_script(child)
+            .base
+            .shell()
+            .buffered_stdout()
+            .get()
+            .clone();
 
         // Propagate the exit code if the *whole* atom was a single `$(...)`
         // (so `$(false)` as argv0 fails the command).

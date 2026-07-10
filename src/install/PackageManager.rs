@@ -684,20 +684,15 @@ impl PackageManager {
         unsafe { &mut *p }
     }
 
-    /// Reborrow the active progress download node (`self.progress.root`-rooted).
-    /// Panics if no download node is active — callers gate on
-    /// `options.log_level.show_progress()`, which is the same condition that
-    /// populates `downloads_node`. Lifetime is decoupled from `&self` for the
-    /// same reason as [`log_mut`]: `Progress` is a stable allocation on the
-    /// leaked-singleton manager and callers interleave node updates with
-    /// disjoint `&mut self.X` field writes.
+    /// The active progress download node. Panics if none is active — callers
+    /// gate on `options.log_level.show_progress()`, which is the same condition
+    /// that populates `downloads_node`.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub fn downloads_node_mut<'a>(&self) -> &'a mut ProgressNode {
+    pub fn downloads_node_mut(&mut self) -> &mut ProgressNode {
         let p = self.downloads_node.expect("downloads_node active");
-        // SAFETY: `downloads_node` points into `self.progress` (BORROW_FIELD);
-        // `Progress` is pinned for the manager's lifetime (leaked singleton)
-        // and the node is set before any caller reaches this path.
+        // SAFETY: `downloads_node` points at `self.progress.root` or at a caller
+        // stack-local that outlives the install pass; `&mut self` makes the
+        // reborrow exclusive.
         unsafe { &mut *p }
     }
 
@@ -913,11 +908,13 @@ impl PackageManager {
         // process-lifetime `Box<[u8]>`) is encapsulated in `bun_dotenv`, not at
         // every call site (PORTING.md §Forbidden: never mint `'static` from
         // a borrowed reference).
-        self.env_mut().get_http_proxy_for(url)
+        // SAFETY: `&mut self`; no other loader borrow is live in this scope.
+        unsafe { self.env_mut() }.get_http_proxy_for(url)
     }
 
     pub fn tls_reject_unauthorized(&mut self) -> bool {
-        self.env_mut().get_tls_reject_unauthorized()
+        // SAFETY: `&mut self`; no other loader borrow is live in this scope.
+        unsafe { self.env_mut() }.get_tls_reject_unauthorized()
     }
 
     pub fn compute_is_continuous_integration(&self) -> bool {
@@ -1067,19 +1064,18 @@ impl PackageManager {
     }
     /// Reborrow the process-global env loader.
     ///
-    /// Lifetime is decoupled from `&self` for the same reason as [`log_mut`] /
-    /// [`downloads_node_mut`]: the loader is a singleton-leaked allocation
-    /// outside the manager (set once in `init()`), and callers interleave env
-    /// mutation with disjoint `&mut self.X` field writes (e.g. `find_commit`
-    /// takes `env`, `log`, and reads `lockfile` in the same argument list).
+    /// # Safety
+    /// The loader is a process-lifetime singleton living outside the manager
+    /// and aliased by `Transpiler::env` (see `configure_env_for_scripts_run`),
+    /// so `&mut self` cannot establish exclusivity over it. The caller must
+    /// ensure no other `&mut` to the same loader is live for the duration of
+    /// the returned borrow — including one obtained via `Transpiler::env_mut`
+    /// — and must call only from the install main thread.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader<'static> {
-        // SAFETY: `env` is set during `init()` and never None afterward; the
-        // pointee is a process-lifetime singleton (leaked `DotEnv.Loader`)
-        // that lives outside `self`, so the unbounded `'a` is sound under the
-        // same single-threaded contract as `log_mut`/`scripts_node_mut`.
-        // `BackRef` guarantees liveness; exclusivity is the caller's contract.
+    pub unsafe fn env_mut(&self) -> &mut dot_env::Loader<'static> {
+        // SAFETY: `env` is set during `init()` and never None afterward;
+        // `BackRef` guarantees the singleton outlives `self`.
         unsafe { &mut *self.env.expect("env initialised").as_ptr() }
     }
 }
@@ -1125,7 +1121,10 @@ fn configure_env_for_scripts_run(
     // `Ok` — same contract as the runtime impl (run_command.rs:628).
     let this_transpiler = unsafe { this_transpiler_slot.assume_init() };
 
-    let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
+    // SAFETY: sole live loader borrow; `this_transpiler` is not touched here.
+    let init_cwd_entry = unsafe { this.env_mut() }
+        .map
+        .get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
             value: Box::<[u8]>::from(strings::without_trailing_slash(
@@ -1138,7 +1137,9 @@ fn configure_env_for_scripts_run(
     // The resolver-tier
     // `FileSystem` mirrors `bun_paths::fs::FileSystem` for `top_level_dir`.
     let paths_fs = bun_paths::fs::FileSystem::instance();
-    this.env_mut().load_ccache_path(paths_fs);
+    // SAFETY: sole live loader borrow; the `this_transpiler` borrow below is
+    // confined to its own block and does not overlap this statement.
+    unsafe { this.env_mut() }.load_ccache_path(paths_fs);
 
     {
         // Run node-gyp jobs in parallel.
@@ -1159,10 +1160,13 @@ fn configure_env_for_scripts_run(
 
     {
         let mut node_path = PathBuffer::uninit();
-        if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
-            let _ = this
-                .env_mut()
-                .load_node_js_config(paths_fs, node_path_z.as_ref())?;
+        // SAFETY: `get_node_path` borrows `node_path`, not the loader, and the
+        // scrutinee temporary is dropped before the body (edition 2024).
+        if let Some(node_path_z) = unsafe { this.env_mut() }.get_node_path(paths_fs, &mut node_path)
+        {
+            // SAFETY: the scrutinee's loader borrow has ended.
+            let _ =
+                unsafe { this.env_mut() }.load_node_js_config(paths_fs, node_path_z.as_ref())?;
         } else {
             'brk: {
                 let current_path = this.env().get(b"PATH").unwrap_or(b"");
@@ -1174,8 +1178,10 @@ fn configure_env_for_scripts_run(
                 {
                     break 'brk;
                 }
-                this.env_mut().map.put(b"PATH", &path_var)?;
-                let _ = this.env_mut().load_node_js_config(paths_fs, bun_path)?;
+                // SAFETY: sequential; each loader borrow ends at its statement.
+                unsafe { this.env_mut() }.map.put(b"PATH", &path_var)?;
+                // SAFETY: same — the borrow above ended at its statement.
+                let _ = unsafe { this.env_mut() }.load_node_js_config(paths_fs, bun_path)?;
             }
         }
     }
@@ -1286,7 +1292,8 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     path_var.extend_from_slice(strings::without_trailing_slash(tempdir.name));
     path_var.push(SEP);
     path_var.extend_from_slice(&manager.node_gyp_tempdir_name);
-    manager.env_mut().map.put(b"PATH", &path_var)?;
+    // SAFETY: `manager: &mut PackageManager`; sole live loader borrow.
+    unsafe { manager.env_mut() }.map.put(b"PATH", &path_var)?;
 
     let path_buf_len = path_buf.len();
     let mut cursor = &mut path_buf[..];
@@ -1305,8 +1312,8 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     let npm_config_node_gyp = &path_buf[..written];
 
     let node_gyp_abs_dir = bun_core::dirname(npm_config_node_gyp).unwrap();
-    manager
-        .env_mut()
+    // SAFETY: `manager: &mut PackageManager`; sole live loader borrow.
+    unsafe { manager.env_mut() }
         .map
         .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir)?;
 
@@ -1804,15 +1811,11 @@ pub fn init(
 
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option = match fs.read_directory(fs.top_level_dir(), 0, true)? {
-        fs::EntriesOption::Entries(e) => {
-            // SAFETY: the BSSMap singleton owns `*e` for the process
-            // lifetime, and `init()` runs single-threaded before any other
-            // access — sole exclusive borrow is sound.
-            unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) }
-        }
-        fs::EntriesOption::Err(e) => return Err(e.canonical_error),
-    };
+    let entries_slot = fs.read_directory(fs.top_level_dir(), 0, true)?;
+    if let fs::EntriesOption::Err(e) = &*entries_slot {
+        return Err(e.canonical_error);
+    }
+    let entries_option: &'static mut fs::DirEntry = entries_slot.entries_mut();
 
     // SAFETY: `init()` runs once on the main thread before any other access to the singleton.
     // `dot_env::Loader<'a>` borrows `&'a mut Map`, so the pair is self-referential; allocate
@@ -1831,8 +1834,7 @@ pub fn init(
     // Reborrow the BSSMap-owned `*DirEntry` for the
     // call; `env.load` only reads it (`hasComptimeQuery` lookups for `.env*`).
     env.load(
-        // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
-        unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(entries_option) },
+        &*entries_option,
         &[],
         dot_env::DotEnvFileSuffix::Production,
         false,
@@ -2319,12 +2321,11 @@ pub(crate) fn init_with_runtime_once(
     // leaves `holder::RAW_PTR` null rather than pointing at an uninitialized
     // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
     let fs_instance = FileSystem::instance();
-    let root_dir = match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true)? {
-        // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
-        // and runtime init runs once on the main thread before any other access.
-        fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
-        fs::EntriesOption::Err(e) => return Err(e.canonical_error),
-    };
+    let root_dir_slot = fs_instance.read_directory(fs_instance.top_level_dir(), 0, true)?;
+    if let fs::EntriesOption::Err(e) = &*root_dir_slot {
+        return Err(e.canonical_error);
+    }
+    let root_dir: &'static mut fs::DirEntry = root_dir_slot.entries_mut();
 
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
     allocate_package_manager();

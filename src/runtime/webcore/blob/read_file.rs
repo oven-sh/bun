@@ -23,6 +23,7 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
 };
+use bun_ptr::BackRef;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(not(windows))]
@@ -195,7 +196,7 @@ pub struct ReadFile {
     pub errno: Option<Error>,
     pub on_complete_ctx: *mut c_void,
     pub on_complete_callback: ReadFileOnReadFileCallback,
-    pub io_task: Option<*mut ReadFileTask>,
+    pub io_task: Option<BackRef<ReadFileTask>>,
     pub io_poll: io::Poll,
     pub io_request: io::Request,
     pub could_block: bool,
@@ -620,11 +621,15 @@ impl ReadFile {
         Ok(())
     }
 
-    pub fn run(&mut self, task: *mut ReadFileTask) {
-        self.run_async(task);
+    /// # Safety
+    /// `task` must be the live `ReadFileTask` that owns `self`; it is dereferenced
+    /// through `BackRef`. Called only from the work-pool trampoline.
+    pub unsafe fn run(&mut self, task: *mut ReadFileTask) {
+        // SAFETY: the WorkTask passes its own address and outlives `self`.
+        self.run_async(unsafe { BackRef::from_raw(task) });
     }
 
-    fn run_async(&mut self, task: *mut ReadFileTask) {
+    fn run_async(&mut self, task: BackRef<ReadFileTask>) {
         #[cfg(windows)]
         {
             let _ = task;
@@ -659,10 +664,11 @@ impl ReadFile {
             }
         }
         if !close_after_io {
-            if let Some(io_task) = self.io_task.take() {
+            if let Some(mut io_task) = self.io_task.take() {
                 bloblog!("ReadFile.onFinish() = immediately");
-                // SAFETY: io_task is a non-null backref set in run(); WorkTask owns lifetime.
-                ReadFileTask::on_finish(unsafe { &mut *io_task });
+                // SAFETY: taken out of the field, so no other borrow of the
+                // WorkTask is live for this call.
+                ReadFileTask::on_finish(unsafe { io_task.get_mut() });
             }
         }
     }
@@ -1094,27 +1100,25 @@ impl<'a> ReadFileUV<'a> {
         let _ = this_ptr;
     }
 
-    pub fn finalize(this: *mut Self) {
+    pub fn finalize(mut self: Box<Self>) {
         log!("ReadFileUV.finalize");
-        // SAFETY: `this` was heap-allocated in start(); we reclaim ownership here.
-        let mut this_box = unsafe { bun_core::heap::take(this) };
-        let event_loop = this_box.event_loop;
+        let event_loop = self.event_loop;
 
-        let cb = this_box.on_complete_fn;
-        let cb_ctx = this_box.on_complete_data;
+        let cb = self.on_complete_fn;
+        let cb_ctx = self.on_complete_data;
 
-        let result = if let Some(err) = this_box.system_error.take() {
+        let result = if let Some(err) = self.system_error.take() {
             ReadFileResultType::Err(err)
         } else {
-            // Move byte_store out so dropping `this_box` below does not free the
+            // Move byte_store out so dropping `self` below does not free the
             // buffer we hand to the callback. Normalize to `Box<[u8]>` so the
             // `is_temporary` consumer (Body.rs / Blob.rs) can soundly reclaim
             // via `heap::take` — handing out `(ptr, len)` from a ByteStore
             // whose `cap > len` would be a layout-mismatched dealloc.
-            let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
+            let boxed = core::mem::take(&mut self.byte_store).into_boxed_slice();
             ReadFileResultType::Result(ReadFileRead {
                 buf: bun_core::heap::into_raw(boxed),
-                total_size: this_box.total_size,
+                total_size: self.total_size,
             })
         };
 
@@ -1123,8 +1127,8 @@ impl<'a> ReadFileUV<'a> {
         cb(cb_ctx, result);
 
         // store.deref runs via StoreRef's Drop when the Box drops.
-        this_box.req.deinit();
-        drop(this_box);
+        self.req.deinit();
+        drop(self);
         // Release the event loop reference now that we're done
         event_loop.unref_concurrently();
         log!("ReadFileUV.finalize destroy");
@@ -1149,7 +1153,8 @@ impl<'a> ReadFileUV<'a> {
             }
         }
 
-        Self::finalize(core::ptr::from_mut(self));
+        // SAFETY: `self` is the allocation from start(); the uv chain's last ref.
+        Self::finalize(unsafe { bun_core::heap::take(core::ptr::from_mut(self)) });
     }
 
     pub fn on_file_open(&mut self, opened_fd: Fd) {

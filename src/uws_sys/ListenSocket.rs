@@ -2,6 +2,7 @@ use core::ffi::{c_char, c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_core::Fd;
+use bun_ptr::ParentRef;
 
 use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SslCtx, us_socket_t};
 
@@ -11,39 +12,37 @@ bun_opaque::opaque_ffi! {
 }
 
 impl ListenSocket {
-    pub fn close(&mut self) {
+    pub fn close(&self) {
         us_listen_socket_close(self)
     }
 
-    pub fn get_local_address<'a>(
-        &mut self,
-        buf: &'a mut [u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    pub fn get_local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
         self.get_socket().local_address(buf)
     }
 
-    pub fn get_local_port(&mut self) -> i32 {
+    pub fn get_local_port(&self) -> i32 {
         self.get_socket().local_port()
     }
 
-    pub fn get_socket(&mut self) -> &mut us_socket_t {
-        // SAFETY: ListenSocket is layout-compatible with us_socket_t on the C side
-        // (a listen socket IS a us_socket_t). The returned
-        // borrow reborrows `&mut self` exclusively — no alias is live while it exists.
-        unsafe { &mut *std::ptr::from_mut::<ListenSocket>(self).cast::<us_socket_t>() }
+    pub fn get_socket(&self) -> &us_socket_t {
+        // S008: ListenSocket is layout-compatible with us_socket_t on the C side
+        // (a listen socket IS a us_socket_t); both are `opaque_ffi!` ZSTs, so route
+        // the `*const → &` pun through the const-asserted safe accessor.
+        us_socket_t::opaque_ref(std::ptr::from_ref::<ListenSocket>(self).cast::<us_socket_t>())
     }
 
-    pub fn socket<const IS_SSL: bool>(&mut self) -> crate::socket::NewSocketHandler<IS_SSL> {
+    pub fn socket<const IS_SSL: bool>(&self) -> crate::socket::NewSocketHandler<IS_SSL> {
         // NewSocketHandler is local (crate::socket); no upward dep.
-        crate::socket::NewSocketHandler::<IS_SSL>::from(std::ptr::from_mut::<us_socket_t>(
-            self.get_socket(),
-        ))
+        // `as_mut_ptr` is the UnsafeCell route from `&self` to a write-provenance ptr.
+        crate::socket::NewSocketHandler::<IS_SSL>::from(self.as_mut_ptr().cast::<us_socket_t>())
     }
 
-    /// Group accepted sockets are linked into.
-    pub fn group(&mut self) -> &mut SocketGroup {
-        // SAFETY: self is a valid listen socket; C returns a non-null group.
-        unsafe { &mut *us_listen_socket_group(self) }
+    /// Group accepted sockets are linked into. The group is embedded in the
+    /// owner and outlives every listen socket linked into it.
+    pub fn group(&self) -> ParentRef<SocketGroup> {
+        // SAFETY: C returns a non-null group, with write provenance, that
+        // outlives this listen socket.
+        unsafe { ParentRef::from_raw_mut(us_listen_socket_group(self)) }
     }
 
     pub fn ext<T>(&mut self) -> &mut T {
@@ -52,7 +51,7 @@ impl ListenSocket {
         unsafe { &mut *us_listen_socket_ext(self).cast::<T>() }
     }
 
-    pub fn fd(&mut self) -> Fd {
+    pub fn fd(&self) -> Fd {
         let raw = us_listen_socket_get_fd(self);
         // SOCKET → kind=system (mask bit 63); `from_native` would store the
         // raw bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
@@ -79,7 +78,7 @@ impl ListenSocket {
     /// a mutable pointer; accepting `&U` and const-casting would make that
     /// round-trip UB.
     pub fn add_server_name(
-        &mut self,
+        &self,
         hostname: &core::ffi::CStr,
         ssl_ctx: *mut SslCtx,
         user: *mut c_void,
@@ -91,7 +90,7 @@ impl ListenSocket {
         unsafe { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx, user) == 0 }
     }
 
-    pub fn remove_server_name(&mut self, hostname: &core::ffi::CStr) {
+    pub fn remove_server_name(&self, hostname: &core::ffi::CStr) {
         // SAFETY: self and hostname are valid for the duration of the call.
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
@@ -100,10 +99,7 @@ impl ListenSocket {
     /// `hostname`, cast to `*mut T`. Returned as `NonNull<T>` (not `&mut T`)
     /// because the pointee is caller-owned external storage — materializing a
     /// `&mut T` here could alias the caller's own live reference to it.
-    pub fn find_server_name_userdata<T>(
-        &mut self,
-        hostname: &core::ffi::CStr,
-    ) -> Option<NonNull<T>> {
+    pub fn find_server_name_userdata<T>(&self, hostname: &core::ffi::CStr) -> Option<NonNull<T>> {
         // SAFETY: self and hostname valid; caller guarantees the stored userdata
         // is a *T.
         let p = unsafe { us_listen_socket_find_server_name_userdata(self, hostname.as_ptr()) };
@@ -111,35 +107,34 @@ impl ListenSocket {
     }
 
     pub fn on_server_name(
-        &mut self,
+        &self,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
     ) {
         us_listen_socket_on_server_name(self, cb)
     }
 }
 
-// This file IS the *_sys crate, so externs live here.
-// `ListenSocket` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&mut
-// ListenSocket` is ABI-identical to a non-null pointer; value-typed shims are
-// `safe fn`. Shims with nullable raw / ctx ptr stay unsafe.
+// `ListenSocket` is `!Freeze`: `&ListenSocket` carries neither `noalias` nor
+// `readonly` and is ABI-identical to a non-null pointer, so no shim needs `&mut`.
+// Value-typed shims are `safe fn`; those with nullable raw/ctx ptrs stay unsafe.
 unsafe extern "C" {
-    safe fn us_listen_socket_close(ls: &mut ListenSocket);
-    safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
-    safe fn us_listen_socket_ext(ls: &mut ListenSocket) -> *mut c_void;
-    safe fn us_listen_socket_get_fd(ls: &mut ListenSocket) -> LIBUS_SOCKET_DESCRIPTOR;
+    safe fn us_listen_socket_close(ls: &ListenSocket);
+    safe fn us_listen_socket_group(ls: &ListenSocket) -> *mut SocketGroup;
+    safe fn us_listen_socket_ext(ls: &ListenSocket) -> *mut c_void;
+    safe fn us_listen_socket_get_fd(ls: &ListenSocket) -> LIBUS_SOCKET_DESCRIPTOR;
     fn us_listen_socket_add_server_name(
-        ls: *mut ListenSocket,
+        ls: &ListenSocket,
         hostname: *const c_char,
         ssl_ctx: *mut SslCtx,
         user: *mut c_void,
     ) -> c_int;
-    fn us_listen_socket_remove_server_name(ls: *mut ListenSocket, hostname: *const c_char);
+    fn us_listen_socket_remove_server_name(ls: &ListenSocket, hostname: *const c_char);
     fn us_listen_socket_find_server_name_userdata(
-        ls: *mut ListenSocket,
+        ls: &ListenSocket,
         hostname: *const c_char,
     ) -> *mut c_void;
     safe fn us_listen_socket_on_server_name(
-        ls: &mut ListenSocket,
+        ls: &ListenSocket,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
     );
 }

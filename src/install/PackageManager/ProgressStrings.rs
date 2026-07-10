@@ -105,30 +105,42 @@ impl ProgressStrings {
 }
 
 impl PackageManager {
+    /// Fill `progress_name_buf` with `emoji` + `name`; returns the byte length.
+    fn write_progress_name<const IS_FIRST: bool>(&mut self, name: &[u8], emoji: &[u8]) -> usize {
+        if Output::enable_ansi_colors_stderr() {
+            if IS_FIRST {
+                self.progress_name_buf[..emoji.len()].copy_from_slice(emoji);
+            }
+            self.progress_name_buf[emoji.len()..][..name.len()].copy_from_slice(name);
+            emoji.len() + name.len()
+        } else {
+            self.progress_name_buf[..name.len()].copy_from_slice(name);
+            name.len()
+        }
+    }
+
+    /// Name `downloads_node`. Fills the buffer and re-derives the node after, so
+    /// no `&mut ProgressNode` is live alongside the `&mut self` it aliases —
+    /// `downloads_node` points at `self.progress.root`.
+    pub fn set_downloads_node_name<const IS_FIRST: bool>(&mut self, name: &[u8], emoji: &[u8]) {
+        let len = self.write_progress_name::<IS_FIRST>(name, emoji);
+        // SAFETY: `progress_name_buf` is an inline field of the leaked singleton,
+        // so it outlives every node that references it.
+        let named: &'static [u8] =
+            unsafe { bun_ptr::detach_lifetime(&self.progress_name_buf[..len]) };
+        self.downloads_node_mut().name = named;
+    }
+
     pub fn set_node_name<const IS_FIRST: bool>(
         &mut self,
         node: &mut ProgressNode,
         name: &[u8],
         emoji: &[u8],
     ) {
-        // SAFETY: `node` is `self.downloads_node` / `self.scripts_node`, both of
-        // which point at storage owned by (or outliving) this `PackageManager`
-        // singleton; `progress_name_buf` is an inline field of that same
-        // singleton, so the buffer outlives every node that references it and
-        // erasing the slice lifetime to `'static` is sound.
-        unsafe {
-            let len = if Output::enable_ansi_colors_stderr() {
-                if IS_FIRST {
-                    self.progress_name_buf[..emoji.len()].copy_from_slice(emoji);
-                }
-                self.progress_name_buf[emoji.len()..][..name.len()].copy_from_slice(name);
-                emoji.len() + name.len()
-            } else {
-                self.progress_name_buf[..name.len()].copy_from_slice(name);
-                name.len()
-            };
-            node.name = bun_ptr::detach_lifetime(&self.progress_name_buf[..len]);
-        }
+        let len = self.write_progress_name::<IS_FIRST>(name, emoji);
+        // SAFETY: `progress_name_buf` is an inline field of the leaked singleton,
+        // so it outlives every node that references it.
+        node.name = unsafe { bun_ptr::detach_lifetime(&self.progress_name_buf[..len]) };
     }
 
     pub fn start_progress_bar_if_none(&mut self) {
@@ -141,19 +153,18 @@ impl PackageManager {
         self.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         // `Progress::start` returns `&mut Node` borrowing `self.progress`;
         // decay to a raw ptr immediately so the exclusive borrow ends before we
-        // re-borrow `&mut self` for `set_node_name` / `progress.refresh()`.
+        // re-borrow `&mut self`.
         let node: *mut ProgressNode = self.progress.start(ProgressStrings::download(), 0);
         self.downloads_node = Some(node);
-        self.set_node_name::<true>(
-            self.downloads_node_mut(),
+        self.set_downloads_node_name::<true>(
             ProgressStrings::DOWNLOAD_NO_EMOJI_.as_bytes(),
             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
         );
-        // `downloads_node` was just stashed above; route through the accessor
-        // (single unsafe site) instead of re-dereffing the raw `node` here.
+        let estimated = (self.total_tasks + self.extracted_count) as usize;
+        let completed = (self.total_tasks - self.pending_task_count()) as usize;
         let dn = self.downloads_node_mut();
-        dn.set_estimated_total_items((self.total_tasks + self.extracted_count) as usize);
-        dn.set_completed_items((self.total_tasks - self.pending_task_count()) as usize);
+        dn.set_estimated_total_items(estimated);
+        dn.set_completed_items(completed);
         dn.activate();
         self.progress.refresh();
     }

@@ -317,15 +317,7 @@ mod draft {
             // read off `self.arena`) to avoid overlapping &mut self borrows.
             let src = self.src;
             let mut iter = src.split(|&b| b == b'\n');
-            // TODO: borrowck — `head` aliases into `self.out.data.e_object` while
-            // `self` is also borrowed mutably for prepare_str(). Kept as raw `*mut`
-            // (the underlying `E::Object` lives in the Expr Store, not on `self`).
-            let mut head: *mut E::Object = std::ptr::from_mut::<E::Object>(
-                self.out
-                    .data
-                    .e_object_mut()
-                    .expect("Parser.out is E.Object"),
-            );
+            let mut head = self.out.data.e_object().expect("Parser.out is E.Object");
 
             let ropealloc = bump;
 
@@ -379,7 +371,7 @@ mod draft {
                             .data
                             .e_object_mut()
                             .expect("Parser.out is E.Object");
-                        let mut parent_object = match root.get_or_put_object(section, bump) {
+                        let parent_object = match root.get_or_put_object(section, bump) {
                             Ok(v) => v,
                             Err(E::SetError::OutOfMemory) => return Err(AllocError),
                             Err(E::SetError::Clobber) => {
@@ -418,12 +410,10 @@ mod draft {
                                 break 'treat_as_key;
                             }
                         };
-                        head = std::ptr::from_mut::<E::Object>(
-                            parent_object
-                                .data
-                                .e_object_mut()
-                                .expect("get_or_put_object returns E.Object"),
-                        );
+                        head = parent_object
+                            .data
+                            .e_object()
+                            .expect("get_or_put_object returns E.Object");
                         break 'treat_as_key;
                     }
                     if !treat_as_key {
@@ -509,9 +499,7 @@ mod draft {
                     _ => value_raw,
                 };
 
-                // SAFETY: head points into self.out's E::Object tree, valid for the
-                // duration of parse().
-                let head_ref = unsafe { &mut *head };
+                let head_ref = &mut *head;
 
                 if is_array {
                     if let Some(val) = head_ref.get(key) {
@@ -1833,10 +1821,8 @@ mod draft {
 
         match &expr.data {
             ExprData::EString(s) => {
-                // SAFETY: arena-backed `EString::slice` mutates only its own
-                // resolved-data cache; the StoreRef pointee outlives this call.
-                let s_mut: &mut E::EString = unsafe { &mut *s.as_ptr() };
-                let pattern = s_mut.slice(bump);
+                let mut s = *s;
+                let pattern = s.slice(bump);
                 let matcher = match create_matcher(pattern, &mut buf) {
                     Ok(m) => m,
                     Err(CreateMatcherError::OutOfMemory) => return Err(FromExprError::OutOfMemory),

@@ -215,7 +215,7 @@ impl StaticRoute {
 
             let mut has_content_disposition = false;
 
-            if let Some(h) = response.get_init_headers_mut() {
+            if let Some(h) = response.headers() {
                 has_content_disposition = h.fast_has(HTTPHeaderName::ContentDisposition);
                 h.fast_remove(HTTPHeaderName::TransferEncoding);
                 h.fast_remove(HTTPHeaderName::ContentLength);
@@ -234,7 +234,7 @@ impl StaticRoute {
             }
 
             let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
-                response.get_init_headers(),
+                response.headers(),
                 any_blob_content_type(&blob),
             );
 
@@ -289,7 +289,7 @@ impl StaticRoute {
             (*this).ref_();
             if let Some(mut server) = (*this).server.get() {
                 server.on_pending_request();
-                resp.timeout(server.config().idle_timeout);
+                resp.timeout(server.config().idle_timeout.get());
             }
             resp.corked(|| (*this).render_metadata_and_end(resp));
             Self::on_response_complete(this, resp);
@@ -356,7 +356,7 @@ impl StaticRoute {
             (*this).ref_();
             if let Some(mut server) = (*this).server.get() {
                 server.on_pending_request();
-                resp.timeout(server.config().idle_timeout);
+                resp.timeout(server.config().idle_timeout.get());
             }
             let mut finished = false;
             (*this).do_render_blob(resp, &mut finished);
@@ -446,7 +446,7 @@ impl StaticRoute {
         // SAFETY: caller contract.
         unsafe {
             if let Some(server) = (*this).server.get() {
-                resp.timeout(server.config().idle_timeout);
+                resp.timeout(server.config().idle_timeout.get());
             }
 
             if !(*this).on_writable_bytes(write_offset, resp) {
@@ -476,7 +476,7 @@ impl StaticRoute {
                 let mut b = bun_core::fmt::ItoaBuf::new();
                 let s = bun_core::fmt::itoa(&mut b, status);
                 // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(r).write_status(s);
+                bun_opaque::opaque_deref(r).write_status(s);
             }
         }
     }
@@ -575,7 +575,7 @@ impl StaticRoute {
             (*this).ref_();
             if let Some(mut server) = (*this).server.get() {
                 server.on_pending_request();
-                resp.timeout(server.config().idle_timeout);
+                resp.timeout(server.config().idle_timeout.get());
             }
             (*this).do_write_status(304, resp);
             (*this).do_write_headers(resp);

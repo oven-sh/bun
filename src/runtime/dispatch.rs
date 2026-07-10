@@ -125,7 +125,7 @@ use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, napi_async_work};
 
 use bun_jsc::PosixSignalTask;
 use bun_jsc::RuntimeTranspilerStore;
-use bun_jsc::cpp_task::CppTask;
+use bun_jsc::cpp_task::{self, CppTask};
 use bun_jsc::hot_reloader;
 use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
 
@@ -233,17 +233,16 @@ pub fn run_task(
             let t = cast_ptr!($ty);
             // SAFETY: tag identifies pointee; heap-allocated at schedule time.
             let r = unsafe { (*t).run_from_js() };
-            // SAFETY: paired with `create_on_js_thread` heap::alloc.
-            unsafe { <$ty>::destroy(t) };
+            // SAFETY: paired with the `heap::into_raw` at each schedule site.
+            <$ty>::destroy(unsafe { bun_core::heap::take(t) });
             r?;
         }};
         (work $ty:ty) => {{
-            let t = cast_ptr!($ty);
-            // SAFETY: tag identifies pointee; heap-allocated at schedule time.
-            let r = bun_jsc::work_task::WorkTask::run_from_js(unsafe { &mut *t });
-            // SAFETY: paired with `create_on_js_thread` heap::alloc.
-            unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
-            r?;
+            // SAFETY: tag identifies pointee; paired with the `heap::into_raw`
+            // in `create_on_js_thread`. `run_from_js` destroys the task before
+            // it re-enters JS.
+            let t = unsafe { bun_core::heap::take(cast_ptr!($ty)) };
+            bun_jsc::work_task::WorkTask::run_from_js(t)?;
         }};
     }
 
@@ -267,7 +266,15 @@ pub fn run_task(
             }
         }
         task_tag::CppTask => {
-            if let Err(err) = cast!(CppTask).run(global) {
+            // SAFETY: §Dispatch — tag identifies pointee and the pointer is a
+            // non-null `EventLoopTask*` the queue solely owns. `run` consumes
+            // it (`performTask` → `delete this`), on the error path too.
+            let task = unsafe {
+                CppTask::adopt(core::ptr::NonNull::new_unchecked(cast_ptr!(
+                    cpp_task::sys::CppTask
+                )))
+            };
+            if let Err(err) = task.run(global) {
                 report_error_or_terminate(global, err)?;
             }
         }
@@ -276,16 +283,24 @@ pub fn run_task(
         // `cast_ptr!` yields the heap-allocated task registered with this
         // tag; the JS-thread dispatch is the sole owner at this point.
         task_tag::ArchiveExtractTask => {
-            ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveExtractTask))?;
+            // SAFETY: §Dispatch — tag identifies pointee; sole owner at JS-thread dispatch.
+            let t = unsafe { bun_core::heap::take(cast_ptr!(ArchiveExtractTask)) };
+            ArchiveAsyncTask::run_from_js(t)?;
         }
         task_tag::ArchiveBlobTask => {
-            ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveBlobTask))?;
+            // SAFETY: §Dispatch — tag identifies pointee; sole owner at JS-thread dispatch.
+            let t = unsafe { bun_core::heap::take(cast_ptr!(ArchiveBlobTask)) };
+            ArchiveAsyncTask::run_from_js(t)?;
         }
         task_tag::ArchiveWriteTask => {
-            ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveWriteTask))?;
+            // SAFETY: §Dispatch — tag identifies pointee; sole owner at JS-thread dispatch.
+            let t = unsafe { bun_core::heap::take(cast_ptr!(ArchiveWriteTask)) };
+            ArchiveAsyncTask::run_from_js(t)?;
         }
         task_tag::ArchiveFilesTask => {
-            ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveFilesTask))?;
+            // SAFETY: §Dispatch — tag identifies pointee; sole owner at JS-thread dispatch.
+            let t = unsafe { bun_core::heap::take(cast_ptr!(ArchiveFilesTask)) };
+            ArchiveAsyncTask::run_from_js(t)?;
         }
 
         // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
@@ -313,7 +328,10 @@ pub fn run_task(
         // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
         // is the sole owner here.
         task_tag::S3HttpSimpleTask => {
-            S3HttpSimpleTask::on_response(cast_ptr!(S3HttpSimpleTask))?;
+            // SAFETY: §Dispatch — tag identifies pointee; JS-thread dispatch is the sole
+            // owner (`AutoDeinit::ManualDeinit`), so ownership transfers into `on_response`.
+            let t = unsafe { bun_core::heap::take(cast_ptr!(S3HttpSimpleTask)) };
+            S3HttpSimpleTask::on_response(t)?;
         }
         task_tag::S3HttpDownloadStreamingTask => {
             S3HttpDownloadStreamingTask::on_response(cast_ptr!(S3HttpDownloadStreamingTask));
@@ -355,12 +373,10 @@ pub fn run_task(
 
         // ── hot-reload (early-returns from the drain loop) ───────────────
         task_tag::HotReloadTask => {
-            let t = cast_ptr!(hot_reloader::HotReloadTask);
-            // The task was heap-allocated in `Task::enqueue`; `deinit` frees it.
-            // SAFETY: tag identifies pointee; live Box'd HotReloadTask.
-            unsafe { (*t).run() };
-            // SAFETY: paired with heap::alloc in `Task::enqueue`.
-            unsafe { hot_reloader::HotReloadTask::deinit(t) };
+            // SAFETY: tag identifies pointee; paired with `heap::into_raw` in
+            // `Task::enqueue`. The box frees the task at the end of this arm.
+            let mut t = unsafe { bun_core::heap::take(cast_ptr!(hot_reloader::HotReloadTask)) };
+            t.run();
             return Ok(RunTaskResult::EarlyReturn);
         }
         // ── bake dev-server (cold — hoisted to `run_task_cold`) ──────────
@@ -373,8 +389,9 @@ pub fn run_task(
             let t = cast_ptr!(FSWatchTask);
             // SAFETY: tag identifies pointee; live Box'd FSWatchTask.
             unsafe { (*t).run() };
-            // SAFETY: paired with heap::alloc in `FSWatchTask::enqueue`.
-            unsafe { FSWatchTask::deinit(t) };
+            // SAFETY: paired with heap::alloc in `FSWatchTask::enqueue`; `t` is
+            // the unique live pointer and is not used after this.
+            FSWatchTask::deinit(unsafe { bun_core::heap::take(t) });
         }
 
         // ── DNS ──────────────────────────────────────────────────────────
@@ -529,19 +546,24 @@ fn run_task_cold(task: Task) {
     match task.tag {
         // ── shell interpreter ────────────────────────────────────────────
         task_tag::ShellAsync => {
-            // SAFETY: §Dispatch — tag identifies pointee.
-            let t = unsafe { &mut *cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask) };
-            // SAFETY: `interp` set at enqueue; outlives task.
-            let interp = unsafe { &*t.interp };
-            ShellAsync::run_from_main_thread(interp, t.node);
+            let t = cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask);
+            // SAFETY: §Dispatch — tag identifies pointee; `interp` set at enqueue
+            // and outlives the task. Raw reads only: no borrow of `*t` spans the
+            // JS re-entry inside `run_from_main_thread`.
+            let (interp, node) = unsafe { (&*(*t).interp, (*t).node) };
+            ShellAsync::run_from_main_thread(interp, node);
         }
         task_tag::ShellAsyncSubprocessDone => {
             let t = cast_ptr!(ShellAsyncSubprocessDone);
-            ShellAsyncSubprocessDone::run_from_main_thread(t);
+            // SAFETY: §Dispatch — tag identifies pointee; paired with the
+            // `heap::alloc` in `ShellSubprocess::on_process_exit`.
+            ShellAsyncSubprocessDone::run_from_main_thread(unsafe { bun_core::heap::take(t) });
         }
         task_tag::ShellIOWriterAsyncDeinit => {
             let t = cast_ptr!(ShellIOWriterAsyncDeinit);
-            ShellIOWriterAsyncDeinit::run_from_main_thread(t);
+            // SAFETY: §Dispatch — tag identifies pointee; `t` is the unique
+            // owning pointer to the `heap::alloc` payload.
+            ShellIOWriterAsyncDeinit::run_from_main_thread(unsafe { bun_core::heap::take(t) });
         }
         task_tag::ShellIOWriter => {
             let t = cast_ptr!(ShellIOWriter);
@@ -549,7 +571,9 @@ fn run_task_cold(task: Task) {
         }
         task_tag::ShellIOReaderAsyncDeinit => {
             let t = cast_ptr!(ShellIOReaderAsyncDeinit);
-            ShellIOReaderAsyncDeinit::run_from_main_thread(t);
+            // SAFETY: §Dispatch — tag identifies pointee; the payload is the
+            // `heap::alloc` box enqueued by `IOReader::async_deinit`.
+            ShellIOReaderAsyncDeinit::run_from_main_thread(unsafe { bun_core::heap::take(t) });
         }
         task_tag::ShellCondExprStatTask => {
             shell_dispatch!(nested ShellCondExprStatTask);
@@ -644,13 +668,6 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
 
     debug_assert!(!owner.is_null());
 
-    /// `ptr.as(T)` — recover the typed owner.
-    macro_rules! owner_as {
-        ($ty:ty) => {{
-            // SAFETY: tag set with this pointee type at `FilePoll::init`.
-            unsafe { &mut *owner.ptr.cast::<$ty>() }
-        }};
-    }
     /// One match-arm body of the poll-tag dispatch. Recovers the typed owner as
     /// a RAW `*mut $Ty` (never `&mut` — re-entrant callees like `DNSResolver`
     /// pick their own deref mode without aliasing UB) then runs `$body`. The
@@ -689,10 +706,18 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             crate::node::memory_pressure::on_poll(unsafe { &mut *poll }, size_or_offset);
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
-            let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
+            // SAFETY: tag set with this pointee type at `FilePoll::init`; the
+            // watchdog is process-global and outlives every poll.
+            let wd = unsafe {
+                bun_ptr::BackRef::from_raw(
+                    owner
+                        .ptr
+                        .cast::<bun_io::parent_death_watchdog::ParentDeathWatchdog>(),
+                )
+            };
             // Mac-only — debug-assert elsewhere (Linux uses prctl(PR_SET_PDEATHSIG)).
             #[cfg(target_os = "macos")]
-            bun_io::parent_death_watchdog::on_parent_exit(wd);
+            bun_io::parent_death_watchdog::on_parent_exit(wd.get());
             #[cfg(not(target_os = "macos"))]
             {
                 debug_assert!(false, "ParentDeathWatchdog poll on non-mac");
@@ -1189,7 +1214,11 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
                         // `AsyncFSTask::create`. The work-pool callback ran
                         // (it posted this entry) so the threadpool no longer
                         // holds the embedded `task` field.
-                        unsafe { fs_async::$ty::destroy(task.ptr.cast::<fs_async::$ty>()) };
+                        unsafe {
+                            fs_async::$ty::destroy(bun_core::heap::take(
+                                task.ptr.cast::<fs_async::$ty>(),
+                            ))
+                        };
                     })*
                     // SAFETY: outer arm guard proves one of the table tags matched.
                     _ => unsafe { core::hint::unreachable_unchecked() },

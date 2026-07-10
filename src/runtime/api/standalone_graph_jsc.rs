@@ -6,7 +6,7 @@ use core::ptr::NonNull;
 
 use bun_core::{self as bstring, strings};
 use bun_http::MimeType;
-use bun_jsc::JSGlobalObject;
+use bun_jsc::{JSGlobalObject, JsCell};
 
 // `StandaloneModuleGraph` here is the inner *module* (so
 // `StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX` resolves);
@@ -45,7 +45,7 @@ impl FileJsc for File {
             // forbids partial moves out of the temporary default.
             let store = StoreRef::from(Store::new(Store {
                 data: Data::Bytes(bytes),
-                mime_type: MimeType::NONE,
+                mime_type: JsCell::new(MimeType::NONE),
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
             }));
@@ -63,13 +63,12 @@ impl FileJsc for File {
                 bun_paths::extension(self.name),
                 b'.',
             )) {
-                // SAFETY: `store_ptr` is the sole live mutable view; held ref
-                // guarantees liveness for the process lifetime.
-                let store = unsafe { &mut *store_ptr };
+                // SAFETY: held ref guarantees liveness for the process lifetime.
+                let store = unsafe { &*store_ptr };
                 b.content_type
                     .set(crate::webcore::blob::BlobContentType::from_mime(&mime));
                 b.content_type_was_set.set(true);
-                store.mime_type = mime;
+                store.mime_type.set(mime);
             }
 
             // The real name goes here:

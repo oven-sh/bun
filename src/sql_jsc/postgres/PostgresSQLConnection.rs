@@ -220,19 +220,6 @@ impl PostgresSQLConnection {
         VirtualMachine::get_mut()
     }
 
-    /// `&mut EventLoop` for `enter`/`exit`/`run_callback`. One audited unsafe
-    /// here replaces the per-site `unsafe { self.vm().event_loop_mut() }` —
-    /// the loop is a disjoint heap allocation owned by the JS-thread VM
-    /// singleton (see [`vm_mut`]); single-thread affinity ⇒ no two
-    /// `&mut EventLoop` ever coexist.
-    #[inline]
-    fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
-        // `vm_mut()` yields the process-lifetime `'static mut VM` (see above);
-        // the event loop it owns lives for the VM's lifetime. Single-JS-thread
-        // invariant ⇒ callers never hold two `&mut EventLoop` at once.
-        self.vm_mut().event_loop_mut()
-    }
-
     /// `KeepAlive::{ref_,unref}` take an `EventLoopCtx` (manual vtable, lives in
     /// `bun_io`). The sql_jsc-side `VirtualMachine` is a thin façade with no
     /// direct conversion; route through the global hook (`get_vm_ctx(.Js)`) which
@@ -276,19 +263,20 @@ impl PostgresSQLConnection {
     }
 
     /// Project `&mut SASL` from `authentication_state` if it is currently the
-    /// `Sasl` variant. One audited [`JsCell::get_mut`] here replaces the three
-    /// per-site unchecked `authentication_state.get_mut()` derefs in the SASL
-    /// handshake arms of [`on`](Self::on).
+    /// `Sasl` variant. The returned borrow is tied to `&self`.
     ///
-    /// SAFETY (encapsulated): single-JS-thread; callers hold the returned
-    /// `&mut SASL` only for the synchronous packet-handler body and drop it
-    /// before any call that touches `authentication_state` again
-    /// (`self.writer()` / `self.flush_data()` / `self.fail()` do not).
+    /// # Safety
+    ///
+    /// Caller must be on the owning JS thread and must guarantee that no other
+    /// reference to `authentication_state` — a second `sasl_state_mut`, or a
+    /// `JsCell` `get`/`set`/`with_mut` — is live for the returned borrow's
+    /// lifetime. In particular the borrow must not be held across any call that
+    /// can re-enter JS (e.g. `self.fail()`), which may read the cell and
+    /// invalidate it. `self.writer()` and `self.flush_data()` do not.
     #[inline]
-    #[allow(clippy::mut_from_ref)] // body projects through `JsCell` (UnsafeCell-backed); see SAFETY note
-    fn sasl_state_mut(&self) -> Option<&mut crate::postgres::sasl::SASL> {
-        // SAFETY: see doc comment — single-JS-thread, no re-entrant access to
-        // `authentication_state` for the borrow's lifetime.
+    #[allow(clippy::mut_from_ref)] // projection through `JsCell` (UnsafeCell-backed)
+    unsafe fn sasl_state_mut(&self) -> Option<&mut crate::postgres::sasl::SASL> {
+        // SAFETY: forwarded to the caller — see the fn-level contract.
         match unsafe { self.authentication_state.get_mut() } {
             AuthenticationState::Sasl(s) => Some(s),
             _ => None,
@@ -716,8 +704,7 @@ impl PostgresSQLConnection {
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
         let on_close_opt = self.consume_on_close_callback(self.global());
         if let Some(on_close) = on_close_opt {
-            let event_loop = self.event_loop();
-            event_loop.enter();
+            let _exit = self.vm().enter_event_loop_scope();
             let mut js_error = value.to_error().unwrap_or(value);
             if js_error.is_empty() {
                 js_error = postgres_error_to_js(
@@ -731,7 +718,6 @@ impl PostgresSQLConnection {
             if let Err(e) = on_close.call(self.global(), JSValue::UNDEFINED, &[js_error, queries]) {
                 self.global().report_active_exception_as_unhandled(e);
             }
-            event_loop.exit();
         }
         self.ref_and_close(Some(value));
         // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
@@ -807,12 +793,10 @@ impl PostgresSQLConnection {
             self.clean_up_requests(None);
             self.update_has_pending_activity();
         } else {
-            let event_loop = self.event_loop();
-            event_loop.enter();
+            let _exit = self.vm().enter_event_loop_scope();
             self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
 
             fail(self);
-            event_loop.exit();
         }
     }
 
@@ -957,8 +941,7 @@ impl PostgresSQLConnection {
             return self.close();
         }
 
-        let event_loop = self.event_loop();
-        event_loop.enter();
+        let _exit = self.vm().enter_event_loop_scope();
 
         self.flush_data();
 
@@ -970,7 +953,6 @@ impl PostgresSQLConnection {
             self.advance();
             self.flush_data();
         }
-        event_loop.exit();
     }
 
     pub fn on_data(&self, data: &[u8]) {
@@ -979,8 +961,7 @@ impl PostgresSQLConnection {
 
         self.disable_connection_timeout();
 
-        let event_loop = self.event_loop();
-        event_loop.enter();
+        let exit_scope = self.vm().enter_event_loop_scope();
         SocketMonitor::read(data);
         // reset the head to the last message so remaining reflects the right amount of bytes
         self.read_buffer
@@ -1052,7 +1033,7 @@ impl PostgresSQLConnection {
             }
         }
 
-        event_loop.exit();
+        drop(exit_scope);
         // === defer block ===
         if self.status.get() == Status::Connected
             && !self.has_query_running()
@@ -1465,8 +1446,7 @@ impl PostgresSQLConnection {
 
             // tls_config dropped by Box drop below.
             if let Some(s) = (*this).secure {
-                // SSL_CTX_free on a valid SSL_CTX*.
-                BoringSSL::c::SSL_CTX_free(s);
+                BoringSSL::c::SSL_CTX_free(uws::SslCtx::opaque_ref(s));
             }
             // Box-allocated in `call()`; ref_count is 0; reclaim.
             drop(bun_core::heap::take(this));
@@ -2643,9 +2623,10 @@ impl PostgresSQLConnection {
                         }
 
                         let mut mechanism_buf = [0u8; 128];
-                        // `sasl` borrow ends before `self.writer()`/`self.flush_data()`
-                        // below (neither touches `authentication_state`).
-                        let Some(sasl) = self.sasl_state_mut() else {
+                        // SAFETY: no other borrow of `authentication_state` is live;
+                        // `sasl` ends before `self.writer()`/`self.flush_data()` below
+                        // (neither touches the cell nor runs JS).
+                        let Some(sasl) = (unsafe { self.sasl_state_mut() }) else {
                             unreachable!()
                         };
                         let mechanism = {
@@ -2667,9 +2648,10 @@ impl PostgresSQLConnection {
                     }
                     protocol::Authentication::SASLContinue(cont) => {
                         let password: &[u8] = self.password();
-                        // `sasl` borrow ends before `self.writer()`/`self.flush_data()`
-                        // below (neither touches `authentication_state`).
-                        let Some(sasl) = self.sasl_state_mut() else {
+                        // SAFETY: no other borrow of `authentication_state` is live;
+                        // `sasl` ends before `self.writer()`/`self.flush_data()` below
+                        // (neither touches the cell nor runs JS).
+                        let Some(sasl) = (unsafe { self.sasl_state_mut() }) else {
                             debug!("Unexpected SASLContinue for authentication state");
                             return Err(AnyPostgresError::UnexpectedMessage);
                         };
@@ -2788,9 +2770,10 @@ impl PostgresSQLConnection {
                         self.flush_data();
                     }
                     protocol::Authentication::SASLFinal { data: final_data } => {
-                        // `sasl` borrow ends before `self.fail()` /
+                        // SAFETY: no other borrow of `authentication_state` is live, and
+                        // `sasl` is dead before `self.fail()` (runs JS) and before
                         // `self.authentication_state.with_mut()` below.
-                        let Some(sasl) = self.sasl_state_mut() else {
+                        let Some(sasl) = (unsafe { self.sasl_state_mut() }) else {
                             debug!("SASLFinal - Unexpected SASLContinue for authentication state");
                             return Err(AnyPostgresError::UnexpectedMessage);
                         };

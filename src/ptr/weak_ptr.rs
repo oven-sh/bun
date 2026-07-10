@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ptr::NonNull;
 
 /// Bit layout:
@@ -57,13 +58,13 @@ impl Default for WeakPtrData {
 /// The field projection is a trait method (typically implemented via
 /// `core::mem::offset_of!`).
 pub trait HasWeakPtrData {
-    /// Return a pointer to the embedded `WeakPtrData` field on `this`.
+    /// Return a pointer to the embedded `WeakPtrData` cell on `this`.
     ///
     /// # Safety
     /// `this` must point to a live allocation of `Self` (the inner contents
     /// may already be finalized, but the allocation itself must not yet be
     /// freed).
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData;
+    unsafe fn weak_ptr_data(this: *mut Self) -> *const Cell<WeakPtrData>;
 }
 
 /// Allow a type to be weakly referenced. This keeps a reference count of how
@@ -106,9 +107,11 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         // SAFETY: caller contract — `this` points to a live `T`. Projecting
         // straight to the embedded field means no whole-struct `&mut T` is
         // formed, so `this`'s provenance reaches the stored pointer intact.
-        let d = unsafe { &mut *T::weak_ptr_data(this) };
-        debug_assert!(!d.finalized());
-        d.set_reference_count(d.reference_count() + 1);
+        let d = unsafe { &*T::weak_ptr_data(this) };
+        let mut data = d.get();
+        debug_assert!(!data.finalized());
+        data.set_reference_count(data.reference_count() + 1);
+        d.set(data);
         Self {
             // SAFETY: caller contract — `this` is non-null.
             raw_ptr: Some(unsafe { NonNull::new_unchecked(this) }),
@@ -133,7 +136,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         if let Some(value) = self.raw_ptr {
             // SAFETY: allocation is live while any WeakPtr holds it (see above).
             unsafe {
-                if !(*T::weak_ptr_data(value.as_ptr())).finalized() {
+                if !(*T::weak_ptr_data(value.as_ptr())).get().finalized() {
                     return Some(&mut *value.as_ptr());
                 }
                 self.deref_internal(value);
@@ -147,17 +150,21 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
     /// allocation whose embedded `WeakPtrData` has `reference_count > 0`.
     unsafe fn deref_internal(&mut self, value: NonNull<T>) {
         self.raw_ptr = None;
-        // SAFETY: caller guarantees `value` points to a live allocation;
-        // projecting to the embedded `WeakPtrData` field.
-        let weak_data = unsafe { &mut *T::weak_ptr_data(value.as_ptr()) };
-        let count = weak_data.reference_count() - 1;
-        weak_data.set_reference_count(count);
-        let finalized = weak_data.finalized();
+        let (count, finalized) = {
+            // SAFETY: caller guarantees `value` points to a live allocation;
+            // projecting to the embedded `WeakPtrData` field.
+            let weak_data = unsafe { &*T::weak_ptr_data(value.as_ptr()) };
+            let mut data = weak_data.get();
+            let count = data.reference_count() - 1;
+            data.set_reference_count(count);
+            weak_data.set(data);
+            (count, data.finalized())
+        };
         if finalized && count == 0 {
             // The allocation came from `heap::alloc` (via `Box::new`).
             // SAFETY: this is the last reference and the owner has finalized,
-            // so we hold the only pointer to a `Box`-allocated `T`. `weak_data`
-            // is dead here, so freeing through `value` disturbs no live borrow.
+            // so we hold the only pointer to a `Box`-allocated `T`. The cell
+            // borrow ended above, so freeing through `value` disturbs nothing.
             drop(unsafe { bun_core::heap::take(value.as_ptr()) });
         }
     }
@@ -190,7 +197,7 @@ mod tests {
     }
 
     struct Owner {
-        weak: WeakPtrData,
+        weak: Cell<WeakPtrData>,
         /// Inline (not behind a `Box`) so writing it is a write into the
         /// `Owner` allocation itself — the access a stale handle trips on.
         payload: u32,
@@ -205,15 +212,25 @@ mod tests {
     }
 
     impl HasWeakPtrData for Owner {
-        unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
+        unsafe fn weak_ptr_data(this: *mut Self) -> *const Cell<WeakPtrData> {
             // SAFETY: caller contract — pure field projection, no read.
-            unsafe { &raw mut (*this).weak }
+            unsafe { &raw const (*this).weak }
         }
+    }
+
+    /// `on_finalize` through the cell; true when no weak refs remain.
+    fn on_finalize(raw: *mut Owner) -> bool {
+        // SAFETY: `raw` is live.
+        let cell = unsafe { &*Owner::weak_ptr_data(raw) };
+        let mut d = cell.get();
+        let last = d.on_finalize();
+        cell.set(d);
+        last
     }
 
     fn new_owner(payload: u32) -> *mut Owner {
         bun_core::heap::into_raw(Box::new(Owner {
-            weak: WeakPtrData::EMPTY,
+            weak: Cell::new(WeakPtrData::EMPTY),
             payload,
             _heap: Box::new(payload),
         }))
@@ -263,8 +280,7 @@ mod tests {
         assert_eq!(weak.get().map(|o| o.payload), Some(4));
 
         // Owner finalizes its contents: not the last ref, so the allocation stays.
-        // SAFETY: `raw` is live.
-        assert!(!unsafe { (*Owner::weak_ptr_data(raw)).on_finalize() });
+        assert!(!on_finalize(raw));
         assert_eq!(drops(), before);
 
         // `get` on a finalized owner releases the ref and reports `None`, which
@@ -329,12 +345,14 @@ mod tests {
         // SAFETY: see above.
         let mut b = unsafe { WeakPtr::init_ref(raw) };
         // SAFETY: `raw` is live.
-        assert_eq!(unsafe { (*Owner::weak_ptr_data(raw)).reference_count() }, 2);
+        assert_eq!(
+            unsafe { (*Owner::weak_ptr_data(raw)).get().reference_count() },
+            2
+        );
         assert_eq!(a.get().map(|o| o.payload), Some(2));
         assert_eq!(b.get().map(|o| o.payload), Some(2));
 
-        // SAFETY: `raw` is live.
-        assert!(!unsafe { (*Owner::weak_ptr_data(raw)).on_finalize() });
+        assert!(!on_finalize(raw));
         a.deref();
         assert_eq!(drops(), before);
         b.deref();

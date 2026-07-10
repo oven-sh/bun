@@ -172,7 +172,7 @@ impl FileRoute {
                     "expected blob not to be heap-allocated"
                 );
                 *body_value = BodyValue::Blob(blob.dupe());
-                let headers = headers_from(response.get_init_headers(), &blob);
+                let headers = headers_from(response.headers(), &blob);
                 let status_code = response.status_code();
 
                 return Ok(Some(bun_core::heap::into_raw(Box::new(FileRoute {
@@ -246,7 +246,7 @@ impl FileRoute {
                 }
             }
             AnyResponse::H3(s) => {
-                let s = bun_opaque::opaque_deref_mut(s);
+                let s = bun_opaque::opaque_deref(s);
                 for (name, value) in names.iter().zip(values) {
                     s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
                 }
@@ -277,7 +277,7 @@ impl FileRoute {
                 let mut b = bun_core::fmt::ItoaBuf::new();
                 let s = bun_core::fmt::itoa(&mut b, status);
                 // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(r).write_status(s);
+                bun_opaque::opaque_deref(r).write_status(s);
             }
         }
     }
@@ -327,7 +327,7 @@ impl FileRoute {
         this.ref_();
         if let Some(mut server) = this.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
+            resp.timeout(server.config().idle_timeout.get());
         }
         // Clone the path so the borrow into `this.blob.store`
         // doesn't span the scopeguard creation (the guard's closure may free
@@ -567,7 +567,7 @@ impl FileRoute {
             pollable,
             offset: body_offset,
             length: body_len,
-            idle_timeout: this.server.get().unwrap().config().idle_timeout,
+            idle_timeout: this.server.get().unwrap().config().idle_timeout.get(),
             ctx: this_ptr.cast::<c_void>(),
             on_complete: on_stream_complete,
             on_abort: None,

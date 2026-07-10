@@ -1607,10 +1607,12 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             if let Some(entry) = hot.get_entry(&config.id) {
                 macro_rules! reload {
                     ($T:ty) => {{
+                        let ptr = entry.ptr.cast::<$T>();
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
-                        let server: &mut $T = unsafe { &mut *entry.ptr.cast::<$T>() };
-                        server.on_reload_from_zig(&mut config, global_object);
-                        return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
+                        unsafe { &mut *ptr }.on_reload_from_zig(&mut config, global_object);
+                        // SAFETY: fresh shared borrow, after the reload's JS re-entry.
+                        let js_value = unsafe { &*ptr }.js_value.get().try_get();
+                        return Ok(js_value.unwrap_or(JSValue::UNDEFINED));
                     }};
                 }
                 match entry.tag {
@@ -1634,8 +1636,6 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
-            // SAFETY: `init` returned a live heap-allocated server pointer.
-            let server_ref: &mut $ServerType = unsafe { &mut *server };
             // SAFETY: `server` is the live heap-allocated server returned by `init`.
             let route_list_object = <$ServerType>::listen(server);
             if global_object.has_exception() {
@@ -1648,7 +1648,12 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
                 // `server_body` until per-type codegen externs land.
                 <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
             }
-            server_ref.js_value.set_strong(obj, global_object);
+            // SAFETY: `init` returned a live heap-allocated server pointer; this
+            // shared borrow starts after every JS-reaching call above.
+            let server_ref: &$ServerType = unsafe { &*server };
+            server_ref
+                .js_value
+                .with_mut(|r| r.set_strong(obj, global_object));
 
             if global_object.bun_vm().test_isolation_enabled {
                 if let Some(handles) = crate::jsc_hooks::isolation_handles() {
@@ -2557,7 +2562,7 @@ pub mod JSZlib {
                 leak_list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
-                let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
+                let Some(decompressor) = bun_libdeflate::Decompressor::new() else {
                     drop(list);
                     return Err(global_this.throw_out_of_memory());
                 };
@@ -2696,8 +2701,7 @@ pub mod JSZlib {
                 leak_list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
-                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level.unwrap_or(6))
-                else {
+                let Some(compressor) = bun_libdeflate::Compressor::new(level.unwrap_or(6)) else {
                     return Err(global_this.throw_out_of_memory());
                 };
                 let encoding = if is_gzip {
@@ -2966,8 +2970,8 @@ pub mod JSZstd {
             },
         )
         .expect("ZstdCtx::init is infallible");
-        // SAFETY: `job` is a freshly-created live pointer.
-        unsafe { jsc::AnyTaskJob::schedule(job) };
+        // SAFETY: `job` is a freshly-created, unscheduled, owned allocation.
+        jsc::AnyTaskJob::schedule(unsafe { bun_core::heap::take(job) });
         promise_value
     }
 
@@ -3030,7 +3034,7 @@ mod stdio_stores {
                 mode,
                 ..Default::default()
             }),
-            mime_type: bun_http_types::MimeType::NONE,
+            mime_type: bun_jsc::JsCell::new(bun_http_types::MimeType::NONE),
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
         });

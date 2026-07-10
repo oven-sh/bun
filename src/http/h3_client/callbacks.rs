@@ -35,13 +35,13 @@ fn qsocket_arg<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket {
     super::client_session::quic_socket_mut(qs)
 }
 
-/// Upgrade an lsquic-supplied `*mut quic::Stream` callback argument to `&mut`.
+/// Upgrade an lsquic-supplied `*mut quic::Stream` callback argument to `&`.
 /// Same INVARIANT as [`qsocket_arg`] (lsquic-owned, live for the callback,
 /// HTTP-thread-only). Routes through the shared
-/// [`client_session::quic_stream_mut`] accessor.
+/// [`client_session::quic_stream_ref`] accessor.
 #[inline(always)]
-fn qstream_arg<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {
-    super::client_session::quic_stream_mut(s)
+fn qstream_arg<'a>(s: *mut quic::Stream) -> &'a quic::Stream {
+    super::client_session::quic_stream_ref(s)
 }
 
 /// Recover the `ClientSession` from a `quic::Socket`'s ext slot.
@@ -65,16 +65,15 @@ fn session_of<'a>(qs: &mut quic::Socket) -> Option<&'a mut ClientSession> {
 /// INVARIANT: the slot is set in `on_stream_open` (and cleared in `detach`);
 /// the `Stream` is heap-owned by its `ClientSession` (`pending` list) and lives
 /// until `detach()`. HTTP-thread only, and a distinct allocation from the
-/// `quic::Stream`, so the returned `&mut` neither aliases the caller's
-/// `&mut quic::Stream` nor any other live borrow.
+/// `quic::Stream`, so the returned `&mut` does not alias any other live borrow.
 #[inline]
-fn stream_of<'a>(s: &mut quic::Stream) -> Option<&'a mut Stream> {
+fn stream_of<'a>(s: &quic::Stream) -> Option<&'a mut Stream> {
     // Route through `client_session::stream_mut` (one centralised unsafe);
     // the ext slot is `Option<NonNull<Stream>>` — same backref invariant.
-    (*s.ext::<Stream>()).map(|p| stream_mut(p.as_ptr()))
+    s.ext::<Stream>().get().map(|p| stream_mut(p.as_ptr()))
 }
 
-pub(crate) fn register(qctx: &mut quic::Context) {
+pub(crate) fn register(qctx: &quic::Context) {
     qctx.on_hsk_done(on_hsk_done);
     qctx.on_goaway(on_goaway);
     qctx.on_close(on_conn_close);
@@ -168,7 +167,7 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
 
 extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     let s = qstream_arg(s);
-    *s.ext::<Stream>() = None;
+    s.ext::<Stream>().set(None);
     if is_client == 0 {
         return;
     }
@@ -194,8 +193,8 @@ extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     };
     // `stream` is a live element of `session.pending` — `stream_mut`
     // centralises that upgrade invariant.
-    stream_mut(stream).qstream = Some(NonNull::from(&mut *s));
-    *s.ext::<Stream>() = NonNull::new(stream);
+    stream_mut(stream).qstream = Some(NonNull::from(s));
+    s.ext::<Stream>().set(NonNull::new(stream));
     bun_core::scoped_log!(h3_client, "stream_open");
     if let Err(e) = encode::write_request(session, stream_mut(stream), s) {
         session.fail(stream, e);
@@ -285,7 +284,7 @@ extern "C" fn on_stream_writable(s: *mut quic::Stream) {
 extern "C" fn on_stream_close(s: *mut quic::Stream) {
     let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
-    *s.ext::<Stream>() = None;
+    s.ext::<Stream>().set(None);
     stream.qstream = None;
     bun_core::scoped_log!(
         h3_client,

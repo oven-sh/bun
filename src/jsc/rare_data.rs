@@ -716,16 +716,15 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
-    pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
+    /// `vm` is only stashed type-erased as `*mut ()`, so it is taken raw: callers
+    /// need not conjure a second `&mut VirtualMachine` for the duration.
+    pub fn spawn_sync_event_loop(&mut self, vm: *mut VirtualMachine) -> &mut SpawnSyncEventLoop {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the
             // `self` address, so the value must not move after init; allocate
             // the Box first, then init into it.
             let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
-            SpawnSyncEventLoop::init(
-                &mut *boxed,
-                core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>(),
-            );
+            SpawnSyncEventLoop::init(&mut *boxed, vm.cast::<()>());
             // SAFETY: `init` fully initialised the slot.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
@@ -1059,8 +1058,8 @@ impl Drop for RareData {
         debug_assert!(self.cron_jobs.is_empty());
 
         if let Some(s) = self.default_client_ssl_ctx.take() {
-            // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.
-            unsafe { boring::SSL_CTX_free(s) };
+            // Returned by ssl_ctx_cache.get_or_create_opts with a +1 ref.
+            boring::SSL_CTX_free(SslCtx::opaque_ref(s));
         }
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.

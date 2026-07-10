@@ -32,6 +32,9 @@ impl JSUint8Array {
         }
     }
 
+    /// `&mut self`, unlike the ZST-only methods above: the returned slice aliases
+    /// the typed array's real backing store, so the exclusive borrow is the only
+    /// thing preventing two live `&mut [u8]` over the same bytes.
     pub fn slice(&mut self) -> &mut [u8] {
         // Note: detached/empty JSUint8Array has ptr=null, len=0;
         // `ffi::slice_mut` tolerates `(null, 0)` so no extra guard.

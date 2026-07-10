@@ -12,7 +12,7 @@ use bun_core::{FeatureFlags, Generation, ZStr, env_var};
 use bun_paths::resolve_path::platform;
 use bun_paths::strings;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, resolve_path as path_handler};
-use bun_ptr::Interned;
+use bun_ptr::{Interned, ParentRef};
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
 
@@ -227,7 +227,7 @@ impl FileSystem {
 /// in `lib.rs` impl this by forwarding to their own `RealFS::kind`.
 pub trait EntryKindResolver {
     fn resolve_kind(
-        &mut self,
+        &self,
         dir: &[u8],
         base: &[u8],
         existing_fd: Fd,
@@ -269,7 +269,9 @@ impl Default for EntryCache {
 // below opts back in under that external-locking discipline).
 pub struct Entry {
     pub cache: core::cell::Cell<EntryCache>,
-    pub dir: &'static [u8],
+    /// `Cell` so a shared `&Entry` (an EntryStore slot) can be re-pointed at
+    /// its directory on a cache refresh; serialized by the per-entry `mutex`.
+    pub dir: core::cell::Cell<&'static [u8]>,
 
     pub base_: strings::StringOrTinyString,
 
@@ -279,7 +281,7 @@ pub struct Entry {
     pub mutex: Mutex,
     pub need_stat: core::cell::Cell<bool>,
 
-    pub abs_path: Interned,
+    pub abs_path: core::cell::Cell<Interned>,
 }
 
 impl Entry {
@@ -333,47 +335,36 @@ impl Entry {
     /// Interned in DirnameStore.
     #[inline]
     pub fn dir(&self) -> &'static [u8] {
-        self.dir
+        self.dir.get()
     }
 
     /// `Interned` is `Copy`.
     #[inline]
     pub fn abs_path(&self) -> Interned {
-        self.abs_path
+        self.abs_path.get()
     }
 
     #[inline]
-    pub fn set_abs_path(&mut self, p: Interned) {
-        self.abs_path = p;
+    pub fn set_abs_path(&self, p: Interned) {
+        self.abs_path.set(p);
     }
 
     /// Stat-on-first-use.
-    ///
-    /// # Safety
-    /// `fs` must point to a live `EntryKindResolver` (the process-global
-    /// `RealFS` singleton in practice). `resolve_kind` must not re-enter
-    /// this entry's `mutex` (it only performs syscalls and string interning).
     // `Entry` lives in the EntryStore BSSMap singleton. The lazy-stat rewrite
     // of `need_stat` / `cache` is serialized on the per-entry `mutex` here
-    // (double-checked: the cached fast path stays lock-free). `fs` is `*mut`
-    // so the call site does not require a second exclusive `&mut RealFS`
-    // borrow while a `&mut Entry` (borrowed out of `RealFS.entries`) is live.
+    // (double-checked: the cached fast path stays lock-free).
     // Generic over `R: EntryKindResolver` so this block is independent of
     // which `RealFS` copy `fs` points at (see file-top comment).
-    pub unsafe fn kind<R: EntryKindResolver>(&self, fs: *mut R, store_fd: bool) -> EntryKind {
+    pub fn kind<R: EntryKindResolver>(&self, fs: ParentRef<R>, store_fd: bool) -> EntryKind {
         if self.need_stat.get() {
             let _guard = self.mutex.lock_guard();
             if self.need_stat.get() {
                 self.need_stat.set(false);
                 // This is technically incorrect, but we are choosing not to handle errors here
-                // SAFETY: `fs` points at the process-global RealFS singleton; `resolve_kind`
-                // only does syscalls + string interning, so the short `&mut` cannot alias.
-                match unsafe { &mut *fs }.resolve_kind(
-                    self.dir,
-                    self.base(),
-                    self.cache().fd,
-                    store_fd,
-                ) {
+                match fs
+                    .get()
+                    .resolve_kind(self.dir.get(), self.base(), self.cache().fd, store_fd)
+                {
                     Ok(c) => self.cache.set(c),
                     Err(_) => return self.cache().kind,
                 }
@@ -382,28 +373,18 @@ impl Entry {
         self.cache().kind
     }
 
-    ///
-    /// # Safety
-    /// `fs` must point to a live `EntryKindResolver` (the process-global
-    /// `RealFS` singleton in practice). See [`Entry::kind`].
-    pub unsafe fn symlink<R: EntryKindResolver>(
-        &self,
-        fs: *mut R,
-        store_fd: bool,
-    ) -> &'static [u8] {
+    /// Stat-on-first-use; see [`Entry::kind`].
+    pub fn symlink<R: EntryKindResolver>(&self, fs: ParentRef<R>, store_fd: bool) -> &'static [u8] {
         if self.need_stat.get() {
             let _guard = self.mutex.lock_guard();
             if self.need_stat.get() {
                 self.need_stat.set(false);
                 // This error can happen if the file was deleted between the time the directory
                 // was scanned and the time it was read
-                // SAFETY: see the note on `Entry::kind`.
-                match unsafe { &mut *fs }.resolve_kind(
-                    self.dir,
-                    self.base(),
-                    self.cache().fd,
-                    store_fd,
-                ) {
+                match fs
+                    .get()
+                    .resolve_kind(self.dir.get(), self.base(), self.cache().fd, store_fd)
+                {
                     Ok(c) => self.cache.set(c),
                     Err(_) => return b"",
                 }
@@ -421,12 +402,12 @@ impl Clone for Entry {
     fn clone(&self) -> Self {
         Self {
             cache: core::cell::Cell::new(self.cache.get()),
-            dir: self.dir,
+            dir: core::cell::Cell::new(self.dir.get()),
             base_: strings::StringOrTinyString::init(self.base_.slice()),
             base_lowercase_: strings::StringOrTinyString::init(self.base_lowercase_.slice()),
             mutex: Mutex::default(),
             need_stat: core::cell::Cell::new(self.need_stat.get()),
-            abs_path: self.abs_path,
+            abs_path: core::cell::Cell::new(self.abs_path.get()),
         }
     }
 }
@@ -435,12 +416,12 @@ impl Default for Entry {
     fn default() -> Self {
         Self {
             cache: core::cell::Cell::new(EntryCache::default()),
-            dir: b"",
+            dir: core::cell::Cell::new(b"" as &'static [u8]),
             base_: strings::StringOrTinyString::init(b""),
             base_lowercase_: strings::StringOrTinyString::init(b""),
             mutex: Mutex::default(),
             need_stat: core::cell::Cell::new(true),
-            abs_path: Interned::EMPTY,
+            abs_path: core::cell::Cell::new(Interned::EMPTY),
         }
     }
 }
@@ -541,18 +522,18 @@ pub mod dir_entry {
 /// Per-entry hook invoked by `add_entry`/`readdir`.
 pub trait DirEntryIterator {
     const IS_VOID: bool = false;
-    fn next(&self, entry: &mut Entry, fd: Fd);
+    fn next(&self, entry: &Entry, fd: Fd);
 }
 
 impl DirEntryIterator for () {
     const IS_VOID: bool = true;
-    fn next(&self, _entry: &mut Entry, _fd: Fd) {}
+    fn next(&self, _entry: &Entry, _fd: Fd) {}
 }
 
 impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
     const IS_VOID: bool = T::IS_VOID;
     #[inline]
-    fn next(&self, entry: &mut Entry, fd: Fd) {
+    fn next(&self, entry: &Entry, fd: Fd) {
         (**self).next(entry, fd)
     }
 }
@@ -657,14 +638,14 @@ impl DirEntry {
                 // `name_hash` instead of re-hashing.
                 if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc) {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
-                    let existing = unsafe { &mut *existing_ptr };
+                    let existing = unsafe { &*existing_ptr };
                     // `MutexGuard` stores a `BackRef<Mutex>` (lifetime-erased), so
-                    // holding it does not borrow `existing` — the field writes
+                    // holding it does not borrow `existing` — the `Cell` writes
                     // below remain unconstrained. Replaces the manual
                     // `lock()` + `scopeguard(addr_of!(mutex), |m| (*m).unlock())`
                     // backref-deref pair.
                     let _guard = existing.mutex.lock_guard();
-                    existing.dir = self.dir;
+                    existing.dir.set(self.dir);
 
                     existing.need_stat.set(
                         existing.need_stat.get()
@@ -718,7 +699,7 @@ impl DirEntry {
                     strings::StringOrTinyString::init_append_if_needed(name_lc, filename_store)?
                 };
                 addr_of_mut!((*p).base_lowercase_).write(base_lowercase);
-                addr_of_mut!((*p).dir).write(self.dir);
+                addr_of_mut!((*p).dir).write(core::cell::Cell::new(self.dir));
                 addr_of_mut!((*p).mutex).write(Mutex::new());
                 // Call "stat" lazily for performance. The "@material-ui/icons" package
                 // contains a directory with over 11,000 entries in it and running "stat"
@@ -731,13 +712,13 @@ impl DirEntry {
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
                 }));
-                addr_of_mut!((*p).abs_path).write(Interned::EMPTY);
+                addr_of_mut!((*p).abs_path).write(core::cell::Cell::new(Interned::EMPTY));
                 p
             }
         };
 
         // SAFETY: just produced from EntryStore append or prev_map lookup
-        let stored_ref = unsafe { &mut *stored };
+        let stored_ref = unsafe { &*stored };
 
         // PERF: the
         // generic `put` here would heap-box a second key copy. `base_lowercase`
@@ -760,7 +741,6 @@ impl DirEntry {
         }
 
         if FeatureFlags::VERBOSE_FS {
-            // re-borrow `base()` after the `iterator.next` mutable borrow ends.
             let stored_name = stored_ref.base();
             if found_kind == Some(EntryKind::Dir) {
                 bun_core::prettyln!("   + {}/", BStr::new(stored_name));
@@ -933,42 +913,48 @@ pub(crate) struct EntriesGuard {
 impl EntriesGuard {
     /// Single `unsafe` deref site for the `entries_option_map()` singleton.
     ///
-    /// Private: `&self → &mut Map` is sound only because `self._lock` is the
-    /// proof-of-exclusivity (`entries_mutex` held), the map lives in a
-    /// disjoint static allocation, and every caller below uses the borrow
-    /// for one map operation then drops it — no two `&mut` overlap. Do NOT
-    /// expose publicly (would let safe code create aliased `&mut`).
+    /// `&mut self` is the compiler-enforced proof that no two `&mut Map`
+    /// overlap; `self._lock` (`entries_mutex` held) is the proof no other
+    /// thread holds one.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn map_mut(&self) -> &mut EntriesOptionMap {
+    fn map_mut(&mut self) -> &mut EntriesOptionMap {
         // SAFETY: `self._lock` holds `entries_mutex` for this guard's whole
         // lifetime — sole `&mut` to the process-static singleton. The returned
-        // borrow is tied to `&self` (the guard), so it cannot outlive the lock.
+        // borrow is tied to `&mut self`, so it cannot outlive the lock.
         unsafe { &mut *entries_option_map() }
     }
 
     pub(crate) fn get_or_put(
-        &self,
+        &mut self,
         key: &[u8],
     ) -> core::result::Result<allocators::Result, AllocError> {
         self.map_mut().get_or_put(key)
     }
-    pub(crate) fn at_index(&self, index: allocators::IndexType) -> Option<*mut EntriesOption> {
+    pub(crate) fn at_index(&mut self, index: allocators::IndexType) -> Option<*mut EntriesOption> {
         let r = self.map_mut().at_index(index)?;
         Some(std::ptr::from_mut::<EntriesOption>(r))
     }
+    /// Exclusive borrow of one slot, tied to `&mut self` (the held lock).
+    /// Callers that need the slot across a `&mut RealFS` call re-borrow by
+    /// `index` rather than laundering a `*mut EntriesOption`.
+    pub(crate) fn at_index_mut(
+        &mut self,
+        index: allocators::IndexType,
+    ) -> Option<&mut EntriesOption> {
+        self.map_mut().at_index(index)
+    }
     pub(crate) fn put(
-        &self,
+        &mut self,
         result: &mut allocators::Result,
         value: EntriesOption,
     ) -> core::result::Result<*mut EntriesOption, AllocError> {
         let r = self.map_mut().put(result, value)?;
         Ok(std::ptr::from_mut::<EntriesOption>(r))
     }
-    pub(crate) fn mark_not_found(&self, result: allocators::Result) {
+    pub(crate) fn mark_not_found(&mut self, result: allocators::Result) {
         self.map_mut().mark_not_found(result)
     }
-    pub(crate) fn remove(&self, key: &[u8]) -> bool {
+    pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
         self.map_mut().remove(key)
     }
 }
@@ -1128,65 +1114,56 @@ impl RealFS {
         // `entries_mutex` for the whole operation so the `&mut BSSMapInner` is
         // exclusive; it does not borrow `self`, so the `&mut self` calls below
         // (`readdir`, `read_directory_error`) remain unconstrained while held.
-        let map = self.entries_locked();
+        let mut map = self.entries_locked();
 
-        // `at_index` returns a raw `*mut EntriesOption`.
-        // Form short-lived `&mut` only at each use site below;
-        // never hand a `&'static mut` back to the caller.
-        let existing_ptr = map.at_index(index)?;
-        // SAFETY: `entries_mutex` held; no other `&mut` to this slot in scope.
-        if let EntriesOption::Entries(entries) = unsafe { &mut *existing_ptr } {
-            if entries.generation < generation {
-                let dir_path = entries.dir;
-                // capture raw ptrs to the in-place `DirEntry` fields, then
-                // drop the short-lived `&mut` before re-borrowing `self` for
-                // `readdir` / `read_directory_error`.
-                let entries_ptr: *mut DirEntry = &raw mut **entries;
-                // SAFETY: derive `prev_map_ptr` FROM `entries_ptr` so both raw ptrs
-                // share one provenance root. Writing `&mut entries.data` here would
-                // call `Box::deref_mut` a second time, which under Stacked Borrows
-                // retags the whole `DirEntry` and invalidates `entries_ptr` — making
-                // the later `*entries_ptr = new_entry` UB.
-                let prev_map_ptr: *mut dir_entry::EntryMap =
-                    unsafe { core::ptr::addr_of_mut!((*entries_ptr).data) };
-                let handle_dir = match bun_sys::Dir::open(dir_path) {
-                    Ok(h) => h,
-                    Err(err) => {
-                        // SAFETY: `entries_mutex` held; sole access to this slot.
-                        unsafe { (*prev_map_ptr).clear() };
-                        return Some(
-                            self.read_directory_error(Some(&map), dir_path, err.into())
-                                .expect("unreachable"),
-                        );
+        // Carry the slab `index`, not a raw slot pointer: each step below
+        // re-borrows the slot through the guard, so no borrow spans a
+        // `&mut self` call (`readdir` / `read_directory_error`).
+        let stale_dir: Option<&'static [u8]> = match map.at_index_mut(index)? {
+            EntriesOption::Entries(entries) if entries.generation < generation => Some(entries.dir),
+            _ => None,
+        };
+        if let Some(dir_path) = stale_dir {
+            let handle_dir = match bun_sys::Dir::open(dir_path) {
+                Ok(h) => h,
+                Err(err) => {
+                    if let Some(EntriesOption::Entries(entries)) = map.at_index_mut(index) {
+                        entries.data.clear();
                     }
-                };
-                let new_entry = match self.readdir(
-                    false,
-                    // `handle_dir` drops at end of this block; never publish.
-                    false,
-                    // SAFETY: `entries_mutex` held; `readdir` does not touch
-                    // `self.entries`, so this `&mut EntryMap` is unaliased.
-                    Some(unsafe { &mut *prev_map_ptr }),
-                    dir_path,
-                    generation,
-                    &handle_dir,
-                    (),
-                ) {
-                    Ok(e) => e,
-                    Err(err) => {
-                        // SAFETY: see above.
-                        unsafe { (*prev_map_ptr).clear() };
-                        return Some(
-                            self.read_directory_error(Some(&map), dir_path, err)
-                                .expect("unreachable"),
-                        );
-                    }
-                };
-                // SAFETY: `entries_mutex` held; sole access to this slot.
-                unsafe {
-                    (*prev_map_ptr).clear();
-                    *entries_ptr = new_entry;
+                    return Some(
+                        self.read_directory_error(Some(&mut map), dir_path, err.into())
+                            .expect("unreachable"),
+                    );
                 }
+            };
+            let prev_map = match map.at_index_mut(index) {
+                Some(EntriesOption::Entries(entries)) => Some(&mut entries.data),
+                _ => None,
+            };
+            let new_entry = match self.readdir(
+                false,
+                // `handle_dir` drops at end of this block; never publish.
+                false,
+                prev_map,
+                dir_path,
+                generation,
+                &handle_dir,
+                (),
+            ) {
+                Ok(e) => e,
+                Err(err) => {
+                    if let Some(EntriesOption::Entries(entries)) = map.at_index_mut(index) {
+                        entries.data.clear();
+                    }
+                    return Some(
+                        self.read_directory_error(Some(&mut map), dir_path, err)
+                            .expect("unreachable"),
+                    );
+                }
+            };
+            if let Some(EntriesOption::Entries(entries)) = map.at_index_mut(index) {
+                entries.data.clear();
+                **entries = new_entry;
             }
         }
 
@@ -1528,7 +1505,7 @@ impl RealFS {
 
     fn read_directory_error(
         &mut self,
-        entries: Option<&EntriesGuard>,
+        entries: Option<&mut EntriesGuard>,
         dir: &[u8],
         err: bun_core::Error,
     ) -> Result<*mut EntriesOption, AllocError> {
@@ -1614,7 +1591,7 @@ impl RealFS {
         // mutex by raw pointer (no borrow of `self`), so the `&mut self` calls below
         // (`open_dir`, `readdir`, `read_directory_error`) remain unconstrained while
         // the lock is held.
-        let entries_guard = if FeatureFlags::ENABLE_ENTRY_CACHE {
+        let mut entries_guard = if FeatureFlags::ENABLE_ENTRY_CACHE {
             Some(self.entries_locked())
         } else {
             None
@@ -1622,32 +1599,38 @@ impl RealFS {
 
         let mut in_place: Option<*mut DirEntry> = None;
 
-        if let Some(entries) = entries_guard.as_ref() {
+        if let Some(entries) = entries_guard.as_mut() {
             cache_result = Some(entries.get_or_put(dir)?);
 
             let cr = cache_result.as_ref().unwrap();
             if cr.has_checked_if_exists() {
-                if let Some(cached_result) = entries.at_index(cr.index) {
-                    // SAFETY: `entries_mutex` held; form a short-lived `&mut` for the
-                    // match only — the raw `*mut` is what escapes to the caller.
-                    match unsafe { &mut *cached_result } {
-                        EntriesOption::Err(_) => return Ok(cached_result),
-                        EntriesOption::Entries(e) if e.generation >= generation => {
-                            return Ok(cached_result);
-                        }
-                        EntriesOption::Entries(e) => {
-                            in_place = Some(&raw mut **e);
+                // Borrow the slot through the guard; on the cache-hit path
+                // re-derive the raw handle from `cr.index` for the return, so
+                // no raw pointer escapes a `&mut EntriesOption`.
+                let mut cached_hit = false;
+                match entries.at_index_mut(cr.index) {
+                    Some(EntriesOption::Err(_)) => cached_hit = true,
+                    Some(EntriesOption::Entries(e)) if e.generation >= generation => {
+                        cached_hit = true;
+                    }
+                    Some(EntriesOption::Entries(e)) => {
+                        in_place = Some(&raw mut **e);
+                    }
+                    None => {
+                        if cr.status == allocators::ItemStatus::NotFound && generation == 0 {
+                            return Ok(TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
+                                slot.write(EntriesOption::Err(dir_entry::Err {
+                                    original_err: bun_core::err!("ENOENT"),
+                                    canonical_error: bun_core::err!("ENOENT"),
+                                }));
+                                // threadlocal storage outlives caller; return raw `*mut`.
+                                slot.as_mut_ptr()
+                            }));
                         }
                     }
-                } else if cr.status == allocators::ItemStatus::NotFound && generation == 0 {
-                    return Ok(TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
-                        slot.write(EntriesOption::Err(dir_entry::Err {
-                            original_err: bun_core::err!("ENOENT"),
-                            canonical_error: bun_core::err!("ENOENT"),
-                        }));
-                        // threadlocal storage outlives caller; return raw `*mut`.
-                        slot.as_mut_ptr()
-                    }));
+                }
+                if cached_hit {
+                    return Ok(entries.at_index(cr.index).expect("cache slot"));
                 }
             }
         }
@@ -1662,7 +1645,7 @@ impl RealFS {
                     _opened.as_ref().unwrap()
                 }
                 Err(err) => {
-                    return Ok(self.read_directory_error(entries_guard.as_ref(), dir, err)?);
+                    return Ok(self.read_directory_error(entries_guard.as_mut(), dir, err)?);
                 }
             },
         };
@@ -1697,7 +1680,7 @@ impl RealFS {
                     // SAFETY: see above
                     unsafe { (*existing).data.clear() };
                 }
-                return Ok(self.read_directory_error(entries_guard.as_ref(), dir, err)?);
+                return Ok(self.read_directory_error(entries_guard.as_mut(), dir, err)?);
             }
         };
 
@@ -1712,7 +1695,7 @@ impl RealFS {
             }
         }
 
-        if let Some(map) = entries_guard.as_ref() {
+        if let Some(map) = entries_guard.as_mut() {
             if publish_fd && !entries.fd.is_valid() {
                 entries.fd = handle_fd;
             }
@@ -2155,7 +2138,7 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
 
 impl RealFS {
     pub fn kind(
-        &mut self,
+        &self,
         dir_: &[u8],
         base: &[u8],
         existing_fd: Fd,
@@ -2343,7 +2326,7 @@ impl RealFS {
 impl EntryKindResolver for RealFS {
     #[inline(always)]
     fn resolve_kind(
-        &mut self,
+        &self,
         dir: &[u8],
         base: &[u8],
         existing_fd: Fd,

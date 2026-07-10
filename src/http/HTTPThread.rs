@@ -24,9 +24,9 @@ bun_core::declare_scope!(HTTPThread_log, visible); // log
 /// Since configs are interned via SSLConfig.GlobalRegistry, pointer equality
 /// is sufficient for lookup. Each entry holds a ref on its SSLConfig.
 struct SslContextCacheEntry {
-    /// Intrusive-refcounted custom-SSL context. The cache holds one strong
-    /// ref (taken in `connect`); released via `ctx.deref()` on eviction.
-    ctx: NonNull<NewHttpContext<true>>,
+    /// Intrusive-refcounted custom-SSL context. The cache adopts one strong
+    /// ref (in `connect`); released via `ctx.deref()` on eviction.
+    ctx: bun_ptr::RefPtr<NewHttpContext<true>>,
     last_used_ns: u64,
     /// Strong ref held by the cache entry (released on eviction).
     _config_ref: ssl_config::SharedPtr,
@@ -38,11 +38,10 @@ impl SslContextCacheEntry {
     /// INVARIANT: `ctx` is set once at insert (in `connect`) to a fresh
     /// `heap::release`-boxed `NewHttpContext` on which the cache holds one
     /// strong intrusive ref; it stays live until eviction's `deref` drops it.
-    /// The map and all callers are HTTP-thread-only, so the returned `&mut`
-    /// is the sole live borrow. Centralises the `Option<NonNull>`-style
+    /// `&mut self` makes the returned borrow the sole live one. Centralises the
     /// `(*entry.ctx.as_ptr()).…` raw deref repeated at every lookup.
     #[inline]
-    fn ctx_mut<'a>(&self) -> &'a mut NewHttpContext<true> {
+    fn ctx_mut(&mut self) -> &mut NewHttpContext<true> {
         // SAFETY: see INVARIANT above.
         unsafe { &mut *self.ctx.as_ptr() }
     }
@@ -53,10 +52,9 @@ impl SslContextCacheEntry {
     /// `NewHttpContext::deref(entry.ctx.as_ptr())` open-coded at both eviction
     /// paths so the set-once `NonNull` is dereferenced in one place.
     fn release(self) {
-        // SAFETY: same INVARIANT as [`ctx_mut`] — `ctx` is a
-        // `heap::release`-boxed `NewHttpContext` on which the cache holds one
-        // strong ref; this `deref` is its sole release.
-        unsafe { NewHttpContext::<true>::deref(self.ctx.as_ptr()) };
+        // `RefPtr` has no `Drop`, so this is the sole release of the ref the
+        // cache adopted at insert.
+        self.ctx.deref();
         // self.config_ref drops here (entry.config_ref.deinit()).
     }
 }
@@ -278,25 +276,26 @@ pub struct CertCheckResumeMessage {
 }
 
 pub struct LibdeflateState {
-    pub decompressor: Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>,
-    pub compressor: Option<bun_libdeflate_sys::libdeflate::OwnedCompressor>,
+    pub decompressor: Option<bun_libdeflate_sys::libdeflate::Decompressor>,
+    pub compressor: Option<bun_libdeflate_sys::libdeflate::Compressor>,
     pub shared_buffer: [u8; 512 * 1024],
 }
 
-// SAFETY: `Option<Owned{De,}Compressor>` is `#[repr(transparent)]` over
-// `NonNull`, so all-zero = `None`; `[u8; N]` is valid at the all-zero bit
-// pattern.
+// SAFETY: `Option<Compressor>` / `Option<Decompressor>` are
+// `#[repr(transparent)]` over `NonNull`, so all-zero = `None`; `[u8; N]` is
+// valid at the all-zero bit pattern.
 unsafe impl bun_core::Zeroable for LibdeflateState {}
 
 impl LibdeflateState {
-    /// Mutable access to the libdeflate decompressor handle.
+    /// Access to the libdeflate decompressor handle. `&` suffices: libdeflate
+    /// mutates the decompressor's scratch state through a shared borrow.
     ///
     /// `decompressor` is set once in [`HttpThread::deflater`] (panics on OOM)
     /// and is never `None` after that, so the unwrap is infallible.
     #[inline]
-    pub(crate) fn decompressor_mut(&mut self) -> &mut bun_libdeflate_sys::libdeflate::Decompressor {
+    pub(crate) fn decompressor(&self) -> &bun_libdeflate_sys::libdeflate::Decompressor {
         self.decompressor
-            .as_deref_mut()
+            .as_ref()
             .expect("set in HttpThread::deflater()")
     }
 }
@@ -386,17 +385,12 @@ impl HttpThread {
         self.uws_loop
     }
 
-    /// Mutable access to the live uSockets event loop.
-    ///
-    /// INVARIANT: `uws_loop` is set once in [`on_start`] (published via the
-    /// `has_awoken` Release store) and outlives the HTTP thread. The loop is a
-    /// separate C heap allocation disjoint from `self`. HTTP-thread-only at
-    /// every caller — `wakeup()` is the sole cross-thread entry and uses the
-    /// raw FFI call instead. Centralises the raw `&mut *self.uws_loop`
-    /// upgrade repeated in `process_events`.
+    /// Mutable access to the live uSockets event loop. The loop is a separate
+    /// C heap allocation disjoint from `self`, so `&mut self` is what makes
+    /// the returned `&mut` exclusive; `wakeup()` uses the raw FFI call.
     #[inline]
-    fn uws_loop_mut<'a>(&self) -> &'a mut uws::Loop {
-        // SAFETY: see INVARIANT above.
+    fn uws_loop_mut(&mut self) -> &mut uws::Loop {
+        // SAFETY: set once in `on_start` and outlives the HTTP thread.
         unsafe { &mut *self.uws_loop }
     }
 
@@ -426,7 +420,7 @@ impl HttpThread {
 
     pub fn deflater(&mut self) -> &mut LibdeflateState {
         if self.lazy_libdeflater.is_none() {
-            let decompressor = bun_libdeflate_sys::libdeflate::OwnedDecompressor::new()
+            let decompressor = bun_libdeflate_sys::libdeflate::Decompressor::new()
                 .unwrap_or_else(|| bun_core::out_of_memory());
             let mut state: Box<LibdeflateState> = bun_core::boxed_zeroed();
             state.decompressor = Some(decompressor);
@@ -507,7 +501,7 @@ impl HttpThread {
                 if let Some(entry) = custom_ssl_context_map().get_mut(&requested_config) {
                     // Cache hit - reuse existing SSL context
                     entry.last_used_ns = self.timer_read();
-                    client.set_custom_ssl_ctx(entry.ctx);
+                    client.set_custom_ssl_ctx(entry.ctx.data);
                     let ctx = entry.ctx_mut();
                     // Keepalive is now supported for custom SSL contexts
                     return if let Some(url) = client.http_proxy.clone() {
@@ -555,7 +549,9 @@ impl HttpThread {
                 let _ = custom_ssl_context_map().put(
                     requested_config,
                     SslContextCacheEntry {
-                        ctx: ctx_nn,
+                        // SAFETY: freshly allocated with ref_count == 1; the
+                        // cache adopts that ref and releases it in `release`.
+                        ctx: unsafe { bun_ptr::RefPtr::adopt_ref(ctx_nn.as_ptr()) },
                         last_used_ns: now,
                         // Strong ref for the cache entry; client.tls_props keeps its own.
                         _config_ref: tls,

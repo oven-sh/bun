@@ -89,26 +89,10 @@ impl OutdatedCommand {
         original_cwd: &[u8],
         manager: &mut PackageManager,
     ) -> Result<(), bun_core::Error> {
-        // Reshaped for borrowck — `load_from_cwd` would otherwise alias
-        // `PackageManager` with its `lockfile` field. Project disjoint
-        // raw pointers from the singleton first; `load_from_cwd` only reads
-        // `manager.options` / migration helpers and never re-borrows
-        // `manager.lockfile` through the `pm` argument.
-        let pm_ptr: *mut PackageManager = manager;
         let not_silent = manager.options.log_level != LogLevel::Silent;
         let log_ptr: *mut bun_ast::Log = manager.log;
 
-        // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
-        // no other live `&mut Lockfile` exists at this point.
-        let lockfile: &mut bun_install::lockfile::Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
-        // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
-        let log = unsafe { &mut *log_ptr };
-        match lockfile.load_from_cwd::<true>(
-            // SAFETY: see comment above — `load_from_cwd` accesses `manager`
-            // fields disjoint from `lockfile`.
-            Some(unsafe { &mut *pm_ptr }),
-            log,
-        ) {
+        match manager.load_lockfile_from_cwd::<true>() {
             LoadResult::NotFound => {
                 if not_silent {
                     Output::err_generic("missing lockfile, nothing outdated", ());

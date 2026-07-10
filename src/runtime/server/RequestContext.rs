@@ -76,7 +76,7 @@ impl AnyResponseExt for uws::AnyResponse {
         match self {
             uws::AnyResponse::SSL(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
             uws::AnyResponse::TCP(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
-            uws::AnyResponse::H3(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
+            uws::AnyResponse::H3(p) => bun_opaque::opaque_deref(p).has_responded(),
         }
     }
     #[inline]
@@ -88,9 +88,7 @@ impl AnyResponseExt for uws::AnyResponse {
             uws::AnyResponse::TCP(p) => {
                 bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
             }
-            uws::AnyResponse::H3(p) => {
-                bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
-            }
+            uws::AnyResponse::H3(p) => bun_opaque::opaque_deref(p).override_write_offset(offset),
         }
     }
 }
@@ -764,11 +762,7 @@ where
 
         if ctx.method == Method::HEAD {
             if let Some(resp) = ctx.resp {
-                let mut pair = HeaderResponsePair {
-                    this: ctx,
-                    response,
-                };
-                resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+                resp.corked(|| Self::do_render_head_response(ctx, response));
             }
             return;
         }
@@ -1022,16 +1016,11 @@ where
 
     pub fn render_missing(&mut self) {
         if let Some(resp) = self.resp {
-            resp.run_corked_with_type(|ctx| Self::render_missing_corked(ctx), self);
+            resp.corked(|| Self::render_missing_corked(self));
         }
     }
 
-    /// # Safety
-    /// `ctx` must point to a live `RequestContext` threaded through cork user-data.
-    pub(crate) fn render_missing_corked(ctx: *mut Self) {
-        // SAFETY: caller upholds the fn-level contract — `ctx` is the live
-        // `RequestContext` threaded through cork user-data.
-        let ctx = unsafe { &mut *ctx };
+    pub(crate) fn render_missing_corked(ctx: &mut Self) {
         if let Some(resp) = ctx.resp {
             if !DEBUG_MODE {
                 if !ctx.flags.has_written_status() {
@@ -1859,7 +1848,7 @@ where
         // managing partial responses themselves.
         let user_handles_range = if let Some(r) = self.response_weakref.get() {
             r.status_code() != 200
-                || r.get_init_headers_mut()
+                || r.headers()
                     .map(|h| h.fast_has(jsc::HTTPHeaderName::ContentRange))
                     .unwrap_or(false)
         } else {
@@ -1890,9 +1879,9 @@ where
                     let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
                     self.do_write_status(416);
                     if let Some(response) = self.response_weakref.get() {
-                        if let Some(mut headers_) = response.swap_init_headers() {
-                            self.do_write_headers(&mut headers_);
-                            // `HeadersRef` releases the +1 ref in Drop; do NOT
+                        if let Some(headers_) = response.swap_init_headers() {
+                            self.do_write_headers(&headers_);
+                            // `FetchHeaders` releases the +1 ref in Drop; do NOT
                             // call `.deref()` explicitly (would double-free).
                             drop(headers_);
                         }
@@ -1962,7 +1951,7 @@ where
             } else {
                 None
             },
-            idle_timeout: server.config().idle_timeout,
+            idle_timeout: server.config().idle_timeout.get(),
             ctx: std::ptr::from_mut::<Self>(self).cast::<c_void>(),
             on_complete: Self::on_file_stream_complete,
             on_abort: Some(Self::on_file_stream_abort),
@@ -2015,22 +2004,16 @@ where
     /// JSSink<T> is `repr(transparent)` so the inner-ptr free matches the
     /// outer allocation.
     fn destroy_sink(ptr: NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>) {
-        // `ptr` was `heap::alloc`'d in do_render_stream and is being consumed
-        // exactly once here. `JSSink<T>` is repr(transparent), so the inner
-        // `HTTPServerWritable` shares the allocation Layout.
-        ResponseStream::<SSL_ENABLED, HTTP3>::destroy(
-            ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED, HTTP3>>(),
-        );
+        // SAFETY: `ptr` was `heap::into_raw_nn`'d in do_render_stream and is
+        // consumed exactly once here. `JSSink<T>` is repr(transparent), so the
+        // inner `HTTPServerWritable` shares the allocation Layout.
+        ResponseStream::<SSL_ENABLED, HTTP3>::destroy(unsafe {
+            bun_core::heap::take(ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED, HTTP3>>())
+        });
     }
 
-    fn do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>) {
+    fn do_render_stream(this: &mut Self, stream: &mut WebCore::ReadableStream) {
         ctx_log!("doRenderStream");
-        // SAFETY: pair is a stack local threaded through cork user-data.
-        let pair = unsafe { &mut *pair };
-        // NOTE: reshaped for borrowck — split the two fields up front so
-        // `this` and `stream` are independent borrows of `*pair`.
-        let this: &mut Self = &mut *pair.this;
-        let stream = &mut pair.stream;
         debug_assert!(this.server.is_some());
         // SAFETY: BACKREF
         let global_this = this.server().global_this();
@@ -2090,7 +2073,7 @@ where
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::assign_to_stream(
                 global_this,
                 stream.value,
-                &mut response_stream.sink,
+                std::ptr::from_mut(&mut response_stream.sink),
                 signal_ptr_slot,
             );
 
@@ -2343,8 +2326,10 @@ where
         // we have to clone the request headers here since they will soon belong to a different request
         if !request_object.has_fetch_headers() {
             if !HTTP3 {
-                // `HeadersRef::create_from_uws` adopts the freshly-allocated +1 ref.
-                request_object.set_fetch_headers(Some(response::HeadersRef::create_from_uws(req)));
+                // `FetchHeaders::create_from_uws` adopts the freshly-allocated +1 ref.
+                // SAFETY: for !HTTP3, `req` is the live `uWS::HttpRequest*` for this callback frame.
+                let headers = unsafe { response::FetchHeaders::create_from_uws(req) };
+                request_object.set_fetch_headers(Some(headers));
             }
         }
 
@@ -2426,20 +2411,12 @@ where
             || self.server().terminated()
     }
 
-    /// # Safety
-    /// `pair` must point to a live stack-local `HeaderResponseSizePair` threaded through cork user-data.
-    pub(crate) fn do_render_head_response_after_s3_size_resolved(
-        pair: *mut HeaderResponseSizePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>,
-    ) {
-        // SAFETY: caller upholds the fn-level contract — `pair` points to a
-        // live stack-local `HeaderResponseSizePair` threaded through cork user-data.
-        let pair = unsafe { &mut *pair };
-        let this = &mut *pair.this;
+    pub(crate) fn do_render_head_response_after_s3_size_resolved(this: &mut Self, size: usize) {
         this.render_metadata();
 
         if let Some(resp) = this.resp {
             // SAFETY: FFI handle
-            resp.write_header_int(b"content-length", pair.size as u64);
+            resp.write_header_int(b"content-length", size as u64);
         }
         this.end_without_body(this.should_close_connection());
         // `end_without_body` released the base ref; the caller
@@ -2463,24 +2440,17 @@ where
                 | S3::simple_request::S3StatResult::NotFound(_) => 0,
                 S3::simple_request::S3StatResult::Success(stat) => stat.size,
             };
-            let mut pair = HeaderResponseSizePair { this, size };
-            resp.run_corked_with_type(
-                |p| Self::do_render_head_response_after_s3_size_resolved(p),
-                &raw mut pair,
-            );
+            resp.corked(|| Self::do_render_head_response_after_s3_size_resolved(this, size));
         }
         // No early returns above; explicit deref instead of a scopeguard that
         // would alias `&mut Self` through a captured raw pointer.
         this.deref();
     }
 
-    fn do_render_head_response(
-        pair: *mut HeaderResponsePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>,
-    ) {
-        // SAFETY: pair is a stack local threaded through cork user-data.
-        let pair = unsafe { &mut *pair };
-        let this = &mut *pair.this;
-        let response_ptr = pair.response;
+    /// `response_ptr` is the JS wrapper's cell pointer, not a `&mut Response`:
+    /// it is handed to `set_response`, which stores it in a `WeakPtr` that
+    /// outlives any reborrow. The cell is GC-rooted by the calling frame.
+    fn do_render_head_response(this: &mut Self, response_ptr: *mut Response) {
         if this.resp.is_none() {
             return;
         }
@@ -2499,7 +2469,7 @@ where
         // not derive framing from that body (or the user headers) either
         // (RFC 9110 §9.3.2): render the exact metadata+framing GET would.
         if HTTPStatusText::is_null_body(response.status_code()) {
-            Self::do_render_blob_corked(std::ptr::from_mut::<Self>(this));
+            Self::do_render_blob_corked(this);
             return;
         }
 
@@ -2525,11 +2495,8 @@ where
                 Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_)
             )
         };
-        // `fast_get`/`fast_has` take `&mut self` (FFI shim), so use the `_mut`
-        // accessor — `get_fetch_headers()` and `get_init_headers()` alias the
-        // same `init.headers` field.
         if !body_decides_framing {
-            if let Some(headers) = response.get_init_headers_mut() {
+            if let Some(headers) = response.headers() {
                 // first respect the headers
                 if !HTTP3 {
                     if let Some(transfer_encoding) =
@@ -2709,11 +2676,7 @@ where
             ctx.flags.set_response_protected(false);
             if ctx.method == Method::HEAD {
                 if let Some(resp) = ctx.resp {
-                    let mut pair = HeaderResponsePair {
-                        this: ctx,
-                        response,
-                    };
-                    resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+                    resp.corked(|| Self::do_render_head_response(ctx, response));
                 }
                 return;
             } else {
@@ -2787,11 +2750,7 @@ where
                     ctx.flags.set_response_protected(false);
                     if ctx.method == Method::HEAD {
                         if let Some(resp) = ctx.resp {
-                            let mut pair = HeaderResponsePair {
-                                this: ctx,
-                                response,
-                            };
-                            resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+                            resp.corked(|| Self::do_render_head_response(ctx, response));
                         }
                         return;
                     }
@@ -3204,8 +3163,8 @@ where
                         | readable_stream::Source::JavaScript
                         | readable_stream::Source::Direct => {
                             if let Some(resp) = this.resp {
-                                let mut pair = StreamPair { stream, this };
-                                resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
+                                let mut stream = stream;
+                                resp.corked(|| Self::do_render_stream(this, &mut stream));
                             }
                             return;
                         }
@@ -3337,19 +3296,14 @@ where
         // This is an important performance optimization
         if self.flags.has_abort_handler() && self.blob.fast_size() < 16384 - 1024 {
             if let Some(resp) = self.resp {
-                resp.run_corked_with_type(|ctx| Self::do_render_blob_corked(ctx), self);
+                resp.corked(|| Self::do_render_blob_corked(self));
             }
         } else {
-            Self::do_render_blob_corked(std::ptr::from_mut::<Self>(self));
+            Self::do_render_blob_corked(self);
         }
     }
 
-    /// # Safety
-    /// `this` must point to a live `RequestContext` threaded through cork user-data.
-    pub(crate) fn do_render_blob_corked(this: *mut Self) {
-        // SAFETY: caller upholds the fn-level contract — `this` points to a
-        // live `RequestContext` threaded through cork user-data.
-        let this = unsafe { &mut *this };
+    pub(crate) fn do_render_blob_corked(this: &mut Self) {
         this.render_metadata();
         this.render_bytes();
     }
@@ -3461,7 +3415,7 @@ where
             let mut exception_list_upstream: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
             vm.on_unhandled_rejection_exception_list =
-                Some(NonNull::from(&mut exception_list_upstream));
+                Some(bun_ptr::BackRef::new_mut(&mut exception_list_upstream));
             (vm.on_unhandled_rejection)(vm, global_this, value);
             vm.on_unhandled_rejection_exception_list = prev_exception_list;
 
@@ -3646,7 +3600,7 @@ where
         };
 
         let (content_type, needs_content_type, content_type_needs_free) =
-            get_content_type(response.get_init_headers_mut(), &self.blob);
+            get_content_type(response.headers(), &self.blob);
         // NOTE: `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
         // Hold the value past all reads below, then let it drop at scope end.
         let _ct_guard = scopeguard::guard(content_type_needs_free, |_needs| {
@@ -3655,7 +3609,7 @@ where
         });
         let mut has_content_disposition = false;
         let mut has_content_range = false;
-        if let Some(mut headers_) = response.swap_init_headers() {
+        if let Some(headers_) = response.swap_init_headers() {
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
             // For .slice()-driven ranges, only promote to 206 if the user
@@ -3668,11 +3622,8 @@ where
             }
 
             self.do_write_status(status);
-            self.do_write_headers(&mut headers_);
-            // `HeadersRef` is RAII — its Drop
-            // already calls `WebCore__FetchHeaders__deref`, so an explicit
-            // `.deref()` here would resolve (via DerefMut) to the inherent
-            // `FetchHeaders::deref` and double-free the C++ object.
+            self.do_write_headers(&headers_);
+            // Release the +1 before the body is written.
             drop(headers_);
         } else if needs_content_range {
             status = 206;
@@ -3794,7 +3745,7 @@ where
         }
     }
 
-    fn do_write_headers(&mut self, headers: &mut FetchHeaders) {
+    fn do_write_headers(&mut self, headers: &FetchHeaders) {
         ctx_log!("writeHeaders");
         headers.fast_remove(jsc::HTTPHeaderName::ContentLength);
         headers.fast_remove(jsc::HTTPHeaderName::TransferEncoding);
@@ -3806,7 +3757,8 @@ where
             headers.fast_remove(jsc::HTTPHeaderName::Upgrade);
         }
         if let Some(resp) = self.resp {
-            headers.to_uws_response(Self::RESP_KIND, any_response_as_ptr(resp));
+            // SAFETY: `resp` is the live `uWS::HttpResponse<SSL>*`/`Http3Response*` matching `RESP_KIND`.
+            unsafe { headers.to_uws_response(Self::RESP_KIND, any_response_as_ptr(resp)) };
         }
     }
 
@@ -4318,25 +4270,6 @@ request_ctx_exports! {
         Bun__HTTPRequestContextDebugH3__onRejectStream;
 }
 
-pub struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
-    pub this: &'a mut RequestContext<ThisServer, SSL, DBG, H3>,
-    pub stream: WebCore::ReadableStream,
-}
-
-pub struct HeaderResponseSizePair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool>
-{
-    pub this: &'a mut RequestContext<ThisServer, SSL, DBG, H3>,
-    pub size: usize,
-}
-
-pub struct HeaderResponsePair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
-    pub this: &'a mut RequestContext<ThisServer, SSL, DBG, H3>,
-    /// The JS wrapper's cell pointer, not a `&mut Response`: the receiving
-    /// frame hands it to `set_response`, which stores it in a `WeakPtr` that
-    /// outlives any reborrow. The cell is GC-rooted by the constructing frame.
-    pub response: *mut Response,
-}
-
 pub struct PathnameFormatter<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
     ctx: &'a RequestContext<ThisServer, SSL, DBG, H3>,
 }
@@ -4528,7 +4461,7 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 }
 
-fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool, bool) {
+fn get_content_type(headers: Option<&FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool, bool) {
     let mut needs_content_type = true;
     let mut content_type_needs_free = false;
 

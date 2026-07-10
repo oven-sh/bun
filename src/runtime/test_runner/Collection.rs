@@ -1,6 +1,8 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
+use core::cell::Cell;
 use core::ptr::NonNull;
+use bun_ptr::ParentRef;
 use crate::test_runner::expect::make_formatter;
 
 use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
@@ -65,12 +67,13 @@ impl Collection {
         };
 
         let mut root_scope = DescribeScope::create(bun_test::BaseScope {
-            parent: Some(&raw mut *bun_test_root.hook_scope),
+            // SAFETY: `hook_scope` is owned by `BunTestRoot`, which outlives the collection tree.
+            parent: Some(unsafe { ParentRef::from_raw_mut(&raw mut *bun_test_root.hook_scope) }),
             name: None,
             concurrent: false,
             mode: bun_test::ScopeMode::Normal,
-            only,
-            has_callback: false,
+            only: Cell::new(only),
+            has_callback: Cell::new(false),
             test_id_for_debugger: 0,
             line_no: 0,
         });

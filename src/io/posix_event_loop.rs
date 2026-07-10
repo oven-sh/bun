@@ -422,10 +422,10 @@ impl FilePoll {
     }
 
     fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: bool) {
-        // `loop_mut()` is the crate-private nonnull-asref accessor (single
-        // deref in `EventLoopCtx`); the `&mut Loop` is consumed by `unregister`
-        // and dropped before any `&mut Store` is materialised.
-        let _ = self.unregister(vm.loop_mut(), force_unregister);
+        // SAFETY: the `&mut Loop` is consumed by `unregister` and dropped
+        // before any `&mut Store` is materialised; no other `&mut Loop` is
+        // live and we are on the loop's thread.
+        let _ = self.unregister(unsafe { vm.loop_mut() }, force_unregister);
 
         self.owner.clear();
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
@@ -621,9 +621,9 @@ impl FilePoll {
     pub fn on_ended(&mut self, event_loop_ctx: EventLoopCtx) {
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::Closed);
-        // `loop_mut()` — crate-private nonnull-asref accessor; `deactivate` is
-        // a leaf counter op so the `&mut Loop` borrow does not escape.
-        self.deactivate(event_loop_ctx.loop_mut());
+        // SAFETY: `deactivate` is a leaf counter op, so the `&mut Loop`
+        // borrow does not escape and no other `&mut Loop` is live.
+        self.deactivate(unsafe { event_loop_ctx.loop_mut() });
     }
 
     #[inline]

@@ -647,17 +647,18 @@ impl EventLoopHandle {
         unsafe { (*self.r#loop()).unref() };
     }
 
-    pub fn env(self) -> *mut DotEnvLoader<'static> {
+    pub fn env(self) -> BackRef<DotEnvLoader<'static>> {
         match self {
-            EventLoopHandle::Js { owner } => owner.env(),
-            // `env` must be set — caller invariant. `env_ptr()` takes
-            // `&self` and returns `Option<NonNull<DotEnvLoader>>` (mutable
-            // provenance). Safe via `BackRef: Deref`.
+            // SAFETY: the VM-owned `DotEnv::Loader` is a thread-lifetime
+            // singleton; it outlives every handle to the loop.
+            EventLoopHandle::Js { owner } => unsafe { BackRef::from_raw(owner.env()) },
+            // `env` must be set — caller invariant. `env_ptr()` takes `&self`
+            // and returns `Option<NonNull<DotEnvLoader>>`.
             EventLoopHandle::Mini(mini) => mini
                 .env_ptr()
                 .expect("MiniEventLoop.env unset")
-                .as_ptr()
-                .cast(),
+                .cast()
+                .into(),
         }
     }
 

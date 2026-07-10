@@ -52,7 +52,7 @@ use crate::server::html_bundle;
 
 /// See module doc for the layering rationale.
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = Self::deinit, debug_name = "JSBundleCompletionTask")]
+#[ref_count(debug_name = "JSBundleCompletionTask")]
 pub struct JSBundleCompletionTask {
     // NOTE: this should arguably be a thread-safe refcount, but it is the plain
     // (non-atomic) `RefCount<Self>` — a pre-existing discrepancy. See the
@@ -66,7 +66,7 @@ pub struct JSBundleCompletionTask {
     pub global_this: BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
-    pub env: *mut bun_dotenv::Loader<'static>,
+    pub env: bun_ptr::ParentRef<bun_dotenv::Loader<'static>>,
     pub log: bun_ast::Log,
     pub cancelled: bool,
 
@@ -82,22 +82,16 @@ pub struct JSBundleCompletionTask {
     pub started_at_ns: u64,
 }
 
-impl JSBundleCompletionTask {
-    /// `RefCounted` destructor — last ref dropped.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destructor` upholds the sole-owner contract.
-    fn deinit(this: *mut Self) {
-        // SAFETY: refcount hit zero; `this` is the sole owner of a
-        // `heap::alloc`'d allocation.
-        let mut boxed = unsafe { bun_core::heap::take(this) };
-        boxed.poll_ref.disable();
-        if let Some(plugin) = boxed.plugins.take() {
+/// Runs when the last ref drops: the derived `RefCounted::destructor` reclaims
+/// the `heap::into_raw` allocation as a `Box<Self>`.
+impl Drop for JSBundleCompletionTask {
+    fn drop(&mut self) {
+        self.poll_ref.disable();
+        if let Some(plugin) = self.plugins.take() {
             // `plugin` is the live FFI handle stashed at construction;
             // last-ref drop is the only place that releases it.
             Plugin::destroy(plugin.as_ptr());
         }
-        // Owned fields (`config`, `log`, `result`, `promise`) drop with the Box.
     }
 }
 
@@ -119,7 +113,9 @@ pub(crate) fn create_and_schedule_completion_task(
     event_loop: *mut EventLoop,
 ) -> Result<*mut JSBundleCompletionTask, bun_core::Error> {
     let vm = global_this.bun_vm_ptr();
-    let env = global_this.bun_vm().transpiler.env;
+    // SAFETY: the per-VM dotenv loader is non-null after `Transpiler::init` and
+    // outlives every completion task; `from_raw_mut` keeps write provenance.
+    let env = unsafe { bun_ptr::ParentRef::from_raw_mut(global_this.bun_vm().transpiler.env) };
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
@@ -211,7 +207,7 @@ impl JSBundleCompletionTask {
     /// (`to_js_error` / `on_complete_anytask`) stay safe. The plugin is a C++
     /// `JSBundlerPlugin` opaque created by [`PluginJscExt::create`] and
     /// `protect()`-ed for the task's lifetime; it is freed only via
-    /// `Plugin::destroy` in `deinit` *after* `take()` clears `self.plugins`.
+    /// `Plugin::destroy` in `Drop` *after* `take()` clears `self.plugins`.
     /// While the field is `Some` the pointee is therefore live, pinned, and
     /// disjoint from `*self` (separate C++-heap allocation).
     #[inline]
@@ -396,9 +392,9 @@ impl JSBundleCompletionTask {
             flags |= StandaloneFlags::DISABLE_AUTOLOAD_PACKAGE_JSON;
         }
 
-        // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
-        // construction; valid for the lifetime of the VirtualMachine.
-        let env = unsafe { &mut *self.env.cast::<bun_dotenv::Loader>() };
+        // SAFETY: JS-thread exclusive; no other borrow of the loader overlaps
+        // `to_executable`, which never re-enters JS.
+        let env = unsafe { self.env.assume_mut() };
 
         let result = match to_executable(
             &compile_options.compile_target,
@@ -1073,23 +1069,15 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
 
         let log: *mut bun_ast::Log = &raw mut self.log;
-        // SAFETY: `self.env` is the per-VM dotenv loader stashed at
-        // construction; cast erases `'_` (bun_dotenv::Loader is invariant on
-        // its arena lifetime, but `Transpiler::init` only stores the pointer).
-        let env = self.env.cast::<bun_dotenv::Loader<'static>>();
+        // `Transpiler::init` only stores the pointer; `as_mut_ptr` preserves the
+        // write provenance it was constructed with.
+        let env = self.env.as_mut_ptr();
         let t = Transpiler::init(bump, log, opts, Some(env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
 
         // Post-init field wiring.
-        // Reborrow through a raw ptr so `&mut self` is usable
-        // again after handing `&'a mut Transpiler` (which is tied to `bump`,
-        // not `self`) to the trait method.
-        let tp: *mut Transpiler<'a> = transpiler;
-        // SAFETY: `tp` aliases nothing in `self`; lives in `bump`.
-        self.configure_bundler(unsafe { &mut *tp }, bump)?;
-        // SAFETY: `tp` was the unique `&'a mut` slot from `bump.alloc`; the
-        // reborrow above has ended.
-        Ok(unsafe { &mut *tp })
+        self.configure_bundler(transpiler, bump)?;
+        Ok(transpiler)
     }
 
     fn init_and_run<'a>(

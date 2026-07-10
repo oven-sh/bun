@@ -212,7 +212,7 @@ pub fn to_js_from_multipart_data(
 
     struct Wrapper<'a> {
         global: &'a JSGlobalObject,
-        form: &'a mut DOMFormData,
+        form: &'a DOMFormData,
     }
 
     impl<'a> Wrapper<'a> {

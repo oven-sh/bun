@@ -77,15 +77,14 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
     }
 
     pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
-        // slot — safe-fn coerces) for the `task` field initialised in
-        // `create_on_js_thread`; the WorkPool calls back with exactly that
-        // field, so `from_task_ptr` recovers the live heap `Self` parent,
-        // exclusively owned by the work pool for this callback's duration.
+        // SAFETY: only reachable via `WorkPoolTask::callback` for the `task`
+        // field initialised in `create_on_js_thread`, so `from_task_ptr`
+        // recovers the live heap `Self`, owned by the pool for this callback.
         let this = unsafe { Self::from_task_ptr(task) };
-        // SAFETY: `this` is alive for the duration of the thread-pool callback;
-        // exclusively owned by the work pool at this point.
-        unsafe { (*this).ctx.run() };
+        // SAFETY: `this` is the live heap `Self` recovered above. The single
+        // deref; the borrow ends before `on_finish` publishes `this` to the JS
+        // thread's concurrent queue.
+        unsafe { &mut *this }.ctx.run();
         Self::on_finish(this);
     }
 
@@ -101,32 +100,22 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
     }
 
     fn on_finish(this: *mut Self) {
-        // SAFETY: only called from `run_from_thread_pool` above with the live
-        // heap allocation recovered via `from_field_ptr!`.
-        // `concurrent_task` is an intrusive field of `*this`; `from`
-        // re-initializes it in place and returns the same address. Passing
-        // `this` while holding `&mut *this` is sound because `from` only stores
-        // the pointer (does not dereference it).
-        let this_ref = unsafe { &mut *this };
-        let event_loop = this_ref.event_loop;
-        let task = core::ptr::NonNull::from(
-            this_ref
-                .concurrent_task
-                .from(this, AutoDeinit::ManualDeinit),
-        );
-        // `task` is the live `concurrent_task` field of the heap-allocated
-        // job; the queue takes ownership of its intrusive `next` link.
+        // SAFETY: only called from `run_from_thread_pool` with the live heap
+        // allocation. Only the intrusive field is borrowed: `from` stores
+        // `this` without dereferencing it, so `this` stays valid for the queue.
+        let event_loop = unsafe { (*this).event_loop };
+        // SAFETY: same invariant — only the intrusive `concurrent_task` field is
+        // borrowed, and `from` stores `this` without dereferencing it.
+        let concurrent_task = unsafe { &mut (*this).concurrent_task };
+        let task = core::ptr::NonNull::from(concurrent_task.from(this, AutoDeinit::ManualDeinit));
+        // No borrow of `*this` is live here: once enqueued, the JS thread may
+        // run and free the job before this call returns.
         event_loop.enqueue_task_concurrent(task);
     }
 
     /// Frees the heap allocation backing this task.
-    ///
-    /// # Safety
-    /// `this` must have been produced by `heap::alloc` (via [`create_on_js_thread`] /
-    /// the `.manual_deinit` concurrent-task path) and must not be used afterwards.
-    pub unsafe fn destroy(this: *mut Self) {
-        // `promise.deinit()` is handled by `JSPromiseStrong: Drop`.
-        // SAFETY: caller contract above.
-        drop(unsafe { bun_core::heap::take(this) });
+    /// `promise.deinit()` is handled by `JSPromiseStrong: Drop`.
+    pub fn destroy(self: Box<Self>) {
+        drop(self);
     }
 }

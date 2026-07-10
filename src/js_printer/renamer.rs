@@ -564,24 +564,42 @@ impl NumberRenamer {
     }
 
     pub fn assign_name(&mut self, scope: &mut NumberScope, input_ref: Ref) {
-        let ref_ = self.symbols.follow(input_ref);
+        let Self {
+            symbols,
+            names,
+            arena,
+            ..
+        } = self;
+        Self::assign_name_in(symbols, names, arena, scope, input_ref);
+    }
+
+    /// The body of [`Self::assign_name`], written against the individual fields
+    /// it needs so that a caller holding `&mut self.root` can reach it.
+    fn assign_name_in(
+        symbols: &symbol::Map,
+        names: &mut [Vec<NameStr>],
+        arena: &Bump,
+        scope: &mut NumberScope,
+        input_ref: Ref,
+    ) {
+        let ref_ = symbols.follow(input_ref);
 
         // Don't rename the same symbol more than once
-        let inner: &mut Vec<NameStr> = &mut self.names[ref_.source_index() as usize];
+        let inner: &mut Vec<NameStr> = &mut names[ref_.source_index() as usize];
         if inner.len() > ref_.inner_index() as usize && inner[ref_.inner_index() as usize].len() > 0
         {
             return;
         }
 
         // Don't rename unbound symbols, symbols marked as reserved names, labels, or private names
-        let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
+        let symbol: &Symbol = symbols.get_const(ref_).unwrap();
         if symbol.slot_namespace() != SlotNamespace::Default {
             return;
         }
 
         // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
         let original_name: &[u8] = symbol.original_name.slice();
-        let name: NameStr = match scope.find_unused_name(&self.arena, original_name) {
+        let name: NameStr = match scope.find_unused_name(arena, original_name) {
             UnusedName::Renamed(name) => name,
             UnusedName::NoCollision => symbol.original_name,
         };
@@ -756,13 +774,14 @@ impl NumberRenamer {
     }
 
     pub fn add_top_level_symbol(&mut self, ref_: Ref) {
-        // Reshaped for borrowck — root is a field of self, but `assign_name`
-        // needs `&mut self` AND `&mut self.root` simultaneously. Sound only
-        // while `assign_name` never reaches `self.root` through `self`; keep
-        // that invariant if `assign_name` changes.
-        let root: *mut NumberScope = &raw mut self.root;
-        // SAFETY: assign_name does not touch self.root through `self`
-        self.assign_name(unsafe { &mut *root }, ref_);
+        let Self {
+            symbols,
+            names,
+            root,
+            arena,
+            ..
+        } = self;
+        Self::assign_name_in(symbols, names, arena, root, ref_);
     }
 
     pub fn add_top_level_declared_symbols(

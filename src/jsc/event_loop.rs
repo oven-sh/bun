@@ -570,7 +570,9 @@ impl EventLoop {
         // owning per-thread singleton; non-null and live for the VM lifetime.
         // `addr_of!` projects to the field place without forming an
         // intermediate `&VirtualMachine` that would assert no-alias.
-        unsafe { core::ptr::addr_of!((*vm).event_loop_handle).read() }.expect("event_loop_handle")
+        unsafe { core::ptr::addr_of!((*vm).event_loop_handle).read() }
+            .expect("event_loop_handle")
+            .as_ptr()
     }
 
     pub fn usockets_loop(&self) -> *mut uws::Loop {
@@ -586,9 +588,12 @@ impl EventLoop {
         }
         #[cfg(not(windows))]
         {
-            self.vm_ref().event_loop_handle.expect(
-                "usockets_loop: event_loop_handle not initialized (call ensure_waker first)",
-            )
+            self.vm_ref()
+                .event_loop_handle
+                .expect(
+                    "usockets_loop: event_loop_handle not initialized (call ensure_waker first)",
+                )
+                .as_ptr()
         }
     }
 
@@ -671,9 +676,6 @@ impl EventLoop {
     /// Without this, the last worker's close-task lambda — and the
     /// `WebWorker` box reachable through its `protectedThis` — leak.
     pub fn drop_concurrent_cpp_tasks(&mut self) {
-        unsafe extern "C" {
-            fn Bun__deleteEventLoopTask(task: *mut CppTask);
-        }
         let mut iter = self.concurrent_tasks.pop_batch().iterator();
         loop {
             let node = iter.next();
@@ -685,10 +687,16 @@ impl EventLoop {
             // freeing here is sound.
             let (task, auto_delete) = unsafe { ((*node).task, (*node).auto_delete()) };
             if task.tag == bun_event_loop::task_tag::CppTask {
-                // SAFETY: every `CppTask` payload is a heap
+                // SAFETY: every `CppTask` payload is a non-null heap
                 // `WebCore::EventLoopTask*` (`ScriptExecutionContext::postTask*`
-                // → `new EventLoopTask`); we own it once popped.
-                unsafe { Bun__deleteEventLoopTask(task.ptr.cast::<CppTask>()) };
+                // → `new EventLoopTask`); we own it once popped, and `Drop`
+                // deletes it without running.
+                let task = unsafe {
+                    CppTask::adopt(NonNull::new_unchecked(
+                        task.ptr.cast::<crate::cpp_task::sys::CppTask>(),
+                    ))
+                };
+                drop(task);
             } else {
                 // Hand non-Cpp payloads to `self.tasks` so `deinit()`'s
                 // existing per-tag reclaim handles them.
@@ -869,7 +877,9 @@ impl EventLoop {
             }
             let vm = self.vm();
             // SAFETY: `vm` is the live owning VM.
-            unsafe { (*vm).event_loop_handle = Some(Async::Loop::get()) };
+            unsafe {
+                (*vm).event_loop_handle = Some(bun_ptr::BackRef::from_raw(Async::Loop::get()))
+            };
             // Route through raw addr_of to avoid stacked-borrow
             // aliasing of the embedded field with its parent.
             // SAFETY: `vm` is the live owning VM; gc_controller is embedded.
@@ -1188,7 +1198,7 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     #[cfg(windows)]
     // SAFETY: `Loop::get()` returns the live process-global `uv_loop_t`.
     let num_polls: i32 =
-        i32::try_from(unsafe { (*bun_sys::windows::libuv::Loop::get()).active_handles })
+        i32::try_from(unsafe { (*bun_sys::windows::libuv::Loop::get()).active_handles.get() })
             .expect("int cast");
     #[cfg(not(windows))]
     // SAFETY: uws::Loop::get() returns a live process-global loop.
@@ -1404,7 +1414,9 @@ pub(crate) fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ()) {
 pub(crate) fn __bun_spawn_sync_vm_get_event_loop_handle(
     vm: *mut (),
 ) -> bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle {
-    vm_from_ptr(vm).event_loop_handle.and_then(NonNull::new)
+    vm_from_ptr(vm)
+        .event_loop_handle
+        .and_then(|h| NonNull::new(h.as_ptr()))
 }
 
 #[unsafe(no_mangle)]
@@ -1412,7 +1424,7 @@ pub(crate) fn __bun_spawn_sync_vm_set_event_loop_handle(
     vm: *mut (),
     h: bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle,
 ) {
-    vm_from_ptr(vm).event_loop_handle = h.map(NonNull::as_ptr);
+    vm_from_ptr(vm).event_loop_handle = h.map(bun_ptr::BackRef::from);
 }
 
 #[unsafe(no_mangle)]

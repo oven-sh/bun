@@ -31,17 +31,18 @@ pub enum ToFileSystemPathError {
 bun_core::named_error_set!(ToFileSystemPathError);
 
 impl DOMURL {
-    pub fn cast_<'a>(value: JSValue, vm: &'a VM) -> Option<&'a mut DOMURL> {
+    pub fn cast_<'a>(value: JSValue, vm: &'a VM) -> Option<&'a DOMURL> {
         // DOMURL is a GC-owned C++ cell; the returned reference is only valid
         // while `value` stays alive (e.g. stack-rooted for the conservative GC
         // scan) — the borrow on `vm` does not capture that.
-        // `DOMURL` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
-        // centralised non-null-ZST deref proof (zero-byte `&mut` cannot alias).
+        // `DOMURL` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
+        // centralised non-null-ZST deref proof. `&DOMURL` is `!Freeze`: no
+        // `noalias`/`readonly`, so C++ may mutate the cell behind it.
         let p = WebCore__DOMURL__cast_(value, vm);
-        (!p.is_null()).then(|| DOMURL::opaque_mut(p))
+        (!p.is_null()).then(|| DOMURL::opaque_ref(p))
     }
 
-    pub fn cast<'a>(value: JSValue) -> Option<&'a mut DOMURL> {
+    pub fn cast<'a>(value: JSValue) -> Option<&'a DOMURL> {
         // SAFETY: VirtualMachine::get() returns the per-thread singleton; caller is on the JS thread.
         Self::cast_(
             value,
@@ -49,17 +50,17 @@ impl DOMURL {
         )
     }
 
-    pub fn href_(&mut self, out: &mut ZigString) {
+    pub fn href_(&self, out: &mut ZigString) {
         WebCore__DOMURL__href_(self, out)
     }
 
-    pub fn href(&mut self) -> ZigString {
+    pub fn href(&self) -> ZigString {
         let mut out = ZigString::EMPTY;
         self.href_(&mut out);
         out
     }
 
-    pub fn file_system_path(&mut self) -> Result<bstr::String, ToFileSystemPathError> {
+    pub fn file_system_path(&self) -> Result<bstr::String, ToFileSystemPathError> {
         let mut error_code: c_int = 0;
         let path = WebCore__DOMURL__fileSystemPath(self, &mut error_code);
         match error_code {
@@ -72,11 +73,11 @@ impl DOMURL {
         Ok(path)
     }
 
-    pub fn pathname_(&mut self, out: &mut ZigString) {
+    pub fn pathname_(&self, out: &mut ZigString) {
         WebCore__DOMURL__pathname_(self, out)
     }
 
-    pub fn pathname(&mut self) -> ZigString {
+    pub fn pathname(&self) -> ZigString {
         let mut out = ZigString::EMPTY;
         self.pathname_(&mut out);
         out

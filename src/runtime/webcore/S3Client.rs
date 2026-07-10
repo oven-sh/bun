@@ -360,27 +360,20 @@ impl S3Client {
             }
         };
         let options = args.next_eat();
-        // `Blob::new` heap-promotes and marks `ref_count = 1` so
-        // the JSS3File wrapper's `finalize` knows to free the blob.
-        let blob = crate::webcore::blob::Blob::new(
-            S3File::construct_s3_file_with_s3_credentials_and_options(
-                global,
-                path,
-                options,
-                &ptr.credentials,
-                ptr.options,
-                ptr.acl,
-                ptr.storage_class,
-                ptr.request_payer,
-            )?,
-        );
-        // `to_js` runs `calculateEstimatedByteSize()`
-        // before wrapping the heap Blob in a JSS3File so JSC sees the correct
-        // GC pressure. Route through `BlobExt::to_js` (the `&mut self` method
-        // that owns the heap pointer), same as `S3File::construct_internal_js`.
-        // SAFETY: `blob` is a freshly leaked `*mut Blob` from `Blob::new`;
-        // `to_js` hands ownership of that pointer to the C++ wrapper.
-        Ok(unsafe { &mut *blob }.to_js(global))
+        let blob = Box::new(S3File::construct_s3_file_with_s3_credentials_and_options(
+            global,
+            path,
+            options,
+            &ptr.credentials,
+            ptr.options,
+            ptr.acl,
+            ptr.storage_class,
+            ptr.request_payer,
+        )?);
+        // `into_js` runs `calculateEstimatedByteSize()` before wrapping the heap
+        // Blob in a JSS3File so JSC sees the correct GC pressure, then hands the
+        // allocation to the C++ wrapper.
+        Ok(blob.into_js(global))
     }
 
     #[bun_jsc::host_fn(method)]

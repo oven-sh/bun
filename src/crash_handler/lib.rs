@@ -318,22 +318,18 @@ pub mod debug {
     // ── self debug-info singleton ────────────────────────────────────────
     // PORTING.md §Global mutable state: lazy debug-only singleton. RacyCell —
     // only called from a stopped/crashing process (lldb or the crash handler
-    // after `panicking` has serialized), so no concurrent access; callers
-    // reborrow the returned `*mut` per-access.
+    // after `panicking` has serialized), so no concurrent access.
     static SELF_DEBUG_INFO: bun_core::RacyCell<Option<SelfInfo>> = bun_core::RacyCell::new(None);
 
-    /// NOT thread-safe.
-    pub fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {
-        // SAFETY: this is debug-only and invoked from a stopped/crashing
-        // process (see SELF_DEBUG_INFO above), so no concurrent access.
-        unsafe {
-            let slot = &mut *SELF_DEBUG_INFO.get();
-            if let Some(info) = slot {
-                return Ok(std::ptr::from_mut(info));
-            }
+    /// NOT thread-safe. The returned borrow must end before the next call.
+    pub fn get_self_debug_info() -> Result<&'static mut SelfInfo, Error> {
+        // SAFETY: debug-only, invoked from a stopped/crashing process (see
+        // SELF_DEBUG_INFO above): no concurrent access, no live prior borrow.
+        let slot: &'static mut Option<SelfInfo> = unsafe { &mut *SELF_DEBUG_INFO.get() };
+        if slot.is_none() {
             *slot = Some(SelfInfo::open()?);
-            Ok(std::ptr::from_mut(slot.as_mut().unwrap()))
         }
+        Ok(slot.as_mut().unwrap())
     }
     /// Detect whether stderr supports ANSI color escapes.
     #[allow(dead_code)]
@@ -3103,8 +3099,7 @@ mod draft {
         'attempt_dump: {
             // Windows has issues with opening the PDB file sometimes.
             let debug_info = match debug::get_self_debug_info() {
-                // SAFETY: lazy debug-only singleton; sole `&mut` for the dump below.
-                Ok(d) => unsafe { &mut *d },
+                Ok(d) => d,
                 Err(err) => {
                     // If the stderr write fails
                     // (e.g. broken pipe), bail out entirely; don't fall through.
@@ -3150,8 +3145,7 @@ mod draft {
         {
             // Assume debug symbol tooling is reliable.
             let debug_info = match debug::get_self_debug_info() {
-                // SAFETY: lazy debug-only singleton; sole `&mut` for the dump below.
-                Ok(d) => unsafe { &mut *d },
+                Ok(d) => d,
                 Err(err) => {
                     let _ = writeln!(
                         stderr,

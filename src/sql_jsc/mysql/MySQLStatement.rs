@@ -33,7 +33,7 @@ pub struct MySQLStatement {
     pub signature: Signature,
     pub status: Status,
     pub error_response: ErrorPacket,
-    pub execution_flags: ExecutionFlags,
+    pub execution_flags: Cell<ExecutionFlags>,
     pub fields_flags: DataCellFlags,
     pub result_count: u64,
 }
@@ -52,7 +52,7 @@ impl MySQLStatement {
             signature,
             status,
             error_response: ErrorPacket::default(),
-            execution_flags: ExecutionFlags::default(),
+            execution_flags: Cell::new(ExecutionFlags::default()),
             fields_flags: DataCellFlags::default(),
             result_count: 0,
         }
@@ -103,18 +103,22 @@ impl MySQLStatement {
     pub(crate) fn reset(&mut self) {
         self.result_count = 0;
         self.columns_received = 0;
-        self.execution_flags = ExecutionFlags::default();
+        self.execution_flags.set(ExecutionFlags::default());
     }
 
     pub(crate) fn check_for_duplicate_fields(&mut self) {
         if !self
             .execution_flags
+            .get()
             .contains(ExecutionFlags::NEEDS_DUPLICATE_CHECK)
         {
             return;
         }
-        self.execution_flags
-            .remove(ExecutionFlags::NEEDS_DUPLICATE_CHECK);
+        self.execution_flags.set(
+            self.execution_flags
+                .get()
+                .difference(ExecutionFlags::NEEDS_DUPLICATE_CHECK),
+        );
 
         self.fields_flags =
             dedupe_columns(self.columns.iter_mut().rev().map(|c| &mut c.name_or_index));

@@ -698,10 +698,9 @@ bun_opaque::opaque_ffi! {
     /// mutates the channel on every dispatch/process call).
     pub struct Channel;
 }
-// Load-bearing: `ares_cancel`/`ares_process_fd` are declared `safe fn(&mut Channel)`
-// on the basis that re-entrant callbacks re-deriving `&mut Channel` from a raw
-// pointer cannot conflict because `Channel` claims zero bytes. If this type ever
-// gains a non-ZST field, those signatures must revert to `unsafe fn(*mut Channel)`.
+// `Channel` is `!Freeze`, so `&Channel` asserts neither `noalias` nor `readonly`;
+// c-ares owns the real object and re-enters through the same handle. If this type
+// ever gains a non-ZST field, the `safe fn(&Channel)` externs must be revisited.
 const _: () = assert!(core::mem::size_of::<Channel>() == 0);
 
 /// Implemented by the type that owns a `*mut Channel` and receives socket-
@@ -805,7 +804,7 @@ impl Channel {
 
     /// See c-ares `ares_getaddrinfo` documentation.
     pub fn get_addr_info<T: AddrInfoHandler>(
-        &mut self,
+        &self,
         host: &[u8],
         port: u16,
         hints: &[AddrInfo_hints],
@@ -833,7 +832,7 @@ impl Channel {
         // SAFETY: c-ares FFI; host/port/hints are NUL-terminated stack buffers or null; ctx outlives the channel.
         unsafe {
             ares_getaddrinfo(
-                self,
+                self.as_mut_ptr(),
                 host_ptr,
                 port_ptr,
                 hints_,
@@ -843,7 +842,7 @@ impl Channel {
         }
     }
 
-    pub fn resolve<T: ResolveHandler>(&mut self, name: &[u8], ctx: &mut T) {
+    pub fn resolve<T: ResolveHandler>(&self, name: &[u8], ctx: &mut T) {
         if name.len() >= 1023
             || name.contains(&0)
             || (name.is_empty() && !(T::LOOKUP_NAME == b"ns" || T::LOOKUP_NAME == b"soa"))
@@ -867,7 +866,7 @@ impl Channel {
         // SAFETY: c-ares FFI; name_ptr is a NUL-terminated stack buffer; ctx outlives the channel.
         unsafe {
             ares_query(
-                self,
+                self.as_mut_ptr(),
                 name_ptr,
                 NSClass::ns_c_in,
                 T::NS_TYPE,
@@ -877,7 +876,7 @@ impl Channel {
         }
     }
 
-    pub fn get_host_by_addr<T: HostentHandler>(&mut self, ip_addr: &[u8], ctx: &mut T) {
+    pub fn get_host_by_addr<T: HostentHandler>(&self, ip_addr: &[u8], ctx: &mut T) {
         // "0000:0000:0000:0000:0000:ffff:192.168.100.228".length = 45
         const BUF_SIZE: usize = 46;
         let mut addr_buf = [0u8; BUF_SIZE];
@@ -900,7 +899,7 @@ impl Channel {
                 // SAFETY: c-ares FFI; addr holds a 4-byte in_addr written by ares_inet_pton; ctx outlives the channel.
                 unsafe {
                     ares_gethostbyaddr(
-                        self,
+                        self.as_mut_ptr(),
                         addr.as_ptr().cast::<c_void>(),
                         4,
                         AF::INET,
@@ -917,7 +916,7 @@ impl Channel {
                 // SAFETY: c-ares FFI; addr holds a 16-byte in6_addr written by ares_inet_pton; ctx outlives the channel.
                 unsafe {
                     ares_gethostbyaddr(
-                        self,
+                        self.as_mut_ptr(),
                         addr.as_ptr().cast::<c_void>(),
                         16,
                         AF::INET6,
@@ -940,7 +939,7 @@ impl Channel {
     }
 
     /// https://c-ares.org/ares_getnameinfo.html
-    pub fn get_name_info<T: NameinfoHandler>(&mut self, sa: &mut sockaddr, ctx: &mut T) {
+    pub fn get_name_info<T: NameinfoHandler>(&self, sa: &mut sockaddr, ctx: &mut T) {
         let salen: ares_socklen_t = if sa.sa_family == AF::INET as _ {
             core::mem::size_of::<sockaddr_in>() as ares_socklen_t
         } else {
@@ -949,7 +948,7 @@ impl Channel {
         // SAFETY: c-ares FFI; sa is a valid sockaddr of size `salen`; ctx outlives the channel.
         unsafe {
             ares_getnameinfo(
-                self,
+                self.as_mut_ptr(),
                 std::ptr::from_ref::<sockaddr>(sa),
                 salen,
                 // node returns ENOTFOUND for addresses like 255.255.255.255:80
@@ -962,7 +961,7 @@ impl Channel {
     }
 
     #[inline]
-    pub fn process(&mut self, fd: ares_socket_t, readable: bool, writable: bool) {
+    pub fn process(&self, fd: ares_socket_t, readable: bool, writable: bool) {
         ares_process_fd(
             self,
             if readable { fd } else { ARES_SOCKET_BAD },
@@ -1027,15 +1026,11 @@ unsafe extern "C" {
     pub fn ares_destroy_options(options: *mut Options);
     pub fn ares_dup(dest: *mut Channel, src: *mut Channel) -> c_int;
     pub fn ares_destroy(channel: *mut Channel);
-    // Opaque handle by exclusive reference only — `Channel` is `!Freeze`/`!Sync`
-    // (UnsafeCell + PhantomData<*mut u8>). Note: `ares_cancel`/`ares_process_fd`
-    // synchronously invoke stored completion callbacks which may re-enter the
-    // resolver and re-derive a `&mut Channel` from a raw pointer; this is sound
-    // because `Channel` is a ZST (`UnsafeCell<[u8;0]>`), so `&mut Channel`
-    // claims zero bytes and overlapping `&mut` do not conflict under Stacked
-    // Borrows — the borrow checker does NOT gate the raw-pointer callbacks.
-    pub safe fn ares_cancel(channel: &mut Channel);
-    pub safe fn ares_set_local_ip4(channel: &mut Channel, local_ip: c_uint);
+    // Shared handle: `Channel` is `!Freeze`, so `&Channel` carries no `noalias`
+    // and no `readonly`. `ares_cancel`/`ares_process_fd` synchronously invoke
+    // completion callbacks that re-enter through the same pointer.
+    pub safe fn ares_cancel(channel: &Channel);
+    pub safe fn ares_set_local_ip4(channel: &Channel, local_ip: c_uint);
     pub fn ares_set_local_ip6(channel: *mut Channel, local_ip6: *const u8);
     pub fn ares_set_local_dev(channel: *mut Channel, local_dev_name: *const u8);
     pub fn ares_set_socket_callback(
@@ -1151,11 +1146,7 @@ unsafe extern "C" {
     ) -> *mut struct_timeval;
     // pub fn ares_process(channel: *mut Channel, read_fds: *mut fd_set, write_fds: *mut fd_set);
     // Opaque handle by exclusive reference + scalars only.
-    pub safe fn ares_process_fd(
-        channel: &mut Channel,
-        read_fd: ares_socket_t,
-        write_fd: ares_socket_t,
-    );
+    pub safe fn ares_process_fd(channel: &Channel, read_fd: ares_socket_t, write_fd: ares_socket_t);
     pub fn ares_create_query(
         name: *const c_char,
         dnsclass: c_int,

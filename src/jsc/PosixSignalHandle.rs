@@ -161,8 +161,9 @@ pub(crate) extern "C" fn Bun__ensureSignalHandler() {
     #[cfg(unix)]
     {
         if let Some(vm) = VirtualMachine::get_main_thread_vm() {
-            // SAFETY: `vm` and its event loop are process-lifetime.
-            let this = unsafe { &mut *(*vm).event_loop() };
+            // SAFETY: `vm` is process-lifetime; `event_loop_mut()` is the
+            // audited accessor for the VM-owned event loop.
+            let this = unsafe { (*vm).event_loop_mut() };
             if this.signal_handler.is_none() {
                 let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
                 this.signal_handler =

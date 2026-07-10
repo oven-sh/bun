@@ -64,7 +64,6 @@ const MAX_CLOSE_REASON: usize = MAX_CONTROL_PAYLOAD - 2;
 const CONTROL_HEADER_SIZE: usize = 6;
 
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct WebSocket<const SSL: bool> {
     pub ref_count: Cell<u32>,
 
@@ -174,8 +173,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.message_is_compressed.set(false);
         self.deflate.replace(None);
         if let Some(s) = self.secure.take() {
-            // SAFETY: s is a valid SSL_CTX* owned by us per field invariant
-            unsafe { boringssl::c::SSL_CTX_free(s) };
+            // `s` is an owned SSL_CTX ref per the field invariant.
+            boringssl::c::SSL_CTX_free(SslCtx::opaque_ref(s));
         }
         // Detach the tunnel first so its shutdown callbacks cannot re-enter this path.
         if let Some(tunnel) = self.proxy_tunnel.take() {
@@ -1500,7 +1499,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         secure: Option<*mut SslCtx>,
         proxy_tunnel: Option<NonNull<WebSocketProxyTunnel>>,
     ) -> *mut Self {
-        let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
+        let mut boxed = Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Cell::new(Socket::<SSL>::detached()),
             outgoing_websocket: Cell::new(NonNull::new(outgoing)),
@@ -1528,14 +1527,14 @@ impl<const SSL: bool> WebSocket<SSL> {
             message_is_compressed: Cell::new(false),
             secure: Cell::new(secure),
             proxy_tunnel: Cell::new(proxy_tunnel),
-        }));
-        bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
-        // SAFETY: ws was just allocated via heap::alloc; no other reference exists.
-        let ws_ref = unsafe { &mut *ws };
+        });
 
         if let Some(params) = deflate_params {
-            *ws_ref.deflate.get_mut() = WebSocketDeflate::init(*params).ok();
+            *boxed.deflate.get_mut() = WebSocketDeflate::init(*params).ok();
         }
+
+        let ws = bun_core::heap::into_raw(boxed);
+        bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
 
         ws
     }
@@ -1759,33 +1758,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    // `deinit` is the IntrusiveRc destructor callback; not `impl Drop` because
-    // self is heap-allocated via heap::alloc and crosses FFI as *mut c_void.
-    unsafe fn deinit(this: *mut Self) {
-        // SAFETY: called once when ref_count hits zero
-        let this_ref = unsafe { &mut *this };
-        this_ref.clear_data();
-        // deflate already dropped in clear_data; this is defensive
-        *this_ref.deflate.get_mut() = None;
-        if let Some(handler) = this_ref.initial_data_handler.take() {
-            // SAFETY: the handler box was allocated via `heap::into_raw` in
-            // init()/init_with_tunnel() and is normally freed by the queued
-            // microtask in `InitialDataHandler::handle`; this field still
-            // being set means that microtask has not run yet, so the box is
-            // live and the raw field write does not alias any borrow.
-            unsafe { core::ptr::addr_of_mut!((*handler.as_ptr()).adopted).write(None) };
-            if this_ref.global_this.bun_vm().is_shutting_down() {
-                // SAFETY: same allocation as above; the VM is shutting down, so
-                // the queued microtask can no longer run and this is the sole
-                // remaining owner of the box.
-                drop(unsafe { bun_core::heap::take(handler.as_ptr()) });
-            }
-        }
-        bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, this);
-        // SAFETY: this was allocated via heap::alloc in init/init_with_tunnel
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
     // `extern "C"` entrypoint; `this` is non-null by C++ contract (see SAFETY comment below).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn memory_cost(this: *const Self) -> usize {
@@ -1796,6 +1768,36 @@ impl<const SSL: bool> WebSocket<SSL> {
         cost += this.receive_buffer.try_borrow().map_or(0, |b| b.capacity());
         // This is under-estimated a little, as we don't include usockets context.
         cost
+    }
+}
+
+// Runs from the `CellRefCounted` default destructor (`Box::from_raw`) once
+// ref_count hits zero; fields drop in declaration order afterwards.
+impl<const SSL: bool> Drop for WebSocket<SSL> {
+    fn drop(&mut self) {
+        self.clear_data();
+        // deflate already dropped in clear_data; this is defensive
+        *self.deflate.get_mut() = None;
+        if let Some(handler) = self.initial_data_handler.take() {
+            // SAFETY: the handler box was allocated via `heap::into_raw` in
+            // init()/init_with_tunnel() and is normally freed by the queued
+            // microtask in `InitialDataHandler::handle`; this field still
+            // being set means that microtask has not run yet, so the box is
+            // live and the raw field write does not alias any borrow.
+            unsafe { core::ptr::addr_of_mut!((*handler.as_ptr()).adopted).write(None) };
+            if self.global_this.bun_vm().is_shutting_down() {
+                // SAFETY: same allocation as above; the VM is shutting down, so
+                // the queued microtask can no longer run and this is the sole
+                // remaining owner of the box.
+                drop(unsafe { bun_core::heap::take(handler.as_ptr()) });
+            }
+        }
+        bun_core::scoped_log!(
+            alloc,
+            "destroy({}) = {:p}",
+            Self::ALLOC_TYPE_NAME,
+            core::ptr::from_ref(self)
+        );
     }
 }
 

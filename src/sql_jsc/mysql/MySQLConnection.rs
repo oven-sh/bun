@@ -54,7 +54,7 @@ pub struct MySQLConnection {
 
     write_buffer: OffsetByteList,
     read_buffer: OffsetByteList,
-    last_message_start: u32,
+    last_message_start: core::cell::Cell<u32>,
     sequence_id: u8,
 
     // TODO: move it to JSMySQLConnection
@@ -97,7 +97,7 @@ impl Default for MySQLConnection {
             status: ConnectionState::Disconnected,
             write_buffer: OffsetByteList::default(),
             read_buffer: OffsetByteList::default(),
-            last_message_start: 0,
+            last_message_start: core::cell::Cell::new(0),
             sequence_id: 0,
             queue: MySQLRequestQueue::init(),
             statements: PreparedStatementsMap::default(),
@@ -311,8 +311,8 @@ impl MySQLConnection {
 
         self.auth_data = Vec::new();
         if let Some(s) = self.secure.take() {
-            // SAFETY: FFI — secure is an owned SSL_CTX* freed exactly once here
-            unsafe { bun_boringssl_sys::SSL_CTX_free(s) };
+            // `secure` is an owned SSL_CTX ref, released exactly once here.
+            bun_boringssl_sys::SSL_CTX_free(SslCtx::opaque_ref(s));
         }
         // _options_buf dropped at scope exit (Box<[u8]> frees via Drop)
     }
@@ -504,7 +504,7 @@ impl MySQLConnection {
                         );
 
                         self.read_buffer.head = 0;
-                        self.last_message_start = 0;
+                        self.last_message_start.set(0);
                         self.read_buffer.byte_list.clear();
                         self.read_buffer
                             .write(&data[offset.get()..])
@@ -521,7 +521,7 @@ impl MySQLConnection {
         }
 
         {
-            self.read_buffer.head = self.last_message_start;
+            self.read_buffer.head = self.last_message_start.get();
 
             self.read_buffer
                 .write(data)
@@ -544,7 +544,7 @@ impl MySQLConnection {
                         bun_core::scoped_log!(
                             MySQLConnection,
                             "Received short read: last_message_start: {}, head: {}, len: {}",
-                            self.last_message_start,
+                            self.last_message_start.get(),
                             self.read_buffer.head,
                             self.read_buffer.byte_list.len()
                         );
@@ -555,7 +555,7 @@ impl MySQLConnection {
                 }
             }
 
-            self.last_message_start = 0;
+            self.last_message_start.set(0);
             self.read_buffer.head = 0;
         }
         self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
@@ -1402,6 +1402,7 @@ impl MySQLConnection {
                 };
                 if !statement
                     .execution_flags
+                    .get()
                     .contains(mysql_statement::ExecutionFlags::HEADER_RECEIVED)
                 {
                     if packet_type == PacketType::OK {
@@ -1460,12 +1461,11 @@ impl MySQLConnection {
                         statement.cached_structure = Default::default();
                         statement.fields_flags = Default::default();
                     }
-                    statement
-                        .execution_flags
-                        .insert(mysql_statement::ExecutionFlags::NEEDS_DUPLICATE_CHECK);
-                    statement
-                        .execution_flags
-                        .insert(mysql_statement::ExecutionFlags::HEADER_RECEIVED);
+                    statement.execution_flags.set(
+                        statement.execution_flags.get()
+                            | mysql_statement::ExecutionFlags::NEEDS_DUPLICATE_CHECK
+                            | mysql_statement::ExecutionFlags::HEADER_RECEIVED,
+                    );
                     return Ok(());
                 } else if (statement.columns_received as usize) < statement.columns.len() {
                     let changed = statement.columns[statement.columns_received as usize]
@@ -1473,9 +1473,10 @@ impl MySQLConnection {
                     if changed {
                         statement.cached_structure = Default::default();
                         statement.fields_flags = Default::default();
-                        statement
-                            .execution_flags
-                            .insert(mysql_statement::ExecutionFlags::NEEDS_DUPLICATE_CHECK);
+                        statement.execution_flags.set(
+                            statement.execution_flags.get()
+                                | mysql_statement::ExecutionFlags::NEEDS_DUPLICATE_CHECK,
+                        );
                     }
                     statement.columns_received += 1;
                 } else {
@@ -1498,14 +1499,16 @@ impl MySQLConnection {
                             // the final EOF (after all rows) differently.
                             if !statement
                                 .execution_flags
+                                .get()
                                 .contains(mysql_statement::ExecutionFlags::COLUMNS_EOF_RECEIVED)
                             {
                                 // Intermediate EOF between column definitions and row data - skip it
                                 let mut eof = EOFPacket::default();
                                 eof.decode_internal(reader)?;
-                                statement
-                                    .execution_flags
-                                    .insert(mysql_statement::ExecutionFlags::COLUMNS_EOF_RECEIVED);
+                                statement.execution_flags.set(
+                                    statement.execution_flags.get()
+                                        | mysql_statement::ExecutionFlags::COLUMNS_EOF_RECEIVED,
+                                );
                                 return Ok(());
                             }
                             // Final EOF after all row data - terminates the result set
@@ -1577,43 +1580,48 @@ pub struct Writer {
 }
 
 impl Writer {
+    /// # Safety
+    ///
+    /// `self.connection` must point at a live `MySQLConnection`, and no other
+    /// reference to its `write_buffer` field — including one reached through
+    /// the connection's own `&mut self`, or through another `Writer` copy —
+    /// may be live while the returned reference is used. `Writer` is `Copy`,
+    /// so nothing checks this.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn write_buffer(&self) -> &mut OffsetByteList {
-        // SAFETY: `self.connection` is never null — `Writer` is only ever
-        // constructed by `MySQLConnection::writer(&mut self)` from a live
-        // `&mut MySQLConnection`, and the `NewWriter<Writer>` is consumed
-        // before that connection is dropped (it is never stored).
-        //
-        // Raw-pointer field projection (`addr_of_mut!`) avoids materializing
-        // an intermediate `&mut MySQLConnection`, which could alias the
-        // caller's own `&mut self` (see the aliasing note on `Reader` below).
-        // Callers never touch `write_buffer` through `&mut self` while a
-        // `Writer` is live, so no two `&mut OffsetByteList` coexist.
+    unsafe fn write_buffer(&self) -> &mut OffsetByteList {
+        // SAFETY: field projection through a valid `*mut MySQLConnection` per
+        // the contract above. `addr_of_mut!` avoids materializing an
+        // intermediate `&mut MySQLConnection` that would alias the caller's.
         unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).write_buffer) }
     }
 }
 
 impl WriterContext for Writer {
     fn write(self, data: &[u8]) -> Result<(), AnyMySQLError> {
-        self.write_buffer()
-            .write(data)
-            .map_err(|_| AnyMySQLError::OutOfMemory)?;
+        // SAFETY: connection outlives this call; the reference dies here.
+        let buffer = unsafe { self.write_buffer() };
+        buffer.write(data).map_err(|_| AnyMySQLError::OutOfMemory)?;
         Ok(())
     }
 
     fn pwrite(self, data: &[u8], index: usize) -> Result<(), AnyMySQLError> {
-        let byte_list = &mut self.write_buffer().byte_list;
+        // SAFETY: connection outlives this call; the reference dies here.
+        let buffer = unsafe { self.write_buffer() };
+        let byte_list = &mut buffer.byte_list;
         byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
         Ok(())
     }
 
     fn offset(self) -> usize {
-        self.write_buffer().len() as usize
+        // SAFETY: connection outlives this call; the reference dies here.
+        let buffer = unsafe { self.write_buffer() };
+        buffer.len() as usize
     }
 
     fn truncate(self, offset: usize) {
-        let buffer = self.write_buffer();
+        // SAFETY: connection outlives this call; the reference dies here.
+        let buffer = unsafe { self.write_buffer() };
         let head = buffer.head as usize;
         buffer.byte_list.truncate(head + offset);
     }
@@ -1646,23 +1654,20 @@ impl Reader {
     }
 
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn last_message_start(&self) -> &mut u32 {
-        // SAFETY: same justification as `read_buffer()` — disjoint field
-        // projection from a non-null connection pointer that outlives the
-        // `Reader`; `process_packets` does not access `last_message_start`
-        // through `&mut self` while the reader is live.
-        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).last_message_start) }
+    fn last_message_start(&self) -> &core::cell::Cell<u32> {
+        // SAFETY: `self.connection` points at a live `MySQLConnection` for the
+        // duration of the read call; the `Reader` is never stored.
+        unsafe { &*core::ptr::addr_of!((*self.connection).last_message_start) }
     }
 }
 
 impl ReaderContext for Reader {
     fn mark_message_start(self) {
-        *self.last_message_start() = self.read_buffer().head;
+        self.last_message_start().set(self.read_buffer().head);
     }
 
     fn set_offset_from_start(self, offset: usize) {
-        self.read_buffer().head = *self.last_message_start() + (offset as u32);
+        self.read_buffer().head = self.last_message_start().get() + (offset as u32);
     }
 
     fn peek(&self) -> &[u8] {

@@ -17,7 +17,8 @@ use crate::api::bun_x509 as X509;
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(non_camel_case_types, non_upper_case_globals)]
 pub(super) mod ffi {
-    use super::boringssl::{SSL, SSL_CTX, X509, X509_STORE, X509_STORE_CTX, struct_stack_st_X509};
+    use super::boringssl::sys::SSL_CTX;
+    use super::boringssl::{SSL, X509, X509_STORE, X509_STORE_CTX, struct_stack_st_X509};
     use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 
     // Re-export the one decl whose `*const c_char` NUL-terminated arg keeps a
@@ -544,7 +545,7 @@ pub(super) fn get_peer_certificate(
     // and released after its fields have been copied into JS values and the
     // terminal self-issued check has run.
     unsafe {
-        let mut store = ffi::SSL_CTX_get_cert_store(boringssl::SSL_CTX::opaque_ref(
+        let mut store = ffi::SSL_CTX_get_cert_store(boringssl::sys::SSL_CTX::opaque_ref(
             ffi::SSL_get_SSL_CTX(boringssl::SSL::opaque_ref(ssl_ptr)),
         ));
         // A context built without an explicit `ca` (and without requestCert,
@@ -902,11 +903,11 @@ pub(crate) fn set_key_cert(
                 ok_chain = ffi::SSL_set1_chain(ssl_ptr.cast(), chain);
             }
             if ok_cert != 1 || ok_key != 1 || ok_chain != 1 {
-                boringssl::SSL_CTX_free(ctx.cast());
+                boringssl::SSL_CTX_free(boringssl::sys::SSL_CTX::opaque_ref(ctx));
                 return Err(global.throw(format_args!("setKeyCert failed to apply the context")));
             }
         }
-        boringssl::SSL_CTX_free(ctx.cast());
+        boringssl::SSL_CTX_free(boringssl::sys::SSL_CTX::opaque_ref(ctx));
     }
     Ok(JSValue::UNDEFINED)
 }

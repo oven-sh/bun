@@ -82,7 +82,7 @@ impl Order {
         if current.failed {
             return Ok(()); // do not schedule any tests in a failed describe scope
         }
-        let use_hooks = self.cfg.always_use_hooks || current.base.has_callback;
+        let use_hooks = self.cfg.always_use_hooks || current.base.has_callback.get();
 
         // gather beforeAll
         let beforeall_order: AllOrderResult = if use_hooks {
@@ -98,9 +98,9 @@ impl Order {
 
         // gather children
         // reshaped for borrowck — iterate by index since generate_order_sub borrows &mut self.
-        let scope_only = current.base.only;
+        let scope_only = current.base.only.get();
         for i in 0..current.entries.len() {
-            if scope_only == Only::Contains && current.entries[i].base().only == Only::No {
+            if scope_only == Only::Contains && current.entries[i].base().only.get() == Only::No {
                 continue;
             }
             self.generate_order_sub(&mut current.entries[i])?;
@@ -131,20 +131,19 @@ impl Order {
         // loop below, so we never hold a long-lived `&mut` to it across those calls — each access
         // dereferences the pointer locally.
         // SAFETY: caller-guaranteed live `ExecutionEntry` (see safety doc above); read-only field access.
-        debug_assert!(unsafe { current.as_ref().base.has_callback == current.as_ref().callback.is_some() });
+        debug_assert!(unsafe { current.as_ref().base.has_callback.get() == current.as_ref().callback.is_some() });
         // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
-        let use_each_hooks = unsafe { current.as_ref().base.has_callback };
+        let use_each_hooks = unsafe { current.as_ref().base.has_callback.get() };
         // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
-        let first_parent: Option<*mut DescribeScope> = unsafe { current.as_ref().base.parent };
+        let first_parent = unsafe { current.as_ref().base.parent };
 
         let mut list = EntryList::default();
 
         // gather beforeEach (alternatively, this could be implemented recursively to make it less complicated)
         if use_each_hooks {
-            let mut parent: Option<*mut DescribeScope> = first_parent;
-            while let Some(p_ptr) = parent {
-                // SAFETY: parent chain consists of live DescribeScope nodes.
-                let p = unsafe { &*p_ptr };
+            let mut parent = first_parent;
+            while let Some(p_ref) = parent {
+                let p = p_ref.get();
                 // prepend in reverse so they end up in forwards order
                 let mut i: usize = p.before_each.len();
                 while i > 0 {
@@ -168,10 +167,9 @@ impl Order {
 
         // gather afterEach
         if use_each_hooks {
-            let mut parent: Option<*mut DescribeScope> = first_parent;
-            while let Some(p_ptr) = parent {
-                // SAFETY: parent chain consists of live DescribeScope nodes.
-                let p = unsafe { &*p_ptr };
+            let mut parent = first_parent;
+            while let Some(p_ref) = parent {
+                let p = p_ref.get();
                 for entry in p.after_each.iter() {
                     let src: *const ExecutionEntry = &raw const **entry;
                     // SAFETY: `src` is valid for reads; `Drop` never runs on the bitwise copy

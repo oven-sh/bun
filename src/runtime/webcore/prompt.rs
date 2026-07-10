@@ -3,6 +3,7 @@
 use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_collections::VecExt as _;
 use bun_core::Output;
+use bun_jsc::JsCell;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString;
 
@@ -307,12 +308,12 @@ pub mod prompt {
 
         // 7. Pause while waiting for the user's response.
         // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.
-        // SAFETY: process-global static; prompt() runs single-threaded on the JS
-        // main thread, so the exclusive borrow is sound for this scope.
-        let reader: &mut bun_core::output::BufferedStdin =
-            unsafe { &mut *Output::buffered_stdin_reader() };
+        // SAFETY: `JsCell` is `repr(transparent)` over its payload, so the cast is exact;
+        // the static is main-thread-only and every mutation below is `with_mut`-scoped.
+        let reader: &JsCell<bun_core::output::BufferedStdin> =
+            unsafe { &*Output::buffered_stdin_reader().cast() };
         let mut second_byte: Option<u8> = None;
-        let Ok(first_byte) = reader.read_byte() else {
+        let Ok(first_byte) = reader.with_mut(|r| r.read_byte()) else {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
             return Ok(JSValue::NULL);
@@ -323,7 +324,7 @@ pub mod prompt {
             //    that the user responded with.
             return Ok(default);
         } else if first_byte == b'\r' {
-            let Ok(second) = reader.read_byte() else {
+            let Ok(second) = reader.with_mut(|r| r.read_byte()) else {
                 return Ok(JSValue::NULL);
             };
             second_byte = Some(second);
@@ -343,12 +344,9 @@ pub mod prompt {
         // buffer of size 2048. If that is too small, then increase the buffer
         // size to 4096. If that is too small, then just dynamically allocate
         // the rest.
-        if let Err(e) = read_until_delimiter_array_list_append_assume_capacity(
-            &mut *reader,
-            &mut input,
-            b'\n',
-            2048,
-        ) {
+        if let Err(e) = reader.with_mut(|r| {
+            read_until_delimiter_array_list_append_assume_capacity(r, &mut input, b'\n', 2048)
+        }) {
             if !matches!(e, ReadError::StreamTooLong) {
                 // 8. Let result be null if the user aborts, or otherwise the string
                 //    that the user responded with.
@@ -357,19 +355,17 @@ pub mod prompt {
 
             input.ensure_total_capacity(4096);
 
-            if let Err(e2) = read_until_delimiter_array_list_append_assume_capacity(
-                &mut *reader,
-                &mut input,
-                b'\n',
-                4096,
-            ) {
+            if let Err(e2) = reader.with_mut(|r| {
+                read_until_delimiter_array_list_append_assume_capacity(r, &mut input, b'\n', 4096)
+            }) {
                 if !matches!(e2, ReadError::StreamTooLong) {
                     // 8. Let result be null if the user aborts, or otherwise the string
                     //    that the user responded with.
                     return Ok(JSValue::NULL);
                 }
 
-                if read_until_delimiter_array_list_infinity(&mut *reader, &mut input, b'\n')
+                if reader
+                    .with_mut(|r| read_until_delimiter_array_list_infinity(r, &mut input, b'\n'))
                     .is_err()
                 {
                     // 8. Let result be null if the user aborts, or otherwise the string

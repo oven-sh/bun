@@ -33,7 +33,7 @@ pub use crate::generated_classes::js_SecureContext as js;
 #[bun_jsc::JsClass]
 #[repr(C)]
 pub struct SecureContext {
-    pub ctx: *mut boringssl::SSL_CTX,
+    pub ctx: *mut boringssl::sys::SSL_CTX,
     /// `BunSocketContextOptions.digest()` — exactly the fields that reach
     /// `us_ssl_ctx_from_options`. Stored so an `intern()` WeakGCMap hit (keyed by
     /// the low 64 bits) can do a full content-equality check before reusing.
@@ -297,8 +297,8 @@ impl SecureContext {
         // SAFETY: `state` is the boxed per-thread `RuntimeState` installed by
         // `init_runtime_state`; the embedded `ssl_ctx_cache` has a stable
         // address for the VM's lifetime and is only touched from the JS thread.
-        let cache = unsafe { &mut (*state).ssl_ctx_cache };
-        let Some(ctx) = cache.get_or_create_digest(ctx_opts, d, &mut err) else {
+        let cache = unsafe { &(*state).ssl_ctx_cache };
+        let Some(ctx) = cache.with_mut(|c| c.get_or_create_digest(ctx_opts, d, &mut err)) else {
             // `err` is only set for the input-validation paths (bad PEM, missing
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
             // enum is still `.none`; surface the library error stack instead of
@@ -331,11 +331,8 @@ impl SecureContext {
     /// `SSL_CTX_up_ref` and return — for callers that want to outlive this
     /// wrapper's GC. Most paths just pass `this.ctx` directly and let `SSL_new`
     /// take its own ref.
-    pub fn borrow(&self) -> *mut boringssl::SSL_CTX {
-        unsafe {
-            // SAFETY: self.ctx is a valid SSL_CTX* held for the lifetime of this wrapper.
-            let _ = boringssl::SSL_CTX_up_ref(self.ctx);
-        }
+    pub fn borrow(&self) -> *mut boringssl::sys::SSL_CTX {
+        let _ = boringssl::SSL_CTX_up_ref(boringssl::sys::SSL_CTX::opaque_ref(self.ctx));
         self.ctx
     }
 
@@ -380,8 +377,8 @@ impl SecureContext {
     // false positive on that contract.
     #[allow(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
-        // SAFETY: `ctx` was created by `SSL_CTX_new`; freed exactly once here.
-        unsafe { boringssl::SSL_CTX_free(self.ctx) };
+        // `ctx` was created by `SSL_CTX_new`; released exactly once here.
+        boringssl::SSL_CTX_free(boringssl::sys::SSL_CTX::opaque_ref(self.ctx));
     }
 
     pub fn memory_cost(&self) -> usize {

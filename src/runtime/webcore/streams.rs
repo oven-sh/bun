@@ -804,16 +804,14 @@ impl StreamResult {
                 let value = err.to_js(global_this);
                 value.ensure_still_alive();
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut`
-                // deref. Fresh temp `&mut` is the sole borrow across this
-                // re-entrant call (no long-lived `&mut JSPromise` held).
+                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &` deref.
                 let _ =
-                    JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(value));
+                    JSPromise::opaque_ref(promise).reject_with_async_stack(global_this, Ok(value));
                 // TODO: properly propagate exception upwards
             }
             StreamResult::Done => {
-                // S008: see reject_with_async_stack above; fresh temp `&mut`.
-                let _ = JSPromise::opaque_mut(promise).resolve(global_this, JSValue::FALSE);
+                // S008: see reject_with_async_stack above.
+                let _ = JSPromise::opaque_ref(promise).resolve(global_this, JSValue::FALSE);
                 // TODO: properly propagate exception upwards
             }
             _ => {
@@ -821,8 +819,8 @@ impl StreamResult {
                     Ok(v) => v,
                     Err(err) => {
                         *result = StreamResult::Temporary(RawSlice::EMPTY);
-                        // S008: see reject_with_async_stack above; fresh temp `&mut`.
-                        let _ = JSPromise::opaque_mut(promise).reject(global_this, Err(err));
+                        // S008: see reject_with_async_stack above.
+                        let _ = JSPromise::opaque_ref(promise).reject(global_this, Err(err));
                         // TODO: properly propagate exception upwards
                         vm.event_loop_ref().exit();
                         return;
@@ -831,8 +829,8 @@ impl StreamResult {
                 value.ensure_still_alive();
 
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
-                // S008: see reject_with_async_stack above; fresh temp `&mut`.
-                let _ = JSPromise::opaque_mut(promise).resolve(global_this, value);
+                // S008: see reject_with_async_stack above.
+                let _ = JSPromise::opaque_ref(promise).resolve(global_this, value);
                 // TODO: properly propagate exception upwards
             }
         }
@@ -1937,28 +1935,19 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         false
     }
 
-    /// # Safety
-    /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
-    /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn destroy(this: *mut Self) {
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    pub fn destroy(mut self: Box<Self>) {
         bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
-        // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim
-        // the Box first so we never hold a `&mut *this` alongside the Box's
-        // unique pointer.
-        let mut this = unsafe { bun_core::heap::take(this) };
         // Callers may tear this sink down without routing through
         // flushPromise() (e.g. handleResolveStream / handleRejectStream).
         // Drop the GC root so the promise can be collected.
-        if let Some(prom) = this.pending_flush.take() {
+        if let Some(prom) = self.pending_flush.take() {
             // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
             JSPromise::opaque_ref(prom).to_js().unprotect();
         }
-        this.buffer.clear_and_free();
-        this.unregister_auto_flusher();
-        drop(this);
+        self.buffer.clear_and_free();
+        self.unregister_auto_flusher();
     }
 
     /// This can be called _many_ times for the same instance
@@ -2023,9 +2012,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
             let global_this = self.global_this();
-            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `* → &`/`&mut` deref.
+            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `* → &` deref.
             JSPromise::opaque_ref(prom).to_js().unprotect();
-            let result = JSPromise::opaque_mut(prom).resolve(
+            let result = JSPromise::opaque_ref(prom).resolve(
                 global_this,
                 JSValue::js_number(self.wrote.saturating_sub(self.wrote_at_start_of_flush) as f64),
             );
@@ -2289,18 +2278,11 @@ impl NetworkSink {
         ))
     }
 
-    /// # Safety
-    /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
-    /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn finalize_and_destroy(this: *mut Self) {
-        // SAFETY: this was heap-allocated; reclaim sole ownership before
-        // touching fields so no `&mut *this` is live alongside the Box.
-        let mut this = unsafe { bun_core::heap::take(this) };
-        this.finalize();
-        drop(this);
+    /// Takes ownership of the sink and frees it after detaching the upload.
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    pub fn finalize_and_destroy(mut self: Box<Self>) {
+        self.finalize();
     }
 
     pub fn abort(&mut self) {
@@ -2404,7 +2386,7 @@ impl NetworkSink {
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        NetworkSinkJSSink::create_object(global_this, self, 0)
+        NetworkSinkJSSink::create_object(global_this, std::ptr::from_mut(self), 0)
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -2517,8 +2499,8 @@ impl BufferAction {
         global: &JSGlobalObject,
         err: &StreamError,
     ) -> core::result::Result<(), jsc::JsTerminated> {
-        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-        JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)))
+        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &` deref.
+        JSPromise::opaque_ref(self.swap()).reject(global, Ok(err.to_js(global)))
     }
 
     pub fn resolve(
@@ -2526,8 +2508,8 @@ impl BufferAction {
         global: &JSGlobalObject,
         result: JSValue,
     ) -> core::result::Result<(), jsc::JsTerminated> {
-        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-        JSPromise::opaque_mut(self.swap()).resolve(global, result)
+        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &` deref.
+        JSPromise::opaque_ref(self.swap()).resolve(global, result)
     }
 
     pub fn value(&self) -> JSValue {

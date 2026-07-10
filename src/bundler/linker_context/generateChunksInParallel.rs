@@ -109,7 +109,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             node: ThreadPoolLib::Node::default(),
                             callback: prepare_css_asts_for_chunk,
                         },
-                        chunk: std::ptr::from_mut::<Chunk>(chunk),
+                        chunk,
                         // `PrepareCssAstTask.linker` is `*mut LinkerContext<'static>`
                         // (raw ptr is invariant); `.cast()` erases the inner `'a` to satisfy it.
                         linker: std::ptr::from_mut::<LinkerContext>(c).cast(),

@@ -12,7 +12,9 @@ pub fn post_process_html_chunk(
     // The body has no fallible sites; the Result signature matches the other
     // `post_process_*_chunk` callees dispatched from `generate_chunk`.
     // This is where we split output into pieces
-    let c = ctx.c();
+    // SAFETY: caller must ensure no peer `generate_chunk` task holds an
+    // overlapping borrow of the linker; see `GenerateChunkCtx::c`.
+    let c = unsafe { ctx.c() };
     // E0509: StringJoiner has Drop, so FRU `..Default::default()` is illegal — assign field instead.
     let mut j = StringJoiner::default();
     j.watcher = Watcher {

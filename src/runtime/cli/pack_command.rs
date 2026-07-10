@@ -19,7 +19,7 @@ use bun_parsers::json as JSON;
 // lift via `bun_ast::Expr::from(t2_expr)` at the call site.
 use bun_ast::{E, Expr, ExprData};
 use bun_js_printer as js_printer;
-use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
+use bun_libarchive::lib::{Entry as ArchiveEntry, Result as ArchiveStatus, sys::Archive};
 use bun_paths::{self as path, PathBuffer, SEP_STR};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
 // borrow_subslice/length live on `cow_slice::CowSliceZ`, not on the `std::borrow::Cow`
@@ -226,11 +226,11 @@ impl PackCommand {
         // `log` is non-null after `PackageManager::init()`.
         let log_ptr: *mut bun_ast::Log = manager.log;
         let manager_ptr: *mut PackageManager = manager;
-        // SAFETY: `manager_ptr`/`log_ptr` came from live `&mut`; reborrowed
-        // disjointly (`log` is a separate allocation from the manager fields
-        // `load_from_cwd` touches).
-        let load_from_disk_result = lockfile
-            .load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), unsafe { &mut *log_ptr });
+        // SAFETY: `log_ptr` came from `manager.log`, non-null after
+        // `PackageManager::init()`; `*log_ptr` is a separate allocation from
+        // the manager fields `load_from_cwd` touches.
+        let load_from_disk_result =
+            lockfile.load_from_cwd::<false>(Some(&mut *manager), unsafe { &mut *log_ptr });
 
         let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
             LoadResult::Ok(ok) => Some(&*ok.lockfile),
@@ -2129,7 +2129,11 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     // raw pointer so `run_package_script_foreground` can `&mut` it without
     // conflicting with our `&Transpiler` borrow.
     let transpiler_env: *mut bun_dotenv::Loader<'static> = this_transpiler.env;
-    manager.env_mut().map.put(b"npm_command", b"pack")?;
+    // SAFETY: `manager: &mut PackageManager`; `transpiler_env` above is a raw
+    // pointer, not a live reference, so this is the sole loader borrow.
+    unsafe { manager.env_mut() }
+        .map
+        .put(b"npm_command", b"pack")?;
 
     let (postpack_script, publish_script, postpublish_script, ran_scripts): (
         Option<Box<[u8]>>,
@@ -3023,19 +3027,17 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 // Note: hoisted from repeated inline blocks to avoid 5x duplication of the
 // same `match err { MissingShell, OutOfMemory }` arms. Behavior identical.
 fn run_lifecycle_script<const FOR_PUBLISH: bool>(
-    ctx: &Context<'_>,
+    ctx: &mut Context<'_>,
     script: &[u8],
     name: &[u8],
     abs_workspace_path: &[u8],
     env: *mut bun_dotenv::Loader<'static>,
     silent: bool,
 ) -> Result<(), PackError<FOR_PUBLISH>> {
-    // Note: `ctx.command_ctx` and `env` are reborrowed via raw pointer
-    // because `run_package_script_foreground` needs `&mut`
-    // for `env.map.put()` while `ctx` only holds `&Context`.
-    // SAFETY: both are process-lifetime singletons; no concurrent `&mut` exists
-    // while a lifecycle script runs (single-threaded CLI dispatch).
-    let command_ctx = unsafe { &mut *std::ptr::from_ref(ctx.command_ctx).cast_mut() };
+    // Note: `env` arrives as a raw pointer because
+    // `run_package_script_foreground` needs `&mut` for `env.map.put()` while
+    // the caller only holds `&Transpiler`.
+    let command_ctx = &mut *ctx.command_ctx;
     let use_system_shell = command_ctx.debug.use_system_shell;
     match RunCommand::run_package_script_foreground(
         command_ctx,

@@ -871,9 +871,9 @@ pub(crate) fn run_scripts_with_filter(
 
     // SAFETY: Transpiler::init always sets `env` to the process-lifetime singleton.
     let env_ptr: *mut bun_dotenv::Loader<'static> = this_transpiler.env;
+    // SAFETY: `env_ptr` is the process-lifetime loader singleton (see above).
     let event_loop = MiniEventLoopMod::init_global(
-        // SAFETY: see above; `&'static mut` reborrow of the singleton for first-init only.
-        Some(unsafe { &mut *env_ptr }),
+        Some(unsafe { bun_ptr::ParentRef::from_raw_mut(env_ptr) }),
         None,
     );
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop

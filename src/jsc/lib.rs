@@ -1102,10 +1102,8 @@ pub mod resolved_source_tag {
 }
 pub use self::resolved_source_tag::ResolvedSourceTag;
 
-// ──────────────────────────────────────────────────────────────────────────
-// FetchHeaders — opaque C++ `WebCore::FetchHeaders` handle plus the
-// `HTTPHeaderName` enum used by `fast_get`/`fast_has`/`put`.
-// ──────────────────────────────────────────────────────────────────────────
+// `FetchHeaders` owns one ref on the C++ `WebCore::FetchHeaders`; `HTTPHeaderName`
+// is the enum used by `fast_get`/`fast_has`/`put`.
 #[path = "FetchHeaders.rs"]
 pub mod fetch_headers;
 pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName};
@@ -1225,8 +1223,8 @@ pub use self::js_promise::Strong as JSPromiseStrong;
 pub use self::js_promise::Status as PromiseStatus;
 
 /// `bun_ptr::RefPtr` — intrusive refcounted smart pointer. Re-exported here so
-/// `crate::RefPtr<SourceProvider>` (ZigStackTrace.rs) resolves without every
-/// submodule taking a direct `bun_ptr` dep.
+/// submodules can write `crate::RefPtr<T>` without each taking a direct
+/// `bun_ptr` dep.
 pub use bun_ptr::RefPtr;
 
 /// `bun.String` — refcounted WTF-backed string. Re-exported at the crate root

@@ -32,11 +32,6 @@ use crate::cli::which_npm_client::NPMClient;
 #[path = "create/SourceFileProjectGenerator.rs"]
 pub mod SourceFileProjectGenerator;
 
-// PORTING.md §Global mutable state: single-thread CLI scratch buffer →
-// RacyCell. Touched on the main thread for `--open` *and* the spawned git
-// thread (sequenced — git thread writes after main is done with it).
-static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
-
 // bun.OSPathLiteral — `bun_paths` does not (yet) export an
 // `os_path_literal!` macro from this crate's POV. `OSPathSlice` is `[u8]` on
 // POSIX, so byte-string literals coerce directly; the Windows `[u16]` form will
@@ -277,8 +272,8 @@ impl CreateCommand {
             return CreateListExamplesCommand::exec(ctx);
         }
 
-        // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
-        let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
+        fs::FileSystem::init(None)?;
+        let filesystem: &mut fs::FileSystem = fs::FileSystem::instance();
         let mut env_loader: DotEnv::Loader =
             { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
 
@@ -1603,9 +1598,8 @@ impl CreateCommand {
         Output::flush();
 
         if create_options.open {
-            // SAFETY: single-threaded CLI access to module-level static path buffer
-            let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
-            if let Some(bin) = which(bun_path_buf, path_env, destination, b"bun") {
+            let mut bun_path_buf = PathBuffer::uninit();
+            if let Some(bin) = which(&mut bun_path_buf, path_env, destination, b"bun") {
                 let argv: [&[u8]; 1] = [bin.as_bytes()];
                 crate::cli::open::open_url(bun_core::zstr!("http://localhost:3000/"));
 
@@ -2083,7 +2077,6 @@ impl ExampleTag {
 // RacyCell. `URL_` borrows into the `*_BUF` statics so they must remain
 // process-lifetime, not stack locals.
 static URL_: bun_core::RacyCell<Option<URL<'static>>> = bun_core::RacyCell::new(None);
-static APP_NAME_BUF: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0u8; 512]);
 static GITHUB_REPOSITORY_URL_BUF: bun_core::RacyCell<[u8; 1024]> =
     bun_core::RacyCell::new([0u8; 1024]);
 // Static so the borrowed slice satisfies `URL<'static>` for
@@ -2096,20 +2089,22 @@ impl Example {
 
     pub fn print(examples: &[Example], default_app_name: Option<&[u8]>) {
         for example in examples {
-            // SAFETY: single-threaded CLI access to static buffer
-            let app_name_buf = unsafe { &mut *APP_NAME_BUF.get() };
-            let app_name: &[u8] = default_app_name.unwrap_or_else(|| {
-                let mut cursor: &mut [u8] = &mut app_name_buf[..];
-                let cap = cursor.len();
-                write!(
-                    &mut cursor,
-                    "./{}-app",
-                    bstr::BStr::new(&example.name[0..example.name.len().min(492)])
-                )
-                .expect("unreachable");
-                let written = cap - cursor.len();
-                &app_name_buf[..written]
-            });
+            let mut app_name_buf = [0u8; 512];
+            let app_name: &[u8] = match default_app_name {
+                Some(name) => name,
+                None => {
+                    let mut cursor: &mut [u8] = &mut app_name_buf[..];
+                    let cap = cursor.len();
+                    write!(
+                        &mut cursor,
+                        "./{}-app",
+                        bstr::BStr::new(&example.name[0..example.name.len().min(492)])
+                    )
+                    .expect("unreachable");
+                    let written = cap - cursor.len();
+                    &app_name_buf[..written]
+                }
+            };
 
             if !example.description.is_empty() {
                 bun_core::pretty!(
@@ -2141,8 +2136,7 @@ impl Example {
 
         let mut examples: Vec<Example> = remote_examples.into_vec();
         {
-            // SAFETY: single-threaded CLI access to module-level static path buffer
-            let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
+            let mut home_dir_buf = PathBuffer::uninit();
             let mut folders: [bun_sys::Dir; 3] = [
                 bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
                 bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
@@ -2150,21 +2144,21 @@ impl Example {
             ];
             if let Some(home_dir) = env_loader.map.get(b"BUN_CREATE_DIR") {
                 let parts = [home_dir];
-                let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                let outdir_path = filesystem.abs_buf(&parts, &mut home_dir_buf);
                 folders[0] = bun_sys::Dir::open(outdir_path)
                     .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             {
                 let parts = [filesystem.top_level_dir, BUN_CREATE_DIR];
-                let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                let outdir_path = filesystem.abs_buf(&parts, &mut home_dir_buf);
                 folders[1] = bun_sys::Dir::open(outdir_path)
                     .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             if let Some(home_dir) = env_loader.map.get(bun_core::env_var::HOME.key()) {
                 let parts = [home_dir, BUN_CREATE_DIR];
-                let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                let outdir_path = filesystem.abs_buf(&parts, &mut home_dir_buf);
                 folders[2] = bun_sys::Dir::open(outdir_path)
                     .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
@@ -2692,7 +2686,7 @@ pub(crate) struct CreateListExamplesCommand;
 
 impl CreateListExamplesCommand {
     pub(crate) fn exec(ctx: &Command::Context) -> Result<(), bun_core::Error> {
-        let filesystem = fs::FileSystem::init(None)?;
+        fs::FileSystem::init(None)?;
         let mut env_loader: DotEnv::Loader =
             { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
 
@@ -2707,8 +2701,7 @@ impl CreateListExamplesCommand {
         let node: *mut ProgressNode = progress.start(b"Fetching manifest", 0);
         progress.refresh();
 
-        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let filesystem = unsafe { &mut *filesystem };
+        let filesystem = fs::FileSystem::instance();
         // SAFETY: `node` points into `progress`, which outlives this call; single-threaded.
         let examples = Example::fetch_all_local_and_remote(
             ctx,
@@ -2823,10 +2816,7 @@ impl GitHandler {
         //   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
         //   Range (min … max):   299.5 ms … 318.8 ms    10 runs
 
-        // SAFETY: single-threaded CLI access to module-level static path buffer (note: this fn
-        // may run on the git thread; BUN_PATH_BUF is also touched on main thread for `--open`.
-        // The two uses are sequenced — git runs before `--open` block.)
-        let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
+        let mut bun_path_buf = PathBuffer::uninit();
         // `bun.spawnSync` on Windows drives `uv_spawn` and needs a uv loop. This fn
         // runs on the dedicated git thread (see `GitHandler::spawn`), so use the
         // *thread-local* `MiniEventLoop` singleton — `init_global` is `thread_local!`-backed,
@@ -2835,7 +2825,7 @@ impl GitHandler {
         let win_loop = bun_event_loop::EventLoopHandle::init_mini(
             bun_event_loop::MiniEventLoop::init_global(None, None),
         );
-        if let Some(git) = which(bun_path_buf, path, destination, b"git") {
+        if let Some(git) = which(&mut bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();
             let git_commands: [&[&[u8]]; 3] = [
                 &[git, b"init", b"--quiet"],

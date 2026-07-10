@@ -1076,7 +1076,7 @@ impl<'a> CopyFileWindows<'a> {
                 core::ptr::from_mut(&mut self.read_write_loop.uv_buf),
                 1,
                 -1,
-                Some(on_read),
+                Some(on_fs::<{ FsOp::Read }>),
             )
         };
 
@@ -1122,18 +1122,33 @@ impl ReadWriteLoop {
 }
 
 #[cfg(windows)]
-extern "C" fn on_read(req: *mut libuv::fs_t) {
-    // SAFETY: `req->data` was set to `core::ptr::from_mut(self)` (whole-struct
-    // provenance) before scheduling. Recover the parent from `data` rather than
-    // `from_field_ptr!(.., io_request, req)`: the `req` pointer libuv hands back was
-    // produced from a `&mut self.io_request` reborrow whose provenance covers only the
-    // `io_request` field, so `container_of`-style subtraction would yield a
-    // `*mut CopyFileWindows` with out-of-bounds provenance (UB under Stacked/Tree
-    // Borrows). After forming `this`, access the request via `this.io_request` — never
-    // through `(*req)`, which would alias the live `&mut`.
-    let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
-    debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
+#[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
+enum FsOp {
+    Read,
+    Write,
+    CopyFile,
+    Chmod,
+}
 
+/// The one place that recovers the parent from `req->data` (whole-struct provenance,
+/// stored before scheduling). `from_field_ptr!` would be wrong: `req` carries only
+/// `io_request`-field provenance. Reach the request via `this.io_request`, never `(*req)`.
+#[cfg(windows)]
+unsafe extern "C" fn on_fs<const OP: FsOp>(req: *mut libuv::fs_t) {
+    // SAFETY: libuv invokes this on the loop thread with `req->data` set to the live,
+    // exclusively-owned `*mut CopyFileWindows`.
+    let this: &mut CopyFileWindows = unsafe { bun_ptr::callback_ctx((*req).data) };
+    debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
+    match OP {
+        FsOp::Read => on_read(this),
+        FsOp::Write => on_write(this),
+        FsOp::CopyFile => on_copy_file(this),
+        FsOp::Chmod => on_chmod(this),
+    }
+}
+
+#[cfg(windows)]
+fn on_read(this: &mut CopyFileWindows) {
     let source_fd = this.read_write_loop.source_fd;
     let destination_fd = this.read_write_loop.destination_fd;
     // reshaped for borrowck — `read_buf.items` is `Vec` len-slice.
@@ -1178,7 +1193,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
             core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
             1,
             -1,
-            Some(on_write),
+            Some(on_fs::<{ FsOp::Write }>),
         )
     };
     this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
@@ -1191,11 +1206,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 }
 
 #[cfg(windows)]
-extern "C" fn on_write(req: *mut libuv::fs_t) {
-    // SAFETY: see `on_read` — recover from `req->data` (whole-struct provenance),
-    // not `from_field_ptr!`; then access the request only via `this.io_request`.
-    let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
-    debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
+fn on_write(this: &mut CopyFileWindows) {
     let buf_len = this.read_write_loop.read_buf.len();
 
     let destination_fd = this.read_write_loop.destination_fd;
@@ -1243,7 +1254,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
                 core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
                 1,
                 -1,
-                Some(on_write),
+                Some(on_fs::<{ FsOp::Write }>),
             )
         };
 
@@ -1294,7 +1305,7 @@ impl<'a> CopyFileWindows<'a> {
     ) -> JSValue {
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
         let global = event_loop.global_ref();
-        let result = bun_core::heap::into_raw(CopyFileWindows::new(CopyFileWindows {
+        let this = CopyFileWindows::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
             promise: jsc::JSPromiseStrong::init(global),
@@ -1307,14 +1318,15 @@ impl<'a> CopyFileWindows<'a> {
             written_bytes: 0,
             err: None,
             read_write_loop: ReadWriteLoop::default(),
-        }));
-        // SAFETY: result was just allocated above
-        let result_ref = unsafe { &mut *result };
-        let promise = result_ref.promise.value();
+        });
+        let promise = this.promise.value();
+        // Ownership moves to the libuv callbacks; `destroy(self: Box<Self>)` frees it.
+        let result = bun_core::heap::into_raw(this);
 
         // On error, this function might free the CopyFileWindows struct.
         // So we can no longer reference it beyond this point.
-        result_ref.copyfile();
+        // SAFETY: `result` is the unique pointer just leaked from the box above.
+        unsafe { (*result).copyfile() };
 
         promise
     }
@@ -1535,7 +1547,7 @@ impl<'a> CopyFileWindows<'a> {
                 old_path.as_ptr(),
                 new_path.as_ptr(),
                 0,
-                Some(on_copy_file),
+                Some(on_fs::<{ FsOp::CopyFile }>),
             )
         };
 
@@ -1558,10 +1570,10 @@ impl<'a> CopyFileWindows<'a> {
 
     pub fn throw(&mut self, err: bun_sys::Error) {
         let global_this = self.event_loop.global_ref();
-        // `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
-        // `self`), but its lifetime is elided to `&mut self`. Decay to a raw pointer so
-        // borrowck doesn't tie it to `self` across `destroy` below.
-        let promise = JSPromise::opaque_mut(self.promise.swap());
+        // `swap()` borrows a GC-owned cell (not `self`), but its lifetime is elided
+        // to `&mut self`. Decay to a raw pointer so borrowck doesn't tie it to `self`
+        // across `destroy` below.
+        let promise = JSPromise::opaque_ref(self.promise.swap());
         let err_instance = err.to_js_with_async_stack(global_this, promise);
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
@@ -1569,8 +1581,9 @@ impl<'a> CopyFileWindows<'a> {
         let _guard = unsafe {
             jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
         };
-        // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
-        unsafe { Self::destroy(core::ptr::from_mut(self)) };
+        // SAFETY: self was heap-allocated (Box) in init(); this is the unique owning
+        // pointer and self is not accessed afterward.
+        Self::destroy(unsafe { bun_core::heap::take(core::ptr::from_mut(self)) });
         // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
         let _ = promise.reject(global_this, err_instance); // TODO: properly propagate exception upwards
     }
@@ -1619,7 +1632,7 @@ impl<'a> CopyFileWindows<'a> {
                         &mut self.io_request,
                         path_ptr,
                         i32::try_from(mode).expect("int cast"),
-                        Some(on_chmod),
+                        Some(on_fs::<{ FsOp::Chmod }>),
                     )
                 };
 
@@ -1649,15 +1662,16 @@ impl<'a> CopyFileWindows<'a> {
         let global_this = self.event_loop.global_ref();
         // see `throw` — re-type the GC cell via the ZST opaque deref so it
         // outlives `destroy(self)` for borrowck.
-        let promise = JSPromise::opaque_mut(self.promise.swap());
+        let promise = JSPromise::opaque_ref(self.promise.swap());
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop.
         let _guard = unsafe {
             jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
         };
 
-        // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
-        unsafe { Self::destroy(core::ptr::from_mut(self)) };
+        // SAFETY: self was heap-allocated (Box) in init(); this is the unique owning
+        // pointer and self is not accessed afterward.
+        Self::destroy(unsafe { bun_core::heap::take(core::ptr::from_mut(self)) });
         // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
         let _ = promise.resolve(global_this, JSValue::js_number_from_uint64(written as u64)); // TODO: properly propagate exception upwards
     }
@@ -1677,17 +1691,12 @@ impl<'a> CopyFileWindows<'a> {
         );
     }
 
-    /// SAFETY: `this` must have been produced by `heap::alloc` in `init()` and
-    /// not yet destroyed. After this call `this` is dangling.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live `heap::alloc`-ed pointer.
-        unsafe {
-            (*this).read_write_loop.close();
-            // destination_file_store.deref() / source_file_store.deref() — Arc Drop on Box drop
-            // promise.deinit() — handled by JscStrong's Drop on Box drop
-            (*this).io_request.deinit();
-            drop(bun_core::heap::take(this));
-        }
+    /// Consumes the allocation made in `init()`.
+    /// `destination_file_store` / `source_file_store` (Arc deref) and `promise`
+    /// (JscStrong) are released by the derived `Drop` when the `Box` drops.
+    pub fn destroy(mut self: Box<Self>) {
+        self.read_write_loop.close();
+        self.io_request.deinit();
     }
 
     fn mkdirp(&mut self) {
@@ -1740,12 +1749,7 @@ impl<'a> CopyFileWindows<'a> {
 }
 
 #[cfg(windows)]
-extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
-    // SAFETY: see `on_read` — recover from `req->data` (whole-struct provenance),
-    // not `from_field_ptr!`; then access the request only via `this.io_request`.
-    let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
-    debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
-
+fn on_copy_file(this: &mut CopyFileWindows) {
     let event_loop = this.event_loop;
     event_loop.unref_concurrently();
     let rc = this.io_request.result;
@@ -1788,12 +1792,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 }
 
 #[cfg(windows)]
-extern "C" fn on_chmod(req: *mut libuv::fs_t) {
-    // SAFETY: see `on_read` — recover from `req->data` (whole-struct provenance),
-    // not `from_field_ptr!`; then access the request only via `this.io_request`.
-    let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
-    debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
-
+fn on_chmod(this: &mut CopyFileWindows) {
     let event_loop = this.event_loop;
     event_loop.unref_concurrently();
 

@@ -16,13 +16,13 @@ impl Taskable for JSCDeferredWorkTask {
 
 unsafe extern "C" {
     // safe: `JSCDeferredWorkTask` is an `opaque_ffi!` ZST handle (`!Freeze`
-    // via `UnsafeCell`); `&mut` is ABI-identical to a non-null `*mut` and the
-    // C++ side consuming it is interior to the opaque cell.
-    safe fn Bun__runDeferredWork(task: &mut JSCDeferredWorkTask);
+    // via `UnsafeCell`); `&T` is ABI-identical to a non-null pointer and the
+    // C++ side consuming it mutates interior to the opaque cell.
+    safe fn Bun__runDeferredWork(task: &JSCDeferredWorkTask);
 }
 
 impl JSCDeferredWorkTask {
-    pub fn run(&mut self) -> Result<(), JsTerminated> {
+    pub fn run(&self) -> Result<(), JsTerminated> {
         // SAFETY: `VirtualMachine::get()` returns the live per-thread VM; `global` is
         // initialized during VM startup and remains valid for the VM's lifetime.
         let global_this = VirtualMachine::get().global();

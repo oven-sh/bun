@@ -127,7 +127,7 @@ unsafe extern "C" {
         ptr: *const c_void,
         len: usize,
     ) -> JSValue;
-    fn JSC__ArrayBuffer__asBunArrayBuffer(self_: *mut JSCArrayBuffer, out: *mut ArrayBuffer);
+    fn JSC__ArrayBuffer__asBunArrayBuffer(self_: &JSCArrayBuffer, out: *mut ArrayBuffer);
     // safe: `JSCArrayBuffer` is an `opaque_ffi!` ZST handle (`!Freeze` via
     // `UnsafeCell`); `&` is ABI-identical to a non-null `*mut` and the C++
     // `RefCounted<ArrayBuffer>` count mutation is interior to the opaque cell.
@@ -1153,7 +1153,7 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for JSCArrayBuffer {
 }
 
 impl JSCArrayBuffer {
-    pub fn as_array_buffer(&mut self) -> ArrayBuffer {
+    pub fn as_array_buffer(&self) -> ArrayBuffer {
         let mut out = core::mem::MaybeUninit::<ArrayBuffer>::uninit();
         // SAFETY: C++ fully initializes `out`.
         unsafe {

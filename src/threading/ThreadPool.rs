@@ -524,19 +524,24 @@ impl ThreadPool {
             i: usize,
         }
 
-        // `run_fn` is stored in WaitContext and dispatched via the `EachCall`
-        // trait (ByValue vs ByPtr).
+        impl<Ctx, V, F: EachCall<Ctx, V>> RunnerTask<Ctx, V, F> {
+            /// `run_fn` is stored in WaitContext and dispatched via the `EachCall`
+            /// trait (ByValue vs ByPtr).
+            fn run(&self) {
+                let wctx = self.ctx.get();
+                // SAFETY: `values` slice outlives all RunnerTasks (wait_for_all() blocks until
+                // every task finishes); each task owns a distinct index `i`.
+                let value: *mut V = unsafe { &raw mut (*wctx.values)[self.i] };
+                // SAFETY: `value` is live and exclusively owned by this task per the index.
+                unsafe { wctx.run_fn.call(&wctx.ctx, value, self.i) };
+            }
+        }
+
         unsafe fn call<Ctx, V, F: EachCall<Ctx, V>>(task: *mut Task) {
             // SAFETY: task points to RunnerTask.task (offset 0, repr(C)).
-            let runner_task =
-                unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
-            let i = runner_task.i;
-            let wctx = runner_task.ctx.get();
-            // SAFETY: `values` slice outlives all RunnerTasks (wait_for_all() blocks until
-            // every task finishes); each task owns a distinct index `i`.
-            let value: *mut V = unsafe { &raw mut (*wctx.values)[i] };
-            // SAFETY: `value` is live and exclusively owned by this task per the index.
-            unsafe { wctx.run_fn.call(&wctx.ctx, value, i) };
+            let runner_task: &RunnerTask<Ctx, V, F> =
+                unsafe { &*bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
+            runner_task.run();
         }
 
         let wait_context = WaitContext {

@@ -632,22 +632,23 @@ struct PasswordResult<Op: PasswordOp> {
 
 impl<Op: PasswordOp> PasswordResult<Op> {
     fn run_from_js_erased(p: *mut Self) -> AnyTaskJsResult<()> {
-        Self::run_from_js(p)
+        // SAFETY: `p` was produced by heap::into_raw in `run_owned`; the event
+        // loop hands sole ownership to this callback.
+        unsafe { bun_core::heap::take(p) }
+            .run_from_js()
             .map_err(|_: jsc::JsTerminated| bun_event_loop::ErasedJsError::Terminated)
     }
 
-    fn run_from_js(this: *mut Self) -> Result<(), jsc::JsTerminated> {
-        // SAFETY: `this` was produced by heap::into_raw in `run_owned` and the
-        // event loop hands sole ownership to this callback. Reclaim the Box once
-        // up-front so all fields drop on scope exit (no `mem::replace` dance).
-        let this = *unsafe { bun_core::heap::take(this) };
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    fn run_from_js(self: Box<Self>) -> Result<(), jsc::JsTerminated> {
         let PasswordResult {
             value,
             mut r#ref,
             mut promise,
             global,
             task: _,
-        } = this;
+        } = *self;
         // SAFETY: `global` stored from a live `&JSGlobalObject`; VM outlives the task.
         let global = unsafe { &*global };
         r#ref.unref(bun_io::js_vm_ctx());

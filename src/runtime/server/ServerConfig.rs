@@ -22,7 +22,7 @@ use crate::socket::ssl_config::SSLConfigFromJs;
 
 pub struct ServerConfig {
     pub address: Address,
-    pub idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
+    pub idle_timeout: core::cell::Cell<u8>, // TODO: should we match websocket default idleTimeout of 120?
     pub has_idle_timeout: bool,
     // TODO: use webkit URL parser instead of bun's
     // NOTE: only the owned buffer is stored; callers parse on
@@ -72,7 +72,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             address: Address::default(),
-            idle_timeout: 10,
+            idle_timeout: core::cell::Cell::new(10),
             has_idle_timeout: false,
             base_uri: Box::default(),
             ssl_config: None,
@@ -263,7 +263,7 @@ impl ServerConfig {
         // residual `self` is a no-op.
         let mut that = ServerConfig {
             address: core::mem::take(&mut self.address),
-            idle_timeout: self.idle_timeout,
+            idle_timeout: core::cell::Cell::new(self.idle_timeout.get()),
             has_idle_timeout: self.has_idle_timeout,
             base_uri: core::mem::take(&mut self.base_uri),
             ssl_config: self.ssl_config.take(),
@@ -325,7 +325,7 @@ impl ServerConfig {
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
-    app: &mut uws::NewApp<SSL>,
+    app: &uws::NewApp<SSL>,
     entry: *mut T,
     path: &[u8],
     method: http_method::Optional,
@@ -1136,7 +1136,7 @@ impl ServerConfig {
                     )));
                 }
 
-                args.idle_timeout = idle_timeout as u8;
+                args.idle_timeout.set(idle_timeout as u8);
             }
         }
 

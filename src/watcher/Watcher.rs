@@ -75,7 +75,26 @@ pub struct AnyResolveWatcher {
     pub callback: fn(*mut (), dir_path: &[u8], dir_fd: Fd),
 }
 
+/// Receiver of resolver directory-watch callbacks.
+pub trait ResolveWatchTarget {
+    fn on_watch_directory(&mut self, dir_path: &[u8], dir_fd: Fd);
+}
+
 impl AnyResolveWatcher {
+    /// Erase a typed context pointer; `tramp` recovers `T` exactly once.
+    pub fn new<T: ResolveWatchTarget>(context: *mut T) -> Self {
+        fn tramp<T: ResolveWatchTarget>(ctx: *mut (), dir_path: &[u8], dir_fd: Fd) {
+            // SAFETY: `ctx` is the `*mut T` paired with this trampoline in
+            // `new`, and `watch` only ever feeds that pointer back.
+            let this = unsafe { &mut *ctx.cast::<T>() };
+            this.on_watch_directory(dir_path, dir_fd);
+        }
+        Self {
+            context: context.cast::<()>(),
+            callback: tramp::<T>,
+        }
+    }
+
     #[inline]
     pub fn watch(self, dir_path: &[u8], dir_fd: Fd) {
         (self.callback)(self.context, dir_path, dir_fd)
@@ -940,17 +959,7 @@ impl Watcher {
     }
 
     pub fn get_resolve_watcher(&mut self) -> AnyResolveWatcher {
-        fn wrap(ctx: *mut (), dir_path: &[u8], dir_fd: Fd) {
-            // SAFETY: ctx was stored from *mut Watcher in get_resolve_watcher()
-            // and `AnyResolveWatcher::watch` only ever feeds back the paired
-            // `context`; the resolver holds it for the Watcher's lifetime.
-            let this = unsafe { &mut *ctx.cast::<Watcher>() };
-            Watcher::on_maybe_watch_directory(this, dir_path, dir_fd);
-        }
-        AnyResolveWatcher {
-            context: std::ptr::from_mut::<Self>(self).cast::<()>(),
-            callback: wrap,
-        }
+        AnyResolveWatcher::new(std::ptr::from_mut::<Self>(self))
     }
 
     pub fn on_maybe_watch_directory(watch: &mut Self, file_path: &[u8], dir_fd: Fd) {
@@ -962,6 +971,12 @@ impl Watcher {
         {
             let _ = watch.add_directory::<false>(dir_fd, file_path, Self::get_hash(file_path));
         }
+    }
+}
+
+impl ResolveWatchTarget for Watcher {
+    fn on_watch_directory(&mut self, dir_path: &[u8], dir_fd: Fd) {
+        Watcher::on_maybe_watch_directory(self, dir_path, dir_fd);
     }
 }
 

@@ -171,9 +171,9 @@ impl ReadableStream {
         let _ = self.reload_tag(global_this);
 
         match self.ptr {
-            Source::Blob(blobby) => {
-                // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-                let blobby = unsafe { &mut *blobby };
+            Source::Blob(_) => {
+                // BACKREF: see `Source::blob()` — payload valid while stream alive.
+                let blobby = self.ptr.blob().expect("matched Blob");
                 if let Some(blob) = blobby.to_any_blob(global_this) {
                     self.done(global_this);
                     return Some(blob);
@@ -578,6 +578,23 @@ impl Source {
             _ => None,
         }
     }
+
+    /// Shared borrow of the `Blob` payload as a [`BackRef`](bun_ptr::BackRef).
+    ///
+    /// Same invariant as [`bytes`](Self::bytes): the pointer is the JS
+    /// wrapper's `m_ctx` heap allocation, non-null and live while the owning
+    /// `ReadableStream` JSValue is rooted. R-2: every `ByteBlobLoader` field
+    /// touched through this borrow is `Cell`/`JsCell`-backed, so re-entrant JS
+    /// that re-derives a fresh `&ByteBlobLoader` from `m_ctx` aliases shared-only.
+    #[inline]
+    pub fn blob(self) -> Option<bun_ptr::BackRef<ByteBlobLoader>> {
+        match self {
+            Source::Blob(p) => Some(bun_ptr::BackRef::from(
+                NonNull::new(p).expect("Source::Blob payload is non-null"),
+            )),
+            _ => None,
+        }
+    }
 }
 
 // ─── NewSource ───────────────────────────────────────────────────────────────
@@ -912,9 +929,9 @@ impl<C: SourceContext> NewSource<C> {
         }
         if let Some(close) = self.close_handler.take() {
             // Identity check against the *exact* fn pointer stored by `set_on_close_from_js`, so the
-            // JS path receives `self` (not `close_ctx`, which is unset on that path).
+            // JS path calls the safe method directly (`close_ctx` is unset on that path).
             if close as usize == Self::on_js_close as fn(Option<*mut c_void>) as usize {
-                Self::on_js_close(Some(std::ptr::from_mut(self).cast::<c_void>()));
+                self.on_close_from_js();
             } else {
                 close(self.close_ctx.map(|p| p.as_ptr()));
             }
@@ -926,16 +943,22 @@ impl<C: SourceContext> NewSource<C> {
     /// `close_handler` by [`Self::set_on_close_from_js`] so the fn-pointer
     /// identity check above matches.
     fn on_js_close(ptr: Option<*mut c_void>) {
-        // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
-        let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
+        // Typed trampoline: one shared deref, then a `&self` method. No `&mut`
+        // is formed, so the `queue_microtask` below cannot stack a second borrow.
+        // SAFETY: ptr is the `*mut NewSource<C>` stored by `set_on_close_from_js`.
+        let this = unsafe { &*(ptr.unwrap().cast::<NewSource<C>>()) };
+        this.on_close_from_js();
+    }
+
+    fn on_close_from_js(&self) {
         // Reached from `FileReader::on_reader_done` off the event loop. While
         // the across-read ref is held (`increment_count` upgraded to Strong),
         // the wrapper is rooted and `try_get()` is `Some`. If the wrapper was
         // already finalized, `try_get()` is `None` and there is no callback.
-        let Some(this_jsvalue) = this.this_jsvalue.try_get() else {
+        let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
             return;
         };
-        let global_this = this.global_this();
+        let global_this = self.global_this();
         if let Some(cb) = <Self as NewSourceCodegen>::on_close_callback_get_cached(this_jsvalue) {
             if !cb.is_undefined() {
                 global_this.queue_microtask(cb, &[]);

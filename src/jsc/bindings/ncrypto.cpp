@@ -4407,7 +4407,8 @@ bool Rsa::checkPrivateKey() const
     }
 
     if (RSA_set0_crt_params(
-            const_cast<RSA*>(rsa_), dp.get(), dq.get(), qi.get()) != 1) {
+            const_cast<RSA*>(rsa_), dp.get(), dq.get(), qi.get())
+        != 1) {
         return false;
     }
     dp.release();

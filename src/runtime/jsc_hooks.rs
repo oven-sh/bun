@@ -75,7 +75,7 @@ pub struct RuntimeState {
     pub sql_rare: bun_sql_jsc::jsc::RareData,
     /// `RareData.ssl_ctx_cache` — concrete digest-keyed weak `SSL_CTX*` cache.
     /// Same cycle-break story as `sql_rare`.
-    pub ssl_ctx_cache: crate::api::SSLContextCache::SSLContextCache,
+    pub ssl_ctx_cache: bun_jsc::JsCell<crate::api::SSLContextCache::SSLContextCache>,
     /// `RareData.editor_context` — `bun_jsc` cannot name `crate::cli::open`.
     pub editor_context: crate::cli::open::EditorContext,
     /// `RareData.global_dns_data` — per-VM resolver + c-ares channel.
@@ -234,7 +234,7 @@ pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun
         );
         // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
         // address for the VM's lifetime and is only touched from the JS thread.
-        let cache = unsafe { &mut (*state).ssl_ctx_cache };
+        let cache = unsafe { &(*state).ssl_ctx_cache };
         // Mode-neutral CTX (VERIFY_NONE). `us_internal_ssl_attach` overrides
         // each client SSL to VERIFY_PEER + the shared bundled-root store, so
         // `new WebSocket("wss://…")` (which shares this CTX and defaults to
@@ -243,7 +243,7 @@ pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun
         // to the same CTX rather than building a second one with the same
         // digest. The +1 ref returned here is held for the VM's lifetime, so
         // the entry never tombstones.
-        match cache.get_or_create_opts(&Default::default(), &mut err) {
+        match cache.with_mut(|c| c.get_or_create_opts(&Default::default(), &mut err)) {
             Some(ctx) => rare.default_client_ssl_ctx = Some(ctx),
             None => bun_core::Output::panic(format_args!(
                 "default client SSL_CTX init failed: {}",
@@ -272,8 +272,8 @@ unsafe fn ssl_ctx_cache_get_or_create(
     );
     // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
     // address for the VM's lifetime and is only touched from the JS thread.
-    let cache = unsafe { &mut (*state).ssl_ctx_cache };
-    cache.get_or_create_opts(opts, err)
+    let cache = unsafe { &(*state).ssl_ctx_cache };
+    cache.with_mut(|c| c.get_or_create_opts(opts, err))
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -506,7 +506,7 @@ unsafe fn configure_debugger(
                 Some(Debugger {
                     path_or_port: None,
                     from_environment_variable: unix,
-                    wait_for_connection,
+                    wait_for_connection: Cell::new(wait_for_connection),
                     set_breakpoint_on_first_line,
                     ..Default::default()
                 })
@@ -514,7 +514,7 @@ unsafe fn configure_debugger(
                 Some(Debugger {
                     path_or_port: None,
                     from_environment_variable: connect_to,
-                    wait_for_connection: Wait::Off,
+                    wait_for_connection: Cell::new(Wait::Off),
                     set_breakpoint_on_first_line: false,
                     mode: Mode::Connect,
                     ..Default::default()
@@ -530,11 +530,11 @@ unsafe fn configure_debugger(
             Some(Debugger {
                 path_or_port: Some(path_or_port),
                 from_environment_variable: unix,
-                wait_for_connection: if enable.wait_for_connection {
+                wait_for_connection: Cell::new(if enable.wait_for_connection {
                     Wait::Forever
                 } else {
                     wait_for_connection
-                },
+                }),
                 set_breakpoint_on_first_line: set_breakpoint_on_first_line
                     || enable.set_breakpoint_on_first_line,
                 ..Default::default()
@@ -1614,8 +1614,9 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
     let mut max_id: i32 = 0;
 
     // Recursively report all discovered tests starting from root scope.
+    // SAFETY: `agent` is a live C++ handle (fn contract).
     retroactively_report_scope(
-        agent,
+        unsafe { &mut *agent },
         &mut active_file.collection.root_scope,
         -1,
         &mut max_id,
@@ -1627,7 +1628,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
     let _ = max_id;
 
     fn retroactively_report_scope(
-        agent: *mut TestReporterHandle,
+        agent: &mut TestReporterHandle,
         scope: &mut DescribeScope,
         parent_id: i32,
         max_id: &mut i32,
@@ -1645,8 +1646,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
                         let mut name = bun_core::String::init(
                             describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
                         );
-                        // SAFETY: `agent` is a live C++ handle (fn contract).
-                        unsafe { &mut *agent }.report_test_found_with_location(
+                        agent.report_test_found_with_location(
                             test_id,
                             &mut name,
                             TestType::Describe,
@@ -1672,8 +1672,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
                         let mut name = bun_core::String::init(
                             test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
                         );
-                        // SAFETY: `agent` is a live C++ handle (fn contract).
-                        unsafe { &mut *agent }.report_test_found_with_location(
+                        agent.report_test_found_with_location(
                             test_id,
                             &mut name,
                             TestType::Test,
@@ -2252,39 +2251,29 @@ fn transpile_source_code_inner(
                 _ => ModuleType::Unknown,
             };
 
-            let mut input_file_fd = bun_sys::Fd::INVALID;
+            let input_file_fd = Cell::new(bun_sys::Fd::INVALID);
             // The deferred fd close is independent of `give_back_arena`
             // and must fire on every exit path: parse failure, JSON early
             // return, `disable_transpilying`, already_bundled, empty `.cjs`,
             // cache-hit, AsyncModule, the wasm recurse, and the print error.
-            // Note: reshaped for borrowck — capture raw pointers so the
-            // guard does not alias the parser's `file_fd_ptr` /
-            // `maybe_watch_file` borrows. **All** later access to
-            // `should_close_input_file_fd` / `input_file_fd` MUST go through
-            // these raw pointers — taking a fresh `&mut` to either local would
-            // invalidate the guard's tag under Stacked Borrows, making the
-            // deferred `.close()` (which the parse path always reaches) UB.
+            // Note: reshaped for borrowck — the `should_close` raw pointer
+            // keeps the guard from aliasing `maybe_watch_file`'s `&mut` borrow;
+            // the fd is a `Cell`, so a shared borrow suffices for both.
             let should_close_ptr: *mut bool = &raw mut should_close_input_file_fd;
-            let input_file_fd_ptr: *mut bun_sys::Fd = &raw mut input_file_fd;
-            // Note: `scopeguard::defer!` would capture the two `*mut`
-            // locals by-ref in its non-`move` closure, which borrowck then
-            // treats as conflicting with the later `&mut *ptr` reborrows below
-            // (edition-2021 capture analysis). Thread the raw pointers through
-            // the guard *payload* instead so nothing is captured.
+            // Note: `scopeguard::defer!` would capture the locals by-ref in its
+            // non-`move` closure, which borrowck then treats as conflicting
+            // with the later reborrows. Thread them through the guard *payload*
+            // instead so nothing is captured.
             let _fd_guard = scopeguard::guard(
-                (should_close_ptr, input_file_fd_ptr),
-                |(should_close_ptr, input_file_fd_ptr)| {
-                    // SAFETY: `should_close_input_file_fd` / `input_file_fd`
-                    // are declared earlier in this stack frame and outlive
-                    // this guard (locals drop in reverse declaration order);
-                    // the guard runs on the same thread before either is
-                    // destroyed.
-                    unsafe {
-                        if *should_close_ptr && (*input_file_fd_ptr).is_valid() {
-                            use bun_sys::FdExt as _;
-                            (*input_file_fd_ptr).close();
-                            *input_file_fd_ptr = bun_sys::Fd::INVALID;
-                        }
+                (should_close_ptr, &input_file_fd),
+                |(should_close_ptr, input_file_fd)| {
+                    // SAFETY: `should_close_input_file_fd` is declared earlier
+                    // in this stack frame and outlives this guard; the guard
+                    // runs on the same thread before it is destroyed.
+                    if unsafe { *should_close_ptr } && input_file_fd.get().is_valid() {
+                        use bun_sys::FdExt as _;
+                        input_file_fd.get().close();
+                        input_file_fd.set(bun_sys::Fd::INVALID);
                     }
                 },
             );
@@ -2404,11 +2393,7 @@ fn transpile_source_code_inner(
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
                     file_descriptor: fd,
-                    // SAFETY: `input_file_fd_ptr` points at this frame's
-                    // `input_file_fd`; reborrow through the raw pointer so the
-                    // `_fd_guard` scopeguard's tag is not invalidated by a
-                    // fresh `&mut` (see Note on `_fd_guard`).
-                    file_fd_ptr: Some(unsafe { &mut *input_file_fd_ptr }),
+                    file_fd_ptr: Some(&input_file_fd),
                     file_hash: Some(hash),
                     macro_remappings,
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -2471,12 +2456,10 @@ fn transpile_source_code_inner(
                 let Some(mut parse_result) = parse_result else {
                     // Register with watcher even on parse failure.
                     if !disable_transpilying {
-                        // SAFETY: see Note on `_fd_guard` — reborrow via
-                        // the raw pointers so the guard stays valid.
                         maybe_watch_file(
                             jsc_vm,
-                            unsafe { &mut *should_close_ptr },
-                            unsafe { *input_file_fd_ptr },
+                            &mut should_close_input_file_fd,
+                            input_file_fd.get(),
                             is_node_override,
                             path,
                             hash,
@@ -2520,12 +2503,10 @@ fn transpile_source_code_inner(
 
                 // Register with watcher on success too.
                 if !disable_transpilying {
-                    // SAFETY: see Note on `_fd_guard` — reborrow via the
-                    // raw pointers so the guard stays valid.
                     maybe_watch_file(
                         jsc_vm,
-                        unsafe { &mut *should_close_ptr },
-                        unsafe { *input_file_fd_ptr },
+                        &mut should_close_input_file_fd,
+                        input_file_fd.get(),
                         is_node_override,
                         path,
                         hash,
@@ -2881,13 +2862,6 @@ fn transpile_source_code_inner(
                 if let Some(mi) = module_info.as_deref_mut() {
                     mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
                 }
-                // Derive the `*mut` from a `&mut` borrow (not `&x as *const _
-                // as *mut _`, which is Stacked-Borrows UB). The borrow ends
-                // here; the raw pointer stays valid until `module_info` is
-                // moved/touched again (after `print_with_source_map`).
-                let module_info_ptr: Option<
-                    *mut bun_bundler::analyze_transpiled_module::ModuleInfo,
-                > = module_info.as_deref_mut().map(core::ptr::from_mut);
 
                 // ── js_printer::print ───────────────────────────────────────
                 // SAFETY: `extra.source_code_printer` is non-null per `TranspileExtra`
@@ -2941,7 +2915,7 @@ fn transpile_source_code_inner(
                             &mut *(*extra).source_code_printer,
                             bun_js_printer::Format::EsmAscii,
                             mapper.get(),
-                            module_info_ptr,
+                            module_info.as_deref_mut(),
                         )
                     };
                     // The printer never took ownership of `module_info`;
@@ -5243,7 +5217,7 @@ pub(crate) fn __bun_stdio_blob_store_new(
             mode,
             ..Default::default()
         }),
-        mime_type: bun_http_types::MimeType::NONE,
+        mime_type: bun_jsc::JsCell::new(bun_http_types::MimeType::NONE),
         ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
         is_all_ascii: None,
     });

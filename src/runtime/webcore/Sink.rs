@@ -1,4 +1,6 @@
 use core::ffi::c_void;
+use core::marker::PhantomData;
+use core::ptr::NonNull;
 
 use crate::api::bun_subprocess::Subprocess;
 use crate::webcore::streams::{self, Signal};
@@ -30,37 +32,29 @@ pub use crate::webcore::file_sink::FileSink;
 
 /// A `Sink` is a hand-rolled vtable-based writable stream sink.
 pub struct Sink<'a> {
-    // LIFETIMES.tsv: BORROW_PARAM — init_with_type stores the handler borrow;
-    // no deinit, end() only dispatches
-    pub ptr: &'a mut (),
+    // LIFETIMES.tsv: BORROW_PARAM — `init_with_type` erases the handler to a
+    // non-null ctx pointer; the vtable thunks re-type it. No borrow is held
+    // across dispatch, which reaches JS.
+    pub ptr: NonNull<()>,
     pub vtable: VTable,
     pub status: Status,
     pub used: bool,
+    _handler: PhantomData<&'a mut ()>,
 }
 
 impl<'a> Sink<'a> {
-    // `ptr` stays `&'a mut ()`: a reference to a
-    // zero-sized type only needs a non-null, aligned address, so a dangling
-    // pointer is a *valid* `&mut ()` (the same rule `Box<()>` relies on).
     pub fn pending() -> Sink<'static> {
-        // SAFETY: `()` is zero-sized, so `NonNull::dangling()` (non-null,
-        // aligned) is valid to reborrow as `&mut ()`; nothing is ever read or
-        // written through it. status == Closed gates all dispatch so neither
-        // `ptr` nor `vtable` is used before being overwritten by init_with_type.
-        //
-        // Both `zeroed()` and
-        // `MaybeUninit::uninit().assume_init()` are immediate UB for a struct of
-        // non-nullable `fn` pointers (niche-bearing). Instead we install a *valid*
-        // sentinel vtable whose entries unconditionally panic — this keeps the value
-        // well-formed at all times and turns any accidental dispatch
-        // into a loud, deterministic crash.
-        unsafe {
-            Sink {
-                ptr: &mut *core::ptr::NonNull::<()>::dangling().as_ptr(),
-                vtable: VTable::PENDING,
-                status: Status::Closed,
-                used: false,
-            }
+        // Both `zeroed()` and `MaybeUninit::uninit().assume_init()` are immediate UB
+        // for a struct of non-nullable `fn` pointers (niche-bearing). Instead install a
+        // *valid* sentinel vtable whose entries unconditionally panic: `status ==
+        // Closed` gates all dispatch, so any accidental call is a deterministic crash
+        // rather than a wild jump. `ptr` is never read before `init_with_type`.
+        Sink {
+            ptr: NonNull::dangling(),
+            vtable: VTable::PENDING,
+            status: Status::Closed,
+            used: false,
+            _handler: PhantomData,
         }
     }
 }
@@ -151,11 +145,12 @@ macro_rules! impl_sink_handler {
 
 pub fn init_with_type<T: SinkHandler>(handler: &mut T) -> Sink<'_> {
     Sink {
-        // SAFETY: type-erased borrow; recovered as *mut T in vtable thunks below.
-        ptr: unsafe { &mut *std::ptr::from_mut::<T>(handler).cast::<()>() },
+        // Type-erased ctx pointer; re-typed as `T` by the vtable thunks below.
+        ptr: NonNull::from(handler).cast::<()>(),
         vtable: VTable::wrap::<T>(),
         status: Status::Ready,
         used: false,
+        _handler: PhantomData,
     }
 }
 
@@ -292,11 +287,11 @@ impl UTF8Fallback {
     }
 }
 
-pub type WriteUtf16Fn = fn(*mut (), &streams::Result) -> streams::result::Writable;
-pub type WriteUtf8Fn = fn(*mut (), &streams::Result) -> streams::result::Writable;
-pub type WriteLatin1Fn = fn(*mut (), &streams::Result) -> streams::result::Writable;
-pub type EndFn = fn(*mut (), Option<SysError>) -> sys::Result<()>;
-pub type ConnectFn = fn(*mut (), Signal) -> sys::Result<()>;
+pub type WriteUtf16Fn = fn(NonNull<()>, &streams::Result) -> streams::result::Writable;
+pub type WriteUtf8Fn = fn(NonNull<()>, &streams::Result) -> streams::result::Writable;
+pub type WriteLatin1Fn = fn(NonNull<()>, &streams::Result) -> streams::result::Writable;
+pub type EndFn = fn(NonNull<()>, Option<SysError>) -> sys::Result<()>;
+pub type ConnectFn = fn(NonNull<()>, Signal) -> sys::Result<()>;
 
 #[derive(Clone, Copy)]
 pub struct VTable {
@@ -318,15 +313,15 @@ impl VTable {
     /// if that invariant is ever violated we get a deterministic panic instead of a wild jump.
     pub const PENDING: VTable = {
         #[cold]
-        fn trap_write(_: *mut (), _: &streams::Result) -> streams::result::Writable {
+        fn trap_write(_: NonNull<()>, _: &streams::Result) -> streams::result::Writable {
             unreachable!("Sink vtable called while pending (status == Closed)")
         }
         #[cold]
-        fn trap_end(_: *mut (), _: Option<SysError>) -> sys::Result<()> {
+        fn trap_end(_: NonNull<()>, _: Option<SysError>) -> sys::Result<()> {
             unreachable!("Sink vtable called while pending (status == Closed)")
         }
         #[cold]
-        fn trap_connect(_: *mut (), _: Signal) -> sys::Result<()> {
+        fn trap_connect(_: NonNull<()>, _: Signal) -> sys::Result<()> {
             unreachable!("Sink vtable called while pending (status == Closed)")
         }
         VTable {
@@ -340,33 +335,35 @@ impl VTable {
 
     pub fn wrap<Wrapped: SinkHandler>() -> VTable {
         fn on_write<W: SinkHandler>(
-            this: *mut (),
+            this: NonNull<()>,
             data: &streams::Result,
         ) -> streams::result::Writable {
-            // SAFETY: `this` was erased from `&mut W` in init_with_type.
-            unsafe { &mut *this.cast::<W>() }.write(data)
+            // SAFETY: `this` is the `NonNull<W>` erased by init_with_type. The `&mut W`
+            // is the receiver of one safe method and dies at return; nothing else holds
+            // a borrow of the handler while `write` reaches JS.
+            unsafe { &mut *this.cast::<W>().as_ptr() }.write(data)
         }
-        fn on_connect<W: SinkHandler>(this: *mut (), signal: Signal) -> sys::Result<()> {
+        fn on_connect<W: SinkHandler>(this: NonNull<()>, signal: Signal) -> sys::Result<()> {
             // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.connect(signal)
+            unsafe { &mut *this.cast::<W>().as_ptr() }.connect(signal)
         }
         fn on_write_latin1<W: SinkHandler>(
-            this: *mut (),
+            this: NonNull<()>,
             data: &streams::Result,
         ) -> streams::result::Writable {
             // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.write_latin1(data)
+            unsafe { &mut *this.cast::<W>().as_ptr() }.write_latin1(data)
         }
         fn on_write_utf16<W: SinkHandler>(
-            this: *mut (),
+            this: NonNull<()>,
             data: &streams::Result,
         ) -> streams::result::Writable {
             // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.write_utf16(data)
+            unsafe { &mut *this.cast::<W>().as_ptr() }.write_utf16(data)
         }
-        fn on_end<W: SinkHandler>(this: *mut (), err: Option<SysError>) -> sys::Result<()> {
+        fn on_end<W: SinkHandler>(this: NonNull<()>, err: Option<SysError>) -> sys::Result<()> {
             // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.end(err)
+            unsafe { &mut *this.cast::<W>().as_ptr() }.end(err)
         }
 
         VTable {
@@ -386,7 +383,7 @@ impl<'a> Sink<'a> {
         }
 
         self.status = Status::Closed;
-        (self.vtable.end)(std::ptr::from_mut::<()>(self.ptr), err)
+        (self.vtable.end)(self.ptr, err)
     }
 
     pub fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
@@ -394,7 +391,7 @@ impl<'a> Sink<'a> {
             return streams::result::Writable::Done;
         }
 
-        let res = (self.vtable.write_latin1)(std::ptr::from_mut::<()>(self.ptr), data);
+        let res = (self.vtable.write_latin1)(self.ptr, data);
         self.status = if res.is_done() || self.status == Status::Closed {
             Status::Closed
         } else {
@@ -409,7 +406,7 @@ impl<'a> Sink<'a> {
             return streams::result::Writable::Done;
         }
 
-        let res = (self.vtable.write)(std::ptr::from_mut::<()>(self.ptr), data);
+        let res = (self.vtable.write)(self.ptr, data);
         self.status = if res.is_done() || self.status == Status::Closed {
             Status::Closed
         } else {
@@ -424,7 +421,7 @@ impl<'a> Sink<'a> {
             return streams::result::Writable::Done;
         }
 
-        let res = (self.vtable.write_utf16)(std::ptr::from_mut::<()>(self.ptr), data);
+        let res = (self.vtable.write_utf16)(self.ptr, data);
         self.status = if res.is_done() || self.status == Status::Closed {
             Status::Closed
         } else {
@@ -611,16 +608,15 @@ pub mod from_js_result {
 }
 
 impl<T: JsSinkAbi> JSSink<T> {
+    /// Takes the canonical `*mut T`: the JS wrapper stashes the pointer and later
+    /// writes and frees through it, so no `&mut T` retag may narrow its
+    /// provenance to a borrow that the wrapper outlives.
     pub fn create_object(
         global: &crate::webcore::jsc::JSGlobalObject,
-        object: &mut T,
+        object: *mut T,
         destructor: usize,
     ) -> crate::webcore::jsc::JSValue {
-        T::create_object_extern(
-            global,
-            std::ptr::from_mut::<T>(object).cast::<c_void>(),
-            destructor,
-        )
+        T::create_object_extern(global, object.cast::<c_void>(), destructor)
     }
 
     pub fn set_destroy_callback(value: crate::webcore::jsc::JSValue, callback: usize) {
@@ -637,18 +633,16 @@ impl<T: JsSinkAbi> JSSink<T> {
         }
     }
 
+    /// Takes the canonical `*mut T` — same provenance rule as
+    /// [`create_object`](Self::create_object); the JS builtin re-enters the sink
+    /// through this pointer.
     pub fn assign_to_stream(
         global: &crate::webcore::jsc::JSGlobalObject,
         stream: crate::webcore::jsc::JSValue,
-        ptr: &mut T,
+        ptr: *mut T,
         jsvalue_ptr: *mut *mut c_void,
     ) -> crate::webcore::jsc::JSValue {
-        T::assign_to_stream_extern(
-            global,
-            stream,
-            std::ptr::from_mut::<T>(ptr).cast::<c_void>(),
-            jsvalue_ptr,
-        )
+        T::assign_to_stream_extern(global, stream, ptr.cast::<c_void>(), jsvalue_ptr)
     }
 
     /// `JSSink.detach(globalThis)` — disconnect the C++ controller cell stashed

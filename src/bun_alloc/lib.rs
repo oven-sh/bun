@@ -10,6 +10,7 @@
 // Used for the per-allocation hot-path TLS in `ast_alloc::AST_ALLOC`.
 #![feature(thread_local)]
 
+use core::cell::{Cell, UnsafeCell};
 use core::fmt::Write as _;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::{NonNull, addr_of_mut};
@@ -183,51 +184,65 @@ impl StdAllocator {
 
 /// Bump allocator over a caller-owned buffer.
 pub struct FixedBufferAllocator<'a> {
-    end: usize,
-    buffer: &'a mut [u8],
+    /// `Cell` + `UnsafeCell` so every method takes `&self`: the vtable thunks in
+    /// `BufferFallbackAllocator` only ever get a shared ref out of their `ctx`,
+    /// and `alloc` hands out `*mut u8` into `buffer`.
+    end: Cell<usize>,
+    buffer: &'a UnsafeCell<[u8]>,
 }
 impl<'a> FixedBufferAllocator<'a> {
     #[inline]
     pub fn init(buffer: &'a mut [u8]) -> Self {
-        Self { end: 0, buffer }
+        Self {
+            end: Cell::new(0),
+            buffer: UnsafeCell::from_mut(buffer),
+        }
     }
     #[inline]
-    pub fn reset(&mut self) {
-        self.end = 0;
+    fn base(&self) -> *mut u8 {
+        self.buffer.get().cast::<u8>()
+    }
+    #[inline]
+    fn capacity(&self) -> usize {
+        self.buffer.get().len()
+    }
+    #[inline]
+    pub fn reset(&self) {
+        self.end.set(0);
     }
     #[inline]
     pub fn owns_ptr(&self, p: *const u8) -> bool {
-        let base = self.buffer.as_ptr() as usize;
-        let q = p as usize;
-        q >= base && q < base + self.buffer.len()
+        let base = self.base().addr();
+        let q = p.addr();
+        q >= base && q < base + self.capacity()
     }
-    pub fn alloc(&mut self, len: usize, alignment: Alignment, _ra: usize) -> Option<*mut u8> {
-        let base = self.buffer.as_mut_ptr() as usize;
-        let aligned =
-            (base + self.end + alignment.to_byte_units() - 1) & !(alignment.to_byte_units() - 1);
-        let new_end = (aligned - base).checked_add(len)?;
-        if new_end > self.buffer.len() {
+    pub fn alloc(&self, len: usize, alignment: Alignment, _ra: usize) -> Option<*mut u8> {
+        let base = self.base();
+        let aligned = (base.addr() + self.end.get() + alignment.to_byte_units() - 1)
+            & !(alignment.to_byte_units() - 1);
+        let new_end = (aligned - base.addr()).checked_add(len)?;
+        if new_end > self.capacity() {
             return None;
         }
-        self.end = new_end;
-        Some(aligned as *mut u8)
+        self.end.set(new_end);
+        Some(base.with_addr(aligned))
     }
-    pub fn resize(&mut self, buf: &mut [u8], _a: Alignment, new_len: usize, _ra: usize) -> bool {
+    pub fn resize(&self, buf: &mut [u8], _a: Alignment, new_len: usize, _ra: usize) -> bool {
         // Only the last allocation can grow; shrinks always succeed.
-        let buf_end = buf.as_ptr() as usize - self.buffer.as_ptr() as usize + buf.len();
-        if buf_end != self.end {
+        let buf_end = buf.as_ptr().addr() - self.base().addr() + buf.len();
+        if buf_end != self.end.get() {
             return new_len <= buf.len();
         }
         let new_end = buf_end - buf.len() + new_len;
-        if new_end > self.buffer.len() {
+        if new_end > self.capacity() {
             return false;
         }
-        self.end = new_end;
+        self.end.set(new_end);
         true
     }
     #[inline]
     pub fn remap(
-        &mut self,
+        &self,
         buf: &mut [u8],
         a: Alignment,
         new_len: usize,
@@ -240,11 +255,11 @@ impl<'a> FixedBufferAllocator<'a> {
         }
     }
     #[inline]
-    pub fn free(&mut self, buf: &mut [u8], _a: Alignment, _ra: usize) {
+    pub fn free(&self, buf: &mut [u8], _a: Alignment, _ra: usize) {
         // Only the last allocation can be freed.
-        let buf_end = buf.as_ptr() as usize - self.buffer.as_ptr() as usize + buf.len();
-        if buf_end == self.end {
-            self.end -= buf.len();
+        let buf_end = buf.as_ptr().addr() - self.base().addr() + buf.len();
+        if buf_end == self.end.get() {
+            self.end.set(self.end.get() - buf.len());
         }
     }
 }

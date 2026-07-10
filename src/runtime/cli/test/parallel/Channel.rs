@@ -21,6 +21,7 @@ use core::marker::PhantomData;
 
 use bun_collections::VecExt;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_ptr::ParentRef;
 use bun_sys::Fd;
 #[cfg(not(windows))]
 use bun_sys::FdExt as _;
@@ -78,11 +79,13 @@ impl<Owner> Default for Channel<Owner> {
 }
 
 impl<Owner: ChannelOwner> Channel<Owner> {
+    /// Back-pointer to the `Owner` this channel is embedded in.
     #[inline]
-    fn owner(&mut self) -> &mut Owner {
+    fn owner_ref(&mut self) -> ParentRef<Owner> {
         // SAFETY: `self` is always embedded at `Owner::OFFSET` inside an
-        // `Owner` that outlives all callbacks (see module doc).
-        unsafe { &mut *Owner::from_field_ptr(std::ptr::from_mut(self)) }
+        // `Owner` that outlives all callbacks (see module doc); `from_mut`
+        // keeps the write provenance `assume_mut` needs.
+        unsafe { ParentRef::from_raw_mut(Owner::from_field_ptr(std::ptr::from_mut(self))) }
     }
 }
 
@@ -470,23 +473,16 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 head += 5usize + len as usize;
                 continue;
             };
-            // borrowck split — `rd` borrows `self.r#in` while
-            // `owner()` would re-borrow `*self` mutably. Capture the owner raw
-            // pointer *before* forming `rd` (so the `&mut *self` reborrow ends
-            // immediately), then recover `&mut Owner` from it after. Same
-            // `container_of` arithmetic as `owner()`. The callback never
-            // touches `self.r#in` (it only reads `rd` and may write other
-            // channel fields / call `send()`), so the aliasing is sound.
-            // SAFETY: `self` is embedded at `Owner::OFFSET` inside an `Owner`
-            // that outlives all callbacks (see `Channel::owner()` / module doc).
-            let owner_ptr: *mut Owner = unsafe { Owner::from_field_ptr(std::ptr::from_mut(self)) };
+            // borrowck split — take the back-pointer *before* `rd` borrows
+            // `self.r#in`, so the `&mut *self` reborrow ends immediately. The
+            // callback only reads `rd`; it never touches `self.r#in`.
+            let owner = self.owner_ref();
             let mut rd = frame::Reader {
                 p: &self.r#in[head + 5..][..len as usize],
             };
-            // SAFETY: see `Channel::owner()` — `self` is embedded at
-            // `Owner::OFFSET` inside an `Owner` that outlives all callbacks.
-            let owner: &mut Owner = unsafe { &mut *owner_ptr };
-            owner.on_channel_frame(kind, &mut rd);
+            // SAFETY: single-threaded loop callback; the owner outlives it and
+            // no other borrow of the owner is live.
+            unsafe { owner.assume_mut() }.on_channel_frame(kind, &mut rd);
             head += 5usize + len as usize;
         }
         self.r#in.drain_front(head);
@@ -497,7 +493,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             return;
         }
         self.done = true;
-        self.owner().on_channel_done();
+        let owner = self.owner_ref();
+        // SAFETY: single-threaded loop callback; the `&mut *self` reborrow ended
+        // above and no other borrow of the owner is live.
+        unsafe { owner.assume_mut() }.on_channel_done();
     }
 }
 

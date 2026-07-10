@@ -71,7 +71,7 @@ fn session_of<'a>(qs: &mut quic::Socket) -> Option<&'a mut ClientSession> {
 fn stream_of<'a>(s: &mut quic::Stream) -> Option<&'a mut Stream> {
     // Route through `client_session::stream_mut` (one centralised unsafe);
     // the ext slot is `Option<NonNull<Stream>>` — same backref invariant.
-    (*s.ext::<Stream>()).map(|p| stream_mut(p.as_ptr()))
+    s.ext::<Stream>().get().map(|p| stream_mut(p.as_ptr()))
 }
 
 pub(crate) fn register(qctx: &mut quic::Context) {
@@ -168,7 +168,7 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
 
 extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     let s = qstream_arg(s);
-    *s.ext::<Stream>() = None;
+    s.ext::<Stream>().set(None);
     if is_client == 0 {
         return;
     }
@@ -195,7 +195,7 @@ extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     // `stream` is a live element of `session.pending` — `stream_mut`
     // centralises that upgrade invariant.
     stream_mut(stream).qstream = Some(NonNull::from(&mut *s));
-    *s.ext::<Stream>() = NonNull::new(stream);
+    s.ext::<Stream>().set(NonNull::new(stream));
     bun_core::scoped_log!(h3_client, "stream_open");
     if let Err(e) = encode::write_request(session, stream_mut(stream), s) {
         session.fail(stream, e);
@@ -285,7 +285,7 @@ extern "C" fn on_stream_writable(s: *mut quic::Stream) {
 extern "C" fn on_stream_close(s: *mut quic::Stream) {
     let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
-    *s.ext::<Stream>() = None;
+    s.ext::<Stream>().set(None);
     stream.qstream = None;
     bun_core::scoped_log!(
         h3_client,

@@ -58,9 +58,9 @@ unsafe extern "C" {
     ) -> JSValue;
 
     safe fn JSC__JSPromise__status(this: &JSPromise) -> u32;
-    safe fn JSC__JSPromise__result(this: &mut JSPromise, vm: &VM) -> JSValue;
+    safe fn JSC__JSPromise__result(this: &JSPromise, vm: &VM) -> JSValue;
     safe fn JSC__JSPromise__isHandled(this: &JSPromise) -> bool;
-    safe fn JSC__JSPromise__setHandled(this: &mut JSPromise);
+    safe fn JSC__JSPromise__setHandled(this: &JSPromise);
     // The resolve/reject/rejectAsHandled shims are `void` on the C side
     // (bindings.cpp) — there is no bool sentinel on the wire; a pending
     // exception is surfaced by checking `global.has_exception()` after the
@@ -115,24 +115,6 @@ impl<T> Weak<T> {
         Self {
             weak: JscWeak::<T>::create(promise, global, ref_type, ctx),
         }
-    }
-
-    /// Borrow the GC-rooted `JSPromise` cell. Panics if the weak slot is empty
-    /// or no longer a promise.
-    ///
-    /// Safe because `JSPromise` is an `opaque_ffi!` ZST handle: a `&mut` to it
-    /// covers zero bytes (see [`bun_opaque::opaque_deref_mut`] for the proof),
-    /// so two callers cannot alias any Rust-visible memory. The pointer comes
-    /// from the JSValue payload (not derived from `&self`) and the weak ref
-    /// keeps the cell observable while held.
-    pub fn get(&self) -> &mut JSPromise {
-        JSPromise::opaque_mut(self.weak.get().unwrap().as_promise().unwrap())
-    }
-
-    /// See [`get`]; returns `None` instead of panicking when the slot is empty.
-    pub fn get_or_null(&self) -> Option<&mut JSPromise> {
-        let promise_value = self.weak.get()?;
-        promise_value.as_promise().map(JSPromise::opaque_mut)
     }
 
     pub fn value(&self) -> JSValue {
@@ -389,7 +371,10 @@ impl JSPromise {
         JSPromise::opaque_ref(p).status()
     }
 
-    pub fn result(&mut self, vm: &VM) -> JSValue {
+    /// `&self`, not `&mut self`: the cell is GC-owned and the C++ side takes a
+    /// bare `JSPromise*`. A `&mut` here would be stacked with any re-entrant
+    /// host→JS→host borrow of the same promise.
+    pub fn result(&self, vm: &VM) -> JSValue {
         JSC__JSPromise__result(self, vm)
     }
 
@@ -397,7 +382,8 @@ impl JSPromise {
         JSC__JSPromise__isHandled(self)
     }
 
-    pub fn set_handled(&mut self) {
+    /// `&self` for the same reason as [`Self::result`].
+    pub fn set_handled(&self) {
         JSC__JSPromise__setHandled(self)
     }
 

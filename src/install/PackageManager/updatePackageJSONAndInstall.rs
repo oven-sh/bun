@@ -80,8 +80,9 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
             // into `pm.known_npm_aliases` for `npm:`-aliased positionals.
             Some(manager),
             // SAFETY: `ctx.log` is set once during `Command::create()` (process-
-            // lifetime singleton) and is never null afterward.
-            unsafe { &mut *ctx.log },
+            // lifetime singleton) and is never null afterward. No other `&mut Log`
+            // is live across this call: `parse` only reborrows this one.
+            unsafe { ctx.log_mut() },
             positionals,
             update_requests,
             subcommand,

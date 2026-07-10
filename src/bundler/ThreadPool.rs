@@ -593,10 +593,10 @@ impl Worker {
         // only ever invoked by the thread pool against a `Worker` enqueued via
         // `deinit_soon`, so provenance covers the full `Worker` allocation.
         let this: *mut Worker = unsafe { bun_core::from_field_ptr!(Worker, deinit_task, task) };
-        // SAFETY: `deinit_soon` schedules this exactly once on a live
-        // heap-allocated `Worker`; the idle-task fires on the worker's own OS
-        // thread with no other live borrow, so we hold exclusive ownership.
-        unsafe { Self::deinit(this) };
+        // SAFETY: `deinit_soon` schedules this exactly once on a live `Worker`
+        // heap-allocated by `get_worker`; the idle-task fires on the worker's
+        // own OS thread with no other live borrow, so the Box is exclusive.
+        unsafe { Self::deinit(bun_core::heap::take(this)) };
     }
 
     pub fn deinit_soon(&mut self) {
@@ -613,20 +613,16 @@ impl Worker {
             // `ast_memory_store` mi_heap (every `AstAlloc` buffer the inline
             // parse produced) and `data.transpiler` per `Bun.build()` call.
             //
-            // SAFETY: `self` is the heap-allocated Worker; sole owner now that
-            // the caller is about to `clear_retaining_capacity()` the
-            // `workers_assignments` map.
-            unsafe { Self::deinit(std::ptr::from_mut::<Self>(self)) };
+            // SAFETY: `self` is the Worker heap-allocated by `get_worker`; sole
+            // owner now that the caller is about to `clear_retaining_capacity()`
+            // the `workers_assignments` map.
+            unsafe { Self::deinit(bun_core::heap::take(std::ptr::from_mut::<Self>(self))) };
         }
     }
 
     /// Takes ownership of the heap allocation and frees it.
-    ///
-    /// # Safety
-    /// `this` must have come from `heap::alloc` in [`ThreadPool::get_worker`].
-    pub unsafe fn deinit(this: *mut Worker) {
-        // SAFETY: caller contract.
-        let worker = unsafe { &mut *this };
+    pub fn deinit(mut self: Box<Worker>) {
+        let worker = &mut *self;
         if worker.has_created {
             // `wire_after_move` boxed a `bun_js_parser_jsc::Macro::MacroContext`
             // behind `macro_context.data` (raw `*mut`, no `Drop` glue);
@@ -663,11 +659,9 @@ impl Worker {
         if worker.has_created {
             worker.heap = None;
         }
-        // SAFETY: caller contract — `this` was heap-allocated via `get_worker`.
-        // Runs full field drop glue: remaining `Option` fields are `None`
-        // (no-op), `ast_memory_store` is `ManuallyDrop` (no auto-drop), so no
-        // double-free; defends against future `Drop`-carrying fields.
-        unsafe { bun_core::heap::destroy(this) };
+        // `self` drops here: full field drop glue (remaining `Option` fields are
+        // `None`, `ast_memory_store` is `ManuallyDrop`), then the allocation is
+        // freed — same as the `heap::destroy` this replaced.
     }
 
     // returns `&'static mut` (detached) — the `Worker` is

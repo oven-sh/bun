@@ -1472,25 +1472,36 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-unsafe extern "C" fn append_buffer_span(
+/// Sink for `Bun__JSArray__collectBufferSpans`. The trampoline below does the
+/// single deref of the opaque ctx; impls only ever see `&mut self`.
+trait BufferSpanSink {
+    fn append_span(&mut self, element: JSValue, span: &mut [u8]);
+}
+
+impl BufferSpanSink for VectorArrayBuffer {
+    fn append_span(&mut self, element: JSValue, span: &mut [u8]) {
+        self.buffers.push(bun_sys::platform_iovec_create(span));
+        self.views.push(element);
+    }
+}
+
+unsafe extern "C" fn append_buffer_span<T: BufferSpanSink>(
     ctx: *mut std::ffi::c_void,
     element: JSValue,
     data: *mut u8,
     byte_len: usize,
 ) {
-    // SAFETY: `ctx` is the `&mut VectorArrayBuffer` passed to
-    // `Bun__JSArray__collectBufferSpans` by `from_js` below, alive for the
-    // duration of the call.
-    let out = unsafe { &mut *ctx.cast::<VectorArrayBuffer>() };
-    let slice: &mut [u8] = if data.is_null() || byte_len == 0 {
+    let span: &mut [u8] = if data.is_null() || byte_len == 0 {
         &mut []
     } else {
         // SAFETY: `data..data + byte_len` is the byte range of `element`'s
         // backing store, valid and unaliased for the duration of the callback.
         unsafe { std::slice::from_raw_parts_mut(data, byte_len) }
     };
-    out.buffers.push(bun_sys::platform_iovec_create(slice));
-    out.views.push(element);
+    // SAFETY: `ctx` is the `*mut T` passed to `Bun__JSArray__collectBufferSpans`,
+    // alive for the duration of the call. `append_span` cannot reach JS, so the
+    // `&mut T` it borrows here cannot alias.
+    unsafe { (*ctx.cast::<T>()).append_span(element, span) };
 }
 
 impl VectorArrayBuffer {
@@ -1522,7 +1533,7 @@ impl VectorArrayBuffer {
                 val,
                 pin,
                 (&raw mut out).cast(),
-                append_buffer_span,
+                append_buffer_span::<VectorArrayBuffer>,
             )
         };
         scope.assert_exception_presence_matches(status == -1);

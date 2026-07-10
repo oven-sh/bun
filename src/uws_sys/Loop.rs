@@ -431,25 +431,12 @@ impl WindowsLoop {
         unsafe { &*self.uv_loop }
     }
 
-    /// Exclusive borrow of the backing libuv loop. Used only for the
-    /// `active_handles` bookkeeping field (Bun-private; libuv itself only
-    /// reads it inside `uv__loop_alive`). `&mut self` provides exclusivity
-    /// over the wrapper; the `uv_loop_t` is the per-thread singleton so no
-    /// other Rust `&mut` to it is live on this thread.
-    #[inline]
-    fn uv_mut(&mut self) -> &mut uv::Loop {
-        // SAFETY: see `uv()` for liveness; `&mut self` is the sole Rust
-        // borrow path to the wrapper, and the only mutation performed via
-        // this accessor is the `active_handles` counter.
-        unsafe { &mut *self.uv_loop }
-    }
-
     pub fn add_active(&mut self, val: u32) {
-        self.uv_mut().add_active(val);
+        self.uv().add_active(val);
     }
 
     pub fn sub_active(&mut self, val: u32) {
-        self.uv_mut().sub_active(val);
+        self.uv().sub_active(val);
     }
 
     pub fn is_active(&self) -> bool {
@@ -509,11 +496,11 @@ impl WindowsLoop {
     }
 
     pub fn inc(&mut self) {
-        self.uv_mut().inc();
+        self.uv().inc();
     }
 
     pub fn dec(&mut self) {
-        self.uv_mut().dec();
+        self.uv().dec();
     }
 
     #[inline]

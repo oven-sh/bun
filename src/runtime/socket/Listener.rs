@@ -56,8 +56,8 @@ fn with_ssl_ctx_cache<R>(
     );
     // SAFETY: `state` is the per-thread `RuntimeState` boxed in
     // `init_runtime_state`, address-stable until VM teardown, and only the JS
-    // thread reaches here — so this `&mut` is unique for `f`'s duration.
-    f(unsafe { &mut (*state).ssl_ctx_cache })
+    // thread reaches here.
+    unsafe { (*state).ssl_ctx_cache.with_mut(f) }
 }
 
 // Route through the codegen'd `toJS` wrapper so we
@@ -77,7 +77,7 @@ pub struct Listener {
     pub listener: Cell<ListenerType>,
 
     pub poll_ref: JsCell<KeepAlive>,
-    pub connection: UnixOrHost,
+    pub connection: JsCell<UnixOrHost>,
     /// Embedded sweep/iteration list-head for every accepted socket on this
     /// listener. `group.ext` = `*Listener`, so the dispatch handler recovers us
     /// from the socket without a context-ext lookup.
@@ -85,7 +85,7 @@ pub struct Listener {
     /// `SSL_CTX*` for accepted sockets. One owned ref; `SSL_CTX_free` on close.
     /// `SSL_new()` per-accept takes its own ref, so accepted sockets outlive a
     /// stopped listener safely.
-    pub secure_ctx: Option<NonNull<boring_sys::SSL_CTX>>,
+    pub secure_ctx: Cell<Option<NonNull<boring_sys::SSL_CTX>>>,
     pub ssl: bool,
     pub protos: Option<Box<[u8]>>,
 
@@ -219,20 +219,22 @@ impl Listener {
                 let default_data = socket_config.default_data;
                 let ssl_cfg_taken = socket_config.ssl.take();
 
-                let this: *mut Listener = bun_core::heap::into_raw(Box::new(Listener {
+                // `release` = `Box::leak`; ownership moves to the JS wrapper below,
+                // or back through `heap::take` on the error path.
+                let this_owned: &mut Listener = bun_core::heap::release(Box::new(Listener {
                     handlers,
-                    connection,
+                    connection: JsCell::new(connection),
                     ssl: ssl_enabled,
                     listener: Cell::new(ListenerType::None),
                     protos: protos_taken,
                     poll_ref: JsCell::new(KeepAlive::init()),
                     group: JsCell::new(uws::SocketGroup::default()),
-                    secure_ctx: None,
+                    secure_ctx: Cell::new(None),
                     strong_data: JsCell::new(Strong::empty()),
                     this_value: JsCell::new(JsRef::empty()),
                 }));
-                // SAFETY: just allocated, non-null, exclusive
-                let this_ref = unsafe { &mut *this };
+                let this: *mut Listener = &raw mut *this_owned;
+                let this_ref: &Listener = this_owned;
                 if !default_data.is_empty() {
                     this_ref
                         .strong_data
@@ -258,8 +260,8 @@ impl Listener {
                     }
                     Err(_) => {
                         this_ref.strong_data.with_mut(|s| s.deinit());
-                        // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
-                        // protos, and the handlers `Rc`.
+                        // SAFETY: reclaim the Box handed off via `release`; drops
+                        // connection, protos, and the handlers `Rc`.
                         drop(unsafe { bun_core::heap::take(this) });
                         return Err(global.throw_invalid_arguments(format_args!(
                             "Failed to listen at {}",
@@ -297,22 +299,24 @@ impl Listener {
         let fd_opt = socket_config.fd;
         let ssl_cfg_taken = socket_config.ssl.take();
 
-        let this: *mut Listener = bun_core::heap::into_raw(Box::new(Listener {
+        // `release` = `Box::leak`; ownership moves to the JS wrapper below, or back
+        // through the cleanup guard on the error paths.
+        let this_owned: &mut Listener = bun_core::heap::release(Box::new(Listener {
             handlers,
-            // Placeholder until `this_ref.connection = connection` below.
+            // Placeholder until `this_ref.connection.set(connection)` below.
             // Cannot `mem::zeroed()` a Rust enum (UB).
-            connection: UnixOrHost::Fd(Fd::invalid()),
+            connection: JsCell::new(UnixOrHost::Fd(Fd::invalid())),
             ssl: ssl_enabled,
             protos: protos_taken,
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
             group: JsCell::new(uws::SocketGroup::default()),
-            secure_ctx: None,
+            secure_ctx: Cell::new(None),
             strong_data: JsCell::new(Strong::empty()),
             this_value: JsCell::new(JsRef::empty()),
         }));
-        // SAFETY: just allocated, non-null, exclusive
-        let this_ref = unsafe { &mut *this };
+        let this: *mut Listener = &raw mut *this_owned;
+        let this_ref: &Listener = this_owned;
         this_ref
             .group
             .with_mut(|g| g.init(uws::Loop::get(), None, this.cast::<c_void>()));
@@ -329,26 +333,27 @@ impl Listener {
         // Disarmed via `into_inner` once ownership transfers to the JS wrapper.
         let cleanup = scopeguard::guard(this, |this| {
             // SAFETY: this is still the sole owner on the error path
-            let this_ref = unsafe { &mut *this };
-            if let Some(c) = this_ref.secure_ctx {
+            let this_owned: Box<Listener> = unsafe { bun_core::heap::take(this) };
+            if let Some(c) = this_owned.secure_ctx.get() {
                 // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref from create_ssl_context
                 unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
             }
             // protos: Box drops automatically when Listener is dropped below
             bun_core::asan::unregister_root_region(
-                this_ref.group.as_ptr().cast::<c_void>(),
+                this_owned.group.as_ptr().cast::<c_void>(),
                 size_of::<uws::SocketGroup>(),
             );
             // SAFETY: group was init'd above; not concurrently walked.
-            unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
-            // SAFETY: reclaim the Box we leaked via into_raw
-            drop(unsafe { bun_core::heap::take(this) });
+            unsafe { uws::SocketGroup::destroy(this_owned.group.as_ptr()) };
+            drop(this_owned);
         });
 
         if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
             let mut create_err = uws::create_bun_socket_error_t::none;
             match ssl_cfg.as_usockets().create_ssl_context(&mut create_err) {
-                Some(ctx) => this_ref.secure_ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
+                Some(ctx) => this_ref
+                    .secure_ctx
+                    .set(NonNull::new(ctx.cast::<boring_sys::SSL_CTX>())),
                 None => {
                     return Err(global.throw_value(
                         crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
@@ -377,6 +382,7 @@ impl Listener {
 
         let secure_ctx_ptr: Option<*mut uws::SslCtx> = this_ref
             .secure_ctx
+            .get()
             .map(|p| p.as_ptr().cast::<uws::SslCtx>());
 
         let mut errno: c_int = 0;
@@ -473,7 +479,7 @@ impl Listener {
             return Err(global.throw_value(err));
         }
 
-        this_ref.connection = connection;
+        this_ref.connection.set(connection);
         this_ref.listener.set(ListenerType::Uws(listen_socket));
         if !default_data.is_empty() {
             this_ref
@@ -483,7 +489,7 @@ impl Listener {
 
         if let Some(ssl_config) = ssl_cfg_taken.as_ref() {
             // `ssl_enabled` ⇒ `createSSLContext` succeeded above ⇒ `secure_ctx` set.
-            let secure = this_ref.secure_ctx.expect("unreachable");
+            let secure = this_ref.secure_ctx.get().expect("unreachable");
             if let Some(server_name) = ssl_config.server_name_cstr() {
                 if !server_name.to_bytes().is_empty() {
                     // Registering the default cert under its own server_name is a
@@ -791,15 +797,13 @@ impl Listener {
             ListenerType::NamedPipe(_) => {}
             ListenerType::None => {}
         }
-        // `deinit` frees the allocation itself (`heap::take`); hand ownership
-        // back so its existing raw-ptr teardown path stays intact.
-        Self::deinit(Box::into_raw(self));
+        Self::deinit(self);
     }
 
     /// Match Node.js/libuv: unlink the unix socket file before closing the listening fd.
     /// Unlinking after close would race with another process creating a socket at the same path.
     fn unlink_unix_socket_path(this: &Self) {
-        let UnixOrHost::Unix(path) = &this.connection else {
+        let UnixOrHost::Unix(path) = this.connection.get() else {
             return;
         };
         // Abstract sockets (Linux) start with a NUL byte and have no filesystem entry.
@@ -810,36 +814,34 @@ impl Listener {
         let _ = bun_sys::unlink(bun_paths::resolve_path::z(path, &mut buf));
     }
 
-    fn deinit(this: *mut Self) {
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    fn deinit(self: Box<Self>) {
         log!("deinit");
-        // SAFETY: `this` is a Box<Listener> leaked via into_raw; sole owner here
-        let this_ref = unsafe { &mut *this };
-        this_ref.this_value.with_mut(|r| r.finalize());
-        this_ref.strong_data.with_mut(|s| s.deinit());
-        this_ref.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
-        debug_assert!(matches!(this_ref.listener.get(), ListenerType::None));
+        self.this_value.with_mut(|r| r.finalize());
+        self.strong_data.with_mut(|s| s.deinit());
+        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        debug_assert!(matches!(self.listener.get(), ListenerType::None));
 
         // Clear the back-pointer before force-closing: this listener is already
         // releasing its own `poll_ref`/`this_value`, so an accepted socket's
         // `on_close` must not reach back in and release them a second time.
-        this_ref.handlers.set_listener(None);
-        if this_ref.handlers.active_connections.get() > 0 {
-            this_ref.group.with_mut(|g| g.close_all());
+        self.handlers.set_listener(None);
+        if self.handlers.active_connections.get() > 0 {
+            self.group.with_mut(|g| g.close_all());
         }
         bun_core::asan::unregister_root_region(
-            this_ref.group.as_ptr().cast::<c_void>(),
+            self.group.as_ptr().cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
         );
         // SAFETY: group was init'd in listen(); not concurrently walked.
-        unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
-        if let Some(ctx) = this_ref.secure_ctx {
+        unsafe { uws::SocketGroup::destroy(self.group.as_ptr()) };
+        if let Some(ctx) = self.secure_ctx.get() {
             // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref; release it
             unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
         }
 
-        // connection / protos / the handlers `Rc`: dropped by heap::take below
-        // SAFETY: reclaim the Box allocated in listen()
-        drop(unsafe { bun_core::heap::take(this) });
+        // connection / protos / the handlers `Rc`: dropped with the Box below
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -849,7 +851,7 @@ impl Listener {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_unix(this: &Self, global: &JSGlobalObject) -> JSValue {
-        let UnixOrHost::Unix(unix) = &this.connection else {
+        let UnixOrHost::Unix(unix) = this.connection.get() else {
             return JSValue::UNDEFINED;
         };
         ZigString::init(unix).with_encoding().to_js(global)
@@ -857,7 +859,7 @@ impl Listener {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_hostname(this: &Self, global: &JSGlobalObject) -> JSValue {
-        let UnixOrHost::Host { host, .. } = &this.connection else {
+        let UnixOrHost::Host { host, .. } = this.connection.get() else {
             return JSValue::UNDEFINED;
         };
         ZigString::init(host).with_encoding().to_js(global)
@@ -865,7 +867,7 @@ impl Listener {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        let UnixOrHost::Host { port, .. } = &this.connection else {
+        let UnixOrHost::Host { port, .. } = this.connection.get() else {
             return JSValue::UNDEFINED;
         };
         JSValue::js_number(*port as f64)
@@ -1575,32 +1577,29 @@ pub struct WindowsNamedPipeListeningContext {
 
 #[cfg(windows)]
 impl WindowsNamedPipeListeningContext {
-    fn on_client_connect(this: *mut Self, status: uv::ReturnCode) {
-        // SAFETY: `this` is the `data` pointer libuv hands back; it was set to a
-        // live heap `WindowsNamedPipeListeningContext` in `listen_named_pipe`.
-        let this_ref = unsafe { &mut *this };
-        let shutting_down = this_ref.vm.is_shutting_down();
-        if status != uv::ReturnCode::ZERO || shutting_down || this_ref.listener.is_none() {
+    fn on_client_connect(&mut self, status: uv::ReturnCode) {
+        let shutting_down = self.vm.is_shutting_down();
+        if status != uv::ReturnCode::ZERO || shutting_down || self.listener.is_none() {
             // connection dropped or vm is shutting down or we are deiniting/closing
             return;
         }
         // `BackRef` deref — owner `Listener` outlives this context (see field doc).
-        let listener_ref = this_ref.listener.unwrap();
+        let listener_ref = self.listener.unwrap();
         let listener: &Listener = listener_ref.get();
         use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
-        let socket: PipeSocketType = if this_ref.ctx.is_some() {
+        let socket: PipeSocketType = if self.ctx.is_some() {
             PipeSocketType::Tls(Listener::on_name_pipe_created::<true>(listener))
         } else {
             PipeSocketType::Tcp(Listener::on_name_pipe_created::<false>(listener))
         };
 
-        let client = WindowsNamedPipeContext::create(&this_ref.global_this, socket);
+        let client = WindowsNamedPipeContext::create(&self.global_this, socket);
 
         // SAFETY: `client` was just heap-allocated by `create()`; exclusive here.
         let result = unsafe {
             (*client)
                 .named_pipe
-                .get_accepted_by(&mut this_ref.uv_pipe, this_ref.ctx.map(|p| p.as_ptr()))
+                .get_accepted_by(&mut self.uv_pipe, self.ctx.map(|p| p.as_ptr()))
         };
         if result.is_err() {
             // connection dropped
@@ -1621,17 +1620,21 @@ impl WindowsNamedPipeListeningContext {
     /// explicitly — matches the `extern "C" fn` callback convention used in
     /// `udp_socket.rs` / `bun_io::PipeReader`.
     extern "C" fn uv_on_client_connect(handle: *mut uv::uv_stream_t, status: uv::ReturnCode) {
-        // SAFETY: `data` was set to `*mut Self` by `Pipe::listen` below.
-        let this = unsafe { (*handle).data.cast::<WindowsNamedPipeListeningContext>() };
-        Self::on_client_connect(this, status);
+        // SAFETY: `data` was set to `*mut Self` by `Pipe::listen` below; libuv only
+        // dispatches this callback while that allocation is live.
+        let this = unsafe { &mut *(*handle).data.cast::<WindowsNamedPipeListeningContext>() };
+        this.on_client_connect(status);
     }
 
     /// `uv_close_cb` trampoline. Only ever invoked by libuv (coerces to the
     /// `uv_close_cb` fn-pointer type at the `Pipe::close` call site); body
     /// wraps its deref explicitly.
     extern "C" fn on_pipe_closed(pipe: *mut uv::Pipe) {
-        // SAFETY: `pipe.data` was set to `this` in `close_pipe_and_deinit`.
-        let this = unsafe { (*pipe).data.cast::<WindowsNamedPipeListeningContext>() };
+        // SAFETY: `pipe.data` was set to `this` in `close_pipe_and_deinit`, the unique
+        // owner; `uv_close` has completed so the loop no longer references it.
+        let this = unsafe {
+            bun_core::heap::take((*pipe).data.cast::<WindowsNamedPipeListeningContext>())
+        };
         Self::deinit(this);
     }
 
@@ -1656,15 +1659,17 @@ impl WindowsNamedPipeListeningContext {
     ) -> Result<*mut WindowsNamedPipeListeningContext, bun_core::Error> {
         // Heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
-        let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
-            uv_pipe: bun_core::ffi::zeroed(),
-            listener: NonNull::new(listener).map(bun_ptr::BackRef::from),
-            global_this: GlobalRef::from(global_this),
-            vm: global_this.bun_vm(),
-            ctx: None,
-        }));
-        // SAFETY: just allocated, non-null, exclusive.
-        let this_ref = unsafe { &mut *this };
+        // `release` = `Box::leak`; ownership moves to the returned pointer, reclaimed
+        // by the cleanup guard or by `on_pipe_closed` -> `deinit`.
+        let this_ref: &mut WindowsNamedPipeListeningContext =
+            bun_core::heap::release(Box::new(WindowsNamedPipeListeningContext {
+                uv_pipe: bun_core::ffi::zeroed(),
+                listener: NonNull::new(listener).map(bun_ptr::BackRef::from),
+                global_this: GlobalRef::from(global_this),
+                vm: global_this.bun_vm(),
+                ctx: None,
+            }));
+        let this: *mut WindowsNamedPipeListeningContext = &raw mut *this_ref;
 
         // Cleanup guard: once the uv pipe handle is registered with the loop it must be closed via
         // uv_close; before that point we can free the struct directly. `deinit()` also
@@ -1675,7 +1680,8 @@ impl WindowsNamedPipeListeningContext {
                 // SAFETY: pipe is registered with the loop; close → on_pipe_closed → deinit.
                 unsafe { Self::close_pipe_and_deinit(this) };
             } else {
-                Self::deinit(this);
+                // SAFETY: `into_raw`'d above and never registered with the loop.
+                Self::deinit(unsafe { bun_core::heap::take(this) });
             }
         });
 
@@ -1731,14 +1737,11 @@ impl WindowsNamedPipeListeningContext {
         Ok(this)
     }
 
-    fn deinit(this: *mut Self) {
-        // SAFETY: `this` is a live `heap::alloc` allocation; this is the last owner.
-        unsafe {
-            (*this).listener = None;
-            if let Some(ctx) = (*this).ctx.take() {
-                boring_sys::SSL_CTX_free(ctx.as_ptr());
-            }
-            drop(bun_core::heap::take(this));
+    fn deinit(mut self: Box<Self>) {
+        self.listener = None;
+        if let Some(ctx) = self.ctx.take() {
+            // SAFETY: the server owns the only reference to this context.
+            unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
         }
     }
 }

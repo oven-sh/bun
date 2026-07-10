@@ -326,13 +326,20 @@ impl ShellSubprocess {
     pub const DEFAULT_MAX_BUFFER_SIZE: u32 = DEFAULT_MAX_BUFFER_SIZE;
 
     /// Borrow the intrusively ref-counted Process mutably.
-    /// SAFETY-internal: shell is single-threaded; `self.process` is non-null
-    /// for the lifetime of `ShellSubprocess` (set in `spawn_maybe_sync_impl`).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub fn proc(&self) -> &mut Process {
-        // SAFETY: see doc comment.
+    pub fn proc(&mut self) -> &mut Process {
+        // SAFETY: `self.process` is non-null for the lifetime of
+        // `ShellSubprocess` (set in `spawn_maybe_sync_impl`); `&mut self`
+        // makes this the only live borrow of it.
         unsafe { &mut *self.process }
+    }
+
+    /// Shared borrow of the process, for read-only queries.
+    #[inline]
+    pub fn proc_ref(&self) -> &Process {
+        // SAFETY: `self.process` is non-null for the lifetime of
+        // `ShellSubprocess` (set in `spawn_maybe_sync_impl`).
+        unsafe { &*self.process }
     }
 
     pub fn on_static_pipe_writer_done(&mut self) {
@@ -354,7 +361,7 @@ impl ShellSubprocess {
     }
 
     pub fn has_exited(&self) -> bool {
-        self.proc().has_exited()
+        self.proc_ref().has_exited()
     }
 
     pub fn r#ref(&mut self) {
@@ -382,7 +389,7 @@ impl ShellSubprocess {
     }
 
     pub fn has_killed(&self) -> bool {
-        self.proc().has_killed()
+        self.proc_ref().has_killed()
     }
 
     pub fn try_kill(&mut self, sig: i32) -> bun_sys::Result<()> {
@@ -513,17 +520,16 @@ impl ShellSubprocess {
     /// is uv-initialized depends on how far startWithCurrentPipe got, so a blind close or
     /// destroy is unsafe. Fall back to leaking the Subprocess (pre-existing behavior)
     /// rather than risk closing an uninitialized handle.
-    fn abort_after_failed_start(this: *mut Self) {
+    fn abort_after_failed_start(self: Box<Self>) {
         #[cfg(windows)]
         {
-            let _ = this;
-            return;
+            // Leak rather than drop: `ShellSubprocess::drop` would run the
+            // teardown the doc comment above forbids.
+            let _ = bun_core::heap::release(self);
         }
         #[cfg(not(windows))]
         {
-            // SAFETY: `this` was created via `heap::alloc` in `spawn` and is
-            // uniquely owned here; reclaim and tear down.
-            let mut subproc = unsafe { bun_core::heap::take(this) };
+            let mut subproc = self;
             for r in [&mut subproc.stdout, &mut subproc.stderr] {
                 if let Readable::Pipe(pipe) = r {
                     // `start()` failed before any reader callback registered,
@@ -866,7 +872,11 @@ impl ShellSubprocess {
             if let Err(err) = unsafe { buffer_mut(buffer) }.start() {
                 let sys_err = err.to_shell_system_error();
                 let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
-                Self::abort_after_failed_start(subprocess);
+                // Clear the out slot before reclaiming: it owns the subprocess.
+                // SAFETY: `out_subproc` is the caller's live, initialised slot.
+                unsafe { *out_subproc = core::ptr::null_mut() };
+                // SAFETY: `subprocess` is the `Box` allocated above and is uniquely owned here.
+                Self::abort_after_failed_start(unsafe { bun_core::heap::take(subprocess) });
                 return Err(ShellErr::Sys(sys_err));
             }
         }
@@ -877,7 +887,11 @@ impl ShellSubprocess {
         {
             let sys_err = err.to_shell_system_error();
             let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
-            Self::abort_after_failed_start(subprocess);
+            // Clear the out slot before reclaiming: it owns the subprocess.
+            // SAFETY: `out_subproc` is the caller's live, initialised slot.
+            unsafe { *out_subproc = core::ptr::null_mut() };
+            // SAFETY: `subprocess` is the `Box` allocated above and is uniquely owned here.
+            Self::abort_after_failed_start(unsafe { bun_core::heap::take(subprocess) });
             return Err(ShellErr::Sys(sys_err));
         }
 
@@ -887,7 +901,11 @@ impl ShellSubprocess {
         {
             let sys_err = err.to_shell_system_error();
             let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
-            Self::abort_after_failed_start(subprocess);
+            // Clear the out slot before reclaiming: it owns the subprocess.
+            // SAFETY: `out_subproc` is the caller's live, initialised slot.
+            unsafe { *out_subproc = core::ptr::null_mut() };
+            // SAFETY: `subprocess` is the `Box` allocated above and is uniquely owned here.
+            Self::abort_after_failed_start(unsafe { bun_core::heap::take(subprocess) });
             return Err(ShellErr::Sys(sys_err));
         }
 
@@ -1545,11 +1563,11 @@ impl<'a> SpawnArgs<'a> {
             // has no PATH). PATH="" (explicit empty) is preserved — that's a
             // deliberate "search nothing" and substituting a default would
             // change argv[0] resolution on existing platforms.
-            // SAFETY: `event_loop.env()` returns the long-lived `*mut Loader`
+            // SAFETY: `event_loop.env()` back-references the long-lived Loader
             // owned by the VM (valid for the lifetime of the spawn args), and
             // `BUN_DEFAULT_PATH_FOR_SPAWN` is a NUL-terminated C-string constant.
             path: unsafe {
-                if let Some(p) = (*event_loop.env()).get(b"PATH") {
+                if let Some(p) = (*event_loop.env().as_ptr()).get(b"PATH") {
                     p
                 } else if cfg!(unix) {
                     core::ffi::CStr::from_ptr(BUN_DEFAULT_PATH_FOR_SPAWN).to_bytes()

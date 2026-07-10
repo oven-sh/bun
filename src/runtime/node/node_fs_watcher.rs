@@ -76,11 +76,11 @@ pub mod js {
 
 impl FSWatcher {
     #[inline]
-    fn vm(&self) -> &'static mut VirtualMachine {
+    fn vm(&self) -> &'static VirtualMachine {
         // SAFETY: BACKREF — `ctx` is the per-thread `VirtualMachine` singleton
         // (set in `init` from `globalThis.bunVM()`); it outlives every
         // FSWatcher and all access is on the JS thread.
-        unsafe { &mut *self.ctx }
+        unsafe { &*self.ctx }
     }
 
     #[inline]
@@ -98,8 +98,8 @@ impl FSWatcher {
     /// the caller releases ownership of; the concurrent queue takes ownership
     /// and frees it on the JS thread after dispatch.
     pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) {
-        // `vm()` is the BACKREF accessor; `event_loop_shared()` is the audited
-        // safe `&EventLoop` accessor. `enqueue_task_concurrent` is the
+        // `vm()` is the shared BACKREF accessor; `event_loop_shared()` is the
+        // audited safe `&EventLoop` accessor. `enqueue_task_concurrent` is the
         // documented cross-thread entry point and only touches the lock-free
         // queue.
         self.vm().event_loop_shared().enqueue_task_concurrent(task);
@@ -264,21 +264,15 @@ impl FSWatchTaskPosix {
     /// the assert below enforces that. A `Drop` impl would also fire on
     /// `*self = Self{..}` in `append()` and on `heap::take` in `finalize`,
     /// where `self` *is* `current_task`, which would always trip the assert.
-    ///
-    /// # Safety
-    /// `this` must be the unique `heap::alloc` pointer produced by
-    /// `enqueue()`; called from the JS-thread task dispatcher only.
-    pub unsafe fn deinit(this: *mut Self) {
-        // SAFETY: caller contract — `this` is the live heap clone.
-        let this_ref = unsafe { &mut *this };
-        this_ref.clean_entries();
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    pub fn deinit(mut self: Box<Self>) {
+        self.clean_entries();
         #[cfg(debug_assertions)]
-        {
-            // SAFETY: ctx is valid for the lifetime of any task (ParentRef).
-            debug_assert!(!core::ptr::eq(this_ref.ctx().current_task.as_ptr(), this));
-        }
-        // SAFETY: paired with `heap::alloc` in `enqueue()`.
-        drop(unsafe { bun_core::heap::take(this) });
+        debug_assert!(!core::ptr::eq(
+            self.ctx().current_task.as_ptr(),
+            &raw const *self
+        ));
     }
 }
 
@@ -430,8 +424,8 @@ impl FSWatchTaskWindows {
             event: Event::Abort,
         }));
 
-        // `ctx` is the live owning `ParentRef<FSWatcher>` (BACKREF); `vm()` →
-        // `event_loop_mut()` is the audited safe `&mut EventLoop` accessor.
+        // `ctx` is the live owning `ParentRef<FSWatcher>` (BACKREF); `vm()` is
+        // shared, `event_loop_mut()` is the audited `&mut EventLoop` accessor.
         // Ownership of `task` transfers to the queue (drained on the same thread).
         ctx.expect("FSWatchTask.ctx unset")
             .vm()
@@ -494,16 +488,12 @@ impl FSWatchTaskWindows {
     /// `FSWatchTaskWindows.deinit`. Explicit, not
     /// `impl Drop`, to mirror `FSWatchTaskPosix::deinit` so the dispatcher can
     /// call `FSWatchTask::deinit` uniformly.
-    ///
-    /// # Safety
-    /// `this` must be the unique `heap::alloc` pointer produced by
-    /// `append_abort()` / `on_path_update_windows()`.
-    pub unsafe fn deinit(this: *mut Self) {
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    pub fn deinit(self: Box<Self>) {
         // `Event` (and `StringOrBytesToDecode`, via its explicit `Drop` impl
         // above which `deref()`s the WTF string) free their payloads via Drop,
         // so dropping the Box releases everything.
-        // SAFETY: paired with `heap::alloc` at the enqueue site.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -581,9 +571,9 @@ impl FSWatcher {
             ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this.as_ctx_ptr()) }),
             event,
         }));
-        // `vm()` is the BACKREF accessor; `event_loop_mut()` is the audited
-        // safe `&mut EventLoop` accessor. Ownership of `task` transfers to the
-        // queue.
+        // `vm()` is the shared BACKREF accessor; `event_loop_mut()` is the
+        // audited `&mut EventLoop` accessor. Ownership of `task` transfers to
+        // the queue.
         this.vm().event_loop_mut().enqueue_task(Task::init(task));
         let _ = is_file;
     }

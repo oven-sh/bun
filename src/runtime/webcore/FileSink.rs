@@ -743,17 +743,17 @@ impl FileSink {
     }
 
     /// `EventLoopHandle::bun_vm()` returns an erased `*mut ()`; recover the
-    /// typed `&mut VirtualMachine` (None for the mini loop or null).
+    /// typed `&VirtualMachine` (None for the mini loop or null).
     #[inline]
-    #[allow(clippy::mut_from_ref)] // recovers `&mut` from a type-erased raw ptr (per-thread VM, not aliased)
-    fn js_vm(&self) -> Option<&mut bun_jsc::VirtualMachineRef> {
+    fn js_vm(&self) -> Option<&'static bun_jsc::VirtualMachineRef> {
         let p = self.event_loop_handle.bun_vm();
         if p.is_null() {
             return None;
         }
-        // SAFETY: `bun_vm()` returns an erased `*mut VirtualMachine` for the
-        // Js arm; non-null implies the per-thread VM, never aliased here.
-        Some(unsafe { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
+        // SAFETY: non-null means the Js arm's per-thread VM, a singleton that
+        // outlives every sink; it is aliased by `VirtualMachine::get()`, so
+        // hand out `&` and mutate through its `Cell`/`JsCell` fields.
+        Some(unsafe { &*p.cast::<bun_jsc::VirtualMachineRef>() })
     }
 
     pub fn connect(&self, signal: streams::Signal) {
@@ -1041,26 +1041,34 @@ impl FileSink {
     /// and the caller must hold the last reference.
     unsafe fn deinit(this: *mut FileSink) {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
-        // SAFETY: caller contract — `this` is valid and uniquely owned.
-        let self_ = unsafe { &mut *this };
+        // SAFETY: caller contract — `this` came from `heap::alloc` in the
+        // constructors and the caller holds the last reference.
+        let self_ = unsafe { bun_core::heap::take(this) };
         // pending/readable_stream/js_sink_ref are dropped by Box drop below.
         if let Some(global) = self_.js_global() {
-            // SAFETY: `bun_vm()` is non-null when `js_global()` returned Some.
             let vm = global.bun_vm().as_mut();
-            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self_, vm);
+            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(&*self_, vm);
         }
-        // SAFETY: `this` was produced by `heap::alloc` in the constructors.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(self_);
     }
 
-    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    /// Takes the canonical `*mut FileSink` (not `&mut self`): the wrapper stashes
+    /// the pointer and later writes and `deref()`s through it, so it must keep
+    /// full write+dealloc provenance. See the `borrow = ptr` note above.
+    ///
+    /// # Safety
+    /// `this` must point to a live `FileSink` from `create*`/`init`.
+    pub unsafe fn to_js(this: *mut FileSink, global_this: &JSGlobalObject) -> JSValue {
         // Wrapper's +1; balanced by `finalize` → `deref()`.
-        self.ref_();
-        JSSink::create_object(global_this, self, 0)
+        // SAFETY: caller contract — `this` is live; `ref_` only touches `Cell<u32>`.
+        unsafe { (*this).ref_() };
+        JSSink::create_object(global_this, this, 0)
     }
 
-    pub fn to_js_with_destructor(
-        &mut self,
+    /// # Safety
+    /// Same contract as [`to_js`](Self::to_js).
+    pub unsafe fn to_js_with_destructor(
+        this: *mut FileSink,
         global_this: &JSGlobalObject,
         // `sink::DestructorPtr` is `TaggedPtrUnion<(Detached, Detached)>`
         // which does not satisfy `bun_ptr::TypeList` yet (sibling Sink.rs); accept
@@ -1068,8 +1076,9 @@ impl FileSink {
         destructor: Option<usize>,
     ) -> JSValue {
         // Wrapper's +1; balanced by `finalize` → `deref()`.
-        self.ref_();
-        JSSink::create_object(global_this, self, destructor.unwrap_or(0))
+        // SAFETY: caller contract — `this` is live; `ref_` only touches `Cell<u32>`.
+        unsafe { (*this).ref_() };
+        JSSink::create_object(global_this, this, destructor.unwrap_or(0))
     }
 
     pub fn end_from_js(&self, global_this: &JSGlobalObject) -> sys::Result<JSValue> {
@@ -1395,84 +1404,95 @@ fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 }
 
 impl FileSink {
-    pub fn assign_to_stream(
-        &mut self,
+    /// Takes the canonical `*mut FileSink` (not `&mut self`): the JS builtin
+    /// re-enters the sink through the C++-held pointer, and `_guard`/`then()`
+    /// may drop the last ref, so no `&`/`&mut FileSink` may span those calls.
+    ///
+    /// # Safety
+    /// `this` must point to a live `FileSink` with write+dealloc provenance.
+    pub unsafe fn assign_to_stream(
+        this: *mut FileSink,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,
     ) -> JSValue {
-        self.signal.set(SinkSignal::init(JSValue::ZERO));
-        // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
-        let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
+        // SAFETY: caller contract — `this` is live; every statement reborrows a
+        // single field and holds no borrow across a re-entrant/freeing call.
+        unsafe {
+            (*this).signal.set(SinkSignal::init(JSValue::ZERO));
+            let _guard = FileSinkRef::new_ref(this);
 
-        // explicitly set it to a dead pointer
-        // we use this memory address to disable signals being sent
-        self.signal.with_mut(|s| s.clear());
+            // explicitly set it to a dead pointer
+            // we use this memory address to disable signals being sent
+            (*this).signal.with_mut(|s| s.clear());
 
-        self.readable_stream
-            .set(readable_stream::Strong::init(*stream, global_this));
-        // reshaped for borrowck — re-derive `signal_ptr` after
-        // assigning `readable_stream`. `JsCell::as_ptr` yields the stable
-        // address of the inner `Signal` (`#[repr(transparent)]` over
-        // `UnsafeCell`).
-        // SAFETY: project to `signal.ptr` without forming a reference;
-        // `Option<NonNull<c_void>>` is ABI-identical to `*mut c_void` (see
-        // const-asserts on `Signal` in streams.rs), so FFI may write the
-        // JSValue bits back through this `void**`.
-        let signal_ptr: *mut *mut c_void =
-            unsafe { (&raw mut (*self.signal.as_ptr()).ptr).cast::<*mut c_void>() };
-        // No per-wrapper +1 for the controller (only the transient `_guard`
-        // above): the JS builtins always call `controller.end()`/`.close()`
-        // (`${controller}__end/close` → `controller->detach()` → m_sinkPtr=null)
-        // before GC, so the controller's dtor never reaches `finalize`.
-        let promise_result = JSSink::assign_to_stream(global_this, stream.value, self, signal_ptr);
+            (*this)
+                .readable_stream
+                .set(readable_stream::Strong::init(*stream, global_this));
+            // Project to `signal.ptr` without forming a reference;
+            // `Option<NonNull<c_void>>` is ABI-identical to `*mut c_void` (see
+            // const-asserts on `Signal` in streams.rs), so FFI may write the
+            // JSValue bits back through this `void**`.
+            let signal_ptr: *mut *mut c_void =
+                (&raw mut (*(*this).signal.as_ptr()).ptr).cast::<*mut c_void>();
+            // No per-wrapper +1 for the controller (only the transient `_guard`
+            // above): the JS builtins always call `controller.end()`/`.close()`
+            // (`${controller}__end/close` → `controller->detach()` → m_sinkPtr=null)
+            // before GC, so the controller's dtor never reaches `finalize`.
+            let promise_result =
+                JSSink::assign_to_stream(global_this, stream.value, this, signal_ptr);
 
-        if let Some(err) = promise_result.to_error() {
-            self.readable_stream.set(readable_stream::Strong::default());
-            return err;
-        }
+            if let Some(err) = promise_result.to_error() {
+                (*this)
+                    .readable_stream
+                    .set(readable_stream::Strong::default());
+                return err;
+            }
 
-        if !promise_result.is_empty_or_undefined_or_null() {
-            if let Some(promise) = promise_result.as_any_promise() {
-                // `bun_jsc::AnyPromise` (the active raw-ptr variant in
-                // lib.rs) does not yet expose `status()`/`result()`; recover the
-                // underlying `JSPromise` (JSInternalPromise subclasses JSPromise
-                // in C++, so the cast is layout-safe).
-                let js_promise: *mut bun_jsc::JSPromise = match promise {
-                    bun_jsc::AnyPromise::Normal(p) => p,
-                    bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
-                };
-                // SAFETY: `as_any_promise` returned non-null.
-                match unsafe { (*js_promise).status() } {
-                    bun_jsc::js_promise::Status::Pending => {
-                        self.writer
-                            .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
-                        self.ref_();
-                        // TODO: properly propagate exception upwards
-                        // `JSValue::then` takes already-wrapped C-ABI
-                        // host fns; the `toJSHostFunction` step is the manual
-                        // shims at the bottom of this file.
-                        promise_result.then(
-                            global_this,
-                            std::ptr::from_mut::<FileSink>(self),
-                            on_resolve_stream_shim,
-                            on_reject_stream_shim,
-                        );
-                    }
-                    bun_jsc::js_promise::Status::Fulfilled => {
-                        // These don't ref().
-                        self.handle_resolve_stream(global_this);
-                    }
-                    bun_jsc::js_promise::Status::Rejected => {
-                        // These don't ref().
-                        // SAFETY: `js_promise` is non-null (`as_any_promise`).
-                        let result = unsafe { (*js_promise).result(global_this.vm()) };
-                        self.handle_reject_stream(global_this, result);
+            if !promise_result.is_empty_or_undefined_or_null() {
+                if let Some(promise) = promise_result.as_any_promise() {
+                    // `bun_jsc::AnyPromise` (the active raw-ptr variant in
+                    // lib.rs) does not yet expose `status()`/`result()`; recover the
+                    // underlying `JSPromise` (JSInternalPromise subclasses JSPromise
+                    // in C++, so the cast is layout-safe).
+                    let js_promise: *mut bun_jsc::JSPromise = match promise {
+                        bun_jsc::AnyPromise::Normal(p) => p,
+                        bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
+                    };
+                    match (*js_promise).status() {
+                        bun_jsc::js_promise::Status::Pending => {
+                            // Read the handle out first: the `with_mut` closure must
+                            // not touch `*this` again while `&mut IOWriter` is live.
+                            let evtloop = (*this).io_evtloop();
+                            (*this)
+                                .writer
+                                .with_mut(|w| w.enable_keeping_process_alive(evtloop));
+                            (*this).ref_();
+                            // TODO: properly propagate exception upwards
+                            // `JSValue::then` takes already-wrapped C-ABI
+                            // host fns; the `toJSHostFunction` step is the manual
+                            // shims at the bottom of this file.
+                            promise_result.then(
+                                global_this,
+                                this,
+                                on_resolve_stream_shim,
+                                on_reject_stream_shim,
+                            );
+                        }
+                        bun_jsc::js_promise::Status::Fulfilled => {
+                            // These don't ref().
+                            (*this).handle_resolve_stream(global_this);
+                        }
+                        bun_jsc::js_promise::Status::Rejected => {
+                            // These don't ref().
+                            let result = (*js_promise).result(global_this.vm());
+                            (*this).handle_reject_stream(global_this, result);
+                        }
                     }
                 }
             }
-        }
 
-        promise_result
+            promise_result
+        }
     }
 }
 

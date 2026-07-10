@@ -32,8 +32,9 @@ pub mod watcher_impl;
 pub use WatchItemKind as Kind;
 pub use watcher_impl::{
     AnyResolveWatcher, ChangedFilePath, Event, HashType, Item, ItemList, MAX_COUNT,
-    MAX_EVICTION_COUNT, Op, PackageJSON, REQUIRES_FILE_DESCRIPTORS, WATCH_OPEN_FLAGS, WatchEvent,
-    WatchItem, WatchItemColumns, WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
+    MAX_EVICTION_COUNT, Op, PackageJSON, REQUIRES_FILE_DESCRIPTORS, ResolveWatchTarget,
+    WATCH_OPEN_FLAGS, WatchEvent, WatchItem, WatchItemColumns, WatchItemIndex, WatchItemKind,
+    WatchList, Watcher, WatcherContext,
 };
 
 // ─── upward-crate placeholders (CYCLEBREAK) ───────────────────────────────

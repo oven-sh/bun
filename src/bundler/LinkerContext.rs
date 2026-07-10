@@ -151,7 +151,10 @@ pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 
 pub struct LinkerContext<'a> {
-    pub parse_graph: *mut Graph<'a>,
+    /// Backref into `BundleV2.graph`, a sibling field of `BundleV2.linker`
+    /// (= `*self`), assigned in [`Self::load`]. `Option` because `Default`
+    /// precedes `load()`. `Copy`, so split-borrow sites read it out by value.
+    pub parse_graph: Option<bun_ptr::BackRef<Graph<'a>>>,
     pub graph: LinkerGraph<'a>,
     /// Backref into `Transpiler.log`, assigned in [`Self::load`]. Stored as a
     /// raw pointer (like `parse_graph` / `resolver`) so `Default` can be
@@ -217,7 +220,7 @@ unsafe impl<'a> Sync for LinkerContext<'a> {}
 impl<'a> Default for LinkerContext<'a> {
     fn default() -> Self {
         Self {
-            parse_graph: core::ptr::null_mut(),
+            parse_graph: None,
             graph: Default::default(),
             log: core::ptr::null_mut(),
             resolver: None,
@@ -267,13 +270,10 @@ impl<'a> LinkerContext<'a> {
     /// `self.parse_graph` field directly.
     #[inline]
     pub fn parse_graph(&self) -> &Graph<'_> {
-        debug_assert!(
-            !self.parse_graph.is_null(),
-            "LinkerContext.parse_graph accessed before load()"
-        );
-        // SAFETY: non-null backref into `BundleV2.graph`, valid for the link
-        // step, disjoint from `*self` (= `BundleV2.linker`).
-        unsafe { &*self.parse_graph }
+        self.parse_graph
+            .as_ref()
+            .expect("LinkerContext.parse_graph accessed before load()")
+            .get()
     }
 
     /// Exclusive accessor for the parse-side graph. See [`Self::parse_graph`]
@@ -282,13 +282,13 @@ impl<'a> LinkerContext<'a> {
     /// borrows.
     #[inline]
     pub fn parse_graph_mut(&mut self) -> &mut Graph<'a> {
-        debug_assert!(
-            !self.parse_graph.is_null(),
-            "LinkerContext.parse_graph accessed before load()"
-        );
-        // SAFETY: non-null backref into `BundleV2.graph`, disjoint from
-        // `*self`; `&mut self` excludes other safe borrows of the linker.
-        unsafe { &mut *self.parse_graph }
+        let parse_graph = self
+            .parse_graph
+            .expect("LinkerContext.parse_graph accessed before load()");
+        // SAFETY: backref into `BundleV2.graph`, disjoint from `*self`; `&mut
+        // self` excludes other safe borrows of the linker. `as_ptr` (not
+        // `get_mut`) so the borrow is tied to `&mut self`, not to the local.
+        unsafe { &mut *parse_graph.as_ptr() }
     }
 
     /// Shared-read accessor for the resolver.
@@ -304,25 +304,19 @@ impl<'a> LinkerContext<'a> {
             .get()
     }
 
-    /// Mutable projection of the `r#loop` BACKREF for `AnyEventLoop` dispatch
-    /// (`enqueue_task_concurrent*`, `tick`). Centralises the raw `NonNull`
-    /// deref so the three callers (`BundleV2::any_loop_mut`, `ParseTask` /
+    /// Shared projection of the `r#loop` BACKREF for `AnyEventLoop` dispatch
+    /// (`enqueue_task_concurrent*`). Centralises the raw `NonNull` deref so the
+    /// three callers (`BundleV2::any_loop`, `ParseTask` /
     /// `ServerComponentParseTask` completion) are safe.
     ///
-    /// `&self` receiver (not `&mut self`): the loop storage is **disjoint**
-    /// from `LinkerContext` (it lives in the `BundleThread` / runtime arena —
-    /// see [`EventLoop`]), and worker-thread completions reach this through a
-    /// `BackRef<BundleV2>` (`&` only).
+    /// `&` not `&mut`: dispatch needs mutation, not exclusivity — both variants
+    /// enqueue through an MPSC queue whose `push` is `&self`. Worker-thread
+    /// completions reach this concurrently through a `BackRef<BundleV2>`.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub fn any_loop_mut(&self) -> Option<&mut bun_event_loop::AnyEventLoop<'static>> {
+    pub fn any_loop(&self) -> Option<&bun_event_loop::AnyEventLoop<'static>> {
         // SAFETY: BACKREF — set once in `BundleV2::init` from a loop that
         // outlives the bundle pass; the pointee is disjoint from `*self`.
-        // Exclusivity: `Js { owner }.enqueue_task_concurrent` is `&self`
-        // (MPSC), and `Mini.enqueue_task_concurrent_with_extra_ctx` only
-        // pushes to an MPSC queue + writes the caller-owned intrusive task
-        // node, so concurrent worker completions do not alias loop state.
-        self.r#loop.map(|p| unsafe { &mut *p.as_ptr() })
+        self.r#loop.map(|p| unsafe { &*p.as_ptr() })
     }
 
     /// Shared-read accessor for the bundler log.
@@ -491,8 +485,9 @@ impl<'a> LinkerContext<'a> {
     ) -> Result<(), BunError> {
         let _trace = bun::perf::trace("Bundler.CloneLinkerGraph");
         // SAFETY: field-disjoint with `self` (= `(*bundle).linker`); `parse_graph`
-        // is a `*mut Graph` backref so no `&mut` is materialized.
-        self.parse_graph = unsafe { core::ptr::addr_of_mut!((*bundle).graph) };
+        // is a backref so no `&mut` is materialized.
+        self.parse_graph =
+            Some(unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*bundle).graph)) });
         // SAFETY: field-disjoint scalar read; `transpiler` is itself a `*mut`.
         let dyn_entry_points =
             unsafe { &mut *core::ptr::addr_of_mut!((*bundle).dynamic_import_entry_points) };
@@ -521,16 +516,19 @@ impl<'a> LinkerContext<'a> {
         // caller-owned slice into the linker arena.
         self.graph.reachable_files = reachable.to_vec();
 
-        // SAFETY: parse_graph is valid backref just assigned above
-        let sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
+        // Backref copy (assigned just above): the borrows below are tied to this
+        // local, leaving `&mut self.graph` disjoint.
+        let parse_graph = self
+            .parse_graph
+            .expect("LinkerContext.parse_graph accessed before load()");
+        let sources: &[Source] = parse_graph.input_files.items_source();
 
         self.graph.load(
             entry_points,
             sources,
             server_component_boundaries,
             dyn_entry_points.keys(),
-            // SAFETY: parse_graph backref
-            unsafe { &(*self.parse_graph).entry_point_original_names },
+            &parse_graph.entry_point_original_names,
         )?;
         dyn_entry_points.clear_retaining_capacity();
 
@@ -670,7 +668,10 @@ impl<'a> LinkerContext<'a> {
         // Note: go through raw pointers and reborrow per use to avoid holding
         // overlapping `&`/`&mut` into `parse_graph.html_imports` and
         // `parse_graph.input_files`.
-        let parse_graph: *mut Graph<'a> = self.parse_graph;
+        let parse_graph: *mut Graph<'a> = self
+            .parse_graph
+            .expect("LinkerContext.parse_graph accessed before load()")
+            .as_ptr();
         // SAFETY: see above; sole accessor of `html_imports` for this scope.
         let server_len = unsafe { (*parse_graph).html_imports.server_source_indices.len() };
         if server_len > 0 {
@@ -775,7 +776,10 @@ impl<'a> LinkerContext<'a> {
             // reallocate inside `validate_tla`; we cache raw column pointers
             // and reborrow per call to satisfy borrowck (`&mut self` is held
             // across the recursion).
-            let parse_graph: *mut Graph<'a> = self.parse_graph;
+            let parse_graph: *mut Graph<'a> = self
+                .parse_graph
+                .expect("LinkerContext.parse_graph accessed before load()")
+                .as_ptr();
             let import_records_list: *const [bun_ast::import_record::List<'a>] =
                 self.graph.ast.items_import_records();
             let flags: *mut [crate::js_meta::Flags] = self.graph.meta.items_flags_mut();
@@ -1671,18 +1675,23 @@ impl<'a> GenerateChunkCtx<'a> {
         unsafe { &*LinkerContext::bundle_v2_ptr(self.c.as_mut_ptr()) }
     }
 
-    /// Mutable view of the owning `LinkerContext`. Centralizes the `unsafe`
-    /// deref of the `c: *mut LinkerContext` backref (set in
-    /// `generate_chunks_in_parallel`); callers previously open-coded
-    /// `unsafe { &mut *ctx.c }`. The per-chunk tasks each touch a disjoint
-    /// chunk, so the linker fields they write don't alias across tasks.
+    /// Exclusive view of the owning `LinkerContext` behind the `c` backref.
+    ///
+    /// # Safety
+    /// `GenerateChunkCtx` is `Copy + Sync` (required by `each_ptr`) and one
+    /// copy is handed to every `generate_chunk` worker task, so exclusivity
+    /// cannot be enforced by the type system here. The caller must guarantee
+    /// that no other borrow of the `LinkerContext` overlaps the returned
+    /// `&mut` — including one minted by a peer task's `c()`, or a `&BundleV2`
+    /// from [`bundle`](Self::bundle), which aliases the same memory — and that
+    /// every linker field it touches is disjoint from the fields peer tasks
+    /// touch. Note `generate_isolated_hash` writes `input_files` rows indexed
+    /// by source, not by chunk.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn c(&self) -> &mut LinkerContext<'a> {
-        // SAFETY: ParentRef into `BundleV2.linker`, valid for the
-        // chunk-generation pass; this task's chunk row is disjoint from peers'.
-        // Constructed via `from_raw_mut` (write provenance) in
-        // `generate_chunks_in_parallel`.
+    pub unsafe fn c(&self) -> &mut LinkerContext<'a> {
+        // SAFETY: caller contract above, plus `from_raw_mut` write provenance
+        // from `generate_chunks_in_parallel`; parent is live for the link step.
         unsafe { self.c.assume_mut() }
     }
 }
@@ -1770,8 +1779,12 @@ impl<'a> LinkerContext<'a> {
         // that live in separate parts in the same file must not be merged. This only
         // needs to be done for JavaScript files, not CSS files.
         if let crate::chunk::Content::Javascript(js) = &chunk.content {
-            // SAFETY: parse_graph backref; exclusive access via &mut *.
-            let sources = unsafe { (*self.parse_graph).input_files.items_source_mut() };
+            let parse_graph: *mut Graph<'a> = self
+                .parse_graph
+                .expect("LinkerContext.parse_graph accessed before load()")
+                .as_ptr();
+            // SAFETY: parse_graph backref; exclusive access via the raw ptr.
+            let sources = unsafe { (*parse_graph).input_files.items_source_mut() };
             for part_range in js.parts_in_chunk_in_order.iter() {
                 let source: &mut Source = &mut sources[part_range.source_index.get() as usize];
 
@@ -2187,9 +2200,12 @@ impl<'a> LinkerContext<'a> {
             ..Default::default()
         }];
 
-        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-        // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
-        let parse_graph = unsafe { &*self.parse_graph };
+        // Backref copy: the `&Graph` is tied to this local, not to `*self`, which
+        // `RequireOrImportMetaCallback::init(self)` below borrows mutably.
+        let parse_graph_ref = self
+            .parse_graph
+            .expect("LinkerContext.parse_graph accessed before load()");
+        let parse_graph = parse_graph_ref.get();
 
         // Note: reshaped for borrowck — `Options` borrows `ts_enums` /
         // `line_offset_tables` / `mangled_props` from `self.graph`, but the
@@ -2355,9 +2371,12 @@ impl<'a> LinkerContext<'a> {
 
         let all_css_asts = self.graph.ast.items_css();
         let all_symbols: &[bun_ast::symbol::List<'a>] = self.graph.ast.items_symbols();
-        // SAFETY: parse_graph backref; raw deref because `all_sources` is held
-        // across `&mut self.mangled_props` below (split borrow).
-        let all_sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
+        // Backref copy: `all_sources` is tied to this local, not to `*self`, so
+        // `&mut self.mangled_props` below stays disjoint (split borrow).
+        let parse_graph_ref = self
+            .parse_graph
+            .expect("LinkerContext.parse_graph accessed before load()");
+        let all_sources: &[Source] = parse_graph_ref.input_files.items_source();
 
         // Collect all local css names
         let mut local_css_names: HashMap<Ref, ()> = HashMap::new();
@@ -3006,11 +3025,14 @@ impl<'a> LinkerContext<'a> {
             Ok(i) => i,
             Err(_) => unreachable!(),
         };
-        // SAFETY: parse_graph backref into BundleV2.graph; the input_files SoA
-        // is monotonically grown and never freed for the link step's lifetime,
-        // so the element address is stable. `'static` is a white lie matching
-        // the `*mut Graph` erasure on `self.parse_graph`.
-        unsafe { &*core::ptr::from_ref(&(*self.parse_graph).input_files.items_source()[index]) }
+        let parse_graph = self
+            .parse_graph
+            .expect("LinkerContext.parse_graph accessed before load()");
+        // SAFETY: parse_graph backrefs into BundleV2.graph; the input_files SoA is
+        // monotonically grown and never freed for the link step's lifetime, so the
+        // element address is stable. The `'static` is a white lie matching the
+        // `*mut Graph` erasure on `self.parse_graph`.
+        unsafe { &*core::ptr::from_ref(&parse_graph.input_files.items_source()[index]) }
     }
 
     /// `log` is an explicit parameter (not `self.log`) because the dev-server

@@ -40,14 +40,11 @@ pub(crate) fn is_macro_path(str: &[u8]) -> bool {
 // MacroContext
 // ══════════════════════════════════════════════════════════════════════════
 
-// All three are modelled as raw pointers because the referents live
-// inside the owning `Transpiler` and are also reachable through other aliases
-// (`Transpiler.resolver`, `Transpiler.env`, `Transpiler.options`); a `&'a mut`
-// here would forbid that aliasing under stacked-borrows. The `'static`
-// erasure on `Resolver`/`DotEnvLoader` matches the `Transpiler<'static>`
-// stored in `VirtualMachine` (the only producer of `MacroContext`).
+// `env` is a raw pointer because the referent lives inside the owning
+// `Transpiler` and is also reachable through `Transpiler.env`. The `'static`
+// erasure matches the `Transpiler<'static>` stored in `VirtualMachine`.
 pub struct MacroContext {
-    pub resolver: *mut Resolver<'static>,
+    pub resolver: bun_ptr::ParentRef<Resolver<'static>>,
     pub env: *mut DotEnvLoader<'static>,
     pub macros: MacroMap,
     pub remap: bun_ptr::BackRef<MacroRemap>,
@@ -87,7 +84,9 @@ impl MacroContext {
     pub fn init(transpiler: &mut Transpiler<'static>) -> MacroContext {
         MacroContext {
             macros: MacroMap::new(),
-            resolver: &raw mut transpiler.resolver,
+            // SAFETY: `transpiler` outlives every `MacroContext` it produces;
+            // `from_raw_mut` keeps the write provenance `assume_mut` needs.
+            resolver: unsafe { bun_ptr::ParentRef::from_raw_mut(&raw mut transpiler.resolver) },
             env: transpiler.env,
             remap: bun_ptr::BackRef::new(&transpiler.options.macro_remap),
             javascript_object: JSValue::ZERO,
@@ -116,10 +115,6 @@ impl MacroContext {
 
         debug_assert!(!is_macro_path(import_record_path_without_macro_prefix));
 
-        // SAFETY: `resolver` outlives `self` (see struct comment); uniquely
-        // accessed for the duration of this resolve call.
-        let resolver = unsafe { &mut *self.resolver };
-
         let input_specifier: &[u8] = 'brk: {
             if let Some(replacement) = ModuleLoader::HardcodedModule::Alias::get(
                 import_record_path,
@@ -129,7 +124,9 @@ impl MacroContext {
                 break 'brk replacement.path.as_bytes();
             }
 
-            let resolve_result = match resolver.resolve(
+            // SAFETY: the parent `Resolver` outlives `self`, and the exclusive
+            // borrow is confined to this call, which never re-enters JS.
+            let resolve_result = match unsafe { self.resolver.assume_mut() }.resolve(
                 source_dir,
                 import_record_path_without_macro_prefix,
                 bun_ast::ImportKind::Stmt,
@@ -177,6 +174,7 @@ impl MacroContext {
             &mut specifier_buf_len,
         );
 
+        let resolver = self.resolver;
         let macro_entry = self.macros.get_or_put(hash).expect("unreachable");
         if !macro_entry.found_existing {
             *macro_entry.value_ptr = match Macro::init(
@@ -401,7 +399,7 @@ impl Macro {
 
     pub fn init(
         // allocator param deleted — always default_allocator
-        resolver: &mut Resolver<'static>,
+        resolver: bun_ptr::ParentRef<Resolver<'static>>,
         input_specifier: &[u8],
         log: &mut Log,
         env: *mut DotEnvLoader<'static>,
@@ -468,7 +466,7 @@ impl Macro {
 
         Ok(Macro {
             vm: NonNull::new(vm),
-            resolver: Some(NonNull::from(resolver)),
+            resolver: NonNull::new(resolver.as_mut_ptr()),
             resolved: ResolveResult::default(),
             disabled: false,
         })

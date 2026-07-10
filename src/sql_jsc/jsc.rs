@@ -274,8 +274,13 @@ pub(crate) trait VirtualMachineSqlExt {
     /// shadowing the inherent VirtualMachine::rare_data() (which returns the
     /// bun_jsc RareData holding the per-protocol SocketGroups).
     fn sql_state(&mut self) -> &mut RareData;
-    /// vm.timer — the Timer::All heap, owned by RuntimeState.
-    fn timer(&mut self) -> &mut TimerHeap;
+    /// Shared view of [`Self::sql_state`] for read-only users such as
+    /// `StrongOptional::get`; mints no exclusive reference to the VM singleton.
+    fn sql_state_ref(&self) -> &RareData;
+    /// vm.timer — the Timer::All heap, owned by RuntimeState. Shared borrow:
+    /// the heap is a disjoint RuntimeState allocation, not VM storage, and
+    /// `TimerHeap`'s own methods take `&self`.
+    fn timer(&self) -> &TimerHeap;
     /// RareData.ssl_ctx_cache — owned by RuntimeState.
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
@@ -300,11 +305,19 @@ impl VirtualMachineSqlExt for VirtualMachine {
         unsafe { &mut *(hooks().sql_rare)(self) }
     }
     #[inline]
-    fn timer(&mut self) -> &mut TimerHeap {
-        // SAFETY: hook returns `&mut runtime_state().timer`; non-null after
-        // `init_runtime_state`. `TimerHeap` is an opaque newtype over the
-        // `*mut c_void` so callers stay typed.
-        unsafe { &mut *(hooks().timer_heap)(self).cast::<TimerHeap>() }
+    fn sql_state_ref(&self) -> &RareData {
+        // SAFETY: the hook ignores its argument and returns
+        // `&runtime_state().sql_rare`; non-null after `init_runtime_state`.
+        // Provenance is the thread-local `*mut`, not a cast of `&self`.
+        unsafe { &*(hooks().sql_rare)(VirtualMachine::get_mut_ptr()) }
+    }
+    #[inline]
+    fn timer(&self) -> &TimerHeap {
+        debug_assert!(core::ptr::eq(self, VirtualMachine::get_mut_ptr()));
+        // SAFETY: hook returns `runtime_state().timer`; non-null after
+        // `init_runtime_state`. Provenance is the thread-local `*mut` from
+        // `init()`, mirroring `VirtualMachine::as_mut`.
+        unsafe { &*(hooks().timer_heap)(VirtualMachine::get_mut_ptr()).cast::<TimerHeap>() }
     }
     #[inline]
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache {
@@ -373,13 +386,15 @@ pub use bun_event_loop::EventLoopTimer::{
 // [`SqlRuntimeHooks`] vtable.
 bun_opaque::opaque_ffi! { pub struct TimerHeap; }
 impl TimerHeap {
-    pub fn insert(&mut self, t: &mut EventLoopTimer) {
-        // SAFETY: `self` is `&mut runtime_state().timer`; `t` is a live
+    // `&self`: the handle is an opaque `UnsafeCell` ZST at the address of
+    // `runtime_state().timer`; the mutation happens across the FFI boundary.
+    pub fn insert(&self, t: &mut EventLoopTimer) {
+        // SAFETY: `self` is `&runtime_state().timer`; `t` is a live
         // intrusive heap node owned by the caller.
         unsafe { (hooks().timer_insert)(self._p.get().cast::<c_void>(), t) }
     }
-    pub fn remove(&mut self, t: &mut EventLoopTimer) {
-        // SAFETY: `self` is `&mut runtime_state().timer`; `t` was previously
+    pub fn remove(&self, t: &mut EventLoopTimer) {
+        // SAFETY: `self` is `&runtime_state().timer`; `t` was previously
         // inserted by the caller.
         unsafe { (hooks().timer_remove)(self._p.get().cast::<c_void>(), t) }
     }

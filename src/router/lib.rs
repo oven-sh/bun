@@ -44,7 +44,7 @@ mod api {
 type CoreError = bun_core::Error;
 
 use bun_core::HashedString;
-use bun_ptr::Interned;
+use bun_ptr::{Interned, ParentRef};
 
 // ──────────────────────────────────────────────────────────────────────────
 // cross-tier decoupling
@@ -1503,7 +1503,7 @@ pub trait ResolverLike {
     fn fs(&self) -> &'static FileSystem;
     /// The resolver's `Implementation` field, passed to
     /// `Entry.kind` for lazy stat.
-    fn fs_impl(&self) -> *mut Fs::Implementation;
+    fn fs_impl(&self) -> ParentRef<Fs::Implementation>;
     /// Returns an arena handle (not a borrow) so the resolver's `&mut self`
     /// borrow ends before the recursive `load()` re-borrows it.
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;
@@ -2078,9 +2078,8 @@ mod tests {
             // SAFETY: process-static singleton (see `FileSystem::instance`).
             unsafe { &*self.0.fs() }
         }
-        fn fs_impl(&self) -> *mut Fs::Implementation {
-            // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-            unsafe { core::ptr::from_mut(&mut (*self.0.fs()).fs) }
+        fn fs_impl(&self) -> ParentRef<Fs::Implementation> {
+            ParentRef::new(&self.0.fs_ref().fs)
         }
         fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
             self.0.read_dir_info_ignore_error(path)
@@ -2155,10 +2154,9 @@ mod tests {
                 .ok_or_else(|| bun_core::err!("FileNotFound"))?;
 
             // return RouteLoader.loadAll(..., opts.routes, &logger, Resolver, &resolver, root_dir);
-            // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
             let routes = RouteLoader::load_all(
                 router.config.clone(),
-                unsafe { &mut *core::ptr::from_mut(&mut log) },
+                &mut log,
                 &mut resolver,
                 &root_dir,
                 top_level_dir,
@@ -2220,13 +2218,7 @@ mod tests {
                 .ok_or_else(|| bun_core::err!("FileNotFound"))?;
 
             // try router.loadRoutes(&logger, root_dir, Resolver, &resolver, top_level_dir);
-            // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
-            router.load_routes(
-                unsafe { &mut *core::ptr::from_mut(&mut log) },
-                &root_dir,
-                &mut resolver,
-                top_level_dir,
-            )?;
+            router.load_routes(&mut log, &root_dir, &mut resolver, top_level_dir)?;
             let entry_points = router.get_entry_points();
 
             assert_eq!(data.len(), entry_points.len());

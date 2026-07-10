@@ -122,7 +122,7 @@ impl SubscriptionCtx {
         })
     }
 
-    fn subscription_callback_map(&self) -> &mut JSMap {
+    fn subscription_callback_map(&self) -> &JSMap {
         let parent_this = self
             .parent()
             .this_value
@@ -130,10 +130,10 @@ impl SubscriptionCtx {
             .try_get()
             .expect("unreachable");
         let value_js = Js::subscription_callback_map_get_cached(parent_this).unwrap();
-        // `JSMap` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        // `JSMap` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
         // `from_js` returns a non-null heap cell when the slot was set by
         // `init()`; single JS thread.
-        JSMap::opaque_mut(JSMap::from_js(value_js).unwrap().as_ptr())
+        JSMap::opaque_ref(JSMap::from_js(value_js).unwrap().as_ptr())
     }
 
     /// Get the total number of channels that this subscription context is subscribed to.
@@ -1601,8 +1601,9 @@ impl JSValkeyClient {
                 debug_assert!(!state.is_null(), "RuntimeState not installed");
                 // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a
                 // stable address for the VM's lifetime, JS-thread-only.
-                let cache = unsafe { &mut (*state).ssl_ctx_cache };
-                self._secure.set(cache.get_or_create(custom, &mut err));
+                let cache = unsafe { &(*state).ssl_ctx_cache };
+                self._secure
+                    .set(cache.with_mut(|c| c.get_or_create(custom, &mut err)));
             }
             self._secure.get().is_none()
         } else {

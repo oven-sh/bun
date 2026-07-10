@@ -1048,12 +1048,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
     // instead of the main loop.
     let event_loop: *mut jsc::event_loop::EventLoop = if IS_SYNC {
-        // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
-        // same VM via the raw pointer for its `vm` arg.
+        // SAFETY: see note above; `spawn_sync_event_loop` stores the VM pointer
+        // type-erased, so it takes the raw pointer and creates no second `&mut`.
         unsafe {
-            let sync_loop = (*jsc_vm_ptr)
-                .rare_data()
-                .spawn_sync_event_loop(&mut *jsc_vm_ptr);
+            let sync_loop = (*jsc_vm_ptr).rare_data().spawn_sync_event_loop(jsc_vm_ptr);
             sync_loop.prepare(jsc_vm_ptr.cast());
             // `SpawnSyncEventLoop.event_loop` is type-erased to `*mut ()`
             // (bun_event_loop is below bun_jsc); the accessor returns the
@@ -1079,7 +1077,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 let main_loop = (*jsc_vm_ptr_cleanup).event_loop();
                 (*jsc_vm_ptr_cleanup)
                     .rare_data()
-                    .spawn_sync_event_loop(&mut *jsc_vm_ptr_cleanup)
+                    .spawn_sync_event_loop(jsc_vm_ptr_cleanup)
                     .cleanup(jsc_vm_ptr_cleanup.cast(), main_loop.cast());
             }
         }
@@ -1258,9 +1256,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
     let subprocess_ptr = bun_core::heap::into_raw(Box::new(SubprocessT {
         global_this: bun_ptr::BackRef::new(global_this),
-        // SAFETY: `to_process` returns a non-null `Box::into_raw` pointer; the
-        // intrusive ref is released in `Subprocess::finalize`.
-        process: unsafe { bun_ptr::BackRef::from_raw(process) },
+        // SAFETY: `to_process` returns a non-null `Box::into_raw` pointer with
+        // exactly one ref; it transfers here and is released in
+        // `Subprocess::finalize`.
+        process: unsafe { bun_ptr::RefPtr::adopt_ref(process) },
         pid_rusage: Cell::new(None),
         // stdin/stdout/stderr are assigned immediately after this literal.
         // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
@@ -1305,8 +1304,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         )),
         exited_due_to_maxbuf: Cell::new(None),
     }));
-    // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
-    let subprocess = unsafe { &mut *subprocess_ptr };
+    // SAFETY: subprocess_ptr is a freshly-boxed Subprocess. A shared ref suffices:
+    // every field is `Cell`/`JsCell`, so the writes this fn makes through
+    // `subprocess_ptr` (abort listener, JS re-entry) cannot invalidate it.
+    let subprocess = unsafe { &*subprocess_ptr };
     // Erase the borrow lifetime to 'static for the intrusive back-pointer
     // (PipeReader stores it as raw NonNull). subprocess_ptr is non-null (just boxed).
     let subprocess_nn: NonNull<SubprocessT<'static>> =
@@ -1381,10 +1382,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
             subprocess.finalize_streams();
             subprocess.process_mut().detach();
-            // Release the intrusive ref
-            // (finalize() won't run on this error path).
-            // SAFETY: this error path returns without ever reading `process` again.
-            unsafe { Process::deref(subprocess.process.as_ptr()) };
+            // Release the intrusive ref (finalize() won't run on this error
+            // path); nothing reads `process` afterwards.
+            subprocess.process.deref();
             let mut mb = subprocess.stdout_maxbuf.get();
             MaxBuf::remove_from_subprocess(&mut mb);
             subprocess.stdout_maxbuf.set(mb);
@@ -1477,11 +1477,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     #[cfg(unix)]
     if !IS_SYNC {
         if let Some(mode) = maybe_ipc_mode {
-            // SAFETY: re-borrow `jsc_vm` through the raw pointer for the nested
-            // `vm` arg while `rare_data()` holds the outer &mut.
+            // SAFETY: `jsc_vm_ptr` is the live thread VM; `spawn_ipc_group` takes a
+            // shared `&VirtualMachine`, so the nested arg needs no second `&mut`.
             let raw_socket = unsafe { &mut *jsc_vm_ptr }
                 .rare_data()
-                .spawn_ipc_group(unsafe { &mut *jsc_vm_ptr })
+                .spawn_ipc_group(unsafe { &*jsc_vm_ptr })
                 .from_fd(
                     bun_uws::SocketKind::SpawnIpc,
                     None,
@@ -1771,11 +1771,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     if !IS_SYNC {
         if !subprocess.has_exited() {
             // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
-            // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
-            unsafe {
-                (*jsc_vm_ptr)
-                    .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
-            };
+            // is a `RefPtr` (wraps `NonNull`), so its pointer is non-null.
+            unsafe { (*jsc_vm_ptr).on_subprocess_spawn(subprocess.process.data) };
         }
         return Ok(out);
     }
@@ -1785,8 +1782,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     debug_assert!(IS_SYNC);
 
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
-        // SAFETY: jsc_vm_ptr is the live thread VM.
-        unsafe { &mut *jsc_vm_ptr }
+        jsc_vm
             .counters
             .mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
@@ -1818,10 +1814,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if !subprocess.has_exited() {
         // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
-        // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
-        unsafe {
-            (*jsc_vm_ptr).on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
-        };
+        // is a `RefPtr` (wraps `NonNull`), so its pointer is non-null.
+        unsafe { (*jsc_vm_ptr).on_subprocess_spawn(subprocess.process.data) };
     }
 
     let mut did_timeout = false;
@@ -1864,10 +1858,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);
         let mut bun_test_fired = false;
 
-        // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
+        // SAFETY: jsc_vm_ptr is the live thread VM; the `vm` arg is the raw
+        // pointer, so no `&mut VirtualMachine` spans the tick loop below.
         let sync_loop = unsafe { &mut *jsc_vm_ptr }
             .rare_data()
-            .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr });
+            .spawn_sync_event_loop(jsc_vm_ptr);
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
@@ -1939,10 +1934,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
                             let taken_active_file = active_file_strong.take().unwrap();
 
-                            // SAFETY: jsc_vm_ptr is the live thread VM.
                             crate::test_runner::jest::Jest::runner()
                                 .unwrap()
-                                .remove_active_timeout(unsafe { &mut *jsc_vm_ptr });
+                                .remove_active_timeout(jsc_vm);
 
                             // This might internally call `kill(2)` on this
                             // spawnSync process. Even if we do that, we still
@@ -1997,7 +1991,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let result_pid = JSValue::js_number_from_int32(subprocess.pid());
     // SAFETY: `subprocess_ptr` was produced by `heap::into_raw(Box::new(...))`
     // above (spawnSync path: never handed to a JS wrapper); reclaim ownership.
-    // `subprocess` (`&mut *subprocess_ptr`) is not used after this line.
+    // `subprocess` (`&*subprocess_ptr`) is not used after this line.
     SubprocessT::finalize(unsafe { Box::from_raw(subprocess_ptr) });
 
     let sync_value = JSValue::create_empty_object(global_this, 0);

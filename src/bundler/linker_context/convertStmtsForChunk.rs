@@ -44,7 +44,7 @@ pub fn convert_stmts_for_chunk(
     source_index: u32,
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
-    chunk: &mut Chunk,
+    chunk: &Chunk,
     bump: &Bump,
     wrap: WrapKind,
     ast: &JSAst<'_>,

@@ -632,43 +632,46 @@ impl SingleHTTPChannel {
             self.cv.wait_guarded(&mut g);
         }
     }
-}
 
-fn send_sync_callback(
-    this: *mut SingleHTTPChannel,
-    async_http: *mut AsyncHTTP<'static>,
-    result: HTTPClientResult<'_>,
-) {
-    // SAFETY: `async_http` is the HTTP-thread copy (inside ThreadlocalAsyncHTTP)
-    // and `real` was set to the caller's stack/heap AsyncHTTP before scheduling.
-    let async_http = unsafe { &mut *async_http };
     // Note: `AsyncHTTP` is not `Copy`/`Clone` and a raw `ptr::read`/`ptr::write`
     // would duplicate owned fields that are later dropped on both sides; instead
     // enumerate every field `on_async_http_callback` (and the client path) writes
     // and that callers of `send_sync` can observe, moving owned values out of
     // the HTTP-thread copy where necessary.
-    if let Some(mut real) = async_http.real {
-        // SAFETY: `real` outlives the HTTP-thread copy by construction.
-        let real = unsafe { real.as_mut() };
-        real.response = async_http.response;
-        real.request = async_http.request.take();
-        real.response_headers = core::mem::take(&mut async_http.response_headers);
-        real.response_encoding = async_http.response_encoding;
-        real.err = async_http.err;
-        real.redirected = async_http.redirected;
-        real.elapsed = async_http.elapsed;
-        real.gzip_elapsed = async_http.gzip_elapsed;
-        real.state
-            .store(async_http.state.load(Ordering::Relaxed), Ordering::Relaxed);
-        real.response_buffer = async_http.response_buffer;
+    fn complete(&self, async_http: &mut AsyncHTTP<'static>, result: HTTPClientResult<'_>) {
+        if let Some(mut real) = async_http.real {
+            // SAFETY: `real` outlives the HTTP-thread copy by construction.
+            let real = unsafe { real.as_mut() };
+            real.response = async_http.response;
+            real.request = async_http.request.take();
+            real.response_headers = core::mem::take(&mut async_http.response_headers);
+            real.response_encoding = async_http.response_encoding;
+            real.err = async_http.err;
+            real.redirected = async_http.redirected;
+            real.elapsed = async_http.elapsed;
+            real.gzip_elapsed = async_http.gzip_elapsed;
+            real.state
+                .store(async_http.state.load(Ordering::Relaxed), Ordering::Relaxed);
+            real.response_buffer = async_http.response_buffer;
+        }
+        // SAFETY: `result` borrows the HTTP-thread copy's response buffer, which is
+        // the caller's buffer — it outlives the read in `send_sync`.
+        self.write_item(unsafe { result.detach_lifetime() });
     }
-    // SAFETY: `this` is the leaked `SingleHTTPChannel` from `send_sync` and is
-    // alive for the process lifetime; `result` borrows the HTTP-thread copy's
-    // response buffer, which is the caller's buffer — outlives the read in
-    // `send_sync`.
-    unsafe {
-        (*this).write_item(result.detach_lifetime());
-    }
+}
+
+/// Typed trampoline for `HTTPClientResultCallbackFunction`: derefs both raw
+/// pointers once, then hands off to a safe method.
+fn send_sync_callback(
+    this: *mut SingleHTTPChannel,
+    async_http: *mut AsyncHTTP<'static>,
+    result: HTTPClientResult<'_>,
+) {
+    // SAFETY: `this` is the heap `SingleHTTPChannel` from `send_sync`, alive until
+    // `read_item` returns; `async_http` is the HTTP-thread copy (inside
+    // `ThreadlocalAsyncHTTP`), owned exclusively by this thread for the call.
+    let (channel, async_http) = unsafe { (&*this, &mut *async_http) };
+    channel.complete(async_http, result);
 }
 
 impl<'a> AsyncHTTP<'a> {

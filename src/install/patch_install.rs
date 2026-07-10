@@ -140,20 +140,13 @@ pub struct InstallContext {
 
 impl PatchTask {
     /// Destroy a heap-allocated `PatchTask` previously created by
-    /// `new_calc_patch_hash` / `new_apply_patch_hash`.
-    ///
-    /// The owned fields (`Box<[u8]>`, `Vec<u8>`, `Log`, `Option<...>`) drop automatically, so no
-    /// `impl Drop` body is needed. Because `PatchTask` is held via raw pointer through the
-    /// intrusive `next`/thread-pool queue, the named reclaim point is `unsafe fn destroy`.
-    ///
-    /// # Safety
-    /// `this` must have been produced by `heap::alloc` in the `new_*` constructors below and
-    /// ownership must be returned here exactly once.
-    pub unsafe fn destroy(this: *mut Self) {
-        // TODO: how to deinit `this.callback.calc_hash.network_task`
-        // SAFETY: caller contract — `this` was produced by `heap::into_raw` in
-        // `new_calc_patch_hash`/`new_apply_patch_hash` and is reclaimed exactly once.
-        drop(unsafe { bun_core::heap::take(this) });
+    /// `new_calc_patch_hash` / `new_apply_patch_hash`. The `Box` receiver is the named
+    /// reclaim point; every owned field drops when it goes out of scope.
+    // `boxed_local`: the `Box` is the point — it is the ownership unit the thread
+    // pool handed back, and this is where it is reclaimed.
+    #[allow(clippy::boxed_local)]
+    pub fn destroy(self: Box<Self>) {
+        // TODO: how to deinit `self.callback.calc_hash.network_task`
     }
 
     /// # Safety

@@ -28,6 +28,7 @@
 use bun_collections::VecExt;
 use bun_core::WTFStringImplExt as _;
 use bun_jsc::JsCell;
+use bun_ptr::BackRef;
 use core::cell::Cell;
 use core::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -505,15 +506,14 @@ impl Interpreter {
         let export_env = if matches!(event_loop, EventLoopHandle::Js { .. }) {
             export_env_.unwrap_or_else(EnvMap::init)
         } else {
-            // SAFETY: `event_loop.env()` returns the `MiniEventLoop`'s
-            // `DotEnv::Loader`, which is set by `init_global()` and outlives
-            // the interpreter (thread-lifetime singleton).
-            let env_loader = unsafe { &mut *event_loop.env() };
+            // `event_loop.env()` back-references the `MiniEventLoop`'s
+            // `DotEnv::Loader`, set by `init_global()` and outliving the
+            // interpreter (thread-lifetime singleton).
+            let env_loader = event_loop.env();
             let mut export_env = EnvMap::init_with_capacity(env_loader.map.map.count());
-            let mut iter = env_loader.iterator();
-            while let Some(entry) = iter.next() {
-                let key = crate::shell::EnvStr::init_slice(&entry.key_ptr[..]);
-                let value = crate::shell::EnvStr::init_slice(&entry.value_ptr.value[..]);
+            for (key, value) in env_loader.map.iter() {
+                let key = crate::shell::EnvStr::init_slice(&key[..]);
+                let value = crate::shell::EnvStr::init_slice(&value.value[..]);
                 export_env.insert(key, value);
             }
             export_env
@@ -1223,8 +1223,11 @@ impl Interpreter {
         // `Bun.$` API can read stdout/stderr after completion. The mini path
         // does not capture (it writes straight to the dup'd fd).
         let (cap_out, cap_err) = if matches!(event_loop, EventLoopHandle::Js { .. }) {
-            self.root_shell
-                .with_mut(|rs| (Some(rs.buffered_stdout()), Some(rs.buffered_stderr())))
+            let rs = self.root_shell.get();
+            (
+                Some(rs.buffered_stdout().as_ptr()),
+                Some(rs.buffered_stderr().as_ptr()),
+            )
         } else {
             (None, None)
         };
@@ -1372,14 +1375,13 @@ impl Interpreter {
 
         if free_buffered_io {
             // Can safely be called multiple times.
-            self.root_shell.with_mut(|rs| {
-                if let Bufio::Owned(o) = &mut rs._buffered_stderr {
-                    o.clear_and_free();
-                }
-                if let Bufio::Owned(o) = &mut rs._buffered_stdout {
-                    o.clear_and_free();
-                }
-            });
+            let rs = self.root_shell.get();
+            if let Bufio::Owned(o) = &rs._buffered_stderr {
+                o.with_mut(|o| o.clear_and_free());
+            }
+            if let Bufio::Owned(o) = &rs._buffered_stdout {
+                o.with_mut(|o| o.clear_and_free());
+            }
         }
 
         // Has this already been finalized?
@@ -1419,13 +1421,9 @@ impl Interpreter {
 
     /// GC finalizer body — runs
     /// whatever teardown `finish()` didn't, then frees the box.
-    ///
-    /// # Safety
-    /// `this` must be the `heap::alloc`'d pointer stored in the JS wrapper's
-    /// `m_ctx`; called exactly once from the GC thread's finalizer.
-    pub unsafe fn deinit_from_finalizer(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live `heap::alloc` payload.
-        let this = unsafe { bun_core::heap::take(this) };
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    pub fn deinit_from_finalizer(this: Box<Self>) {
         log!(
             "Interpreter(0x{:x}) deinitFromFinalizer (cleanup_state={})",
             &raw const *this as usize,
@@ -1474,6 +1472,8 @@ impl Interpreter {
         // `args: Box<ShellArgs>` and `vm_args_utf8: Vec<ZigStringSlice>` drop
         // with the box; `ZigStringSlice` has a `Drop` impl that derefs its
         // WTF backing.
+        // The `Box` is the ownership unit the finalizer handed back; release it.
+        drop(this);
     }
 
     /// JS `interp.setQuiet()`.
@@ -1580,20 +1580,14 @@ impl Interpreter {
         &self,
         global_this: &crate::jsc::JSGlobalObject,
     ) -> crate::jsc::JSValue {
-        io_to_js_value(
-            global_this,
-            self.root_shell.with_mut(|rs| rs.buffered_stdout()),
-        )
+        io_to_js_value(global_this, self.root_shell.get().buffered_stdout())
     }
 
     pub fn get_buffered_stderr(
         &self,
         global_this: &crate::jsc::JSGlobalObject,
     ) -> crate::jsc::JSValue {
-        io_to_js_value(
-            global_this,
-            self.root_shell.with_mut(|rs| rs.buffered_stderr()),
-        )
+        io_to_js_value(global_this, self.root_shell.get().buffered_stderr())
     }
 
     /// GC finalizer hook — called from the
@@ -1601,10 +1595,7 @@ impl Interpreter {
     /// `host_fn::host_fn_finalize`.
     pub fn finalize(self: Box<Self>) {
         log!("Interpreter(0x{:x}) finalize", &raw const *self as usize);
-        // See [`deinit_from_finalizer`](Self::deinit_from_finalizer).
-        // SAFETY: `self` is the unique GC-owned `m_ctx` payload; round-trip via
-        // raw ptr so `deinit_from_finalizer` can `heap::take` it.
-        unsafe { Self::deinit_from_finalizer(Box::into_raw(self)) };
+        Self::deinit_from_finalizer(self);
     }
 
     /// GC `hasPendingActivity()` hook.
@@ -1740,10 +1731,11 @@ impl Interpreter {
 /// and resets the source to empty.
 fn io_to_js_value(
     global_this: &crate::jsc::JSGlobalObject,
-    buf: *mut Vec<u8>,
+    buf: &JsCell<Vec<u8>>,
 ) -> crate::jsc::JSValue {
-    // SAFETY: `buf` points into a live `ShellExecEnv` (root or borrowed).
-    let bytelist = core::mem::take(unsafe { &mut *buf });
+    // Take the bytes out before touching JS: no borrow of `buf` is live across
+    // `create_buffer`, which can re-enter.
+    let bytelist = buf.replace(Vec::new());
     // The moved-out `Vec<u8>` storage is handed to JSC directly; the
     // `Vec<u8>` value itself is `mem::forget`-ed since JSC now owns the bytes.
     let mut bytelist = core::mem::ManuallyDrop::new(bytelist);
@@ -1796,23 +1788,21 @@ pub struct ShellExecEnv {
 }
 
 pub enum Bufio {
-    Owned(Vec<u8>),
-    Borrowed(*mut Vec<u8>),
+    Owned(JsCell<Vec<u8>>),
+    Borrowed(BackRef<JsCell<Vec<u8>>>),
 }
 
 impl Default for Bufio {
     fn default() -> Self {
-        Bufio::Owned(Vec::<u8>::default())
+        Bufio::Owned(JsCell::new(Vec::<u8>::default()))
     }
 }
 
 impl Bufio {
     pub fn memory_cost(&self) -> usize {
         match self {
-            Bufio::Owned(o) => o.memory_cost(),
-            // SAFETY: borrowed buffer points into a live parent `ShellExecEnv`
-            // (set by `dupe_for_subshell`); the parent outlives the child.
-            Bufio::Borrowed(b) => unsafe { (**b).memory_cost() },
+            Bufio::Owned(o) => o.get().memory_cost(),
+            Bufio::Borrowed(b) => b.get().get().memory_cost(),
         }
     }
 }
@@ -1857,54 +1847,23 @@ impl ShellExecEnv {
         &self.__prev_cwd[..self.__prev_cwd.len().saturating_sub(1)]
     }
 
-    pub fn buffered_stdout(&mut self) -> *mut Vec<u8> {
-        // Return the raw `*mut` directly — no `&mut Vec<u8>` is materialised,
-        // so the `Bufio::Borrowed` aliasing concern (which forces
-        // [`buffered_stdout_mut`] to be `unsafe fn`) does not apply here. The
-        // dereference obligation is on whoever later writes through it.
-        match &mut self._buffered_stdout {
-            Bufio::Owned(o) => std::ptr::from_mut(o),
-            Bufio::Borrowed(b) => *b,
-        }
-    }
-
-    pub fn buffered_stderr(&mut self) -> *mut Vec<u8> {
-        match &mut self._buffered_stderr {
-            Bufio::Owned(o) => std::ptr::from_mut(o),
-            Bufio::Borrowed(b) => *b,
-        }
-    }
-
-    /// Mutably borrow the captured-stdout buffer (owned, or the parent env's
-    /// buffer for subshell/pipeline children — see `Bufio`).
-    ///
-    /// # Safety
-    /// In the `Bufio::Borrowed` arm the returned `&mut Vec<u8>` aliases the
-    /// PARENT `ShellExecEnv`'s buffer. Caller must ensure no other
-    /// `&`/`&mut` to that buffer is live (including via a `&mut` of the
-    /// parent env). The shell trampoline mutates one node at a time so this
-    /// holds in practice, but `&mut self` alone does not encode it — hence
-    /// `unsafe fn`. The parent env strictly outlives this child (parents
-    /// `deinit` after children), so the pointer is never dangling.
+    /// The captured-stdout cell: this env's own buffer, or the parent env's
+    /// for subshell/pipeline children (see `Bufio`). Writers go through
+    /// `JsCell::with_mut`, so no `&mut Vec<u8>` ever aliases the parent.
     #[inline]
-    pub unsafe fn buffered_stdout_mut(&mut self) -> &mut Vec<u8> {
-        match &mut self._buffered_stdout {
+    pub fn buffered_stdout(&self) -> &JsCell<Vec<u8>> {
+        match &self._buffered_stdout {
             Bufio::Owned(o) => o,
-            // SAFETY: caller contract.
-            Bufio::Borrowed(b) => unsafe { &mut **b },
+            Bufio::Borrowed(b) => b.get(),
         }
     }
 
-    /// See [`buffered_stdout_mut`].
-    ///
-    /// # Safety
-    /// See [`buffered_stdout_mut`].
+    /// See [`buffered_stdout`].
     #[inline]
-    pub unsafe fn buffered_stderr_mut(&mut self) -> &mut Vec<u8> {
-        match &mut self._buffered_stderr {
+    pub fn buffered_stderr(&self) -> &JsCell<Vec<u8>> {
+        match &self._buffered_stderr {
             Bufio::Owned(o) => o,
-            // SAFETY: caller contract; see `buffered_stdout_mut`.
-            Bufio::Borrowed(b) => unsafe { &mut **b },
+            Bufio::Borrowed(b) => b.get(),
         }
     }
 
@@ -1927,16 +1886,18 @@ impl ShellExecEnv {
         // For `.fd` with a captured
         // buffer, borrow that; for `.ignore`, own a fresh one; for `.pipe`,
         // own when normal/cmd_subst, borrow parent's when subshell/pipeline.
-        let bufio_for = |out: &OutKind, parent_buf: *mut Vec<u8>| -> Bufio {
+        let bufio_for = |out: &OutKind, parent_buf: BackRef<JsCell<Vec<u8>>>| -> Bufio {
             match out {
                 OutKind::Fd(f) => match f.captured {
-                    Some(cap) => Bufio::Borrowed(cap),
-                    None => Bufio::Owned(Vec::<u8>::default()),
+                    // SAFETY: `captured` is `JsCell::as_ptr` of a live parent
+                    // env's buffer cell; the parent outlives this child.
+                    Some(cap) => Bufio::Borrowed(unsafe { BackRef::from_raw(cap.cast()) }),
+                    None => Bufio::Owned(JsCell::new(Vec::<u8>::default())),
                 },
-                OutKind::Ignore => Bufio::Owned(Vec::<u8>::default()),
+                OutKind::Ignore => Bufio::Owned(JsCell::new(Vec::<u8>::default())),
                 OutKind::Pipe => match kind {
                     ShellExecEnvKind::Normal | ShellExecEnvKind::CmdSubst => {
-                        Bufio::Owned(Vec::<u8>::default())
+                        Bufio::Owned(JsCell::new(Vec::<u8>::default()))
                     }
                     ShellExecEnvKind::Subshell | ShellExecEnvKind::Pipeline => {
                         Bufio::Borrowed(parent_buf)
@@ -1944,8 +1905,8 @@ impl ShellExecEnv {
                 },
             }
         };
-        let stdout = bufio_for(&io.stdout, self.buffered_stdout());
-        let stderr = bufio_for(&io.stderr, self.buffered_stderr());
+        let stdout = bufio_for(&io.stdout, BackRef::new(self.buffered_stdout()));
+        let stderr = bufio_for(&io.stderr, BackRef::new(self.buffered_stderr()));
 
         let duped = Box::new(ShellExecEnv {
             kind,
@@ -1977,7 +1938,7 @@ impl ShellExecEnv {
         let boxed = unsafe { bun_core::heap::take(this) };
         closefd(boxed.cwd_fd);
         // EnvMap/Vec/Vec<u8> drop impls free their storage; `Bufio::Borrowed`
-        // is a raw ptr so its drop is a no-op.
+        // is a non-owning `BackRef` so its drop is a no-op.
         drop(boxed);
     }
 
@@ -1989,11 +1950,11 @@ impl ShellExecEnv {
             std::ptr::from_ref(self) as usize
         );
         if free_buffered_io {
-            if let Bufio::Owned(o) = &mut self._buffered_stdout {
-                o.clear_and_free();
+            if let Bufio::Owned(o) = &self._buffered_stdout {
+                o.with_mut(|o| o.clear_and_free());
             }
-            if let Bufio::Owned(o) = &mut self._buffered_stderr {
-                o.clear_and_free();
+            if let Bufio::Owned(o) = &self._buffered_stderr {
+                o.with_mut(|o| o.clear_and_free());
             }
         }
         // EnvMap has a Drop impl; replace with fresh to free now and leave

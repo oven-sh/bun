@@ -83,13 +83,13 @@ impl ArrayBufferSink {
     /// # Safety
     /// `this` must be the m_ctx payload allocated via `heap::alloc` in
     /// init/JSSink, called from JSC lazy sweep on the mutator thread.
-    // Forwards `this` to `destroy` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on this forwarding wrapper.
+    // not_unsafe_ptr_arg_deref: the `# Safety` contract above stands in for the
+    // `unsafe fn` this codegen-facing thunk cannot be.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn finalize(this: *mut Self) {
         // SAFETY: `this` is the heap-allocated m_ctx payload (see `# Safety`
-        // above); it has not been freed yet, so `destroy` may reclaim it.
-        unsafe { Self::destroy(this) };
+        // above); it has not been freed yet, so we may reclaim ownership.
+        Self::destroy(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn init(
@@ -173,13 +173,9 @@ impl ArrayBufferSink {
         Ok(())
     }
 
-    /// # Safety
-    /// `this` must have been allocated via `heap::alloc` (i.e. by
-    /// [`ArrayBufferSink::init`] or the JSSink codegen path) and not yet freed.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: reclaiming ownership drops `bytes` (Vec<u8> impls Drop) and
-        // frees the box.
-        drop(unsafe { bun_core::heap::take(this) });
+    /// Drops the sink: `bytes` (Vec<u8> impls Drop) is freed with the box.
+    pub fn destroy(self: Box<Self>) {
+        drop(self);
     }
 
     pub fn to_js(

@@ -50,34 +50,33 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
             ))
             .unwrap_or(workspace);
 
-        // SAFETY: joined[2..] is exactly MAX_PATH_BYTES bytes long.
-        let joined_path: &mut PathBuffer =
-            unsafe { &mut *joined.as_mut_ptr().add(2).cast::<PathBuffer>() };
-        let mut paths = normalize_package_json_path(
+        // `joined[2..]` is exactly MAX_PATH_BYTES bytes long.
+        let Paths { rel, .. } = normalize_package_json_path(
             GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
-            joined_path,
+            &mut joined[2..],
             self.manager.lockfile.str(str_to_use),
         );
 
-        if !strings::starts_with_char(paths.rel, b'.') && !strings::starts_with_char(paths.rel, SEP)
-        {
-            joined[0] = b'.';
-            joined[1] = SEP;
-            // `paths.rel` points into `joined[2..]`; extend the view backward
-            // by the two bytes just written via safe slicing of `joined`.
-            let n = paths.rel.len() + 2;
-            paths.rel = &joined[..n];
-        }
+        let rel: &[u8] =
+            if !strings::starts_with_char(rel, b'.') && !strings::starts_with_char(rel, SEP) {
+                joined[0] = b'.';
+                joined[1] = SEP;
+                // `normalize_package_json_path` wrote the same bytes at the front
+                // of `joined[2..]`; extend the view backward over the two written.
+                &joined[..rel.len() + 2]
+            } else {
+                rel
+            };
 
         if self.quoted {
-            let quoted = QuotedFormatter { text: paths.rel };
+            let quoted = QuotedFormatter { text: rel };
             fmt::Display::fmt(&quoted, f)
         } else {
             // `fmt::Formatter` only accepts `&str`, so non-UTF-8 path bytes are emitted lossily
             // (U+FFFD) via `bstr::BStr`'s Display. Both current callers pass
             // `quoted = true`, so this branch is unreached today; if a future
             // caller needs byte-exact output it must use an `io::Write` sink.
-            write!(f, "{}", bstr::BStr::new(paths.rel))
+            write!(f, "{}", bstr::BStr::new(rel))
         }
     }
 }
@@ -177,16 +176,18 @@ impl FolderResolverImpl for CacheFolderResolver {
 
 struct Paths<'a> {
     abs: &'a ZStr,
-    rel: &'a [u8],
+    /// `FileSystem::relative` returns the threadlocal relative buffer, which is
+    /// a separate allocation from `joined`.
+    rel: &'static [u8],
 }
 
 fn normalize_package_json_path<'a>(
     global_or_relative: GlobalOrRelative<'_>,
-    joined: &'a mut PathBuffer,
+    joined: &'a mut [u8],
     non_normalized_path: &[u8],
 ) -> Paths<'a> {
     let abs: &[u8];
-    let rel: &[u8];
+    let rel: &'static [u8];
     // We consider it valid if there is a package.json in the folder
     let normalized: &[u8] = if non_normalized_path.len() == 1 && non_normalized_path[0] == b'.' {
         non_normalized_path
@@ -291,11 +292,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
-        // SAFETY: `manager_ptr` was just derived from the live `&mut PackageManager`
-        // argument; `log` points into a separate `Log` allocation (see the
-        // borrow-splitting comment above), so this `&mut` reborrow aliases no
-        // other live reference.
-        let json = unsafe { &mut *manager_ptr }
+        let json = manager
             .workspace_package_json_cache
             .get_with_path(log, abs.as_bytes(), Default::default())
             .unwrap()?;

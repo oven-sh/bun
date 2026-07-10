@@ -283,16 +283,9 @@ impl WindowsNamedPipeContext {
     }
 
     #[cfg(windows)]
-    fn run_event(this: *mut Self) {
-        // SAFETY: called from AnyTask; `this` is the live ctx pointer registered in create()
-        match unsafe { (*this).task_event } {
-            EventState::Deinit => {
-                // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
-                // and this deferred task is the sole remaining owner. Drop runs field destructors.
-                drop(unsafe { bun_core::heap::take(this) });
-            }
-            EventState::None => panic!("Invalid event state"),
-        }
+    fn run_event(this: Box<Self>) {
+        assert!(this.task_event == EventState::Deinit, "Invalid event state");
+        // `this` drops here: `Drop` derefs the socket, then field destructors run.
     }
 
     /// Owns the freshly-`create()`d context until `disarm()`: on any early
@@ -370,7 +363,11 @@ impl WindowsNamedPipeContext {
             let task = AnyTask {
                 ctx: ptr::NonNull::new(this.cast::<c_void>()),
                 callback: |ctx| {
-                    Self::run_event(ctx.cast::<WindowsNamedPipeContext>());
+                    // SAFETY: `ctx` is the `heap::into_raw` allocation above; the refcount hit
+                    // zero before `schedule_deinit` queued this task, so it is the sole owner.
+                    Self::run_event(unsafe {
+                        bun_core::heap::take(ctx.cast::<WindowsNamedPipeContext>())
+                    });
                     Ok(())
                 },
             };

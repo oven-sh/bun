@@ -9458,52 +9458,71 @@ impl SysQuietWriterAdapter {
     #[inline]
     fn buffered(&self) -> &[u8] {
         // SAFETY: `buf` is a `cap`-byte allocation owned by this adapter (set
-        // at construction); `pos <= cap` is upheld by `adapter_write_all`
+        // at construction); `pos <= cap` is upheld by `write_all`
         // (drains before writing past `cap`). Bytes `[0, pos)` were written by
         // `copy_nonoverlapping` and are initialized. Borrow tied to `&self`.
         unsafe { core::slice::from_raw_parts(self.buf, self.pos) }
     }
 }
 
-unsafe fn adapter_write_all(
+/// Safe body of an `io::Writer` adapter. `Self` must be `repr(C)` with
+/// `io::Writer` as its first field; the trampolines below do the one downcast.
+trait WriterImpl: Sized {
+    fn write_all(&mut self, bytes: &[u8]);
+    fn flush(&mut self);
+}
+
+unsafe fn tramp_write_all<T: WriterImpl>(
     w: *mut bun_core::io::Writer,
     bytes: &[u8],
 ) -> core::result::Result<(), bun_core::Error> {
-    // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
-    let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
-    if this.cap == 0 {
-        let _ = fd_write_all_quiet(this.fd, bytes);
-        return Ok(());
-    }
-    if this.pos + bytes.len() > this.cap {
-        // Drain buffered bytes first.
-        if this.pos > 0 {
-            let _ = fd_write_all_quiet(this.fd, this.buffered());
-            this.pos = 0;
-        }
-        // Large writes bypass the buffer so the next small write still coalesces.
-        if bytes.len() >= this.cap {
-            let _ = fd_write_all_quiet(this.fd, bytes);
-            return Ok(());
-        }
-    }
-    // SAFETY: `this.buf` has capacity `this.cap`; the branch above ensures
-    // `this.pos + bytes.len() <= this.cap`, so `[buf+pos, buf+pos+len)` is
-    // in-bounds and cannot overlap `bytes` (caller-owned slice).
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), this.buf.add(this.pos), bytes.len());
-    }
-    this.pos += bytes.len();
+    // SAFETY: `w` is the repr(C) head of the `T` this instantiation was
+    // registered on; the `&mut T` is the only live reference for the call.
+    unsafe { &mut *w.cast::<T>() }.write_all(bytes);
     Ok(())
 }
-unsafe fn adapter_flush(w: *mut bun_core::io::Writer) -> core::result::Result<(), bun_core::Error> {
-    // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
-    let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
-    if this.pos > 0 {
-        let _ = fd_write_all_quiet(this.fd, this.buffered());
-        this.pos = 0;
-    }
+
+unsafe fn tramp_flush<T: WriterImpl>(
+    w: *mut bun_core::io::Writer,
+) -> core::result::Result<(), bun_core::Error> {
+    // SAFETY: as `tramp_write_all`.
+    unsafe { &mut *w.cast::<T>() }.flush();
     Ok(())
+}
+
+impl WriterImpl for SysQuietWriterAdapter {
+    fn write_all(&mut self, bytes: &[u8]) {
+        if self.cap == 0 {
+            let _ = fd_write_all_quiet(self.fd, bytes);
+            return;
+        }
+        if self.pos + bytes.len() > self.cap {
+            // Drain buffered bytes first.
+            if self.pos > 0 {
+                let _ = fd_write_all_quiet(self.fd, self.buffered());
+                self.pos = 0;
+            }
+            // Large writes bypass the buffer so the next small write still coalesces.
+            if bytes.len() >= self.cap {
+                let _ = fd_write_all_quiet(self.fd, bytes);
+                return;
+            }
+        }
+        // SAFETY: `self.buf` has capacity `self.cap`; the branch above ensures
+        // `self.pos + bytes.len() <= self.cap`, so `[buf+pos, buf+pos+len)` is
+        // in-bounds and cannot overlap `bytes` (caller-owned slice).
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.buf.add(self.pos), bytes.len());
+        }
+        self.pos += bytes.len();
+    }
+
+    fn flush(&mut self) {
+        if self.pos > 0 {
+            let _ = fd_write_all_quiet(self.fd, self.buffered());
+            self.pos = 0;
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -9545,8 +9564,8 @@ bun_core::link_impl_OutputSink! {
             let fd = qw_fd(&qw);
             let concrete = SysQuietWriterAdapter {
                 writer: bun_core::io::Writer {
-                    write_all: adapter_write_all,
-                    flush: adapter_flush,
+                    write_all: tramp_write_all::<SysQuietWriterAdapter>,
+                    flush: tramp_flush::<SysQuietWriterAdapter>,
                 },
                 fd,
                 buf,

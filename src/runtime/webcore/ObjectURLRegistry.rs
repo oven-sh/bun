@@ -117,8 +117,7 @@ pub(crate) fn bun_create_object_url(
             .throw_invalid_arguments(format_args!("createObjectURL expects a Blob object")));
     };
     let registry = ObjectURLRegistry::singleton();
-    // SAFETY: `bun_vm_ptr()` returns the live VM pointer for `global_object`.
-    let uuid = registry.register(unsafe { &mut *global_object.bun_vm_ptr() }, blob);
+    let uuid = registry.register(global_object.bun_vm().as_mut(), blob);
     let mut str = bun_core::String::create_format(format_args!("blob:{}", uuid));
     str.transfer_to_js(global_object)
 }

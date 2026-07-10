@@ -47,7 +47,7 @@ impl PendingConnect {
     /// every caller. Centralises the raw `(*this.pc)` upgrade repeated at
     /// each consume site.
     #[inline]
-    fn pc_mut<'a>(&self) -> &'a mut quic::PendingConnect {
+    fn pc_mut(&mut self) -> &mut quic::PendingConnect {
         // SAFETY: see INVARIANT above.
         unsafe { &mut *self.pc }
     }
@@ -57,7 +57,7 @@ impl PendingConnect {
         // holds one ref from construction until Drop. `session_mut` centralises
         // the backref upgrade (same invariant as the other call sites below).
         session_mut(session).ref_();
-        let self_ = Box::new(PendingConnect {
+        let mut self_ = Box::new(PendingConnect {
             session,
             pc,
             loop_ptr: l,
@@ -80,7 +80,7 @@ impl PendingConnect {
     pub unsafe fn on_dns_resolved(this: *mut PendingConnect) {
         // SAFETY: `this` was heap-allocated in `register`; reclaim it so the Box drops at
         // end of scope — `Drop` derefs `session` and the allocation is freed.
-        let this = unsafe { bun_core::heap::take(this) };
+        let mut this = unsafe { bun_core::heap::take(this) };
         let session = this.session;
 
         // session is kept alive by the ref `this` holds for the duration of this

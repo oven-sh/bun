@@ -1,4 +1,3 @@
-use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
@@ -6,7 +5,7 @@ use bun_ast::Loc;
 use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
 use bun_core::{self, ZigStringSlice, strings};
-use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
+use bun_jsc::{JSGlobalObject, JSValue, JsCell, VM, bun_string_jsc};
 use bun_sourcemap::{
     LineOffsetTable, LineOffsetTableColumns as _, Ordinal, ParsedSourceMap, internal_source_map,
     line_offset_table,
@@ -360,7 +359,7 @@ unsafe extern "C" {
         source_id: i32,
         ctx: *mut c_void,
         ignore_sourcemap: bool,
-        cb: extern "C" fn(*mut Generator, *const BasicBlockRange, usize, usize, bool),
+        cb: extern "C" fn(*mut c_void, *const BasicBlockRange, usize, usize, bool),
     ) -> bool;
 }
 
@@ -370,16 +369,15 @@ struct Generator<'a> {
 }
 
 impl<'a> Generator<'a> {
+    /// Trampoline for the `(cb, ctx)` pair handed to `CodeCoverage__withBlocksAndFunctions`.
+    /// The `*mut c_void` is dereferenced exactly here; `run` is a safe method.
     extern "C" fn do_(
-        this: *mut Generator,
+        ctx: *mut c_void,
         blocks_ptr: *const BasicBlockRange,
         blocks_len: usize,
         function_start_offset: usize,
         ignore_sourcemap: bool,
     ) {
-        // SAFETY: `this` was passed as &mut Generator to CodeCoverage__withBlocksAndFunctions
-        // and is valid for the duration of this synchronous callback.
-        let this = unsafe { &mut *this };
         // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
         // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned
         // pointer even for zero-length slices, so we must bail before constructing the slice.
@@ -389,8 +387,20 @@ impl<'a> Generator<'a> {
         // SAFETY: blocks_len != 0, so blocks_ptr[0..blocks_len] is a valid contiguous C array
         // provided by JSC for the duration of this synchronous callback.
         let all = unsafe { core::slice::from_raw_parts(blocks_ptr, blocks_len) };
+        // SAFETY: `ctx` is the `&raw mut generator` passed alongside this callback; it is the
+        // only pointer to that `Generator`, which outlives this synchronous callback.
+        let this = unsafe { &mut *ctx.cast::<Generator<'_>>() };
+        this.run(all, function_start_offset, ignore_sourcemap);
+    }
+
+    fn run(
+        &mut self,
+        all: &[BasicBlockRange],
+        function_start_offset: usize,
+        ignore_sourcemap: bool,
+    ) {
         let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
-        let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
+        let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..];
         if function_blocks.len() > 1 {
             function_blocks = &function_blocks[1..];
         }
@@ -403,8 +413,8 @@ impl<'a> Generator<'a> {
         // `from_utf8_never_free` already detaches the lifetime by design, and
         // `generate_report_from_blocks` only borrows `&self`, so no &/&mut overlap.
         let source_url =
-            ZigStringSlice::from_utf8_never_free(this.byte_range_mapping.source_url.slice());
-        *this.result = this
+            ZigStringSlice::from_utf8_never_free(self.byte_range_mapping.source_url.slice());
+        *self.result = self
             .byte_range_mapping
             .generate_report_from_blocks(source_url, blocks, function_blocks, ignore_sourcemap)
             .ok();
@@ -438,33 +448,22 @@ thread_local! {
     // `*mut ByteRangeMapping` pointing into it). The Box is **owned** by the
     // thread-local — it is dropped on thread exit, never leaked (PORTING.md
     // §Forbidden: no Box::leak).
-    static MAP: UnsafeCell<Option<Box<ByteRangeMappingHashMap>>> =
-        const { UnsafeCell::new(None) };
+    static MAP: JsCell<Option<Box<ByteRangeMappingHashMap>>> = const { JsCell::new(None) };
 }
 
-/// Returns a raw pointer to this thread's map, lazily creating it.
-/// The pointer is valid until thread exit (the Box is pinned in the thread-local
-/// slot and never moved or dropped earlier).
-fn thread_map() -> *mut ByteRangeMappingHashMap {
+/// Runs `f` with this thread's map, lazily creating it. `f` must not re-enter
+/// this thread-local (it holds the only `&mut` to the map for its duration).
+fn thread_map<R>(f: impl FnOnce(&mut ByteRangeMappingHashMap) -> R) -> R {
     MAP.with(|cell| {
-        // SAFETY: thread-local; no other reference to this UnsafeCell can exist
-        // concurrently on this thread while we hold this exclusive borrow.
-        let slot = unsafe { &mut *cell.get() };
-        if slot.is_none() {
-            *slot = Some(Box::new(ByteRangeMappingHashMap::default()));
-        }
-        // SAFETY: just ensured Some above; Box deref gives stable address.
-        &raw mut **slot.as_mut().unwrap()
+        cell.with_mut(|slot| {
+            f(slot.get_or_insert_with(|| Box::new(ByteRangeMappingHashMap::default())))
+        })
     })
 }
 
-/// Returns a raw pointer to this thread's map if it has been created, else null.
+/// Returns a pointer to this thread's map if it has been created, else `None`.
 fn thread_map_opt() -> Option<NonNull<ByteRangeMappingHashMap>> {
-    MAP.with(|cell| {
-        // SAFETY: thread-local exclusive access.
-        let slot = unsafe { &mut *cell.get() };
-        slot.as_mut().map(|b| NonNull::from(&mut **b))
-    })
+    MAP.with(|cell| cell.with_mut(|slot| slot.as_mut().map(|b| NonNull::from(&mut **b))))
 }
 
 impl ByteRangeMapping {
@@ -847,17 +846,15 @@ pub(crate) extern "C" fn ByteRangeMapping__generate(
     source_contents_str: bun_core::String,
     source_id: i32,
 ) {
-    // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
-    // valid for the lifetime of the thread, and we are the only mutable accessor on
-    // this thread for the duration of this call.
-    let map = unsafe { &mut *thread_map() };
-
     let slice = str_.to_utf8();
     let hash = bun_wyhash::hash(slice.slice());
     let source_contents = source_contents_str.to_utf8();
 
+    // Build the value before borrowing the map: nothing may run inside `thread_map`.
     let new_value = ByteRangeMapping::compute(source_contents.slice(), source_id, slice);
-    map.insert(hash, new_value);
+    thread_map(|map| {
+        map.insert(hash, new_value);
+    });
     // `source_contents` drops here (matches `defer source_contents.deinit()`).
     // Note: `slice` ownership transferred into the new ByteRangeMapping.source_url.
 }
@@ -872,13 +869,14 @@ pub(crate) extern "C" fn ByteRangeMapping__find(
     path: bun_core::String,
 ) -> Option<NonNull<ByteRangeMapping>> {
     let slice = path.to_utf8();
-
-    let map_ptr = thread_map_opt()?;
-    // SAFETY: map_ptr points into this thread's owned Box; valid until thread exit.
-    let map = unsafe { &mut *map_ptr.as_ptr() };
     let hash = bun_wyhash::hash(slice.slice());
-    let entry = map.get_mut(&hash)?;
-    Some(NonNull::from(entry))
+
+    MAP.with(|cell| {
+        cell.with_mut(|slot| {
+            let entry = slot.as_mut()?.get_mut(&hash)?;
+            Some(NonNull::from(entry))
+        })
+    })
 }
 
 #[unsafe(no_mangle)]

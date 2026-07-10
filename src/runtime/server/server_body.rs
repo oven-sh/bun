@@ -12,10 +12,8 @@ use crate::node::types::PathLikeExt as _;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
-use crate::webcore::response::HeadersRef;
-use crate::webcore::{
-    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response,
-};
+use crate::webcore::response::FetchHeaders;
+use crate::webcore::{self as WebCore, AbortSignal, AnyBlob, Blob, Request, Response};
 use ::bstr::BStr;
 use bun_collections::HashMap;
 use bun_core::{Output, fmt as bun_fmt};
@@ -561,20 +559,13 @@ impl AnyRoute {
         let Some(headers_js) = argument.get(init_ctx.global, b"headers")? else {
             return Ok(None);
         };
+        // Owns the `+1` from `create_from_js`; `Drop` releases it at scope end.
         let fetch_headers = FetchHeaders::create_from_js(init_ctx.global, headers_js)?;
-        let _fh_guard = scopeguard::guard(fetch_headers, |fh| {
-            // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-            if let Some(h) = fh {
-                bun_opaque::opaque_deref_mut(h.as_ptr()).deref();
-            }
-        });
         if init_ctx.global.has_exception() {
             return Err(JsError::Thrown);
         }
 
-        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-        let headers_ref = fetch_headers.map(|p| bun_opaque::opaque_deref(p.as_ptr().cast_const()));
-        let route = Self::from_options(init_ctx.global, headers_ref, &mut path)?;
+        let route = Self::from_options(init_ctx.global, fetch_headers.as_ref(), &mut path)?;
 
         if is_index_route {
             return Ok(Some(route));
@@ -1214,9 +1205,13 @@ pub(super) fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> 
     Ok(JSValue::UNDEFINED)
 }
 
+/// Borrows the `FetchHeaders` owned by a JS `Headers` wrapper. Takes no ref.
 #[inline]
-fn fetch_headers_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut FetchHeaders> {
-    FetchHeaders::cast_(value, global.vm()).map(|p| p.as_ptr())
+fn fetch_headers_from_js(
+    value: JSValue,
+    global: &JSGlobalObject,
+) -> Option<mem::ManuallyDrop<FetchHeaders>> {
+    FetchHeaders::cast_(value, global.vm())
 }
 
 /// Per-process latch for the dev-mode idle-timeout warning. The
@@ -1290,7 +1285,7 @@ impl<'a, Ctx: RequestCtxOps> PreparedRequestFor<'a, Ctx> {
         SavedRequest {
             js_request: StrongOptional::create(self.js_request, global),
             request: self.request_object,
-            ctx: AnyRequestContext::init(std::ptr::from_ref::<Ctx>(self.ctx)),
+            ctx: AnyRequestContext::init(std::ptr::from_mut::<Ctx>(self.ctx)),
             response: RespLike::to_any_response(resp),
         }
     }
@@ -1351,7 +1346,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `&mut` accessor for the live uws App. Only call from paths where the
     /// server is running (`self.app` set in `listen()`).
     #[inline]
-    fn app_mut(&self) -> &mut uws_sys::NewApp<SSL> {
+    fn app_mut(&mut self) -> &mut uws_sys::NewApp<SSL> {
         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref via
         // const-asserted `bun_opaque::opaque_deref_mut`. `self.app` is `Some`
         // for the lifetime of any JS-reachable `Server` (set in `listen()`,
@@ -1627,13 +1622,10 @@ where
         }
         let value = seconds.to_u32();
 
-        if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments[0]) {
-            // SAFETY: from_js returns a live *mut Request
-            let _ = unsafe { &mut *request }.request_context.set_timeout(value);
-        } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments[0])
-        {
-            // SAFETY: from_js returns a live *mut NodeHTTPResponse
-            unsafe { &mut *response }.set_timeout((value % 255) as u8);
+        if let Some(request) = arguments[0].as_class_ref::<Request>() {
+            let _ = request.request_context.set_timeout(value);
+        } else if let Some(response) = arguments[0].as_class_ref::<NodeHTTPResponse>() {
+            response.set_timeout((value % 255) as u8);
         } else {
             return Err(self
                 .global()
@@ -1745,9 +1737,7 @@ where
             return Ok(JSValue::FALSE);
         }
 
-        if let Some(node_http_response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(object) {
-            // SAFETY: from_js returns a live *mut NodeHTTPResponse
-            let node_http_response = unsafe { &mut *node_http_response };
+        if let Some(node_http_response) = object.as_class_ref::<NodeHTTPResponse>() {
             if node_http_response
                 .flags
                 .get()
@@ -1762,15 +1752,8 @@ where
 
             let mut data_value = JSValue::ZERO;
 
-            // if we converted a HeadersInit to a Headers object, we need to free it
-            let fetch_headers_to_deref: core::cell::Cell<Option<*mut FetchHeaders>> =
-                core::cell::Cell::new(None);
-            let _fh_guard = scopeguard::guard(&fetch_headers_to_deref, |cell| {
-                if let Some(fh) = cell.get() {
-                    // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                    bun_opaque::opaque_deref_mut(fh).deref();
-                }
-            });
+            // if we converted a HeadersInit to a Headers object, `Drop` frees it
+            let mut created_fetch_headers: Option<FetchHeaders> = None;
 
             let mut sec_websocket_protocol = ZigString::EMPTY;
             let mut sec_websocket_extensions = ZigString::EMPTY;
@@ -1807,30 +1790,27 @@ where
                             break 'getter;
                         }
 
-                        let fetch_headers_to_use: *mut FetchHeaders =
-                            match fetch_headers_from_js(headers_value, global) {
-                                Some(h) => h,
-                                None => 'brk: {
-                                    if headers_value.is_object() {
-                                        if let Some(fetch_headers) =
-                                            FetchHeaders::create_from_js(global, headers_value)?
-                                        {
-                                            fetch_headers_to_deref
-                                                .set(Some(fetch_headers.as_ptr()));
-                                            break 'brk fetch_headers.as_ptr();
-                                        }
+                        let borrowed_fetch_headers = fetch_headers_from_js(headers_value, global);
+                        let fetch_headers_to_use: &FetchHeaders = match borrowed_fetch_headers
+                            .as_deref()
+                        {
+                            Some(h) => h,
+                            None => 'brk: {
+                                if headers_value.is_object() {
+                                    if let Some(fetch_headers) =
+                                        FetchHeaders::create_from_js(global, headers_value)?
+                                    {
+                                        break 'brk &*created_fetch_headers.insert(fetch_headers);
                                     }
-                                    if !global.has_exception() {
-                                        return Err(global.throw_invalid_arguments(format_args!(
-                                            "upgrade options.headers must be a Headers or an object"
-                                        )));
-                                    }
-                                    return Err(JsError::Thrown);
                                 }
-                            };
-                        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                        let fetch_headers_to_use =
-                            bun_opaque::opaque_deref_mut(fetch_headers_to_use);
+                                if !global.has_exception() {
+                                    return Err(global.throw_invalid_arguments(format_args!(
+                                        "upgrade options.headers must be a Headers or an object"
+                                    )));
+                                }
+                                return Err(JsError::Thrown);
+                            }
+                        };
 
                         if global.has_exception() {
                             return Err(JsError::Thrown);
@@ -1861,10 +1841,14 @@ where
                         if let Some(raw_response) = node_http_response.raw_response.get() {
                             // we must write the status first so that 200 OK isn't written
                             raw_response.write_status(b"101 Switching Protocols");
-                            fetch_headers_to_use.to_uws_response(
-                                ResponseKind::from(SSL, false),
-                                raw_response.socket().cast::<c_void>(),
-                            );
+                            // SAFETY: `raw_response.socket()` is the live
+                            // `uWS::HttpResponse` for this request.
+                            unsafe {
+                                fetch_headers_to_use.to_uws_response(
+                                    ResponseKind::from(SSL, false),
+                                    raw_response.socket().cast::<c_void>(),
+                                );
+                            }
                         }
                     }
 
@@ -1930,15 +1914,8 @@ where
         let mut _sec_websocket_protocol_owned = bun_core::ZigStringSlice::empty();
         let mut _sec_websocket_extensions_owned = bun_core::ZigStringSlice::empty();
 
-        // NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
-        // is `*mut`), so go through the `BodyMixin` accessor which yields a
-        // `NonNull` instead of the inherent `&FetchHeaders` getter.
         if let Some(head) = crate::webcore::body::BodyMixin::get_fetch_headers(request) {
             use jsc::HTTPHeaderName;
-            // `head` is a live, intrusively-refcounted C++ handle owned by
-            // `request.headers`. `FetchHeaders` is an opaque ZST FFI handle
-            // (S008) — safe `*mut → &mut` via `opaque_deref_mut`.
-            let head = bun_opaque::opaque_deref_mut(head.as_ptr());
             if let Some(key) = head.fast_get(HTTPHeaderName::SecWebSocketKey) {
                 _sec_websocket_key_owned = key.to_slice_clone();
                 sec_websocket_key_str = ZigString::init(_sec_websocket_key_owned.slice());
@@ -1953,8 +1930,6 @@ where
             }
         }
 
-        // SAFETY: upgrader_ptr is live (ref_() above)
-        let upgrader = unsafe { &mut *upgrader_ptr };
         if let Some(req_ptr) = upgrader.req {
             // NOTE: `RequestContext.req` is type-erased to `*mut c_void`
             // (RequestContext.rs:82). `server.upgrade()` is HTTP/1-only — H3
@@ -1989,15 +1964,12 @@ where
         }
 
         let mut data_value = JSValue::ZERO;
-        // Non-unit guard state: holds the temporarily-created FetchHeaders (if
-        // any) and derefs it on scope exit. Populated below via DerefMut.
-        let mut fetch_headers_to_deref = scopeguard::guard(None::<*mut FetchHeaders>, |fh| {
-            // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-            if let Some(h) = fh {
-                bun_opaque::opaque_deref_mut(h).deref()
-            }
-        });
-        let mut fetch_headers_to_use: Option<*mut FetchHeaders> = None;
+        // Holds the temporarily-created FetchHeaders (if any); `Drop` derefs it.
+        let mut created_fetch_headers: Option<FetchHeaders> = None;
+        // The JS `Headers` wrapper owns this ref (see `fetch_headers_from_js`);
+        // the binding only has to outlive `fetch_headers_to_use`'s borrow of it.
+        let borrowed_fetch_headers: Option<mem::ManuallyDrop<FetchHeaders>>;
+        let mut fetch_headers_to_use: Option<&FetchHeaders> = None;
 
         if let Some(opts) = optional {
             'getter: {
@@ -2021,15 +1993,15 @@ where
                         break 'getter;
                     }
                     use jsc::HTTPHeaderName;
-                    let fh: *mut FetchHeaders = match fetch_headers_from_js(headers_value, global) {
+                    borrowed_fetch_headers = fetch_headers_from_js(headers_value, global);
+                    let fh: &FetchHeaders = match borrowed_fetch_headers.as_deref() {
                         Some(h) => h,
                         None => {
                             if headers_value.is_object() {
                                 if let Some(created) =
                                     FetchHeaders::create_from_js(global, headers_value)?
                                 {
-                                    *fetch_headers_to_deref = Some(created.as_ptr());
-                                    created.as_ptr()
+                                    &*created_fetch_headers.insert(created)
                                 } else if !global.has_exception() {
                                     return Err(global.throw_invalid_arguments(format_args!(
                                         "upgrade options.headers must be a Headers or an object"
@@ -2051,8 +2023,6 @@ where
                         return Err(JsError::Thrown);
                     }
 
-                    // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                    let fh = bun_opaque::opaque_deref_mut(fh);
                     if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
                         _sec_websocket_protocol_owned = p.to_slice_clone();
                         sec_websocket_protocol =
@@ -2087,11 +2057,14 @@ where
         if fetch_headers_to_use.is_some() || cookies_to_write.is_some() {
             resp.write_status(b"101 Switching Protocols");
             if let Some(h) = fetch_headers_to_use {
-                // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(h).to_uws_response(
-                    ResponseKind::from(SSL, false),
-                    resp.socket().cast::<c_void>(),
-                );
+                // SAFETY: `resp.socket()` is the live `uWS::HttpResponse` for
+                // this request.
+                unsafe {
+                    h.to_uws_response(
+                        ResponseKind::from(SSL, false),
+                        resp.socket().cast::<c_void>(),
+                    );
+                }
             }
             if let Some(c) = cookies_to_write.as_mut() {
                 c.write(
@@ -2226,7 +2199,7 @@ where
 
         let route_list_value = self.set_routes();
         if new_config.had_routes_object {
-            if let Some(server_js_value) = self.js_value.try_get() {
+            if let Some(server_js_value) = self.js_value.get().try_get() {
                 if !server_js_value.is_empty() {
                     Self::js_gc_route_list_set(server_js_value, global, route_list_value);
                 }
@@ -2257,7 +2230,7 @@ where
         }
         let route_list_value = self.set_routes();
         if !route_list_value.is_empty() {
-            if let Some(server_js_value) = self.js_value.try_get() {
+            if let Some(server_js_value) = self.js_value.get().try_get() {
                 if !server_js_value.is_empty() {
                     Self::js_gc_route_list_set(server_js_value, &self.global(), route_list_value);
                 }
@@ -2296,7 +2269,7 @@ where
 
         self.on_reload_from_zig(&mut new_config, global);
 
-        Ok(self.js_value.try_get().unwrap_or(JSValue::UNDEFINED))
+        Ok(self.js_value.get().try_get().unwrap_or(JSValue::UNDEFINED))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2325,7 +2298,7 @@ where
             );
         }
 
-        let mut headers: Option<HeadersRef> = None;
+        let mut headers: Option<FetchHeaders> = None;
         let mut method = Method::GET;
         // SAFETY: bun_vm() returns the live per-thread VM singleton.
         let mut args = jsc::ArgumentsSlice::init(ctx.bun_vm(), arguments);
@@ -2373,22 +2346,13 @@ where
 
                 if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {
                     if let Some(headers__) = FetchHeaders::cast_(headers_, ctx.vm()) {
-                        // NOTE: `cast_` returns the `FetchHeaders*` held by the
-                        // JS `Headers` wrapper (`JSFetchHeaders`'s internal
-                        // `Ref<FetchHeaders>`) without bumping the refcount —
-                        // the FFI surface has `WebCore__FetchHeaders__deref` but
-                        // no `ref()`, so a +1 cannot be taken here. Adopting
-                        // hands that wrapper-held ref to the constructed
-                        // `Request` (via `Request::init2` below): the eventual
-                        // single deref happens when the Request's finalizer
-                        // drops its `headers` field (`HeadersRef::Drop`,
-                        // Response.rs), pairing with the wrapper's +1.
-                        // SAFETY: `headers__` is live (rooted by `headers_`),
-                        // and ownership of one ref transfers as described above.
-                        headers = Some(unsafe { HeadersRef::adopt(headers__) });
+                        // The JS `Headers` wrapper owns that ref, so the Request
+                        // gets its own copy — the same `clone_this` a
+                        // `new Response(_, { headers })` takes in `Response::init`.
+                        headers = headers__.clone_this(ctx)?;
                     } else if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_)? {
-                        // SAFETY: create_from_js returns a +1 ref.
-                        headers = Some(unsafe { HeadersRef::adopt(headers__) });
+                        // `create_from_js` already hands back the owned `+1`.
+                        headers = Some(headers__);
                     }
                 }
 
@@ -2550,7 +2514,7 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_pending_requests(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number((self.pending_requests as u32 & 0x7FFF_FFFF) as i32 as f64)
+        JSValue::js_number((self.pending_requests.get() as u32 & 0x7FFF_FFFF) as i32 as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2683,12 +2647,12 @@ where
         // `deinit_if_we_can` may defer the actual free (pending requests still
         // hold a ref), so hand ownership back to the raw teardown path.
         let this = bun_core::heap::release(self);
-        this.js_value.finalize();
+        this.js_value.with_mut(|r| r.finalize());
         this.deinit_if_we_can();
     }
 
     pub fn get_all_closed_promise(&mut self, global: &JSGlobalObject) -> JSValue {
-        if !self.has_listener() && self.pending_requests == 0 {
+        if !self.has_listener() && self.pending_requests.get() == 0 {
             return JSPromise::resolved_promise(global, JSValue::UNDEFINED).to_js();
         }
         let prom = &mut self.all_closed_promise;
@@ -2762,7 +2726,7 @@ where
             req.set_yield(true);
             return;
         }
-        self.pending_requests += 1;
+        self.pending_requests.set(self.pending_requests.get() + 1);
         req.set_yield(false);
 
         let buffer_writer = bun_js_printer::BufferWriter::init();
@@ -2785,7 +2749,7 @@ where
         resp.write_header_int(b"Age", 0);
         let buffer = writer.ctx.written();
         resp.end(buffer, false);
-        self.pending_requests -= 1;
+        self.pending_requests.set(self.pending_requests.get() - 1);
     }
 
     // `on_chrome_dev_tools_json_request` is defined once below (next to
@@ -2976,7 +2940,7 @@ where
         self.on_pending_request();
 
         ReqLike::set_yield(req, false);
-        RespLike::timeout(resp, self.config.idle_timeout);
+        RespLike::timeout(resp, self.config.idle_timeout.get());
 
         // Since we do timeouts by default, we should tell the user when
         // this happens - but limit it to only warn once.
@@ -3060,7 +3024,7 @@ where
         let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
         let request_object_box = Request::new(Request::init(
             ctx.ctx_method(),
-            AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
+            AnyRequestContext::init(std::ptr::from_mut::<Ctx>(ctx)),
             SSL,
             Some(signal_for_req),
             body_hive,
@@ -3080,11 +3044,9 @@ where
         // the rest of the pipeline never needs to know which transport
         // delivered the bytes.
         if Ctx::IS_H3 {
-            // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
+            // SAFETY: `req` is the live `uWS::Http3Request` for this request.
             request_object.set_fetch_headers(Some(unsafe {
-                crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(
-                    std::ptr::from_mut(req).cast::<c_void>(),
-                ))
+                FetchHeaders::create_from_h3(std::ptr::from_mut(req).cast::<c_void>())
             }));
             // NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
             // returned slices alias the same uWS-owned header buffer. Format
@@ -3273,7 +3235,7 @@ where
             resp.end_without_body(true);
             return;
         }
-        this.pending_requests += 1;
+        this.pending_requests.set(this.pending_requests.get() + 1);
         req.set_yield(false);
         // SAFETY: `request_pool` is non-null while the server is alive; `claim()`
         // reserves a fresh slot whose `Drop` releases it on panic before init.
@@ -3309,7 +3271,7 @@ where
         let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
         let request_object_box = Request::new(Request::init(
             ctx.method,
-            AnyRequestContext::init(std::ptr::from_ref(ctx)),
+            AnyRequestContext::init(std::ptr::from_mut(ctx)),
             SSL,
             Some(signal_for_req),
             body_hive,
@@ -3484,12 +3446,12 @@ where
     }
 
     pub fn on_client_error_callback(
-        &mut self,
+        &self,
         socket: &mut uws::Socket,
         error_code: u8,
         raw_packet: &[u8],
     ) {
-        let Some(callback) = self.on_clienterror.get() else {
+        let Some(callback) = self.on_clienterror.get().get() else {
             return;
         };
         {
@@ -3593,18 +3555,14 @@ pub(super) fn server_set_idle_timeout_(
         )));
     }
     let value = seconds.to_u32();
-    if let Some(this) = server.as_::<HTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else if let Some(this) = server.as_::<HTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
+    if let Some(this) = server.as_class_ref::<HTTPServer>() {
+        this.set_idle_timeout(value);
+    } else if let Some(this) = server.as_class_ref::<HTTPSServer>() {
+        this.set_idle_timeout(value);
+    } else if let Some(this) = server.as_class_ref::<DebugHTTPServer>() {
+        this.set_idle_timeout(value);
+    } else if let Some(this) = server.as_class_ref::<DebugHTTPSServer>() {
+        this.set_idle_timeout(value);
     } else {
         return Err(global.throw(format_args!(
             "Failed to set timeout: The 'this' value is not a Server."
@@ -3632,12 +3590,11 @@ pub(super) fn server_set_on_client_error_(
 
     macro_rules! handle {
         ($T:ty) => {
-            if let Some(this) = server.as_::<$T>() {
-                // SAFETY: as_ returned a non-null *mut to a live server.
-                let this = unsafe { &mut *this };
+            if let Some(this) = server.as_class_ref::<$T>() {
                 if let Some(app) = this.app {
-                    this.on_clienterror.deinit();
-                    this.on_clienterror = StrongOptional::create(callback, global);
+                    this.on_clienterror.with_mut(|c| c.deinit());
+                    this.on_clienterror
+                        .set(StrongOptional::create(callback, global));
                     // uws_sys::App::on_client_error takes the raw C-ABI handler shape;
                     // wrap our typed callback in an extern "C" thunk that slices raw_packet.
                     extern "C" fn thunk(
@@ -3648,9 +3605,9 @@ pub(super) fn server_set_on_client_error_(
                         raw_packet: *mut u8,
                         raw_packet_len: c_int,
                     ) {
-                        // SAFETY: user_data is the `*mut Self` registered below; socket is a live
+                        // SAFETY: user_data is the `$T` registered below; socket is a live
                         // uWS socket; raw_packet/raw_packet_len describe a valid (possibly empty) buffer.
-                        let this = unsafe { &mut *user_data.cast::<$T>() };
+                        let this = unsafe { &*user_data.cast::<$T>() };
                         let packet: &[u8] = if raw_packet_len > 0 {
                             // SAFETY: uWS guarantees `raw_packet` points to `raw_packet_len`
                             // readable bytes when `raw_packet_len > 0`.
@@ -3662,7 +3619,7 @@ pub(super) fn server_set_on_client_error_(
                         this.on_client_error_callback(bun_opaque::opaque_deref_mut(socket), error_code, packet);
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).on_client_error(thunk, core::ptr::from_mut::<$T>(this).cast::<c_void>());
+                    bun_opaque::opaque_deref_mut(app).on_client_error(thunk, core::ptr::from_ref::<$T>(this).cast::<c_void>().cast_mut());
                 }
                 return Ok(JSValue::UNDEFINED);
             }
@@ -3688,18 +3645,14 @@ pub(super) fn server_set_app_flags_(
         )));
     }
 
-    if let Some(this) = server.as_::<HTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
-    } else if let Some(this) = server.as_::<HTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
-    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
-    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
+    if let Some(this) = server.as_class_ref::<HTTPServer>() {
+        this.set_flags(require_host_header, use_strict_method_validation);
+    } else if let Some(this) = server.as_class_ref::<HTTPSServer>() {
+        this.set_flags(require_host_header, use_strict_method_validation);
+    } else if let Some(this) = server.as_class_ref::<DebugHTTPServer>() {
+        this.set_flags(require_host_header, use_strict_method_validation);
+    } else if let Some(this) = server.as_class_ref::<DebugHTTPSServer>() {
+        this.set_flags(require_host_header, use_strict_method_validation);
     } else {
         return Err(global.throw(format_args!(
             "Failed to set timeout: The 'this' value is not a Server."
@@ -3719,18 +3672,14 @@ pub(super) fn server_set_max_http_header_size_(
         )));
     }
 
-    if let Some(this) = server.as_::<HTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
-    } else if let Some(this) = server.as_::<HTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
-    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
-    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
+    if let Some(this) = server.as_class_ref::<HTTPServer>() {
+        this.set_max_http_header_size(max_header_size);
+    } else if let Some(this) = server.as_class_ref::<HTTPSServer>() {
+        this.set_max_http_header_size(max_header_size);
+    } else if let Some(this) = server.as_class_ref::<DebugHTTPServer>() {
+        this.set_max_http_header_size(max_header_size);
+    } else if let Some(this) = server.as_class_ref::<DebugHTTPSServer>() {
+        this.set_max_http_header_size(max_header_size);
     } else {
         return Err(global.throw(format_args!(
             "Failed to set maxHeaderSize: The 'this' value is not a Server."

@@ -1,6 +1,7 @@
 //! `us_quic_stream_t` — one bidirectional HTTP/3 request stream. Valid
 //! until its `on_stream_close` callback returns.
 
+use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::NonNull;
 
@@ -65,13 +66,11 @@ impl Stream {
         unsafe { us_quic_stream_header(self, i).as_ref() }
     }
 
-    pub fn ext<T>(&mut self) -> &mut Option<NonNull<T>> {
+    pub fn ext<T>(&mut self) -> &Cell<Option<NonNull<T>>> {
         // SAFETY: self is a valid us_quic_stream_t; ext slot is pointer-sized & pointer-aligned,
-        // and Option<NonNull<T>> has nullable-pointer layout.
-        // Aliasing: the ext slot is disjoint storage returned by C (not overlapping the
-        // zero-sized opaque `Stream` handle), and the returned &mut borrows from &mut self
-        // so no second &mut to the slot can be obtained while this one is live.
-        unsafe { &mut *us_quic_stream_ext(self).cast::<Option<NonNull<T>>>() }
+        // and Option<NonNull<T>> has nullable-pointer layout. `Cell` is repr(transparent), so no
+        // &mut into the slot is ever live across a callback that re-enters lsquic.
+        unsafe { &*us_quic_stream_ext(self).cast::<Cell<Option<NonNull<T>>>>() }
     }
 
     pub fn write(&mut self, data: &[u8]) -> c_int {

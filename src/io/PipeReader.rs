@@ -1582,50 +1582,60 @@ impl WindowsBufferedReader {
                 if !this.flags.contains(WindowsFlags::IS_PAUSED) {
                     // Re-snapshot — `on_read` may have mutated `this.source`.
                     let this_ptr = core::ptr::from_mut(this).cast::<c_void>();
-                    let file_raw: *mut crate::source::File = match this.source.as_mut() {
-                        Some(Source::File(f)) => f.as_mut() as *mut _,
-                        _ => core::ptr::null_mut(),
-                    };
-                    if !file_raw.is_null() {
-                        // SAFETY: see above; raw-ptr break for self-aliasing.
-                        let file = unsafe { &mut *file_raw };
-                        // Can only start if file is in deinitialized state
-                        if file.can_start() {
-                            file.fs.data = this_ptr;
-                            file.prepare();
-                            let buf = this.get_read_buffer_with_stable_memory_address(64 * 1024);
-                            file.iov = uv::uv_buf_t::init(buf);
-                            this.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
-
-                            let offset = if this.flags.contains(WindowsFlags::USE_PREAD) {
-                                i64::try_from(this._offset).expect("int cast")
+                    // Can only start if file is in deinitialized state
+                    let can_start = match this.source.as_mut() {
+                        Some(Source::File(file)) => {
+                            if file.can_start() {
+                                file.fs.data = this_ptr;
+                                file.prepare();
+                                true
                             } else {
-                                -1
-                            };
-                            // SAFETY: `file` is fully initialized; libuv stores
-                            // the cb and fires it on the event loop.
-                            if let Some(err) = unsafe {
-                                uv::uv_fs_read(
-                                    this.vtable.loop_().cast(),
-                                    &mut file.fs,
-                                    file.file,
-                                    &file.iov,
-                                    1,
-                                    offset,
-                                    Some(Self::on_file_read),
-                                )
+                                false
                             }
-                            // Tagged `.write` even though the syscall is
-                            // `uv_fs_read`, so user-visible `error.syscall`
-                            // stays bit-identical with previous releases.
-                            .to_error(sys::Tag::write)
-                            {
-                                file.complete(false);
-                                this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
-                                this.flags.insert(WindowsFlags::IS_PAUSED);
-                                // we should inform the error if we are unable to keep reading
-                                this.on_read(sys::Result::Err(err), &mut [], ReadState::Progress);
-                            }
+                        }
+                        _ => false,
+                    };
+                    if can_start {
+                        // The `&mut File` borrow above has ended, so the
+                        // `&mut self` methods below need no raw-pointer break.
+                        let iov = uv::uv_buf_t::init(
+                            this.get_read_buffer_with_stable_memory_address(64 * 1024),
+                        );
+                        this.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
+
+                        let offset = if this.flags.contains(WindowsFlags::USE_PREAD) {
+                            i64::try_from(this._offset).expect("int cast")
+                        } else {
+                            -1
+                        };
+                        let loop_ = this.vtable.loop_();
+                        let Some(Source::File(file)) = this.source.as_mut() else {
+                            unreachable!()
+                        };
+                        file.iov = iov;
+                        // SAFETY: `file` is fully initialized; libuv stores
+                        // the cb and fires it on the event loop.
+                        if let Some(err) = unsafe {
+                            uv::uv_fs_read(
+                                loop_.cast(),
+                                &mut file.fs,
+                                file.file,
+                                &file.iov,
+                                1,
+                                offset,
+                                Some(Self::on_file_read),
+                            )
+                        }
+                        // Tagged `.write` even though the syscall is
+                        // `uv_fs_read`, so user-visible `error.syscall`
+                        // stays bit-identical with previous releases.
+                        .to_error(sys::Tag::write)
+                        {
+                            file.complete(false);
+                            this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
+                            this.flags.insert(WindowsFlags::IS_PAUSED);
+                            // we should inform the error if we are unable to keep reading
+                            this.on_read(sys::Result::Err(err), &mut [], ReadState::Progress);
                         }
                     }
                 }
@@ -1641,10 +1651,6 @@ impl WindowsBufferedReader {
             return sys::Result::Ok(());
         }
         self.flags.remove(WindowsFlags::IS_PAUSED);
-        // BORROW_PARAM (raw-ptr break): the body needs `&mut self` (for
-        // `get_read_buffer_…`/`flags`) while also holding `&mut File` borrowed
-        // out of `self.source`. The boxed `File` is its own heap allocation, so
-        // a `*mut File` snapshot is provenance-disjoint from `&mut self`.
         let self_ptr = self as *mut Self as *mut c_void;
         let Some(source) = self.source.as_mut() else {
             return sys::Result::Err(sys::Error::from_code(sys::E::BADF, sys::Tag::read));
@@ -1653,10 +1659,6 @@ impl WindowsBufferedReader {
 
         match source {
             Source::File(file) => {
-                let file_raw: *mut crate::source::File = file.as_mut();
-                // SAFETY: `file_raw` points into the boxed File owned by
-                // `self.source`; live until `self.source` is replaced.
-                let file = unsafe { &mut *file_raw };
                 // If already reading, just set data and unpause
                 file.fs.data = self_ptr;
                 if !file.can_start() {
@@ -1665,37 +1667,6 @@ impl WindowsBufferedReader {
 
                 // Start new read - set data before prepare
                 file.prepare();
-                let buf = self.get_read_buffer_with_stable_memory_address(64 * 1024);
-                file.iov = uv::uv_buf_t::init(buf);
-                self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
-
-                let offset = if self.flags.contains(WindowsFlags::USE_PREAD) {
-                    i64::try_from(self._offset).expect("int cast")
-                } else {
-                    -1
-                };
-                // SAFETY: file is fully initialized; libuv stores cb and fires
-                // it on the event loop.
-                if let Some(err) = unsafe {
-                    uv::uv_fs_read(
-                        self.vtable.loop_().cast(),
-                        &mut file.fs,
-                        file.file,
-                        &file.iov,
-                        1,
-                        offset,
-                        Some(Self::on_file_read),
-                    )
-                }
-                // Tagged `.write` even though the syscall is `uv_fs_read`, so
-                // user-visible `error.syscall` stays bit-identical with
-                // previous releases.
-                .to_error(sys::Tag::write)
-                {
-                    file.complete(false);
-                    self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
-                    return sys::Result::Err(err);
-                }
             }
             _ => {
                 // SAFETY: source is a live Pipe/Tty stream handle.
@@ -1716,7 +1687,47 @@ impl WindowsBufferedReader {
                     );
                     return sys::Result::Err(err);
                 }
+                return sys::Result::Ok(());
             }
+        }
+
+        // The `&mut File` borrow ends with the match, so the `&mut self`
+        // methods below need no raw-pointer break; nothing above replaces
+        // `self.source`.
+        let iov = uv::uv_buf_t::init(self.get_read_buffer_with_stable_memory_address(64 * 1024));
+        self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
+
+        let offset = if self.flags.contains(WindowsFlags::USE_PREAD) {
+            i64::try_from(self._offset).expect("int cast")
+        } else {
+            -1
+        };
+        let loop_ = self.vtable.loop_();
+        let Some(Source::File(file)) = self.source.as_mut() else {
+            unreachable!()
+        };
+        file.iov = iov;
+        // SAFETY: file is fully initialized; libuv stores cb and fires
+        // it on the event loop.
+        if let Some(err) = unsafe {
+            uv::uv_fs_read(
+                loop_.cast(),
+                &mut file.fs,
+                file.file,
+                &file.iov,
+                1,
+                offset,
+                Some(Self::on_file_read),
+            )
+        }
+        // Tagged `.write` even though the syscall is `uv_fs_read`, so
+        // user-visible `error.syscall` stays bit-identical with
+        // previous releases.
+        .to_error(sys::Tag::write)
+        {
+            file.complete(false);
+            self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
+            return sys::Result::Err(err);
         }
 
         sys::Result::Ok(())

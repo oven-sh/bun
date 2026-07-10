@@ -279,16 +279,12 @@ impl<'a> GlobalJS<'a> {
 
     #[inline]
     pub fn enqueue_task_concurrent_wait_pid<T: bun_event_loop::Taskable>(self, task: *mut T) {
-        // SAFETY: bun_vm_concurrently() returns a valid &VirtualMachine; we need &mut for the
-        // intrusive concurrent queue push (which is itself thread-safe). The VM outlives the call.
-        let vm = self
-            .global_this
-            .bun_vm_concurrently()
-            .cast_const()
-            .cast_mut();
+        // SAFETY: `bun_vm_concurrently()` yields the VM owning this global; it is
+        // process-lifetime and outlives every task queued against it.
+        let vm: bun_ptr::ParentRef<VirtualMachine> =
+            unsafe { bun_ptr::ParentRef::from_raw(self.global_this.bun_vm_concurrently()) };
         let concurrent = bun_event_loop::ConcurrentTask::create(bun_event_loop::Task::init(task));
-        // SAFETY: see above — `vm` is a live VM pointer.
-        unsafe { &mut *vm }.enqueue_task_concurrent(concurrent);
+        vm.enqueue_task_concurrent(concurrent);
     }
 
     #[inline]
@@ -313,7 +309,9 @@ impl<'a> GlobalJS<'a> {
         #[cfg(not(windows))]
         // SAFETY: `event_loop_handle` is set during VM init and never freed before the VM.
         unsafe {
-            &*vm.event_loop_handle.expect("event_loop_handle is null")
+            &*vm.event_loop_handle
+                .expect("event_loop_handle is null")
+                .as_ptr()
         }
     }
 

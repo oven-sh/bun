@@ -330,8 +330,8 @@ pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> *mut Job
         },
     )
     .expect("Pbkdf2Ctx::init is infallible");
-    // SAFETY: `job` is a freshly-created live pointer.
-    unsafe { AnyTaskJob::schedule(job) };
+    // SAFETY: `job` is a freshly-created, unscheduled, owned allocation.
+    AnyTaskJob::schedule(unsafe { bun_core::heap::take(job) });
     job
 }
 

@@ -354,7 +354,7 @@ union active_reqs_u {
 #[repr(C)]
 pub struct Loop {
     pub data: *mut c_void,
-    pub active_handles: c_uint,
+    pub active_handles: Cell<c_uint>,
     pub handle_queue: uv__queue,
     active_reqs: active_reqs_u,
     pub internal_fields: *mut c_void,
@@ -458,42 +458,50 @@ impl Loop {
     /// (avoid underflow during teardown when Bun's virtual keep-alive refs and
     /// libuv's own accounting momentarily disagree).
     #[inline]
-    pub fn sub_active(&mut self, value: u32) {
-        log!("subActive({}) - {}", value, self.active_handles);
-        self.active_handles = self.active_handles.saturating_sub(value);
+    pub fn sub_active(&self, value: u32) {
+        log!("subActive({}) - {}", value, self.active_handles.get());
+        self.active_handles
+            .set(self.active_handles.get().saturating_sub(value));
     }
     #[inline]
-    pub fn add_active(&mut self, value: u32) {
+    pub fn add_active(&self, value: u32) {
         log!("addActive({})", value);
-        self.active_handles = self.active_handles.saturating_add(value);
+        self.active_handles
+            .set(self.active_handles.get().saturating_add(value));
     }
     #[inline]
-    pub fn inc(&mut self) {
-        log!("inc - {}", self.active_handles.saturating_add(1));
-        self.active_handles = self.active_handles.saturating_add(1);
+    pub fn inc(&self) {
+        log!("inc - {}", self.active_handles.get().saturating_add(1));
+        self.active_handles
+            .set(self.active_handles.get().saturating_add(1));
     }
     #[inline]
-    pub fn dec(&mut self) {
+    pub fn dec(&self) {
         log!("dec");
-        self.active_handles = self.active_handles.saturating_sub(1);
+        self.active_handles
+            .set(self.active_handles.get().saturating_sub(1));
     }
     /// `ref`/`unref` aliases for `inc`/`dec`.
     #[inline]
-    pub fn ref_(&mut self) {
+    pub fn ref_(&self) {
         self.inc();
     }
     #[inline]
-    pub fn unref(&mut self) {
+    pub fn unref(&self) {
         self.dec();
     }
     #[inline]
-    pub fn unref_count(&mut self, count: i32) {
+    pub fn unref_count(&self, count: i32) {
         log!("unrefCount({})", count);
         // A bare `count as u32` would silently wrap a
         // negative to ~4 billion and zero out `active_handles`:
         // assert in debug, clamp in release so we never wrap.
         debug_assert!(count >= 0, "unref_count: count must be non-negative");
-        self.active_handles = self.active_handles.saturating_sub(count.max(0) as u32);
+        self.active_handles.set(
+            self.active_handles
+                .get()
+                .saturating_sub(count.max(0) as u32),
+        );
     }
     #[inline]
     pub fn stop(&mut self) {
@@ -731,10 +739,7 @@ pub unsafe trait UvStream: UvHandle {
     /// `.to_error(Tag::listen)` themselves.
     #[inline]
     fn read_start_ctx<T: StreamReader>(&mut self, context: *mut T) -> ReturnCode {
-        // SAFETY: stream prefix invariant — `&mut Self` reinterprets as
-        // `&mut Handle` for the leading `UV_HANDLE_FIELDS`.
-        let h: &mut Handle = unsafe { &mut *(self as *mut Self).cast::<Handle>() };
-        h.data = context.cast();
+        self.set_data(context.cast());
 
         unsafe extern "C" fn uv_allocb<T: StreamReader>(
             req: *mut uv_handle_t,

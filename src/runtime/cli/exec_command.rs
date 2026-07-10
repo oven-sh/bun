@@ -62,11 +62,9 @@ impl ExecCommand {
                 Global::exit(1);
             }
         };
-        // SAFETY: `Transpiler::init` always populates `env` (caller-supplied,
-        // process singleton, or freshly `heap::alloc`'d) — never null. The
-        // loader is a thread-/process-lifetime singleton, so `&'static mut` is
-        // sound for the single CLI dispatch thread.
-        let env = unsafe { &mut *bundle.env.cast::<bun_dotenv::Loader<'static>>() };
+        // SAFETY: `bundle.env` is the process-lifetime loader singleton set in
+        // `Transpiler::init`; no `&mut` to it is live here.
+        let env = unsafe { bun_ptr::ParentRef::from_raw_mut(bundle.env.cast()) };
         let mini = bun_event_loop::MiniEventLoop::init_global(Some(env), Some(cwd));
         let parts: [&[u8]; 2] = [cwd, b"[eval]"];
         let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);

@@ -3,8 +3,8 @@
 use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
 use crate::p::P;
 use crate::parser::{ImportItemForNamespaceMap, Ref};
+use bun_ast::import_record;
 use bun_ast::{self as js_ast, Expr, G, LocRef, S, Stmt, Symbol};
-use bun_ast::{ImportRecord, import_record};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_crash_handler::handle_oom::handle_oom;
@@ -61,16 +61,12 @@ impl<'a> ImportScanner<'a> {
 
                     let import_record_index = st.import_record_index;
                     // We can't keep a long-lived `&mut ImportRecord` for the whole arm
-                    // alongside other `p.*` borrows. We take a raw pointer once and unsafe-deref
-                    // at each use site (no operation below grows `p.import_records`, so
-                    // the pointer stays valid for this iteration).
-                    let record: *mut ImportRecord =
-                        &raw mut p.import_records.items_mut()[import_record_index as usize];
+                    // alongside other `p.*` borrows, so re-borrow it at each use site. Every
+                    // use is a standalone statement, and the other `p.*` borrows live across
+                    // them (`p.symbols`, `p.import_items_for_namespace`) are disjoint fields.
                     macro_rules! record {
                         () => {
-                            // SAFETY: `record` points into `p.import_records`' backing storage;
-                            // nothing in this match arm reallocates that list.
-                            unsafe { &mut *record }
+                            p.import_records.items_mut()[import_record_index as usize]
                         };
                     }
 

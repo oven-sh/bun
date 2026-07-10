@@ -1726,9 +1726,9 @@ impl<'a> Resolver<'a> {
 
             if let Some(entries) = dir.get_entries_ref(self.generation) {
                 if let Some(query) = entries.get(name.filename) {
-                    // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                    let symlink_path =
-                        unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+                    // SAFETY: `rfs_ptr()` points at the process-global RealFS.
+                    let fs = unsafe { bun_ptr::ParentRef::from_raw(self.rfs_ptr()) };
+                    let symlink_path = query.entry().symlink(fs, self.store_fd);
                     if !symlink_path.is_empty() {
                         path.set_realpath(symlink_path);
                         if !result.file_fd.is_valid() {
@@ -3578,16 +3578,18 @@ impl<'a> Resolver<'a> {
                 unsafe { (*dir_entries_ptr).data.count() },
             );
 
-            dir_entries_option = rfs!()
-                .entries
-                .put(
-                    &mut cached_dir_entry_result,
-                    Fs::file_system::real_fs::EntriesOption::Entries(
-                        // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly boxed entry.
-                        unsafe { &mut *dir_entries_ptr },
-                    ),
-                )
-                .expect("unreachable");
+            dir_entries_option = std::ptr::from_mut(
+                rfs!()
+                    .entries
+                    .put(
+                        &mut cached_dir_entry_result,
+                        Fs::file_system::real_fs::EntriesOption::Entries(
+                            // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly boxed entry.
+                            unsafe { &mut *dir_entries_ptr },
+                        ),
+                    )
+                    .expect("unreachable"),
+            );
         }
 
         // We must initialize it as empty so that the result index is correct.
@@ -3851,10 +3853,9 @@ impl<'a> Resolver<'a> {
                     }
                 };
 
-                // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                if unsafe { entry_query.entry().kind(self.rfs_ptr(), self.store_fd) }
-                    == Fs::file_system::EntryKind::Dir
-                {
+                // SAFETY: `rfs_ptr()` points at the process-global RealFS.
+                let fs = unsafe { bun_ptr::ParentRef::from_raw(self.rfs_ptr()) };
+                if entry_query.entry().kind(fs, self.store_fd) == Fs::file_system::EntryKind::Dir {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     esm_resolution.status = Status::UnsupportedDirectoryImport;
 
@@ -3872,8 +3873,10 @@ impl<'a> Resolver<'a> {
                                     file_name[index.len()..].copy_from_slice(ext);
                                     let index_query = dir_entries.get(&file_name[..]);
                                     if let Some(iq) = index_query {
-                                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                                        if unsafe { iq.entry().kind(self.rfs_ptr(), self.store_fd) }
+                                        // SAFETY: `rfs_ptr()` points at the process-global RealFS.
+                                        let fs =
+                                            unsafe { bun_ptr::ParentRef::from_raw(self.rfs_ptr()) };
+                                        if iq.entry().kind(fs, self.store_fd)
                                             == Fs::file_system::EntryKind::File
                                         {
                                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -3904,17 +3907,15 @@ impl<'a> Resolver<'a> {
                 }
 
                 let absolute_out_path: &[u8] = {
-                    if entry_query.entry().abs_path.is_empty() {
-                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
-                        // evaluated before LHS `&mut Entry` is materialized.
-                        unsafe { &mut *entry_query.entry }.abs_path = Interned::from_static(
+                    if entry_query.entry().abs_path.get().is_empty() {
+                        entry_query.entry().abs_path.set(Interned::from_static(
                             self.fs_ref()
                                 .dirname_store
                                 .append_slice(abs_esm_path)
                                 .expect("unreachable"),
-                        );
+                        ));
                     }
-                    entry_query.entry().abs_path.as_bytes()
+                    entry_query.entry().abs_path.get().as_bytes()
                 };
                 let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
                     pkg.module_type
@@ -4662,13 +4663,13 @@ impl<'a> Resolver<'a> {
                     // freshly boxed entry (see block-wide note above).
                     unsafe { (*dir_entries_ptr).data.count() },
                 );
-                dir_entries_option = rfs!().entries.put(
+                dir_entries_option = std::ptr::from_mut(rfs!().entries.put(
                     &mut cached_dir_entry_result,
                     Fs::file_system::real_fs::EntriesOption::Entries(
                         // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly boxed entry.
                         unsafe { &mut *dir_entries_ptr },
                     ),
-                )?;
+                )?);
             }
 
             // We must initialize it as empty so that the result index is correct.
@@ -5283,24 +5284,26 @@ impl<'a> Resolver<'a> {
 
         if let Some(entries) = dir_info.get_entries_ref(self.generation) {
             if let Some(lookup) = entries.get(&base[..]) {
-                // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                if unsafe { lookup.entry().kind(rfs, self.store_fd) }
+                // SAFETY: `rfs` points at the process-global RealFS.
+                if lookup
+                    .entry()
+                    // SAFETY: `rfs` is `addr_of_mut!((*self.fs).fs)` on the process-global
+                    // FileSystem singleton — non-null and outliving this resolver.
+                    .kind(unsafe { bun_ptr::ParentRef::from_raw(rfs) }, self.store_fd)
                     == Fs::file_system::EntryKind::File
                 {
                     let out_buf: &[u8] = {
-                        if lookup.entry().abs_path.is_empty() {
+                        if lookup.entry().abs_path.get().is_empty() {
                             let parts = [dir_info.abs_path, &base[..]];
                             let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
-                            // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
-                            // evaluated before LHS `&mut Entry` is materialized.
-                            unsafe { &mut *lookup.entry }.abs_path = Interned::from_static(
+                            lookup.entry().abs_path.set(Interned::from_static(
                                 self.fs_ref()
                                     .dirname_store
                                     .append_slice(out_buf_)
                                     .expect("unreachable"),
-                            );
+                            ));
                         }
-                        lookup.entry().abs_path.as_bytes()
+                        lookup.entry().abs_path.get().as_bytes()
                     };
 
                     if let Some(debug) = self.debug_logs.as_mut() {
@@ -5779,27 +5782,30 @@ impl<'a> Resolver<'a> {
         }
 
         if let Some(query) = entries!().get(base) {
-            // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-            if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
+            // SAFETY: `rfs` points at the process-global RealFS.
+            if query
+                .entry()
+                // SAFETY: `rfs` is `addr_of_mut!((*self.fs).fs)` on the process-global
+                // FileSystem singleton — non-null and outliving this resolver.
+                .kind(unsafe { bun_ptr::ParentRef::from_raw(rfs) }, self.store_fd)
+                == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
                 }
 
                 let abs_path: &'static [u8] = {
-                    if query.entry().abs_path.is_empty() {
-                        let abs_path_parts = [query.entry().dir, query.entry().base()];
+                    if query.entry().abs_path.get().is_empty() {
+                        let abs_path_parts = [query.entry().dir(), query.entry().base()];
                         let joined = self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
-                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
-                        // evaluated before LHS `&mut Entry` is materialized.
-                        unsafe { &mut *query.entry }.abs_path = Interned::from_static(
+                        query.entry().abs_path.set(Interned::from_static(
                             self.fs_ref()
                                 .dirname_store
                                 .append_slice(joined)
                                 .expect("unreachable"),
-                        );
+                        ));
                     }
-                    query.entry().abs_path.as_bytes()
+                    query.entry().abs_path.get().as_bytes()
                 };
 
                 dec_ret!(Some(LoadResult {
@@ -5880,8 +5886,12 @@ impl<'a> Resolver<'a> {
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 
                     if let Some(query) = entries!().get(&buffer[..]) {
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                        if unsafe { query.entry().kind(rfs, self.store_fd) }
+                        // SAFETY: `rfs` points at the process-global RealFS.
+                        if query
+                            .entry()
+                            // SAFETY: `rfs` is `addr_of_mut!((*self.fs).fs)` on the process-global
+                            // FileSystem singleton — non-null and outliving this resolver.
+                            .kind(unsafe { bun_ptr::ParentRef::from_raw(rfs) }, self.store_fd)
                             == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -5893,11 +5903,8 @@ impl<'a> Resolver<'a> {
 
                             dec_ret!(Some(LoadResult {
                                 path: {
-                                    if query.entry().abs_path.is_empty() {
-                                        // SAFETY: `dir` is `&'static [u8]` (DirnameStore-interned),
-                                        // copied out so no `&Entry` borrow survives into the
-                                        // `&mut Entry` write below.
-                                        let entry_dir = query.entry().dir;
+                                    if query.entry().abs_path.get().is_empty() {
+                                        let entry_dir = query.entry().dir();
                                         let new_abs = if !entry_dir.is_empty()
                                             && entry_dir[entry_dir.len() - 1] == SEP
                                         {
@@ -5919,11 +5926,9 @@ impl<'a> Resolver<'a> {
                                                     .expect("unreachable"),
                                             )
                                         };
-                                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS
-                                        // fully evaluated above — sole `&mut Entry` for this write.
-                                        unsafe { &mut *query.entry }.abs_path = new_abs;
+                                        query.entry().abs_path.set(new_abs);
                                     }
-                                    query.entry().abs_path.as_bytes()
+                                    query.entry().abs_path.get().as_bytes()
                                 },
                                 diff_case: query.diff_case,
                                 dirname_fd: entries!().fd,
@@ -5987,8 +5992,13 @@ impl<'a> Resolver<'a> {
         }
 
         if let Some(query) = entries.get().get(file_name) {
-            // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-            if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
+            // SAFETY: `rfs` points at the process-global RealFS.
+            if query
+                .entry()
+                // SAFETY: `rfs` is `addr_of_mut!((*self.fs).fs)` on the process-global
+                // FileSystem singleton — non-null and outliving this resolver.
+                .kind(unsafe { bun_ptr::ParentRef::from_raw(rfs) }, self.store_fd)
+                == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
@@ -6000,21 +6010,15 @@ impl<'a> Resolver<'a> {
                 // now that we've found it, we allocate it.
                 return Some(LoadResult {
                     path: {
-                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS is fully
-                        // evaluated (shared reads) before the LHS `&mut Entry` is
-                        // materialized for the write — no overlapping unique borrow.
-                        unsafe { &mut *query.entry }.abs_path = if query.entry().abs_path.is_empty()
-                        {
-                            Interned::from_static(
+                        if query.entry().abs_path.get().is_empty() {
+                            query.entry().abs_path.set(Interned::from_static(
                                 self.fs_ref()
                                     .dirname_store
                                     .append_slice(&buffer[..])
                                     .expect("unreachable"),
-                            )
-                        } else {
-                            query.entry().abs_path
-                        };
-                        query.entry().abs_path.as_bytes()
+                            ));
+                        }
+                        query.entry().abs_path.get().as_bytes()
                     },
                     diff_case: query.diff_case,
                     dirname_fd: entries.fd,
@@ -6094,9 +6098,13 @@ impl<'a> Resolver<'a> {
             if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
                 info.flags.set_present(
                     DirInfo::Flag::HasNodeModules,
-                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                    unsafe { entry.entry().kind(rfs_ptr, self.store_fd) }
-                        == Fs::file_system::EntryKind::Dir,
+                    // SAFETY: `rfs_ptr` points at the process-global RealFS.
+                    entry.entry().kind(
+                        // SAFETY: `rfs` is `addr_of_mut!((*self.fs).fs)` on the process-global
+                        // FileSystem singleton — non-null and outliving this resolver.
+                        unsafe { bun_ptr::ParentRef::from_raw(rfs_ptr) },
+                        self.store_fd,
+                    ) == Fs::file_system::EntryKind::Dir,
                 );
             }
         }
@@ -6146,9 +6154,13 @@ impl<'a> Resolver<'a> {
 
                 if info.is_node_modules() {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
-                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                        if unsafe { q.entry().kind(rfs_ptr, self.store_fd) }
-                            == Fs::file_system::EntryKind::Dir
+                        // SAFETY: `rfs_ptr` points at the process-global RealFS.
+                        if q.entry().kind(
+                            // SAFETY: `rfs` is `addr_of_mut!((*self.fs).fs)` on the process-global
+                            // FileSystem singleton — non-null and outliving this resolver.
+                            unsafe { bun_ptr::ParentRef::from_raw(rfs_ptr) },
+                            self.store_fd,
+                        ) == Fs::file_system::EntryKind::Dir
                         {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
                             if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
@@ -6240,7 +6252,10 @@ impl<'a> Resolver<'a> {
 
                         // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
                         // rewrite inside `symlink()` is serialized on `Entry.mutex`.
-                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
+                        let mut symlink = entry.symlink(
+                            unsafe { bun_ptr::ParentRef::from_raw(rfs_ptr) },
+                            self.store_fd,
+                        );
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6304,8 +6319,13 @@ impl<'a> Resolver<'a> {
                 // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                 // dies (NLL) before any later `&mut` to this slot.
                 let entry = lookup.entry();
-                // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
+                // SAFETY: `rfs_ptr` points at the process-global RealFS.
+                if entry.kind(
+                    // SAFETY: `rfs` is `addr_of_mut!((*self.fs).fs)` on the process-global
+                    // FileSystem singleton — non-null and outliving this resolver.
+                    unsafe { bun_ptr::ParentRef::from_raw(rfs_ptr) },
+                    self.store_fd,
+                ) == Fs::file_system::EntryKind::File
                 {
                     info.package_json = if self.use_package_manager()
                         && !info.has_node_modules()
@@ -6374,9 +6394,13 @@ impl<'a> Resolver<'a> {
                     // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                     // dies (NLL) before any later `&mut` to this slot.
                     let entry = lookup.entry();
-                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                    if unsafe { entry.kind(rfs_ptr, self.store_fd) }
-                        == Fs::file_system::EntryKind::File
+                    // SAFETY: `rfs_ptr` points at the process-global RealFS.
+                    if entry.kind(
+                        // SAFETY: `rfs` is `addr_of_mut!((*self.fs).fs)` on the process-global
+                        // FileSystem singleton — non-null and outliving this resolver.
+                        unsafe { bun_ptr::ParentRef::from_raw(rfs_ptr) },
+                        self.store_fd,
+                    ) == Fs::file_system::EntryKind::File
                     {
                         let parts = [path, b"tsconfig.json".as_slice()];
                         tsconfig_path = Some(
@@ -6390,9 +6414,13 @@ impl<'a> Resolver<'a> {
                         // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                         // dies (NLL) before any later `&mut` to this slot.
                         let entry = lookup.entry();
-                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                        if unsafe { entry.kind(rfs_ptr, self.store_fd) }
-                            == Fs::file_system::EntryKind::File
+                        // SAFETY: `rfs_ptr` points at the process-global RealFS.
+                        if entry.kind(
+                            // SAFETY: `rfs` is `addr_of_mut!((*self.fs).fs)` on the process-global
+                            // FileSystem singleton — non-null and outliving this resolver.
+                            unsafe { bun_ptr::ParentRef::from_raw(rfs_ptr) },
+                            self.store_fd,
+                        ) == Fs::file_system::EntryKind::File
                         {
                             let parts = [path, b"jsconfig.json".as_slice()];
                             tsconfig_path = Some(

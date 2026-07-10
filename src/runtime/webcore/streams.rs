@@ -1937,28 +1937,19 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         false
     }
 
-    /// # Safety
-    /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
-    /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn destroy(this: *mut Self) {
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    pub fn destroy(mut self: Box<Self>) {
         bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
-        // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim
-        // the Box first so we never hold a `&mut *this` alongside the Box's
-        // unique pointer.
-        let mut this = unsafe { bun_core::heap::take(this) };
         // Callers may tear this sink down without routing through
         // flushPromise() (e.g. handleResolveStream / handleRejectStream).
         // Drop the GC root so the promise can be collected.
-        if let Some(prom) = this.pending_flush.take() {
+        if let Some(prom) = self.pending_flush.take() {
             // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
             JSPromise::opaque_ref(prom).to_js().unprotect();
         }
-        this.buffer.clear_and_free();
-        this.unregister_auto_flusher();
-        drop(this);
+        self.buffer.clear_and_free();
+        self.unregister_auto_flusher();
     }
 
     /// This can be called _many_ times for the same instance
@@ -2289,18 +2280,11 @@ impl NetworkSink {
         ))
     }
 
-    /// # Safety
-    /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
-    /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn finalize_and_destroy(this: *mut Self) {
-        // SAFETY: this was heap-allocated; reclaim sole ownership before
-        // touching fields so no `&mut *this` is live alongside the Box.
-        let mut this = unsafe { bun_core::heap::take(this) };
-        this.finalize();
-        drop(this);
+    /// Takes ownership of the sink and frees it after detaching the upload.
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    pub fn finalize_and_destroy(mut self: Box<Self>) {
+        self.finalize();
     }
 
     pub fn abort(&mut self) {
@@ -2404,7 +2388,7 @@ impl NetworkSink {
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        NetworkSinkJSSink::create_object(global_this, self, 0)
+        NetworkSinkJSSink::create_object(global_this, std::ptr::from_mut(self), 0)
     }
 
     pub fn memory_cost(&self) -> usize {

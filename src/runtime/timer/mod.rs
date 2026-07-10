@@ -78,7 +78,7 @@ macro_rules! impl_timer_object {
             unsafe fn destructor(this: *mut Self, _ctx: ()) {
                 // SAFETY: `raw_count == 0` ⇒ unique ownership; `deinit`
                 // consumes the `heap::alloc`'d allocation from `init_with()`.
-                unsafe { Self::deinit(this) }
+                unsafe { Self::deinit(::bun_core::heap::take(this)) }
             }
         }
 
@@ -169,17 +169,16 @@ macro_rules! impl_timer_object {
             }
 
             /// Called via `RefCounted::destructor` when the refcount reaches
-            /// zero. Not `impl Drop`: this fn frees the backing `Box` itself.
+            /// zero. Takes ownership; the `Box` drops when this returns.
             ///
             /// # Safety
-            /// `this` must be the unique owner (refcount == 0) of a
-            /// `heap::alloc`'d `Self`.
-            unsafe fn deinit(this: *mut Self) {
-                // SAFETY: refcount has reached zero ⇒ unique reference.
-                unsafe {
-                    (*this).internals.deinit();
-                    drop(::bun_core::heap::take(this));
-                }
+            /// Refcount must be zero, and `internals.deinit()` requires the
+            /// per-thread `RuntimeState`/`VirtualMachine` to be installed.
+            // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+            #[allow(clippy::boxed_local)]
+            unsafe fn deinit(mut self: ::std::boxed::Box<Self>) {
+                // SAFETY: caller contract.
+                unsafe { self.internals.deinit() };
             }
 
             // C-ABI shim (`${name}Class__construct`) is emitted by
@@ -455,7 +454,7 @@ impl EventLoopDelayMonitor {
 
     pub(crate) fn enable(
         &mut self,
-        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+        _vm: ::bun_ptr::BackRef<bun_jsc::virtual_machine::VirtualMachine>,
         histogram: JSValue,
         resolution_ms: i32,
     ) {
@@ -479,7 +478,10 @@ impl EventLoopDelayMonitor {
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
-    pub(crate) fn disable(&mut self, _vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+    pub(crate) fn disable(
+        &mut self,
+        _vm: ::bun_ptr::BackRef<bun_jsc::virtual_machine::VirtualMachine>,
+    ) {
         if !self.enabled {
             return;
         }

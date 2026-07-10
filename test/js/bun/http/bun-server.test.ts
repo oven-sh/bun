@@ -336,6 +336,25 @@ describe.concurrent("Server", () => {
     }
   });
 
+  test("server.fetch(url, { headers }) copies the Headers instead of aliasing them", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        req.headers.set("x-injected", "1");
+        return new Response("ok");
+      },
+    });
+    const headers = new Headers({ "x-probe": "alive" });
+    const response = await server.fetch(`http://${server.hostname}:${server.port}/`, { headers });
+    expect(await response.text()).toBe("ok");
+    // The Request's header list must be a copy, so the handler's mutation is
+    // invisible here and the Request dropping must not free `headers`'
+    // C++ FetchHeaders (they used to share one refcount).
+    expect(headers.get("x-injected")).toBeNull();
+    Bun.gc(true);
+    expect(headers.get("x-probe")).toBe("alive");
+  });
+
   test("server should return a body for a OPTIONS Request", async () => {
     using server = Bun.serve({
       port: 0,

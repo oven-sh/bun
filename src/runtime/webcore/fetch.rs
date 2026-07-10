@@ -52,7 +52,7 @@ use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
-use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
+use bun_jsc::{FetchHeaders, HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
 use bun_paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
@@ -66,7 +66,7 @@ use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value 
 use crate::webcore::headers_ref::any_blob_content_type_opt;
 use crate::webcore::s3::client as s3;
 use crate::webcore::{
-    AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
+    AbortSignal, Blob, Body, ObjectURLRegistry, ReadableStream, Request, Response,
 };
 use crate::webcore::{blob, readable_stream, response};
 use bun_http_jsc as _;
@@ -130,21 +130,6 @@ impl Drop for SignalRef {
             // C++ intrusive refcount; the pointee outlives this `BackRef`
             // until `unref()` releases that +1.
             bun_ptr::BackRef::from(sig).unref();
-        }
-    }
-}
-
-/// RAII guard for the `+1` `FetchHeaders` ref returned by
-/// `FetchHeaders::create_from_js`; releases the ref on every exit path of
-/// `extract_headers`.
-struct FetchHeadersRef(Option<NonNull<FetchHeaders>>);
-impl Drop for FetchHeadersRef {
-    fn drop(&mut self) {
-        if let Some(fh) = self.0.take() {
-            // `fh` came from `FetchHeaders::create_from_js` which returns a
-            // +1-ref `NonNull<FetchHeaders>`. `FetchHeaders` is an opaque ZST
-            // FFI handle (S008) — safe `*mut → &mut` via `opaque_deref_mut`.
-            bun_opaque::opaque_deref_mut(fh.as_ptr()).deref();
         }
     }
 }
@@ -493,24 +478,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'brk None;
     };
 
-    // kept as raw `*mut Request` because the body re-borrows it
-    // multiple times across long-lived option/init reads.
-    let request: Option<*mut Request> = 'brk: {
+    // Every accessor used below takes `&self` and mutates through `JsCell`,
+    // so a shared borrow suffices and may safely alias across JS re-entry.
+    let request: Option<&Request> = 'brk: {
         if first_arg.is_cell() {
             if let Some(request_) = first_arg.as_direct::<Request>() {
-                break 'brk Some(request_);
+                // SAFETY: `as_direct` yields the payload of a live JS-owned
+                // Request cell, pinned while `first_arg` is on the stack.
+                break 'brk Some(unsafe { &*request_ });
             }
         }
         break 'brk None;
     };
-    // Helper macro: short-lived `&mut Request` reborrow of the optional pointer.
-    macro_rules! request_mut {
-        () => {
-            // SAFETY: `request` was obtained from a live JS-owned Request via
-            // `as_direct`; each reborrow is non-overlapping at the call site.
-            request.map(|p| unsafe { &mut *p })
-        };
-    }
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
     let url_str_optional = if first_arg.as_::<Request>().is_none() {
@@ -544,7 +523,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'extract_url str;
         }
 
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request {
             let _ = req.ensure_url(); // bun.handleOom — aborts on OOM
             break 'extract_url req.url.get().dupe_ref();
         }
@@ -636,7 +615,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request {
             break 'extract_method Some(req.method);
         }
 
@@ -907,7 +886,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // redirect: "follow" | "error" | "manual" | undefined;
     redirect_type = 'extract_redirect_type: {
         // First, try to use the Request object's redirect if available
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request {
             redirect_type = req.flags.redirect;
         }
 
@@ -1097,20 +1076,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                     if !headers_value.is_undefined_or_null() {
                                         if let Some(fetch_hdrs) = FetchHeaders::cast(headers_value)
                                         {
-                                            // `cast` returns a live JS-owned FetchHeaders*;
-                                            // BackRef invariant holds for this read.
-                                            let fetch_hdrs = bun_ptr::BackRef::from(fetch_hdrs);
+                                            // `cast` borrows the JS-owned headers; no ref taken.
                                             proxy_headers =
                                                 Some(from_fetch_headers(Some(&*fetch_hdrs), None));
                                         } else if let Some(fetch_hdrs) =
                                             FetchHeaders::create_from_js(ctx, headers_value)?
                                         {
-                                            // `create_from_js` returns a +1-ref NonNull<FetchHeaders>;
-                                            // RAII guard releases it on scope exit.
-                                            let _guard = FetchHeadersRef(Some(fetch_hdrs));
-                                            let fetch_hdrs = bun_ptr::BackRef::from(fetch_hdrs);
+                                            // Owns the +1 from `create_from_js`; Drop releases it.
                                             proxy_headers =
-                                                Some(from_fetch_headers(Some(&*fetch_hdrs), None));
+                                                Some(from_fetch_headers(Some(&fetch_hdrs), None));
                                         }
                                     }
                                 }
@@ -1166,7 +1140,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request {
             if let Some(signal_) = req.signal.get() {
                 break 'extract_signal NonNull::new(signal_.ref_());
             }
@@ -1228,7 +1202,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request {
             let body_value = req.get_body_value();
             let already_used = match body_value {
                 BodyValue::Used => true,
@@ -1304,25 +1278,26 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     headers = 'extract_headers: {
         // Releases the +1 from `create_from_js` on every exit path (including
         // the `has_exception()` early returns below).
-        let mut fetch_headers_to_deref = FetchHeadersRef(None);
+        let mut _fetch_headers_to_deref: Option<FetchHeaders> = None;
+        // `cast` only borrows; this slot outlives the `if let` arm so the read below can point at it.
+        let mut borrowed_headers: Option<std::mem::ManuallyDrop<FetchHeaders>> = None;
 
-        let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
+        let fetch_headers: Option<&FetchHeaders> = 'brk: {
             if let Some(options) = options_object {
                 if let Some(headers_value) =
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
                         if let Some(headers__) = FetchHeaders::cast(headers_value) {
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
+                            if headers__.is_empty() {
                                 break 'brk None;
                             }
-                            break 'brk Some(headers__.as_ptr());
+                            break 'brk Some(&**borrowed_headers.insert(headers__));
                         }
 
                         if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_value)? {
-                            fetch_headers_to_deref.0 = Some(headers__);
-                            break 'brk Some(headers__.as_ptr());
+                            // Owns the +1 from `create_from_js`; Drop releases it.
+                            break 'brk Some(_fetch_headers_to_deref.insert(headers__));
                         }
 
                         break 'brk None;
@@ -1334,9 +1309,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            if let Some(req) = request_mut!() {
+            if let Some(req) = request {
                 if let Some(head) = req.get_fetch_headers_unless_empty() {
-                    break 'brk Some(head.as_ptr());
+                    break 'brk Some(head);
                 }
                 break 'brk None;
             }
@@ -1347,16 +1322,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 {
                     if !headers_value.is_undefined() {
                         if let Some(headers__) = FetchHeaders::cast(headers_value) {
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
+                            if headers__.is_empty() {
                                 break 'brk None;
                             }
-                            break 'brk Some(headers__.as_ptr());
+                            break 'brk Some(&**borrowed_headers.insert(headers__));
                         }
 
                         if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_value)? {
-                            fetch_headers_to_deref.0 = Some(headers__);
-                            break 'brk Some(headers__.as_ptr());
+                            // Owns the +1 from `create_from_js`; Drop releases it.
+                            break 'brk Some(_fetch_headers_to_deref.insert(headers__));
                         }
 
                         break 'brk None;
@@ -1375,11 +1349,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             return Ok(JSValue::ZERO);
         }
 
-        let result = if let Some(headers_) = fetch_headers {
-            // `headers_` points to a live FetchHeaders (either JS-owned or
-            // refcounted via `fetch_headers_to_deref` above). `FetchHeaders` is
-            // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
-            let headers_ref = bun_opaque::opaque_deref_mut(headers_);
+        let result = if let Some(headers_ref) = fetch_headers {
             if let Some(hostname_) = headers_ref.fast_get(HTTPHeaderName::Host) {
                 hostname = Some(hostname_.to_owned_slice().into_boxed_slice());
             }
@@ -1406,7 +1376,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             headers
         };
 
-        // `fetch_headers_to_deref` Drop releases the +1 from create_from_js.
+        // `_fetch_headers_to_deref` Drop releases the +1 from create_from_js.
         break 'extract_headers result;
     };
 

@@ -177,7 +177,10 @@ impl<'a, 'b> Wait<'a, 'b> {
         // `Installer.manager` is a BACKREF raw pointer; `manager_mut()`
         // materializes the unique `&mut PackageManager` for this main-thread
         // tick without aliasing `&mut Installer`.
-        let pkg_manager = self.installer.manager_mut();
+        // SAFETY: main thread. `run_tasks` requires both this and
+        // `&mut Installer`; its callbacks re-derive their own `&mut`, so this
+        // one must not be used from inside them.
+        let pkg_manager = unsafe { self.installer.manager_mut() };
         let log_level = pkg_manager.options.log_level;
         // `run_tasks` must not call `installer.manager_mut()` — `pkg_manager`
         // is the live `&mut PackageManager` for this call.
@@ -191,7 +194,8 @@ impl<'a, 'b> Wait<'a, 'b> {
             return true;
         }
 
-        let pkg_manager = self.installer.manager_mut();
+        // SAFETY: main thread; `run_tasks` has returned, no other `&mut` live.
+        let pkg_manager = unsafe { self.installer.manager_mut() };
         if let Some(node) = pkg_manager.scripts_node_mut() {
             // if we're just waiting for scripts, make it known.
 
@@ -2014,13 +2018,15 @@ pub(crate) fn install_isolated_packages(
         // the local would pop the stored raw's Stacked Borrows tag, and the
         // run-tasks tick callback dereferences that raw via `scripts_node_mut()`.
         let scripts_node_ptr = manager.scripts_node;
-        // `Installer.manager` is a BACKREF raw pointer; copying `manager_ptr`
-        // does not move `manager`, so the body keeps using `manager` via the
-        // shadow-reborrow below.
+        // `Installer.manager` is a BACKREF; copying `manager_ptr` does not move
+        // `manager`, so the body keeps using `manager` via the shadow-reborrow below.
         let manager_ptr: *mut PackageManager = manager;
         let mut installer = store::Installer {
             lockfile: lockfile_ptr,
-            manager: manager_ptr,
+            // SAFETY: `manager_ptr` came from `&mut PackageManager`, so the BACKREF
+            // keeps write provenance for `manager_mut()`; the pointee outlives the
+            // `Installer` and every `Task`.
+            manager: unsafe { bun_ptr::ParentRef::from_raw_mut(manager_ptr) },
             command_ctx,
             installed,
             install_node: if show_progress {
@@ -2081,13 +2087,14 @@ pub(crate) fn install_isolated_packages(
             .any(|r| r.tag == ResolutionTag::Symlink)
         {
             let _ = crate::package_manager_real::directories::global_link_dir_path(
-                installer.manager_mut(),
+                // SAFETY: main thread; no other `&mut PackageManager` is live.
+                unsafe { installer.manager_mut() },
             );
         }
 
         // add the pending task count upfront
-        installer
-            .manager_mut()
+        // SAFETY: main thread; no other `&mut PackageManager` is live here.
+        unsafe { installer.manager_mut() }
             .increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
         for _entry_id in 0..store.entries.len() {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
@@ -2338,8 +2345,9 @@ pub(crate) fn install_isolated_packages(
                     let mut pkg_cache_dir_subpath: AutoRelPath =
                         AutoRelPath::from(cache_subpath_z.as_bytes()).assume_ok();
 
+                    // SAFETY: main thread; no other `&mut PackageManager` live.
                     let (cache_dir, cache_dir_path) =
-                        installer.manager_mut().get_cache_directory_and_abs_path();
+                        unsafe { installer.manager_mut() }.get_cache_directory_and_abs_path();
                     let _ = &cache_dir_path; // dropped at scope exit
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
@@ -2367,7 +2375,8 @@ pub(crate) fn install_isolated_packages(
                                     .unwrap_or(false),
                                 };
                                 if exists {
-                                    installer.manager_mut().set_preinstall_state(
+                                    // SAFETY: main thread; no other `&mut` live.
+                                    unsafe { installer.manager_mut() }.set_preinstall_state(
                                         pkg_id,
                                         install::PreinstallState::Done,
                                     );
@@ -2406,7 +2415,8 @@ pub(crate) fn install_isolated_packages(
 
                     match pkg_res_tag {
                         ResolutionTag::Npm => {
-                            match installer.manager_mut().enqueue_package_for_download(
+                            // SAFETY: main thread; no other `&mut` live.
+                            match unsafe { installer.manager_mut() }.enqueue_package_for_download(
                                 pkg_name.slice(string_buf),
                                 dep_id,
                                 pkg_id,
@@ -2444,7 +2454,8 @@ pub(crate) fn install_isolated_packages(
                             }
                         }
                         ResolutionTag::Git => {
-                            installer.manager_mut().enqueue_git_for_checkout(
+                            // SAFETY: main thread; no other `&mut` live.
+                            unsafe { installer.manager_mut() }.enqueue_git_for_checkout(
                                 dep_id,
                                 dep.name.slice(string_buf),
                                 &pkg_res,
@@ -2458,7 +2469,8 @@ pub(crate) fn install_isolated_packages(
                             // (the two arms share `Repository` layout).
                             let url = installer.manager().alloc_github_url(pkg_res.github());
                             // (Drop frees url)
-                            match installer.manager_mut().enqueue_tarball_for_download(
+                            // SAFETY: main thread; no other `&mut` live.
+                            match unsafe { installer.manager_mut() }.enqueue_tarball_for_download(
                                 dep_id,
                                 pkg_id,
                                 &url,
@@ -2493,7 +2505,8 @@ pub(crate) fn install_isolated_packages(
                             }
                         }
                         ResolutionTag::LocalTarball => {
-                            installer.manager_mut().enqueue_tarball_for_reading(
+                            // SAFETY: main thread; no other `&mut` live.
+                            unsafe { installer.manager_mut() }.enqueue_tarball_for_reading(
                                 dep_id,
                                 pkg_id,
                                 dep.name.slice(string_buf),
@@ -2502,7 +2515,8 @@ pub(crate) fn install_isolated_packages(
                             );
                         }
                         ResolutionTag::RemoteTarball => {
-                            match installer.manager_mut().enqueue_tarball_for_download(
+                            // SAFETY: main thread; no other `&mut` live.
+                            match unsafe { installer.manager_mut() }.enqueue_tarball_for_download(
                                 dep_id,
                                 pkg_id,
                                 pkg_res.remote_tarball().slice(string_buf),
@@ -2575,8 +2589,10 @@ pub(crate) fn install_isolated_packages(
         }
         // Defensive: clear the stack-local progress-node pointers so the
         // accessors can't observe dangling pointers after this frame returns.
-        installer.manager_mut().scripts_node = None;
-        installer.manager_mut().downloads_node = None;
+        // SAFETY: main thread; tasks are drained, no other `&mut` live.
+        let manager = unsafe { installer.manager_mut() };
+        manager.scripts_node = None;
+        manager.downloads_node = None;
 
         if Environment::CI_ASSERT {
             let mut done = true;

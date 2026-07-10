@@ -274,8 +274,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         // `completion` can be borrowed again below.
         let transpiler_ptr: *mut Transpiler<'_> = transpiler;
         let run = completion.init_and_run(
-            // SAFETY: `transpiler` lives in `bump` for the duration of `heap`.
-            unsafe { &mut *transpiler_ptr },
+            transpiler,
             bump,
             // `WorkPool::get()` returns `&'static ThreadPool`; pass as raw so
             // the impl can hand it to `BundleV2::init` (which stores `*mut`).

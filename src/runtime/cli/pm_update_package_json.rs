@@ -48,17 +48,15 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
     //    typing in the dependency names
     // 3. Run the install command
     if cli.analyze {
-        // `ctx`/`cli` are stored as raw `*mut` because
-        // `BuildCommand::exec` holds `command::get()` (the same `ContextData`) across
-        // the `on_fetch` callback, and `DependenciesScanner.entry_points` owns a copy
-        // of `cli.positionals[1..]` for the duration of the scan; storing `&mut` here
-        // would assert exclusivity we don't have.
-        struct Analyzer {
+        // `ctx` is stored as a raw `*mut` because `BuildCommand::exec` takes its own
+        // `&mut ContextData` from `command::get()` — the same object — and holds it
+        // across the `on_fetch` callback, so a `&mut` field would be a live sibling.
+        struct Analyzer<'a> {
             ctx: *mut ContextData,
-            cli: *mut CommandLineArguments,
+            cli: &'a mut CommandLineArguments,
             subcommand: Subcommand,
         }
-        impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer {
+        impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer<'_> {
             fn on_analyze(
                 &mut self,
                 result: &mut DependenciesScannerResult<'_, '_>,
@@ -90,21 +88,15 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
                     v
                 });
 
-                // SAFETY: `this.cli` / `this.ctx` were set from live stack locals in
-                // `update_package_json_and_install` whose scope encloses the entire
-                // `BuildCommand::exec` call (and hence this callback). The bundler has
-                // finished reading `entry_points` before invoking `on_fetch`, and this
-                // callback never returns (`Global::exit` below), so forming fresh `&mut`
-                // here is exclusive for the remainder of the process.
-                let cli = unsafe { &mut *this.cli };
-                cli.positionals = positionals.as_slice();
+                this.cli.positionals = positionals.as_slice();
                 // SAFETY: `this.ctx` points to the `ctx` stack local in
                 // `update_package_json_and_install`, whose frame outlives this
                 // callback; `Global::exit` below makes this `&mut` exclusive for
                 // the remainder of the process.
                 let ctx = unsafe { &mut *this.ctx };
+                let cli = this.cli.clone();
 
-                update_package_json_and_install_and_cli(ctx, this.subcommand, cli.clone())?;
+                update_package_json_and_install_and_cli(ctx, this.subcommand, cli)?;
 
                 Global::exit(0);
             }
@@ -121,7 +113,7 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
 
         let mut analyzer = Analyzer {
             ctx: std::ptr::from_mut::<ContextData>(ctx),
-            cli: &raw mut cli,
+            cli: &mut cli,
             subcommand,
         };
 

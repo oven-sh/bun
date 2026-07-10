@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use bun_jsc::JsCell;
 use enumset::EnumSet;
 
-use super::response::HeadersRef;
+use super::response::FetchHeaders;
 use crate::api::AnyRequestContext;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::ZigStringBlobExt as _;
@@ -16,7 +16,7 @@ use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{
     self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
 };
-use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
+use crate::webcore::{AbortSignal, Blob, CookieMap, ReadableStream, Response};
 use bun_alloc::AllocError;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{OwnedStringCell, String as BunString, ZigString, strings};
@@ -36,9 +36,9 @@ use bun_uws as uws;
 use core::mem::ManuallyDrop;
 
 impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
+    unsafe fn weak_ptr_data(this: *mut Self) -> *const Cell<WeakPtrData> {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
+        unsafe { core::ptr::addr_of!((*this).weak_ptr_data) }
     }
 }
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Request>;
@@ -78,14 +78,13 @@ const _: () = {
 /// `&mut Request`) so re-entrant JS calls cannot stack two `&mut` to the same
 /// instance. Fields mutated by host-fns are wrapped in `Cell` (Copy scalars)
 /// or `JsCell` (Drop types). Both are `#[repr(transparent)]`, so `#[repr(C)]`
-/// field layout is unchanged. `method`/`flags`/`request_context`/`body`/
-/// `weak_ptr_data` are only written during construction or via raw-ptr
-/// `finalize`, so stay plain.
+/// field layout is unchanged. `method`/`flags`/`request_context`/`body` are
+/// only written during construction or via raw-ptr `finalize`, so stay plain.
 #[repr(C)]
 pub struct Request {
     pub url: bun_core::OwnedStringCell,
 
-    headers: JsCell<Option<HeadersRef>>,
+    headers: JsCell<Option<FetchHeaders>>,
     // AbortSignal is an opaque C++ handle with intrusive WebCore refcounting —
     // `Arc` of an opaque ZST is meaningless (its payload address is not the
     // C++ object). `AbortSignalRef` wraps `NonNull<AbortSignal>` and routes
@@ -101,7 +100,7 @@ pub struct Request {
     pub method: Method,
     pub flags: Flags,
     pub request_context: AnyRequestContext,
-    pub weak_ptr_data: WeakPtrData,
+    pub weak_ptr_data: Cell<WeakPtrData>,
     // We must report a consistent value for this
     pub reported_estimated_size: Cell<usize>,
     pub internal_event_callback: JsCell<InternalJSEventCallback>,
@@ -177,15 +176,8 @@ impl BodyMixin for Request {
         Request::get_body_value(self)
     }
     #[inline]
-    fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
-        // Opaque C++ handle. Return the raw `*mut`
-        // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
-        // going through `as_deref()` would derive it from a `&FetchHeaders`
-        // and make the later `as_mut()` UB under Stacked Borrows.
-        self.headers.get().as_ref().map(|h| {
-            core::ptr::NonNull::new(h.as_ptr())
-                .expect("HeadersRef wraps a non-null *mut FetchHeaders")
-        })
+    fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
+        self.headers.get().as_ref()
     }
     #[inline]
     fn get_form_data_encoding(
@@ -220,15 +212,11 @@ impl Request {
         unsafe { &mut (*self.body.as_ptr()).value }
     }
 
-    /// R-2: short-hand for `unsafe { self.headers.get_mut() }`. The
-    /// single-JS-thread invariant (see `JsCell` docs) means no other
-    /// `&mut Option<HeadersRef>` is live for the duration of the borrow.
+    /// Shared accessor over the C++ handle; mirrored by `Response::headers`.
+    /// Every `FetchHeaders` method takes `&self`, so this reaches all of them.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn headers_mut(&self) -> &mut Option<HeadersRef> {
-        // SAFETY: single-JS-thread; callers below keep the borrow short and do
-        // not re-enter a path that touches `self.headers`.
-        unsafe { self.headers.get_mut() }
+    pub fn headers(&self) -> Option<&FetchHeaders> {
+        self.headers.get().as_ref()
     }
 
     // Returns if the request has headers already cached/set.
@@ -238,29 +226,29 @@ impl Request {
 
     /// Sets the headers of the request. This will take ownership of the headers.
     /// it will deref the previous headers if they exist.
-    pub fn set_fetch_headers(&self, headers: Option<HeadersRef>) {
-        // old_headers.deref() → handled by HeadersRef::Drop on assignment
+    pub fn set_fetch_headers(&self, headers: Option<FetchHeaders>) {
+        // old_headers.deref() → handled by FetchHeaders::Drop on assignment
         self.headers.set(headers);
     }
 
     /// Returns the headers of the request. If the headers are not already cached, it will create a new FetchHeaders object.
     /// If the headers are empty, it will look at request_context to get the headers.
     /// If the headers are empty and request_context is null, it will create an empty FetchHeaders object.
-    #[allow(clippy::mut_from_ref)]
-    pub fn ensure_fetch_headers(&self, global_this: &JSGlobalObject) -> JsResult<&mut HeadersRef> {
+    pub fn ensure_fetch_headers(&self, global_this: &JSGlobalObject) -> JsResult<&FetchHeaders> {
         if self.headers.get().is_some() {
             // headers is already set
-            return Ok(self.headers_mut().as_mut().unwrap());
+            return Ok(self.headers().unwrap());
         }
 
         if let Some(req) = self.request_context.get_request() {
             // we have a request context, so we can get the headers from it
-            self.headers.set(Some(HeadersRef::create_from_uws(
-                req.cast::<core::ffi::c_void>(),
-            )));
+            // SAFETY: `req` is the live `uWS::HttpRequest` held by our request context.
+            self.headers.set(Some(unsafe {
+                FetchHeaders::create_from_uws(req.cast::<core::ffi::c_void>())
+            }));
         } else {
             // we don't have a request context, so we need to create an empty headers object
-            self.headers.set(Some(HeadersRef::create_empty()));
+            self.headers.set(Some(FetchHeaders::create_empty()));
             // Snapshot the pointer first; it stays valid across the field borrow.
             let content_type: Option<*const [u8]> = match self.body_value() {
                 BodyValue::Blob(blob) => {
@@ -268,11 +256,12 @@ impl Request {
                 }
                 BodyValue::Locked(locked) => match locked.readable.get(global_this) {
                     Some(readable) => match readable.ptr {
-                        crate::webcore::readable_stream::Source::Blob(blob) => {
-                            // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
-                            // for as long as the readable stream exists; we only read
-                            // its `content_type` slice and immediately copy below.
-                            let ct: &[u8] = unsafe { (*blob).content_type.as_slice() };
+                        crate::webcore::readable_stream::Source::Blob(_) => {
+                            // BACKREF: see `Source::blob()` — payload valid while the
+                            // stream lives; we only read its `content_type` slice and
+                            // immediately copy below.
+                            let loader = readable.ptr.blob().expect("matched Blob");
+                            let ct: &[u8] = loader.content_type.get().as_slice();
                             Some(std::ptr::from_ref::<[u8]>(ct))
                         }
                         _ => None,
@@ -287,7 +276,7 @@ impl Request {
                 // call; the bytes are copied into the header map below.
                 let content_type_ = unsafe { &*content_type_ };
                 if !content_type_.is_empty() {
-                    self.headers_mut().as_mut().unwrap().put(
+                    self.headers().unwrap().put(
                         HTTPHeaderName::ContentType,
                         &BunString::ascii(content_type_),
                         global_this,
@@ -296,21 +285,21 @@ impl Request {
             }
         }
 
-        Ok(self.headers_mut().as_mut().unwrap())
+        Ok(self.headers().unwrap())
     }
 
-    #[allow(clippy::mut_from_ref)]
-    pub fn get_fetch_headers_unless_empty(&self) -> Option<&mut HeadersRef> {
+    pub fn get_fetch_headers_unless_empty(&self) -> Option<&FetchHeaders> {
         if self.headers.get().is_none() {
             if let Some(req) = self.request_context.get_request() {
                 // we have a request context, so we can get the headers from it
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    req.cast::<core::ffi::c_void>(),
-                )));
+                // SAFETY: `req` is the live `uWS::HttpRequest` held by our request context.
+                self.headers.set(Some(unsafe {
+                    FetchHeaders::create_from_uws(req.cast::<core::ffi::c_void>())
+                }));
             }
         }
 
-        let headers = self.headers_mut().as_mut()?;
+        let headers = self.headers.get().as_ref()?;
         if headers.is_empty() {
             return None;
         }
@@ -322,16 +311,17 @@ impl Request {
         Ok(self.ensure_fetch_headers(global_this)?.to_js(global_this))
     }
 
-    pub fn clone_headers(&self, global_this: &JSGlobalObject) -> JsResult<Option<HeadersRef>> {
+    pub fn clone_headers(&self, global_this: &JSGlobalObject) -> JsResult<Option<FetchHeaders>> {
         if self.headers.get().is_none() {
             if let Some(uws_req) = self.request_context.get_request() {
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    uws_req.cast::<core::ffi::c_void>(),
-                )));
+                // SAFETY: `uws_req` is the live `uWS::HttpRequest` held by our request context.
+                self.headers.set(Some(unsafe {
+                    FetchHeaders::create_from_uws(uws_req.cast::<core::ffi::c_void>())
+                }));
             }
         }
 
-        if let Some(head) = self.headers_mut().as_mut() {
+        if let Some(head) = self.headers.get().as_ref() {
             if head.is_empty() {
                 return Ok(None);
             }
@@ -351,7 +341,7 @@ impl Request {
             }
         }
 
-        if let Some(headers) = self.headers_mut().as_mut() {
+        if let Some(headers) = self.headers() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
                 return Ok(Some(value.to_slice()));
             }
@@ -451,7 +441,7 @@ impl Request {
     /// TODO: do we need this?
     pub fn init2(
         url: BunString,
-        headers: Option<HeadersRef>,
+        headers: Option<FetchHeaders>,
         body: BodyHiveHandle,
         method: Method,
     ) -> Request {
@@ -464,7 +454,7 @@ impl Request {
             method,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
-            weak_ptr_data: WeakPtrData::EMPTY,
+            weak_ptr_data: Cell::new(WeakPtrData::EMPTY),
             reported_estimated_size: Cell::new(0),
             internal_event_callback: JsCell::new(InternalJSEventCallback::default()),
         }
@@ -724,7 +714,7 @@ impl Request {
     }
 
     pub fn mime_type(&self) -> &[u8] {
-        if let Some(headers) = self.headers_mut().as_mut() {
+        if let Some(headers) = self.headers() {
             if let Some(content_type) = headers.fast_get(HTTPHeaderName::ContentType) {
                 // `fast_get` returns a `ZigString` by value whose
                 // bytes borrow the FetchHeaders' WTF::String storage (NOT the
@@ -803,7 +793,7 @@ impl Request {
     }
 
     pub fn finalize_without_deinit(&mut self) {
-        // headers.deref() → HeadersRef::Drop when set to None
+        // headers.deref() → FetchHeaders::Drop when set to None
         self.headers.set(None);
 
         self.url.set(BunString::empty());
@@ -824,7 +814,10 @@ impl Request {
         // hot-path `Box::from_raw().drop()` below cannot re-run this.
         // SAFETY: `this` is live and this is the sole release point for `body`.
         unsafe { ManuallyDrop::drop(&mut this.body) };
-        if this.weak_ptr_data.on_finalize() {
+        let mut weak_data = this.weak_ptr_data.get();
+        let last_ref = weak_data.on_finalize();
+        this.weak_ptr_data.set(weak_data);
+        if last_ref {
             // Hot path: no outstanding weak refs. Reclaim and drop the whole
             // allocation in one shot — `Box::from_raw`'s drop runs
             // `drop_in_place` over every field (headers / url / signal /
@@ -847,7 +840,7 @@ impl Request {
     }
 
     pub fn get_referrer(&self, global_object: &JSGlobalObject) -> JSValue {
-        if let Some(headers_ref) = self.headers_mut().as_mut() {
+        if let Some(headers_ref) = self.headers() {
             if let Some(referrer) = headers_ref.get(b"referrer", global_object) {
                 return referrer.to_js(global_object);
             }
@@ -1097,7 +1090,7 @@ impl Request {
             method: Method::GET,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
-            weak_ptr_data: WeakPtrData::EMPTY,
+            weak_ptr_data: Cell::new(WeakPtrData::EMPTY),
             reported_estimated_size: Cell::new(0),
             internal_event_callback: JsCell::new(InternalJSEventCallback::default()),
         };
@@ -1258,22 +1251,22 @@ impl Request {
                 }
 
                 if let Some(response) = value.as_direct::<Response>() {
-                    // SAFETY: `as_direct` returned a live `*mut Response` owned by the JS wrapper.
-                    let response = unsafe { &mut *response };
+                    // SAFETY: as_direct returns a live *mut Response payload (m_ctx)
+                    let response = unsafe { &*response };
                     if !fields.contains(Fields::Method) {
                         req.method = response.get_method();
                         fields.insert(Fields::Method);
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        if let Some(headers) = response.get_init_headers_mut() {
+                        if let Some(headers) = response.headers() {
                             // The flag is set unconditionally once `getInitHeaders()` yielded a
                             // value, even if `cloneThis` returns null — so a later arg can't
                             // repopulate headers from a different source.
                             match headers.clone_this(global_this) {
                                 Ok(h) => {
-                                    // SAFETY: clone_this returns a +1 ref FetchHeaders.
-                                    req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
+                                    // `clone_this` hands back an owned +1; the cell takes it.
+                                    req.headers.set(h);
                                     fields.insert(Fields::Headers);
                                 }
                                 Err(e) => bail!(Err(e)),
@@ -1549,19 +1542,10 @@ impl Request {
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
             if let BodyValue::Blob(blob) = req.body_value() {
                 let ct: &[u8] = blob.content_type_slice();
-                if !ct.is_empty()
-                    && !req
-                        .headers_mut()
-                        .as_mut()
-                        .unwrap()
-                        .fast_has(HTTPHeaderName::ContentType)
-                {
-                    // Reshaped for borrowck — split borrow of req.body and req.headers
-                    let ct_ptr: *const [u8] = ct;
-                    match req.headers_mut().as_mut().unwrap().put(
+                if !ct.is_empty() && !req.headers().unwrap().fast_has(HTTPHeaderName::ContentType) {
+                    match req.headers().unwrap().put(
                         HTTPHeaderName::ContentType,
-                        // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        &BunString::ascii(unsafe { &*ct_ptr }),
+                        &BunString::ascii(ct),
                         global_this,
                     ) {
                         Ok(()) => {}
@@ -1657,7 +1641,7 @@ impl Request {
                     method: self.method,
                     flags: self.flags,
                     request_context: AnyRequestContext::NULL,
-                    weak_ptr_data: WeakPtrData::EMPTY,
+                    weak_ptr_data: Cell::new(WeakPtrData::EMPTY),
                     reported_estimated_size: Cell::new(0),
                     internal_event_callback: JsCell::new(InternalJSEventCallback::default()),
                 },
@@ -1690,7 +1674,7 @@ impl Request {
             method: Method::GET,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
-            weak_ptr_data: WeakPtrData::EMPTY,
+            weak_ptr_data: Cell::new(WeakPtrData::EMPTY),
             reported_estimated_size: Cell::new(0),
             internal_event_callback: JsCell::new(InternalJSEventCallback::default()),
         });
@@ -1762,23 +1746,9 @@ impl Request {
                 ..Flags::default()
             },
             request_context,
-            weak_ptr_data: WeakPtrData::EMPTY,
+            weak_ptr_data: Cell::new(WeakPtrData::EMPTY),
             reported_estimated_size: Cell::new(0),
             internal_event_callback: JsCell::new(InternalJSEventCallback::default()),
         }
-    }
-
-    #[inline]
-    pub fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
-        self.headers.get().as_deref()
-    }
-
-    /// Mutable access to the already-materialized headers (does NOT lazily
-    /// create from the underlying uWS request — see `get_fetch_headers_unless_empty`
-    /// for that).
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub fn get_fetch_headers_mut(&self) -> Option<&mut FetchHeaders> {
-        self.headers_mut().as_deref_mut()
     }
 }

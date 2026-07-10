@@ -716,16 +716,15 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
-    pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
+    /// `vm` is only stashed type-erased as `*mut ()`, so it is taken raw: callers
+    /// need not conjure a second `&mut VirtualMachine` for the duration.
+    pub fn spawn_sync_event_loop(&mut self, vm: *mut VirtualMachine) -> &mut SpawnSyncEventLoop {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the
             // `self` address, so the value must not move after init; allocate
             // the Box first, then init into it.
             let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
-            SpawnSyncEventLoop::init(
-                &mut *boxed,
-                core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>(),
-            );
+            SpawnSyncEventLoop::init(&mut *boxed, vm.cast::<()>());
             // SAFETY: `init` fully initialised the slot.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }

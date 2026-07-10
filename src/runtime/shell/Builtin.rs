@@ -376,15 +376,14 @@ impl BuiltinIO {
                 // and preserved across `dup_ref` so `2>&1` lands in stdout's
                 // bytelist.
                 // SAFETY: caller contract — shell env outlives the Cmd node
-                // (single-threaded); `captured` points into a live
-                // `ShellExecEnv` Bufio.
-                unsafe {
-                    let captured = match *target {
+                // (single-threaded).
+                let captured = unsafe {
+                    match *target {
                         IoKind::Stdout => (*shell).buffered_stdout(),
                         IoKind::Stderr | IoKind::Stdin => (*shell).buffered_stderr(),
-                    };
-                    (*captured).append_slice(buf)
+                    }
                 };
+                captured.with_mut(|captured| captured.append_slice(buf));
                 Ok(buf.len())
             }
             BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
@@ -747,10 +746,9 @@ impl Builtin {
                 } else if let Some(body) =
                     crate::webcore::body::Value::from_request_or_response(jsval)
                 {
-                    // SAFETY: returned a live JSC-owned `*mut Value` borrowed
-                    // from a Response/Request wrapper.
-                    let body = unsafe { &mut *body };
-                    let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
+                    // Shared reborrow ends here, before the `throw` below; the
+                    // `&mut` for `use_()` is minted fresh afterwards.
+                    let is_file_blob = matches!(&*body, crate::webcore::body::Value::Blob(b)
                         if !b.needs_to_read_file());
                     if (redirect.stdout() || redirect.stderr()) && !is_file_blob {
                         let _ = global.throw(format_args!(
@@ -846,16 +844,12 @@ impl Builtin {
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (Cmd::on_io_writer_chunk's behaviour).
         if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
-            // SAFETY: single trampoline frame; no other borrow of the env's
-            // (or its parent's) stderr buffer is live.
-            let stderr = unsafe {
-                interp
-                    .as_cmd_mut(cmd)
-                    .base
-                    .shell_mut()
-                    .buffered_stderr_mut()
-            };
-            stderr.append_slice(&buf);
+            interp
+                .as_cmd(cmd)
+                .base
+                .shell()
+                .buffered_stderr()
+                .with_mut(|stderr| stderr.append_slice(&buf));
         }
         let parent = interp.as_cmd(cmd).base.parent;
         interp.child_done(parent, cmd, 1)

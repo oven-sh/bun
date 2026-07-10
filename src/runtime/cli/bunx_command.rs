@@ -891,8 +891,7 @@ impl BunxCommand {
         };
 
         env_loader.map.put(b"PATH", &path)?;
-        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let fs = unsafe { &mut *this_transpiler.fs };
+        let fs = this_transpiler.fs_mut();
         let uid_digits = bun_core::fmt::digit_count(uid);
         let bunx_cache_dir: &[u8] =
             &path[0..temp_dir.len() + b"/bunx--".len() + package_fmt.len() + uid_digits];
@@ -1296,18 +1295,9 @@ impl BunxCommand {
                     bun_event_loop::MiniEventLoop::init_global(
                         // `this_transpiler.env` is the process-lifetime loader
                         // singleton populated during transpiler init.
-                        //
-                        // Aliasing: do NOT call `this_transpiler.env_mut()` here —
-                        // `env_loader` (line 594) is still live and is used again below at the
-                        // post-install `Run::run_binary` calls. A second `env_mut()` would
-                        // `unsafe { &mut *self.env }` from the raw field, popping `env_loader`'s
-                        // Unique tag under Stacked Borrows (UB on later use). Instead reborrow
-                        // *through* `env_loader` so the new `&mut` is a child of its tag; the
-                        // child is consumed by `init_global` (converted to `NonNull`) before
-                        // `env_loader` is touched again.
-                        // SAFETY: `env_loader` is a valid `&'static mut Loader`; this is a
-                        // stacked reborrow, not a sibling alias.
-                        Some(unsafe { &mut *(env_loader as *mut _) }),
+                        // SAFETY: the loader outlives the process; the raw cast keeps
+                        // write provenance and creates no `&mut` aliasing `env_loader`.
+                        Some(unsafe { bun_ptr::ParentRef::from_raw_mut(env_loader as *mut _) }),
                         None,
                     ),
                 ),

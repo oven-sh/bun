@@ -462,8 +462,8 @@ fn construct_s3_file_internal(
     global: &JSGlobalObject,
     path: PathLike,
     options: Option<JSValue>,
-) -> JsResult<*mut Blob> {
-    Ok(Blob::new(construct_s3_file_internal_store(
+) -> JsResult<Box<Blob>> {
+    Ok(Blob::new_boxed(construct_s3_file_internal_store(
         global, path, options,
     )?))
 }
@@ -477,10 +477,6 @@ pub(crate) struct S3BlobStatTask {
 }
 
 impl S3BlobStatTask {
-    pub(crate) fn new(init: S3BlobStatTask) -> *mut S3BlobStatTask {
-        bun_core::heap::into_raw(Box::new(init))
-    }
-
     pub(crate) fn on_s3_exists_resolved(
         result: s3::S3StatResult,
         this: *mut core::ffi::c_void,
@@ -581,85 +577,51 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    pub(crate) fn exists(global: &JSGlobalObject, blob: &Blob) -> JsResult<JSValue> {
-        let this = S3BlobStatTask::new(S3BlobStatTask {
+    /// Ownership of the task transfers to `s3::stat`, which invokes `on_resolved`
+    /// exactly once on every path; the callback reclaims the box via `heap::take`.
+    fn spawn(
+        global: &JSGlobalObject,
+        blob: &Blob,
+        on_resolved: fn(
+            s3::S3StatResult,
+            *mut core::ffi::c_void,
+        ) -> Result<(), bun_jsc::JsTerminated>,
+    ) -> JsResult<JSValue> {
+        let task = Box::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.get().as_ref().unwrap().clone(),
             global: bun_ptr::BackRef::new(global),
         });
-        // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
-        let this_ref = unsafe { &mut *this };
-        let promise = this_ref.promise.value();
+        let promise = task.promise.value();
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (set during init).
         let env = global.bun_vm().as_mut().transpiler.env_mut();
+        let ctx = bun_core::heap::into_raw(task).cast::<core::ffi::c_void>();
 
         s3::stat(
             credentials,
             path,
-            S3BlobStatTask::on_s3_exists_resolved,
-            this.cast::<core::ffi::c_void>(),
+            on_resolved,
+            ctx,
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
+    }
+
+    pub(crate) fn exists(global: &JSGlobalObject, blob: &Blob) -> JsResult<JSValue> {
+        Self::spawn(global, blob, S3BlobStatTask::on_s3_exists_resolved)
     }
 
     pub(crate) fn stat(global: &JSGlobalObject, blob: &Blob) -> JsResult<JSValue> {
-        let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(global),
-            store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
-        });
-        // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
-        let this_ref = unsafe { &mut *this };
-        let promise = this_ref.promise.value();
-        let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
-        let credentials = s3_store.get_credentials();
-        let path = s3_store.path();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (set during init).
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
-
-        s3::stat(
-            credentials,
-            path,
-            S3BlobStatTask::on_s3_stat_resolved,
-            this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
-            s3_store.request_payer,
-        )?;
-        Ok(promise)
+        Self::spawn(global, blob, S3BlobStatTask::on_s3_stat_resolved)
     }
 
     pub(crate) fn size(global: &JSGlobalObject, blob: &mut Blob) -> JsResult<JSValue> {
-        let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(global),
-            store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
-        });
-        // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
-        let this_ref = unsafe { &mut *this };
-        let promise = this_ref.promise.value();
-        let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
-        let credentials = s3_store.get_credentials();
-        let path = s3_store.path();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (set during init).
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
-
-        s3::stat(
-            credentials,
-            path,
-            S3BlobStatTask::on_s3_size_resolved,
-            this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
-            s3_store.request_payer,
-        )?;
-        Ok(promise)
+        Self::spawn(global, blob, S3BlobStatTask::on_s3_size_resolved)
     }
 
     // Teardown (store deref, promise deinit, freeing the box) is handled by Box<Self> Drop.
@@ -855,11 +817,9 @@ pub(crate) fn construct_internal_js(
     options: Option<JSValue>,
 ) -> JsResult<JSValue> {
     let blob = construct_s3_file_internal(global, path, options)?;
-    // SAFETY: `blob` is a freshly heap-allocated `*mut Blob` from `Blob::new`.
-    // Call the `BlobExt::to_js` `&mut self` method (not the by-value
-    // `JsClass::to_js`), which hands the existing heap pointer to the C++
-    // wrapper.
-    Ok(BlobExt::to_js(unsafe { &mut *blob }, global))
+    // `BlobExt::to_js` (not the by-value `JsClass::to_js`) hands the existing
+    // heap pointer to the C++ wrapper, which adopts it.
+    Ok(BlobExt::to_js(&*bun_core::heap::release(blob), global))
 }
 
 pub fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
@@ -880,7 +840,11 @@ pub(crate) fn construct_internal(
     let Some(path) = PathLike::from_js(global, &mut args)? else {
         return Err(global.throw_invalid_arguments(format_args!("Expected file path string")));
     };
-    construct_s3_file_internal(global, path, args.next_eat())
+    Ok(bun_core::heap::into_raw(construct_s3_file_internal(
+        global,
+        path,
+        args.next_eat(),
+    )?))
 }
 
 // Hand-written ABI shim: returns `*mut Blob` (codegen constructor contract),

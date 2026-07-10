@@ -1103,16 +1103,16 @@ mod windows_impl {
 
             // SAFETY: caller contract — `this` is live.
             if let Some(err) = unsafe { (*this).to_system_error() } {
-                // SAFETY: caller contract — `this` is live; consumed here.
-                unsafe { Self::deinit(this) };
+                // SAFETY: caller contract — `this` is the unique live pointer, from `Self::new`.
+                unsafe { bun_core::heap::take(this) }.deinit();
                 if let Err(e) = cb(cb_ctx, WriteFileResultType::Err(Box::new(err))) {
                     return e.into();
                 }
             } else {
                 // SAFETY: caller contract — `this` is live.
                 let wrote = unsafe { (*this).total_written };
-                // SAFETY: caller contract — `this` is live; consumed here.
-                unsafe { Self::deinit(this) };
+                // SAFETY: caller contract — `this` is the unique live pointer, from `Self::new`.
+                unsafe { bun_core::heap::take(this) }.deinit();
                 if let Err(e) = cb(cb_ctx, WriteFileResultType::Result(wrote as SizeType)) {
                     return e.into();
                 }
@@ -1231,31 +1231,17 @@ mod windows_impl {
             bun_core::heap::into_raw(Box::new(init))
         }
 
-        /// # Safety
-        /// `this` must be the unique live pointer to a `WriteFileWindows`
-        /// allocated via [`Self::new`]. Consumes the allocation; `*this` is
-        /// freed and must not be accessed after this returns.
-        ///
-        /// Takes a raw pointer (not `&mut self`) because reclaiming the `Box`
-        /// while a `&mut self` argument is on the stack is a Stacked Borrows
-        /// protector violation (deallocating memory a protected reference
-        /// points into is UB even if the reference is never used again).
-        pub unsafe fn deinit(this: *mut Self) {
-            // SAFETY: caller contract — `this` is live.
-            unsafe {
-                let fd = (*this).fd;
-                if fd > 0 && (*this).owned_fd {
-                    aio::Closer::close(Fd::from_uv(fd), (*this).io_request.loop_);
-                }
-                // The store derefs happen via `StoreRef::drop` when the Box is
-                // reclaimed below (paired with the RAII note in `create_with_ctx`).
-                (*this).poll_ref.disable();
-                // (*this).io_request is a valid uv_fs_t embedded in this struct; uv_fs_req_cleanup
-                // is safe on a zeroed or previously-used req.
-                uv::uv_fs_req_cleanup(&mut (*this).io_request);
-                // `this` was allocated via Self::new (heap::into_raw); reclaim and drop here.
-                drop(bun_core::heap::take(this));
+        /// Consumes the allocation produced by [`Self::new`]; freed when this returns.
+        pub fn deinit(mut self: Box<Self>) {
+            if self.fd > 0 && self.owned_fd {
+                aio::Closer::close(Fd::from_uv(self.fd), self.io_request.loop_);
             }
+            // The store derefs happen via `StoreRef::drop` when the Box drops
+            // below (paired with the RAII note in `create_with_ctx`).
+            self.poll_ref.disable();
+            // SAFETY: `io_request` is a valid uv_fs_t embedded in this struct; uv_fs_req_cleanup
+            // is safe on a zeroed or previously-used req.
+            unsafe { uv::uv_fs_req_cleanup(&mut self.io_request) };
         }
 
         pub fn create<C>(

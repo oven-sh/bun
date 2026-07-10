@@ -11,6 +11,7 @@ use bun_options_types::command_tag::{ALWAYS_LOADS_CONFIG, Tag as CommandTag};
 use bun_options_types::context::Context;
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
+use bun_ptr::BackRef;
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 
 use crate::bunfig::Bunfig;
@@ -122,9 +123,7 @@ pub fn load_config_path(
 }
 
 #[cold]
-fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: bun_core::Error) -> ! {
-    // SAFETY: process-global Log; see `load_bunfig` note.
-    let log = unsafe { &mut *log };
+fn report_bunfig_load_failure(log: BackRef<bun_ast::Log>, err: bun_core::Error) -> ! {
     if log.has_any() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
         Output::print_error("\n");
@@ -158,7 +157,7 @@ pub fn load_config(
 
             if let Some(path) = get_home_config_path(&mut config_buf) {
                 if let Err(err) = load_config_path(cmd, true, path, ctx) {
-                    report_bunfig_load_failure(ctx.log, err);
+                    report_bunfig_load_failure(BackRef::new(ctx.log_ref()), err);
                 }
             }
         }
@@ -221,7 +220,7 @@ pub fn load_config(
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        report_bunfig_load_failure(ctx.log, err);
+        report_bunfig_load_failure(BackRef::new(ctx.log_ref()), err);
     }
     Ok(())
 }

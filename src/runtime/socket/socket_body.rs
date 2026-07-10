@@ -3280,9 +3280,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 debug_assert!(!state.is_null(), "RuntimeState not installed");
                 // SAFETY: per-thread `RuntimeState` boxed by `init_runtime_state`;
                 // stable address for the VM's lifetime, JS-thread-only access.
-                unsafe { &mut (*state).ssl_ctx_cache }
+                unsafe { &(*state).ssl_ctx_cache }
             };
-            owned_ctx = match cache.get_or_create(cfg, &mut create_err) {
+            owned_ctx = match cache.with_mut(|c| c.get_or_create(cfg, &mut create_err)) {
                 // SAFETY: `get_or_create` hands back a +1 ref.
                 Some(c) => unsafe { boringssl_sys::OwnedSslCtx::from_raw(c.cast::<SSL_CTX>()) },
                 None => {
@@ -4039,8 +4039,8 @@ impl DuplexUpgradeContext {
                 //
                 // SAFETY: `this` is live; short-lived `&` for the null-check.
                 if unsafe { (*this).tls.is_none() } {
-                    // SAFETY: per fn contract; no `&Self` live across this.
-                    unsafe { Self::deinit(this) };
+                    // SAFETY: per fn contract — `this` is the unique owner.
+                    Self::deinit(unsafe { bun_core::heap::take(this) });
                     return;
                 }
                 let started: Result<(), bun_core::Error> = {
@@ -4082,8 +4082,8 @@ impl DuplexUpgradeContext {
                     // was never registered and nothing will schedule
                     // `.Close`. Same as the `tls == null` early-return
                     // above: tear down here.
-                    // SAFETY: per fn contract; no `&Self` live across this.
-                    unsafe { Self::deinit(this) };
+                    // SAFETY: per fn contract — `this` is the unique owner.
+                    Self::deinit(unsafe { bun_core::heap::take(this) });
                     return;
                 }
                 // SAFETY: `this` is live; short-lived `&mut` for the field write.
@@ -4092,8 +4092,8 @@ impl DuplexUpgradeContext {
             // Previously this only called `upgrade.close()` and never `deinit`,
             // leaking the SSLWrapper, the strong refs, and this struct itself
             // for every duplex-upgraded TLS socket.
-            // SAFETY: per fn contract; no `&Self` live across this.
-            EventState::Close => unsafe { Self::deinit(this) },
+            // SAFETY: per fn contract — `this` is the unique owner.
+            EventState::Close => Self::deinit(unsafe { bun_core::heap::take(this) }),
         }
     }
 
@@ -4118,34 +4118,21 @@ impl DuplexUpgradeContext {
         self.enqueue_self_task();
     }
 
-    /// # Safety
-    /// `this` must be the unique live pointer to the heap allocation produced
-    /// in `js_upgrade_duplex_to_tls`. Frees the allocation; callers must not
-    /// hold a `&`/`&mut Self` across this call (taking `&mut self` here would
-    /// be a Stacked Borrows protector violation when the backing `Box` is
-    /// reclaimed below).
-    unsafe fn deinit(this: *mut Self) {
-        {
-            // SAFETY: `this` is live; short-lived `&mut` ends before the
-            // `heap::take` free below — no protector spans the dealloc.
-            let this_ref = unsafe { &mut *this };
-            if let Some(tls) = this_ref.tls.take() {
-                // Release the owner's +1.
-                tls.deref();
-            }
-            // Close raced ahead of StartTLS — drop the unconsumed config.
-            this_ref.ssl_config = None;
-            if let Some(ctx) = this_ref.owned_ctx.take() {
-                // SAFETY: BoringSSL FFI; we hold one owned ref.
-                unsafe { boringssl_sys::SSL_CTX_free(ctx) };
-            }
+    /// Consumes the allocation from `js_upgrade_duplex_to_tls`; `UpgradedDuplex`
+    /// cleanup runs via its `Drop` when the `Box` is reclaimed at end of scope.
+    // `boxed_local`: the `Box` is the ownership unit being reclaimed here.
+    #[allow(clippy::boxed_local)]
+    fn deinit(mut self: Box<Self>) {
+        if let Some(tls) = self.tls.take() {
+            // Release the owner's +1.
+            tls.deref();
         }
-        // `UpgradedDuplex` cleanup
-        // runs via `Drop` when `heap::take(this)` frees the containing
-        // struct below; an explicit call here would double-free.
-        // SAFETY: heap-allocated in `js_upgrade_duplex_to_tls`; this is the
-        // matching free. No `&`/`&mut Self` survives past this point.
-        drop(unsafe { bun_core::heap::take(this) });
+        // Close raced ahead of StartTLS — drop the unconsumed config.
+        self.ssl_config = None;
+        if let Some(ctx) = self.owned_ctx.take() {
+            // SAFETY: BoringSSL FFI; we hold one owned ref.
+            unsafe { boringssl_sys::SSL_CTX_free(ctx) };
+        }
     }
 }
 

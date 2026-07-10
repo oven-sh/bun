@@ -172,7 +172,7 @@ impl FileRoute {
                     "expected blob not to be heap-allocated"
                 );
                 *body_value = BodyValue::Blob(blob.dupe());
-                let headers = headers_from(response.get_init_headers(), &blob);
+                let headers = headers_from(response.headers(), &blob);
                 let status_code = response.status_code();
 
                 return Ok(Some(bun_core::heap::into_raw(Box::new(FileRoute {
@@ -327,7 +327,7 @@ impl FileRoute {
         this.ref_();
         if let Some(mut server) = this.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
+            resp.timeout(server.config().idle_timeout.get());
         }
         // Clone the path so the borrow into `this.blob.store`
         // doesn't span the scopeguard creation (the guard's closure may free
@@ -567,7 +567,7 @@ impl FileRoute {
             pollable,
             offset: body_offset,
             length: body_len,
-            idle_timeout: this.server.get().unwrap().config().idle_timeout,
+            idle_timeout: this.server.get().unwrap().config().idle_timeout.get(),
             ctx: this_ptr.cast::<c_void>(),
             on_complete: on_stream_complete,
             on_abort: None,

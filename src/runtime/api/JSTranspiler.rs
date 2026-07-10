@@ -1134,7 +1134,7 @@ impl Drop for JSTranspiler {
 /// and early `return Err`) those must be restored before the locals drop, or
 /// the next method call dereferences a dangling allocator/log.
 struct TranspilerStateGuard {
-    transpiler: *mut Transpiler::Transpiler<'static>,
+    transpiler: bun_ptr::ParentRef<Transpiler::Transpiler<'static>>,
     prev_arena: &'static Arena,
     restore_log: *mut bun_ast::Log,
     /// `Some(prev)` ⇒ also restore `macro_context` to `prev` (transformSync's
@@ -1145,20 +1145,12 @@ struct TranspilerStateGuard {
 
 impl TranspilerStateGuard {
     /// Mutable access to the guarded `Transpiler`.
-    ///
-    /// SAFETY: `self.transpiler` is always non-null — every construction site
-    /// initializes it from `js_transpiler.transpiler.as_ptr()` (the
-    /// `JsCell<Transpiler>` in the heap-stable `Box<JSTranspiler>`), which
-    /// outlives this stack-local guard. The guard is held as
-    /// `let _restore = ...;` and never touched between construction and `Drop`,
-    /// so no other `&mut Transpiler` projection from that `JsCell` is live when
-    /// this runs.
     #[inline]
     fn transpiler_mut(&mut self) -> &mut Transpiler::Transpiler<'static> {
-        // SAFETY: `self.transpiler` is non-null (set from `JsCell::as_ptr()` on the
-        // heap-stable `Box<JSTranspiler>`); the guard holds the only live `&mut`
-        // projection of that `JsCell` between construction and `Drop`.
-        unsafe { &mut *self.transpiler }
+        // SAFETY: built by `from_raw_mut` from `JsCell::as_ptr()` on the heap-stable
+        // `Box<JSTranspiler>`, which outlives this guard; the guard holds the only
+        // live `&mut` projection of that `JsCell` between construction and `Drop`.
+        unsafe { self.transpiler.assume_mut() }
     }
 
     /// Raw `*mut Log` to restore on drop. Returned as a pointer (not `&mut`)
@@ -1357,7 +1349,9 @@ impl JSTranspiler {
             prev
         });
         let _restore = TranspilerStateGuard {
-            transpiler: self.transpiler.as_ptr(),
+            // SAFETY: write provenance from `JsCell::as_ptr()`; the cell lives in the
+            // heap-stable `Box<JSTranspiler>` and outlives this stack-local guard.
+            transpiler: unsafe { bun_ptr::ParentRef::from_raw_mut(self.transpiler.as_ptr()) },
             prev_arena,
             restore_log: self.config_log_ptr(),
             prev_macro_context: None,
@@ -1555,7 +1549,9 @@ impl JSTranspiler {
             (prev_arena, prev_mc)
         });
         let _restore = TranspilerStateGuard {
-            transpiler: self.transpiler.as_ptr(),
+            // SAFETY: write provenance from `JsCell::as_ptr()`; the cell lives in the
+            // heap-stable `Box<JSTranspiler>` and outlives this stack-local guard.
+            transpiler: unsafe { bun_ptr::ParentRef::from_raw_mut(self.transpiler.as_ptr()) },
             prev_arena,
             restore_log: self.config_log_ptr(),
             prev_macro_context: Some(prev_macro_context),
@@ -1741,7 +1737,9 @@ impl JSTranspiler {
             prev
         });
         let _restore = TranspilerStateGuard {
-            transpiler: self.transpiler.as_ptr(),
+            // SAFETY: write provenance from `JsCell::as_ptr()`; the cell lives in the
+            // heap-stable `Box<JSTranspiler>` and outlives this stack-local guard.
+            transpiler: unsafe { bun_ptr::ParentRef::from_raw_mut(self.transpiler.as_ptr()) },
             prev_arena,
             restore_log: self.config_log_ptr(),
             prev_macro_context: None,

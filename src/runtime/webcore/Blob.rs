@@ -391,6 +391,9 @@ pub trait BlobExt {
     fn calculate_estimated_byte_size(&self);
     fn estimated_size(&self) -> usize;
     fn to_js(&self, global_object: &JSGlobalObject) -> JSValue;
+    /// Owning sibling of [`BlobExt::to_js`]: heap-promotes and hands the
+    /// allocation to the JS wrapper, which frees it via `Blob::finalize`.
+    fn into_js(self: Box<Self>, global_object: &JSGlobalObject) -> JSValue;
     fn find_or_create_file_from_path(
         path_or_fd: &mut PathOrFileDescriptor,
         global_this: &JSGlobalObject,
@@ -861,18 +864,17 @@ impl BlobExt for Blob {
         let mut converter = URLSearchParamsConverter { buf: Vec::new() };
         search_params.to_string(&mut converter, URLSearchParamsConverter::convert);
         let store = Store::init(converter.buf);
-        // SAFETY: `store` is the sole +1 on this freshly-allocated Store.
-        unsafe {
-            (*store.as_ptr()).mime_type = bun_http_types::MimeType::Compact::from(
+        store.mime_type.set(
+            bun_http_types::MimeType::Compact::from(
                 // The bare tag, *without* `;charset=UTF-8` (charset promotion is
                 // Compact::to_mime_type's job, applied when read).
                 bun_http_types::MimeType::Table::from_mime_literal(
                     "application/x-www-form-urlencoded",
                 ),
             )
-            .to_mime_type();
-        }
-        let content_type = BlobContentType::from_mime(&store.mime_type);
+            .to_mime_type(),
+        );
+        let content_type = BlobContentType::from_mime(store.mime_type.get());
 
         let blob = Blob::init_with_store(store, global_this);
         blob.content_type.set(content_type);
@@ -1658,8 +1660,7 @@ impl BlobExt for Blob {
         let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
             global_this,
             readable_stream.value,
-            // SAFETY: file_sink is a live +1 *mut FileSink.
-            unsafe { &mut *file_sink },
+            file_sink,
             signal_ptr,
         );
 
@@ -1932,7 +1933,8 @@ impl BlobExt for Blob {
             }
 
             // `FileSink::to_js` takes its own per-wrapper +1; release init's +1.
-            let js = sink_mut.to_js(global_this);
+            // SAFETY: `sink` is the live +1 `*mut FileSink` from `init`.
+            let js = unsafe { webcore::FileSink::to_js(sink, global_this) };
             // SAFETY: `to_js` took a +1; this releases init's +1 (rc ≥ 1 after).
             unsafe { webcore::FileSink::deref(sink) };
             return Ok(js);
@@ -1991,7 +1993,7 @@ impl BlobExt for Blob {
             }
 
             // SAFETY: sink is live; `to_js` takes its own per-wrapper +1.
-            let js = unsafe { (*sink).to_js(global_this) };
+            let js = unsafe { webcore::FileSink::to_js(sink, global_this) };
             // SAFETY: `to_js` took a +1; rc ≥ 1 after this deref.
             unsafe { webcore::FileSink::deref(sink) };
             Ok(js)
@@ -2113,14 +2115,14 @@ impl BlobExt for Blob {
     }
 
     fn get_mime_type(&self) -> Option<MimeType> {
-        self.store().map(|s| s.mime_type.clone())
+        self.store().map(|s| s.mime_type.get().clone())
     }
 
     fn get_mime_type_or_content_type(&self) -> Option<MimeType> {
         if self.content_type_was_set.get() {
             return Some(MimeType::init(self.content_type_slice(), false, None));
         }
-        self.store().map(|s| s.mime_type.clone())
+        self.store().map(|s| s.mime_type.get().clone())
     }
 
     fn get_type(&self, global_this: &JSGlobalObject) -> JSValue {
@@ -2129,7 +2131,7 @@ impl BlobExt for Blob {
             return JscZigString::init(ct).to_js(global_this);
         }
         if let Some(store) = self.store.get() {
-            return JscZigString::init(&store.mime_type.value).to_js(global_this);
+            return JscZigString::init(&store.mime_type.get().value).to_js(global_this);
         }
         JscZigString::EMPTY.to_js(global_this)
     }
@@ -2542,7 +2544,7 @@ impl BlobExt for Blob {
                     // attempt a partial move out of `Store` which has a `Drop` impl.
                     let store = StoreRef::from(Store::new(Store {
                         data: store::Data::Bytes(result),
-                        mime_type: bun_http_types::MimeType::NONE,
+                        mime_type: JsCell::new(bun_http_types::MimeType::NONE),
                         ref_count: bun_ptr::ThreadSafeRefCount::init(),
                         is_all_ascii: None,
                     }));
@@ -3715,6 +3717,14 @@ impl BlobExt for Blob {
         }
 
         js::to_js_unchecked(global_object, this)
+    }
+
+    fn into_js(mut self: Box<Self>, global_object: &JSGlobalObject) -> JSValue {
+        // Same `+1` as `Blob::new`: it belongs to the JS wrapper, whose
+        // `finalize` owns the allocation from here on.
+        self.ref_count = bun_ptr::RawRefCount::init(1);
+        let this: &Self = bun_core::heap::release(self);
+        this.to_js(global_object)
     }
 
     /// `Bun.file(pathOrFd)` core: wrap a path-or-fd in a `Store::File` and
@@ -5208,9 +5218,7 @@ pub fn write_file_internal(
                     BodyValue::Error(err_ref) => {
                         let err_js = err_ref.to_js(global_this);
                         destination_blob.detach();
-                        // SAFETY: `body_value` points into a live JS-heap Body; re-borrowed
-                        // after `err_ref` is consumed so no `&mut` alias remains active.
-                        let _ = unsafe { &mut *body_value }.use_();
+                        let _ = body_value_ref.use_();
                         Ok(ControlFlow::Break(
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this, err_js,
@@ -5658,7 +5666,7 @@ pub fn jsdom_file_construct_(
                     name_value_str.to_owned_slice().into_boxed_slice(),
                 )),
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                mime_type: bun_http_types::MimeType::NONE,
+                mime_type: JsCell::new(bun_http_types::MimeType::NONE),
                 is_all_ascii: None,
             }))));
         }

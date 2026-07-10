@@ -439,53 +439,65 @@ static CACHED_DEFAULT_SYSTEM_LIBRARY_DIR: OnceLock<bun_core::ZBox> = OnceLock::n
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE: Once = Once::new();
 
-impl CompileC {
-    /// # Safety
-    /// `this_` is the `ConfigErr::ctx` pointer round-tripped through TinyCC; it
-    /// must be null or point to a live `CompileC`. `message` is a NUL-terminated
-    /// C string when non-null. Signature matches `ConfigErr::handler` exactly so
-    /// it can be passed without an ABI-coercing cast.
-    pub(crate) unsafe extern "C" fn handle_compilation_error(
-        this_: *mut CompileC,
-        message: *const c_char,
-    ) {
-        if this_.is_null() {
-            return;
+/// Sink for TinyCC's error callback, invoked by `tcc_error_trampoline` once it
+/// has done the single raw-pointer deref. `msg` is the raw TCC message.
+pub(crate) trait TccErrorSink {
+    fn on_tcc_error(&mut self, msg: &[u8]);
+}
+
+/// The one deref site for a `ConfigErr::ctx` round-tripped through TinyCC.
+///
+/// # Safety
+/// `ctx` must be null or point to a live `T`; `message` is a NUL-terminated C
+/// string when non-null. Signature matches `ConfigErr::handler` exactly.
+pub(crate) unsafe extern "C" fn tcc_error_trampoline<T: TccErrorSink>(
+    ctx: *mut T,
+    message: *const c_char,
+) {
+    // SAFETY: per the fn contract, `ctx` is null or the live `T` we gave TinyCC.
+    let Some(this) = (unsafe { ctx.as_mut() }) else {
+        return;
+    };
+    let msg: &[u8] = if message.is_null() {
+        b""
+    } else {
+        // SAFETY: TCC guarantees `message` is a valid NUL-terminated string when non-null.
+        unsafe { bun_core::ffi::cstr(message) }.to_bytes()
+    };
+    this.on_tcc_error(msg);
+}
+
+/// the message we get from TCC sometimes has garbage in it
+/// i think because we're doing in-memory compilation
+fn trim_tcc_message(msg: &[u8]) -> &[u8] {
+    let mut offset: usize = 0;
+    while offset < msg.len() {
+        if msg[offset] > 0x20 && msg[offset] < 0x7f {
+            break;
         }
-        // SAFETY: TinyCC threads our own `&mut CompileC` back as `ctx`; we hold
-        // the unique borrow for the duration of the callback.
-        let this = unsafe { &mut *this_ };
-        let mut msg: &[u8] = if message.is_null() {
-            b""
-        } else {
-            // SAFETY: TCC guarantees `message` is a valid NUL-terminated string when non-null.
-            unsafe { bun_core::ffi::cstr(message) }.to_bytes()
-        };
+        offset += 1;
+    }
+    &msg[offset..]
+}
+
+impl TccErrorSink for CompileC {
+    fn on_tcc_error(&mut self, msg: &[u8]) {
         if msg.is_empty() {
             return;
         }
-
-        let mut offset: usize = 0;
-        // the message we get from TCC sometimes has garbage in it
-        // i think because we're doing in-memory compilation
-        while offset < msg.len() {
-            if msg[offset] > 0x20 && msg[offset] < 0x7f {
-                break;
-            }
-            offset += 1;
-        }
-        msg = &msg[offset..];
-
-        this.deferred_errors.push(Box::<[u8]>::from(msg));
+        self.deferred_errors
+            .push(Box::<[u8]>::from(trim_tcc_message(msg)));
     }
+}
 
+impl CompileC {
     #[inline]
     fn has_deferred_errors(&self) -> bool {
         !self.deferred_errors.is_empty()
     }
 
     /// Returns DeferredError if any errors from tinycc were registered
-    /// via `handle_compilation_error`
+    /// via `tcc_error_trampoline`
     #[inline]
     fn error_check(&self) -> Result<(), DeferredError> {
         if !self.deferred_errors.is_empty() {
@@ -621,7 +633,7 @@ impl CompileC {
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(std::ptr::from_mut::<CompileC>(self)),
-                handler: Self::handle_compilation_error,
+                handler: tcc_error_trampoline::<CompileC>,
             },
         }) {
             Ok(s) => s,
@@ -1892,7 +1904,7 @@ pub(super) fn generate_symbols(
 pub struct Function {
     pub symbol_from_dynamic_library: Option<*mut c_void>,
     pub base_name: Option<ZBox>,
-    pub state: Option<NonNull<TCC::State>>,
+    pub state: Cell<Option<NonNull<TCC::State>>>,
 
     pub return_type: ABIType,
     pub arg_types: Vec<ABIType>,
@@ -1906,7 +1918,7 @@ impl Default for Function {
         Self {
             symbol_from_dynamic_library: None,
             base_name: None,
-            state: None,
+            state: Cell::new(None),
             return_type: ABIType::Void,
             arg_types: Vec::new(),
             step: Step::Pending,
@@ -1935,6 +1947,15 @@ impl Drop for Function {
     }
 }
 
+impl TccErrorSink for Function {
+    fn on_tcc_error(&mut self, msg: &[u8]) {
+        self.step = Step::Failed {
+            msg: Box::<[u8]>::from(trim_tcc_message(msg)),
+            allocated: true,
+        };
+    }
+}
+
 impl Function {
     pub(crate) fn needs_handle_scope(&self) -> bool {
         for arg in self.arg_types.iter() {
@@ -1958,36 +1979,6 @@ impl Function {
         bun_core::runtime_embed_file!(Src, "runtime/ffi/FFI.h").as_bytes()
     }
 
-    /// # Safety
-    /// `ctx` is the `ConfigErr::ctx` pointer round-tripped through TinyCC and
-    /// must point to a live `Function`. `message` is a NUL-terminated C string.
-    /// Signature matches `ConfigErr::handler` exactly so it can be passed
-    /// without an ABI-coercing cast.
-    pub(crate) unsafe extern "C" fn handle_tcc_error(ctx: *mut Function, message: *const c_char) {
-        debug_assert!(!ctx.is_null());
-        // SAFETY: TinyCC threads our own `&mut Function` back as `ctx`.
-        let this = unsafe { &mut *ctx };
-        // SAFETY: TCC passes a valid NUL-terminated string
-        let mut msg: &[u8] = unsafe { bun_core::ffi::cstr(message) }.to_bytes();
-        if !msg.is_empty() {
-            let mut offset: usize = 0;
-            // the message we get from TCC sometimes has garbage in it
-            // i think because we're doing in-memory compilation
-            while offset < msg.len() {
-                if msg[offset] > 0x20 && msg[offset] < 0x7f {
-                    break;
-                }
-                offset += 1;
-            }
-            msg = &msg[offset..];
-        }
-
-        this.step = Step::Failed {
-            msg: Box::<[u8]>::from(msg),
-            allocated: true,
-        };
-    }
-
     pub(crate) fn compile(
         &mut self,
         napi_env: Option<&napi::NapiEnv>,
@@ -2001,31 +1992,26 @@ impl Function {
         } else {
             zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
         };
-        let state = match TCC::State::init::<Function, false>(&TCC::Config {
+        let state_ptr = match TCC::State::init::<Function, false>(&TCC::Config {
             options: Some(NonNull::from(tcc_options)),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(std::ptr::from_mut::<Function>(self)),
-                handler: Self::handle_tcc_error,
+                handler: tcc_error_trampoline::<Function>,
             },
         }) {
             Ok(s) => s,
             Err(_) => return Err(bun_core::err!("TCCMissing")),
         };
 
-        self.state = Some(state);
-        let _guard = scopeguard::guard(std::ptr::from_mut::<Function>(self), |this_ptr| {
-            // SAFETY: this_ptr is &mut self for the duration of compile()
-            let this = unsafe { &mut *this_ptr };
-            if matches!(this.step, Step::Failed { .. }) {
-                if let Some(s) = this.state.take() {
-                    // SAFETY: we own the state
-                    unsafe { TCC::State::destroy(s.as_ptr()) };
-                }
-            }
+        // The guard owns the state until the `Compiled` step defuses it; every
+        // early return below therefore leaves `self.state` unset.
+        let state_guard = scopeguard::guard(state_ptr, |s| {
+            // SAFETY: we own the state
+            unsafe { TCC::State::destroy(s.as_ptr()) };
         });
-        // SAFETY: state is non-null, just stored above
-        let state = unsafe { self.state.unwrap().as_mut() };
+        // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`.
+        let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
 
         if let Some(env) = napi_env {
             // `env` is the live VM-owned napi env; process-lifetime.
@@ -2077,6 +2063,8 @@ impl Function {
             return Ok(());
         };
 
+        self.state
+            .set(Some(scopeguard::ScopeGuard::into_inner(state_guard)));
         self.step = Step::Compiled(Compiled {
             ptr: symbol.as_ptr().cast::<c_void>(),
             ..Default::default()
@@ -2122,12 +2110,12 @@ impl Function {
         } else {
             zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
         };
-        let state = match TCC::State::init::<Function, false>(&TCC::Config {
+        let state_ptr = match TCC::State::init::<Function, false>(&TCC::Config {
             options: Some(NonNull::from(tcc_options)),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(std::ptr::from_mut::<Function>(self)),
-                handler: Self::handle_tcc_error,
+                handler: tcc_error_trampoline::<Function>,
             },
         }) {
             Ok(s) => s,
@@ -2140,19 +2128,14 @@ impl Function {
             //    aren't possible
             Err(_) => unreachable!(),
         };
-        self.state = Some(state);
-        let _guard = scopeguard::guard(std::ptr::from_mut::<Function>(self), |this_ptr| {
-            // SAFETY: this_ptr is &mut self for the duration of compile_callback()
-            let this = unsafe { &mut *this_ptr };
-            if matches!(this.step, Step::Failed { .. }) {
-                if let Some(s) = this.state.take() {
-                    // SAFETY: we own the state
-                    unsafe { TCC::State::destroy(s.as_ptr()) };
-                }
-            }
+        // The guard owns the state until the `Compiled` step defuses it; every
+        // early return below therefore leaves `self.state` unset.
+        let state_guard = scopeguard::guard(state_ptr, |s| {
+            // SAFETY: we own the state
+            unsafe { TCC::State::destroy(s.as_ptr()) };
         });
-        // SAFETY: just stored above
-        let state = unsafe { self.state.unwrap().as_mut() };
+        // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`.
+        let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
 
         if self.needs_napi_env() {
             if state
@@ -2215,6 +2198,8 @@ impl Function {
             return Ok(());
         };
 
+        self.state
+            .set(Some(scopeguard::ScopeGuard::into_inner(state_guard)));
         self.step = Step::Compiled(Compiled {
             ptr: symbol.as_ptr().cast::<c_void>(),
             // SAFETY: opaque-handle storage only. Never

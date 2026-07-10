@@ -22,7 +22,7 @@ use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 /// supplied by [`AnyTaskJob`].
 ///
 /// `Drop` on the implementor is the deinit path — it runs on the JS thread
-/// (from `run_from_js`'s `heap::take`) on every exit, including the
+/// (when `run_from_js`'s `Box<Self>` drops) on every exit, including the
 /// `is_shutting_down` early-out and `init` failure.
 pub trait AnyTaskJobCtx: Sized {
     /// Optional fallible JS-thread setup, run after heap allocation but before
@@ -85,14 +85,18 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
             poll: KeepAlive::default(),
             ctx,
         }));
-        // SAFETY: `job` was just allocated and is exclusively owned here.
         // Build the erased AnyTask directly with a non-capturing shim.
-        unsafe {
-            (*job).any_task = AnyTask {
-                ctx: NonNull::new(job.cast::<c_void>()),
-                callback: |p: *mut c_void| Self::run_from_js(p.cast::<Self>()).map_err(Into::into),
-            };
-        }
+        let any_task = AnyTask {
+            ctx: NonNull::new(job.cast::<c_void>()),
+            callback: |p: *mut c_void| {
+                // SAFETY: `p` is the `heap::into_raw` allocation below; the
+                // `AnyTask` fires exactly once, so this is the unique owner.
+                let this = unsafe { bun_core::heap::take(p.cast::<Self>()) };
+                Self::run_from_js(this).map_err(Into::into)
+            },
+        };
+        // SAFETY: `job` was just allocated and is exclusively owned here.
+        unsafe { (*job).any_task = any_task };
         // `ctx.init` may throw (e.g. CryptoJob<Scrypt>); on error, reclaim the
         // box so `Drop for C` releases any resources `ctx` already owns.
         let mut guard = scopeguard::guard(job, |job| {
@@ -107,23 +111,19 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
     /// `KeepAlive::ref_` the JS event loop and hand the intrusive task to the
     /// work pool. Ownership transfers to the pool → `run_task` →
     /// `run_from_js`.
-    ///
-    /// # Safety
-    /// `this` must be a live pointer returned by [`Self::create`] that has not
-    /// yet been scheduled.
-    pub unsafe fn schedule(this: *mut Self) {
-        // SAFETY: caller contract.
-        let this = unsafe { &mut *this };
-        this.poll.ref_(bun_io::js_vm_ctx());
-        WorkPool::schedule(&raw mut this.task);
+    pub fn schedule(mut self: Box<Self>) {
+        self.poll.ref_(bun_io::js_vm_ctx());
+        let this = bun_core::heap::into_raw(self);
+        // SAFETY: `this` is the allocation just leaked above; the pool owns it now.
+        WorkPool::schedule(unsafe { &raw mut (*this).task });
     }
 
     /// [`Self::create`] + [`Self::schedule`]. For callers that don't need to
     /// read back from `ctx` after scheduling.
     pub fn create_and_schedule(global: &JSGlobalObject, ctx: C) -> JsResult<()> {
         let job = Self::create(global, ctx)?;
-        // SAFETY: `job` is a freshly-created live pointer.
-        unsafe { Self::schedule(job) };
+        // SAFETY: `job` is a freshly-created, unscheduled, owned allocation.
+        Self::schedule(unsafe { bun_core::heap::take(job) });
         Ok(())
     }
 
@@ -147,17 +147,17 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
             .enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
     }
 
-    /// `AnyTask` callback — runs ON the JS thread. Reclaims the heap
+    /// `AnyTask` callback — runs ON the JS thread. Consumes the heap
     /// allocation; `Drop for Self` (poll.unref) and `Drop for C` run on every
     /// path.
-    fn run_from_js(this: *mut Self) -> JsResult<()> {
-        // SAFETY: `this` was produced by `heap::into_raw` in `create` and is
-        // uniquely owned here (the `AnyTask` fires exactly once).
-        let mut this = unsafe { bun_core::heap::take(this) };
-        let vm = this.vm;
+    // `boxed_local`: consuming the `Box` IS the contract — it is the ownership
+    // unit the task queue handed back.
+    #[allow(clippy::boxed_local)]
+    fn run_from_js(mut self: Box<Self>) -> JsResult<()> {
+        let vm = self.vm;
         if vm.is_shutting_down() {
             return Ok(());
         }
-        this.ctx.then(vm.global())
+        self.ctx.then(vm.global())
     }
 }

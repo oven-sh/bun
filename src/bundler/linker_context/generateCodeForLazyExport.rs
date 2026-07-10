@@ -51,9 +51,10 @@ pub fn generate_code_for_lazy_export(
     // Take `parts` as a raw pointer *before* the
     // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
     let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
-    // SAFETY: parse_graph backref; raw deref because `all_sources` is held
-    // across `&mut *this.log` below (split borrow).
-    let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
+    // Backref copy: `all_sources` is tied to this local, not to `*this`, so it can
+    // be held across `&mut *this.log` below (split borrow).
+    let parse_graph_ref = this.parse_graph.expect("parse_graph set in load()");
+    let all_sources = parse_graph_ref.input_files.items_source();
     let all_css_asts: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
     let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
 

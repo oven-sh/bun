@@ -25,7 +25,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     c: &mut LinkerContext,
     writer: &mut js_printer::BufferWriter,
     r: renamer::Renamer<'r, 'src>,
-    chunk: &mut Chunk,
+    chunk: &Chunk,
     part_range: PartRange,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,

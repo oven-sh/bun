@@ -438,8 +438,10 @@ impl Process {
             self.poller = Poller::Fd(
                 core::ptr::NonNull::new(poll).expect("FilePoll::init returns a live hive slot"),
             );
-            // SAFETY: poll is live; exclusive on this thread (event loop).
-            let fd = unsafe { &mut *poll };
+            let fd = self
+                .poller
+                .fd_poll_mut()
+                .expect("poller was just set to Poller::Fd");
             fd.enable_keeping_process_alive(ctx);
 
             // SAFETY: `platform_event_loop` returns the live uws loop.
@@ -2389,8 +2391,11 @@ mod spawn_process_body {
             pending_alloc: Option<Box<[u8]>>,
             pub pipe: Box<uv::Pipe>,
             pub err: bun_sys::E,
-            pub context: *mut SyncWindowsProcess,
-            pub on_done_callback: fn(*mut SyncWindowsProcess, OutFd, Vec<Box<[u8]>>, bun_sys::E),
+            /// Non-owning back-ref: the parent outlives every reader (it spins on
+            /// `waiting_count` before reclaiming itself).
+            pub context: bun_ptr::ParentRef<SyncWindowsProcess>,
+            pub on_done_callback:
+                fn(bun_ptr::ParentRef<SyncWindowsProcess>, OutFd, Vec<Box<[u8]>>, bun_sys::E),
             pub tag: OutFd,
         }
 
@@ -2441,9 +2446,9 @@ mod spawn_process_body {
                 suggested_size: usize,
                 buffer: *mut uv::uv_buf_t,
             ) {
-                // SAFETY: `req.data` was set to `*mut Self` in `start()`.
-                let this: &mut SyncWindowsPipeReader =
-                    unsafe { &mut *((*req).data as *mut SyncWindowsPipeReader) };
+                // SAFETY: `req.data` was set to `*mut Self` in `start()`; libuv fires
+                // this from the loop with no other borrow of the reader live.
+                let this = unsafe { bun_ptr::callback_ctx::<SyncWindowsPipeReader>((*req).data) };
                 let buf = Self::on_alloc(this, suggested_size);
                 // SAFETY: `buffer` is a libuv-owned out-parameter. Do NOT route
                 // through `uv_buf_t::init(&[u8])` — that reborrows the `&mut [u8]`
@@ -2463,9 +2468,9 @@ mod spawn_process_body {
                 nreads: uv::ReturnCodeI64,
                 buffer: *const uv::uv_buf_t,
             ) {
-                // SAFETY: `req.data` was set to `*mut Self` in `start()`.
-                let this: &mut SyncWindowsPipeReader =
-                    unsafe { &mut *((*req).data as *mut SyncWindowsPipeReader) };
+                // SAFETY: `req.data` was set to `*mut Self` in `start()`; libuv fires
+                // this from the loop with no other borrow of the reader live.
+                let this = unsafe { bun_ptr::callback_ctx::<SyncWindowsPipeReader>((*req).data) };
                 let nreads = nreads.int();
                 if nreads == 0 {
                     return;
@@ -2497,24 +2502,23 @@ mod spawn_process_body {
                     !this.is_null(),
                     "Expected SyncWindowsPipeReader to have data"
                 );
-                // SAFETY: this is valid until we destroy it below
-                let this_ref = unsafe { &mut *this };
-                let context = this_ref.context;
+                // SAFETY: heap-allocated in `start()`; uv fires this close callback
+                // exactly once, so reclaiming the Box here is the sole owner.
+                let mut this = unsafe { bun_core::heap::take(this) };
+                let context = this.context;
                 // Move ownership of the chunk allocations out *before* dropping
                 // `this`, otherwise the callback would observe freed buffers.
                 // The chunk allocations survive to be freed later by
                 // `flatten_owned_chunks`.
-                let chunks: Vec<Box<[u8]>> = core::mem::take(&mut this_ref.chunks);
-                let err = if this_ref.err == bun_sys::E::CANCELED {
+                let chunks: Vec<Box<[u8]>> = core::mem::take(&mut this.chunks);
+                let err = if this.err == bun_sys::E::CANCELED {
                     bun_sys::E::SUCCESS
                 } else {
-                    this_ref.err
+                    this.err
                 };
-                let tag = this_ref.tag;
-                let on_done_callback = this_ref.on_done_callback;
-                // bun.default_allocator.destroy(this)
-                // SAFETY: this was heap-allocated in start(); reclaim and drop
-                drop(unsafe { bun_core::heap::take(this) });
+                let tag = this.tag;
+                let on_done_callback = this.on_done_callback;
+                drop(this);
                 on_done_callback(context, tag, chunks, err);
             }
 
@@ -2612,13 +2616,15 @@ mod spawn_process_body {
             }
 
             pub fn on_reader_done(
-                this: *mut SyncWindowsProcess,
+                this: bun_ptr::ParentRef<SyncWindowsProcess>,
                 tag: OutFd,
                 chunks: Vec<Box<[u8]>>,
                 err: bun_sys::E,
             ) {
-                // SAFETY: this is valid (back-ref from SyncWindowsPipeReader)
-                let this = unsafe { &mut *this };
+                // SAFETY: built by `from_raw_mut` (write provenance). The reader that
+                // held this back-ref was freed by `on_close` before we got here, and
+                // the uv loop is single-threaded, so no other borrow of the parent lives.
+                let this = unsafe { this.assume_mut() };
                 match tag {
                     OutFd::Stderr => this.stderr = chunks,
                     OutFd::Stdout => this.stdout = chunks,
@@ -2736,7 +2742,9 @@ mod spawn_process_body {
                 let taken = core::mem::replace(stdio, WindowsStdioResult::Unavailable);
                 if let WindowsStdioResult::Buffer(pipe) = taken {
                     let reader = SyncWindowsPipeReader::new(SyncWindowsPipeReader {
-                        context: this_ptr,
+                        // SAFETY: `this_ptr` is the live `heap::alloc` root (mutable
+                        // provenance) and outlives the reader.
+                        context: unsafe { bun_ptr::ParentRef::from_raw_mut(this_ptr) },
                         tag,
                         pipe,
                         chunks: Vec::new(),

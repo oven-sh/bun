@@ -63,12 +63,10 @@ impl Stream {
     ///
     /// INVARIANT: `qstream` is set in `callbacks::on_stream_open` and remains
     /// valid until `callbacks::on_stream_close` / `ClientSession::detach`
-    /// nulls it. The `quic::Stream` is an FFI-owned allocation distinct from
-    /// `self`, so the returned `&mut` does not alias `self`. HTTP-thread-only.
+    /// nulls it. HTTP-thread-only. Borrows `self` exclusively so no two live
+    /// `&mut quic::Stream` can be minted from one `Stream`.
     #[inline]
-    pub fn qstream_mut<'s>(&self) -> Option<&'s mut quic::Stream> {
-        // Route through the shared `client_session::quic_stream_mut` accessor;
-        // see INVARIANT above.
+    pub fn qstream_mut(&mut self) -> Option<&mut quic::Stream> {
         self.qstream
             .map(|qs| super::client_session::quic_stream_mut(qs.as_ptr()))
     }

@@ -38,16 +38,22 @@ impl IniTestingAPIs {
         let mut log = Log::init();
 
         let envjs = frame.argument(1);
-        // The loader is either VM-owned or built locally. Per PORTING.md §Forbidden
-        // (`Box::leak` is banned), keep both `Map` and `Loader` owned in fn-scope
-        // `Option`s and hand out a raw `*mut Loader` uniformly. Both drop at fn
-        // return.
-        let mut map_storage: Option<Box<dotenv::Map>>;
-        let mut env_storage: Option<dotenv::Loader<'_>>;
-        let env: *mut dotenv::Loader<'static> = if envjs.is_empty_or_undefined_or_null() {
-            // SAFETY: `bun_vm()` is non-null on a constructed `JSGlobalObject`;
-            // `transpiler.env` is set during VM init (transpiler.rs).
-            global.bun_vm().as_mut().transpiler.env
+        let mut install = Box::new(BunInstall::default());
+        let mut configs: Vec<config_iterator::Item> = Vec::new();
+        // `Loader<'a>` is invariant in `'a`, so the VM-owned loader and a locally built
+        // one have unrelated types. `load_npmrc` takes `&mut Loader<'_>`, whose borrow
+        // lifetime is independent, so each arm calls it rather than unifying on a ptr.
+        let failed = if envjs.is_empty_or_undefined_or_null() {
+            let env = global.bun_vm().as_mut().transpiler.env_mut();
+            load_npmrc(
+                &mut install,
+                env,
+                ZStr::from_static(b".npmrc\0"),
+                &mut log,
+                &source,
+                &mut configs,
+            )
+            .is_err()
         } else {
             let mut envmap = dotenv::map::HashTable::new();
             let Some(envobj) = envjs.get_object() else {
@@ -82,32 +88,20 @@ impl IniTestingAPIs {
                 )?;
             }
 
-            map_storage = Some(Box::new(dotenv::Map { map: envmap }));
-            // SAFETY-NOTE: `Loader` borrows from `map_storage`; both live until fn
-            // return.
-            let map_ref: &mut dotenv::Map = map_storage.as_deref_mut().unwrap();
-            env_storage = Some(dotenv::Loader::init(map_ref));
-            // `Loader<'a>` is invariant in `'a` (holds `&'a mut Map`); erase to `'static`
-            // via raw-pointer `.cast()` so both `if` arms unify on a single pointer type.
-            // The borrow does not escape this function — `load_npmrc` only reads through
-            // it and both `env_storage` / `map_storage` drop at fn return.
-            std::ptr::from_mut(env_storage.as_mut().unwrap()).cast::<dotenv::Loader<'static>>()
+            let mut map = dotenv::Map { map: envmap };
+            let mut env = dotenv::Loader::init(&mut map);
+            load_npmrc(
+                &mut install,
+                &mut env,
+                ZStr::from_static(b".npmrc\0"),
+                &mut log,
+                &source,
+                &mut configs,
+            )
+            .is_err()
         };
 
-        let mut install = Box::new(BunInstall::default());
-        let mut configs: Vec<config_iterator::Item> = Vec::new();
-        if load_npmrc(
-            &mut install,
-            // SAFETY: `env` points to either the VM-singleton Loader or `env_storage`;
-            // both outlive this call and are not aliased for its duration.
-            unsafe { &mut *env },
-            ZStr::from_static(b".npmrc\0"),
-            &mut log,
-            &source,
-            &mut configs,
-        )
-        .is_err()
-        {
+        if failed {
             return bun_ast_jsc::log_to_js(&log, global, b"error");
         }
 

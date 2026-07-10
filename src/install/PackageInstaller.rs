@@ -408,9 +408,9 @@ impl<'a> PackageInstaller<'a> {
     }
 
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn lockfile_mut(&self) -> &'a mut Lockfile {
-        // SAFETY: BACKREF — never null; disjoint from `*self`; see `manager_mut`.
+    pub(crate) fn lockfile_mut(&mut self) -> &mut Lockfile {
+        // SAFETY: BACKREF — never null; disjoint from `*self`. `&mut self`
+        // makes the returned reference the only live `&mut Lockfile`.
         unsafe { &mut *self.lockfile }
     }
 
@@ -596,10 +596,10 @@ impl<'a> PackageInstaller<'a> {
             loop {
                 // `node_modules_path` (mut) and `target_node_modules_path`
                 // (read-only) refer to the same buffer when no replacement is
-                // set. Derive both from a single `*mut` so the read pointer
-                // shares the write reference's provenance (a `*const` taken
-                // from `&node_modules_path` would be popped by the later
-                // `&mut` reborrow under stacked-borrows).
+                // set. Keep the read side a raw pointer taken from the local:
+                // under tree-borrows such a pointer survives the sibling `&mut`
+                // below, while a `*const` from `&node_modules_path` would be
+                // disabled by that `&mut`'s first write.
                 // SAFETY: `bin::Linker::link` only reads `target_node_modules_path` and
                 // never writes through it while `node_modules_path` is borrowed.
                 let nm_ptr: *mut AbsPath = &raw mut node_modules_path;
@@ -615,10 +615,7 @@ impl<'a> PackageInstaller<'a> {
                         .as_ref()
                         .map(std::ptr::from_ref::<AbsPath>)
                         .unwrap_or_else(|| nm_ptr.cast_const()),
-                    // SAFETY: `nm_ptr` = `&raw mut node_modules_path` (live local); the only
-                    // other pointer derived from it is the read-only `target_node_modules_path`
-                    // above, which `bin::Linker::link` never writes through.
-                    node_modules_path: unsafe { &mut *nm_ptr },
+                    node_modules_path: &mut node_modules_path,
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
                     rel_buf: link_rel_buf,
@@ -967,7 +964,7 @@ impl<'a> PackageInstaller<'a> {
         // pointee outlives `'a`; the packages column buffers are not freed for
         // the lifetime of this `PackageInstaller` (only grow, which is why
         // this fn exists — to re-snapshot after growth).
-        let packages = self.lockfile_mut().packages.slice();
+        let packages = self.lockfile().packages.slice();
         self.metas = bun_ptr::RawSlice::new(packages.items_meta());
         self.names = bun_ptr::RawSlice::new(packages.items_name());
         self.pkg_name_hashes = bun_ptr::RawSlice::new(packages.items_name_hash());
@@ -1209,9 +1206,7 @@ impl<'a> PackageInstaller<'a> {
         let subpath_buf_ptr: *mut PathBuffer = &raw mut self.destination_dir_subpath_buf;
         let destination_dir_subpath: &mut ZStr = {
             let alias_slice = alias.slice(string_buf!());
-            // SAFETY: `subpath_buf_ptr` is the unique borrow of the field; valid for
-            // the lifetime of this fn body.
-            let buf = unsafe { &mut *subpath_buf_ptr };
+            let buf = &mut self.destination_dir_subpath_buf;
             buf[..alias_slice.len()].copy_from_slice(alias_slice);
             buf[alias_slice.len()] = 0;
             // SAFETY: buf[alias_slice.len()] == 0 written above; pointer derives from

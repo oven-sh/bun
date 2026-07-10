@@ -26,6 +26,7 @@ use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_core::Output;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 use bun_io::file_poll::Store as FilePollStore;
+use bun_ptr::ParentRef;
 use bun_sys::{self as sys, Fd, Mode};
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
@@ -121,7 +122,7 @@ thread_local! {
 /// overlapping `&mut` to the same allocation — UB. Return the raw pointer;
 /// callers reborrow `&mut` for the scope they need.
 pub fn init_global(
-    env: Option<&'static mut DotEnvLoader<'static>>,
+    env: Option<ParentRef<DotEnvLoader<'static>>>,
     cwd: Option<&[u8]>,
 ) -> *mut MiniEventLoop<'static> {
     if GLOBAL_INITIALIZED.with(|g| g.get()) {
@@ -130,34 +131,13 @@ pub fn init_global(
         return GLOBAL.with(|g| g.get());
     }
     let loop_ = MiniEventLoop::init();
-    // §Forbidden bans `Box::leak` for `&'static`; this is a
-    // thread-lifetime singleton, so use `heap::alloc` (intrusive ownership)
-    // and store the raw pointer in the thread-local.
-    let global_ptr: *mut MiniEventLoop<'static> = bun_core::heap::into_raw(Box::new(loop_));
-    // SAFETY: `global_ptr` was just allocated via `heap::alloc`; this thread
-    // holds the only reference for the duration of first-init. The `GLOBAL`
-    // thread-local is NOT yet published (set below, after this `&mut` is dropped),
-    // so neither `MiniKind::get_vm()` nor a re-entrant `init_global()` can observe
-    // the pointer while this exclusive borrow is live. The `&mut` is scoped to
-    // this function body — NOT `'static` — and ends before we publish/return the
-    // raw ptr.
-    let global = unsafe { &mut *global_ptr };
-
-    // `InternalLoopData::set_parent_event_loop` (typed) lives in a
-    // higher tier; the sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
-    // tag 2 = mini (`EventLoopHandle` discriminant + 1).
-    {
-        let (tag, ptr) = EventLoopHandle::init_mini(global_ptr).into_tag_ptr();
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe {
-            (*global.loop_ptr())
-                .internal_loop_data
-                .set_parent_raw(tag, ptr)
-        };
-    }
+    // §Forbidden bans `Box::leak` for `&'static`; this is a thread-lifetime
+    // singleton, so hand the `Box` off with `heap::release` (ownership moves to
+    // the thread-local) and mutate through the returned `&mut`.
+    let global: &mut MiniEventLoop<'static> = bun_core::heap::release(Box::new(loop_));
 
     // The process-global loader is stored as `AtomicPtr<Loader<'static>>`.
-    global.env = env.map(NonNull::from).or_else(|| {
+    global.env = env.and_then(|p| NonNull::new(p.as_mut_ptr())).or_else(|| {
         NonNull::new(
             dotenv::INSTANCE
                 .load(core::sync::atomic::Ordering::Acquire)
@@ -165,11 +145,9 @@ pub fn init_global(
         )
     });
     if global.env.is_none() {
-        // Thread-lifetime singletons.
-        let map: *mut dotenv::Map = bun_core::heap::into_raw(Box::new(dotenv::Map::init()));
-        // SAFETY: `map` lives for the thread (singleton); never freed.
-        let loader =
-            bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init(unsafe { &mut *map })));
+        // Thread-lifetime singletons; the map's ownership passes to the loader.
+        let map: &'static mut dotenv::Map = bun_core::heap::release(Box::new(dotenv::Map::init()));
+        let loader = bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init(map)));
         global.env = Some(loader);
     }
 
@@ -189,12 +167,22 @@ pub fn init_global(
         }
     }
 
-    // Publish the thread-local pointer only AFTER the scoped `&mut *global_ptr`
-    // above is no longer used — `MiniKind::get_vm()` reads `GLOBAL` without
-    // checking `GLOBAL_INITIALIZED`, so publishing earlier would let a callee
-    // re-derive a `&mut` aliasing `global` (UB). Nothing between the `&mut`
-    // borrow and here reads `GLOBAL` (`EventLoopHandle::init_mini`/`into_tag_ptr`
-    // only copy the pointer value).
+    let uws_loop = global.loop_ptr();
+    // The coercion consumes the `&mut`, so no reference to the loop survives
+    // into the publish below (`MiniKind::get_vm()` re-derives from `GLOBAL`).
+    let global_ptr: *mut MiniEventLoop<'static> = global;
+
+    // `InternalLoopData::set_parent_event_loop` (typed) lives in a
+    // higher tier; the sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
+    // tag 2 = mini (`EventLoopHandle` discriminant + 1).
+    {
+        let (tag, ptr) = EventLoopHandle::init_mini(global_ptr).into_tag_ptr();
+        // SAFETY: see `loop_ptr()` invariant.
+        unsafe { (*uws_loop).internal_loop_data.set_parent_raw(tag, ptr) };
+    }
+
+    // `MiniKind::get_vm()` reads `GLOBAL` without checking `GLOBAL_INITIALIZED`,
+    // so publish only once the exclusive borrow has been given up.
     GLOBAL.with(|g| g.set(global_ptr));
     GLOBAL_INITIALIZED.with(|g| g.set(true));
     global_ptr
@@ -447,7 +435,7 @@ impl<'a> MiniEventLoop<'a> {
     /// and `ctx` is non-null and outlives the queued task (intrusive node; ownership stays
     /// with caller).
     pub unsafe fn enqueue_task_concurrent_with_extra_ctx<C, P>(
-        &mut self,
+        &self,
         ctx: *mut C,
         callback: fn(*mut C, *mut P),
         field_offset: usize,
@@ -509,7 +497,7 @@ impl<'a> MiniEventLoop<'a> {
 
 bun_io::link_impl_EventLoopCtx! {
     Mini for MiniEventLoop<'static> => |this| {
-        platform_event_loop_ptr() => (*this).loop_ptr(),
+        platform_event_loop_ptr() => bun_ptr::ParentRef::from_raw_mut((*this).loop_ptr()),
         // `file_polls_raw` to avoid aliased `&mut MiniEventLoop` while `tick*`
         // holds `&mut self` across the re-entrant `UwsLoop::tick()` that
         // reaches this body.

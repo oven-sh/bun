@@ -385,10 +385,6 @@ impl NodeHTTPResponse {
         let Some(ws_handler) = server.web_socket_handler() else {
             return false;
         };
-        // Lifetime-extend the handler past the method calls below.
-        // SAFETY: JS-thread only; the server (and its websocket config) outlives this call.
-        let ws_handler: &mut crate::server::WebSocketServerHandler =
-            unsafe { &mut *std::ptr::from_mut(ws_handler) };
         let socket_value = self.get_server_socket_value();
         if socket_value.is_empty() {
             return false;

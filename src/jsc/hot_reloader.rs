@@ -623,17 +623,6 @@ where
         self.count += 1;
     }
 
-    /// The dispatched task was heap-allocated in [`Self::enqueue`] via
-    /// `heap::alloc`; the event loop calls this after `run()` to free it.
-    ///
-    /// # Safety
-    /// `this` must have been created via `heap::alloc` in [`Self::enqueue`]
-    /// and must not be used after this call.
-    pub unsafe fn deinit(this: *mut Self) {
-        // SAFETY: precondition — `this` came from heap::alloc in `enqueue`.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
     pub fn run(&mut self) {
         // Since we rely on the event loop for hot reloads, there can be
         // a delay before the next reload begins. In the time between the
@@ -1202,7 +1191,7 @@ where
                                                 ent.set_cache_fd(Fd::INVALID);
                                                 ent.need_stat.set(true);
                                             }
-                                            path_string = ent.abs_path;
+                                            path_string = ent.abs_path();
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {
                                                 if *hash == file_hash {

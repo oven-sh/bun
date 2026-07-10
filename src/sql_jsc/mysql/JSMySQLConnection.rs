@@ -55,8 +55,7 @@ pub struct JSMySQLConnection {
     // LIFETIMES.tsv: JSC_BORROW — assigned from createInstance param; never freed
     global_object: GlobalRef,
     // LIFETIMES.tsv: STATIC — globalObject.bunVM() singleton. `BackRef` so the
-    // hot `vm()` deref is safe; `vm_mut()` routes through the canonical
-    // `VirtualMachine::as_mut()` accessor.
+    // hot `vm()` deref is safe; no `&mut VirtualMachine` is ever formed here.
     vm: BackRef<VirtualMachine>,
     poll_ref: JsCell<KeepAlive>,
 
@@ -124,23 +123,14 @@ impl JSMySQLConnection {
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }
-    /// Short-lived `&mut VirtualMachine` for the few `vm.timer()` callers
-    /// (jsc shim's `timer()` is `&mut self`). The VM is a JS-thread singleton;
-    /// we never hold two `&mut` to it at once in this module.
-    fn vm_mut(&self) -> &'static mut VirtualMachine {
-        VirtualMachine::get_mut()
-    }
-
-    /// `&mut EventLoop` for `entered()`/`run_callback`. One audited unsafe
-    /// here replaces the per-site `unsafe { self.vm().event_loop_mut() }` —
-    /// the loop is a disjoint heap allocation owned by the JS-thread VM
-    /// singleton; single-thread affinity ⇒ no two `&mut EventLoop` coexist.
+    /// `&mut EventLoop` for `entered()`/`run_callback`. The loop is a disjoint
+    /// heap allocation owned by the JS-thread VM singleton; single-thread
+    /// affinity ⇒ no two `&mut EventLoop` coexist.
     #[inline]
     fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
-        // `vm_mut()` yields the process-lifetime `'static mut VM` (see above);
-        // the owned event loop lives for the VM's lifetime. Single-JS-thread
-        // invariant ⇒ callers never overlap `&mut`.
-        self.vm_mut().event_loop_mut()
+        // `VirtualMachine::get()` is the `&'static` JS-thread singleton; the
+        // owned event loop lives for the VM's lifetime.
+        VirtualMachine::get().event_loop_mut()
     }
 
     #[inline]
@@ -222,11 +212,11 @@ impl JSMySQLConnection {
     fn stop_timers(&self) {
         bun_core::scoped_log!(MySQLConnection, "stopTimers");
         if self.timer.get().state == EventLoopTimerState::ACTIVE {
-            self.timer.with_mut(|t| self.vm_mut().timer().remove(t));
+            self.timer.with_mut(|t| self.vm().timer().remove(t));
         }
         if self.max_lifetime_timer.get().state == EventLoopTimerState::ACTIVE {
             self.max_lifetime_timer
-                .with_mut(|t| self.vm_mut().timer().remove(t));
+                .with_mut(|t| self.vm().timer().remove(t));
         }
     }
 
@@ -247,7 +237,7 @@ impl JSMySQLConnection {
         let interval = self.get_timeout_interval();
         bun_core::scoped_log!(MySQLConnection, "resetConnectionTimeout {}", interval);
         if self.timer.get().state == EventLoopTimerState::ACTIVE {
-            self.timer.with_mut(|t| self.vm_mut().timer().remove(t));
+            self.timer.with_mut(|t| self.vm().timer().remove(t));
         }
         if self.connection.get().status == my_sql_connection::Status::Failed
             || self.connection.get().is_processing_data()
@@ -258,7 +248,7 @@ impl JSMySQLConnection {
 
         self.timer.with_mut(|t| {
             t.next = timespec::ms_from_now(TimespecMockMode::AllowMockedTime, interval.into());
-            self.vm_mut().timer().insert(t);
+            self.vm().timer().insert(t);
         });
     }
 
@@ -338,7 +328,7 @@ impl JSMySQLConnection {
                 TimespecMockMode::AllowMockedTime,
                 self.max_lifetime_interval_ms.into(),
             );
-            self.vm_mut().timer().insert(t);
+            self.vm().timer().insert(t);
         });
     }
 

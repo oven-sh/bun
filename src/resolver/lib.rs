@@ -1027,13 +1027,12 @@ pub mod fs {
             &mut self,
             result: &mut bun_alloc::Result,
             value: EntriesOption,
-        ) -> core::result::Result<*mut EntriesOption, bun_core::Error> {
+        ) -> core::result::Result<&mut EntriesOption, bun_core::Error> {
             // `BSSMapInner::put` mutates `result.index` to record placement; callers
             // (e.g. `dir_info_cached_maybe_log`) re-read `result.index` post-`put`, so the
             // mutation must be visible — pass through directly.
             self.inner()
                 .put(result, value)
-                .map(std::ptr::from_mut::<EntriesOption>)
                 .map_err(|_| bun_core::err!("OutOfMemory"))
         }
         pub fn mark_not_found(&mut self, result: bun_alloc::Result) {
@@ -1146,7 +1145,6 @@ pub mod fs {
         /// Iterate `handle` and populate a
         /// fresh `DirEntry` (re-using `prev_map` Entry slots where the name matches).
         fn readdir<I: DirEntryIterator>(
-            &mut self,
             store_fd: bool,
             mut prev_map: Option<&mut dir_entry::EntryMap>,
             dir_: &'static [u8],
@@ -1184,7 +1182,7 @@ pub mod fs {
             &mut self,
             dir: &[u8],
             err: bun_core::Error,
-        ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
+        ) -> core::result::Result<&mut EntriesOption, bun_core::Error> {
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
                 let mut get_or_put_result = self.entries.get_or_put(dir)?;
                 if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
@@ -1203,8 +1201,7 @@ pub mod fs {
                             canonical_error: err,
                         }),
                     )?;
-                    // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-                    return Ok(unsafe { &mut *opt });
+                    return Ok(opt);
                 }
             }
 
@@ -1243,7 +1240,7 @@ pub mod fs {
             generation: Generation,
             store_fd: bool,
             iterator: I,
-        ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
+        ) -> core::result::Result<&mut EntriesOption, bun_core::Error> {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
@@ -1261,27 +1258,27 @@ pub mod fs {
 
                 let cr = cache_result.as_ref().unwrap();
                 if cr.has_checked_if_exists() {
-                    if let Some(cached_result) = self.entries.at_index(cr.index) {
-                        // erase to raw immediately so the early-return reborrow
-                        // doesn't conflict with the `&mut self.entries` borrow above.
-                        let cached_ptr = std::ptr::from_mut::<EntriesOption>(cached_result);
-                        // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
-                        // Single `&mut` reborrow — the catch-all arm binds and returns the
-                        // scrutinee directly so no second `&mut *cached_ptr` is materialized
-                        // while the first is on the borrow stack (Stacked Borrows hygiene).
-                        match unsafe { &mut *cached_ptr } {
-                            EntriesOption::Entries(e) if e.generation < generation => {
-                                in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
-                            }
-                            cached => return Ok(cached),
+                    let mut cached_index: Option<bun_alloc::IndexType> = None;
+                    match self.entries.at_index(cr.index) {
+                        Some(EntriesOption::Entries(e)) if e.generation < generation => {
+                            in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                         }
-                    } else if cr.status == bun_alloc::ItemStatus::NotFound && generation == 0 {
-                        return Ok(temp_entries_option_write(EntriesOption::Err(
-                            dir_entry::Err {
-                                original_err: bun_core::err!("ENOENT"),
-                                canonical_error: bun_core::err!("ENOENT"),
-                            },
-                        )));
+                        Some(_) => cached_index = Some(cr.index),
+                        None => {
+                            if cr.status == bun_alloc::ItemStatus::NotFound && generation == 0 {
+                                return Ok(temp_entries_option_write(EntriesOption::Err(
+                                    dir_entry::Err {
+                                        original_err: bun_core::err!("ENOENT"),
+                                        canonical_error: bun_core::err!("ENOENT"),
+                                    },
+                                )));
+                            }
+                        }
+                    }
+                    // Hand the hit back by slot index: returning the `&mut` bound
+                    // above would keep `self` borrowed over the readdir path below.
+                    if let Some(index) = cached_index {
+                        return Ok(self.entries.at_index(index).expect("cached slot"));
                     }
                 }
             }
@@ -1325,7 +1322,7 @@ pub mod fs {
                 // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
                 unsafe { &mut (*p).data }
             });
-            let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
+            let mut entries = match Self::readdir(store_fd, prev, dir, generation, handle, iterator)
             {
                 Ok(e) => e,
                 Err(err) => {
@@ -1362,8 +1359,7 @@ pub mod fs {
                 );
 
                 let out = self.entries.put(cache_result.as_mut().unwrap(), result)?;
-                // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-                return Ok(unsafe { &mut *out });
+                return Ok(out);
             }
 
             // ENABLE_ENTRY_CACHE = false: stash in the threadlocal and hand back its
@@ -1394,7 +1390,7 @@ pub mod fs {
         /// (if reparse point) `CreateFileW`-follow + `GetFinalPathNameByHandle`
         /// realpath.
         pub fn kind(
-            &mut self,
+            &self,
             dir_: &[u8],
             base: &[u8],
             existing_fd: Fd,
@@ -1575,7 +1571,7 @@ pub mod fs {
     impl crate::fs_full::EntryKindResolver for RealFS {
         #[inline(always)]
         fn resolve_kind(
-            &mut self,
+            &self,
             dir: &[u8],
             base: &[u8],
             existing_fd: bun_sys::Fd,
@@ -1618,52 +1614,55 @@ pub mod fs {
             index: bun_alloc::IndexType,
             generation: Generation,
         ) -> Option<&mut EntriesOption> {
-            // erase to raw immediately so re-borrowing `&mut self` for
-            // `open_dir`/`readdir`/`read_directory_error` doesn't conflict.
-            // `entries_mutex` held by caller; sole `&mut` to this slot.
-            let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
-            // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
-            if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
-                if existing.generation < generation {
-                    let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
-                    // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
-                    let dir = unsafe { (*e_ptr).dir };
-                    // `open_dir_for_iteration`, NOT
-                    // `RealFS.openDir`. On Windows the two diverge: `open_dir` passes
-                    // `read_only: true` (no DELETE access on the handle), whereas
-                    // `openDirForIteration` uses the default `WindowsOpenDirOptions`
-                    // (`can_rename_or_delete: true`). On POSIX it's `O_DIRECTORY` only
-                    // vs `O_RDONLY|O_DIRECTORY`.
-                    let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir) {
-                        Ok(h) => h,
-                        Err(err) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err.into()).ok();
-                        }
-                    };
-                    let _close_guard = scopeguard::guard(handle, |h| {
-                        let _ = bun_sys::close(h);
-                    });
-                    // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
-                    let prev = Some(unsafe { &mut (*e_ptr).data });
-                    match self.readdir(false, prev, dir, generation, handle, ()) {
+            // Copy the stale slot's interned `dir` out and end the borrow; each step
+            // below re-indexes the slot instead of holding a `&mut` across a call that
+            // needs `&mut self`. `entries_mutex` held by caller.
+            let stale_dir: Option<&'static [u8]> = match self.entries.at_index(index)? {
+                EntriesOption::Entries(existing) if existing.generation < generation => {
+                    Some(existing.dir)
+                }
+                _ => None,
+            };
+            let Some(dir) = stale_dir else {
+                return self.entries.at_index(index);
+            };
+            // `open_dir_for_iteration`, NOT
+            // `RealFS.openDir`. On Windows the two diverge: `open_dir` passes
+            // `read_only: true` (no DELETE access on the handle), whereas
+            // `openDirForIteration` uses the default `WindowsOpenDirOptions`
+            // (`can_rename_or_delete: true`). On POSIX it's `O_DIRECTORY` only
+            // vs `O_RDONLY|O_DIRECTORY`.
+            let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir) {
+                Ok(h) => h,
+                Err(err) => {
+                    if let Some(EntriesOption::Entries(existing)) = self.entries.at_index(index) {
+                        existing.data.clear();
+                    }
+                    return self.read_directory_error(dir, err.into()).ok();
+                }
+            };
+            let _close_guard = scopeguard::guard(handle, |h| {
+                let _ = bun_sys::close(h);
+            });
+            let readdir_err = match self.entries.at_index(index)? {
+                EntriesOption::Entries(existing) => {
+                    let read =
+                        Self::readdir(false, Some(&mut existing.data), dir, generation, handle, ());
+                    existing.data.clear();
+                    match read {
                         Ok(new_entry) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            // SAFETY: see above — slot is exclusively owned here.
-                            unsafe { *e_ptr = new_entry };
+                            **existing = new_entry;
+                            None
                         }
-                        Err(err) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err).ok();
-                        }
+                        Err(err) => Some(err),
                     }
                 }
+                EntriesOption::Err(_) => None,
+            };
+            if let Some(err) = readdir_err {
+                return self.read_directory_error(dir, err).ok();
             }
-            // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-            Some(unsafe { &mut *result_ptr })
+            self.entries.at_index(index)
         }
 
         fn platform_temp_dir_compute() -> &'static [u8] {
@@ -1949,8 +1948,8 @@ pub mod dir_entry_accessor {
                     core::ptr::NonNull::new(*val).expect("EntryStore slot"),
                 );
                 let fs: *mut Implementation = &raw mut FS::instance().fs;
-                // SAFETY: entries_mutex held; fs points at the process-global RealFS.
-                let kind = unsafe { entry.kind(fs, true) };
+                // SAFETY: `fs` points at the process-global RealFS.
+                let kind = entry.kind(unsafe { bun_ptr::ParentRef::from_raw(fs) }, true);
                 let fskind = match kind {
                     EntryKind::File => bun_sys::FileKind::File,
                     EntryKind::Dir => bun_sys::FileKind::Directory,
@@ -2486,7 +2485,7 @@ pub mod cache {
         /// `Contents::Owned(Vec<u8>)` path.
         pub fn read_file_with_allocator(
             &mut self,
-            _fs: &mut fs_mod::FileSystem,
+            _fs: &fs_mod::FileSystem,
             path: &[u8],
             dirname_fd: Fd,
             use_shared_buffer: bool,

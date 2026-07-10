@@ -2,7 +2,7 @@ use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, RegularExpression};
 use bun_core::String as BunString;
 
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
@@ -304,10 +304,7 @@ fn filter_names<R: WriteEnd>(rem: &mut R, description: Option<&[u8]>, parent_in:
     rem.write_end(description.unwrap_or(b""));
     let mut parent = parent_in;
     while let Some(scope) = parent {
-        // PORTING.md: `BaseScope.parent` is `Option<*const DescribeScope>` (raw backref);
-        // per-use reborrow.
-        // SAFETY: parent backrefs are stable for the lifetime of the collection tree.
-        parent = scope.base.parent.map(|p| unsafe { &*p });
+        parent = scope.base.parent.as_ref().map(|p| p.get());
         if scope.base.name.is_none() {
             continue;
         }
@@ -426,10 +423,9 @@ impl ScopeFunctions {
                             "matches_filter \"{}\"",
                             bstr::BStr::new(bun_test.collection.filter_buffer.as_slice())
                         ));
-                        // SAFETY: `filter_regex` is the FFI-allocated Yarr handle stored in
-                        // `TestRunner` for the process lifetime; single-threaded here so the
-                        // exclusive borrow is unaliased.
-                        matches_filter = unsafe { &mut *filter_regex.as_ptr() }.matches(str);
+                        // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is
+                        // the centralised non-null deref proof.
+                        matches_filter = RegularExpression::opaque_mut(filter_regex.as_ptr()).matches(str);
 
                         bun_test.collection.filter_buffer.clear();
                     }

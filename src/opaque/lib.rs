@@ -428,3 +428,106 @@ pub mod ffi {
         }
     }
 }
+
+// ── Owned handles to foreign objects ──────────────────────────────────────────
+
+/// A foreign (C/C++-owned) object whose ownership Rust can hold and give back.
+///
+/// Implement via [`foreign_owned!`], never by hand. `release` is the C++
+/// destructor or intrusive-refcount decrement — **not** exclusive access, so it
+/// receives `&Self`, matching the `UnsafeCell` in [`opaque_ffi!`].
+///
+/// # Safety
+/// `release` must give back exactly one ownership unit (one refcount, or the
+/// object), and must be sound to call exactly once per owned handle.
+pub unsafe trait ForeignOwned: Sized {
+    /// # Safety
+    /// `this` must be live and carry an ownership unit the caller is giving up.
+    unsafe fn release(this: ::core::ptr::NonNull<Self>);
+}
+
+/// Owned handle to a foreign object.
+///
+/// `T` : `ForeignRef<T>` :: `Path` : `PathBuf` — the borrowed opaque and its
+/// owner. Holds exactly one ownership unit; `Drop` gives it back.
+///
+/// There is deliberately **no `DerefMut`**. `T` is an [`opaque_ffi!`] ZST, so
+/// `&T` already carries no `noalias`/`readonly` and the foreign owner may mutate
+/// through it. A `&mut T` would assert an exclusivity that is never true (C++
+/// holds the object) and never needed (every FFI shim takes `&T`).
+///
+/// Not `Clone` — duplicating an ownership unit is a per-type decision. Not
+/// `Send`/`Sync` — inherited from `NonNull`.
+#[repr(transparent)]
+pub struct ForeignRef<T: ForeignOwned>(::core::ptr::NonNull<T>);
+
+impl<T: ForeignOwned> ForeignRef<T> {
+    /// Adopt an ownership unit the caller is transferring in.
+    ///
+    /// # Safety
+    /// `ptr` must be live and carry exactly one ownership unit that no other
+    /// handle will give back.
+    #[inline(always)]
+    pub const unsafe fn adopt(ptr: ::core::ptr::NonNull<T>) -> Self {
+        Self(ptr)
+    }
+
+    #[inline(always)]
+    pub const fn as_ptr(&self) -> *mut T {
+        self.0.as_ptr()
+    }
+
+    #[inline(always)]
+    pub const fn as_non_null(&self) -> ::core::ptr::NonNull<T> {
+        self.0
+    }
+
+    /// Hand the ownership unit to a foreign owner (a callback context, a C++
+    /// field) without giving it back. Pairs with a later [`Self::adopt`].
+    #[inline(always)]
+    pub fn leak(self) -> ::core::ptr::NonNull<T> {
+        // `ManuallyDrop`, not `mem::forget`: `clippy::mem_forget` is denied here,
+        // and forgetting a `Drop` type reads as a bug even when it is the point.
+        ::core::mem::ManuallyDrop::new(self).0
+    }
+}
+
+impl<T: ForeignOwned> ::core::ops::Deref for ForeignRef<T> {
+    type Target = T;
+    #[inline(always)]
+    fn deref(&self) -> &T {
+        // SAFETY: `self.0` is non-null and live for `self`'s lifetime.
+        unsafe { opaque_deref_nn(self.0.as_ptr()) }
+    }
+}
+
+impl<T: ForeignOwned> Drop for ForeignRef<T> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        // SAFETY: we own exactly one unit; `adopt`/`leak` maintain that.
+        unsafe { T::release(self.0) }
+    }
+}
+
+/// Declare that an [`opaque_ffi!`] handle is owned, released by `$release`.
+///
+/// `$release` must accept `&$t`: giving back a refcount is not exclusive access.
+/// Emits `unsafe impl ForeignOwned`, which is what makes `ForeignRef<$t>` work.
+///
+/// ```ignore
+/// opaque_ffi! { pub struct FetchHeaders; }
+/// foreign_owned!(FetchHeaders, WebCore__FetchHeaders__deref);
+/// pub struct FetchHeaders(bun_opaque::ForeignRef<sys::FetchHeaders>);
+/// ```
+#[macro_export]
+macro_rules! foreign_owned {
+    ($t:ty, $release:path) => {
+        // SAFETY: `$release` gives back exactly one ownership unit of `$t`.
+        unsafe impl $crate::ForeignOwned for $t {
+            #[inline(always)]
+            unsafe fn release(this: ::core::ptr::NonNull<Self>) {
+                $release($crate::opaque_deref(this.as_ptr()))
+            }
+        }
+    };
+}

@@ -1102,10 +1102,8 @@ pub mod resolved_source_tag {
 }
 pub use self::resolved_source_tag::ResolvedSourceTag;
 
-// ──────────────────────────────────────────────────────────────────────────
-// FetchHeaders — opaque C++ `WebCore::FetchHeaders` handle plus the
-// `HTTPHeaderName` enum used by `fast_get`/`fast_has`/`put`.
-// ──────────────────────────────────────────────────────────────────────────
+// `FetchHeaders` owns one ref on the C++ `WebCore::FetchHeaders`; `HTTPHeaderName`
+// is the enum used by `fast_get`/`fast_has`/`put`.
 #[path = "FetchHeaders.rs"]
 pub mod fetch_headers;
 pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName};

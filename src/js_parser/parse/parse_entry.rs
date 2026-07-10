@@ -1642,12 +1642,13 @@ impl<'a> Parser<'a> {
                 // `esm_import_keyword` is also set for `import.meta` (which Bun's
                 // CJS wrapper supports) and type-only imports, so detect a real
                 // `import` statement via its import record instead.
-                let import_stmt: Option<&ImportRecord> = p.import_records.items().iter().find(|r| {
-                    r.kind == bun_ast::ImportKind::Stmt
-                        && !r
-                            .flags
-                            .intersects(ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED)
-                });
+                let import_stmt: Option<&ImportRecord> =
+                    p.import_records.items().iter().find(|r| {
+                        r.kind == bun_ast::ImportKind::Stmt
+                            && !r.flags.intersects(
+                                ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED,
+                            )
+                    });
                 let found: Option<(bun_ast::Range, &str)> = if p.esm_export_keyword.len > 0 {
                     Some((p.esm_export_keyword, "'export'"))
                 } else if let Some(record) = import_stmt {

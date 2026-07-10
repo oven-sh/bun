@@ -146,11 +146,14 @@ describe.concurrent("explicit CommonJS module type rejects ESM-only syntax", () 
       "package.json": `{"name":"pkg","type":"commonjs"}`,
       "lib/esm/package.json": `{"type":"module"}`,
       "lib/esm/inner/t.js": exportBody,
-      "entry.mjs": `await import("./lib/esm/inner/t.js");\n`,
+      "entry.mjs": `const ns = await import("./lib/esm/inner/t.js");\nconsole.log(JSON.stringify({ x: ns.x, hasDefault: "default" in ns }));\n`,
     });
     const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
     expect(stderr).not.toContain("Cannot use 'export' in a CommonJS module");
-    expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({
+      stdout: `ran\n${JSON.stringify({ x: 7, hasDefault: false })}\n`,
+      exitCode: 0,
+    });
   });
 
   test('nameless nested {"type":"commonjs"} overrides outer {"type":"module"}', async () => {

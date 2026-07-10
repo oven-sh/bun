@@ -13,8 +13,6 @@ const table = {
     'hello.cts': 'commonjs',
     'hello.jsx': 'module',
     'hello.mts': 'module',
-    // files using ES import and no exports will be detected as module
-    "import.cjs": "module",
   },
   esm: {
     'hello.cjs': 'commonjs',
@@ -25,8 +23,6 @@ const table = {
     'hello.cts': 'commonjs',
     'hello.jsx': 'module',
     'hello.mts': 'module',
-    // files using ES import and no exports will be detected as module
-    "import.cjs": "module",
   },
 };
 

@@ -144,22 +144,23 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
   const original = require.extensions[".ts"];
   assert(original);
   try {
-    delete require.cache[require.resolve("./extensions-fixture/secretly_esm.cjs")];
     let called = false;
-    const mocked = (require.extensions[".cjs"] = mock(function (module, filename) {
+    const mocked = (require.extensions[".custom"] = mock(function (module, filename) {
       expect(module).toBeDefined();
-      expect(filename).toBe(path.join(import.meta.dir, "extensions-fixture", "secretly_esm.cjs"));
+      expect(filename).toBe(path.join(import.meta.dir, "extensions-fixture", "secretly_esm.custom"));
       module._compile = function (code, filename) {
         called = true;
         throw new Error("should not be called");
       };
       original(module, filename);
     }));
-    const mod = require("./extensions-fixture/secretly_esm");
+    delete require.cache[require.resolve("./extensions-fixture/secretly_esm.custom")];
+    const mod = require("./extensions-fixture/secretly_esm.custom");
     expect(mod).toEqual({ default: 1 });
     expect(mocked).toBeCalled();
+    expect(called).toBe(false);
   } finally {
-    require.extensions[".cjs"] = original;
+    delete require.extensions[".custom"];
   }
 });
 test("mutating extensions is banned by some files", () => {

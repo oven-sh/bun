@@ -258,6 +258,10 @@ impl<'a> Options<'a> {
             hasher.update(b"no_dce");
         }
 
+        // `module_type` changes transpiled output for byte-identical sources:
+        // exports_kind and the cjs-with-ESM-syntax error both depend on it.
+        hasher.update(&[self.module_type as u8]);
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
@@ -1620,6 +1624,50 @@ impl<'a> Parser<'a> {
             p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate > 0;
 
         let mut wrap_mode: WrapMode = WrapMode::None;
+
+        // .cjs/.cts are unconditionally CommonJS in Node; ESM syntax is a
+        // SyntaxError there. Runtime only (bundler accepts mixed input). Scoped to
+        // the extension because packages rely on `export` in .js/.ts under "type":"commonjs".
+        if p.options.module_type == options::ModuleType::Cjs
+            && p.options.features.commonjs_at_runtime
+            && !p.options.bundle
+        {
+            let ext = p.source.path.name().ext;
+            let rename_to: Option<&str> = match ext {
+                b".cjs" => Some(".mjs"),
+                b".cts" => Some(".mts"),
+                _ => None,
+            };
+            if let Some(rename_to) = rename_to {
+                let found: Option<(bun_ast::Range, &str)> = if p.esm_export_keyword.len > 0 {
+                    Some((p.esm_export_keyword, "'export'"))
+                } else if p.esm_import_keyword.len > 0 {
+                    Some((p.esm_import_keyword, "an 'import' statement"))
+                } else if p.top_level_await_keyword.len > 0 {
+                    Some((p.top_level_await_keyword, "top-level 'await'"))
+                } else {
+                    None
+                };
+                if let Some((range, what)) = found {
+                    p.log().add_range_error_with_notes(
+                        Some(p.source),
+                        range,
+                        format!("Cannot use {} in a CommonJS module", what).into_bytes(),
+                        Box::new([bun_ast::Data {
+                            text: std::borrow::Cow::Owned(
+                                format!(
+                                    "This file is CommonJS because it has the \"{}\" extension. Rename it to end in {} to use ES module syntax.",
+                                    bstr::BStr::new(ext),
+                                    rename_to,
+                                )
+                                .into_bytes(),
+                            ),
+                            ..Default::default()
+                        }]),
+                    );
+                }
+            }
+        }
 
         if p.is_deoptimized_commonjs() {
             exports_kind = js_ast::ExportsKind::Cjs;

@@ -237,4 +237,22 @@ describe.concurrent("custom Error.stack string", () => {
     expect(stdout).toContain("ERR_SOMETHING");
     expect(exitCode).toBe(0);
   });
+
+  test("reading .stack before logging keeps the generated format", async () => {
+    // Bun's module-level frames have no parentheses, so the materialized
+    // `.stack` string parses to zero V8 frames; it must still not be mistaken
+    // for a user-assigned value.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const e = new Error("boom"); void e.stack; console.log(e);`],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("error: boom");
+    expect(stdout).not.toContain("Error: boom");
+    expect(stdout).toContain(" at ");
+    expect(exitCode).toBe(0);
+  });
 });

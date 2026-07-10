@@ -3156,7 +3156,7 @@ pub mod __gated_printer {
             while iter.next(&mut cursor) {
                 match cursor.c as u32 {
                     // unlike other versions, we only want to mutate > 0x7F
-                    0..=LAST_ASCII => {
+                    0..=0x7F => {
                         if !is_ascii {
                             ascii_start = cursor.i as usize;
                             is_ascii = true;
@@ -4599,14 +4599,16 @@ pub mod __gated_printer {
             }
 
             if IS_BUN_PLATFORM {
-                // Translate any non-ASCII to unicode escape sequences
+                // Translate any non-ASCII to unicode escape sequences.
+                // ASCII (including control characters like NUL) passes through
+                // verbatim so `RegExp.prototype.source` round-trips the source text.
                 let mut ascii_start: usize = 0;
                 let mut is_ascii = false;
                 let iter = CodepointIterator::init(&e.value);
                 let mut cursor = strings::Cursor::default();
                 while iter.next(&mut cursor) {
                     match cursor.c as u32 {
-                        FIRST_ASCII..=LAST_ASCII => {
+                        0..=0x7F => {
                             if !is_ascii {
                                 ascii_start = cursor.i as usize;
                                 is_ascii = true;

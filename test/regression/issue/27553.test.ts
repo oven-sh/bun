@@ -55,6 +55,32 @@ test("null bytes in untagged template literals are preserved", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("String.raw preserves raw DEL (0x7F) bytes in tagged template literals", async () => {
+  const source = Buffer.concat([
+    Buffer.from("const s = String.raw`"),
+    Buffer.from([0x7f]),
+    Buffer.from("`;\nconsole.log(s.length);\nconsole.log(s.charCodeAt(0));\n"),
+  ]);
+
+  using dir = tempDir("issue-27553-del", {
+    "test.js": source,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("1\n127\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test("null bytes in String.raw with surrounding content", async () => {
   const source = Buffer.concat([
     Buffer.from("const s = String.raw`hello"),

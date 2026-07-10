@@ -2724,6 +2724,46 @@ console.log(resolve.length)
       expectParseError("/x/msuygig", 'Duplicate flag "g" in regular expression');
     });
 
+    // https://github.com/oven-sh/bun/issues/33930
+    it("regexp with raw ASCII control characters round-trips", async () => {
+      const NUL = String.fromCharCode(0x00);
+      const US = String.fromCharCode(0x1f);
+      const DEL = String.fromCharCode(0x7f);
+
+      // Printer-level: the bun-target printer must not rewrite raw control
+      // characters into literal \uXXXX escape text.
+      const bunTranspiler = new Bun.Transpiler({ target: "bun" });
+      const input = `export const re = /${NUL}HFMASK(\\d+)${US}${DEL}/g;`;
+      expect(bunTranspiler.transformSync(input)).toBe(input + "\n");
+
+      // Runtime: RegExp.prototype.source reflects the source text and the
+      // regex matches raw NUL-delimited input.
+      const source = Buffer.concat([
+        Buffer.from("const re = /"),
+        Buffer.from([0x00]),
+        Buffer.from("HFMASK(\\d+)"),
+        Buffer.from([0x00]),
+        Buffer.from('/g;\nconst s = "\\u0000HFMASK0\\u0000";\n'),
+        Buffer.from("console.log(re.source.length);\n"),
+        Buffer.from("console.log(JSON.stringify(re.exec(s)));\n"),
+        Buffer.from("console.log(/"),
+        Buffer.from([0x1f, 0x78, 0x7f]),
+        Buffer.from("/.source.length);\n"),
+      ]);
+      using dir = tempDir("transpiler-regex-control-chars", {
+        "test.js": source,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe('13\n["\\u0000HFMASK0\\u0000","0"]\n3\n');
+      expect(exitCode).toBe(0);
+    });
+
     it("identifier escapes", () => {
       expectPrinted_("var _\u0076\u0061\u0072", "var _var");
       expectParseError("var \u0076\u0061\u0072", 'Expected identifier but found "\u0076\u0061\u0072"');

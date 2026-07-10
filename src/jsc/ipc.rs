@@ -703,11 +703,7 @@ impl Handle {
 
     /// Capture a Handle-owned dup of `fd` for the wire (see `owns_fd`).
     /// `Err` carries the `dup(2)` errno so the caller can surface it.
-    pub fn init_dup(
-        fd: Fd,
-        js: JSValue,
-        close_on_complete: bool,
-    ) -> Result<Self, bun_sys::Error> {
+    pub fn init_dup(fd: Fd, js: JSValue, close_on_complete: bool) -> Result<Self, bun_sys::Error> {
         let wire_fd = bun_sys::dup(fd)?;
         Ok(Self {
             fd: wire_fd,

@@ -134,9 +134,9 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         #[cfg(windows)]
         {
             let peer_pid = subprocess.pid() as u32;
-            let Some(hex) =
-                crate::ipc_host::attach_windows_socket_payload(global, message, native_fd, peer_pid)
-            else {
+            let Some(hex) = crate::ipc_host::attach_windows_socket_payload(
+                global, message, native_fd, peer_pid,
+            ) else {
                 return Ok(JSValue::NULL);
             };
             let mut h = bun_jsc::ipc::Handle::init(native_fd, handle);

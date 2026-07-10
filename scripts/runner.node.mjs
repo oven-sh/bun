@@ -758,12 +758,14 @@ async function runTests() {
           NO_COLOR: "1",
           BUN_DEBUG_QUIET_LOGS: "1",
         };
-        if (!isWindows) {
-          // Node-compat tests spawn workers/children (cluster, child_process)
-          // and then kill/exit; a child that outlives its parent can keep a
-          // common.PORT socket bound and flake the next sequential test.
-          // --no-orphans wires PR_SET_PDEATHSIG / kqueue parent watch so the
-          // whole tree dies with the test process.
+        if (!isWindows && title.includes("/sequential/")) {
+          // Sequential node tests share common.PORT (12346); a cluster worker
+          // or child_process subprocess that outlives its test can keep that
+          // port bound and flake the next file. --no-orphans wires
+          // PR_SET_PDEATHSIG / kqueue parent watch so the whole tree dies with
+          // the test process. Scoped to sequential/ because parallel/ has
+          // tests that assert a detached grandchild survives its parent
+          // (test-child-process-*-detached.js), which this flag defeats.
           env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
         }
         if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {

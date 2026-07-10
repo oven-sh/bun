@@ -197,6 +197,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.has_non_local_export_declare_inside_namespace;
         p.has_non_local_export_declare_inside_namespace = false;
 
+        // Namespace bodies compile to generated closures, so a `return`
+        // inside one is not a module-level return (and must not count as
+        // CommonJS evidence for `has_top_level_return`).
+        let old_is_outside_fn_or_arrow = p.fn_or_arrow_data_parse.is_outside_fn_or_arrow;
+        p.fn_or_arrow_data_parse.is_outside_fn_or_arrow = false;
+
         // Parse the statements inside the namespace
         let mut stmts: BumpVec<'_, Stmt> = BumpVec::new_in(p.arena);
         if p.lexer.token == T::TDot {
@@ -225,6 +231,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts)?;
             p.lexer.next()?;
         }
+        p.fn_or_arrow_data_parse.is_outside_fn_or_arrow = old_is_outside_fn_or_arrow;
         let has_non_local_export_declare_inside_namespace =
             p.has_non_local_export_declare_inside_namespace;
         p.has_non_local_export_declare_inside_namespace =

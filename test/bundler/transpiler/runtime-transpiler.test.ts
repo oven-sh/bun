@@ -252,3 +252,386 @@ describe("unterminated string literals in large files", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/32175
+describe.concurrent("implicit strict mode for files forced to ESM", () => {
+  async function run(dir: unknown, file: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), file],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("legacy octal literal in a bare .mjs file is an error", async () => {
+    using dir = tempDir("forced-esm-strict-octal", {
+      "octal.mjs": "var v = 010;\nconsole.log(v);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "octal.mjs");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stderr).toContain('".mjs" extension makes it an ECMAScript module');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("legacy octal literal in a bare .mts file is an error", async () => {
+    using dir = tempDir("forced-esm-strict-octal-mts", {
+      "octal.mts": "var v = 010;\nconsole.log(v);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "octal.mts");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stderr).toContain('".mts" extension makes it an ECMAScript module');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test('legacy octal literal in a "type": "module" package is an error', async () => {
+    using dir = tempDir("forced-esm-strict-type-module", {
+      "package.json": '{ "type": "module" }',
+      "octal.js": "var v = 010;\nconsole.log(v);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "octal.js");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stderr).toContain('package.json sets "type" to "module"');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("leading-zero decimal like 08 in a bare .mjs file is an error", async () => {
+    using dir = tempDir("forced-esm-strict-08", {
+      "zero.mjs": "console.log(08);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "zero.mjs");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("legacy octal literal as an object property key in a .mjs file is an error", async () => {
+    using dir = tempDir("forced-esm-strict-octal-key", {
+      "key.mjs": "console.log({ 010: 1 });\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "key.mjs");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("legacy octal literal as a destructuring binding key in a .mjs file is an error", async () => {
+    using dir = tempDir("forced-esm-strict-octal-binding", {
+      "binding.mjs": "var { 010: x } = { 8: 1 };\nconsole.log(x);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "binding.mjs");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("eval and arguments declarations in CommonJS-classified .mjs files still fail ESM-format bundles", async () => {
+    // The file executes as CommonJS via the interop, but `bun build
+    // --format=esm` puts its wrapper inside a strict ES module, so the
+    // sloppy-only declaration must keep failing the build.
+    using dir = tempDir("forced-esm-bundle-esm-format", {
+      "utils.mjs": "exports.x = 1;\nvar arguments = 5;\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "utils.mjs", "--format=esm"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(
+      'Declarations with the name "arguments" cannot be used with the ESM output format due to strict mode',
+    );
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("legacy octal literal in a CommonJS-classified .mjs file still bundles to ESM format", async () => {
+    // Unlike sloppy-only declarations, legacy octal literals never survive
+    // into the printed bundle (the printer emits the numeric value), so the
+    // ESM output format check must not reject them.
+    using dir = tempDir("forced-esm-bundle-octal", {
+      "utils.mjs": "exports.x = 010;\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "utils.mjs", "--format=esm"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("Legacy octal literals");
+    expect(stdout).toContain("8");
+    expect(exitCode).toBe(0);
+  });
+
+  test("reserved word declarations in CommonJS-classified .mjs files still bundle to ESM format", async () => {
+    // The renamer remaps bound reserved-word symbols (package -> _package),
+    // so the bundle is strict-valid and the build must not error.
+    using dir = tempDir("forced-esm-bundle-reserved", {
+      "utils.mjs": "exports.x = 1;\nvar package = 1;\nconsole.log(package);\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "utils.mjs", "--format=esm"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("reserved word");
+    expect(stdout).toContain("_package");
+    expect(exitCode).toBe(0);
+  });
+
+  test("top-level return inside a TypeScript namespace body does not opt out of strict mode", async () => {
+    // Namespace bodies compile to generated closures, so a return there is
+    // not a module-level return and must not classify the file as CommonJS.
+    using dir = tempDir("forced-esm-ns-return", {
+      "ns.mts": "namespace N {\n  if (globalThis.never) return;\n}\nvar v = 010;\nconsole.log(v);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "ns.mts");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("return inside declare global does not opt out of strict mode", async () => {
+    // The ambient body is parsed then dropped, so a return there is not a
+    // module-level return.
+    using dir = tempDir("forced-esm-declare-global-return", {
+      "dg.mts": "declare global {\n  return;\n}\nvar v = 010;\nconsole.log(v);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "dg.mts");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("top-level return keeps the interop carve-out under non-ESM bundle formats", async () => {
+    // Top-level return detection must not depend on the output format: the
+    // same .mjs file classifies as CommonJS (sloppy) whether bundling to
+    // esm, cjs, or iife.
+    using dir = tempDir("forced-esm-bundle-return-formats", {
+      "r.mjs": "var v = 010;\nconsole.log(v);\nreturn;\n",
+    });
+    for (const [format, outfile, expected] of [
+      ["esm", "out.mjs", "8\n"],
+      ["cjs", "out.cjs", "8\n"],
+      // A CommonJS-classified entry point is wrapped but not invoked under
+      // the iife format (pre-existing for any CJS entry, e.g. a .cjs file).
+      ["iife", "out.iife.js", ""],
+    ]) {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "r.mjs", `--format=${format}`, `--outfile=${outfile}`],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [buildStdout, buildStderr, buildExit] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      expect({ format, buildStdout, buildStderr }).toMatchObject({ format, buildStderr: "" });
+      expect(buildExit).toBe(0);
+      const { stdout, stderr, exitCode } = await run(dir, outfile);
+      expect({ format, stdout, stderr }).toEqual({ format, stdout: expected, stderr: "" });
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("block-level functions in CommonJS-style .mjs files keep sloppy hoisting when bundled", async () => {
+    // Symbol hoisting runs before exports_kind classification, so the
+    // forced-ESM marking must not disable the sloppy-mode Annex B handling
+    // for files that execute as CommonJS via the interop.
+    using dir = tempDir("forced-esm-bundle-annex-b", {
+      "f.mjs": "exports.x = 1;\n{ function g() { return 1; } }\nconsole.log(g());\n",
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "f.mjs", "--format=esm", "--outfile=out.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildStdout, buildStderr, buildExit] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect({ buildStdout, buildStderr }).toMatchObject({ buildStderr: "" });
+    expect(buildExit).toBe(0);
+    const { stdout, stderr, exitCode } = await run(dir, "out.mjs");
+    expect({ stdout, stderr }).toEqual({ stdout: "1\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("strict mode reserved word in a bare .mjs file is a transpiler error", async () => {
+    using dir = tempDir("forced-esm-strict-reserved", {
+      "reserved.mjs": "var package = { name: 1 };\nconsole.log(package.name);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "reserved.mjs");
+    // The transpiler reports this; previously it was left for the JS engine,
+    // which printed a different message at runtime.
+    expect(stderr).toContain('"package" is a reserved word and cannot be used in strict mode');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("legacy octal literal with explicit ESM syntax is an error", async () => {
+    using dir = tempDir("esm-syntax-strict-octal", {
+      "octal.js": "export {};\nconsole.log(010);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "octal.js");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stderr).toContain('because of the "export" keyword');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("legacy octal literal inside a class body is an error even in CommonJS", async () => {
+    using dir = tempDir("class-strict-octal", {
+      "class.js": "class C { m() { return 010; } }\nconsole.log(new C().m());\nmodule.exports = C;\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "class.js");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stderr).toContain("All code inside a class is implicitly in strict mode");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("legacy octal literal inside a class body is an error even in a CommonJS-classified .mjs file", async () => {
+    // Class bodies are unconditionally strict; the CommonJS interop
+    // classification (the file uses `exports`) must not swallow this.
+    using dir = tempDir("forced-esm-class-octal", {
+      "class.mjs": "exports.C = class { m() { return 010; } };\nconsole.log(new exports.C().m());\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "class.mjs");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stderr).toContain("All code inside a class is implicitly in strict mode");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("reserved word inside a class body is an error even in a CommonJS-classified .mjs file", async () => {
+    using dir = tempDir("forced-esm-class-reserved", {
+      "class.mjs":
+        "exports.C = class { m() { var package = 1; return package; } };\nconsole.log(new exports.C().m());\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "class.mjs");
+    expect(stderr).toContain('"package" is a reserved word and cannot be used in strict mode');
+    expect(stderr).toContain("All code inside a class is implicitly in strict mode");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test('legacy octal literal under "use strict" is an error', async () => {
+    using dir = tempDir("use-strict-octal", {
+      "strict.js": '"use strict";\nconsole.log(010);\n',
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "strict.js");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stderr).toContain('because of the "use strict" directive');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  // Bun deliberately executes forced-ESM files that use CommonJS-only
+  // features as CommonJS (sloppy mode), so none of the above applies to them.
+  test("file using exports still runs as sloppy CommonJS despite .mjs", async () => {
+    using dir = tempDir("forced-esm-cjs-interop-exports", {
+      "interop.mjs": "exports.v = 010;\nconsole.log(exports.v);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "interop.mjs");
+    expect({ stdout, stderr }).toEqual({ stdout: "8\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test('file using exports still runs as sloppy CommonJS under "type": "module"', async () => {
+    using dir = tempDir("type-module-cjs-interop-exports", {
+      "package.json": '{ "type": "module" }',
+      "interop.js": "exports.v = 010;\nconsole.log(exports.v);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "interop.js");
+    expect({ stdout, stderr }).toEqual({ stdout: "8\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("file using a with statement still runs as sloppy CommonJS despite .mjs", async () => {
+    using dir = tempDir("forced-esm-cjs-interop-with", {
+      "with.mjs": "with ({ x: 1 }) { console.log(x); }\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "with.mjs");
+    expect({ stdout, stderr }).toEqual({ stdout: "1\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("file using a top-level return still runs as sloppy CommonJS despite .mjs", async () => {
+    using dir = tempDir("forced-esm-cjs-interop-return", {
+      "return.mjs": "console.log(010);\nreturn;\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "return.mjs");
+    expect({ stdout, stderr }).toEqual({ stdout: "8\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("top-level return makes a plain .js file CommonJS like Node", async () => {
+    using dir = tempDir("top-level-return-cjs", {
+      "return.js": 'console.log("before");\nreturn;\nconsole.log("after");\n',
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "return.js");
+    expect({ stdout, stderr }).toEqual({ stdout: "before\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("top-level return stays a SyntaxError for bun -e, like node -e", async () => {
+    // The [eval] entry point executes as a bare program with no CommonJS
+    // function wrapper, so a top-level return cannot make it CommonJS.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", 'console.log("a"); return;'],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("SyntaxError");
+    expect(exitCode).toBe(1);
+  });
+
+  test("top-level return stays a SyntaxError for piped stdin too", async () => {
+    // Same carve-out as [eval]: the [stdin] entry point has no CommonJS
+    // function wrapper either.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "-"],
+      env: bunEnv,
+      stdin: new Blob(['console.log("a"); return;']),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("SyntaxError");
+    expect(exitCode).toBe(1);
+  });
+
+  test("strict-clean CommonJS code in a .mjs file keeps working", async () => {
+    using dir = tempDir("forced-esm-cjs-interop-clean", {
+      "clean.mjs":
+        'exports.foo = 42;\nconsole.log("ran as", typeof module === "undefined" ? "esm" : "cjs", exports.foo);\n',
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "clean.mjs");
+    expect({ stdout, stderr }).toEqual({ stdout: "ran as cjs 42\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});

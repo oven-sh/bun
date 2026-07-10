@@ -26,7 +26,7 @@ use bun_ast::RuntimeTranspilerCache;
 
 /// Bump when the cache wire format or parser output changes. Mirrors
 /// `EXPECTED_VERSION` in src/jsc/RuntimeTranspilerCache.rs.
-pub const RUNTIME_TRANSPILER_CACHE_VERSION: u32 = 20;
+pub const RUNTIME_TRANSPILER_CACHE_VERSION: u32 = 23;
 
 /// Written by CLI argument parsing and `VirtualMachine` init, and flipped
 /// lazily on cache-dir resolution failure. Module-level so those writers can

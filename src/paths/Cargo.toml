@@ -29,8 +29,3 @@ thiserror.workspace = true
 # `string_paths.rs` — Miri requires the stub's signature to match the extern
 # declaration's types exactly, not just their ABI layout.
 bun_simdutf_sys.workspace = true
-# Native-symbol shims + the prebuilt libuv archive so `cargo test -p
-# bun_paths` links locally (see src/test_native_link).
-bun_test_native_link = { path = "../test_native_link" }
-# Real `ErrnoNames[Sys]` dispatch impl for the test binary.
-bun_errno.workspace = true

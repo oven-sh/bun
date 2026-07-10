@@ -523,10 +523,6 @@ pub(crate) mod tests {
     #[test]
     fn dropping_stdio_is_safe() {
         let _g = FD_TEST_LOCK.lock();
-        // `cargo test` skips product startup; populate the Windows stdio
-        // caches the way `bun_bin` does before exercising them.
-        #[cfg(windows)]
-        bun_core::output::stdio::init();
         // `File::stdin()` / `stdout()` / `stderr()` wrap process-shared
         // descriptors that the caller does not own. Dropping the wrapper must
         // not tear down the test harness's output.

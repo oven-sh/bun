@@ -1434,9 +1434,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_core",
- "bun_errno",
  "bun_simdutf_sys",
- "bun_test_native_link",
  "bytemuck",
  "const_format",
  "enum-map",
@@ -2047,8 +2045,6 @@ dependencies = [
  "bun_opaque",
  "bun_output",
  "bun_paths",
- "bun_simdutf_sys",
- "bun_test_native_link",
  "bun_windows_sys",
  "bun_wyhash",
  "bytemuck",
@@ -2089,13 +2085,6 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_test_native_link"
-version = "0.0.0"
-dependencies = [
- "bun_simdutf_sys",
 ]
 
 [[package]]

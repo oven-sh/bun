@@ -10370,7 +10370,3 @@ mod normalize_path_windows_tests {
         assert!(fstat(*sub).is_ok());
     }
 }
-
-// Test-only shims for native symbols (see the module doc).
-#[cfg(test)]
-mod native_test_shims;

@@ -1058,7 +1058,3 @@ pub mod fs {
 }
 
 pub use self::fs::PathContentsPair;
-
-// Test-only shims for native symbols (see the module doc).
-#[cfg(test)]
-mod native_test_shims;

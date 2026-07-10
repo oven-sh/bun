@@ -41,11 +41,3 @@ memchr = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 bun_libuv_sys.workspace = true
 bun_output.workspace = true
-
-[dev-dependencies]
-# Native-symbol shims + the prebuilt libuv archive so `cargo test -p bun_sys`
-# links locally (see src/test_native_link).
-bun_test_native_link = { path = "../test_native_link" }
-# Nominal `SIMDUTFResult`/`Status` for the simdutf stubs in
-# `native_test_shims.rs`.
-bun_simdutf_sys.workspace = true

@@ -785,10 +785,11 @@ var InternalSecureContext = class SecureContext {
       if (key) throwOnInvalidTLSArray("options.key", key);
       const ca = options.ca;
       if (ca) throwOnInvalidTLSArray("options.ca", ca);
-      if (options.servername != null && typeof options.servername !== "string")
-        throw $ERR_INVALID_ARG_TYPE("options.servername", "string", options.servername);
-      if (options.secureOptions != null && typeof options.secureOptions !== "number")
-        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", options.secureOptions);
+      const { servername, secureOptions } = options;
+      if (servername != null && typeof servername !== "string")
+        throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
+      if (secureOptions != null && typeof secureOptions !== "number")
+        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
       const privateKeyIdentifier = options.privateKeyIdentifier;
       if (!$isUndefinedOrNull(privateKeyIdentifier)) {
         const privateKeyEngine = options.privateKeyEngine;

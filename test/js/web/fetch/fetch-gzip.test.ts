@@ -611,6 +611,33 @@ describe("Transfer-Encoding other than chunked/identity is rejected", () => {
       server.close();
     }
   });
+
+  // RFC 9112 §6.1: Transfer-Encoding MAY be sent on a HEAD or 304 response to
+  // indicate what would have been applied. There is no body to decode, so the
+  // header is informational and the fetch must resolve like Node/undici.
+  it.concurrent.each([
+    ["HEAD", "200 OK"],
+    ["GET", "304 Not Modified"],
+    ["GET", "204 No Content"],
+  ])("%s -> %s with Transfer-Encoding: gzip resolves", async (method, status) => {
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", () => {
+        socket.end(`HTTP/1.1 ${status}\r\nTransfer-Encoding: gzip\r\nConnection: close\r\n\r\n`);
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/`, { method });
+      expect({ status: res.status, body: await res.text() }).toEqual({
+        status: Number(status.split(" ")[0]),
+        body: "",
+      });
+    } finally {
+      server.close();
+    }
+  });
 });
 
 describe("empty compressed responses", () => {

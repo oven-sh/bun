@@ -4982,6 +4982,7 @@ impl<'a> HTTPClient<'a> {
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
+        let mut unsupported_transfer_coding = false;
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
@@ -5066,10 +5067,10 @@ impl<'a> HTTPClient<'a> {
                     } else if strings::eql_case_insensitive_ascii_check_length(value, b"chunked") {
                         self.state.transfer_encoding = Encoding::Chunked;
                     } else {
-                        // We never send a TE request header, so per RFC 9112 §5 a server
-                        // may only apply chunked; any other coding (including the
-                        // compression codings) has no decoder here and must be refused.
-                        return Err(err!(UnsupportedTransferEncoding));
+                        // We never send a TE request header, so any coding other than
+                        // chunked has no decoder here. Defer the error: RFC 9112 §6.1
+                        // allows this header on HEAD/304 where there is no body.
+                        unsupported_transfer_coding = true;
                     }
                 }
                 h if h == hash_header_const(b"Location") => {
@@ -5477,6 +5478,9 @@ impl<'a> HTTPClient<'a> {
                 || self.state.transfer_encoding == Encoding::Chunked
                 || is_server_sent_events)
         {
+            if unsupported_transfer_coding {
+                return Err(err!(UnsupportedTransferEncoding));
+            }
             Ok(ShouldContinue::ContinueStreaming)
         } else {
             Ok(ShouldContinue::Finished)

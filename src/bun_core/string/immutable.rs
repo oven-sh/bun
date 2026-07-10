@@ -6,7 +6,7 @@ use core::ffi::c_int;
 
 use crate::BoundedArray;
 use crate::Error;
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, ArenaVec, MimallocArena};
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
@@ -1554,6 +1554,33 @@ pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     } else {
         None
     }
+}
+
+/// Well-formed UTF-8 view of `bytes`: returns `bytes` unchanged when it is
+/// already valid (the SIMD-validated common case), else an `arena` copy with
+/// each maximal ill-formed subsequence replaced by U+FFFD.
+pub fn replace_invalid_utf8<'a>(bytes: &'a [u8], arena: &'a MimallocArena) -> &'a [u8] {
+    if is_valid_utf8(bytes) {
+        return bytes;
+    }
+    // Size exactly: each maximal ill-formed subsequence (1-3 bytes) becomes
+    // one 3-byte U+FFFD.
+    let out_len = bytes.utf8_chunks().fold(0usize, |len, chunk| {
+        let replacement = if chunk.invalid().is_empty() {
+            0
+        } else {
+            UNICODE_REPLACEMENT_STR.len()
+        };
+        len + chunk.valid().len() + replacement
+    });
+    let mut out = ArenaVec::with_capacity_in(out_len, arena);
+    for chunk in bytes.utf8_chunks() {
+        out.extend_from_slice(chunk.valid().as_bytes());
+        if !chunk.invalid().is_empty() {
+            out.extend_from_slice(&UNICODE_REPLACEMENT_STR);
+        }
+    }
+    out.leak()
 }
 
 pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;

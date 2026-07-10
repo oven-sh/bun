@@ -9,8 +9,10 @@ use bun_ast::{Log, Range, Source};
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
 use bun_collections::{ArrayHashMap, HashMap};
 use bun_core::strings;
-use bun_core::{Error, Output, err};
+use bun_core::Output;
 use bun_dotenv::Loader as DotEnvLoader;
+
+use crate::Error;
 use bun_js_parser as js_parser;
 use bun_resolver::Resolver;
 use bun_resolver::package_json::{
@@ -105,7 +107,7 @@ impl MacroContext {
         import_range: Range,
         caller: Expr,
         function_name: &[u8],
-    ) -> Result<Expr, Error> {
+    ) -> crate::Result<Expr> {
         let _store_guard = DisableStoreReset::new();
         // const is_package_path = isPackagePath(specifier);
         let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {
@@ -135,7 +137,7 @@ impl MacroContext {
                 bun_ast::ImportKind::Stmt,
             ) {
                 Ok(r) => r,
-                Err(e) if e == err!("ModuleNotFound") => {
+                Err(e) if e == crate::Error::ModuleNotFound => {
                     log.add_resolve_error(
                         Some(source),
                         import_range,
@@ -147,7 +149,7 @@ impl MacroContext {
                         bun_ast::ImportKind::Stmt,
                         e,
                     );
-                    return Err(err!("MacroNotFound"));
+                    return Err(crate::Error::MacroNotFound);
                 }
                 Err(e) => {
                     log.add_range_error_fmt(
@@ -309,7 +311,7 @@ pub(crate) fn __bun_macro_context_call(
     import_range: Range,
     caller: Expr,
     function_name: &[u8],
-) -> Result<Expr, Error> {
+) -> crate::Result<Expr> {
     debug_assert!(
         !ctx.data.is_null(),
         "MacroContext.call reached without init"
@@ -408,7 +410,7 @@ impl Macro {
         function_name: &[u8],
         specifier: &[u8],
         hash: i32,
-    ) -> Result<Macro, Error> {
+    ) -> crate::Result<Macro> {
         let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
             (VirtualMachine::get_mut_ptr(), false)
         } else {
@@ -463,7 +465,7 @@ impl Macro {
             unsafe {
                 (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
             }
-            return Err(err!("MacroLoadError"));
+            return Err(crate::Error::MacroLoadError);
         }
 
         Ok(Macro {
@@ -513,12 +515,12 @@ bun_core::oom_from_alloc!(MacroError);
 impl From<MacroError> for Error {
     fn from(e: MacroError) -> Self {
         match e {
-            MacroError::MacroFailed => err!("MacroFailed"),
-            MacroError::OutOfMemory => err!("OutOfMemory"),
+            MacroError::MacroFailed => crate::Error::MacroFailed,
+            MacroError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             MacroError::ToJs(e) => e.into(),
-            MacroError::Js(JsError::OutOfMemory) => err!("OutOfMemory"),
-            MacroError::Js(JsError::Terminated) => err!("JSTerminated"),
-            MacroError::Js(JsError::Thrown) => err!("JSError"),
+            MacroError::Js(JsError::OutOfMemory) => crate::Error::Alloc(bun_alloc::AllocError),
+            MacroError::Js(JsError::Terminated) => crate::Error::JSTerminated,
+            MacroError::Js(JsError::Thrown) => crate::Error::JSError,
         }
     }
 }
@@ -1064,7 +1066,7 @@ fn expr_from_blob(
     mime_type: &[u8],
     log: &mut Log,
     loc: bun_ast::Loc,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};
 
     // MimeType::Category::Json — `application/json` or `+json`/`/json` suffix.
@@ -1076,7 +1078,7 @@ fn expr_from_blob(
         let source = &Source::init_path_string(b"fetch.json", bytes);
         let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
             Ok(e) => e,
-            Err(_) => return Err(bun_core::err!("MacroFailed")),
+            Err(_) => return Err(crate::Error::MacroFailed),
         };
         out_expr.loc = loc;
         match &mut out_expr.data {

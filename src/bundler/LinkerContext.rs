@@ -1298,7 +1298,6 @@ impl From<BunError> for LinkError {
         }
     }
 }
-bun_core::named_error_set!(LinkError);
 
 pub struct LinkerOptions {
     pub generate_bytecode_cache: bool,

@@ -1,5 +1,8 @@
 // @link "deps/zlib/libz.a"
 
+pub mod error;
+pub use error::{Error, Result};
+
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::size_of;
 
@@ -243,7 +246,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
         None
     }
 
-    pub fn read_all(&mut self, is_done: bool) -> Result<(), bun_core::Error>
+    pub fn read_all(&mut self, is_done: bool) -> crate::Result<()>
     where
         W: bun_io::Write,
     {
@@ -297,7 +300,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
                 }
                 ReturnCode::MemError => {
                     self.state = ZlibReaderState::Error;
-                    return Err(bun_core::err!("OutOfMemory"));
+                    return Err(crate::Error::Alloc(bun_alloc::AllocError));
                 }
                 ReturnCode::BufError => {
                     // BufError with avail_in == 0 means we need more input data
@@ -305,13 +308,13 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
                         if is_done {
                             // Stream is truncated - we're at EOF but decoder needs more data
                             self.state = ZlibReaderState::Error;
-                            return Err(bun_core::err!("ZlibError"));
+                            return Err(crate::Error::ZlibError);
                         }
                         // Not at EOF - we can retry with more data
-                        return Err(bun_core::err!("ShortRead"));
+                        return Err(crate::Error::ShortRead);
                     }
                     self.state = ZlibReaderState::Error;
-                    return Err(bun_core::err!("ZlibError"));
+                    return Err(crate::Error::ZlibError);
                 }
                 ReturnCode::StreamError
                 | ReturnCode::DataError
@@ -319,7 +322,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
                 | ReturnCode::VersionError
                 | ReturnCode::ErrNo => {
                     self.state = ZlibReaderState::Error;
-                    return Err(bun_core::err!("ZlibError"));
+                    return Err(crate::Error::ZlibError);
                 }
                 ReturnCode::Ok => {}
             }
@@ -344,7 +347,6 @@ pub enum ZlibError {
 
 bun_core::impl_tag_error!(ZlibError);
 
-bun_core::named_error_set!(ZlibError);
 
 // zlib `alloc_func`/`free_func` thunks → mimalloc. Shared by `ZlibReader` and
 // `ZlibCompressorArrayList`. Intentionally

@@ -881,15 +881,15 @@ impl JSGlobalObject {
         self.throw_value(instance)
     }
 
-    pub fn throw_error(&self, err: bun_core::Error, fmt: &'static str) -> JsError {
-        if err == bun_core::err!("OutOfMemory") {
+    pub fn throw_error(&self, err: crate::CrateError, fmt: &'static str) -> JsError {
+        if err == crate::CrateError::Alloc(bun_alloc::AllocError) {
             return self.throw_out_of_memory();
         }
 
         // If we're throwing JSError, that means either:
         // - We're throwing an exception while another exception is already active
         // - We're incorrectly returning JSError from a function that did not throw.
-        debug_assert!(err != bun_core::err!("JSError"));
+        debug_assert!(err != crate::CrateError::JSError);
 
         let mut buffer: Vec<u8> = Vec::new();
         use core::fmt::Write;

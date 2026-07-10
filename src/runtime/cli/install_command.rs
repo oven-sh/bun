@@ -1,5 +1,6 @@
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
-use bun_core::{Error, Global, Output, err};
+use bun_core::{Global, Output};
+use crate::Error;
 use bun_install::package_manager_real::{
     CommandLineArguments, PackageManager, ROOT_PACKAGE_JSON_PATH, Subcommand, install_with_manager,
     update_package_json_and_install_with_manager,
@@ -25,7 +26,7 @@ impl InstallCommand {
     #[cold]
     #[inline(never)]
     fn handle_error(e: Error) -> Result<(), Error> {
-        if e == err!("InstallFailed") || e == err!("InvalidPackageJSON") {
+        if e == crate::Error::InstallFailed || e == crate::Error::InvalidPackageJSON {
             // SAFETY: `Cli::LOG_` is initialised once during single-threaded
             // startup in `Cli::start()` before any command (including this
             // one) is dispatched; no other `&mut` to it is live here.

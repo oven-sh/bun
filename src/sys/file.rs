@@ -364,7 +364,7 @@ impl File {
         self,
         src: &ZStr,
         dest: &ZStr,
-    ) -> core::result::Result<(), bun_core::Error> {
+    ) -> Maybe<()> {
         let cwd = Fd::cwd();
         let result = move_file_z_with_handle(self.handle, cwd, src, cwd, dest);
         let _ = self.close(); // close error is non-actionable; discarded
@@ -375,7 +375,7 @@ impl File {
     pub fn get_path<'a>(
         &self,
         buf: &'a mut bun_paths::PathBuffer,
-    ) -> core::result::Result<&'a [u8], bun_core::Error> {
+    ) -> Maybe<&'a [u8]> {
         get_fd_path(self.handle, buf)
             .map(|s| &*s)
             .map_err(Into::into)
@@ -395,9 +395,9 @@ impl File {
     pub fn read_file_from(
         dir: impl AsFd,
         path: &[u8],
-    ) -> core::result::Result<(Self, Vec<u8>), bun_core::Error> {
+    ) -> Maybe<(Self, Vec<u8>)> {
         let dir = dir.as_fd();
-        let f = Self::openat(dir, path, O::RDONLY, 0).map_err(Into::<bun_core::Error>::into)?;
+        let f = Self::openat(dir, path, O::RDONLY, 0)?;
         match f.read_to_end() {
             Ok(bytes) => Ok((f, bytes)),
             // The fd escapes only on success; `Drop` closes it here.

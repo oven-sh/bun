@@ -490,7 +490,6 @@ pub enum MinifyErr {
     minify_err,
 }
 bun_core::impl_tag_error!(MinifyErr);
-bun_core::named_error_set!(MinifyErr);
 
 pub type MinifyError = ErrorWithLocation<MinifyErrorKind>;
 

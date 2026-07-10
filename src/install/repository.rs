@@ -5,7 +5,8 @@ use bstr::BStr;
 
 use bun_alloc::AllocError;
 use bun_core::strings;
-use bun_core::{self, Error, Output, err};
+use bun_core::{self, Output};
+use crate::Error;
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::string::Buf as StringBuf;
 
@@ -390,7 +391,7 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
                 && strings::contains(&result.stderr, b"found"))
                 || strings::contains(&result.stderr, b"does not exist")
             {
-                return Err(err!("RepositoryNotFound"));
+                return Err(crate::Error::RepositoryNotFound);
             }
         }
         _ => {}
@@ -418,7 +419,7 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
         Output::flush();
     }
 
-    Err(err!("InstallFailed"))
+    Err(crate::Error::InstallFailed)
 }
 
 impl RepositoryExt for Repository {
@@ -693,7 +694,7 @@ impl RepositoryExt for Repository {
                 "{}.git\0",
                 bun_core::fmt::hex_int_lower::<16>(task_id.get())
             )
-            .map_err(|_| err!("NoSpaceLeft"))?;
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             let written = total - cursor.len() - 1;
             bun_core::ZStr::from_buf(&folder_name_buf[..], written)
         };
@@ -716,7 +717,7 @@ impl RepositoryExt for Repository {
                 Ok(dir)
             }
             Err(not_found) => {
-                if not_found != err!("ENOENT") {
+                if not_found != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                     return Err(not_found);
                 }
 
@@ -738,7 +739,7 @@ impl RepositoryExt for Repository {
                         target,
                     ],
                 ) {
-                    if err == err!("RepositoryNotFound") || attempt > 1 {
+                    if err == crate::Error::RepositoryNotFound || attempt > 1 {
                         log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
@@ -771,7 +772,7 @@ impl RepositoryExt for Repository {
                 "{}.git",
                 bun_core::fmt::hex_int_lower::<16>(task_id.get())
             )
-            .map_err(|_| err!("NoSpaceLeft"))?;
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             let written = total - cursor.len();
             &folder_name_buf[..written]
         };
@@ -844,7 +845,7 @@ impl RepositoryExt for Repository {
                     BStr::new(name)
                 ),
             );
-            return Err(err!("InstallFailed"));
+            return Err(crate::Error::InstallFailed);
         }
 
         let folder_name_buf = TlBufs::folder_name_buf();
@@ -861,7 +862,7 @@ impl RepositoryExt for Repository {
         {
             Ok(d) => d,
             Err(not_found) => 'brk: {
-                if not_found != err!("ENOENT") {
+                if not_found != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                     return Err(not_found);
                 }
 
@@ -947,7 +948,7 @@ impl RepositoryExt for Repository {
             match bun_sys::File::read_file_from(package_dir.fd(), b"package.json") {
                 Ok(v) => v,
                 Err(err) => {
-                    if err == err!("ENOENT") {
+                    if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                         // allow git dependencies without package.json
                         package_dir.close();
                         return Ok(ExtractData {
@@ -967,7 +968,7 @@ impl RepositoryExt for Repository {
                         ),
                     );
                     package_dir.close();
-                    return Err(err!("InstallFailed"));
+                    return Err(crate::Error::InstallFailed);
                 }
             };
 
@@ -985,7 +986,7 @@ impl RepositoryExt for Repository {
                 );
                 let _ = json_file.close(); // close error is non-actionable
                 package_dir.close();
-                return Err(err!("InstallFailed"));
+                return Err(crate::Error::InstallFailed);
             }
         };
 

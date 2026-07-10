@@ -10,7 +10,8 @@ use bun_collections::{
     HashMap as BunHashMap, IdentityContext, LinearFifo, linear_fifo::DynamicBuffer,
 };
 use bun_core::fmt::PathSep;
-use bun_core::{Error as BunError, Global, Output, err};
+use bun_core::{Global, Output};
+use crate::Error as BunError;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
@@ -614,7 +615,7 @@ impl Lockfile {
                 // `format == Binary` the same way the real `Ok` result does.
                 let binary_origin = LoadResult::Err(LoadResultErr {
                     step: LoadStep::ParseFile,
-                    value: err!("DebugTextLockfileRoundTrip"),
+                    value: crate::Error::DebugTextLockfileRoundTrip,
                     lockfile_path: zstr!("bun.lockb"),
                     format: LockfileFormat::Binary,
                 });
@@ -1107,7 +1108,7 @@ impl Lockfile {
         }
 
         // Step 1. Recreate the lockfile with only the packages that are still alive
-        let root = old.root_package().ok_or_else(|| err!("NoPackage"))?;
+        let root = old.root_package().ok_or(crate::Error::NoPackage)?;
 
         let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
         let clone_queue_ = PendingResolutions::new();
@@ -1812,8 +1813,8 @@ impl<'a> Printer<'a> {
         let writer = Output::writer_buffered();
         match Self::print_with_lockfile(&lockfile, format, writer) {
             Ok(()) => {}
-            Err(e) if e == err!("OutOfMemory") => bun_core::out_of_memory(),
-            Err(e) if e == err!("BrokenPipe") || e == err!("WriteFailed") => return Ok(()),
+            Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
+            Err(crate::Error::BrokenPipe) | Err(crate::Error::WriteFailed) => return Ok(()),
             Err(e) => return Err(e),
         }
         Output::flush();

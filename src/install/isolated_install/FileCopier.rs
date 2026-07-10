@@ -2,7 +2,7 @@
 use core::ptr;
 
 use bun_alloc::AllocError;
-use bun_core::{Error, err};
+use crate::Error;
 #[cfg(not(windows))]
 use bun_core::{Global, fmt as bun_fmt};
 use bun_paths::{self, OSPathChar, OSPathSlice};
@@ -76,48 +76,30 @@ impl FileCopier {
             Err(e) => {
                 // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
                 let errno: E = {
-                    // Match against interned bun_core::Error tags.
                     let e: Error = e;
-                    if e == err!("AccessDenied") {
-                        E::EPERM
-                    } else if e == err!("FileTooBig") {
-                        E::EFBIG
-                    } else if e == err!("SymLinkLoop") {
-                        E::ELOOP
-                    } else if e == err!("ProcessFdQuotaExceeded") {
-                        E::ENFILE
-                    } else if e == err!("NameTooLong") {
-                        E::ENAMETOOLONG
-                    } else if e == err!("SystemFdQuotaExceeded") {
-                        E::EMFILE
-                    } else if e == err!("SystemResources") {
-                        E::ENOMEM
-                    } else if e == err!("ReadOnlyFileSystem") {
-                        E::EROFS
-                    } else if e == err!("FileSystem") {
-                        E::EIO
-                    } else if e == err!("FileBusy") || e == err!("DeviceBusy") {
-                        E::EBUSY
-                    }
-                    // One of the path components was not a directory.
-                    // This error is unreachable if `sub_path` does not contain a path separator.
-                    else if e == err!("NotDir") {
-                        E::ENOTDIR
-                    }
-                    // On Windows, file paths must be valid Unicode.
-                    // On Windows, file paths cannot contain these characters:
-                    // '/', '*', '?', '"', '<', '>', '|'
-                    else if e == err!("InvalidUtf8")
-                        || e == err!("InvalidWtf8")
-                        || e == err!("BadPathName")
-                    {
-                        E::EINVAL
-                    } else if e == err!("FileNotFound") {
-                        E::ENOENT
-                    } else if e == err!("IsDir") {
-                        E::EISDIR
-                    } else {
-                        E::EFAULT
+                    match e {
+                        crate::Error::Sys(bun_errno::SystemErrno::EACCES) => E::EPERM,
+                        crate::Error::FileTooBig => E::EFBIG,
+                        crate::Error::SymLinkLoop => E::ELOOP,
+                        crate::Error::ProcessFdQuotaExceeded => E::ENFILE,
+                        crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG) => E::ENAMETOOLONG,
+                        crate::Error::SystemFdQuotaExceeded => E::EMFILE,
+                        crate::Error::SystemResources => E::ENOMEM,
+                        crate::Error::ReadOnlyFileSystem => E::EROFS,
+                        crate::Error::FileSystem => E::EIO,
+                        crate::Error::FileBusy | crate::Error::DeviceBusy => E::EBUSY,
+                        // One of the path components was not a directory.
+                        // This error is unreachable if `sub_path` does not contain a path separator.
+                        crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => E::ENOTDIR,
+                        // On Windows, file paths must be valid Unicode.
+                        // On Windows, file paths cannot contain these characters:
+                        // '/', '*', '?', '"', '<', '>', '|'
+                        crate::Error::InvalidUtf8
+                        | crate::Error::InvalidWtf8
+                        | crate::Error::Sys(bun_errno::SystemErrno::EINVAL) => E::EINVAL,
+                        crate::Error::Sys(bun_errno::SystemErrno::ENOENT) => E::ENOENT,
+                        crate::Error::Sys(bun_errno::SystemErrno::EISDIR) => E::EISDIR,
+                        _ => E::EFAULT,
                     }
                 };
                 #[cfg(windows)]

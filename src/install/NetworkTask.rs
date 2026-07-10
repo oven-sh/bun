@@ -385,16 +385,16 @@ pub enum ForManifestError {
     InvalidURL,
 }
 bun_core::oom_from_alloc!(ForManifestError);
-impl From<ForManifestError> for bun_core::Error {
+impl From<ForManifestError> for crate::Error {
     fn from(e: ForManifestError) -> Self {
         match e {
-            ForManifestError::OutOfMemory => bun_core::err!(OutOfMemory),
-            ForManifestError::InvalidURL => bun_core::err!(InvalidURL),
+            ForManifestError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ForManifestError::InvalidURL => crate::Error::InvalidURL,
         }
     }
 }
-impl PartialEq<bun_core::Error> for ForManifestError {
-    fn eq(&self, other: &bun_core::Error) -> bool {
+impl PartialEq<crate::Error> for ForManifestError {
+    fn eq(&self, other: &crate::Error) -> bool {
         <&'static str>::from(self) == other.name()
     }
 }
@@ -704,16 +704,16 @@ pub enum ForTarballError {
     InvalidURL,
 }
 bun_core::oom_from_alloc!(ForTarballError);
-impl From<ForTarballError> for bun_core::Error {
+impl From<ForTarballError> for crate::Error {
     fn from(e: ForTarballError) -> Self {
         match e {
-            ForTarballError::OutOfMemory => bun_core::err!(OutOfMemory),
-            ForTarballError::InvalidURL => bun_core::err!(InvalidURL),
+            ForTarballError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ForTarballError::InvalidURL => crate::Error::InvalidURL,
         }
     }
 }
-impl PartialEq<bun_core::Error> for ForTarballError {
-    fn eq(&self, other: &bun_core::Error) -> bool {
+impl PartialEq<crate::Error> for ForTarballError {
+    fn eq(&self, other: &crate::Error) -> bool {
         <&'static str>::from(self) == other.name()
     }
 }

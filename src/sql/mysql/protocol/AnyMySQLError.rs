@@ -54,7 +54,6 @@ bun_core::impl_tag_error!(Error);
 /// (`bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError`) resolve.
 pub type AnyMySQLError = Error;
 
-bun_core::named_error_set!(Error);
 
 // Reverse of the above: `bun_core::Error` is just an interned name; recover the
 // matching variant by name (or `UnknownError` as a catch-all). Needed because

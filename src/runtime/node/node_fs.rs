@@ -401,15 +401,15 @@ fn encoding_to_node(e: Encoding) -> bun_core::NodeEncoding {
 /// `super::stat` swaps to `pub use bun_sys::PosixStat` this alias collapses.
 use super::stat::PosixStat;
 
-/// Node `fs.rm` mapping helper — `bun_core::err!("Name")` produces a
-/// `bun_core::Error` from a static error-set name; the *reverse* (name →
+/// Node `fs.rm` mapping helper — `crate::Error::Name` produces a
+/// `crate::Error` from a static error-set name; the *reverse* (name →
 /// `Error` for return) needs the same constructor. The macro caches per
 /// *call site*, but `dt_err` feeds a runtime-selected name from a `match`,
 /// so route through the underlying `Error::intern` (process-global string→u16
 /// table; idempotent, lock-free after first hit on the SEED set).
 #[inline]
-fn err_from_static(name: &'static str) -> bun_core::Error {
-    bun_core::Error::intern(name)
+fn err_from_static(name: &'static str) -> crate::Error {
+    crate::Error::intern(name)
 }
 
 /// `preallocate_supported` / `preallocate_length` — these consts have
@@ -7792,7 +7792,7 @@ impl NodeFS {
             #[cfg(not(windows))]
             let resolved = args.path.slice();
             if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File) {
-                let errno = if err == bun_core::err!("FileNotFound") {
+                let errno = if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                     if args.force {
                         return Ok(());
                     }
@@ -9602,7 +9602,7 @@ impl ReaddirEntry for Buffer {
 // collapsed them into one, which silently mapped AccessDenied→EPERM for `rm`
 // (Node returns EACCES there) and widened the narrow table. Split back out
 // per call site.
-fn map_anyerror_to_errno(err: bun_core::Error) -> E {
+fn map_anyerror_to_errno(err: crate::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EPERM,
         "PermissionDenied" => E::EPERM,
@@ -9625,7 +9625,7 @@ fn map_anyerror_to_errno(err: bun_core::Error) -> E {
 
 // `rm` recursive (zig_delete_tree) — same shape as the rmdir table above except
 // AccessDenied maps to EACCES, not EPERM.
-fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
+fn map_anyerror_to_errno_rm_tree(err: crate::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EACCES,
         "PermissionDenied" => E::EPERM,
@@ -9693,7 +9693,7 @@ pub unsafe extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const 
 // treat_as_dir flip-flop, close-then-deleteDir, retry-on-DirNotEmpty.
 
 #[inline]
-fn dt_err(errno: E) -> bun_core::Error {
+fn dt_err(errno: E) -> crate::Error {
     // Reverse of the `map_anyerror_to_errno*` tables above — round-trip through
     // the error-set name so existing callers don't have to change.
     err_from_static(match errno {
@@ -9811,7 +9811,7 @@ pub fn zig_delete_tree(
     self_: &sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let initial_iterable_dir =
         match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
             Some(d) => d,
@@ -9983,7 +9983,7 @@ fn zig_delete_tree_open_initial_subpath(
     self_: &sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
-) -> Result<Option<sys::Dir>, bun_core::Error> {
+) -> crate::Result<Option<sys::Dir>> {
     // Treat as a file by default
     let mut treat_as_dir = kind_hint == sys::FileKind::Directory;
     loop {
@@ -10012,7 +10012,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
     self_: &sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     'start_over: loop {
         let mut dir = match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
             Some(d) => d,
@@ -10034,7 +10034,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
         // Here we must avoid recursion, in order to provide O(1) memory guarantee of this function.
         // Go through each entry and if it is not a directory, delete it. If it is a directory,
         // open it, and close the original directory. Repeat. Then start the entire operation over.
-        let result: Result<(), bun_core::Error> = 'scan_dir: loop {
+        let result: crate::Result<()> = 'scan_dir: loop {
             let mut dir_it = DirIterator::WrappedIterator::init(dir.fd);
             'dir_it: loop {
                 let entry = match dir_it.next() {

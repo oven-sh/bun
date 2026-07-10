@@ -286,9 +286,9 @@ impl Algorithm {
     }
 }
 
-/// `bun_core::Error` (NonZeroU16 tag). The pwhash shim
-/// must `impl From<pwhash::Error> for bun_core::Error`.
-pub(crate) type HashError = bun_core::Error;
+/// `crate::Error` (NonZeroU16 tag). The pwhash shim
+/// must `impl From<pwhash::Error> for crate::Error`.
+pub(crate) type HashError = crate::Error;
 
 impl PasswordObject {
     // This is purposely simple because nobody asked to make it more complicated
@@ -361,7 +361,7 @@ impl PasswordObject {
 
         let algo = match algorithm.or_else(|| Algorithm::get(previous_hash)) {
             Some(a) => a,
-            None => return Err(bun_core::err!("UnsupportedAlgorithm")),
+            None => return Err(crate::Error::UnsupportedAlgorithm),
         };
 
         Self::verify_with_algorithm(password, previous_hash, algo)
@@ -377,7 +377,7 @@ impl PasswordObject {
                 match pwhash::argon2::str_verify(previous_hash, password, Default::default()) {
                     Ok(()) => Ok(true),
                     Err(err) => {
-                        if err == bun_core::err!("PasswordVerificationFailed") {
+                        if err == crate::Error::PasswordVerificationFailed {
                             return Ok(false);
                         }
                         Err(err)
@@ -405,7 +405,7 @@ impl PasswordObject {
                 ) {
                     Ok(()) => Ok(true),
                     Err(err) => {
-                        if err == bun_core::err!("PasswordVerificationFailed") {
+                        if err == crate::Error::PasswordVerificationFailed {
                             return Ok(false);
                         }
                         Err(err)

@@ -2214,7 +2214,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ) {
                     Ok(r) => r,
                     Err(err) => {
-                        if err == bun_core::err!("MacroFailed") {
+                        if err == crate::Error::MacroFailed {
                             if p.log().msgs.len() == start_error_count {
                                 p.log().add_error(
                                     Some(p.source),

@@ -452,7 +452,6 @@ pub(crate) enum GitError {
     GitFailed,
 }
 
-bun_core::named_error_set!(GitError);
 
 /// Return the set of changed files (absolute paths) according to git.
 ///

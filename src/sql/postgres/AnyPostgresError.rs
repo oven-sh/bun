@@ -49,7 +49,6 @@ pub enum AnyPostgresError {
 
 bun_core::impl_tag_error!(AnyPostgresError);
 
-bun_core::named_error_set!(AnyPostgresError);
 
 // Reverse of the above: `bun_core::Error` is just an interned name; recover the
 // matching variant by name (or `JSError` as a catch-all). Needed because the

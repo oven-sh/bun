@@ -78,7 +78,6 @@ impl BackendError {
     }
 }
 
-bun_core::named_error_set!(BackendError);
 
 bun_core::oom_from_alloc!(BackendError);
 

@@ -41,7 +41,6 @@ impl From<codecs::Error> for BackendError {
     }
 }
 
-bun_core::named_error_set!(BackendError);
 
 impl BackendError {
     /// Reshape into the

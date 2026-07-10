@@ -10,7 +10,8 @@
 //! `update_package_json_and_install_and_cli`.
 
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
-use bun_core::{Error, Global, Output, err};
+use bun_core::{Global, Output};
+use crate::Error;
 use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
 use bun_install::package_manager_real::{Subcommand, update_package_json_and_install_and_cli};
 
@@ -24,7 +25,7 @@ pub fn update_package_json_and_install_catch_error(
 ) -> Result<(), Error> {
     match update_package_json_and_install(ctx, subcommand) {
         Ok(()) => Ok(()),
-        Err(e) if e == err!("InstallFailed") || e == err!("InvalidPackageJSON") => {
+        Err(e) if e == crate::Error::InstallFailed || e == crate::Error::InvalidPackageJSON => {
             // SAFETY: `Cli::LOG_` is initialised once during single-threaded startup in
             // `Cli::start()` before any command (including this one) is dispatched; we
             // are on the single CLI thread in the install error path and no other

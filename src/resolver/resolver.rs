@@ -42,7 +42,7 @@ unsafe extern "Rust" {
         log: NonNull<bun_ast::Log>,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
         env: NonNull<bun_dotenv::Loader<'static>>,
-    ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_core::Error>;
+    ) -> crate::CrateResult<NonNull<dyn AutoInstaller>>;
 }
 use crate::cache::Set as CacheSet;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
@@ -195,7 +195,7 @@ mod bun_sys {
     pub(super) fn open_dir_absolute_z(
         path: &::bun_core::ZStr,
         opts: OpenDirOptions,
-    ) -> core::result::Result<Fd, ::bun_core::Error> {
+    ) -> crate::CrateResult<Fd> {
         #[cfg(unix)]
         let nofollow = if opts.no_follow { libc::O_NOFOLLOW } else { 0 };
         #[cfg(not(unix))]
@@ -211,7 +211,7 @@ mod bun_sys {
         dir: Fd,
         path: &[u8],
         _opts: OpenDirOptions,
-    ) -> core::result::Result<Fd, ::bun_core::Error> {
+    ) -> crate::CrateResult<Fd> {
         // NOTE: callers pass either a `&'static [u8]` literal or a NUL-terminated
         // slice; `open_dir_at` builds its own ZStr internally so we strip the sentinel.
         let path = if path.last() == Some(&0) {
@@ -234,7 +234,7 @@ trait FdExt: Sized {
     fn get_fd_path<'b>(
         self,
         buf: &'b mut ::bun_paths::PathBuffer,
-    ) -> core::result::Result<&'b [u8], ::bun_core::Error>;
+    ) -> crate::CrateResult<&'b [u8]>;
 }
 impl FdExt for ::bun_sys::Fd {
     #[inline]
@@ -245,7 +245,7 @@ impl FdExt for ::bun_sys::Fd {
     fn get_fd_path<'b>(
         self,
         buf: &'b mut ::bun_paths::PathBuffer,
-    ) -> core::result::Result<&'b [u8], ::bun_core::Error> {
+    ) -> crate::CrateResult<&'b [u8]> {
         ::bun_sys::get_fd_path(self, buf)
             .map(|s| &*s)
             .map_err(Into::into)
@@ -879,7 +879,7 @@ impl<'a> Resolver<'a> {
     /// resolve failure rather than panicking.
     pub fn get_package_manager(
         &mut self,
-    ) -> core::result::Result<*mut dyn AutoInstaller, bun_core::Error> {
+    ) -> crate::CrateResult<*mut dyn AutoInstaller> {
         if let Some(pm) = self.package_manager {
             return Ok(pm.as_ptr());
         }
@@ -1056,7 +1056,7 @@ impl<'a> Resolver<'a> {
     pub fn flush_debug_logs(
         &mut self,
         flush_mode: FlushMode,
-    ) -> core::result::Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         // NOTE: capture `log` before partially borrowing `self.debug_logs`
         // so the method call doesn't conflict with the field borrow (`log()`
         // derefs the raw `*mut Log` and is lifetime-decoupled from `&self`).
@@ -1302,7 +1302,7 @@ impl<'a> Resolver<'a> {
         match DataURL::parse(import_path) {
             Err(_) => {
                 self.extension_order = original_order;
-                return ResultUnion::Failure(bun_core::err!("InvalidDataURL"));
+                return ResultUnion::Failure(crate::Error::InvalidDataURL);
             }
             Ok(Some(data_url)) => {
                 // "import 'data:text/javascript,console.log(123)';"
@@ -1421,7 +1421,7 @@ impl<'a> Resolver<'a> {
                 //     debug.add_note(b"Cannot resolve this path without a directory".to_vec());
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
-                // return ResultUnion::Failure(bun_core::err!("MissingResolveDir"));
+                // return ResultUnion::Failure(crate::Error::MissingResolveDir);
                 break 'brk Fs::FileSystem::instance().top_level_dir;
             }
 
@@ -1433,7 +1433,7 @@ impl<'a> Resolver<'a> {
                 //     debug.add_note(b"Cannot resolve this path without an absolute directory".to_vec());
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
-                // return ResultUnion::Failure(bun_core::err!("InvalidResolveDir"));
+                // return ResultUnion::Failure(crate::Error::InvalidResolveDir);
                 break 'brk Fs::FileSystem::instance().top_level_dir;
             }
 
@@ -1552,11 +1552,11 @@ impl<'a> Resolver<'a> {
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
-    ) -> core::result::Result<Result, bun_core::Error> {
+    ) -> crate::CrateResult<Result> {
         match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::disable) {
             ResultUnion::Success(result) => Ok(result),
             ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                Err(bun_core::err!("ModuleNotFound"))
+                Err(crate::Error::ModuleNotFound)
             }
             ResultUnion::Failure(e) => Err(e),
         }
@@ -1569,7 +1569,7 @@ impl<'a> Resolver<'a> {
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
-    ) -> core::result::Result<Result, bun_core::Error> {
+    ) -> crate::CrateResult<Result> {
         // SAFETY: `import_path` is caller-interned (source text / DirnameStore)
         // and outlives the returned Result. TODO: thread an explicit lifetime.
         let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
@@ -1610,7 +1610,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         result: &mut Result,
         kind: ast::ImportKind,
-    ) -> core::result::Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         if result.flags.is_external() {
             return Ok(());
         }
@@ -1761,7 +1761,7 @@ impl<'a> Resolver<'a> {
                             // return them as `Result.Union.failure` — never
                             // panic on EACCES/EMFILE/ELOOP here.
                             let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
-                                .map_err(Into::<bun_core::Error>::into)?;
+                                .map_err(Into::<crate::Error>::into)?;
                             {
                                 // Every cached-`Entry` rewrite takes the per-entry mutex.
                                 let _entry_guard = query.entry().mutex.lock_guard();
@@ -3128,9 +3128,7 @@ impl<'a> Resolver<'a> {
                                 if let Some(d) = self.debug_logs.as_mut() {
                                     d.decrease_indent();
                                 }
-                                return MatchStatus::Failure(bun_core::err!(
-                                    "VersionSpecifierNotAllowedHere"
-                                ));
+                                return MatchStatus::Failure(crate::Error::VersionSpecifierNotAllowedHere);
                             }
                             string_buf = esm.version;
                             dependency_version = match manager!().parse_dependency(
@@ -3200,7 +3198,7 @@ impl<'a> Resolver<'a> {
                     Ok(p) => p,
                     Err(err) => {
                         // if it's missing, we need to install it
-                        if err == bun_core::err!("FileNotFound") {
+                        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             match manager!().get_preinstall_state(resolved_package_id) {
                                 Install::PreinstallState::Done => {
                                     // NOTE: `MatchResult.path_pair` is `Path<'static>`;
@@ -3452,7 +3450,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         dir_path_maybe_trail_slash: &[u8],
         package_id: Install::PackageID,
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
         debug_assert!(self.package_manager.is_some());
 
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
@@ -3991,7 +3989,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         file: &[u8],
         dirname_fd: FD,
-    ) -> core::result::Result<Option<Box<TSConfigJSON>>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
@@ -4086,7 +4084,7 @@ impl<'a> Resolver<'a> {
         file: &[u8],
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
-    ) -> core::result::Result<Option<core::ptr::NonNull<PackageJSON>>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<core::ptr::NonNull<PackageJSON>>> {
         use crate::package_json::{IncludeDependencies, IncludeScripts};
         // NOTE: `IncludeDependencies` is a
         // const generic on `PackageJSON::parse`, `IncludeScripts` is runtime (it only
@@ -4124,14 +4122,14 @@ impl<'a> Resolver<'a> {
     fn dir_info_cached(
         &mut self,
         path: &[u8],
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
         self.dir_info_cached_maybe_log(true, path)
     }
 
     pub fn read_dir_info(
         &mut self,
         path: &[u8],
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
         self.dir_info_cached_maybe_log(false, path)
     }
 
@@ -4148,7 +4146,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         enable_logging: bool,
         raw_input_path: &[u8],
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
         // `self.mutex` is `&'static Mutex` (Copy) — bind it first so the guard
         // doesn't keep `self` borrowed across the body.
         let _unlock = self.mutex.lock_guard();
@@ -4230,7 +4228,7 @@ impl<'a> Resolver<'a> {
         enable_logging: bool,
         input_path: &[u8],
         top_result: allocators::Result,
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
         let dir_info_uncached_path_buf = bufs!(dir_info_uncached_path);
 
         let mut i: usize = 1;
@@ -4433,7 +4431,7 @@ impl<'a> Resolver<'a> {
                     let sentinel = bun_core::ZStr::from_buf(path, nul_at);
 
                     #[cfg(unix)]
-                    let open_req: core::result::Result<FD, bun_core::Error> = {
+                    let open_req: crate::CrateResult<FD> = {
                         bun_sys::open_dir_absolute_z(
                             sentinel,
                             bun_sys::OpenDirOptions {
@@ -4443,7 +4441,7 @@ impl<'a> Resolver<'a> {
                         )
                     };
                     #[cfg(windows)]
-                    let open_req: core::result::Result<FD, bun_core::Error> = {
+                    let open_req: crate::CrateResult<FD> = {
                         bun_sys::open_dir_at_windows_a(
                             FD::INVALID,
                             sentinel.as_bytes(),
@@ -4476,9 +4474,8 @@ impl<'a> Resolver<'a> {
                             // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
                             // list which contains such paths and treating them as missing means we just
                             // ignore them during path resolution.
-                            if err == bun_core::err!("ENOTDIR")
-                                || err == bun_core::err!("IsDir")
-                                || err == bun_core::err!("NotDir")
+                            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
+                                || err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                             {
                                 return Ok(None);
                             }
@@ -4493,8 +4490,7 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
-                            if !(err == bun_core::err!("ENOENT")
-                                || err == bun_core::err!("FileNotFound"))
+                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                             {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
@@ -5740,10 +5736,8 @@ impl<'a> Resolver<'a> {
 
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
-                e if e == bun_core::err!("ENOENT")
-                    || e == bun_core::err!("FileNotFound")
-                    || e == bun_core::err!("ENOTDIR")
-                    || e == bun_core::err!("NotDir") => {}
+                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,
@@ -6038,7 +6032,7 @@ impl<'a> Resolver<'a> {
         parent_index: allocators::IndexType,
         fd: FD,
         package_id: Option<Install::PackageID>,
-    ) -> core::result::Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         let result = _result;
 
         // SAFETY: RealFS is the process-global ARENA singleton. `Entry::kind` /
@@ -6427,7 +6421,7 @@ impl<'a> Resolver<'a> {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
                         let pretty = tsconfigpath;
-                        if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound")
+                        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                         {
                             let _ = self.log_mut().add_error_fmt(
                                 None,
@@ -6437,9 +6431,8 @@ impl<'a> Resolver<'a> {
                                     bun_core::fmt::quote(pretty)
                                 ),
                             );
-                        } else if err != bun_core::err!("ParseErrorAlreadyLogged")
-                            && err != bun_core::err!("IsDir")
-                            && err != bun_core::err!("EISDIR")
+                        } else if err != crate::Error::ParseErrorAlreadyLogged
+                            && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                         {
                             let _ = self.log_mut().add_error_fmt(
                                 None,
@@ -6597,7 +6590,7 @@ impl<'a> Resolver<'a> {
 enum DependencyToResolve {
     NotFound,
     Pending(Box<PendingResolution>),
-    Failure(bun_core::Error),
+    Failure(crate::Error),
     Resolution(Resolution),
 }
 

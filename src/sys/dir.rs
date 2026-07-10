@@ -102,7 +102,7 @@ impl Dir {
 
     /// `mkdir -p` relative to this dir.
     #[inline]
-    pub fn make_path(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+    pub fn make_path(&self, sub_path: &[u8]) -> Maybe<()> {
         mkdir_recursive_at(self.fd, sub_path).map_err(Into::into)
     }
     /// Try opening the directory first; on ENOENT, `make_path`
@@ -111,7 +111,7 @@ impl Dir {
         &self,
         sub_path: &[u8],
         _opts: OpenDirOptions,
-    ) -> core::result::Result<Dir, bun_core::Error> {
+    ) -> Maybe<Dir> {
         match open_dir_at(self.fd, sub_path) {
             Ok(fd) => Ok(Dir::from_fd(fd)),
             Err(e) if e.get_errno() == E::ENOENT => {
@@ -125,7 +125,7 @@ impl Dir {
     }
     /// Recursive `rm -rf`
     /// (stack-based depth-first walk).
-    pub fn delete_tree(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+    pub fn delete_tree(&self, sub_path: &[u8]) -> Maybe<()> {
         // `delete_tree_open_initial_subpath` — try unlinking as a file first; if
         // that yields IsDir/EPERM, open it as an iterable directory.
         let initial = match self.delete_tree_open_initial_subpath(sub_path)? {
@@ -151,7 +151,7 @@ impl Dir {
         });
 
         'process_stack: while let Some(top) = stack.last_mut() {
-            while let Some(entry) = top.iter.next().map_err(bun_core::Error::from)? {
+            while let Some(entry) = top.iter.next()? {
                 let mut treat_as_dir = matches!(entry.kind, EntryKind::Directory);
                 'handle_entry: loop {
                     if treat_as_dir {
@@ -261,7 +261,7 @@ impl Dir {
     fn delete_tree_open_initial_subpath(
         &self,
         sub_path: &[u8],
-    ) -> core::result::Result<Option<Fd>, bun_core::Error> {
+    ) -> Maybe<Option<Fd>> {
         let mut treat_as_dir = false;
         loop {
             if !treat_as_dir {
@@ -331,8 +331,8 @@ pub struct CreateFlags {
 impl Dir {
     /// Single-level `mkdirat` (mode 0o755) relative to
     /// this dir. Unlike `make_path`, does NOT create intermediate directories
-    /// and surfaces `error.PathAlreadyExists` for callers to branch on.
-    pub fn make_dir(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+    /// and surfaces `EEXIST` for callers to branch on.
+    pub fn make_dir(&self, sub_path: &[u8]) -> core::result::Result<(), bun_errno::SystemErrno> {
         let mut buf = bun_paths::PathBuffer::default();
         let len = sub_path.len().min(buf.0.len() - 1);
         buf.0[..len].copy_from_slice(&sub_path[..len]);
@@ -341,7 +341,7 @@ impl Dir {
         let z = ZStr::from_buf(&buf.0[..], len);
         match mkdirat(self.fd, z, 0o755) {
             Ok(()) => Ok(()),
-            Err(e) if e.get_errno() == E::EEXIST => Err(bun_core::err!("PathAlreadyExists")),
+            Err(e) if e.get_errno() == E::EEXIST => Err(bun_errno::SystemErrno::EEXIST),
             Err(e) => Err(e.into()),
         }
     }
@@ -355,7 +355,7 @@ impl Dir {
         target: &[u8],
         link_name: &[u8],
         _is_directory: bool,
-    ) -> core::result::Result<(), bun_core::Error> {
+    ) -> Maybe<()> {
         let mut tbuf = bun_paths::PathBuffer::default();
         let tlen = target.len().min(tbuf.0.len() - 1);
         tbuf.0[..tlen].copy_from_slice(&target[..tlen]);
@@ -380,7 +380,7 @@ impl Dir {
         &self,
         sub_path: &ZStr,
         flags: CreateFlags,
-    ) -> core::result::Result<File, bun_core::Error> {
+    ) -> Maybe<File> {
         let mut o = O::CREAT | O::CLOEXEC;
         o |= if flags.read { O::RDWR } else { O::WRONLY };
         if flags.truncate {
@@ -392,7 +392,7 @@ impl Dir {
 
     /// `unlinkat(self.fd, sub_path, 0)`.
     #[inline]
-    pub fn delete_file_z(&self, sub_path: &ZStr) -> core::result::Result<(), bun_core::Error> {
+    pub fn delete_file_z(&self, sub_path: &ZStr) -> Maybe<()> {
         unlinkat(self.fd, sub_path).map_err(Into::into)
     }
 
@@ -408,7 +408,7 @@ impl Dir {
         dest_dir: &Dir,
         dest_path: &[u8],
         options: CopyFileOptions,
-    ) -> core::result::Result<(), bun_core::Error> {
+    ) -> Maybe<()> {
         let in_fd = openat_a(self.fd, source_path, O::RDONLY | O::CLOEXEC, 0)?;
         let mode = match options.override_mode {
             Some(m) => m,
@@ -442,7 +442,7 @@ impl Dir {
     /// this dir as a `Dir` handle: `O_DIRECTORY |
     /// O_RDONLY | O_CLOEXEC` (handled by `open_dir_at`).
     #[inline]
-    pub fn open_dir_z(&self, sub_path: &ZStr) -> core::result::Result<Dir, bun_core::Error> {
+    pub fn open_dir_z(&self, sub_path: &ZStr) -> Maybe<Dir> {
         open_dir_at(self.fd, sub_path.as_bytes())
             .map(Dir::from_fd)
             .map_err(Into::into)
@@ -462,7 +462,7 @@ impl Dir {
         &self,
         sub_path: &[u8],
         opts: OpenDirOptions,
-    ) -> core::result::Result<Dir, bun_core::Error> {
+    ) -> Maybe<Dir> {
         #[cfg(windows)]
         {
             return open_dir_at_windows_a(
@@ -491,17 +491,17 @@ impl Dir {
 // `bun_install` and `bun_bundler` directly on `Fd`. Extension trait so we
 // don't fight with `bun_core`'s inherent impl.
 pub trait FdDirExt: Copy {
-    fn make_path(self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error>;
-    fn make_open_path(self, sub_path: &[u8]) -> core::result::Result<Dir, bun_core::Error>;
+    fn make_path(self, sub_path: &[u8]) -> Maybe<()>;
+    fn make_open_path(self, sub_path: &[u8]) -> Maybe<Dir>;
     fn from_std_dir(dir: &Dir) -> Self;
 }
 impl FdDirExt for Fd {
     #[inline]
-    fn make_path(self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+    fn make_path(self, sub_path: &[u8]) -> Maybe<()> {
         mkdir_recursive_at(self, sub_path).map_err(Into::into)
     }
     #[inline]
-    fn make_open_path(self, sub_path: &[u8]) -> core::result::Result<Dir, bun_core::Error> {
+    fn make_open_path(self, sub_path: &[u8]) -> Maybe<Dir> {
         Dir::borrow(&self).make_open_path(sub_path, OpenDirOptions::default())
     }
     #[inline]

@@ -30,7 +30,6 @@ pub enum MachoError {
     #[error("OutOfMemory")]
     OutOfMemory,
 }
-bun_core::named_error_set!(MachoError);
 bun_core::oom_from_alloc!(MachoError);
 
 pub struct MachoFile {

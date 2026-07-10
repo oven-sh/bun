@@ -71,13 +71,13 @@ pub type Id = u32;
 pub(crate) struct PackageDownloadError<'a> {
     pub name: &'a [u8],
     pub resolution: Resolution,
-    pub err: bun_core::Error,
+    pub err: crate::CrateError,
     pub url: &'a [u8],
 }
 
 pub(crate) struct PackageResolveError<'a> {
     pub name: &'a [u8],
-    pub err: bun_core::Error,
+    pub err: crate::CrateError,
     pub url: &'a [u8],
     pub version: bun_install::dependency::Version,
 }
@@ -146,7 +146,7 @@ impl AsyncModule {
         global_this: &JSGlobalObject,
         promise: JSValue,
         resolved_source: &mut ResolvedSource,
-        err: Option<bun_core::Error>,
+        err: Option<crate::CrateError>,
         specifier_: BunString,
         referrer_: BunString,
         log: &mut bun_ast::Log,
@@ -189,9 +189,9 @@ impl AsyncModule {
                 None
             };
 
-            if e == bun_core::err!("JSError") {
+            if e == crate::CrateError::JSError {
                 errorable = ErrorableResolvedSource::err(
-                    bun_core::err!("JSError"),
+                    crate::CrateError::JSError,
                     global_this.take_error(JsError::Thrown),
                 );
             } else {
@@ -278,7 +278,7 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
         Queue::on_resolve(ctx)
     }
 
-    fn on_package_manifest_error(ctx: &mut Queue, name: &[u8], err: bun_core::Error, url: &[u8]) {
+    fn on_package_manifest_error(ctx: &mut Queue, name: &[u8], err: crate::CrateError, url: &[u8]) {
         ctx.on_package_manifest_error(name, err, url)
     }
 
@@ -287,7 +287,7 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
         package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
-        err: bun_core::Error,
+        err: crate::CrateError,
         url: &[u8],
     ) {
         ctx.on_package_download_error(package_id, name, resolution, err, url)
@@ -314,7 +314,7 @@ impl Queue {
         ctx: *mut c_void,
         dependency: &Dependency,
         root_dependency_id: DependencyID,
-        err: bun_core::Error,
+        err: crate::CrateError,
     ) {
         // SAFETY: ctx was registered as *Queue when installing this callback.
         let this: &mut Queue = unsafe { bun_ptr::callback_ctx::<Queue>(ctx) };
@@ -406,7 +406,7 @@ impl Queue {
         }
     }
 
-    pub fn on_package_manifest_error(&mut self, name: &[u8], err: bun_core::Error, url: &[u8]) {
+    pub fn on_package_manifest_error(&mut self, name: &[u8], err: crate::CrateError, url: &[u8]) {
         bun_core::scoped_log!(
             AsyncModule,
             "onPackageManifestError: {}",
@@ -450,7 +450,7 @@ impl Queue {
         package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
-        err: bun_core::Error,
+        err: crate::CrateError,
         url: &[u8],
     ) {
         bun_core::scoped_log!(
@@ -713,8 +713,8 @@ impl AsyncModule {
         ));
         let errorable: ErrorableResolvedSource = match this.resume_loading_module(&mut log) {
             Ok(rs) => ErrorableResolvedSource::ok(rs),
-            Err(err) if err == bun_core::err!("JSError") => ErrorableResolvedSource::err(
-                bun_core::err!("JSError"),
+            Err(crate::CrateError::JSError) => ErrorableResolvedSource::err(
+                crate::CrateError::JSError,
                 global_this.take_error(JsError::Thrown),
             ),
             Err(err) => {
@@ -759,7 +759,7 @@ impl AsyncModule {
         vm: &mut VirtualMachine,
         import_record_id: u32,
         result: &PackageResolveError<'_>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         // Copy the `GlobalRef` out so the borrow of `self` ends before
         // `&mut self` reborrows below; `GlobalRef::deref` is the safe
         // JSC_BORROW accessor.
@@ -768,7 +768,7 @@ impl AsyncModule {
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
-        if e == bun_core::err!("PackageManifestHTTP400") {
+        if e == crate::CrateError::PackageManifestHTTP400 {
             write!(
                 &mut msg,
                 "HTTP 400 while resolving package '{}' at '{}'",
@@ -776,7 +776,7 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP401") {
+        } else if e == crate::CrateError::PackageManifestHTTP401 {
             write!(
                 &mut msg,
                 "HTTP 401 while resolving package '{}' at '{}'",
@@ -784,7 +784,7 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP402") {
+        } else if e == crate::CrateError::PackageManifestHTTP402 {
             write!(
                 &mut msg,
                 "HTTP 402 while resolving package '{}' at '{}'",
@@ -792,7 +792,7 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP403") {
+        } else if e == crate::CrateError::PackageManifestHTTP403 {
             write!(
                 &mut msg,
                 "HTTP 403 while resolving package '{}' at '{}'",
@@ -800,14 +800,14 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP404") {
+        } else if e == crate::CrateError::PackageManifestHTTP404 {
             write!(
                 &mut msg,
                 "Package '{}' was not found",
                 bstr::BStr::new(result.name)
             )
             .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP4xx") {
+        } else if e == crate::CrateError::PackageManifestHTTP4xx {
             write!(
                 &mut msg,
                 "HTTP 4xx while resolving package '{}' at '{}'",
@@ -815,7 +815,7 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP5xx") {
+        } else if e == crate::CrateError::PackageManifestHTTP5xx {
             write!(
                 &mut msg,
                 "HTTP 5xx while resolving package '{}' at '{}'",
@@ -823,12 +823,12 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == bun_core::err!("DistTagNotFound") || e == bun_core::err!("NoMatchingVersion")
+        } else if e == crate::CrateError::DistTagNotFound || e == crate::CrateError::NoMatchingVersion
         {
             // `Version::try_npm()` performs the tag guard and yields the
             // `NpmInfo` (whose `.version` is the semver query group).
             let npm = result.version.try_npm();
-            let prefix: &[u8] = if e == bun_core::err!("NoMatchingVersion")
+            let prefix: &[u8] = if e == crate::CrateError::NoMatchingVersion
                 && npm.map(|n| n.version.is_exact()).unwrap_or(false)
             {
                 b"Version not found"
@@ -858,13 +858,13 @@ impl AsyncModule {
         }
         // msg dropped at scope exit (defer bun.default_allocator.free(msg)).
 
-        let name: &[u8] = if e == bun_core::err!("NoMatchingVersion") {
+        let name: &[u8] = if e == crate::CrateError::NoMatchingVersion {
             b"PackageVersionNotFound"
-        } else if e == bun_core::err!("DistTagNotFound") {
+        } else if e == crate::CrateError::DistTagNotFound {
             b"PackageTagNotFound"
-        } else if e == bun_core::err!("PackageManifestHTTP403") {
+        } else if e == crate::CrateError::PackageManifestHTTP403 {
             b"PackageForbidden"
-        } else if e == bun_core::err!("PackageManifestHTTP404") {
+        } else if e == crate::CrateError::PackageManifestHTTP404 {
             b"PackageNotFound"
         } else {
             b"PackageResolveError"
@@ -968,7 +968,7 @@ impl AsyncModule {
         vm: &mut VirtualMachine,
         import_record_id: u32,
         result: &PackageDownloadError<'_>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         // Copy the `GlobalRef` out so the borrow of `self` ends before
         // `&mut vm` / `&mut self` reborrows below; `GlobalRef::deref` is the
         // safe JSC_BORROW accessor.
@@ -992,7 +992,7 @@ impl AsyncModule {
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
-        if e == bun_core::err!("TarballHTTP400") {
+        if e == crate::CrateError::TarballHTTP400 {
             write!(
                 &mut msg,
                 "HTTP 400 downloading package '{}@{}'",
@@ -1000,7 +1000,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballHTTP401") {
+        } else if e == crate::CrateError::TarballHTTP401 {
             write!(
                 &mut msg,
                 "HTTP 401 downloading package '{}@{}'",
@@ -1008,7 +1008,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballHTTP402") {
+        } else if e == crate::CrateError::TarballHTTP402 {
             write!(
                 &mut msg,
                 "HTTP 402 downloading package '{}@{}'",
@@ -1016,7 +1016,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballHTTP403") {
+        } else if e == crate::CrateError::TarballHTTP403 {
             write!(
                 &mut msg,
                 "HTTP 403 downloading package '{}@{}'",
@@ -1024,7 +1024,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballHTTP404") {
+        } else if e == crate::CrateError::TarballHTTP404 {
             write!(
                 &mut msg,
                 "HTTP 404 downloading package '{}@{}'",
@@ -1032,7 +1032,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballHTTP4xx") {
+        } else if e == crate::CrateError::TarballHTTP4xx {
             write!(
                 &mut msg,
                 "HTTP 4xx downloading package '{}@{}'",
@@ -1040,7 +1040,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballHTTP5xx") {
+        } else if e == crate::CrateError::TarballHTTP5xx {
             write!(
                 &mut msg,
                 "HTTP 5xx downloading package '{}@{}'",
@@ -1048,7 +1048,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == bun_core::err!("TarballFailedToExtract") {
+        } else if e == crate::CrateError::TarballFailedToExtract {
             write!(
                 &mut msg,
                 "Failed to extract tarball for package '{}@{}'",
@@ -1075,11 +1075,11 @@ impl AsyncModule {
         }
         // msg dropped at scope exit.
 
-        let name: &[u8] = if e == bun_core::err!("TarballFailedToExtract") {
+        let name: &[u8] = if e == crate::CrateError::TarballFailedToExtract {
             b"PackageExtractionError"
-        } else if e == bun_core::err!("TarballHTTP403") {
+        } else if e == crate::CrateError::TarballHTTP403 {
             b"TarballForbiddenError"
-        } else if e == bun_core::err!("TarballHTTP404") {
+        } else if e == crate::CrateError::TarballHTTP404 {
             b"TarballNotFoundError"
         } else {
             b"TarballDownloadError"
@@ -1185,7 +1185,7 @@ impl AsyncModule {
     pub fn resume_loading_module(
         &mut self,
         log: &mut bun_ast::Log,
-    ) -> Result<ResolvedSource, bun_core::Error> {
+    ) -> crate::CrateResult<ResolvedSource> {
         bun_core::scoped_log!(
             AsyncModule,
             "resumeLoadingModule: {}",

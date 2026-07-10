@@ -1,0 +1,21 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum Error {
+    #[error("MaxPathExceeded")]
+    MaxPathExceeded,
+    #[error(transparent)]
+    Sys(#[from] bun_errno::SystemErrno),
+    #[error(transparent)]
+    Core(#[from] bun_core::Error),
+}
+
+impl Error {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Sys(e) => <&'static str>::from(e),
+            Self::Core(e) => e.name(),
+            Self::MaxPathExceeded => "MaxPathExceeded",
+        }
+    }
+}
+
+pub type Result<T, E = Error> = core::result::Result<T, E>;

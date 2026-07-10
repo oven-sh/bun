@@ -48,7 +48,6 @@ pub enum Error {
     SizeOfImageMismatch,
 }
 
-bun_core::named_error_set!(Error);
 
 // Enums for strip modes and options
 #[derive(Copy, Clone, Eq, PartialEq)]

@@ -7,7 +7,7 @@ use core::sync::atomic::Ordering;
 
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{Error, err};
+use crate::Error;
 
 use super::stream::{State as StreamState, Stream};
 use super::{dispatch, encode};
@@ -346,7 +346,7 @@ impl ClientSession {
             if let Some(err) = self.fatal_error {
                 client.h2_fail(err);
             } else if client.signals.get(signals::Field::Aborted) {
-                client.h2_fail(err!(Aborted));
+                client.h2_fail(crate::Error::Aborted);
             } else if self.has_headroom() {
                 self.attach(client);
             } else {
@@ -670,7 +670,7 @@ impl ClientSession {
         while total < len {
             let wrote = self.socket.write(&pending.slice()[total..]);
             if wrote < 0 {
-                return Err(err!(WriteFailed));
+                return Err(crate::Error::WriteFailed);
             }
             let n = wrote as usize;
             total += n;
@@ -710,7 +710,7 @@ impl ClientSession {
         }
 
         if self.flush().is_err() {
-            self.fatal_error = Some(err!(WriteFailed));
+            self.fatal_error = Some(crate::Error::WriteFailed);
         }
 
         if let Some(err) = self.fatal_error {
@@ -809,7 +809,7 @@ impl ClientSession {
         }
         self.read_buffer.truncate(tail);
         if self.flush().is_err() {
-            self.fatal_error = Some(err!(WriteFailed));
+            self.fatal_error = Some(crate::Error::WriteFailed);
         }
     }
 
@@ -871,7 +871,7 @@ impl ClientSession {
             .position(|&c| pending_client_mut(c).async_http_id == async_http_id);
         if let Some(i) = found {
             let client = self.pending_attach.swap_remove(i);
-            pending_client_mut(client).h2_fail(err!(Aborted));
+            pending_client_mut(client).h2_fail(crate::Error::Aborted);
             self.rearm_timeout();
             self.maybe_release();
             return;
@@ -889,7 +889,7 @@ impl ClientSession {
             }
         }
         if let Some(stream) = target {
-            self.detach_with_failure(stream, err!(Aborted));
+            self.detach_with_failure(stream, crate::Error::Aborted);
         }
         self.rearm_timeout();
         self.maybe_release();
@@ -907,7 +907,7 @@ impl ClientSession {
                 }
             };
             if aborted {
-                self.detach_with_failure(stream, err!(Aborted));
+                self.detach_with_failure(stream, crate::Error::Aborted);
             } else {
                 i += 1;
             }
@@ -983,7 +983,7 @@ impl ClientSession {
             let _ = self.flush();
             stream.client = None;
             client.h2 = None;
-            client.h2_fail(err!(Aborted));
+            client.h2_fail(crate::Error::Aborted);
             return true;
         }
 
@@ -994,7 +994,7 @@ impl ClientSession {
             // before producing any of it (REFUSED_STREAM after HEADERS would
             // be a server bug, but retrying then re-streams a body prefix
             // into a Response that JS already holds — silent corruption).
-            if err == err!(HTTP2RefusedStream)
+            if err == crate::Error::HTTP2RefusedStream
                 && stream.status_code == 0
                 && client.h2_retries < crate::MAX_H2_RETRIES
                 && matches!(
@@ -1127,7 +1127,7 @@ impl ClientSession {
     fn finish_stream(&mut self, stream: &mut Stream, client: &mut HTTPClient) -> bool {
         if let Some(cl) = client.state.content_length {
             if stream.data_bytes_received != cl as u64 {
-                client.h2_fail(err!(HTTP2ContentLengthMismatch));
+                client.h2_fail(crate::Error::HTTP2ContentLengthMismatch);
                 return true;
             }
         }

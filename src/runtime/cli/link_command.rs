@@ -1,7 +1,7 @@
 use bstr::BStr;
 
 use bun_core::strings;
-use bun_core::{Global, Output, err};
+use bun_core::{Global, Output};
 use bun_paths::{AbsPath, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{Dir, Fd, FdDirExt};
@@ -20,16 +20,16 @@ use crate::command;
 pub(crate) struct LinkCommand;
 
 impl LinkCommand {
-    pub(crate) fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: command::Context) -> crate::Result<()> {
         link(ctx)
     }
 }
 
-fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
+fn link(ctx: command::Context) -> crate::Result<()> {
     let cli = CommandLineArguments::parse(Subcommand::Link)?;
     let (manager, original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Link) {
         Ok(v) => v,
-        Err(e) if e == err!(MissingPackageJSON) => {
+        Err(crate::Error::MissingPackageJSON) => {
             attempt_to_create_package_json()?;
             // Re-parse argv: `CommandLineArguments` is not `Clone`, and `parse`
             // is deterministic over process argv.
@@ -153,7 +153,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
             if name[0] == b'@' {
                 if let Some(i) = strings::index_of_char(name, b'/') {
                     if let Err(e) = node_modules.make_dir(&name[..i as usize]) {
-                        if e != err!(PathAlreadyExists) {
+                        if e != crate::Error::PathAlreadyExists {
                             if manager.options.log_level != LogLevel::Silent {
                                 bun_core::pretty_errorln!(
                                     "<r><red>error:<r> failed to create scope in global dir due to error {}",

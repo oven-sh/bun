@@ -133,7 +133,7 @@ impl ResolveMessage {
     pub fn fmt(
         specifier: &[u8],
         referrer: &[u8],
-        err: bun_core::Error,
+        err: crate::CrateError,
         import_kind: ImportKind,
     ) -> Vec<u8> {
         use bstr::BStr;
@@ -148,8 +148,7 @@ impl ResolveMessage {
             .ok();
             return out;
         }
-        // Note: matching against interned bun_core::Error consts.
-        if err == bun_core::err!("ModuleNotFound") {
+        if err == crate::CrateError::ModuleNotFound {
             if referrer == b"bun:main" {
                 write!(&mut out, "Module not found '{}'", BStr::new(specifier)).ok();
                 return out;
@@ -174,7 +173,7 @@ impl ResolveMessage {
             }
             return out;
         }
-        if err == bun_core::err!("InvalidDataURL") {
+        if err == crate::CrateError::InvalidDataURL {
             write!(
                 &mut out,
                 "Cannot resolve invalid data URL '{}' from '{}'",
@@ -184,7 +183,7 @@ impl ResolveMessage {
             .ok();
             return out;
         }
-        if err == bun_core::err!("InvalidURL") {
+        if err == crate::CrateError::InvalidURL {
             write!(
                 &mut out,
                 "Cannot resolve invalid URL '{}' from '{}'",

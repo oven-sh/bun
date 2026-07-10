@@ -1,7 +1,7 @@
 use bstr::BStr;
 
 use bun_core::strings;
-use bun_core::{Global, Output, err};
+use bun_core::{Global, Output};
 use bun_paths::{AbsPath, PathBuffer, platform, resolve_path};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt};
 
@@ -19,16 +19,16 @@ use crate::command::ContextData;
 pub(crate) struct UnlinkCommand;
 
 impl UnlinkCommand {
-    pub(crate) fn exec(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: &mut ContextData) -> crate::Result<()> {
         unlink(ctx)
     }
 }
 
-fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
     let cli = CommandLineArguments::parse(Subcommand::Unlink)?;
     let (manager, _original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Unlink) {
         Ok(v) => v,
-        Err(e) if e == err!(MissingPackageJSON) => {
+        Err(crate::Error::MissingPackageJSON) => {
             attempt_to_create_package_json()?;
             // Re-parse argv: `CommandLineArguments` is not `Clone`, and `parse`
             // is deterministic over process argv.

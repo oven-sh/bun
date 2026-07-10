@@ -1262,7 +1262,6 @@ pub enum ToJSError {
 }
 bun_core::impl_tag_error!(ToJSError);
 
-bun_core::named_error_set!(ToJSError);
 
 /// Say you need to allocate a bunch of tiny arrays
 /// You could just do separate allocations for each, but that is slow

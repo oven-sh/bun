@@ -7,7 +7,8 @@ use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
 use bun_core::ZStr;
-use bun_core::{Error, Global, Output, ZBox, env_var, fmt as bun_fmt};
+use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
+use crate::Error;
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
@@ -848,7 +849,7 @@ pub fn global_link_dir(this: &mut PackageManager) -> Fd {
 
     let global_dir = match options::open_global_dir(this.options.explicit_global_directory) {
         Ok(d) => Dir::from_fd(d),
-        Err(err) if err == bun_core::err!("No global directory found") => {
+        Err(crate::Error::NoGlobalDirectoryFound) => {
             Output::err_generic(
                 "failed to find a global directory for package caching and global link directories",
                 (),

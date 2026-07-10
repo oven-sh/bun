@@ -46,7 +46,7 @@ fn dir_open_dir_z(
     dir: &Dir,
     path: &ZStr,
     opts: bun_sys::OpenDirOptions,
-) -> Result<Dir, bun_core::Error> {
+) -> crate::Result<Dir> {
     dir.open_dir(path.as_bytes(), opts)
 }
 
@@ -209,7 +209,7 @@ impl PackCommand {
     pub fn exec_with_manager(
         ctx: Command::Context<'_>,
         manager: &mut PackageManager,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         use bun_install::lockfile::{LoadResult, LoadStep};
 
         if manager.options.log_level != LogLevel::Silent
@@ -237,7 +237,7 @@ impl PackCommand {
             LoadResult::Err(cause) => 'err: {
                 match cause.step {
                     LoadStep::OpenFile => {
-                        if cause.value == bun_core::err!("ENOENT") {
+                        if cause.value == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             break 'err None;
                         }
                         Output::err_generic(
@@ -317,7 +317,7 @@ impl PackCommand {
         Ok(())
     }
 
-    pub fn exec(ctx: Command::Context<'_>) -> Result<(), bun_core::Error> {
+    pub fn exec(ctx: Command::Context<'_>) -> crate::Result<()> {
         let cli =
             bun_install::package_manager::command_line_arguments::CommandLineArguments::parse(
                 bun_install::Subcommand::Pack,
@@ -329,7 +329,7 @@ impl PackCommand {
                 Ok(v) => v,
                 Err(err) => {
                     if !silent {
-                        if err == bun_core::err!("MissingPackageJSON") {
+                        if err == crate::Error::MissingPackageJSON {
                             let mut cwd_buf = PathBuffer::uninit();
                             match bun_sys::getcwd_z(&mut cwd_buf) {
                                 Ok(cwd) => {
@@ -923,7 +923,7 @@ fn iterate_bundled_deps(
         Ok(d) => d,
         Err(err) => {
             // ignore node_modules if it isn't a directory, or doesn't exist
-            if err == bun_core::err!("ENOTDIR") || err == bun_core::err!("ENOENT") {
+            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) || err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 return Ok(bundled_pack_queue);
             }
             Output::err(
@@ -2094,7 +2094,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         manager.options.log_level != LogLevel::Silent,
         false,
     ) {
-        if err == bun_core::err!("OutOfMemory") {
+        if err == crate::Error::Alloc(bun_alloc::AllocError) {
             return Err(PackError::OutOfMemory);
         }
         Output::err_generic(
@@ -3051,14 +3051,14 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     ) {
         Ok(_) => Ok(()),
         Err(err) => {
-            if err == bun_core::err!("MissingShell") {
+            if err == crate::Error::MissingShell {
                 Output::err_generic(
                     "failed to find shell executable to run {} script",
                     format_args!("{}", bstr::BStr::new(name)),
                 );
                 Global::crash();
             }
-            if err == bun_core::err!("OutOfMemory") {
+            if err == crate::Error::Alloc(bun_alloc::AllocError) {
                 return Err(PackError::OutOfMemory);
             }
             unreachable!()
@@ -3239,7 +3239,7 @@ fn archive_package_json(
         Ok(s) => s,
         Err(err) => {
             Output::err(
-                bun_core::Error::from(err),
+                crate::Error::from(err),
                 "failed to stat package.json",
                 format_args!(""),
             );
@@ -3342,7 +3342,7 @@ fn add_archive_entry(
         Ok(n) => n,
         Err(err) => {
             Output::err(
-                bun_core::Error::from(err),
+                crate::Error::from(err),
                 "failed to read file: \"{}\"",
                 format_args!("{}", bstr::BStr::new(filename.as_bytes())),
             );
@@ -3356,7 +3356,7 @@ fn add_archive_entry(
             Ok(n) => n,
             Err(err) => {
                 Output::err(
-                    bun_core::Error::from(err),
+                    crate::Error::from(err),
                     "failed to read file: \"{}\"",
                     format_args!("{}", bstr::BStr::new(filename.as_bytes())),
                 );
@@ -3592,7 +3592,7 @@ fn edit_root_package_json(
     ) {
         Ok(w) => w,
         Err(err) => {
-            if err == bun_core::err!("OutOfMemory") {
+            if err == crate::Error::Alloc(bun_alloc::AllocError) {
                 return Err(AllocError);
             }
             Output::err_generic(
@@ -3773,7 +3773,7 @@ impl IgnorePatterns {
         dir: &Dir,
         ignore_kind: IgnorePatternsKind,
         reason: IgnoreFileFailReason,
-        err: bun_core::Error,
+        err: crate::Error,
     ) -> ! {
         let mut buf = PathBuffer::uninit();
         let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
@@ -3923,7 +3923,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
             Ok(s) => s,
             Err(err) => {
                 Output::err(
-                    bun_core::Error::from(err),
+                    crate::Error::from(err),
                     "failed to stat package.json",
                     format_args!(""),
                 );
@@ -3953,7 +3953,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
                         continue;
                     }
                     Output::err(
-                        bun_core::Error::from(err),
+                        crate::Error::from(err),
                         "failed to stat file: \"{}\"",
                         format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
                     );
@@ -4096,7 +4096,7 @@ pub mod bindings {
                 return Err(global.throw(format_args!(
                     "failed to open tarball file \"{}\": {}",
                     bstr::BStr::new(tarball_path.slice()),
-                    bun_core::Error::from(err).name(),
+                    crate::Error::from(err).name(),
                 )));
             }
         };
@@ -4108,7 +4108,7 @@ pub mod bindings {
                 return Err(global.throw(format_args!(
                     "failed to read tarball contents \"{}\": {}",
                     bstr::BStr::new(tarball_path.slice()),
-                    bun_core::Error::from(err).name(),
+                    crate::Error::from(err).name(),
                 )));
             }
         };

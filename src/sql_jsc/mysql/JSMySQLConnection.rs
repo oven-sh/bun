@@ -1079,7 +1079,6 @@ pub enum OnResultRowError {
     JSError,
 }
 bun_core::impl_tag_error!(OnResultRowError);
-bun_core::named_error_set!(OnResultRowError);
 impl From<OnResultRowError> for AnyMySQLErrorT {
     fn from(e: OnResultRowError) -> Self {
         match e {

@@ -5,7 +5,7 @@ use crate::bun_fs as fs;
 use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
-use bun_core::Error;
+use crate::Error;
 use bun_paths::fs::Path as FsPath;
 use bun_paths::{platform, resolve_path};
 use bun_sys as sys;
@@ -256,7 +256,7 @@ const SELECTOR_CAP: usize = TAG_HANDLERS.len() + 3;
 
 #[inline]
 fn lol_err<E>(_: E) -> Error {
-    bun_core::err!(Fail)
+    crate::Error::Fail
 }
 
 /// `element_content_handlers` entry with only the element slot populated —

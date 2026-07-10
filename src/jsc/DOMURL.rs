@@ -28,7 +28,6 @@ pub enum ToFileSystemPathError {
     InvalidHost,
 }
 
-bun_core::named_error_set!(ToFileSystemPathError);
 
 impl DOMURL {
     pub fn cast_<'a>(value: JSValue, vm: &'a VM) -> Option<&'a mut DOMURL> {

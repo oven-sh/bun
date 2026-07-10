@@ -2,7 +2,7 @@
 // Hand-ported subset — the remaining analytics::* types are unused at runtime
 // and come back with the next peechy regen (see the `analytics` mod below).
 
-use bun_core::Error;
+use crate::Error;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Reader / Writer
@@ -19,7 +19,7 @@ use bun_core::Error;
 // (`Error::from_name` interns at runtime, so this is a fn, not a const.)
 #[inline]
 pub(crate) fn eof() -> Error {
-    bun_core::err!("EOF")
+    crate::Error::Sys(bun_errno::SystemErrno::EOF)
 }
 
 /// Primitive integers encodable in the peechy wire format (native-endian raw

@@ -1,7 +1,8 @@
 use core::ptr::NonNull;
 
 use bun_core::MutableString;
-use bun_core::{Error, Output};
+use bun_core::Output;
+use crate::Error;
 
 use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
 
@@ -380,7 +381,7 @@ impl<'a> InternalState<'a> {
                 self.decompressor
                     .decompress_chunk(self.encoding, buffer, body_out_str, is_done)
             {
-                if is_done || err != bun_core::err!("ShortRead") {
+                if is_done || err != crate::Error::ShortRead {
                     bun_core::pretty_errorln!(
                         "<r><red>Decompression error: {}<r>",
                         bstr::BStr::new(err.name()),

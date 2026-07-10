@@ -379,7 +379,7 @@ pub fn CreateIoCompletionPort(
     existing_completion_port: HANDLE,
     completion_key: ULONG_PTR,
     concurrent_threads: DWORD,
-) -> core::result::Result<HANDLE, bun_core::Error> {
+) -> core::result::Result<HANDLE, bun_errno::SystemErrno> {
     let h = kernel32::CreateIoCompletionPort(
         file_handle,
         existing_completion_port,
@@ -387,7 +387,7 @@ pub fn CreateIoCompletionPort(
         concurrent_threads,
     );
     if h.is_null() {
-        return Err(bun_core::err!("Unexpected"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
     Ok(h)
 }
@@ -4028,7 +4028,7 @@ pub enum Subsystem {
 pub fn edit_win32_binary_subsystem(
     fd: &bun_sys::File,
     subsystem: Subsystem,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), bun_errno::SystemErrno> {
     const _: () = assert!(cfg!(windows));
     if kernel32_2::SetFilePointerEx(
         fd.handle.native(),
@@ -4037,14 +4037,14 @@ pub fn edit_win32_binary_subsystem(
         win32::FILE_BEGIN,
     ) == 0
     {
-        return Err(bun_core::err!("Win32Error"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
     // Use `read_all` (which retries on short reads) rather than a single
     // `read()` syscall, so a short read isn't mis-reported as EndOfStream.
     let mut off_bytes = [0u8; 4];
-    let n = fd.read_all(&mut off_bytes).map_err(bun_core::Error::from)?;
+    let n = fd.read_all(&mut off_bytes).map_err(bun_errno::SystemErrno::from)?;
     if n != 4 {
-        return Err(bun_core::err!("EndOfStream"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
     let offset: u32 = u32::from_le_bytes(off_bytes);
     if kernel32_2::SetFilePointerEx(
@@ -4054,12 +4054,12 @@ pub fn edit_win32_binary_subsystem(
         win32::FILE_BEGIN,
     ) == 0
     {
-        return Err(bun_core::err!("Win32Error"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
     // Use `write_all` rather than a single `write()` + length check so a
     // short write is retried instead of failing.
     let sub_bytes = (subsystem as u16).to_le_bytes();
-    fd.write_all(&sub_bytes).map_err(bun_core::Error::from)?;
+    fd.write_all(&sub_bytes).map_err(bun_errno::SystemErrno::from)?;
     Ok(())
 }
 
@@ -4079,7 +4079,6 @@ pub mod rescle {
         ) -> c_int;
     }
 
-    bun_core::named_error_set!(RescleError);
 
     #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
     pub enum RescleError {
@@ -4383,7 +4382,7 @@ pub fn become_watcher_manager() -> ! {
     loop {
         if let Err(err) = spawn_watcher_child(&mut procinfo, job) {
             bun_core::handle_error_return_trace(err);
-            if err == bun_core::err!("Win32Error") {
+            if err == bun_errno::SystemErrno::EIO {
                 // This read is best-effort — Drop guards inside
                 // `spawn_watcher_child` (FreeEnvironmentStringsW, Vec drops
                 // via HeapFree) may have clobbered the thread's last-error
@@ -4393,7 +4392,7 @@ pub fn become_watcher_manager() -> ! {
                 let last = Win32Error(GetLastError() as u16);
                 bun_core::Output::panic(format_args!("Failed to spawn process: {:?}\n", last));
             }
-            bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err.name()));
+            bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err));
         }
         // `kernel32::WaitForSingleObject` is the local `safe fn` re-decl
         // (by-value `HANDLE`/`DWORD` only); avoid the `bun_windows_sys`
@@ -4431,7 +4430,7 @@ pub fn become_watcher_manager() -> ! {
 pub fn spawn_watcher_child(
     procinfo: &mut PROCESS_INFORMATION,
     job: HANDLE,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), bun_errno::SystemErrno> {
     // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
     let mut attr_size: usize = 0;
     // SAFETY: query size with null buffer
@@ -4443,7 +4442,7 @@ pub fn spawn_watcher_child(
     if unsafe { externs::InitializeProcThreadAttributeList(p.as_mut_ptr(), 1, 0, &mut attr_size) }
         == 0
     {
-        return Err(bun_core::err!("Win32Error"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
     let mut job_local = job;
     // SAFETY: p initialized above; job_local valid for sizeof(HANDLE)
@@ -4459,7 +4458,7 @@ pub fn spawn_watcher_child(
         )
     } == 0
     {
-        return Err(bun_core::err!("Win32Error"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
 
     // The win32 layer exposes these as DWORD constants — assemble the raw mask.
@@ -4555,7 +4554,7 @@ pub fn spawn_watcher_child(
         )
     };
     if rc == 0 {
-        return Err(bun_core::err!("Win32Error"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
     let mut is_in_job: BOOL = 0;
     let _ = kernel32_2::IsProcessInJob(procinfo.hProcess, job, &mut is_in_job);

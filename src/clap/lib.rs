@@ -7,9 +7,11 @@ use bun_core::{self, Output};
 
 pub mod args;
 pub mod comptime;
+pub mod error;
 pub mod streaming;
 
 pub use comptime::{ComptimeClap, ConvertedTable};
+pub use error::{Error, Result};
 pub use streaming::StreamingClap;
 
 // Proc-macro backend — do not call these directly; use `parse_param!` / `param!` /
@@ -342,7 +344,7 @@ impl Diagnostic {
     /// in `.text.unlikely`, away from the cold-start working set.
     #[cold]
     #[inline(never)]
-    pub fn report<W>(&self, _stream: W, err: bun_core::Error) -> Result<(), bun_core::Error> {
+    pub fn report<W>(&self, _stream: W, err: crate::Error) -> crate::Result<()> {
         let mut name_buf = [0u8; 1024];
         let name: &[u8] = if let Some(s) = self.short {
             name_buf[0] = b'-';
@@ -360,24 +362,23 @@ impl Diagnostic {
         };
 
         let name = bstr::BStr::new(name);
-        if err == bun_core::err!("DoesntTakeValue") {
-            bun_core::pretty_errorln!(
+        match err {
+            crate::Error::DoesntTakeValue => bun_core::pretty_errorln!(
                 "<red>error<r><d>:<r> The argument '{}' does not take a value.",
                 name
-            );
-        } else if err == bun_core::err!("MissingValue") {
-            bun_core::pretty_errorln!(
+            ),
+            crate::Error::MissingValue => bun_core::pretty_errorln!(
                 "<red>error<r><d>:<r> The argument '{}' requires a value but none was supplied.",
                 name
-            );
-        } else if err == bun_core::err!("InvalidArgument") {
-            bun_core::pretty_errorln!("<red>error<r><d>:<r> Invalid Argument '{}'", name);
-        } else {
-            bun_core::pretty_errorln!(
+            ),
+            crate::Error::InvalidArgument => {
+                bun_core::pretty_errorln!("<red>error<r><d>:<r> Invalid Argument '{}'", name)
+            }
+            _ => bun_core::pretty_errorln!(
                 "<red>error<r><d>:<r> {} while parsing argument '{}'",
-                bstr::BStr::new(err.name()),
+                err,
                 name
-            );
+            ),
         }
         bun_core::Output::flush();
         Ok(())
@@ -497,7 +498,7 @@ impl<Id: 'static> Args<Id> {
 pub fn parse<Id: 'static>(
     params: &'static [Param<Id>],
     opt: ParseOptions<'_>,
-) -> Result<Args<Id>, bun_core::Error> {
+) -> crate::Result<Args<Id>> {
     let mut iter = args::OsIterator::init();
     let exe_arg = iter.exe_arg;
 
@@ -518,7 +519,7 @@ pub fn parse<Id: 'static>(
 pub fn parse_with_table<Id: 'static>(
     table: &'static ConvertedTable,
     opt: ParseOptions<'_>,
-) -> Result<Args<Id>, bun_core::Error> {
+) -> crate::Result<Args<Id>> {
     let mut iter = args::OsIterator::init();
     let exe_arg = iter.exe_arg;
     let clap = ComptimeClap::<Id>::parse_with_table(
@@ -542,7 +543,7 @@ pub fn parse_ex<Id: 'static, I>(
     params: &'static [Param<Id>],
     iter: &mut I,
     opt: ParseOptions<'_>,
-) -> Result<ComptimeClap<Id>, bun_core::Error>
+) -> crate::Result<ComptimeClap<Id>>
 where
     I: args::ArgIter<'static>,
 {
@@ -563,11 +564,11 @@ pub fn help_full<W, Id, E, C>(
     context: &C,
     help_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
     value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: fmt::Write,
     Id: Copy,
-    E: Into<bun_core::Error>,
+    E: Into<crate::Error>,
 {
     let max_spacing: usize = 'blk: {
         let mut res: usize = 0;
@@ -611,11 +612,11 @@ fn print_param<W, Id, E, C>(
     param: &Param<Id>,
     context: &C,
     value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: fmt::Write,
     Id: Copy,
-    E: Into<bun_core::Error>,
+    E: Into<crate::Error>,
 {
     if let Some(s) = param.names.short {
         write!(stream, "-{}", s as char)?;
@@ -644,11 +645,11 @@ fn write_takes_value_suffix<W, Id, E, C>(
     param: &Param<Id>,
     context: &C,
     value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: fmt::Write,
     Id: Copy,
-    E: Into<bun_core::Error>,
+    E: Into<crate::Error>,
 {
     match param.takes_value {
         Values::None => {}
@@ -686,7 +687,7 @@ pub fn help_ex<W, Id>(
     params: &[Param<Id>],
     help_text: fn(&Param<Id>) -> &'static [u8],
     value_text: fn(&Param<Id>) -> &'static [u8],
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: fmt::Write,
     Id: Copy,
@@ -696,11 +697,11 @@ where
         value_text: fn(&Param<Id>) -> &'static [u8],
     }
 
-    fn help<Id>(c: &Context<Id>, p: &Param<Id>) -> Result<&'static [u8], bun_core::Error> {
+    fn help<Id>(c: &Context<Id>, p: &Param<Id>) -> crate::Result<&'static [u8]> {
         Ok((c.help_text)(p))
     }
 
-    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> Result<&'static [u8], bun_core::Error> {
+    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> crate::Result<&'static [u8]> {
         Ok((c.value_text)(p))
     }
 
@@ -718,7 +719,7 @@ where
 
 #[cold]
 #[inline(never)]
-pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
+pub fn simple_print_param(param: &Param<Help>) -> crate::Result<()> {
     bun_core::pretty!("\n");
     if let Some(s) = param.names.short {
         if param.takes_value != Values::None && param.names.long.is_none() {
@@ -850,7 +851,7 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
 /// A wrapper around help_ex that takes a `Param<Help>`.
 #[cold]
 #[inline(never)]
-pub fn help<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<(), bun_core::Error> {
+pub fn help<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> crate::Result<()> {
     help_ex(stream, params, get_help_simple, get_value_simple)
 }
 
@@ -866,11 +867,11 @@ pub fn usage_full<W, Id, E, C>(
     params: &[Param<Id>],
     context: &C,
     value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: fmt::Write,
     Id: Copy,
-    E: Into<bun_core::Error>,
+    E: Into<crate::Error>,
 {
     let mut cos = CountingWriter::wrap(stream);
     for param in params {
@@ -945,7 +946,7 @@ pub fn usage_ex<W, Id>(
     stream: &mut W,
     params: &[Param<Id>],
     value_text: fn(&Param<Id>) -> &'static [u8],
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: fmt::Write,
     Id: Copy,
@@ -954,7 +955,7 @@ where
         value_text: fn(&Param<Id>) -> &'static [u8],
     }
 
-    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> Result<&'static [u8], bun_core::Error> {
+    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> crate::Result<&'static [u8]> {
         Ok((c.value_text)(p))
     }
 
@@ -964,7 +965,7 @@ where
 /// A wrapper around usage_ex that takes a `Param<Help>`.
 #[cold]
 #[inline(never)]
-pub fn usage<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<(), bun_core::Error> {
+pub fn usage<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> crate::Result<()> {
     usage_ex(stream, params, get_value_simple)
 }
 

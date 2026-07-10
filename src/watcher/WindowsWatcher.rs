@@ -48,7 +48,6 @@ pub enum Error {
     CreateFileFailed,
     InvalidPath,
 }
-bun_core::named_error_set!(Error);
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]

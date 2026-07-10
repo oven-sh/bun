@@ -10,4 +10,3 @@ pub enum InitError {
     InvalidCA,
 }
 
-bun_core::named_error_set!(InitError);

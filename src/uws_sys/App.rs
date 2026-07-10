@@ -479,7 +479,6 @@ pub enum AddServerNameError {
 }
 bun_core::impl_tag_error!(AddServerNameError);
 
-bun_core::named_error_set!(AddServerNameError);
 
 bun_opaque::opaque_ffi! { pub struct uws_app_s; }
 pub type uws_app_t = uws_app_s;

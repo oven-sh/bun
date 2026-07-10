@@ -195,9 +195,9 @@ pub enum EscapeError {
     EscapeCalledTwice,
 }
 
-impl From<EscapeError> for bun_core::Error {
+impl From<EscapeError> for crate::Error {
     fn from(_: EscapeError) -> Self {
-        bun_core::err!("EscapeCalledTwice")
+        crate::Error::EscapeCalledTwice
     }
 }
 

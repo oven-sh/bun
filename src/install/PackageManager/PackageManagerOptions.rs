@@ -284,7 +284,7 @@ pub struct Update {
 }
 
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
-pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_core::Error> {
+pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
@@ -321,12 +321,12 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
             .map(|d| d.into_raw());
     }
 
-    Err(bun_core::err!("No global directory found"))
+    Err(crate::Error::NoGlobalDirectoryFound)
 }
 
 pub(crate) fn open_global_bin_dir(
     opts_: Option<&Api::BunInstall>,
-) -> Result<bun_sys::Fd, bun_core::Error> {
+) -> crate::Result<bun_sys::Fd> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
@@ -367,9 +367,7 @@ pub(crate) fn open_global_bin_dir(
             .map(|d| d.into_raw());
     }
 
-    Err(bun_core::err!(
-        "Missing global bin directory: try setting $BUN_INSTALL"
-    ))
+    Err(crate::Error::MissingGlobalBinDirectoryTrySettingBUNINSTALL)
 }
 
 // `BunInstall` owns `Box<[u8]>`; Options stores `&'static [u8]`

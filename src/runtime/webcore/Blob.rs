@@ -165,7 +165,7 @@ pub trait BlobExt {
     fn _on_structured_clone_serialize<W: bun_io::Write>(
         &self,
         writer: &mut W,
-    ) -> Result<(), bun_core::Error>;
+    ) -> crate::Result<()>;
     fn on_structured_clone_serialize(
         &self,
         _global_this: &JSGlobalObject,
@@ -728,7 +728,7 @@ impl BlobExt for Blob {
     fn _on_structured_clone_serialize<W: bun_io::Write>(
         &self,
         writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let is_memory_backed = if let Some(store) = self.store.get() {
             matches!(store.data, store::Data::Bytes(_))
         } else {
@@ -834,15 +834,15 @@ impl BlobExt for Blob {
         let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
             Ok(v) => v,
             Err(e)
-                if e == bun_core::err!("EndOfStream")
-                    || e == bun_core::err!("TooSmall")
-                    || e == bun_core::err!("InvalidValue") =>
+                if e == crate::Error::EndOfStream
+                    || e == crate::Error::TooSmall
+                    || e == crate::Error::InvalidValue =>
             {
                 return Err(
                     global_this.throw(format_args!("Blob.onStructuredCloneDeserialize failed"))
                 );
             }
-            Err(e) if e == bun_core::err!("OutOfMemory") => {
+            Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
                 return Err(global_this.throw_out_of_memory());
             }
             Err(_) => unreachable!(),
@@ -4151,7 +4151,7 @@ impl StructuredCloneWriter {
 
 // Implement `bun_io::Write` so `write_int_le` / `write_all` work directly.
 impl bun_io::Write for StructuredCloneWriter {
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+    fn write_all(&mut self, bytes: &[u8]) -> crate::Result<()> {
         StructuredCloneWriter::write(self, bytes);
         Ok(())
     }
@@ -4160,13 +4160,13 @@ impl bun_io::Write for StructuredCloneWriter {
 // Only ever called with f64 (Blob.last_modified). A concrete impl
 // because Rust forbids `[u8; size_of::<F>()]`
 // without `generic_const_exprs`. Bit-cast → native-endian bytes.
-fn write_float<W: bun_io::Write>(value: f64, writer: &mut W) -> Result<(), bun_core::Error> {
+fn write_float<W: bun_io::Write>(value: f64, writer: &mut W) -> crate::Result<()> {
     writer.write_all(&value.to_ne_bytes())
 }
 
 fn read_float<B: AsRef<[u8]>>(
     reader: &mut bun_io::FixedBufferStream<B>,
-) -> Result<f64, bun_core::Error> {
+) -> crate::Result<f64> {
     let mut bytes_buf = [0u8; core::mem::size_of::<f64>()];
     reader.read_exact(&mut bytes_buf)?;
     Ok(f64::from_ne_bytes(bytes_buf))
@@ -4175,21 +4175,21 @@ fn read_float<B: AsRef<[u8]>>(
 fn read_slice<B: AsRef<[u8]>>(
     reader: &mut bun_io::FixedBufferStream<B>,
     len: usize,
-) -> Result<Vec<u8>, bun_core::Error> {
+) -> crate::Result<Vec<u8>> {
     if len > reader.buffer.as_ref().len().saturating_sub(reader.pos) {
-        return Err(bun_core::err!("TooSmall"));
+        return Err(crate::Error::TooSmall);
     }
     let mut slice = vec![0u8; len];
     reader
         .read_exact(&mut slice)
-        .map_err(|_| bun_core::err!("TooSmall"))?;
+        .map_err(|_| crate::Error::TooSmall)?;
     Ok(slice)
 }
 
 fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
     reader: &mut bun_io::FixedBufferStream<B>,
-) -> Result<JSValue, bun_core::Error> {
+) -> crate::Result<JSValue> {
     let version = reader.read_int_le::<u8>()?;
     let offset = reader.read_int_le::<u64>()?;
 
@@ -4199,7 +4199,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     let content_type_was_set: bool = reader.read_int_le::<u8>()? != 0;
 
     let store_tag = store::SerializeTag::from_raw(reader.read_int_le::<u8>()?)
-        .ok_or_else(|| bun_core::err!("InvalidValue"))?;
+        .ok_or_else(|| crate::Error::InvalidValue)?;
 
     let blob: *mut Blob = match store_tag {
         store::SerializeTag::Bytes => 'bytes: {
@@ -4242,7 +4242,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
             use crate::node::types::PathOrFileDescriptorSerializeTag;
             let pathlike_tag =
                 PathOrFileDescriptorSerializeTag::from_raw(reader.read_int_le::<u8>()?)
-                    .ok_or_else(|| bun_core::err!("InvalidValue"))?;
+                    .ok_or_else(|| crate::Error::InvalidValue)?;
 
             match pathlike_tag {
                 PathOrFileDescriptorSerializeTag::Fd => {
@@ -4498,7 +4498,7 @@ pub trait MkdirpTarget {
     fn mkdirp_if_not_exists(&self) -> bool;
     fn set_mkdirp_if_not_exists(&mut self, v: bool);
     fn set_system_error(&mut self, e: bun_sys::SystemError);
-    fn set_errno_if_present(&mut self, _e: bun_core::Error) {}
+    fn set_errno_if_present(&mut self, _e: crate::Error) {}
     fn set_opened_fd_if_present(&mut self, _fd: Fd) {}
 }
 
@@ -7080,7 +7080,7 @@ pub trait FileOpener: Sized {
 
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
-    fn set_errno(&mut self, e: bun_core::Error);
+    fn set_errno(&mut self, e: crate::Error);
     fn set_system_error(&mut self, e: jsc::SystemError);
     /// Either `self.file_store.pathlike` or `self.file_blob.store.data.file.pathlike`.
     fn pathlike(&self) -> &PathOrFileDescriptor;

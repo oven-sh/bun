@@ -64,6 +64,9 @@ use core::fmt;
 // Module declarations — explicit #[path] attrs for PascalCase files.
 // ──────────────────────────────────────────────────────────────────────────
 
+pub mod error;
+pub use error::{Error, Result};
+
 pub mod npm;
 #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
@@ -1190,4 +1193,3 @@ pub(crate) enum PackageManifestError {
 
 bun_core::impl_tag_error!(PackageManifestError);
 
-bun_core::named_error_set!(PackageManifestError);

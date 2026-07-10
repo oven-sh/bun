@@ -2,7 +2,7 @@
 //! stay in `s3_signing/`; the `*JSGlobalObject`-taking variants live here.
 
 use bun_core::String as BunString;
-use bun_core::{Error, err};
+use crate::Error;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError};
 use bun_s3_signing::error::{self as s3_error, get_sign_error_message};
 
@@ -18,46 +18,46 @@ fn msg(bytes: &'static [u8]) -> &'static str {
 
 pub fn get_js_sign_error(err: Error, global_this: &JSGlobalObject) -> JSValue {
     match err {
-        e if e == err!("MissingCredentials") => global_this
+        crate::Error::MissingCredentials => global_this
             .err(
                 ErrorCode::S3_MISSING_CREDENTIALS,
                 format_args!(
                     "{}",
-                    msg(get_sign_error_message(err!("MissingCredentials")))
+                    msg(get_sign_error_message(crate::Error::MissingCredentials))
                 ),
             )
             .to_js(),
-        e if e == err!("InvalidMethod") => global_this
+        crate::Error::InvalidMethod => global_this
             .err(
                 ErrorCode::S3_INVALID_METHOD,
-                format_args!("{}", msg(get_sign_error_message(err!("InvalidMethod")))),
+                format_args!("{}", msg(get_sign_error_message(crate::Error::InvalidMethod))),
             )
             .to_js(),
-        e if e == err!("InvalidPath") => global_this
+        crate::Error::InvalidPath => global_this
             .err(
                 ErrorCode::S3_INVALID_PATH,
-                format_args!("{}", msg(get_sign_error_message(err!("InvalidPath")))),
+                format_args!("{}", msg(get_sign_error_message(crate::Error::InvalidPath))),
             )
             .to_js(),
-        e if e == err!("InvalidEndpoint") => global_this
+        crate::Error::InvalidEndpoint => global_this
             .err(
                 ErrorCode::S3_INVALID_ENDPOINT,
-                format_args!("{}", msg(get_sign_error_message(err!("InvalidEndpoint")))),
+                format_args!("{}", msg(get_sign_error_message(crate::Error::InvalidEndpoint))),
             )
             .to_js(),
-        e if e == err!("InvalidSessionToken") => global_this
+        crate::Error::InvalidSessionToken => global_this
             .err(
                 ErrorCode::S3_INVALID_SESSION_TOKEN,
                 format_args!(
                     "{}",
-                    msg(get_sign_error_message(err!("InvalidSessionToken")))
+                    msg(get_sign_error_message(crate::Error::InvalidSessionToken))
                 ),
             )
             .to_js(),
         _ => global_this
             .err(
                 ErrorCode::S3_INVALID_SIGNATURE,
-                format_args!("{}", msg(get_sign_error_message(err!("SignError")))),
+                format_args!("{}", msg(get_sign_error_message(crate::Error::SignError))),
             )
             .to_js(),
     }
@@ -65,46 +65,46 @@ pub fn get_js_sign_error(err: Error, global_this: &JSGlobalObject) -> JSValue {
 
 pub fn throw_sign_error(err: Error, global_this: &JSGlobalObject) -> JsError {
     match err {
-        e if e == err!("MissingCredentials") => global_this
+        crate::Error::MissingCredentials => global_this
             .err(
                 ErrorCode::S3_MISSING_CREDENTIALS,
                 format_args!(
                     "{}",
-                    msg(get_sign_error_message(err!("MissingCredentials")))
+                    msg(get_sign_error_message(crate::Error::MissingCredentials))
                 ),
             )
             .throw(),
-        e if e == err!("InvalidMethod") => global_this
+        crate::Error::InvalidMethod => global_this
             .err(
                 ErrorCode::S3_INVALID_METHOD,
-                format_args!("{}", msg(get_sign_error_message(err!("InvalidMethod")))),
+                format_args!("{}", msg(get_sign_error_message(crate::Error::InvalidMethod))),
             )
             .throw(),
-        e if e == err!("InvalidPath") => global_this
+        crate::Error::InvalidPath => global_this
             .err(
                 ErrorCode::S3_INVALID_PATH,
-                format_args!("{}", msg(get_sign_error_message(err!("InvalidPath")))),
+                format_args!("{}", msg(get_sign_error_message(crate::Error::InvalidPath))),
             )
             .throw(),
-        e if e == err!("InvalidEndpoint") => global_this
+        crate::Error::InvalidEndpoint => global_this
             .err(
                 ErrorCode::S3_INVALID_ENDPOINT,
-                format_args!("{}", msg(get_sign_error_message(err!("InvalidEndpoint")))),
+                format_args!("{}", msg(get_sign_error_message(crate::Error::InvalidEndpoint))),
             )
             .throw(),
-        e if e == err!("InvalidSessionToken") => global_this
+        crate::Error::InvalidSessionToken => global_this
             .err(
                 ErrorCode::S3_INVALID_SESSION_TOKEN,
                 format_args!(
                     "{}",
-                    msg(get_sign_error_message(err!("InvalidSessionToken")))
+                    msg(get_sign_error_message(crate::Error::InvalidSessionToken))
                 ),
             )
             .throw(),
         _ => global_this
             .err(
                 ErrorCode::S3_INVALID_SIGNATURE,
-                format_args!("{}", msg(get_sign_error_message(err!("SignError")))),
+                format_args!("{}", msg(get_sign_error_message(crate::Error::SignError))),
             )
             .throw(),
     }

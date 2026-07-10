@@ -69,7 +69,7 @@ pub trait RunTasksCallbacks {
     fn on_package_manifest_error(
         _ctx: &mut Self::Ctx,
         _name: &[u8],
-        _err: bun_core::Error,
+        _err: crate::Error,
         _url: &[u8],
     ) {
         unreachable!()
@@ -85,7 +85,7 @@ pub trait RunTasksCallbacks {
         _task_id: Task::Id,
         _name: &[u8],
         _resolution: &bun_install::Resolution,
-        _err: bun_core::Error,
+        _err: crate::Error,
         _url: &[u8],
     ) {
         unreachable!()
@@ -95,7 +95,7 @@ pub trait RunTasksCallbacks {
         _package_id: PackageID,
         _name: &[u8],
         _resolution: &bun_install::Resolution,
-        _err: bun_core::Error,
+        _err: crate::Error,
         _url: &[u8],
     ) {
         unreachable!()
@@ -139,7 +139,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     extract_ctx: &mut C::Ctx,
     install_peer: bool,
     log_level: Options::LogLevel,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     // `Cell<bool>` so the `scopeguard::defer!` below can read it via `&self`
     // while the loop body sets it — no raw-ptr provenance dance needed.
     let has_updated_this_run = Cell::new(false);
@@ -237,7 +237,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
             } else {
                 // Patch application failed - propagate error to cause install failure
-                return Err(bun_core::err!("InstallFailed"));
+                return Err(crate::Error::InstallFailed);
             }
         }
     }
@@ -392,7 +392,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
-                        .unwrap_or_else(|| bun_core::err!("HTTPError"));
+                        .unwrap_or(crate::Error::HTTPError);
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
@@ -420,7 +420,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
-                        .unwrap_or_else(|| bun_core::err!("HTTPError"));
+                        .unwrap_or(crate::Error::HTTPError);
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, &task.url_buf);
@@ -659,7 +659,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
-                        .unwrap_or_else(|| bun_core::err!("TarballFailedToDownload"));
+                        .unwrap_or(crate::Error::TarballFailedToDownload);
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
@@ -700,7 +700,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
-                        .unwrap_or_else(|| bun_core::err!("TarballFailedToDownload"));
+                        .unwrap_or(crate::Error::TarballFailedToDownload);
 
                     // The download will not be retried for this task_id, so
                     // drop the dedupe state before dispatching the error.
@@ -800,13 +800,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
                         let err = match response.status_code {
-                            400 => bun_core::err!("TarballHTTP400"),
-                            401 => bun_core::err!("TarballHTTP401"),
-                            402 => bun_core::err!("TarballHTTP402"),
-                            403 => bun_core::err!("TarballHTTP403"),
-                            404 => bun_core::err!("TarballHTTP404"),
-                            405..=499 => bun_core::err!("TarballHTTP4xx"),
-                            _ => bun_core::err!("TarballHTTP5xx"),
+                            400 => crate::Error::TarballHTTP400,
+                            401 => crate::Error::TarballHTTP401,
+                            402 => crate::Error::TarballHTTP402,
+                            403 => crate::Error::TarballHTTP403,
+                            404 => crate::Error::TarballHTTP404,
+                            405..=499 => crate::Error::TarballHTTP4xx,
+                            _ => crate::Error::TarballHTTP5xx,
                         };
 
                         if C::IS_STORE_INSTALLER {
@@ -973,7 +973,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if task.status == Task::Status::Fail {
                     let req = task.request_package_manifest();
                     let name = req.name.slice();
-                    let err = task.err.unwrap_or_else(|| bun_core::err!("Failed"));
+                    let err = task.err.unwrap_or(crate::Error::Failed);
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, &req.network.url_buf);
@@ -1075,7 +1075,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if task.status == Task::Status::Fail {
                     let err = task
                         .err
-                        .unwrap_or_else(|| bun_core::err!("TarballFailedToExtract"));
+                        .unwrap_or(crate::Error::TarballFailedToExtract);
 
                     // Extract-task failure (integrity check, libarchive error, etc.)
                     // is symmetric with the HTTP 4xx/5xx branch above: drop the
@@ -1264,7 +1264,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.git_repositories.insert(task.id, repo_fd);
 
                 if task.status == Task::Status::Fail {
-                    let err = task.err.unwrap_or_else(|| bun_core::err!("Failed"));
+                    let err = task.err.unwrap_or(crate::Error::Failed);
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, url);
@@ -1432,7 +1432,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let mut package_id: PackageID = INVALID_PACKAGE_ID;
 
                 if task.status == Task::Status::Fail {
-                    let err = task.err.unwrap_or_else(|| bun_core::err!("Failed"));
+                    let err = task.err.unwrap_or(crate::Error::Failed);
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR && C::IS_STORE_INSTALLER {
                         // SAFETY: `resolution.tag == Git` — git-checkout tasks are
@@ -1946,7 +1946,7 @@ fn process_dependency_list_for_ctx<C: RunTasksCallbacks>(
     dependency_list: TaskCallbackList,
     extract_ctx: &mut C::Ctx,
     install_peer: bool,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let ctx_ptr: *mut C::Ctx = extract_ctx;
     manager.process_dependency_list(
         dependency_list,

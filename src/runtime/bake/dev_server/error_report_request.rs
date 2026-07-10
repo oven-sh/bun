@@ -52,7 +52,7 @@ impl BodyReaderHandler for ErrorReportRequest {
         this: *mut Self,
         body: &[u8],
         resp: AnyResponse,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
         // pointer with full-allocation provenance and no live borrows.
         unsafe { ErrorReportRequest::run_with_body(this, body, resp) }
@@ -108,7 +108,7 @@ impl ErrorReportRequest {
         ctx: *mut ErrorReportRequest,
         body: &[u8],
         r: AnyResponse,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // .finalize has to be called last, but only in the non-error path.
         // On error return, BodyReaderMixin calls `on_error` → `finalize`, so
         // here we simply call `finalize` directly at the success tail.
@@ -435,7 +435,7 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
     contents: &'a [u8],
     target_line: u32,
     arena: &'a Arena,
-) -> Result<Option<[&'a [u8]; N]>, bun_core::Error> {
+) -> crate::Result<Option<[&'a [u8]; N]>> {
     let mut line: usize = 0;
     let mut prev: usize = 0;
     let index_of_first_line: usize = if target_line == 0 {
@@ -544,14 +544,14 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
 #[inline]
 fn read_string32<'a>(
     r: &mut bun_io::FixedBufferStream<&'a [u8]>,
-) -> Result<&'a [u8], bun_core::Error> {
+) -> crate::Result<&'a [u8]> {
     let len = r.read_int_le::<u32>()? as usize;
     let buf: &'a [u8] = r.buffer;
     let end = r
         .pos
         .checked_add(len)
         .filter(|&e| e <= buf.len())
-        .ok_or_else(|| bun_core::err!("EndOfStream"))?;
+        .ok_or_else(|| crate::Error::EndOfStream)?;
     let s = &buf[r.pos..end];
     r.pos = end;
     Ok(s)

@@ -104,10 +104,9 @@ pub enum CompressError {
     OutOfMemory,
 }
 
-bun_core::named_error_set!(DecompressError, CompressError);
 
 impl PerMessageDeflate {
-    pub(crate) fn init(params: Params) -> Result<Box<Self>, bun_core::Error> {
+    pub(crate) fn init(params: Params) -> crate::Result<Box<Self>> {
         // Initialize compressor (deflate)
         // We use negative window bits for raw DEFLATE, as required by RFC 7692.
         let compress_stream = zlib::DeflateEncoder::new(
@@ -116,12 +115,12 @@ impl PerMessageDeflate {
             Z_DEFAULT_MEM_LEVEL,
             Z_DEFAULT_STRATEGY,
         )
-        .map_err(|_| bun_core::err!("DeflateInitFailed"))?;
+        .map_err(|_| crate::Error::DeflateInitFailed)?;
 
         // Initialize decompressor (inflate)
         let decompress_stream =
             zlib::InflateDecoder::new(-(params.server_max_window_bits as c_int))
-                .map_err(|_| bun_core::err!("InflateInitFailed"))?;
+                .map_err(|_| crate::Error::InflateInitFailed)?;
 
         Ok(Box::new(Self {
             params,

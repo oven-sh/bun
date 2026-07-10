@@ -12,7 +12,7 @@ use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::options::{self, PackagesOption, SourceMapOption};
 use bun_bundler::transpiler::{MacroJSCtx, ParseOptions, ParseResult};
 use bun_bundler::{self as Transpiler};
-use bun_core::Error;
+use crate::Error;
 use bun_js_parser::lexer as JSLexer;
 use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
@@ -815,7 +815,7 @@ impl<'a> TransformTask<'a> {
         };
 
         let Some(parse_result) = self.transpiler.parse(parse_options, None) else {
-            self.err = Some(bun_core::err!("ParseError"));
+            self.err = Some(crate::Error::ParseError);
             return;
         };
 

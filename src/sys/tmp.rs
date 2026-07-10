@@ -63,7 +63,7 @@ impl<'a> Tmpfile<'a> {
         Ok(tmpfile)
     }
 
-    pub fn finish(&mut self, destname: &ZStr) -> Result<(), bun_core::Error> {
+    pub fn finish(&mut self, destname: &ZStr) -> crate::Result<()> {
         // ALLOW_TMPFILE = false dead branch — see `create()` note above.
         if ALLOW_TMPFILE && self.using_tmpfile {
             let mut retry = true;

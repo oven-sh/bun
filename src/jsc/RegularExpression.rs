@@ -26,7 +26,6 @@ pub enum RegularExpressionError {
     InvalidRegExp,
 }
 
-bun_core::named_error_set!(RegularExpressionError);
 
 // `RegularExpression` is an opaque `UnsafeCell`-backed ZST handle, so
 // `&RegularExpression` is ABI-identical to a non-null `*const` and C++ mutating

@@ -30,7 +30,7 @@ impl<'a> TOML<'a> {
         source_: &'a bun_ast::Source,
         log: &'a mut bun_ast::Log,
         redact_logs: bool,
-    ) -> Result<TOML<'a>, bun_core::Error> {
+    ) -> crate::Result<TOML<'a>> {
         Ok(TOML {
             lexer: Lexer::init(log, source_, bump, redact_logs)?,
             bump,
@@ -56,7 +56,7 @@ impl<'a> TOML<'a> {
         log: &'a mut bun_ast::Log,
         bump: &'a Bump,
         redact_logs: bool,
-    ) -> Result<Expr, bun_core::Error> {
+    ) -> crate::Result<Expr> {
         match source_.contents.len() {
             // This is to be consisntent with how disabled JS files are handled
             0 => {
@@ -76,7 +76,7 @@ impl<'a> TOML<'a> {
         parser.run_parser()
     }
 
-    pub fn parse_maybe_trailing_comma(&mut self, closer: T) -> Result<bool, bun_core::Error> {
+    pub fn parse_maybe_trailing_comma(&mut self, closer: T) -> crate::Result<bool> {
         self.lexer.expect(T::t_comma)?;
 
         if self.lexer.token == closer {
@@ -88,7 +88,7 @@ impl<'a> TOML<'a> {
 
     // ── AST-producing methods ──────────────────────────────────────────────
 
-    pub fn parse_key_segment(&mut self) -> Result<Option<Expr>, bun_core::Error> {
+    pub fn parse_key_segment(&mut self) -> crate::Result<Option<Expr>> {
         let loc = self.lexer.loc();
 
         match self.lexer.token {
@@ -122,7 +122,7 @@ impl<'a> TOML<'a> {
     }
 
     #[allow(clippy::mut_from_ref)]
-    pub fn parse_key(&mut self, bump: &'a Bump) -> Result<&'a mut Rope, bun_core::Error> {
+    pub fn parse_key(&mut self, bump: &'a Bump) -> crate::Result<&'a mut Rope> {
         // Allocate from the caller-provided bump and return `&mut Rope`
         // borrowed from it.
         let rope: &mut Rope = bump.alloc(Rope {
@@ -130,7 +130,7 @@ impl<'a> TOML<'a> {
                 Some(seg) => seg,
                 None => {
                     self.lexer.expected_string(b"key")?;
-                    return Err(bun_core::err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
             },
             next: core::ptr::null_mut(),
@@ -154,7 +154,7 @@ impl<'a> TOML<'a> {
             if segments > MAX_DOTTED_KEY_SEGMENTS {
                 self.lexer
                     .add_default_error(b"Dotted key has too many segments")?;
-                return Err(bun_core::err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
             // SAFETY: `rope` points into `bump` and is live for this call; we are
             // the sole mutator. Raw pointers used to avoid stacked &mut reborrows.
@@ -167,7 +167,7 @@ impl<'a> TOML<'a> {
         Ok(unsafe { &mut *head })
     }
 
-    fn run_parser(&mut self) -> Result<Expr, bun_core::Error> {
+    fn run_parser(&mut self) -> crate::Result<Expr> {
         let root = self.e(E::Object::default(), self.lexer.loc());
         let mut head: *mut E::Object = root
             .data
@@ -205,9 +205,11 @@ impl<'a> TOML<'a> {
                         Ok(v) => v,
                         Err(SetError::Clobber) => {
                             self.lexer.add_default_error(b"Table already defined")?;
-                            return Err(bun_core::err!("SyntaxError"));
+                            return Err(crate::Error::SyntaxError);
                         }
-                        Err(e) => return Err(e.into()),
+                        Err(SetError::OutOfMemory) => {
+                            return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                        }
                     };
                     head = parent_object
                         .data
@@ -236,9 +238,11 @@ impl<'a> TOML<'a> {
                         Err(SetError::Clobber) => {
                             self.lexer
                                 .add_default_error(b"Cannot overwrite table array")?;
-                            return Err(bun_core::err!("SyntaxError"));
+                            return Err(crate::Error::SyntaxError);
                         }
-                        Err(e) => return Err(e.into()),
+                        Err(SetError::OutOfMemory) => {
+                            return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                        }
                     };
                     let new_head = self.e(E::Object::default(), loc);
                     array
@@ -267,7 +271,7 @@ impl<'a> TOML<'a> {
         &mut self,
         obj: &mut E::Object,
         bump: &'a Bump,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         self.lexer.allow_double_bracket = false;
         let rope = self.parse_key(bump)?;
         let rope_end = self.lexer.start;
@@ -299,27 +303,27 @@ impl<'a> TOML<'a> {
                         start as usize,
                         format_args!("Cannot redefine key '{}'", bstr::BStr::new(key_name)),
                     );
-                    return Err(bun_core::err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
-                Err(e) => return Err(e.into()),
+                Err(SetError::OutOfMemory) => return Err(crate::Error::Alloc(bun_alloc::AllocError)),
             }
         }
         self.lexer.allow_double_bracket = true;
         Ok(())
     }
 
-    pub fn parse_value(&mut self) -> Result<Expr, bun_core::Error> {
+    pub fn parse_value(&mut self) -> crate::Result<Expr> {
         // Recursion depth is guarded only by `StackCheck`. A previous hard
         // depth cap was an artificial limit on a feature; the test's recursion
         // depth is set to a value that exhausts the 18 MB stack regardless of
         // frame size.
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(bun_core::err!("StackOverflow"));
+            return Err(crate::Error::StackOverflow);
         }
         self.parse_value_inner()
     }
 
-    fn parse_value_inner(&mut self) -> Result<Expr, bun_core::Error> {
+    fn parse_value_inner(&mut self) -> crate::Result<Expr> {
         let loc = self.lexer.loc();
 
         self.lexer.allow_double_bracket = true;
@@ -457,7 +461,7 @@ impl<'a> TOML<'a> {
             }
             _ => {
                 self.lexer.unexpected()?;
-                Err(bun_core::err!("SyntaxError"))
+                Err(crate::Error::SyntaxError)
             }
         }
     }

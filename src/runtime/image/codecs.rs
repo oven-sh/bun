@@ -247,7 +247,6 @@ pub enum Error {
     OutOfMemory,
 }
 
-bun_core::named_error_set!(Error);
 
 bun_core::oom_from_alloc!(Error);
 

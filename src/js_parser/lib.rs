@@ -16,6 +16,10 @@
 
 pub use bun_collections::VecExt as _VecExtReexport;
 
+pub mod error;
+pub use error::Error;
+pub use error::Result as CrateResult;
+
 // ─── module layout (see docs/REFACTOR_BUN_AST.md) ───────────────────────────
 pub mod parser;
 // Re-export parser-helper types at crate root so p.rs can `use crate::{...}`.

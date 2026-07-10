@@ -3,7 +3,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
-use bun_core::{Error as BunError, err};
 use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
 use bun_event_loop::{
     AnyTask::AnyTask,
@@ -1170,7 +1169,7 @@ impl FetchTasklet {
                             self.is_waiting_abort = self.result.has_more;
                             self.abort_reason.set(&global_object, check_result);
                             self.abort_task();
-                            self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
+                            self.result.fail = Some(crate::Error::ERR_TLS_CERT_ALTNAME_INVALID);
                             return false;
                         }
                     };
@@ -1190,7 +1189,7 @@ impl FetchTasklet {
                             self.is_waiting_abort = self.result.has_more;
                             self.abort_reason.set(&global_object, hostname_err_result);
                             self.abort_task();
-                            self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
+                            self.result.fail = Some(crate::Error::ERR_TLS_CERT_ALTNAME_INVALID);
                             return false;
                         }
                     };
@@ -1211,7 +1210,7 @@ impl FetchTasklet {
                         self.is_waiting_abort = self.result.has_more;
                         self.abort_reason.set(&global_object, check_result);
                         self.abort_task();
-                        self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
+                        self.result.fail = Some(crate::Error::ERR_TLS_CERT_ALTNAME_INVALID);
                         return false;
                     }
 
@@ -1226,7 +1225,7 @@ impl FetchTasklet {
         if let Some(http_) = self.http.as_mut() {
             http::http_thread().schedule_shutdown(http_);
         }
-        self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
+        self.result.fail = Some(crate::Error::ERR_TLS_CERT_ALTNAME_INVALID);
         false
     }
 
@@ -1287,7 +1286,7 @@ impl FetchTasklet {
         // Fetch-spec "network error" cases that callers feature-detect via
         // `instanceof TypeError`. Keep this list narrow; the catch-all
         // SystemError below is still a plain Error for backwards compat.
-        if fail == err!("RequestBodyNotReusable") {
+        if fail == crate::Error::RequestBodyNotReusable {
             return BodyValueError::TypeError(BunString::static_(
                 "Request body is a ReadableStream and cannot be replayed for this redirect",
             ));
@@ -1307,7 +1306,7 @@ impl FetchTasklet {
         // rather than a generic connect-failure message. `dns_error` is the
         // raw getaddrinfo(3) code and is nonzero on this path, so `init_eai`
         // is always `Some`.
-        if fail == err!("DNSResolveFailed") {
+        if fail == crate::Error::DNSResolveFailed {
             if let Some(dns_err) = c_ares::Error::init_eai(self.result.dns_error) {
                 // `dns_hostname` is the owned copy of the exact name the
                 // connect resolved (proxy or post-redirect target), captured
@@ -1324,195 +1323,195 @@ impl FetchTasklet {
             }
         }
 
-        let code = if fail == err!("ConnectionClosed") {
+        let code = if fail == crate::Error::ConnectionClosed {
             BunString::static_("ECONNRESET")
         } else {
             BunString::static_(fail.name())
         };
 
         let message = match fail {
-            e if e == err!("ConnectionClosed") => BunString::static_(
+            crate::Error::ConnectionClosed => BunString::static_(
                 "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
             ),
-            e if e == err!("FailedToOpenSocket") => {
+            crate::Error::FailedToOpenSocket => {
                 BunString::static_("Was there a typo in the url or port?")
             }
-            e if e == err!("TooManyRedirects") => BunString::static_(
+            crate::Error::TooManyRedirects => BunString::static_(
                 "The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()",
             ),
-            e if e == err!("ConnectionRefused") => {
+            crate::Error::ConnectionRefused => {
                 BunString::static_("Unable to connect. Is the computer able to access the url?")
             }
-            e if e == err!("RedirectURLInvalid") => {
+            crate::Error::RedirectURLInvalid => {
                 BunString::static_("Redirect URL in Location header is invalid.")
             }
 
-            e if e == err!("UNABLE_TO_GET_ISSUER_CERT") => {
+            crate::Error::UNABLE_TO_GET_ISSUER_CERT => {
                 BunString::static_("unable to get issuer certificate")
             }
-            e if e == err!("UNABLE_TO_GET_CRL") => {
+            crate::Error::UNABLE_TO_GET_CRL => {
                 BunString::static_("unable to get certificate CRL")
             }
-            e if e == err!("UNABLE_TO_DECRYPT_CERT_SIGNATURE") => {
+            crate::Error::UNABLE_TO_DECRYPT_CERT_SIGNATURE => {
                 BunString::static_("unable to decrypt certificate's signature")
             }
-            e if e == err!("UNABLE_TO_DECRYPT_CRL_SIGNATURE") => {
+            crate::Error::UNABLE_TO_DECRYPT_CRL_SIGNATURE => {
                 BunString::static_("unable to decrypt CRL's signature")
             }
-            e if e == err!("UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY") => {
+            crate::Error::UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY => {
                 BunString::static_("unable to decode issuer public key")
             }
-            e if e == err!("CERT_SIGNATURE_FAILURE") => {
+            crate::Error::CERT_SIGNATURE_FAILURE => {
                 BunString::static_("certificate signature failure")
             }
-            e if e == err!("CRL_SIGNATURE_FAILURE") => BunString::static_("CRL signature failure"),
-            e if e == err!("CERT_NOT_YET_VALID") => {
+            crate::Error::CRL_SIGNATURE_FAILURE => BunString::static_("CRL signature failure"),
+            crate::Error::CERT_NOT_YET_VALID => {
                 BunString::static_("certificate is not yet valid")
             }
-            e if e == err!("CRL_NOT_YET_VALID") => BunString::static_("CRL is not yet valid"),
-            e if e == err!("CERT_HAS_EXPIRED") => BunString::static_("certificate has expired"),
-            e if e == err!("CRL_HAS_EXPIRED") => BunString::static_("CRL has expired"),
-            e if e == err!("ERROR_IN_CERT_NOT_BEFORE_FIELD") => {
+            crate::Error::CRL_NOT_YET_VALID => BunString::static_("CRL is not yet valid"),
+            crate::Error::CERT_HAS_EXPIRED => BunString::static_("certificate has expired"),
+            crate::Error::CRL_HAS_EXPIRED => BunString::static_("CRL has expired"),
+            crate::Error::ERROR_IN_CERT_NOT_BEFORE_FIELD => {
                 BunString::static_("format error in certificate's notBefore field")
             }
-            e if e == err!("ERROR_IN_CERT_NOT_AFTER_FIELD") => {
+            crate::Error::ERROR_IN_CERT_NOT_AFTER_FIELD => {
                 BunString::static_("format error in certificate's notAfter field")
             }
-            e if e == err!("ERROR_IN_CRL_LAST_UPDATE_FIELD") => {
+            crate::Error::ERROR_IN_CRL_LAST_UPDATE_FIELD => {
                 BunString::static_("format error in CRL's lastUpdate field")
             }
-            e if e == err!("ERROR_IN_CRL_NEXT_UPDATE_FIELD") => {
+            crate::Error::ERROR_IN_CRL_NEXT_UPDATE_FIELD => {
                 BunString::static_("format error in CRL's nextUpdate field")
             }
-            e if e == err!("OUT_OF_MEM") => BunString::static_("out of memory"),
-            e if e == err!("DEPTH_ZERO_SELF_SIGNED_CERT") => {
+            crate::Error::OUT_OF_MEM => BunString::static_("out of memory"),
+            crate::Error::DEPTH_ZERO_SELF_SIGNED_CERT => {
                 BunString::static_("self signed certificate")
             }
-            e if e == err!("SELF_SIGNED_CERT_IN_CHAIN") => {
+            crate::Error::SELF_SIGNED_CERT_IN_CHAIN => {
                 BunString::static_("self signed certificate in certificate chain")
             }
-            e if e == err!("UNABLE_TO_GET_ISSUER_CERT_LOCALLY") => {
+            crate::Error::UNABLE_TO_GET_ISSUER_CERT_LOCALLY => {
                 BunString::static_("unable to get local issuer certificate")
             }
-            e if e == err!("UNABLE_TO_VERIFY_LEAF_SIGNATURE") => {
+            crate::Error::UNABLE_TO_VERIFY_LEAF_SIGNATURE => {
                 BunString::static_("unable to verify the first certificate")
             }
-            e if e == err!("CERT_CHAIN_TOO_LONG") => {
+            crate::Error::CERT_CHAIN_TOO_LONG => {
                 BunString::static_("certificate chain too long")
             }
-            e if e == err!("CERT_REVOKED") => BunString::static_("certificate revoked"),
-            e if e == err!("INVALID_CA") => BunString::static_("invalid CA certificate"),
-            e if e == err!("INVALID_NON_CA") => {
+            crate::Error::CERT_REVOKED => BunString::static_("certificate revoked"),
+            crate::Error::INVALID_CA => BunString::static_("invalid CA certificate"),
+            crate::Error::INVALID_NON_CA => {
                 BunString::static_("invalid non-CA certificate (has CA markings)")
             }
-            e if e == err!("PATH_LENGTH_EXCEEDED") => {
+            crate::Error::PATH_LENGTH_EXCEEDED => {
                 BunString::static_("path length constraint exceeded")
             }
-            e if e == err!("PROXY_PATH_LENGTH_EXCEEDED") => {
+            crate::Error::PROXY_PATH_LENGTH_EXCEEDED => {
                 BunString::static_("proxy path length constraint exceeded")
             }
-            e if e == err!("PROXY_CERTIFICATES_NOT_ALLOWED") => BunString::static_(
+            crate::Error::PROXY_CERTIFICATES_NOT_ALLOWED => BunString::static_(
                 "proxy certificates not allowed, please set the appropriate flag",
             ),
-            e if e == err!("INVALID_PURPOSE") => {
+            crate::Error::INVALID_PURPOSE => {
                 BunString::static_("unsupported certificate purpose")
             }
-            e if e == err!("CERT_UNTRUSTED") => BunString::static_("certificate not trusted"),
-            e if e == err!("CERT_REJECTED") => BunString::static_("certificate rejected"),
-            e if e == err!("APPLICATION_VERIFICATION") => {
+            crate::Error::CERT_UNTRUSTED => BunString::static_("certificate not trusted"),
+            crate::Error::CERT_REJECTED => BunString::static_("certificate rejected"),
+            crate::Error::APPLICATION_VERIFICATION => {
                 BunString::static_("application verification failure")
             }
-            e if e == err!("SUBJECT_ISSUER_MISMATCH") => {
+            crate::Error::SUBJECT_ISSUER_MISMATCH => {
                 BunString::static_("subject issuer mismatch")
             }
-            e if e == err!("AKID_SKID_MISMATCH") => {
+            crate::Error::AKID_SKID_MISMATCH => {
                 BunString::static_("authority and subject key identifier mismatch")
             }
-            e if e == err!("AKID_ISSUER_SERIAL_MISMATCH") => {
+            crate::Error::AKID_ISSUER_SERIAL_MISMATCH => {
                 BunString::static_("authority and issuer serial number mismatch")
             }
-            e if e == err!("KEYUSAGE_NO_CERTSIGN") => {
+            crate::Error::KEYUSAGE_NO_CERTSIGN => {
                 BunString::static_("key usage does not include certificate signing")
             }
-            e if e == err!("UNABLE_TO_GET_CRL_ISSUER") => {
+            crate::Error::UNABLE_TO_GET_CRL_ISSUER => {
                 BunString::static_("unable to get CRL issuer certificate")
             }
-            e if e == err!("UNHANDLED_CRITICAL_EXTENSION") => {
+            crate::Error::UNHANDLED_CRITICAL_EXTENSION => {
                 BunString::static_("unhandled critical extension")
             }
-            e if e == err!("KEYUSAGE_NO_CRL_SIGN") => {
+            crate::Error::KEYUSAGE_NO_CRL_SIGN => {
                 BunString::static_("key usage does not include CRL signing")
             }
-            e if e == err!("KEYUSAGE_NO_DIGITAL_SIGNATURE") => {
+            crate::Error::KEYUSAGE_NO_DIGITAL_SIGNATURE => {
                 BunString::static_("key usage does not include digital signature")
             }
-            e if e == err!("UNHANDLED_CRITICAL_CRL_EXTENSION") => {
+            crate::Error::UNHANDLED_CRITICAL_CRL_EXTENSION => {
                 BunString::static_("unhandled critical CRL extension")
             }
-            e if e == err!("INVALID_EXTENSION") => {
+            crate::Error::INVALID_EXTENSION => {
                 BunString::static_("invalid or inconsistent certificate extension")
             }
-            e if e == err!("INVALID_POLICY_EXTENSION") => {
+            crate::Error::INVALID_POLICY_EXTENSION => {
                 BunString::static_("invalid or inconsistent certificate policy extension")
             }
-            e if e == err!("NO_EXPLICIT_POLICY") => BunString::static_("no explicit policy"),
-            e if e == err!("DIFFERENT_CRL_SCOPE") => BunString::static_("Different CRL scope"),
-            e if e == err!("UNSUPPORTED_EXTENSION_FEATURE") => {
+            crate::Error::NO_EXPLICIT_POLICY => BunString::static_("no explicit policy"),
+            crate::Error::DIFFERENT_CRL_SCOPE => BunString::static_("Different CRL scope"),
+            crate::Error::UNSUPPORTED_EXTENSION_FEATURE => {
                 BunString::static_("Unsupported extension feature")
             }
-            e if e == err!("UNNESTED_RESOURCE") => {
+            crate::Error::UNNESTED_RESOURCE => {
                 BunString::static_("RFC 3779 resource not subset of parent's resources")
             }
-            e if e == err!("PERMITTED_VIOLATION") => {
+            crate::Error::PERMITTED_VIOLATION => {
                 BunString::static_("permitted subtree violation")
             }
-            e if e == err!("EXCLUDED_VIOLATION") => {
+            crate::Error::EXCLUDED_VIOLATION => {
                 BunString::static_("excluded subtree violation")
             }
-            e if e == err!("SUBTREE_MINMAX") => {
+            crate::Error::SUBTREE_MINMAX => {
                 BunString::static_("name constraints minimum and maximum not supported")
             }
-            e if e == err!("UNSUPPORTED_CONSTRAINT_TYPE") => {
+            crate::Error::UNSUPPORTED_CONSTRAINT_TYPE => {
                 BunString::static_("unsupported name constraint type")
             }
-            e if e == err!("UNSUPPORTED_CONSTRAINT_SYNTAX") => {
+            crate::Error::UNSUPPORTED_CONSTRAINT_SYNTAX => {
                 BunString::static_("unsupported or invalid name constraint syntax")
             }
-            e if e == err!("UNSUPPORTED_NAME_SYNTAX") => {
+            crate::Error::UNSUPPORTED_NAME_SYNTAX => {
                 BunString::static_("unsupported or invalid name syntax")
             }
-            e if e == err!("CRL_PATH_VALIDATION_ERROR") => {
+            crate::Error::CRL_PATH_VALIDATION_ERROR => {
                 BunString::static_("CRL path validation error")
             }
-            e if e == err!("SUITE_B_INVALID_VERSION") => {
+            crate::Error::SUITE_B_INVALID_VERSION => {
                 BunString::static_("Suite B: certificate version invalid")
             }
-            e if e == err!("SUITE_B_INVALID_ALGORITHM") => {
+            crate::Error::SUITE_B_INVALID_ALGORITHM => {
                 BunString::static_("Suite B: invalid public key algorithm")
             }
-            e if e == err!("SUITE_B_INVALID_CURVE") => {
+            crate::Error::SUITE_B_INVALID_CURVE => {
                 BunString::static_("Suite B: invalid ECC curve")
             }
-            e if e == err!("SUITE_B_INVALID_SIGNATURE_ALGORITHM") => {
+            crate::Error::SUITE_B_INVALID_SIGNATURE_ALGORITHM => {
                 BunString::static_("Suite B: invalid signature algorithm")
             }
-            e if e == err!("SUITE_B_LOS_NOT_ALLOWED") => {
+            crate::Error::SUITE_B_LOS_NOT_ALLOWED => {
                 BunString::static_("Suite B: curve not allowed for this LOS")
             }
-            e if e == err!("SUITE_B_CANNOT_SIGN_P_384_WITH_P_256") => {
+            crate::Error::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256 => {
                 BunString::static_("Suite B: cannot sign P-384 with P-256")
             }
-            e if e == err!("HOSTNAME_MISMATCH") => BunString::static_("Hostname mismatch"),
-            e if e == err!("EMAIL_MISMATCH") => BunString::static_("Email address mismatch"),
-            e if e == err!("IP_ADDRESS_MISMATCH") => BunString::static_("IP address mismatch"),
-            e if e == err!("INVALID_CALL") => {
+            crate::Error::HOSTNAME_MISMATCH => BunString::static_("Hostname mismatch"),
+            crate::Error::EMAIL_MISMATCH => BunString::static_("Email address mismatch"),
+            crate::Error::IP_ADDRESS_MISMATCH => BunString::static_("IP address mismatch"),
+            crate::Error::INVALID_CALL => {
                 BunString::static_("Invalid certificate verification context")
             }
-            e if e == err!("STORE_LOOKUP") => BunString::static_("Issuer certificate lookup error"),
-            e if e == err!("NAME_CONSTRAINTS_WITHOUT_SANS") => {
+            crate::Error::STORE_LOOKUP => BunString::static_("Issuer certificate lookup error"),
+            crate::Error::NAME_CONSTRAINTS_WITHOUT_SANS => {
                 BunString::static_("Issuer has name constraints but leaf has no SANs")
             }
-            e if e == err!("UNKNOWN_CERTIFICATE_VERIFICATION_ERROR") => {
+            crate::Error::UNKNOWN_CERTIFICATE_VERIFICATION_ERROR => {
                 BunString::static_("unknown certificate verification error")
             }
 
@@ -1840,7 +1839,7 @@ impl FetchTasklet {
         global_this: &JSGlobalObject,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
-    ) -> Result<*mut FetchTasklet, BunError> {
+    ) -> crate::Result<*mut FetchTasklet> {
         // SAFETY: bun_vm() returns the FFI `*mut VirtualMachine`; the VM outlives
         // this tasklet (process-lifetime singleton on the JS thread).
         let jsc_vm: &'static VirtualMachine = global_this.bun_vm();
@@ -2270,7 +2269,7 @@ impl FetchTasklet {
         global: &JSGlobalObject,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
-    ) -> Result<*mut FetchTasklet, BunError> {
+    ) -> crate::Result<*mut FetchTasklet> {
         http::http_thread::init(&http::http_thread::InitOpts::default());
         let node = Self::get(global, fetch_options, promise)?;
 

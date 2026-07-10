@@ -20,7 +20,6 @@ pub enum ChannelError {
 
 bun_core::oom_from_alloc!(ChannelError);
 
-bun_core::named_error_set!(ChannelError);
 
 // Channel is shared across threads through `&self`, so `buffer` is wrapped in
 // `UnsafeCell` and `is_closed` in `Cell`, both accessed only while `mutex` is

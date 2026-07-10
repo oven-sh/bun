@@ -1464,7 +1464,6 @@ pub enum ParseError {
 
 bun_core::oom_from_alloc!(ParseError);
 
-bun_core::named_error_set!(ParseError);
 
 pub(crate) type PkgPathSet = PkgMap<()>;
 

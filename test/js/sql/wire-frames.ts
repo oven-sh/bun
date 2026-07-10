@@ -182,6 +182,39 @@ export function pgCopyDone(): Buffer {
   return pgRaw("c", Buffer.alloc(0));
 }
 
+// PostgreSQL FE/BE protocol §55.7 ParseComplete: Byte1('1') Int32(4)
+export function pgParseComplete(): Buffer {
+  return pgRaw("1", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 BindComplete: Byte1('2') Int32(4)
+export function pgBindComplete(): Buffer {
+  return pgRaw("2", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 ParameterDescription: Byte1('t') Int32(len) Int16(nparams) Int32[nparams](typeOid)
+export function pgParameterDescription(typeOids: number[]): Buffer {
+  const body = Buffer.alloc(2 + 4 * typeOids.length);
+  body.writeInt16BE(typeOids.length, 0);
+  for (let i = 0; i < typeOids.length; i++) body.writeInt32BE(typeOids[i], 2 + 4 * i);
+  return pgRaw("t", body);
+}
+
+/**
+ * Drain complete PostgreSQL frontend messages from `buffered`, calling
+ * onMessage(type, body) for each; returns the leftover bytes. The very first
+ * frontend message (StartupMessage) has no type byte: feed it separately.
+ */
+export function pgReadFrontendMessages(buffered: Buffer, onMessage: (type: number, body: Buffer) => void): Buffer {
+  while (buffered.length >= 5) {
+    const len = buffered.readInt32BE(1);
+    if (buffered.length < 1 + len) break;
+    onMessage(buffered[0], buffered.subarray(5, 1 + len));
+    buffered = buffered.subarray(1 + len);
+  }
+  return buffered;
+}
+
 // PostgreSQL FE/BE protocol §55.7 DataRow: Byte1('D') Int32(len) Int16(ncols) per col: Int32(byteLen | -1) Byte[len]
 export function pgDataRow(cols: (Buffer | null)[]): Buffer {
   const parts: Buffer[] = [Buffer.alloc(2)];

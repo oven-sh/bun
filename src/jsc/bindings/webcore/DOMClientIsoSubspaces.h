@@ -52,6 +52,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForErrorCodeCache;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunInspectorConnection;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNextTickQueue;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSocketHandlers;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNAPIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSDiffieHellman;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSDiffieHellmanGroup;

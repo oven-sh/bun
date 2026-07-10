@@ -25,8 +25,6 @@
 // crate, `EventLoopHandle` is `EventLoopCtx` (the by-value `{kind, owner}`
 // pair) and the seam is type-checked.
 
-pub mod stub_event_loop;
-
 #[cfg(windows)]
 pub mod windows_event_loop;
 

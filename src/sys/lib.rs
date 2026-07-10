@@ -6815,6 +6815,9 @@ pub fn normalize_path_windows_opts<'a>(
     while prefix_len > 0 && base[prefix_len - 1] == b'\\' as u16 {
         prefix_len -= 1;
     }
+    // Post-trim on purpose: false for volume-root bases (the trim shortened
+    // the prefix), whose lone-separator suffix must survive (see below).
+    let whole_base = prefix_len == base.len();
     let mut rest = &base[prefix_len..];
     // Volume-root handles yield a trailing `\` — trim it so `joined` below
     // starts with exactly one separator.
@@ -6851,6 +6854,13 @@ pub fn normalize_path_windows_opts<'a>(
         bun_paths::is_sep_any_t::<u16>,
     )
     .len();
+    // A lone-separator suffix means `rel` collapsed to nothing: drop it for a
+    // directory-path prefix, keep it for a bare device name where it selects
+    // the root directory over the volume device.
+    if sub_len == 1 && whole_base {
+        buf[prefix_len] = 0;
+        return Ok(WStr::from_buf(&buf[..], prefix_len));
+    }
     // ZERO_TERMINATE wrote NUL at buf[prefix_len + sub_len].
     Ok(WStr::from_buf(&buf[..], prefix_len + sub_len))
 }
@@ -9843,6 +9853,9 @@ mod normalize_path_windows_tests {
         let base = normalize(*dir, ".");
         let base_vol = base["\\Device\\".len()..].split('\\').next().unwrap();
         assert_eq!(comps[0], base_vol, "{got} vs {base}");
+        // `..`-only rel clamps to the volume root DIRECTORY: device + `\`.
+        let root = normalize(*dir, "..\\..\\..\\..\\..\\..\\..\\..\\..");
+        assert_eq!(root, format!("\\Device\\{base_vol}\\"), "{root}");
     }
 
     #[test]
@@ -9884,7 +9897,11 @@ mod normalize_path_windows_tests {
         assert!(got.starts_with("\\Device\\"), "{got}");
         assert!(!got.ends_with('\\'), "{got}");
         let name = tree.0.file_name().unwrap().to_str().unwrap();
-        assert!(got.ends_with(&format!("\\{name}")), "{got}");
+        // Exact, trailing-sep-free expectation built from the parent handle.
+        let parent = scopeguard::guard(open_dir_handle(tree.0.parent().unwrap()), |fd| {
+            let _ = close(fd);
+        });
+        assert_eq!(got, format!("{}\\{name}", normalize(*parent, ".")));
     }
 
     #[test]

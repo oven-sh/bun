@@ -222,20 +222,13 @@ describe("new File() lastModified option", () => {
     expect(lm({ lastModified: input })).toBe(expected);
   });
 
-  test("lastModified: undefined defaults to Date.now()", () => {
-    const before = Date.now();
-    const value = lm({ lastModified: undefined });
-    const after = Date.now();
-    expect(value).toBeGreaterThanOrEqual(before);
-    expect(value).toBeLessThanOrEqual(after);
-  });
-
-  test("missing lastModified defaults to Date.now()", () => {
-    const before = Date.now();
-    const value = lm({});
-    const after = Date.now();
-    expect(value).toBeGreaterThanOrEqual(before);
-    expect(value).toBeLessThanOrEqual(after);
+  // The default comes from a native wall-clock read that may differ from JS
+  // Date.now() by a few ms on Windows; assert "current time" within a wide
+  // tolerance rather than an exact bracket.
+  test.each([[{ lastModified: undefined }], [{}]])("%p defaults to the current time", opts => {
+    const value = lm(opts);
+    expect(Number.isFinite(value)).toBe(true);
+    expect(Math.abs(value - Date.now())).toBeLessThan(60_000);
   });
 
   test("valueOf throwing propagates", () => {

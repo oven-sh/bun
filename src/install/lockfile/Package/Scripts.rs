@@ -146,7 +146,7 @@ impl Scripts {
                     first_script_index = i8::try_from(script_index).expect("int cast");
                 }
                 scripts[script_index as usize] =
-                    Some(Box::<[u8]>::from(self.preinstall.slice(lockfile_buf)));
+                    Some(Box::<[u8]>::from(self.postinstall.slice(lockfile_buf)));
                 counter += 1;
             }
             script_index += 1;
@@ -292,13 +292,16 @@ impl Scripts {
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution: &Resolution,
+        // Precomputed `lockfile.has_trusted_dependency(folder_name,
+        // folder_name, resolution)`. Passed in (rather than read here) so the
+        // isolated installer can serialize the `trusted_dependencies` read
+        // against concurrent inserts without holding its mutex across the
+        // filesystem stat / package.json parse below.
+        trusted: bool,
     ) -> Result<Option<List>, bun_core::Error> {
         if self.has_any() {
             let add_node_gyp_rebuild_script =
-                if lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
-                    && self.install.is_empty()
-                    && self.preinstall.is_empty()
-                {
+                if trusted && self.install.is_empty() && self.preinstall.is_empty() {
                     // `defer save.restore()` — `save()` returns an RAII guard that
                     // restores the path length on Drop and derefs to the path.
                     let mut save = folder_path.save();

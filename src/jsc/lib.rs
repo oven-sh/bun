@@ -500,8 +500,6 @@ pub mod bun_exception;
 pub mod bun_stack_frame;
 #[path = "BunStackTrace.rs"]
 pub mod bun_stack_trace;
-#[path = "javascript_core_c_api.rs"]
-pub mod c_api;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
 #[path = "DeferredError.rs"]
@@ -1564,9 +1562,7 @@ pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]
 pub type PlatformEventLoop = bun_io::Loop;
 
-pub use self::c_api as C;
-/// Legacy lower-case alias.
-pub use self::c_api as c;
+pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 /// Deprecated: Remove all of these please.
 pub use self::sizes as Sizes;
 /// Deprecated: Use `bun_core::ZigString`

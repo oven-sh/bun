@@ -57,7 +57,7 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
-pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, jsc::C::JSObjectRef>;
+pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
 /// `api::JsException` lives in
 /// [`crate::schema_api`] (not `bun_options_types::schema::api`) because its
 /// `stack: StackTrace` field transitively names `BunStackFramePosition` from

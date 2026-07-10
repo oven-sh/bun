@@ -159,7 +159,7 @@ static void pipeToLoopStep(JSGlobalObject* globalObject, JSStreamPipeToOperation
         return;
     auto* runtime = JSStreamsRuntime::from(globalObject);
     if (*desiredSize <= 0) {
-        registerPipeReaction(globalObject, writer->m_readyPromise.get(), runtime->onPipeWriterReadyFulfilled(), nullptr, op);
+        registerPipeReaction(globalObject, writer->readyPromise(globalObject), runtime->onPipeWriterReadyFulfilled(), nullptr, op);
         return;
     }
     auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::PipeTo, op);
@@ -629,7 +629,7 @@ void pipeToReadRequestChunkSteps(JSGlobalObject* globalObject, JSStreamPipeToOpe
     op->m_readInFlight = false;
     if (op->m_finalized)
         return;
-    const auto* writer = op->m_writer.get();
+    auto* writer = op->m_writer.get();
     auto* runtime = JSStreamsRuntime::from(globalObject);
     // The sink write is deferred by one microtask so an enqueue() inside the source never
     // synchronously reenters the destination's write algorithm. m_currentWrite is the deferred
@@ -642,7 +642,7 @@ void pipeToReadRequestChunkSteps(JSGlobalObject* globalObject, JSStreamPipeToOpe
     // A shutdown that is waiting on m_currentWrite re-checks it when its reaction fires.
     if (op->m_shuttingDown)
         return;
-    RELEASE_AND_RETURN(scope, WebCore::registerPipeReaction(globalObject, writer->m_readyPromise.get(), runtime->onPipeWriterReadyFulfilled(), nullptr, op));
+    RELEASE_AND_RETURN(scope, WebCore::registerPipeReaction(globalObject, writer->readyPromise(globalObject), runtime->onPipeWriterReadyFulfilled(), nullptr, op));
 }
 
 void pipeToReadRequestCloseSteps(JSGlobalObject* globalObject, JSStreamPipeToOperation* op)

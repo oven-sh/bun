@@ -4250,7 +4250,7 @@ impl DuplexUpgradeContext {
                     }
                 };
                 if let Err(err) = started {
-                    if err == crate::Error::Alloc(bun_alloc::AllocError) {
+                    if matches!(err, crate::Error::Alloc(_)) {
                         bun_core::out_of_memory();
                     }
                     let errno = sys::SystemErrno::ECONNREFUSED as c_int;

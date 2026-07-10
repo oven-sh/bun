@@ -1434,7 +1434,7 @@ pub mod command {
         // exists in case a producer is ever added (Arguments.rs).
         let ctx = match init(tag, log) {
             Ok(ctx) => ctx,
-            Err(e) if tag == Tag::AutoCommand && e == crate::Error::MissingEntryPoint => {
+            Err(e) if tag == Tag::AutoCommand && matches!(e, crate::Error::MissingEntryPoint) => {
                 return HelpCommand::exec();
             }
             Err(e) => return Err(e),

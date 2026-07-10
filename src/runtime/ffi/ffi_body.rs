@@ -1152,8 +1152,8 @@ impl FFI {
         // Now we compile the code with tinycc.
         let mut tcc_state: Option<NonNull<TCC::State>> = match compile_c.compile(global_this) {
             Ok(s) => Some(s),
-            Err(err) => {
-                if err == crate::Error::DeferredErrors {
+            Err(err) => match err {
+                crate::Error::DeferredErrors => {
                     let mut combined: Vec<u8> = Vec::new();
                     let file_for_err = if !compile_c.current_file_for_errors.is_empty() {
                         compile_c.current_file_for_errors.as_bytes()
@@ -1173,16 +1173,12 @@ impl FFI {
                     }
 
                     return Err(global_this.throw(format_args!("{}", BStr::new(&combined))));
-                } else if err == crate::Error::JSError {
-                    return Err(JsError::Thrown);
-                } else if err == crate::Error::Alloc(bun_alloc::AllocError) {
-                    return Err(JsError::OutOfMemory);
-                } else if err == crate::Error::JSTerminated {
-                    return Err(JsError::Terminated);
-                } else {
-                    unreachable!()
                 }
-            }
+                crate::Error::JSError => return Err(JsError::Thrown),
+                crate::Error::Alloc(_) => return Err(JsError::OutOfMemory),
+                crate::Error::JSTerminated => return Err(JsError::Terminated),
+                _ => unreachable!(),
+            },
         };
         let _tcc_guard = scopeguard::guard(&mut tcc_state, |s| {
             if let Some(state) = s {

@@ -1099,7 +1099,7 @@ where
             reason: Some(Api::FallbackStep::fetch_event_handler),
             cwd: Some(cwd.to_vec().into_boxed_slice()),
             problems: Some(Api::Problems {
-                code: err.as_u16(),
+                code: 500,
                 name: err.name().as_bytes().to_vec().into_boxed_slice(),
                 exceptions: exceptions.to_vec(),
                 build: {

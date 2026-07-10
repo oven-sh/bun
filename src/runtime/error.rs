@@ -386,6 +386,40 @@ pub enum Error {
     BoringSSLError,
     #[error("WriteFailed")]
     WriteFailed,
+    #[error("FileNotFound")]
+    FileNotFound,
+    #[error("AccessDenied")]
+    AccessDenied,
+    #[error("PermissionDenied")]
+    PermissionDenied,
+    #[error("SymLinkLoop")]
+    SymLinkLoop,
+    #[error("NameTooLong")]
+    NameTooLong,
+    #[error("SystemResources")]
+    SystemResources,
+    #[error("ReadOnlyFileSystem")]
+    ReadOnlyFileSystem,
+    #[error("FileSystem")]
+    FileSystem,
+    #[error("FileBusy")]
+    FileBusy,
+    #[error("NotDir")]
+    NotDir,
+    #[error("IsDir")]
+    IsDir,
+    #[error("DirNotEmpty")]
+    DirNotEmpty,
+    #[error("SystemFdQuotaExceeded")]
+    SystemFdQuotaExceeded,
+    #[error("ProcessFdQuotaExceeded")]
+    ProcessFdQuotaExceeded,
+    #[error("BadPathName")]
+    BadPathName,
+    #[error("FileTooBig")]
+    FileTooBig,
+    #[error("NoDevice")]
+    NoDevice,
 
     #[error(transparent)]
     Core(#[from] bun_core::Error),
@@ -432,9 +466,13 @@ pub enum Error {
     #[error(transparent)]
     JsPrinter(#[from] bun_js_printer::Error),
     #[error(transparent)]
+    Sourcemap(#[from] bun_sourcemap::Error),
+    #[error(transparent)]
     StandaloneGraph(#[from] bun_standalone_graph::Error),
     #[error(transparent)]
     TerminalInit(crate::api::bun_terminal_body::InitError),
+    #[error(transparent)]
+    DirIterator(#[from] crate::node::dir_iterator::IteratorError),
     #[error("JSError")]
     Js(bun_jsc::JsError),
 }
@@ -748,6 +786,23 @@ impl Error {
             Self::Unexpected => "Unexpected",
             Self::BoringSSLError => "BoringSSLError",
             Self::WriteFailed => "WriteFailed",
+            Self::FileNotFound => "FileNotFound",
+            Self::AccessDenied => "AccessDenied",
+            Self::PermissionDenied => "PermissionDenied",
+            Self::SymLinkLoop => "SymLinkLoop",
+            Self::NameTooLong => "NameTooLong",
+            Self::SystemResources => "SystemResources",
+            Self::ReadOnlyFileSystem => "ReadOnlyFileSystem",
+            Self::FileSystem => "FileSystem",
+            Self::FileBusy => "FileBusy",
+            Self::NotDir => "NotDir",
+            Self::IsDir => "IsDir",
+            Self::DirNotEmpty => "DirNotEmpty",
+            Self::SystemFdQuotaExceeded => "SystemFdQuotaExceeded",
+            Self::ProcessFdQuotaExceeded => "ProcessFdQuotaExceeded",
+            Self::BadPathName => "BadPathName",
+            Self::FileTooBig => "FileTooBig",
+            Self::NoDevice => "NoDevice",
             Self::Core(e) => e.name(),
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
@@ -770,8 +825,10 @@ impl Error {
             Self::Http(e) => e.name(),
             Self::Hpack(e) => <&'static str>::from(e),
             Self::JsPrinter(e) => e.name(),
+            Self::Sourcemap(e) => e.name(),
             Self::StandaloneGraph(e) => e.name(),
             Self::TerminalInit(e) => <&'static str>::from(e),
+            Self::DirIterator(e) => <&'static str>::from(e),
             Self::Js(_) => "JSError",
         }
     }

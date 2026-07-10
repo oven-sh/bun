@@ -355,9 +355,10 @@ impl CreateCommand {
                         match Example::fetch(ctx, &mut env_loader, template, &mut progress, node) {
                             Ok(b) => b,
                             Err(err) => {
-                                if err == crate::Error::HTTPForbidden
-                                    || err == crate::Error::ExampleNotFound
-                                {
+                                if matches!(
+                                    err,
+                                    crate::Error::HTTPForbidden | crate::Error::ExampleNotFound
+                                ) {
                                     node.end();
                                     progress.refresh();
 
@@ -395,7 +396,7 @@ impl CreateCommand {
                     ) {
                         Ok(b) => b,
                         Err(err) => {
-                            if err == crate::Error::HTTPForbidden {
+                            if matches!(err, crate::Error::HTTPForbidden) {
                                 node.end();
                                 progress.refresh();
 
@@ -403,7 +404,7 @@ impl CreateCommand {
                                     "\n<r><red>error:<r> GitHub returned 403. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n",
                                 );
                                 Global::crash();
-                            } else if err == crate::Error::GitHubRepositoryNotFound {
+                            } else if matches!(err, crate::Error::GitHubRepositoryNotFound) {
                                 node.end();
                                 progress.refresh();
 

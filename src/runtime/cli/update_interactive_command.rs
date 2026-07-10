@@ -1288,7 +1288,11 @@ impl UpdateInteractiveCommand {
         let result = match Self::process_multi_select(&mut state, terminal_size) {
             Ok(r) => r,
             Err(err) => {
-                if err == crate::Error::EndOfStream {
+                if matches!(
+                    err,
+                    crate::Error::EndOfStream
+                        | crate::Error::Core(bun_core::Error::EndOfStream)
+                ) {
                     Output::flush();
                     bun_core::prettyln!("\n<r><red>x<r> Cancelled");
                     Global::exit(0);

@@ -25,11 +25,6 @@ pub enum IteratorError {
     #[error("Unexpected")]
     Unexpected,
 }
-impl From<IteratorError> for crate::Error {
-    fn from(e: IteratorError) -> Self {
-        crate::Error::intern(<&'static str>::from(e))
-    }
-}
 
 pub struct IteratorResult {
     /// `RawSlice` invariant: borrows the iterator's `getdents` buffer

@@ -923,7 +923,10 @@ fn iterate_bundled_deps(
         Ok(d) => d,
         Err(err) => {
             // ignore node_modules if it isn't a directory, or doesn't exist
-            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) || err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+            if matches!(
+                err,
+                crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR | bun_errno::SystemErrno::ENOENT)
+            ) {
                 return Ok(bundled_pack_queue);
             }
             Output::err(
@@ -2094,7 +2097,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         manager.options.log_level != LogLevel::Silent,
         false,
     ) {
-        if err == crate::Error::Alloc(bun_alloc::AllocError) {
+        if matches!(err, crate::Error::Alloc(_)) {
             return Err(PackError::OutOfMemory);
         }
         Output::err_generic(
@@ -3051,14 +3054,14 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     ) {
         Ok(_) => Ok(()),
         Err(err) => {
-            if err == crate::Error::MissingShell {
+            if matches!(err, crate::Error::MissingShell) {
                 Output::err_generic(
                     "failed to find shell executable to run {} script",
                     format_args!("{}", bstr::BStr::new(name)),
                 );
                 Global::crash();
             }
-            if err == crate::Error::Alloc(bun_alloc::AllocError) {
+            if matches!(err, crate::Error::Alloc(_)) {
                 return Err(PackError::OutOfMemory);
             }
             unreachable!()

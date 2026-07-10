@@ -101,7 +101,7 @@ pub mod js_bindings {
 
     #[bun_jsc::host_fn]
     pub(crate) fn js_root_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        crash_handler::handle_root_error(crate::Error::Test, None);
+        crash_handler::handle_root_error(crash_handler::Error::Named("Test"), None);
     }
 
     #[bun_jsc::host_fn]

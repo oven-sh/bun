@@ -234,7 +234,7 @@ impl PmPkgCommand {
                     results.put(key, value)?;
                 }
                 Err(e) => {
-                    if e == crate::Error::InvalidPath {
+                    if matches!(e, crate::Error::InvalidPath) {
                         if strings::index_of(key, b"[]").is_some() {
                             Output::err_generic(
                                 "Empty brackets are not valid syntax for retrieving values.",
@@ -243,7 +243,7 @@ impl PmPkgCommand {
                             Global::exit(1);
                         }
                     }
-                    if e != crate::Error::NotFound {
+                    if !matches!(e, crate::Error::NotFound) {
                         return Err(e);
                     }
                 }
@@ -361,7 +361,7 @@ impl PmPkgCommand {
                     }
                 }
                 Err(e) => {
-                    if e != crate::Error::NotFound {
+                    if !matches!(e, crate::Error::NotFound) {
                         return Err(e);
                     }
                 }

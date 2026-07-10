@@ -833,11 +833,9 @@ impl BlobExt for Blob {
 
         let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
             Ok(v) => v,
-            Err(e)
-                if e == crate::Error::EndOfStream
-                    || e == crate::Error::TooSmall
-                    || e == crate::Error::InvalidValue =>
-            {
+            Err(crate::Error::EndOfStream)
+            | Err(crate::Error::TooSmall)
+            | Err(crate::Error::InvalidValue) => {
                 return Err(
                     global_this.throw(format_args!("Blob.onStructuredCloneDeserialize failed"))
                 );

@@ -218,7 +218,7 @@ pub mod expect {
             // snapshot bytes. Propagate the writer error as a thrown JS error
             // so the caller's `.is_err()` branch
             // (expect.rs `to_match_snapshot_value_kind`) fires.
-            out.flush().map_err(|e| global.throw_error(e, "snapshot writer flush failed"))?;
+            out.flush().map_err(|e| global.throw_error(e.into(), "snapshot writer flush failed"))?;
             Ok(())
         }
         #[inline]

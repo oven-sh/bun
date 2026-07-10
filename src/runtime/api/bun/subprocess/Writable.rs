@@ -1,7 +1,6 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_core;
 use bun_jsc::{JSGlobalObject, JSValue, event_loop::EventLoop};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdExt};

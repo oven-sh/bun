@@ -865,7 +865,7 @@ impl<'a> TransformTask<'a> {
 
         if self.log.has_any() || self.err.is_some() {
             let error_value: JsResult<JSValue> = 'brk: {
-                if let Some(err) = self.err {
+                if let Some(err) = &self.err {
                     if !self.log.has_any() {
                         break 'brk bun_jsc::BuildMessage::create(
                             self.global,

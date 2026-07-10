@@ -376,12 +376,8 @@ impl PasswordObject {
             Algorithm::Argon2id | Algorithm::Argon2d | Algorithm::Argon2i => {
                 match pwhash::argon2::str_verify(previous_hash, password, Default::default()) {
                     Ok(()) => Ok(true),
-                    Err(err) => {
-                        if err == crate::Error::PasswordVerificationFailed {
-                            return Ok(false);
-                        }
-                        Err(err)
-                    }
+                    Err(crate::Error::PasswordVerificationFailed) => Ok(false),
+                    Err(err) => Err(err),
                 }
             }
             Algorithm::Bcrypt => {
@@ -404,12 +400,8 @@ impl PasswordObject {
                     },
                 ) {
                     Ok(()) => Ok(true),
-                    Err(err) => {
-                        if err == crate::Error::PasswordVerificationFailed {
-                            return Ok(false);
-                        }
-                        Err(err)
-                    }
+                    Err(crate::Error::PasswordVerificationFailed) => Ok(false),
+                    Err(err) => Err(err),
                 }
             }
         }

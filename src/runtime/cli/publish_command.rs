@@ -733,7 +733,7 @@ impl PublishCommand {
                     // SAFETY: see above.
                     unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
                 ) {
-                    if e == crate::Error::MissingShell {
+                    if matches!(e, crate::Error::MissingShell) {
                         Output::err_generic(
                             "failed to find shell executable to run publish script",
                             (),
@@ -757,7 +757,7 @@ impl PublishCommand {
                     // SAFETY: see above.
                     unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
                 ) {
-                    if e == crate::Error::MissingShell {
+                    if matches!(e, crate::Error::MissingShell) {
                         Output::err_generic(
                             "failed to find shell executable to run postpublish script",
                             (),
@@ -1390,7 +1390,7 @@ impl PublishCommand {
         ) {
             Ok(v) => Ok(v.into()),
             Err(e) => {
-                if e == crate::Error::Alloc(bun_alloc::AllocError) {
+                if matches!(e, crate::Error::Alloc(_)) {
                     return Err(GetOTPError::OutOfMemory);
                 }
                 Output::err(e, "failed to read OTP input", ());

@@ -4405,14 +4405,14 @@ unsafe fn transpile_file(
             promise.cast::<c_void>()
         }
         Err(err) => {
-            if err == crate::Error::AsyncModule {
+            if matches!(err, crate::Error::AsyncModule) {
                 debug_assert!(!promise.is_null());
                 return promise.cast::<c_void>();
             }
-            if err == crate::Error::PluginError {
+            if matches!(err, crate::Error::PluginError) {
                 return ptr::null_mut();
             }
-            if err == crate::Error::JSError {
+            if matches!(err, crate::Error::JSError) {
                 // `take_error` unwraps
                 // the JSC::Exception to its inner value; the C++ caller
                 // re-wraps via `JSC::Exception::create`, so storing the raw
@@ -4578,10 +4578,10 @@ unsafe fn transpile_virtual_module(
             true
         }
         Err(err) => {
-            if err == crate::Error::PluginError {
+            if matches!(err, crate::Error::PluginError) {
                 return true;
             }
-            if err == crate::Error::JSError {
+            if matches!(err, crate::Error::JSError) {
                 // `take_error` unwraps
                 // the JSC::Exception to its inner value (see same note in
                 // `transpile_file` above).

@@ -3,7 +3,6 @@ use core::mem::MaybeUninit;
 use core::ptr;
 
 use bun_boringssl_sys as boringssl;
-use bun_core;
 
 use super::evp;
 

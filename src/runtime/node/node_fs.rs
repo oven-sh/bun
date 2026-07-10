@@ -401,15 +401,31 @@ fn encoding_to_node(e: Encoding) -> bun_core::NodeEncoding {
 /// `super::stat` swaps to `pub use bun_sys::PosixStat` this alias collapses.
 use super::stat::PosixStat;
 
-/// Node `fs.rm` mapping helper — `crate::Error::Name` produces a
-/// `crate::Error` from a static error-set name; the *reverse* (name →
-/// `Error` for return) needs the same constructor. The macro caches per
-/// *call site*, but `dt_err` feeds a runtime-selected name from a `match`,
-/// so route through the underlying `Error::intern` (process-global string→u16
-/// table; idempotent, lock-free after first hit on the SEED set).
+/// Node `fs.rm` mapping helper — maps an error-set *name* string back to a
+/// `crate::Error` variant so the callers' `map_anyerror_to_errno*` tables (which
+/// match on `err.name()`) keep round-tripping.
 #[inline]
 fn err_from_static(name: &'static str) -> crate::Error {
-    crate::Error::intern(name)
+    match name {
+        "FileNotFound" => crate::Error::FileNotFound,
+        "AccessDenied" => crate::Error::AccessDenied,
+        "PermissionDenied" => crate::Error::PermissionDenied,
+        "SymLinkLoop" => crate::Error::SymLinkLoop,
+        "NameTooLong" => crate::Error::NameTooLong,
+        "SystemResources" => crate::Error::SystemResources,
+        "ReadOnlyFileSystem" => crate::Error::ReadOnlyFileSystem,
+        "FileSystem" => crate::Error::FileSystem,
+        "FileBusy" => crate::Error::FileBusy,
+        "NotDir" => crate::Error::NotDir,
+        "IsDir" => crate::Error::IsDir,
+        "DirNotEmpty" => crate::Error::DirNotEmpty,
+        "SystemFdQuotaExceeded" => crate::Error::SystemFdQuotaExceeded,
+        "ProcessFdQuotaExceeded" => crate::Error::ProcessFdQuotaExceeded,
+        "BadPathName" => crate::Error::BadPathName,
+        "FileTooBig" => crate::Error::FileTooBig,
+        "NoDevice" => crate::Error::NoDevice,
+        _ => crate::Error::Unexpected,
+    }
 }
 
 /// `preallocate_supported` / `preallocate_length` — these consts have
@@ -7792,7 +7808,7 @@ impl NodeFS {
             #[cfg(not(windows))]
             let resolved = args.path.slice();
             if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File) {
-                let errno = if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                let errno = if matches!(err, crate::Error::FileNotFound) {
                     if args.force {
                         return Ok(());
                     }

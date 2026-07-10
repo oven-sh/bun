@@ -611,7 +611,7 @@ impl FileSystemRouter {
             Err(err) => {
                 return Err(global_this.throw(format_args!(
                     "{} parsing path: {}",
-                    crate::Error::from(err).name(),
+                    bun_url::Error::from(err).name(),
                     bstr::BStr::new(path.slice())
                 )));
             }

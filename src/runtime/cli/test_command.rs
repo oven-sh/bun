@@ -3278,7 +3278,7 @@ impl TestCommand {
 
 pub(crate) fn handle_top_level_test_error_before_javascript_start(err: crate::Error) -> ! {
     if cfg!(debug_assertions) {
-        if err != crate::Error::ModuleNotFound {
+        if !matches!(err, crate::Error::ModuleNotFound) {
             bun_core::debug_warn!("Unhandled error: {}", err.name());
         }
     }

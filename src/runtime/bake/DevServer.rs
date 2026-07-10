@@ -5078,7 +5078,7 @@ impl DevServer {
             log.msgs.len(),
         );
 
-        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) || err == crate::Error::ModuleNotFound {
+        if matches!(err, crate::Error::Sys(bun_errno::SystemErrno::ENOENT) | crate::Error::ModuleNotFound) {
             // Special-case files being deleted.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {

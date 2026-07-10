@@ -60,6 +60,17 @@ describe("null byte injection protection", () => {
       }
     });
 
+    test("throws error for null byte in cwd", async () => {
+      try {
+        Bun.spawn({ cmd: ["echo", "hello"], cwd: "/tmp\0/etc" });
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e.code).toBe("ERR_INVALID_ARG_VALUE");
+        expect(e.message).toMatch(/options\.cwd/);
+        expect(e.message).toMatch(/must be a string without null bytes/);
+      }
+    });
+
     test("works normally with valid arguments", async () => {
       await using proc = Bun.spawn(["echo", "hello"], { stdout: "pipe" });
       const stdout = await new Response(proc.stdout).text();
@@ -100,6 +111,17 @@ describe("null byte injection protection", () => {
       } catch (e: any) {
         expect(e.code).toBe("ERR_INVALID_ARG_VALUE");
         expect(e.message).toMatch(/options\.argv0/);
+        expect(e.message).toMatch(/must be a string without null bytes/);
+      }
+    });
+
+    test("throws error for null byte in cwd", () => {
+      try {
+        Bun.spawnSync({ cmd: ["echo", "hello"], cwd: "/tmp\0/etc" });
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e.code).toBe("ERR_INVALID_ARG_VALUE");
+        expect(e.message).toMatch(/options\.cwd/);
         expect(e.message).toMatch(/must be a string without null bytes/);
       }
     });

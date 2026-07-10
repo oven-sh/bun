@@ -244,6 +244,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamBYOBRead
     if (!stream)
         return throwVMTypeError(lexicalGlobalObject, scope, "ReadableStreamBYOBReader constructor requires a ReadableStream as its first argument"_s);
 
+    // Same as getReader({mode:"byob"}): a lazy native stream materializes into a byte
+    // controller before it is locked. A DirectPending stream is left alone so it rejects
+    // without running user code.
+    if (stream->m_bunMode == BunStreamMode::NativePending) {
+        stream->materializeIfNeeded(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
     auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     RETURN_IF_EXCEPTION(scope, {});
     auto* reader = JSReadableStreamBYOBReader::create(vm, structure);

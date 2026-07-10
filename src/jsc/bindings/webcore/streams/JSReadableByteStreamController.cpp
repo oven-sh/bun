@@ -155,11 +155,12 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGl
         return nullptr;
     case SourceKind::ByteTeeBranch:
         RELEASE_AND_RETURN(scope, byteTeePullAlgorithm(globalObject, uncheckedDowncast<JSStreamTeeState>(controller->m_algorithms.algorithmContext.get()), controller->m_algorithms.teeBranchIndex));
+    case SourceKind::Native:
+        RELEASE_AND_RETURN(scope, nativeSourcePull(globalObject, controller));
     case SourceKind::Transform:
     case SourceKind::TeeBranch:
     case SourceKind::FromIterable:
     case SourceKind::CrossRealm:
-    case SourceKind::Native:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -188,11 +189,12 @@ static JSC::JSPromise* performByteControllerCancelAlgorithm(JSC::VM& vm, JSC::JS
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     case SourceKind::ByteTeeBranch:
         RELEASE_AND_RETURN(scope, byteTeeCancelAlgorithm(globalObject, uncheckedDowncast<JSStreamTeeState>(controller->m_algorithms.algorithmContext.get()), controller->m_algorithms.teeBranchIndex, reason));
+    case SourceKind::Native:
+        RELEASE_AND_RETURN(scope, nativeSourceCancel(globalObject, controller, reason));
     case SourceKind::Transform:
     case SourceKind::TeeBranch:
     case SourceKind::FromIterable:
     case SourceKind::CrossRealm:
-    case SourceKind::Native:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

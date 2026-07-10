@@ -78,9 +78,9 @@ public:
     // stream has NO size algorithm (a byte stream given a size strategy is a RangeError at
     // construction). See SourceAlgorithmSlots (StreamQueue.h).
     // The reachable m_algorithms.kind set on a BYTE controller is EXACTLY
-    // {JavaScript, Nothing, ByteTeeBranch}. CrossRealm is impossible (the cross-realm
+    // {JavaScript, Nothing, ByteTeeBranch, Native}. CrossRealm is impossible (the cross-realm
     // readable endpoint is always a DEFAULT controller — JSCrossRealmTransformState's
-    // back-pointer is exact-typed to one) and Native always uses a DEFAULT controller.
+    // back-pointer is exact-typed to one).
     Bun::WebStreams::SourceAlgorithmSlots m_algorithms;
 
     // Internal methods

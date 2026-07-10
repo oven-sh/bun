@@ -12,7 +12,7 @@
 #include "root.h"
 #include "StreamsForward.h"
 
-#include "JSReadableStreamDefaultController.h"
+#include "JSReadableByteStreamController.h"
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/Weak.h>
 
@@ -55,13 +55,16 @@ public:
     JSC::WriteBarrier<JSC::Unknown> m_drainValue;
     // THE ONE SANCTIONED JSC::Weak in the subsystem. Null-check EVERY read: null ⇒ the JS
     // consumer side was collected ⇒ drop the data / no-op. Assigned lazily — never eagerly.
-    JSC::Weak<JSReadableStreamDefaultController> m_controller;
+    JSC::Weak<JSReadableByteStreamController> m_controller;
     // adaptive chunk size (256 KiB default, doubled once up to 2 MiB).
     size_t m_chunkSize { 0 };
     // #hasResized — the one-shot chunk-size adaptation already happened.
     bool m_hasResized : 1 { false };
     // #closed
     bool m_closed : 1 { false };
+    // the in-flight async pull's m_pendingView is the head pull-into descriptor's buffer
+    // (respond(n) on fulfilment) rather than an adapter-owned scratch buffer (enqueue()).
+    bool m_pendingIsBYOB : 1 { false };
 
 private:
     JSNativeStreamSourceAdapter(JSC::VM&, JSC::Structure*);

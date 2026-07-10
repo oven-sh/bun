@@ -344,12 +344,12 @@ describe("other loaders do not crash", () => {
 });
 
 describe("?raw", () => {
-  for (const [name, fn] of [
-    ["bun run", testBunRun],
-    // ["bun build", testBunBuild], // TODO: bun.build doesn't support query params at all yet
-    ["bun run await import", testBunRunAwaitImport],
-    ["require", testBunRunRequire],
-    // ["bun build require", testBunBuildRequire], // TODO: bun.build doesn't support query params at all yet
+  for (const [name, fn, expected] of [
+    ["bun run", testBunRun, {}],
+    // ["bun build", testBunBuild, {}], // TODO: bun.build doesn't support query params at all yet
+    ["bun run await import", testBunRunAwaitImport, {}],
+    ["require", testBunRunRequire, { __esModule: true }],
+    // ["bun build require", testBunBuildRequire, {}], // TODO: bun.build doesn't support query params at all yet
   ] as const) {
     test(name, async () => {
       const filename = "abcd.js";
@@ -357,7 +357,7 @@ describe("?raw", () => {
       const question_raw = tempDirWithFiles("import-attributes", {
         [filename]: code,
       });
-      expect(await fn(question_raw, null, filename + "?raw")).toEqual({ default: code });
+      expect(await fn(question_raw, null, filename + "?raw")).toEqual({ ...expected, default: code });
     });
   }
 });

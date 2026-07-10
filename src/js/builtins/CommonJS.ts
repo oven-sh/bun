@@ -117,14 +117,11 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     // If we can pull out a ModuleNamespaceObject, let's do it.
     const namespace = $esmNamespaceForCjs(id);
     if (namespace !== undefined) {
-      // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-      // Various libraries expect __esModule to be set when using ESM from require().
-      // We don't want to always inject the __esModule export into every module,
-      // And creating an Object wrapper causes the actual exports to not be own properties.
-      // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-      // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
+      // Node adds an own enumerable `__esModule: true` to the namespace returned from
+      // require(esm) when the module has a `default` export, so that transpiler interop
+      // helpers (Babel/TypeScript `_interopRequireDefault`) don't double-wrap.
       // https://github.com/oven-sh/bun/issues/14411
-      if (namespace.__esModule === undefined) {
+      if (namespace.__esModule === undefined && "default" in namespace) {
         try {
           namespace.__esModule = true;
         } catch {
@@ -341,14 +338,11 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
   // If we can pull out a ModuleNamespaceObject, let's do it.
   const namespace = $esmNamespaceForCjs(id);
   if (namespace !== undefined) {
-    // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-    // Various libraries expect __esModule to be set when using ESM from require().
-    // We don't want to always inject the __esModule export into every module,
-    // And creating an Object wrapper causes the actual exports to not be own properties.
-    // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-    // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
+    // Node adds an own enumerable `__esModule: true` to the namespace returned from
+    // require(esm) when the module has a `default` export, so that transpiler interop
+    // helpers (Babel/TypeScript `_interopRequireDefault`) don't double-wrap.
     // https://github.com/oven-sh/bun/issues/14411
-    if (namespace.__esModule === undefined) {
+    if (namespace.__esModule === undefined && "default" in namespace) {
       try {
         namespace.__esModule = true;
       } catch {

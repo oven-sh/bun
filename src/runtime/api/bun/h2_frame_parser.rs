@@ -1326,9 +1326,9 @@ pub struct H2FrameParser {
     /// Same bridge per stream: (stream id, bytes) pairs drained into the engine's per-stream send
     /// windows in rewrite_read.
     pending_stream_send_consumed: JsCell<Vec<(u32, u64)>>,
-    /// INITIAL_WINDOW_SIZE of each SETTINGS frame the legacy encoder sent, in send order, drained
-    /// into the engine's per-SETTINGS ack queue in rewrite_read (§6.5.3: ACKs apply in order).
-    pending_settings_window_submissions: JsCell<Vec<u32>>,
+    /// Snapshot of each SETTINGS frame the legacy encoder sent, in send order, drained into the
+    /// engine's per-SETTINGS ack queue in rewrite_read (§6.5.3: ACKs apply in order).
+    pending_settings_submissions: JsCell<Vec<crate::api::h2::settings::Settings>>,
     /// Stream ids whose legacy-side lifecycle finished while a dispatch held the engine
     /// borrow (the normal request path: receive() -> JS handler -> respond -> END_STREAM).
     /// Drained into Connection::close_stream on the next rewrite_read batch.
@@ -1364,7 +1364,9 @@ pub struct H2FrameParser {
 
     streams: JsCell<BunHashMap<u32, *mut Stream>>,
 
-    hpack: JsCell<Option<lshpack::HpackHandle>>,
+    /// Outbound HPACK encoder (the engine in `engine` owns the inbound decoder). `Coder` carries
+    /// the pending RFC 7541 §6.3 size update queued by a peer SETTINGS_HEADER_TABLE_SIZE change.
+    hpack: JsCell<Option<crate::api::h2::hpack::Coder>>,
 
     has_nonnative_backpressure: Cell<bool>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
@@ -2234,6 +2236,18 @@ impl H2FrameParser {
         value: &[u8],
         never_index: bool,
     ) -> Result<usize, bun_core::Error> {
+        // Every outbound header block (request/respond, trailers, push promise) funnels its fields
+        // through here into a fresh, initially empty buffer, so the first field of a block is
+        // where RFC 7541 §6.3 requires a pending Dynamic Table Size Update to be announced.
+        if encoded_headers.is_empty() {
+            let mut opcode = [0u8; crate::api::h2::hpack::MAX_SIZE_UPDATE_BYTES];
+            let n = self.hpack.with_mut(|hpack| {
+                hpack
+                    .as_mut()
+                    .map_or(0, |hpack| hpack.take_pending_size_update(&mut opcode, 0))
+            });
+            encoded_headers.extend_from_slice(&opcode[..n]);
+        }
         let old_len = encoded_headers.len();
         let required = old_len + name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
         // Note: materializing `&mut [u8]` over uninitialized capacity is UB and
@@ -2406,10 +2420,10 @@ impl H2FrameParser {
             .set(self.outstanding_settings.get() + 1);
 
         self.local_settings.set(settings);
-        // Remember which INITIAL_WINDOW_SIZE this submission carries so the engine can attribute
-        // the peer's ACK to it (§6.5.3 - ACKs apply to outstanding SETTINGS in order).
-        self.pending_settings_window_submissions
-            .with_mut(|v| v.push(settings.initial_window_size));
+        // Remember the values this submission carries so the engine can attribute the peer's ACK
+        // to it (§6.5.3 - ACKs apply to outstanding SETTINGS in order).
+        self.pending_settings_submissions
+            .with_mut(|v| v.push(self.rewrite_local_settings()));
         let _ = self.local_settings.get().write(&mut stream);
         let _ = self.write(&buffer);
         true
@@ -2640,8 +2654,8 @@ impl H2FrameParser {
         };
         self.outstanding_settings
             .set(self.outstanding_settings.get() + 1);
-        self.pending_settings_window_submissions
-            .with_mut(|v| v.push(self.local_settings.get().initial_window_size));
+        self.pending_settings_submissions
+            .with_mut(|v| v.push(self.rewrite_local_settings()));
         let _ = settings_header.write(&mut preface_stream);
         let _ = self.local_settings.get().write(&mut preface_stream);
         let _ = self.write(&preface_buffer);
@@ -5440,10 +5454,10 @@ impl H2FrameParser {
                 });
             });
             // Register SETTINGS submissions the legacy encoder sent since the last batch, so the
-            // engine attributes each inbound ACK to the right INITIAL_WINDOW_SIZE (§6.5.3).
-            self.pending_settings_window_submissions.with_mut(|v| {
-                for w in v.drain(..) {
-                    engine.pending_local_window_acks.push_back(w);
+            // engine attributes each inbound ACK to the right submission's values (§6.5.3).
+            self.pending_settings_submissions.with_mut(|v| {
+                for s in v.drain(..) {
+                    engine.pending_local_settings_acks.push_back(s);
                 }
             });
             // Streams whose legacy lifecycle finished since the last batch: evict the engine
@@ -5608,6 +5622,15 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             ..Default::default()
         };
         self.remote_settings.set(Some(fp));
+        // RFC 7541 §4.2: the peer's HEADER_TABLE_SIZE bounds OUR encoder's dynamic table. Queue a
+        // §6.3 size update for the start of the next outbound header block; a peer that lowered
+        // the limit (nginx advertises 0 to every upstream) rejects blocks that keep referencing
+        // the old table. queue_encoder_capacity is a no-op when the value is unchanged.
+        self.hpack.with_mut(|hpack| {
+            if let Some(hpack) = hpack.as_mut() {
+                hpack.queue_encoder_capacity(settings.header_table_size);
+            }
+        });
         // §6.9.2 (mirrors the legacy inbound): when the peer's INITIAL_WINDOW_SIZE grows, raise the
         // send window of streams opened before its SETTINGS arrived (a client's first request is
         // typically sent before the server's SETTINGS lands), then resume queued sends.
@@ -9226,7 +9249,7 @@ impl H2FrameParser {
             pending_stream_send_consumed: JsCell::new(Vec::new()),
             pending_engine_stream_closes: JsCell::new(Vec::new()),
             dispatch_depth: Cell::new(0),
-            pending_settings_window_submissions: JsCell::new(Vec::new()),
+            pending_settings_submissions: JsCell::new(Vec::new()),
             max_rejected_streams: Cell::new(100),
             max_session_invalid_frames: Cell::new(1000),
             max_outstanding_settings: Cell::new(10),
@@ -9402,12 +9425,12 @@ impl H2FrameParser {
             .strong_this
             .with_mut(|s| s.set_strong(this_value, global_object));
 
-        // Note: `HPACK::init` returns a C-allocated wrapper that must be
-        // torn down via `lshpack_wrapper_deinit` (runs `lshpack_{enc,dec}_cleanup`
-        // before freeing). Wrapping it in `heap::take` and letting `Box` drop
-        // would `mi_free` the struct but leak the encoder/decoder internals.
-        this_ref.hpack.set(Some(lshpack::HpackHandle::new(
-            this_ref.local_settings.get().header_table_size,
+        // RFC 7541 §4.2: the outbound encoder is bounded by the PEER's SETTINGS_HEADER_TABLE_SIZE,
+        // which starts at the 4096 default until its SETTINGS arrives (our own headerTableSize
+        // governs the inbound decoder, owned by the engine). `Coder` owns an `HpackHandle` whose
+        // teardown runs `lshpack_wrapper_deinit` (cleanup + free), not a bare `mi_free`.
+        this_ref.hpack.set(Some(crate::api::h2::hpack::Coder::new(
+            crate::api::h2::wire::DEFAULT_HEADER_TABLE_SIZE,
         )));
         if is_server {
             let _ = this_ref.set_settings(this_ref.local_settings.get());

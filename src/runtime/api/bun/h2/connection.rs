@@ -162,10 +162,10 @@ pub struct Connection {
     /// The initial window size the peer has ACKed (RFC 9113 6.5.3): until our SETTINGS is ACKed,
     /// the peer may legitimately send according to the previous value - enforce the larger.
     acked_local_initial_window: u32,
-    /// INITIAL_WINDOW_SIZE values of sent-but-unACKed SETTINGS frames, in send order. §6.5.3:
-    /// ACKs apply to outstanding SETTINGS in order, so each inbound ACK pops the front - the
-    /// value the peer actually acknowledged - rather than assuming the latest submission.
-    pub pending_local_window_acks: std::collections::VecDeque<u32>,
+    /// Snapshots of sent-but-unACKed SETTINGS frames, in send order. §6.5.3: ACKs apply to
+    /// outstanding SETTINGS in order, so each inbound ACK pops the front - the values the peer
+    /// actually acknowledged - rather than assuming the latest submission.
+    pub pending_local_settings_acks: std::collections::VecDeque<Settings>,
     invalid_frame_count: u32,
     /// Maximum number of entries accepted in a single inbound SETTINGS frame (node's maxSettings
     /// session option, nghttp2's max_settings; not a SETTINGS parameter). Frames carrying more
@@ -224,7 +224,7 @@ impl Connection {
             max_header_list_pairs: 128,
             max_invalid_frames: 1000,
             acked_local_initial_window: 65_535,
-            pending_local_window_acks: std::collections::VecDeque::new(),
+            pending_local_settings_acks: std::collections::VecDeque::new(),
             invalid_frame_count: 0,
             max_settings: 32,
             send_window: SendWindow::new(wire::DEFAULT_WINDOW_SIZE),
@@ -281,8 +281,8 @@ impl Connection {
     pub fn send_settings(&mut self, sink: &impl Sink) {
         let mut buf = [0u8; Settings::STANDARD_COUNT * 6];
         let n = self.local_settings.pack_standard(&mut buf);
-        self.pending_local_window_acks
-            .push_back(self.local_settings.initial_window_size);
+        self.pending_local_settings_acks
+            .push_back(self.local_settings);
         self.write_frame(sink, FrameType::Settings, 0, 0, &buf[..n]);
     }
 
@@ -563,14 +563,21 @@ impl Connection {
                 return true;
             }
             self.local_settings_acked = true;
-            // §6.5.3: this ACK acknowledges the oldest outstanding SETTINGS, whose window size
-            // may differ from the latest submission when several SETTINGS are in flight.
-            self.acked_local_initial_window = self
-                .pending_local_window_acks
+            // §6.5.3: this ACK acknowledges the oldest outstanding SETTINGS, whose values may
+            // differ from the latest submission when several SETTINGS are in flight.
+            let acked = self
+                .pending_local_settings_acks
                 .pop_front()
-                .unwrap_or(self.local_settings.initial_window_size);
-            let snapshot = self.local_settings;
-            sink.on_local_settings(&snapshot);
+                .unwrap_or(self.local_settings);
+            self.acked_local_initial_window = acked.initial_window_size;
+            // RFC 7541 §6.3: the limit on the peer's Dynamic Table Size Update is the
+            // SETTINGS_HEADER_TABLE_SIZE the peer has ACKed. Resize OUR decoder to match. (The
+            // outbound encoder is the mirror: the embedder applies the PEER's header table size
+            // to it from Sink::on_remote_settings.)
+            self.hpack.set_decoder_capacity(acked.header_table_size);
+            // The `localSettings` event / `session.localSettings` must report the values the peer
+            // just acknowledged (what nghttp2's local_settings holds), not the latest submission.
+            sink.on_local_settings(&acked);
             return false;
         }
         // node's maxSettings (nghttp2 max_settings): refuse SETTINGS frames carrying more entries

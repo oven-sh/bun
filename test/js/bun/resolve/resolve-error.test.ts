@@ -188,9 +188,11 @@ describe.concurrent("long import path overflow", () => {
 // throwing ERR_INVALID_PACKAGE_CONFIG. Bun previously swallowed the parse
 // error and silently fell through to content-sniffing or the parent scope.
 describe.concurrent("ERR_INVALID_PACKAGE_CONFIG", () => {
+  // A 0-byte package.json is NOT in this matrix: Bun intentionally treats
+  // empty JSONC input as `{}` (see test/js/bun/resolve/jsonc.test.ts), so an
+  // empty package.json is a valid empty scope rather than an error.
   const invalidCases = [
     ["malformed JSON", "{\n"],
-    ["empty file", ""],
     ["non-object root", "42"],
     ["non-string type", `{"name":"p","type":42}`],
   ] as const;

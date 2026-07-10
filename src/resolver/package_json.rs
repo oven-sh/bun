@@ -523,12 +523,6 @@ impl PackageJSON {
             })
         };
 
-        // `parse_package_json` short-circuits empty input to a synthetic `{}`
-        // before the parser runs; Node rejects a 0-byte file.
-        if entry_contents.is_empty() {
-            return invalid(package_json_path);
-        }
-
         let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
             Ok(Some(v)) => v,
             Ok(None) => return invalid(package_json_path),

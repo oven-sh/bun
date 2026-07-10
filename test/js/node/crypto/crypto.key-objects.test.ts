@@ -610,6 +610,56 @@ describe("crypto.KeyObjects", () => {
     });
   });
 
+  test("createPrivateKey accepts SEC1 DER ECPrivateKey without optional publicKey", () => {
+    // RFC 5915 ECPrivateKey with the optional [1] publicKey field omitted, as
+    // emitted by `openssl ec -no_public` and many HSM/PKCS#11 exporters.
+    // SEQUENCE { version 1, privateKey OCTET STRING(32), [0] parameters prime256v1 }
+    const sec1NoPub = Buffer.from(
+      "30310201010420" +
+        "a91e18c61cd48b5f98a776c88c281346cd71730fe2a271b95eaef207d64bf5b4" +
+        "a00a06082a8648ce3d030107",
+      "hex",
+    );
+
+    const fromDerSec1 = createPrivateKey({ key: sec1NoPub, format: "der", type: "sec1" });
+    expect({
+      type: fromDerSec1.type,
+      asymmetricKeyType: fromDerSec1.asymmetricKeyType,
+      namedCurve: fromDerSec1.asymmetricKeyDetails?.namedCurve,
+    }).toEqual({
+      type: "private",
+      asymmetricKeyType: "ec",
+      namedCurve: "prime256v1",
+    });
+
+    // The same bytes wrapped in PKCS#8 and PEM already worked; verify all three
+    // faces yield the same key material.
+    const pkcs8 = Buffer.concat([
+      Buffer.from("304d020100301306072a8648ce3d020106082a8648ce3d0301070433", "hex"),
+      sec1NoPub,
+    ]);
+    const fromDerPkcs8 = createPrivateKey({ key: pkcs8, format: "der", type: "pkcs8" });
+    const pem =
+      "-----BEGIN EC PRIVATE KEY-----\n" +
+      sec1NoPub.toString("base64") +
+      "\n-----END EC PRIVATE KEY-----\n";
+    const fromPem = createPrivateKey(pem);
+
+    const jwkSec1 = fromDerSec1.export({ format: "jwk" });
+    expect(jwkSec1.crv).toBe("P-256");
+    expect(jwkSec1.d).toBe(fromDerPkcs8.export({ format: "jwk" }).d);
+    expect(jwkSec1.d).toBe(fromPem.export({ format: "jwk" }).d);
+
+    // SEC1 DER with the optional publicKey present must still work.
+    const full = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
+      format: "der",
+      type: "sec1",
+    });
+    const fromFull = createPrivateKey({ key: full, format: "der", type: "sec1" });
+    expect(fromFull.asymmetricKeyType).toBe("ec");
+    expect(fromFull.asymmetricKeyDetails?.namedCurve).toBe("prime256v1");
+  });
+
   test("private encrypted should work", async () => {
     // Reading an encrypted key without a passphrase should fail.
     expect(() => createPrivateKey(privateEncryptedPem)).toThrow();

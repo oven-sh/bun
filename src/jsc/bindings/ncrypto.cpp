@@ -2574,7 +2574,10 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
         return keyOrError(EVPKeyPointer(EVP_PKCS82PKEY(p8inf.get())));
     }
     case PKEncodingType::SEC1: {
-        auto key = d2i_PrivateKey_bio(bio.get(), nullptr);
+        // SEC1 is always EC. BoringSSL's d2i_PrivateKey_bio guesses by counting
+        // SEQUENCE elements and rejects ECPrivateKey without optional [1] publicKey.
+        const unsigned char* p = buffer.data;
+        auto key = d2i_PrivateKey(EVP_PKEY_EC, nullptr, &p, buffer.len);
         return keyOrError(EVPKeyPointer(key));
     }
     default: {

@@ -144,7 +144,9 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             local_binding: JsCell::new(None),
             // — defaults —
             owned_ssl_ctx: Cell::new(None),
-            flags: Cell::new(SocketFlags::default()),
+            // node:net/node:tls own server-identity (`checkServerIdentity`)
+            // policy in JS, so a hostname mismatch is never enforced natively.
+            flags: Cell::new(SocketFlags::default() | SocketFlags::DEFERS_SERVER_IDENTITY),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -154,6 +156,7 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
+            verify_error: JsCell::new(None),
         });
         socket.get_this_value(global)
     }

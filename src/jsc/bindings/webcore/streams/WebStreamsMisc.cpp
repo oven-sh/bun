@@ -73,10 +73,9 @@ bool canTransferArrayBuffer(JSC::ArrayBuffer& buffer)
     return !buffer.isDetached() && buffer.isDetachable();
 }
 
-// spec TransferArrayBuffer(O) at the impl level: detach O (and every view over it) and
-// return a fresh ArrayBuffer over the same block. No JSArrayBuffer wrapper is created —
-// callers hand out views over the impl, and JSC materializes a wrapper only if user code
-// reads `.buffer`.
+// spec TransferArrayBuffer(O) = ArrayBufferCopyAndDetach(O, undefined, fixed-length):
+// resizability must NOT survive the transfer, or a later user resize() invalidates every
+// byte length the byte controller recorded. No JSArrayBuffer wrapper cell is created.
 RefPtr<JSC::ArrayBuffer> transferArrayBufferImpl(JSGlobalObject* globalObject, JSC::ArrayBuffer& buffer)
 {
     auto& vm = getVM(globalObject);
@@ -85,6 +84,19 @@ RefPtr<JSC::ArrayBuffer> transferArrayBufferImpl(JSGlobalObject* globalObject, J
     if (!buffer.isDetachable()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Cannot transfer an ArrayBuffer that is not detachable"_s);
         return nullptr;
+    }
+    if (buffer.isResizableNonShared()) [[unlikely]] {
+        // Same shape as JSC's arrayBufferCopyAndDetach FixedLength slow path: copy into a
+        // fixed-length block, then detach the original.
+        RefPtr<JSC::ArrayBuffer> copy = JSC::ArrayBuffer::tryCreate(buffer.span());
+        if (!copy) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
+        JSC::ArrayBufferContents droppedContents;
+        bool detached = buffer.transferTo(vm, droppedContents);
+        ASSERT_UNUSED(detached, detached);
+        return copy;
     }
     JSC::ArrayBufferContents contents;
     bool transferred = buffer.transferTo(vm, contents);

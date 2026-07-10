@@ -9905,6 +9905,21 @@ mod normalize_path_windows_tests {
     }
 
     #[test]
+    fn within_tree_dotdot_resolves_under_base() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_within");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let base = normalize(*dir, ".");
+        // Non-climbing `..` needs no clamp boundary; it resolves in place.
+        assert_eq!(normalize(*dir, "a\\..\\b"), format!("{base}\\b"));
+        // Collapsing to nothing lands exactly on the base directory (the
+        // join's lone separator is dropped).
+        assert_eq!(normalize(*dir, "sub\\.."), base);
+    }
+
+    #[test]
     fn excess_dotdot_fails_closed_on_local_volume() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_clamp");
@@ -9933,10 +9948,37 @@ mod normalize_path_windows_tests {
             let _ = close(fd);
         });
         let base = normalize(*dir, ".");
-        // `/` separates components in the floor walk exactly like `\`.
+        // `/` separates components exactly like `\` — lexically for the
+        // within-tree rel, and in the floor walk for the climbing one.
         assert_eq!(normalize(*dir, "a/../b"), format!("{base}\\b"));
         let over = format!("{}x", "../".repeat(floor_depth(*dir) + 1));
         assert_eq!(normalize_err(*dir, &over).get_errno(), E::EINVAL, "{over}");
+    }
+
+    #[test]
+    fn climbing_rel_with_leading_name_through_walk() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_climb_name");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        // Net-climbing despite the leading name: the walk sees +1,−1,−1,+1
+        // and stays above the floor while `..` resolves into the parent.
+        assert_eq!(
+            normalize(*child, "a\\..\\..\\x"),
+            format!("{}\\x", normalize(*parent, "."))
+        );
+        // Same shape pushed one past the floor fails closed.
+        let over = format!("a\\..\\{}x", "..\\".repeat(floor_depth(*child) + 1));
+        assert_eq!(
+            normalize_err(*child, &over).get_errno(),
+            E::EINVAL,
+            "{over}"
+        );
     }
 
     #[test]

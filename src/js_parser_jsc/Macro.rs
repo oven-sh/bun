@@ -322,6 +322,7 @@ pub(crate) fn __bun_macro_context_call(
     // lower-tier handle is uniquely borrowed for this call so no alias exists.
     let inner = unsafe { &mut *ctx.data.cast::<MacroContext>() };
     inner.javascript_object = JSValue::from_encoded(ctx.javascript_object.0 as usize);
+    let caller_loc = caller.loc;
     inner
         .call(
             import_record_path,
@@ -332,7 +333,20 @@ pub(crate) fn __bun_macro_context_call(
             caller,
             function_name,
         )
-        .map_err(|_| bun_js_parser::Error::MacroFailed)
+        .map_err(|e| {
+            // visit_expr only prints a fallback "macro threw exception" when
+            // nothing was added to the log; record the specific cause here so
+            // errors like ToJSError's "Cannot convert argument type to JS"
+            // reach the user (03830.test.ts snapshot asserts on this).
+            if e.name() != "MacroFailed" {
+                log.add_error_fmt(
+                    Some(source),
+                    caller_loc,
+                    format_args!("\"{}\" error in macro", e.name()),
+                );
+            }
+            bun_js_parser::Error::MacroFailed
+        })
 }
 
 #[unsafe(no_mangle)]

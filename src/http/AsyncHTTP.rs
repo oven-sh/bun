@@ -422,17 +422,21 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
     unsafe {
         let response_buffer: *mut MutableString = core::ptr::addr_of_mut!((*this).response_buffer);
         let url = (*this).url.clone();
-        let async_http = (*this).async_http.insert(AsyncHTTP::init(
-            Method::GET,
-            url,
-            headers::EntryList::default(),
-            b"",
-            response_buffer,
-            b"",
-            HTTPClientResultCallback::new::<Preconnect>(this, Preconnect::on_result),
-            FetchRedirect::Manual,
-            Options::default(),
-        ));
+        let async_http = (*this).async_http.insert(
+            AsyncHTTP::init()
+                .method(Method::GET)
+                .url(url)
+                .headers(headers::EntryList::default())
+                .headers_buf(b"")
+                .response_buffer(response_buffer)
+                .request_body(b"")
+                .callback(HTTPClientResultCallback::new::<Preconnect>(
+                    this,
+                    Preconnect::on_result,
+                ))
+                .redirect_type(FetchRedirect::Manual)
+                .call(),
+        );
         async_http.client.flags.is_preconnect_only = true;
 
         crate::HTTPThread::schedule(Batch::from(core::ptr::addr_of_mut!(async_http.task)));
@@ -443,16 +447,23 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
 // impl AsyncHTTP — init / reset / schedule
 // ──────────────────────────────────────────────────────────────────────────
 
+#[bon::bon]
 impl<'a> AsyncHTTP<'a> {
+    /// Named setters: `headers_buf` and `request_body` are both `&[u8]`,
+    /// so positional arguments could be transposed and still type-check.
+    #[builder]
     pub fn init(
         method: Method,
         url: URL<'a>,
         headers: headers::EntryList,
+        /// Backing storage that `headers` indexes into.
         headers_buf: &'a [u8],
         response_buffer: *mut MutableString,
         request_body: &'a [u8],
         callback: HTTPClientResultCallback,
         redirect_type: FetchRedirect,
+        /// All-optional extras; `Options::default()` is the neutral element.
+        #[builder(default)]
         options: Options<'a>,
     ) -> AsyncHTTP<'a> {
         let async_http_id = if options
@@ -561,10 +572,12 @@ impl<'a> AsyncHTTP<'a> {
     /// value — in practice they live on the calling stack frame and the
     /// request is driven to completion via `send_sync` before that frame
     /// returns.
+    #[builder]
     pub fn init_sync(
         method: Method,
         url: URL<'a>,
         headers: headers::EntryList,
+        /// Backing storage that `headers` indexes into.
         headers_buf: &'a [u8],
         response_buffer: *mut MutableString,
         request_body: &'a [u8],
@@ -572,21 +585,21 @@ impl<'a> AsyncHTTP<'a> {
         hostname: Option<&'a [u8]>,
         redirect_type: FetchRedirect,
     ) -> AsyncHTTP<'a> {
-        Self::init(
-            method,
-            url,
-            headers,
-            headers_buf,
-            response_buffer,
-            request_body,
-            noop_callback(),
-            redirect_type,
-            Options {
+        Self::init()
+            .method(method)
+            .url(url)
+            .headers(headers)
+            .headers_buf(headers_buf)
+            .response_buffer(response_buffer)
+            .request_body(request_body)
+            .callback(noop_callback())
+            .redirect_type(redirect_type)
+            .options(Options {
                 http_proxy,
                 hostname,
                 ..Options::default()
-            },
-        )
+            })
+            .call()
     }
 
     pub fn schedule(&mut self, batch: &mut Batch) {

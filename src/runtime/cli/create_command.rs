@@ -2301,17 +2301,18 @@ impl Example {
             crate::cli::cli_arena().alloc(MutableString::init(8192)?);
 
         // ensure very stable memory address
-        let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
-            HTTP::Method::GET,
-            api_url,
-            header_entries,
-            headers_buf,
-            mutable,
-            b"",
-            http_proxy,
-            None,
-            HTTP::FetchRedirect::Follow,
-        ));
+        let mut async_http = Box::new(
+            HTTP::AsyncHTTP::init_sync()
+                .method(HTTP::Method::GET)
+                .url(api_url)
+                .headers(header_entries)
+                .headers_buf(headers_buf)
+                .response_buffer(mutable)
+                .request_body(b"")
+                .maybe_http_proxy(http_proxy)
+                .redirect_type(HTTP::FetchRedirect::Follow)
+                .call(),
+        );
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
@@ -2402,19 +2403,19 @@ impl Example {
             .map(|u| unsafe { u.erase_lifetime() });
 
         // ensure very stable memory address
-        let async_http: &mut HTTP::AsyncHTTP =
-            crate::cli::cli_arena().alloc(HTTP::AsyncHTTP::init_sync(
-                HTTP::Method::GET,
+        let async_http: &mut HTTP::AsyncHTTP = crate::cli::cli_arena().alloc(
+            HTTP::AsyncHTTP::init_sync()
+                .method(HTTP::Method::GET)
                 // SAFETY: single-threaded CLI access to static URL_ (set just above)
-                unsafe { (*URL_.get()).clone() }.unwrap(),
-                Default::default(),
-                b"",
-                mutable,
-                b"",
-                http_proxy,
-                None,
-                HTTP::FetchRedirect::Follow,
-            ));
+                .url(unsafe { (*URL_.get()).clone() }.unwrap())
+                .headers(Default::default())
+                .headers_buf(b"")
+                .response_buffer(mutable)
+                .request_body(b"")
+                .maybe_http_proxy(http_proxy)
+                .redirect_type(HTTP::FetchRedirect::Follow)
+                .call(),
+        );
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
@@ -2498,17 +2499,16 @@ impl Example {
             .get_http_proxy_for(&parsed_tarball_url)
             .map(|u| unsafe { u.erase_lifetime() });
 
-        *async_http = HTTP::AsyncHTTP::init_sync(
-            HTTP::Method::GET,
-            parsed_tarball_url,
-            Default::default(),
-            b"",
-            mutable,
-            b"",
-            http_proxy,
-            None,
-            HTTP::FetchRedirect::Follow,
-        );
+        *async_http = HTTP::AsyncHTTP::init_sync()
+            .method(HTTP::Method::GET)
+            .url(parsed_tarball_url)
+            .headers(Default::default())
+            .headers_buf(b"")
+            .response_buffer(mutable)
+            .request_body(b"")
+            .maybe_http_proxy(http_proxy)
+            .redirect_type(HTTP::FetchRedirect::Follow)
+            .call();
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
@@ -2544,17 +2544,18 @@ impl Example {
         let mutable: &'static mut MutableString =
             crate::cli::cli_arena().alloc(MutableString::init(2048)?);
 
-        let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
-            HTTP::Method::GET,
-            url,
-            Default::default(),
-            b"",
-            mutable,
-            b"",
-            http_proxy,
-            None,
-            HTTP::FetchRedirect::Follow,
-        ));
+        let mut async_http = Box::new(
+            HTTP::AsyncHTTP::init_sync()
+                .method(HTTP::Method::GET)
+                .url(url)
+                .headers(Default::default())
+                .headers_buf(b"")
+                .response_buffer(mutable)
+                .request_body(b"")
+                .maybe_http_proxy(http_proxy)
+                .redirect_type(HTTP::FetchRedirect::Follow)
+                .call(),
+        );
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         if Output::enable_ansi_colors_stdout() {

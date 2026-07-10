@@ -17,6 +17,7 @@ shim_standalone = []
 workspace = true
 
 [dependencies]
+bon.workspace = true
 bytemuck = "1"
 strum.workspace = true
 thiserror.workspace = true

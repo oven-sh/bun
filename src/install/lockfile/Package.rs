@@ -1726,12 +1726,20 @@ impl Package<u64> {
         };
         self.parse(lockfile, pm, log, source, resolver, features)
     }
+}
 
+// Separate impl block so `#[bon::bon]` only re-emits `parse_dependency`, not
+// the rest of the (large) `Package<u64>` impl above.
+#[bon::bon]
+impl Package<u64> {
     // The live `StringBuilder`
     // (also passed) already holds `&mut lockfile.buffers.string_bytes`. The
     // body only otherwise touches `workspace_paths` / `workspace_versions`,
     // so accept those two maps directly and read `string_bytes` via the
     // builder — caller can then split-borrow at the field level.
+    //
+    // Named setters: sixteen positional parameters would be unreviewable.
+    #[builder]
     fn parse_dependency(
         workspace_paths: &mut lockfile::NameHashMap,
         workspace_versions: &mut lockfile::VersionHashMap,
@@ -2134,7 +2142,9 @@ impl Package<u64> {
 
         Ok(Some(this_dep))
     }
+}
 
+impl Package<u64> {
     pub fn parse_with_json<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,
@@ -2858,24 +2868,25 @@ impl Package<u64> {
                         None
                     };
 
-                    if let Some(dep_) = Self::parse_dependency(
-                        &mut lockfile.workspace_paths,
-                        &mut lockfile.workspace_versions,
-                        &mut lockfile.scratch.duplicate_checker_map,
-                        pm,
-                        log,
-                        source,
-                        group,
-                        &mut string_builder,
-                        FEATURES,
-                        package_dependencies.as_mut_slice(),
-                        total_dependencies_count,
-                        Some(dependency::version::Tag::Workspace),
-                        workspace_version,
-                        external_name,
-                        path_,
-                        bun_ast::Loc::EMPTY,
-                    )? {
+                    if let Some(dep_) = Self::parse_dependency()
+                        .workspace_paths(&mut lockfile.workspace_paths)
+                        .workspace_versions(&mut lockfile.workspace_versions)
+                        .duplicate_checker_map(&mut lockfile.scratch.duplicate_checker_map)
+                        .pm(pm)
+                        .log(log)
+                        .source(source)
+                        .group(group)
+                        .string_builder(&mut string_builder)
+                        .features(FEATURES)
+                        .package_dependencies(package_dependencies.as_mut_slice())
+                        .dependencies_count(total_dependencies_count)
+                        .tag(dependency::version::Tag::Workspace)
+                        .maybe_workspace_ver(workspace_version)
+                        .external_alias(external_name)
+                        .version(path_)
+                        .key_loc(bun_ast::Loc::EMPTY)
+                        .call()?
+                    {
                         let mut dep = dep_;
                         if group.behavior.is_peer()
                             && optional_peer_dependencies.swap_remove(&external_name.hash)
@@ -2905,24 +2916,23 @@ impl Package<u64> {
                         let external_name = string_builder.append::<ExternalString>(key);
                         let version = version.unwrap_or(b"");
 
-                        if let Some(dep_) = Self::parse_dependency(
-                            &mut lockfile.workspace_paths,
-                            &mut lockfile.workspace_versions,
-                            &mut lockfile.scratch.duplicate_checker_map,
-                            pm,
-                            log,
-                            source,
-                            group,
-                            &mut string_builder,
-                            FEATURES,
-                            package_dependencies.as_mut_slice(),
-                            total_dependencies_count,
-                            None,
-                            None,
-                            external_name,
-                            version,
-                            key_loc,
-                        )? {
+                        if let Some(dep_) = Self::parse_dependency()
+                            .workspace_paths(&mut lockfile.workspace_paths)
+                            .workspace_versions(&mut lockfile.workspace_versions)
+                            .duplicate_checker_map(&mut lockfile.scratch.duplicate_checker_map)
+                            .pm(pm)
+                            .log(log)
+                            .source(source)
+                            .group(group)
+                            .string_builder(&mut string_builder)
+                            .features(FEATURES)
+                            .package_dependencies(package_dependencies.as_mut_slice())
+                            .dependencies_count(total_dependencies_count)
+                            .external_alias(external_name)
+                            .version(version)
+                            .key_loc(key_loc)
+                            .call()?
+                        {
                             let mut dep = dep_;
                             if group.behavior.is_peer()
                                 && optional_peer_dependencies.swap_remove(&external_name.hash)
@@ -2955,24 +2965,23 @@ impl Package<u64> {
         let meta_only = optional_peer_dependencies.iterator();
         for entry in meta_only {
             let external_name = string_builder.append::<ExternalString>(*entry.value_ptr);
-            if let Some(dep_) = Self::parse_dependency(
-                &mut lockfile.workspace_paths,
-                &mut lockfile.workspace_versions,
-                &mut lockfile.scratch.duplicate_checker_map,
-                pm,
-                log,
-                source,
-                &DependencyGroup::PEER,
-                &mut string_builder,
-                FEATURES,
-                package_dependencies.as_mut_slice(),
-                total_dependencies_count,
-                None,
-                None,
-                external_name,
-                b"*",
-                bun_ast::Loc::EMPTY,
-            )? {
+            if let Some(dep_) = Self::parse_dependency()
+                .workspace_paths(&mut lockfile.workspace_paths)
+                .workspace_versions(&mut lockfile.workspace_versions)
+                .duplicate_checker_map(&mut lockfile.scratch.duplicate_checker_map)
+                .pm(pm)
+                .log(log)
+                .source(source)
+                .group(&DependencyGroup::PEER)
+                .string_builder(&mut string_builder)
+                .features(FEATURES)
+                .package_dependencies(package_dependencies.as_mut_slice())
+                .dependencies_count(total_dependencies_count)
+                .external_alias(external_name)
+                .version(b"*")
+                .key_loc(bun_ast::Loc::EMPTY)
+                .call()?
+            {
                 let mut dep = dep_;
                 dep.behavior.insert(Behavior::OPTIONAL);
                 package_dependencies.push(dep);

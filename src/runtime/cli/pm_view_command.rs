@@ -120,17 +120,16 @@ pub(crate) fn view(
     let mut response_buf = MutableString::init(2048)?;
     let header_buf: &[u8] = headers.content.written_slice();
     let http_proxy = manager.http_proxy(&url);
-    let mut req = http::AsyncHTTP::init_sync(
-        http::Method::GET,
-        url,
-        headers.entries,
-        header_buf,
-        &raw mut response_buf,
-        b"",
-        http_proxy,
-        None,
-        http::FetchRedirect::Follow,
-    );
+    let mut req = http::AsyncHTTP::init_sync()
+        .method(http::Method::GET)
+        .url(url)
+        .headers(headers.entries)
+        .headers_buf(header_buf)
+        .response_buffer(&raw mut response_buf)
+        .request_body(b"")
+        .maybe_http_proxy(http_proxy)
+        .redirect_type(http::FetchRedirect::Follow)
+        .call();
     req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
 
     let res = match req.send_sync() {
@@ -159,17 +158,20 @@ pub(crate) fn view(
         Global::crash();
     }
 
-    // Parse the existing JSON response into a PackageManifest using the now-public parse function
-    let parsed_manifest = match PackageManifest::parse(
-        &scope,
-        &mut log,
-        response_buf.list.as_slice(),
-        name,
-        b"",  // last_modified (not needed for view)
-        b"",  // etag (not needed for view)
-        0,    // public_max_age (not needed for view)
-        true, // is_extended_manifest (view uses application/json Accept header)
-    ) {
+    // `pm view` reads the whole manifest, so the cache metadata members
+    // (`last_modified`/`etag`/`public_max_age`) are unused here. The
+    // `application/json` Accept header requests the extended manifest shape.
+    let parsed_manifest = match PackageManifest::parse()
+        .scope(&scope)
+        .log(&mut log)
+        .json_buffer(response_buf.list.as_slice())
+        .expected_name(name)
+        .last_modified(b"")
+        .etag(b"")
+        .public_max_age(0)
+        .is_extended_manifest(true)
+        .call()
+    {
         Ok(Some(m)) => m,
         Ok(None) => {
             Output::err_generic("failed to parse package manifest", ());

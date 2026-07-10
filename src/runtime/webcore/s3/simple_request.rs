@@ -107,6 +107,10 @@ pub enum S3PartResult<'a> {
     Failure(S3Error<'a>),
 }
 
+/// Every non-`Option` field must be supplied at the construction site;
+/// forgetting one is a compile error. `Drop` calls `assume_init` on `http`,
+/// so a half-built value is never allowed to exist.
+#[derive(bon::Builder)]
 pub struct S3HttpSimpleTask {
     // `http` is `MaybeUninit` because (a) it is initialised late —
     // `AsyncHTTP` contains `&'static [u8]` and `fn(...)` fields, so a
@@ -117,9 +121,8 @@ pub struct S3HttpSimpleTask {
     // `execute_simple_s3_request` before the task pointer escapes, so every later access (in
     // `http_callback` / `Drop`) may `assume_init`.
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
-    /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
-    /// the inert `Default` placeholder (overwritten before the task escapes).
-    pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
+    /// JSC_BORROW: per-thread VM singleton, outlives every task.
+    pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: *mut c_void,
@@ -143,32 +146,6 @@ pub struct S3HttpSimpleTask {
 
 impl Taskable for S3HttpSimpleTask {
     const TAG: TaskTag = task_tag::S3HttpSimpleTask;
-}
-
-// `..Default::default()` requires the whole struct to be Default, so beyond
-// `response_buffer`/`result`/`concurrent_task` the remaining fields get
-// inert placeholders that callers always overwrite (see client.rs / execute_simple_s3_request).
-impl Default for S3HttpSimpleTask {
-    fn default() -> Self {
-        fn unset_callback(_: S3UploadResult<'_>, _: *mut c_void) -> JsTerminatedResult<()> {
-            unreachable!("S3HttpSimpleTask.callback used before being set")
-        }
-        Self {
-            http: core::mem::MaybeUninit::uninit(),
-            vm: None,
-            sign_result: SignResult::default(),
-            headers: Headers::default(),
-            callback_context: core::ptr::null_mut(),
-            callback: Callback::Upload(unset_callback),
-            response_buffer: MutableString::default(),
-            result: HTTPClientResult::default(),
-            concurrent_task: ConcurrentTask::default(),
-            range: None,
-            proxy_url: Box::default(),
-            body: Box::default(),
-            poll_ref: KeepAlive::default(),
-        }
-    }
 }
 
 // Re-export the canonical alias so sibling modules that imported it from here keep compiling.
@@ -484,10 +461,7 @@ impl S3HttpSimpleTask {
             // is set during VM init and outlives this task. `enqueue_task_concurrent` is `&self`.
             // `task` is the inline `concurrent_task` field of this heap request;
             // the queue takes ownership of its `next` link.
-            this.vm
-                .expect("vm set at task creation")
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
+            this.vm.event_loop_shared().enqueue_task_concurrent(task);
         }
     }
 }
@@ -619,22 +593,24 @@ pub(crate) fn execute_simple_s3_request(
         }
     };
 
-    let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
-        // written below via `MaybeUninit::write` before any read.
-        http: core::mem::MaybeUninit::uninit(),
-        sign_result: result,
-        callback_context,
-        callback,
-        range: options.range,
-        headers,
-        vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
-        response_buffer: MutableString::default(),
-        result: HTTPClientResult::default(),
-        concurrent_task: ConcurrentTask::default(),
-        proxy_url: Box::default(),
-        body: Box::<[u8]>::from(options.body),
-        poll_ref: KeepAlive::init(),
-    });
+    let task_ptr = S3HttpSimpleTask::new(
+        S3HttpSimpleTask::builder()
+            // written below via `MaybeUninit::write` before any read.
+            .http(core::mem::MaybeUninit::uninit())
+            .sign_result(result)
+            .callback_context(callback_context)
+            .callback(callback)
+            .maybe_range(options.range)
+            .headers(headers)
+            .vm(bun_ptr::BackRef::new(VirtualMachine::get()))
+            .response_buffer(MutableString::default())
+            .result(HTTPClientResult::default())
+            .concurrent_task(ConcurrentTask::default())
+            .proxy_url(Box::default())
+            .body(Box::<[u8]>::from(options.body))
+            .poll_ref(KeepAlive::init())
+            .build(),
+    );
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; exclusive access here.
     let task = unsafe { &mut *task_ptr };
     task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
@@ -672,27 +648,29 @@ pub(crate) fn execute_simple_s3_request(
     let vm = VirtualMachine::get();
     let verbose = vm.as_mut().get_verbose_fetch();
     let reject_unauthorized = vm.get_tls_reject_unauthorized();
-    task.http.write(AsyncHTTP::init(
-        options.method,
-        url,
-        task.headers.entries.clone().expect("OOM"),
-        headers_buf,
-        &raw mut task.response_buffer,
-        body,
-        HTTPClientResultCallback::new::<S3HttpSimpleTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` was just heap-allocated above and `async_http` is supplied by
-            // the HTTP thread as a live pointer for the duration of the callback.
-            S3HttpSimpleTask::http_callback,
-        ),
-        FetchRedirect::Follow,
-        HttpOptions {
-            http_proxy,
-            verbose: Some(verbose),
-            reject_unauthorized: Some(reject_unauthorized),
-            ..Default::default()
-        },
-    ));
+    task.http.write(
+        AsyncHTTP::init()
+            .method(options.method)
+            .url(url)
+            .headers(task.headers.entries.clone().expect("OOM"))
+            .headers_buf(headers_buf)
+            .response_buffer(&raw mut task.response_buffer)
+            .request_body(body)
+            .callback(HTTPClientResultCallback::new::<S3HttpSimpleTask>(
+                task_ptr,
+                // SAFETY: `task_ptr` was just heap-allocated above and `async_http` is supplied by
+                // the HTTP thread as a live pointer for the duration of the callback.
+                S3HttpSimpleTask::http_callback,
+            ))
+            .redirect_type(FetchRedirect::Follow)
+            .options(HttpOptions {
+                http_proxy,
+                verbose: Some(verbose),
+                reject_unauthorized: Some(reject_unauthorized),
+                ..Default::default()
+            })
+            .call(),
+    );
     // queue http request
     bun_http::http_thread::init(&Default::default());
     let mut batch = thread_pool::Batch::default();

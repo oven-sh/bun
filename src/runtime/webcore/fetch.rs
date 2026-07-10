@@ -102,15 +102,15 @@ fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr 
 pub(crate) fn s3_credentials_from_env(
     env: &bun_dotenv::S3Credentials,
 ) -> bun_s3_signing::S3Credentials {
-    bun_s3_signing::S3Credentials::new_value(
-        env.access_key_id.clone(),
-        env.secret_access_key.clone(),
-        env.region.clone(),
-        env.endpoint.clone(),
-        env.bucket.clone(),
-        env.session_token.clone(),
-        env.insecure_http,
-    )
+    bun_s3_signing::S3Credentials::new_value()
+        .access_key_id(env.access_key_id.clone())
+        .secret_access_key(env.secret_access_key.clone())
+        .region(env.region.clone())
+        .endpoint(env.endpoint.clone())
+        .bucket(env.bucket.clone())
+        .session_token(env.session_token.clone())
+        .insecure_http(env.insecure_http)
+        .call()
 }
 
 /// RAII guard for the `+1` `AbortSignal` ref taken in `extract_signal`,
@@ -1929,22 +1929,23 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
             // `upload_stream` adopts the ref by value (no extra bump) and the
             // MultiPartUpload derefs on completion.
-            let _ = s3::upload_stream(
-                credentials_with_options.credentials.dupe(),
-                s3_path,
-                readable_stream.get(global_this).unwrap(),
-                global_this,
-                credentials_with_options.options,
-                credentials_with_options.acl,
-                credentials_with_options.storage_class,
-                headers.as_ref().and_then(|h| h.get_content_type()),
-                headers.as_ref().and_then(|h| h.get_content_disposition()),
-                headers.as_ref().and_then(|h| h.get_content_encoding()),
-                proxy_url,
-                credentials_with_options.request_payer,
-                Some(s3_stream_wrapper_resolve),
-                bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
-            )?;
+            let _ = s3::upload_stream(credentials_with_options.credentials.dupe())
+                .path(s3_path)
+                .readable_stream(readable_stream.get(global_this).unwrap())
+                .global_this(global_this)
+                .options(credentials_with_options.options)
+                .maybe_acl(credentials_with_options.acl)
+                .maybe_storage_class(credentials_with_options.storage_class)
+                .maybe_content_type(headers.as_ref().and_then(|h| h.get_content_type()))
+                .maybe_content_disposition(
+                    headers.as_ref().and_then(|h| h.get_content_disposition()),
+                )
+                .maybe_content_encoding(headers.as_ref().and_then(|h| h.get_content_encoding()))
+                .maybe_proxy(proxy_url)
+                .request_payer(credentials_with_options.request_payer)
+                .callback(s3_stream_wrapper_resolve)
+                .callback_context(bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>())
+                .call()?;
             // url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);
         }
@@ -2048,39 +2049,41 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     } else {
         None
     };
-    let fetch_options = FetchOptions {
-        method,
-        url: url_static,
-        headers: headers.take().unwrap_or_default(),
-        body,
-        disable_keepalive,
-        disable_timeout,
-        idle_timeout_seconds,
-        disable_decompression,
-        max_redirects,
-        reject_unauthorized,
-        redirect_type,
-        verbose,
-        proxy: proxy_static,
-        proxy_headers: proxy_headers.take(),
-        url_proxy_buffer: url_proxy_boxed,
-        signal: signal.take(),
-        global_this: Some(global_this.into()),
-        ssl_config: ssl_config.take(),
-        hostname: hostname.take(),
-        upgraded_connection,
-        force_http2,
-        force_http3,
-        force_http1,
-        is_node_http_client: ALLOW_GET_BODY,
-        compress,
-        check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {
+    let fetch_options = FetchOptions::builder()
+        .method(method)
+        .url(url_static)
+        .headers(headers.take().unwrap_or_default())
+        .body(body)
+        .disable_keepalive(disable_keepalive)
+        .disable_timeout(disable_timeout)
+        .maybe_idle_timeout_seconds(idle_timeout_seconds)
+        .disable_decompression(disable_decompression)
+        .maybe_max_redirects(max_redirects)
+        .reject_unauthorized(reject_unauthorized)
+        .redirect_type(redirect_type)
+        .verbose(verbose)
+        .maybe_proxy(proxy_static)
+        .maybe_proxy_headers(proxy_headers.take())
+        .url_proxy_buffer(url_proxy_boxed)
+        .maybe_signal(signal.take())
+        .maybe_ssl_config(ssl_config.take())
+        .maybe_hostname(hostname.take())
+        .upgraded_connection(upgraded_connection)
+        .force_http2(force_http2)
+        .force_http3(force_http3)
+        .force_http1(force_http1)
+        .is_node_http_client(ALLOW_GET_BODY)
+        .maybe_compress(compress)
+        .check_server_identity(if check_server_identity.is_empty_or_undefined_or_null() {
             jsc::strong::Optional::empty()
         } else {
             jsc::strong::Optional::create(check_server_identity, global_this)
-        },
-        unix_socket_path: core::mem::replace(&mut unix_socket_path, ZigStringSlice::empty()),
-    };
+        })
+        .unix_socket_path(core::mem::replace(
+            &mut unix_socket_path,
+            ZigStringSlice::empty(),
+        ))
+        .build();
 
     let _ = FetchTasklet::queue(
         global_this,

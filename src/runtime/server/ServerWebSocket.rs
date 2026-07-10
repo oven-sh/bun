@@ -263,10 +263,19 @@ impl ServerWebSocket {
         }
         Ok(args_len > 1 && compress_value.to_boolean())
     }
+}
 
+// Separate impl block so `#[bon::bon]` only re-emits `do_publish`, not the
+// `#[bun_jsc::host_fn]` methods in the block above.
+#[bon::bon]
+impl ServerWebSocket {
     /// Route a publish through either the per-socket uWS handle (when
     /// `!publish_to_self && !closed`) or the app-wide broadcast, then map the
     /// aggregated `SendStatus` to the JS number contract shared with `send()`.
+    ///
+    /// Named setters: `ssl`/`publish_to_self`/`compress` are all `bool` and
+    /// `topic`/`buffer` are both `&[u8]`; positional args could transpose them.
+    #[builder]
     #[inline]
     fn do_publish(
         &self,
@@ -285,7 +294,9 @@ impl ServerWebSocket {
         };
         send_status_to_js(status, buffer.len(), "publish", "bytes")
     }
+}
 
+impl ServerWebSocket {
     /// Shared body for `subscribe` / `unsubscribe` / `isSubscribed`: identical
     /// arg-count guard, closed short-circuit, string-type guard, UTF-8 slice,
     /// non-empty guard, then dispatch to the uWS topic op. Only the JS-visible
@@ -792,15 +803,16 @@ impl ServerWebSocket {
 
         if let Some(array_buffer) = message_value.as_array_buffer(global_this) {
             let buffer = array_buffer.slice();
-            return Ok(self.do_publish(
-                ssl,
-                app,
-                publish_to_self,
-                topic_slice.slice(),
-                buffer,
-                Opcode::Binary,
-                compress,
-            ));
+            return Ok(self
+                .do_publish()
+                .ssl(ssl)
+                .app(app)
+                .publish_to_self(publish_to_self)
+                .topic(topic_slice.slice())
+                .buffer(buffer)
+                .opcode(Opcode::Binary)
+                .compress(compress)
+                .call());
         }
 
         {
@@ -808,15 +820,16 @@ impl ServerWebSocket {
             let view = js_string.view(global_this);
             let slice = view.to_slice();
 
-            let ret = self.do_publish(
-                ssl,
-                app,
-                publish_to_self,
-                topic_slice.slice(),
-                slice.slice(),
-                Opcode::Text,
-                compress,
-            );
+            let ret = self
+                .do_publish()
+                .ssl(ssl)
+                .app(app)
+                .publish_to_self(publish_to_self)
+                .topic(topic_slice.slice())
+                .buffer(slice.slice())
+                .opcode(Opcode::Text)
+                .compress(compress)
+                .call();
             js_string.ensure_still_alive();
             Ok(ret)
         }
@@ -862,15 +875,16 @@ impl ServerWebSocket {
         let view = js_string.view(global_this);
         let slice = view.to_slice();
 
-        let ret = self.do_publish(
-            ssl,
-            app,
-            publish_to_self,
-            topic_slice.slice(),
-            slice.slice(),
-            Opcode::Text,
-            compress,
-        );
+        let ret = self
+            .do_publish()
+            .ssl(ssl)
+            .app(app)
+            .publish_to_self(publish_to_self)
+            .topic(topic_slice.slice())
+            .buffer(slice.slice())
+            .opcode(Opcode::Text)
+            .compress(compress)
+            .call();
         js_string.ensure_still_alive();
         Ok(ret)
     }
@@ -921,15 +935,16 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publishBinary expects an ArrayBufferView")));
         };
 
-        Ok(self.do_publish(
-            ssl,
-            app,
-            publish_to_self,
-            topic_slice.slice(),
-            array_buffer.slice(),
-            Opcode::Binary,
-            compress,
-        ))
+        Ok(self
+            .do_publish()
+            .ssl(ssl)
+            .app(app)
+            .publish_to_self(publish_to_self)
+            .topic(topic_slice.slice())
+            .buffer(array_buffer.slice())
+            .opcode(Opcode::Binary)
+            .compress(compress)
+            .call())
     }
 
     pub fn publish_binary_without_type_checks(
@@ -953,15 +968,16 @@ impl ServerWebSocket {
             return Ok(JSValue::js_number(0.0));
         }
 
-        Ok(self.do_publish(
-            ssl,
-            app,
-            publish_to_self,
-            topic_slice.slice(),
-            buffer,
-            Opcode::Binary,
-            true,
-        ))
+        Ok(self
+            .do_publish()
+            .ssl(ssl)
+            .app(app)
+            .publish_to_self(publish_to_self)
+            .topic(topic_slice.slice())
+            .buffer(buffer)
+            .opcode(Opcode::Binary)
+            .compress(true)
+            .call())
     }
 
     pub fn publish_text_without_type_checks(
@@ -987,15 +1003,16 @@ impl ServerWebSocket {
             return Ok(JSValue::js_number(0.0));
         }
 
-        Ok(self.do_publish(
-            ssl,
-            app,
-            publish_to_self,
-            topic_slice.slice(),
-            buffer,
-            Opcode::Text,
-            true,
-        ))
+        Ok(self
+            .do_publish()
+            .ssl(ssl)
+            .app(app)
+            .publish_to_self(publish_to_self)
+            .topic(topic_slice.slice())
+            .buffer(buffer)
+            .opcode(Opcode::Text)
+            .compress(true)
+            .call())
     }
 
     // `passThis: true` in server.classes.ts — wrapper is emitted by

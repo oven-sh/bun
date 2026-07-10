@@ -945,19 +945,20 @@ impl ClientSession {
             // ancestor frame holds `&mut NewHTTPContext` here and forming one
             // from the backref is sound — route through the centralised
             // [`HTTPClient::ssl_ctx_mut`] accessor (same set-once invariant).
-            HTTPClient::ssl_ctx_mut(self.ctx).release_socket(
-                self.socket,
-                self.did_have_handshaking_error,
-                self.established_with_reject_unauthorized,
-                &self.hostname,
-                self.port,
-                self.ssl_config.as_ref(),
-                None,
-                b"",
-                0,
-                self.host_header_hash,
-                Some(self_ptr),
-            );
+            HTTPClient::ssl_ctx_mut(self.ctx)
+                .release_socket(self.socket)
+                .did_have_handshaking_error_while_reject_unauthorized_is_false(
+                    self.did_have_handshaking_error,
+                )
+                .established_with_reject_unauthorized(self.established_with_reject_unauthorized)
+                .hostname(&self.hostname)
+                .port(self.port)
+                .maybe_ssl_config(self.ssl_config.as_ref())
+                .target_hostname(b"")
+                .target_port(0)
+                .proxy_auth_hash(self.host_header_hash)
+                .h2_session(self_ptr)
+                .call();
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);
             // SAFETY: `self: &mut Self` carries write provenance to the Box alloc.

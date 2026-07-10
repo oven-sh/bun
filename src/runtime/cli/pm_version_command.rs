@@ -154,16 +154,16 @@ impl PmVersionCommand {
         if let Some(s) = &scripts_obj {
             if let Some(script) = s.get(b"preversion") {
                 if let Some(script_command) = script.as_string(&json_bump) {
-                    RunCommand::run_package_script_foreground(
-                        ctx,
-                        script_command,
-                        b"preversion",
-                        &package_json_dir,
-                        pm.env_mut(),
-                        &[],
-                        silent,
-                        use_system_shell,
-                    )?;
+                    RunCommand::run_package_script_foreground()
+                        .ctx(ctx)
+                        .original_script(script_command)
+                        .name(b"preversion")
+                        .cwd(&package_json_dir)
+                        .env(pm.env_mut())
+                        .passthrough(&[])
+                        .silent(silent)
+                        .use_system_shell(use_system_shell)
+                        .call()?;
                 }
             }
         }
@@ -234,16 +234,16 @@ impl PmVersionCommand {
         if let Some(s) = &scripts_obj {
             if let Some(script) = s.get(b"version") {
                 if let Some(script_command) = script.as_string(&json_bump) {
-                    RunCommand::run_package_script_foreground(
-                        ctx,
-                        script_command,
-                        b"version",
-                        &package_json_dir,
-                        pm.env_mut(),
-                        &[],
-                        silent,
-                        use_system_shell,
-                    )?;
+                    RunCommand::run_package_script_foreground()
+                        .ctx(ctx)
+                        .original_script(script_command)
+                        .name(b"version")
+                        .cwd(&package_json_dir)
+                        .env(pm.env_mut())
+                        .passthrough(&[])
+                        .silent(silent)
+                        .use_system_shell(use_system_shell)
+                        .call()?;
                 }
             }
         }
@@ -255,16 +255,16 @@ impl PmVersionCommand {
         if let Some(s) = &scripts_obj {
             if let Some(script) = s.get(b"postversion") {
                 if let Some(script_command) = script.as_string(&json_bump) {
-                    RunCommand::run_package_script_foreground(
-                        ctx,
-                        script_command,
-                        b"postversion",
-                        &package_json_dir,
-                        pm.env_mut(),
-                        &[],
-                        silent,
-                        use_system_shell,
-                    )?;
+                    RunCommand::run_package_script_foreground()
+                        .ctx(ctx)
+                        .original_script(script_command)
+                        .name(b"postversion")
+                        .cwd(&package_json_dir)
+                        .env(pm.env_mut())
+                        .passthrough(&[])
+                        .silent(silent)
+                        .use_system_shell(use_system_shell)
+                        .call()?;
                 }
             }
         }

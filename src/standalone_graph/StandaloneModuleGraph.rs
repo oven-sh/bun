@@ -1554,17 +1554,18 @@ pub(crate) fn download_to_path(
             let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
             let progress = refresher.start(b"Downloading", 0);
 
-            let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
-                bun_http::Method::GET,
-                url,
-                Default::default(),
-                b"",
-                &raw mut *compressed_archive_bytes,
-                b"",
-                http_proxy,
-                None,
-                bun_http::FetchRedirect::Follow,
-            ));
+            let mut async_http = Box::new(
+                bun_http::AsyncHTTP::init_sync()
+                    .method(bun_http::Method::GET)
+                    .url(url)
+                    .headers(Default::default())
+                    .headers_buf(b"")
+                    .response_buffer(&raw mut *compressed_archive_bytes)
+                    .request_body(b"")
+                    .maybe_http_proxy(http_proxy)
+                    .redirect_type(bun_http::FetchRedirect::Follow)
+                    .call(),
+            );
             async_http.client.progress_node =
                 core::ptr::NonNull::new(core::ptr::from_mut(progress));
             async_http.client.flags.reject_unauthorized = reject_unauthorized;

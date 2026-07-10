@@ -221,12 +221,18 @@ impl Default for S3Credentials {
     }
 }
 
+// Separate impl block so `#[bon::bon]` only re-emits `new_value`, not the
+// rest of the (large) `S3Credentials` impl below.
+#[bon::bon]
 impl S3Credentials {
     /// Construct a value (refcount = 1) from owned field data. Exists so
     /// higher-tier callers (e.g. `bun_runtime`) can build the refcounted
     /// signing credentials from the lower-tier `bun_dotenv::S3Credentials`
     /// POD mirror without naming the private `ref_count` field.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// Named setters: six of these parameters are `Box<[u8]>`, so positional
+    /// arguments could transpose `access_key_id` and `secret_access_key`.
+    #[builder]
     pub fn new_value(
         access_key_id: Box<[u8]>,
         secret_access_key: Box<[u8]>,
@@ -249,7 +255,9 @@ impl S3Credentials {
             virtual_hosted_style: false,
         }
     }
+}
 
+impl S3Credentials {
     pub fn estimated_size(&self) -> usize {
         size_of::<S3Credentials>()
             + self.access_key_id.len()
@@ -754,24 +762,23 @@ impl S3Credentials {
                 )
                 .into_boxed_slice();
             } else {
-                let canonical = CanonicalRequest::format(
-                    &mut tmp_buffer,
-                    header_key,
-                    method_name.as_bytes(),
-                    normalized_path,
-                    search_params.map(|p| &p[1..]).unwrap_or(b""),
-                    content_disposition,
-                    content_encoding,
-                    content_md5.as_deref(),
-                    &host,
-                    acl,
-                    aws_content_hash,
-                    &amz_date,
-                    session_token,
-                    storage_class,
-                    signed_headers,
-                )
-                .map_err(|_| SignError::NoSpaceLeft)?;
+                let canonical = CanonicalRequest::format(&mut tmp_buffer)
+                    .key(header_key)
+                    .method(method_name.as_bytes())
+                    .path(normalized_path)
+                    .query(search_params.map(|p| &p[1..]).unwrap_or(b""))
+                    .maybe_content_disposition(content_disposition)
+                    .maybe_content_encoding(content_encoding)
+                    .maybe_content_md5(content_md5.as_deref())
+                    .host(&host)
+                    .maybe_acl(acl)
+                    .hash(aws_content_hash)
+                    .date(&amz_date)
+                    .maybe_session_token(session_token)
+                    .maybe_storage_class(storage_class)
+                    .signed_headers(signed_headers)
+                    .call()
+                    .map_err(|_| SignError::NoSpaceLeft)?;
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
                 // was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
                 // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
@@ -1363,10 +1370,14 @@ impl SignedHeaders {
 
 struct CanonicalRequest;
 
+#[bon::bon]
 impl CanonicalRequest {
+    /// Named setters: seven of these parameters are `&[u8]` and six are
+    /// `Option<&[u8]>`; transposing any pair silently corrupts the signature.
     // Builds the canonical request at runtime with conditional writes; profile if hot.
+    #[builder]
     pub(crate) fn format<'b>(
-        buf: &'b mut [u8],
+        #[builder(start_fn)] buf: &'b mut [u8],
         key: SignedHeadersKey,
         method: &[u8],
         path: &[u8],

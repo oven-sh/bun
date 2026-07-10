@@ -1125,3 +1125,108 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
   });
 });
+
+// Each boolean scan option maps to one named setter on the Rust
+// `GlobWalker::init` builder. Flipping one at a time against a fixed
+// result set catches any option wired to the wrong flag.
+describe("glob.scan option flags", () => {
+  const FILES = {
+    "top.txt": "top",
+    ".hidden.txt": "hidden",
+    "sub/inner.txt": "inner",
+  };
+  const DEFAULT = ["sub/inner.txt", "top.txt"];
+
+  test.concurrent("defaults: relative paths, no dotfiles, files only", () => {
+    using dir = tempDir("glob-flag-default", FILES);
+    expect(prepareEntries([...new Glob("**/*.txt").scanSync(String(dir))])).toEqual(DEFAULT);
+  });
+
+  test.concurrent("dot controls whether dotfiles match", () => {
+    using dir = tempDir("glob-flag-dot", FILES);
+    const cwd = String(dir);
+    expect({
+      on: prepareEntries([...new Glob("**/*.txt").scanSync({ cwd, dot: true })]),
+      off: prepareEntries([...new Glob("**/*.txt").scanSync({ cwd, dot: false })]),
+    }).toEqual({
+      on: [".hidden.txt", ...DEFAULT],
+      off: DEFAULT,
+    });
+  });
+
+  test.concurrent("absolute controls whether returned paths are rooted at cwd", () => {
+    using dir = tempDir("glob-flag-absolute", FILES);
+    const cwd = String(dir);
+    expect({
+      on: prepareEntries([...new Glob("**/*.txt").scanSync({ cwd, absolute: true })]),
+      off: prepareEntries([...new Glob("**/*.txt").scanSync({ cwd, absolute: false })]),
+    }).toEqual({
+      on: prepareEntries(DEFAULT.map(p => path.join(cwd, p))),
+      off: DEFAULT,
+    });
+  });
+
+  test.concurrent("onlyFiles controls whether directories are returned", () => {
+    using dir = tempDir("glob-flag-onlyfiles", FILES);
+    const cwd = String(dir);
+    expect({
+      on: prepareEntries([...new Glob("*").scanSync({ cwd, onlyFiles: true })]),
+      off: prepareEntries([...new Glob("*").scanSync({ cwd, onlyFiles: false })]),
+    }).toEqual({
+      on: ["top.txt"],
+      off: ["sub", "top.txt"],
+    });
+  });
+
+  test.concurrent.skipIf(!canCreateDirSymlink)(
+    "followSymlinks controls whether a symlinked directory is traversed",
+    () => {
+      // `outside/` is a sibling of the scanned root, so the only way
+      // `**/*.txt` reaches `linked.txt` is through the `link` symlink.
+      using dir = tempDir("glob-flag-symlinks", {
+        "root/top.txt": "top",
+        "root/.hidden.txt": "hidden",
+        "root/sub/inner.txt": "inner",
+        "outside/linked.txt": "linked",
+      });
+      const cwd = path.join(String(dir), "root");
+      fs.symlinkSync(path.join("..", "outside"), path.join(cwd, "link"), "dir");
+      expect({
+        on: prepareEntries([...new Glob("**/*.txt").scanSync({ cwd, followSymlinks: true })]),
+        off: prepareEntries([...new Glob("**/*.txt").scanSync({ cwd, followSymlinks: false })]),
+      }).toEqual({
+        on: ["link/linked.txt", ...DEFAULT],
+        off: DEFAULT,
+      });
+    },
+  );
+
+  // An omitted `cwd` must resolve to the process cwd, the same directory an
+  // explicit `cwd: process.cwd()` names. Run in a subprocess so the implicit
+  // case does not depend on this file's `process.chdir` in `beforeAll`.
+  test.concurrent("omitting cwd scans from the process cwd", async () => {
+    using dir = tempDir("glob-flag-nocwd", FILES);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const implicit = [...new Bun.Glob("**/*.txt").scanSync()];
+         const explicit = [...new Bun.Glob("**/*.txt").scanSync({ cwd: process.cwd() })];
+         console.log(JSON.stringify({ implicit, explicit }));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Assert the exit before parsing stdout, so a subprocess crash surfaces
+    // stdout/stderr/exitCode instead of a bare SyntaxError from JSON.parse.
+    // `stderr` is not pinned: ASAN/debug builds emit benign warnings there.
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const { implicit, explicit } = JSON.parse(stdout);
+    expect({ implicit: prepareEntries(implicit), explicit: prepareEntries(explicit) }).toEqual({
+      implicit: DEFAULT,
+      explicit: DEFAULT,
+    });
+  });
+});

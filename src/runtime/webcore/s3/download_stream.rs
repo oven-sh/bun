@@ -15,13 +15,16 @@ use bun_threading::Mutex;
 
 bun_core::declare_scope!(S3, hidden);
 
+/// Every non-`Option` field must be supplied at the construction site;
+/// forgetting one is a compile error. In particular `callback` and
+/// `callback_context` have no safe placeholder.
+#[derive(bon::Builder)]
 pub struct S3HttpDownloadStreamingTask {
     // `MaybeUninit` because `AsyncHTTP` contains non-null references, so
     // `mem::zeroed()` can't be used here (mirrors `S3HttpSimpleTask`).
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
-    /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
-    /// the inert `Default` placeholder (overwritten before the task escapes).
-    pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
+    /// JSC_BORROW: per-thread VM singleton, outlives every task.
+    pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: NonNull<()>,
@@ -48,36 +51,6 @@ pub struct S3HttpDownloadStreamingTask {
 // Hot-dispatch tag for `ConcurrentTask::from`.
 impl Taskable for S3HttpDownloadStreamingTask {
     const TAG: TaskTag = task_tag::S3HttpDownloadStreamingTask;
-}
-
-impl Default for S3HttpDownloadStreamingTask {
-    fn default() -> Self {
-        // only the fields `has_schedule_callback` .. `concurrent_task`
-        // are observed via this path; the rest are placeholders that the caller (client.rs
-        // `..Default::default()`) overwrites before the task pointer escapes
-        // (see S3HttpSimpleTask in simple_request.rs).
-        Self {
-            // never read — fully overwritten by `AsyncHTTP::init` before first use.
-            http: core::mem::MaybeUninit::uninit(),
-            vm: None,
-            sign_result: SignResult::default(),
-            headers: Headers::default(),
-            callback_context: NonNull::dangling(),
-            callback: |_, _, _, _| {},
-            range: None,
-            proxy_url: Box::default(),
-            has_schedule_callback: AtomicBool::new(false),
-            signal_store: bun_http::signals::Store::default(),
-            signals: Signals::default(),
-            poll_ref: KeepAlive::default(),
-            response_buffer: MutableString::default(),
-            mutex: Mutex::default(),
-            reported_response_buffer: MutableString::default(),
-            state: AtomicU64::new(State::default().0),
-            concurrent_task: ConcurrentTask::default(),
-            async_http_id: 0,
-        }
-    }
 }
 
 impl S3HttpDownloadStreamingTask {
@@ -350,11 +323,7 @@ impl S3HttpDownloadStreamingTask {
             // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
             // `task` is the inline `concurrent_task` field of this heap request;
             // the queue takes ownership of its `next` link.
-            self_
-                .vm
-                .expect("vm set at task creation")
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
+            self_.vm.event_loop_shared().enqueue_task_concurrent(task);
         }
     }
 }

@@ -31,7 +31,7 @@ fn glob_ignore_fn(val: &[u8]) -> bool {
     false
 }
 
-// The ignore filter is a runtime parameter on `init_with_cwd`, and
+// The ignore filter is a runtime parameter on `init`, and
 // `DirEntryAccessor` lives in `bun_resolver` (it depends on the resolver's
 // DirEntry cache).
 type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
@@ -299,16 +299,14 @@ impl PackageFilterIterator {
         // bun_glob copies `pattern`/`cwd` internally.
         let cwd: &[u8] = self.root_dir.slice();
         // outer `?` propagates the error, inner converts `Maybe(Self)` to a Result.
-        let walker = GlobWalker::init_with_cwd(
-            pattern,
-            cwd,
-            true,
-            true,
-            false,
-            true,
-            true,
-            Some(glob_ignore_fn),
-        )??;
+        let walker = GlobWalker::init(pattern)
+            .cwd(cwd)
+            .dot(true)
+            .absolute(true)
+            .error_on_broken_symlinks(true)
+            .only_files(true)
+            .ignore_filter_fn(glob_ignore_fn)
+            .call()??;
         // Heap-allocate the walker so its address is stable even if `self` moves between
         // `init_walker` and the iterator's last use. `iter` holds a `'static`-erased `&mut`
         // into this allocation; `deinit_walker` drops `iter` before freeing the walker.

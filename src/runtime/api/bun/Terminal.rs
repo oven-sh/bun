@@ -662,9 +662,14 @@ impl Terminal {
         self.hpcon.get()
     }
 
-    /// Close the parent's copy of slave_fd after fork
-    /// The child process has its own copy - closing the parent's ensures
-    /// EOF is received on the master side when the child exits
+    /// Mark a terminal created inline by `Bun.spawn` so it can't be reused
+    /// by a later spawn.
+    pub(crate) fn mark_inline_spawned(&self) {
+        self.update_flags(|f| f.insert(Flags::INLINE_SPAWNED));
+    }
+
+    /// Close the parent's copy of slave_fd. The child holds its own copy;
+    /// once every slave fd is closed the master reader observes EOF.
     pub(crate) fn close_slave_fd(&self) {
         self.update_flags(|f| f.insert(Flags::INLINE_SPAWNED));
         let fd = self.slave_fd.get();
@@ -672,6 +677,28 @@ impl Terminal {
             fd.close();
             self.slave_fd.set(Fd::INVALID);
         }
+    }
+
+    /// Called when the owned subprocess exits. BSD/macOS discards any data
+    /// still buffered in the PTY output queue when the last slave fd closes,
+    /// so the parent must keep its slave copy open until the child has exited
+    /// and the master has been drained; only then may it close the slave to
+    /// let the reader observe EOF.
+    #[cfg(unix)]
+    pub(crate) fn drain_and_close_slave(&self) {
+        let flags = self.flags.get();
+        if flags.contains(Flags::CLOSED) {
+            return;
+        }
+        if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+            // Streams pending chunks to the JS data callback until EAGAIN.
+            // Re-check state after: user JS may have closed the terminal.
+            self.reader.with_mut(|r| r.read());
+            if self.flags.get().contains(Flags::CLOSED) {
+                return;
+            }
+        }
+        self.close_slave_fd();
     }
 
     /// Windows: close only the ConPTY handle so conhost releases its pipe ends and

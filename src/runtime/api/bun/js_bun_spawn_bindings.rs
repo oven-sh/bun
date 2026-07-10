@@ -2021,14 +2021,17 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf.get();
     let stdin_write_error: JSValue = match subprocess.stdin_write_err.replace(None) {
         Some(err) => {
-            let sys_err = err.to_system_error();
+            // Read errno/code directly instead of going through
+            // `to_system_error()`, which allocates a WTFStringImpl message
+            // that nothing here would deref (bun_core::String is Copy).
             let obj = JSValue::create_empty_object(global_this, 2);
             obj.put(
                 global_this,
                 b"errno",
-                JSValue::js_number_from_int32(sys_err.errno),
+                JSValue::js_number_from_int32((err.errno as i32).wrapping_neg()),
             );
-            obj.put(global_this, b"code", sys_err.code.to_js(global_this)?);
+            let code = BunString::static_(err.name());
+            obj.put(global_this, b"code", code.to_js(global_this)?);
             obj
         }
         None => JSValue::UNDEFINED,

@@ -984,7 +984,19 @@ impl Subprocess<'_> {
         // We won't be sending any more data.
         let pending_start = self.take_pending_start_writer();
         if let Writable::Buffer(buffer) = self.stdin.get() {
-            Writable::buffer_writer_mut(buffer).close();
+            let writer = Writable::buffer_writer_mut(buffer);
+            // Process exited before the whole stdin buffer was written. The
+            // writer normally records the failing write(), but if this exit
+            // event dispatched before stdin's POLLHUP in the same batch,
+            // close() below would skip that write. Record EPIPE here so the
+            // `result.error` guarantee is structural, not event-order based.
+            if !writer.get_buffer().is_empty() && self.stdin_write_err.get().is_none() {
+                self.stdin_write_err.set(Some(bun_sys::Error::new(
+                    bun_sys::E::EPIPE,
+                    bun_sys::Tag::write,
+                )));
+            }
+            writer.close();
         }
         if let Some(writer) = pending_start {
             // SAFETY: `started` ⇒ start +1 was live entering; last use.

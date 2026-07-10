@@ -503,7 +503,7 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         if (hasBYOBRequest) {
             // The pull-into can be gone by the time an async pull settles (cancel / release
             // cleared it); skip respond() rather than tripping its non-empty precondition.
-            if (controller && view && !controller->m_pendingPullIntos.isEmpty()) {
+            if (written > 0 && controller && view && !controller->m_pendingPullIntos.isEmpty()) {
                 uint64_t count = static_cast<uint64_t>(std::min(static_cast<size_t>(written), static_cast<size_t>(view->length())));
                 if (count > 0) {
                     readableByteStreamControllerRespond(globalObject, controller, count);

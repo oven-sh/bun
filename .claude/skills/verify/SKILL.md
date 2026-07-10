@@ -4,20 +4,20 @@ description: Verify a change to the Bun runtime by driving the debug build end-t
 
 # Verifying a Bun runtime change
 
-**Build once, then drive `./build/debug/bun-debug` directly** — don't
-re-run `bun bd` for every probe (a no-op rebuild still costs seconds
-of cargo dep-checking).
+**Drive the debug build with `bun bd <args>`** — with exec args present,
+build output is suppressed and a no-op rebuild is a quick dep-check, so
+you get only the binary's output.
 
 ```bash
 bun bd --revision                          # build; prints version+hash on success
-./build/debug/bun-debug -e '<snippet>'     # drive it
+bun bd -e '<snippet>'                      # drive it
 BUN_DEBUG_QUIET_LOGS=1 ...                 # suppress the very chatty debug tracing
 ```
 
 ## Surfaces by area
 
 - **JS-visible API** (`Bun.*`, Web APIs, `node:*` modules): a `-e`
-  one-liner is the surface. `./build/debug/bun-debug -e 'console.log(new Request("https://x").url)'`.
+  one-liner is the surface. `bun bd -e 'console.log(new Request("https://x").url)'`.
 - **CLI** (`bun install`, `bun build`, `bun test`): run the subcommand
   in a `mktemp -d` scratch dir. Use `bunEnv` from `test/harness.ts` if
   you need the CI-equivalent env.

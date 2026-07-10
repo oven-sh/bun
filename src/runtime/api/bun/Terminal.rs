@@ -669,8 +669,9 @@ impl Terminal {
         self.update_flags(|f| f.insert(Flags::INLINE_SPAWNED));
     }
 
-    /// Close the parent's copy of slave_fd. The child holds its own; once
-    /// every slave fd is gone the master reader observes EOF.
+    /// Close the parent's copy of slave_fd and mark the terminal inline
+    /// spawned (cannot be reused). The child holds its own slave; once every
+    /// slave fd is gone the master reader observes EOF.
     pub(crate) fn close_slave_fd(&self) {
         self.mark_inline_spawned();
         let fd = self.slave_fd.get();
@@ -690,8 +691,10 @@ impl Terminal {
             return;
         }
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
-            self.reader.with_mut(|r| r.read());
-            // The data callback runs user JS, which may have closed us.
+            // SAFETY: single JS thread; re-entrant user JS (data callback may
+            // call `terminal.close()`) is handled via the raw-pointer dispatch
+            // convention used by `__bun_run_file_poll` for BUFFERED_READER.
+            unsafe { (*self.reader.as_ptr()).read() };
             if self.flags.get().contains(Flags::CLOSED) {
                 return;
             }

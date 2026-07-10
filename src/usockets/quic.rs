@@ -22,8 +22,9 @@ use crate::types::{
     addrinfo, addrinfo_request, addrinfo_result, ext_of, sockaddr_storage, socklen_t,
     us_bun_socket_context_options_t, us_loop_t, us_poll_t, us_quic_socket_context_s,
     us_udp_socket_t, Bun__addrinfo_freeRequest, Bun__addrinfo_get, Bun__addrinfo_getRequestResult,
-    LIBUS_SOCKET_DESCRIPTOR,
 };
+#[cfg(not(target_os = "linux"))]
+use crate::types::LIBUS_SOCKET_DESCRIPTOR;
 use crate::udp::{
     us_create_udp_socket, us_udp_packet_buffer_payload, us_udp_packet_buffer_payload_length,
     us_udp_packet_buffer_peer, us_udp_packet_buffer_t, us_udp_socket_close, us_udp_socket_user,

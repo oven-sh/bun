@@ -230,7 +230,6 @@ pub unsafe extern "C" fn us_udp_socket_remote_ip(
     unsafe { copy_socket_ip(s, buf, length, bsd_remote_addr) }
 }
 
-#[inline]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_udp_socket_user(udp: *mut us_udp_socket_t) -> *mut c_void {
     // SAFETY: caller guarantees `udp` is a live UDP socket.

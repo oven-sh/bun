@@ -87,27 +87,32 @@ const fn htons(n: u16) -> u16 {
 
 #[cfg(not(windows))]
 mod plat {
-    pub use libc::{inet_pton, sockaddr_in, sockaddr_in6, AF_INET, AF_INET6};
+    use core::ffi::{c_char, c_int, c_void};
+    pub(super) use libc::{sockaddr_in, sockaddr_in6, AF_INET, AF_INET6};
+
+    unsafe extern "C" {
+        pub(super) fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
+    }
 }
 
 #[cfg(windows)]
 mod plat {
     use core::ffi::{c_char, c_int, c_void};
-    pub use bun_windows_sys::ws2_32::{sockaddr_in, sockaddr_in6};
+    pub(super) use bun_windows_sys::ws2_32::{sockaddr_in, sockaddr_in6};
 
-    pub const AF_INET: c_int = 2;
-    pub const AF_INET6: c_int = 23;
+    pub(super) const AF_INET: c_int = 2;
+    pub(super) const AF_INET6: c_int = 23;
 
-    pub const MSG_PUSH_IMMEDIATE: c_int = 0x20;
-    pub const SOCKET_ERROR: c_int = -1;
-    pub const WSAEINTR: c_int = 10004;
-    pub const WSAEWOULDBLOCK: c_int = 10035;
+    pub(super) const MSG_PUSH_IMMEDIATE: c_int = 0x20;
+    pub(super) const SOCKET_ERROR: c_int = -1;
+    pub(super) const WSAEINTR: c_int = 10004;
+    pub(super) const WSAEWOULDBLOCK: c_int = 10035;
 
     #[link(name = "ws2_32")]
     unsafe extern "system" {
-        pub fn inet_pton(family: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
-        pub fn recv(s: usize, buf: *mut c_char, len: c_int, flags: c_int) -> c_int;
-        pub fn WSAGetLastError() -> c_int;
+        pub(super) fn inet_pton(family: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
+        pub(super) fn recv(s: usize, buf: *mut c_char, len: c_int, flags: c_int) -> c_int;
+        pub(super) fn WSAGetLastError() -> c_int;
     }
 }
 
@@ -342,14 +347,12 @@ pub unsafe extern "C" fn us_socket_group_timestamp(group: *mut us_socket_group_t
     unsafe { (*group).timestamp as c_ushort }
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_group_loop(group: *mut us_socket_group_t) -> *mut us_loop_t {
     // SAFETY: `group` is live.
     unsafe { (*group).loop_ }
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_group_ext(group: *mut us_socket_group_t) -> *mut c_void {
     // SAFETY: `group` is live.
@@ -750,7 +753,6 @@ pub unsafe extern "C" fn us_listen_socket_close(ls: *mut us_listen_socket_t) {
     }
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_listen_socket_ext(ls: *mut us_listen_socket_t) -> *mut c_void {
     // SAFETY: trailing ext bytes sit immediately after the struct.
@@ -1183,11 +1185,13 @@ pub unsafe extern "C" fn us_internal_socket_after_resolve(c: *mut us_connecting_
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_internal_socket_after_open(s: *mut us_socket_t, mut error: c_int) {
+pub unsafe extern "C" fn us_internal_socket_after_open(s: *mut us_socket_t, error: c_int) {
     // SAFETY: `s` is a SEMI_SOCKET that became writable or errored.
     unsafe {
         let c = (*s).connect_state;
 
+        #[cfg(windows)]
+        let mut error = error;
         #[cfg(windows)]
         if error == 0 {
             if plat::recv(us_poll_fd(s.cast()), ptr::null_mut(), 0, plat::MSG_PUSH_IMMEDIATE)

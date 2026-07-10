@@ -153,10 +153,7 @@ pub struct SSL_SESSION {
 pub struct SSL_CIPHER {
     _p: [u8; 0],
 }
-#[repr(C)]
-pub struct SSL_METHOD {
-    _p: [u8; 0],
-}
+pub use bun_boringssl_sys::SSL_METHOD;
 #[repr(C)]
 pub struct EVP_PKEY {
     _p: [u8; 0],
@@ -365,8 +362,8 @@ unsafe extern "C" {
     fn X509_STORE_get0_objects(store: *mut X509_STORE) -> *mut stack_st;
     fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
 
-    fn sk_num(sk: *const stack_st) -> usize;
-    fn sk_value(sk: *const stack_st, i: usize) -> *mut c_void;
+    fn sk_num(sk: *const c_void) -> usize;
+    fn sk_value(sk: *const c_void, i: usize) -> *mut c_void;
     fn sk_pop_free_ex(
         sk: *mut stack_st,
         call_free: Option<
@@ -1693,7 +1690,7 @@ pub unsafe extern "C" fn us_ssl_ctx_add_ca_cert(ctx: *mut SSL_CTX, content: *con
         let mut store_is_empty = false;
         if !store.is_null() && !store_is_shared {
             let objs = X509_STORE_get0_objects(store);
-            store_is_empty = objs.is_null() || sk_num(objs) == 0;
+            store_is_empty = objs.is_null() || sk_num(objs.cast()) == 0;
         }
         if store_is_shared || store_is_empty {
             let own = us_get_default_ca_store();
@@ -1820,11 +1817,11 @@ pub unsafe extern "C" fn us_ssl_parse_pkcs12(
                 *err_reason = c"parse".as_ptr();
                 break 'done;
             }
-            if !extra.is_null() && sk_num(extra) > 0 {
+            if !extra.is_null() && sk_num(extra.cast()) > 0 {
                 ab = BIO_new(BIO_s_mem());
                 if !ab.is_null() {
-                    for i in 0..sk_num(extra) {
-                        PEM_write_bio_X509(ab, sk_value(extra, i).cast());
+                    for i in 0..sk_num(extra.cast()) {
+                        PEM_write_bio_X509(ab, sk_value(extra.cast(), i).cast());
                     }
                     pem_from_bio(ab, out_ca, out_ca_len);
                 }

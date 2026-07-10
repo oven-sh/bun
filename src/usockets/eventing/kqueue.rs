@@ -61,7 +61,7 @@ unsafe fn is_eintr(rc: c_int) -> bool {
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod kq {
-    pub use libc::{kevent64, kevent64_s, KEVENT_FLAG_ERROR_EVENTS, KEVENT_FLAG_IMMEDIATE};
+    pub(super) use libc::{kevent64, kevent64_s, KEVENT_FLAG_ERROR_EVENTS, KEVENT_FLAG_IMMEDIATE};
 }
 
 #[cfg(target_os = "freebsd")]
@@ -243,7 +243,7 @@ pub struct us_timer_t {
 // Loop
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_loop_free(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` was allocated by us_create_loop; fields are valid.
     unsafe {
@@ -253,7 +253,7 @@ pub unsafe extern "C" fn us_loop_free(loop_: *mut us_loop_t) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_create_loop(
     _hint: *mut c_void,
     wakeup_cb: Option<unsafe extern "C" fn(*mut us_loop_t)>,
@@ -284,7 +284,7 @@ pub unsafe extern "C" fn us_create_loop(
 // Poll — create/free/ext/init/type/events/fd
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_create_poll(
     loop_: *mut us_loop_t,
     fallthrough: c_int,
@@ -300,7 +300,7 @@ pub unsafe extern "C" fn us_create_poll(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_free(p: *mut us_poll_t, loop_: *mut us_loop_t) {
     // SAFETY: `p` was returned by us_create_poll; `loop_` is live.
     unsafe {
@@ -309,14 +309,13 @@ pub unsafe extern "C" fn us_poll_free(p: *mut us_poll_t, loop_: *mut us_loop_t) 
     }
 }
 
-#[inline(always)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_ext(p: *mut us_poll_t) -> *mut c_void {
     // SAFETY: ext area is the bytes immediately after the struct.
     unsafe { p.add(1) as *mut c_void }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_init(p: *mut us_poll_t, fd: LIBUS_SOCKET_DESCRIPTOR, poll_type: c_int) {
     // SAFETY: `p` points at a live us_poll_t.
     unsafe {
@@ -325,8 +324,7 @@ pub unsafe extern "C" fn us_poll_init(p: *mut us_poll_t, fd: LIBUS_SOCKET_DESCRI
     }
 }
 
-#[inline(always)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_events(p: *mut us_poll_t) -> c_int {
     // SAFETY: `p` points at a live us_poll_t.
     let pt = unsafe { (*p).poll_type() };
@@ -334,22 +332,21 @@ pub unsafe extern "C" fn us_poll_events(p: *mut us_poll_t) -> c_int {
         | (if pt & POLL_TYPE_POLLING_OUT != 0 { LIBUS_SOCKET_WRITABLE } else { 0 })
 }
 
-#[inline(always)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_fd(p: *mut us_poll_t) -> LIBUS_SOCKET_DESCRIPTOR {
     // SAFETY: `p` points at a live us_poll_t.
     unsafe { (*p).fd() }
 }
 
 /// Returns any of listen socket, socket, shut down socket or callback.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_poll_type(p: *mut us_poll_t) -> c_int {
     // SAFETY: `p` points at a live us_poll_t.
     unsafe { (*p).poll_type() & POLL_TYPE_KIND_MASK }
 }
 
 /// Bug: doesn't really SET, rather read and change, so needs to be inited first!
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_poll_set_type(p: *mut us_poll_t, poll_type: c_int) {
     // SAFETY: `p` points at a live us_poll_t.
     unsafe {
@@ -538,7 +535,7 @@ unsafe fn us_internal_clamp_to_sweep(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_loop_run(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` was returned by us_create_loop and is single-threaded here.
     unsafe {
@@ -574,7 +571,7 @@ pub unsafe extern "C" fn us_loop_run(loop_: *mut us_loop_t) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_loop_run_bun_tick(loop_: *mut us_loop_t, mut timeout: *const timespec) {
     // SAFETY: `loop_` is live; `timeout` may be null.
     unsafe {
@@ -637,7 +634,7 @@ pub unsafe extern "C" fn us_loop_run_bun_tick(loop_: *mut us_loop_t, mut timeout
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_loop_update_pending_ready_polls(
     loop_: *mut us_loop_t,
     old_poll: *mut us_poll_t,
@@ -757,7 +754,7 @@ pub(crate) unsafe fn kqueue_change(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_resize(
     p: *mut us_poll_t,
     loop_: *mut us_loop_t,
@@ -795,7 +792,7 @@ pub unsafe extern "C" fn us_poll_resize(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_start_rc(
     p: *mut us_poll_t,
     loop_: *mut us_loop_t,
@@ -812,7 +809,7 @@ pub unsafe extern "C" fn us_poll_start_rc(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_start(p: *mut us_poll_t, loop_: *mut us_loop_t, events: c_int) {
     // SAFETY: forwards to us_poll_start_rc.
     unsafe {
@@ -820,7 +817,7 @@ pub unsafe extern "C" fn us_poll_start(p: *mut us_poll_t, loop_: *mut us_loop_t,
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_change(p: *mut us_poll_t, loop_: *mut us_loop_t, events: c_int) {
     // SAFETY: `p` and `loop_` are live.
     unsafe {
@@ -837,7 +834,7 @@ pub unsafe extern "C" fn us_poll_change(p: *mut us_poll_t, loop_: *mut us_loop_t
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_stop(p: *mut us_poll_t, loop_: *mut us_loop_t) {
     // SAFETY: `p` and `loop_` are live.
     unsafe {
@@ -851,7 +848,7 @@ pub unsafe extern "C" fn us_poll_stop(p: *mut us_poll_t, loop_: *mut us_loop_t) 
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_accept_poll_event(_p: *mut us_poll_t) -> usize {
     // Kqueue has no underlying FD for user events.
     0
@@ -865,36 +862,36 @@ pub unsafe extern "C" fn us_internal_accept_poll_event(_p: *mut us_poll_t) -> us
 mod mach {
     use core::ffi::{c_int, c_uint};
 
-    pub type mach_port_t = c_uint;
-    pub type kern_return_t = c_int;
+    pub(super) type mach_port_t = c_uint;
+    pub(super) type kern_return_t = c_int;
 
-    pub const MACHPORT_BUF_LEN: usize = 1024;
+    pub(super) const MACHPORT_BUF_LEN: usize = 1024;
 
-    pub const KERN_SUCCESS: kern_return_t = 0;
-    pub const MACH_PORT_NULL: mach_port_t = 0;
-    pub const MACH_PORT_RIGHT_RECEIVE: c_uint = 1;
-    pub const MACH_MSG_TYPE_MAKE_SEND: c_uint = 20;
-    pub const MACH_MSG_TYPE_COPY_SEND: c_uint = 19;
-    pub const MACH_PORT_LIMITS_INFO: c_int = 1;
-    pub const MACH_PORT_LIMITS_INFO_COUNT: c_uint = 1;
-    pub const MACH_RCV_MSG: c_uint = 0x0000_0002;
-    pub const MACH_RCV_OVERWRITE: c_uint = 0x0000_0000;
-    pub const MACH_SEND_MSG: c_int = 0x0000_0001;
-    pub const MACH_SEND_TIMEOUT: c_int = 0x0000_0010;
+    pub(super) const KERN_SUCCESS: kern_return_t = 0;
+    pub(super) const MACH_PORT_NULL: mach_port_t = 0;
+    pub(super) const MACH_PORT_RIGHT_RECEIVE: c_uint = 1;
+    pub(super) const MACH_MSG_TYPE_MAKE_SEND: c_uint = 20;
+    pub(super) const MACH_MSG_TYPE_COPY_SEND: c_uint = 19;
+    pub(super) const MACH_PORT_LIMITS_INFO: c_int = 1;
+    pub(super) const MACH_PORT_LIMITS_INFO_COUNT: c_uint = 1;
+    pub(super) const MACH_RCV_MSG: c_uint = 0x0000_0002;
+    pub(super) const MACH_RCV_OVERWRITE: c_uint = 0x0000_0000;
+    pub(super) const MACH_SEND_MSG: c_int = 0x0000_0001;
+    pub(super) const MACH_SEND_TIMEOUT: c_int = 0x0000_0010;
 
     /// `MACH_MSGH_BITS(remote, local)` — legacy encoder.
     #[inline(always)]
-    pub const fn mach_msgh_bits(remote: c_uint, local: c_uint) -> c_uint {
+    pub(super) const fn mach_msgh_bits(remote: c_uint, local: c_uint) -> c_uint {
         remote | (local << 8)
     }
 
     #[repr(C)]
-    pub struct mach_port_limits_t {
+    pub(super) struct mach_port_limits_t {
         pub mpl_qlimit: c_uint,
     }
 
     #[repr(C)]
-    pub struct mach_msg_header_t {
+    pub(super) struct mach_msg_header_t {
         pub msgh_bits: c_uint,
         pub msgh_size: c_uint,
         pub msgh_remote_port: mach_port_t,
@@ -904,27 +901,27 @@ mod mach {
     }
 
     unsafe extern "C" {
-        pub static mach_task_self_: mach_port_t;
-        pub fn mach_port_allocate(
+        pub(super) static mach_task_self_: mach_port_t;
+        pub(super) fn mach_port_allocate(
             task: mach_port_t,
             right: c_uint,
             name: *mut mach_port_t,
         ) -> kern_return_t;
-        pub fn mach_port_insert_right(
+        pub(super) fn mach_port_insert_right(
             task: mach_port_t,
             name: mach_port_t,
             poly: mach_port_t,
             poly_poly: c_uint,
         ) -> kern_return_t;
-        pub fn mach_port_set_attributes(
+        pub(super) fn mach_port_set_attributes(
             task: mach_port_t,
             name: mach_port_t,
             flavor: c_int,
             info: *mut c_int,
             count: c_uint,
         ) -> kern_return_t;
-        pub fn mach_port_deallocate(task: mach_port_t, name: mach_port_t) -> kern_return_t;
-        pub fn mach_msg(
+        pub(super) fn mach_port_deallocate(task: mach_port_t, name: mach_port_t) -> kern_return_t;
+        pub(super) fn mach_msg(
             msg: *mut mach_msg_header_t,
             option: c_int,
             send_size: c_uint,
@@ -936,14 +933,14 @@ mod mach {
     }
 
     #[inline(always)]
-    pub unsafe fn mach_task_self() -> mach_port_t {
+    pub(super) unsafe fn mach_task_self() -> mach_port_t {
         // SAFETY: reading the libSystem-exported task-self port global.
         unsafe { mach_task_self_ }
     }
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_create_async(
     loop_: *mut us_loop_t,
     fallthrough: c_int,
@@ -1003,7 +1000,7 @@ pub unsafe extern "C" fn us_internal_create_async(
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_async_close(a: *mut us_internal_async) {
     use mach::*;
     // SAFETY: `a` was returned by us_internal_create_async.
@@ -1046,7 +1043,7 @@ pub unsafe extern "C" fn us_internal_async_close(a: *mut us_internal_async) {
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_async_set(
     a: *mut us_internal_async,
     cb: Option<unsafe extern "C" fn(*mut us_internal_async)>,
@@ -1089,7 +1086,7 @@ pub unsafe extern "C" fn us_internal_async_set(
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_async_wakeup(a: *mut us_internal_async) {
     use mach::*;
     // SAFETY: `a` is a live us_internal_callback_t with a valid send right.
@@ -1118,7 +1115,7 @@ pub unsafe extern "C" fn us_internal_async_wakeup(a: *mut us_internal_async) {
 }
 
 #[cfg(target_os = "freebsd")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_create_async(
     loop_: *mut us_loop_t,
     fallthrough: c_int,
@@ -1146,7 +1143,7 @@ pub unsafe extern "C" fn us_internal_create_async(
 }
 
 #[cfg(target_os = "freebsd")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_async_close(a: *mut us_internal_async) {
     // SAFETY: `a` was returned by us_internal_create_async.
     unsafe {
@@ -1182,7 +1179,7 @@ pub unsafe extern "C" fn us_internal_async_close(a: *mut us_internal_async) {
 }
 
 #[cfg(target_os = "freebsd")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_async_set(
     a: *mut us_internal_async,
     cb: Option<unsafe extern "C" fn(*mut us_internal_async)>,
@@ -1226,7 +1223,7 @@ pub unsafe extern "C" fn us_internal_async_set(
 }
 
 #[cfg(target_os = "freebsd")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_async_wakeup(a: *mut us_internal_async) {
     // SAFETY: `a` is a live us_internal_callback_t registered with EVFILT_USER.
     unsafe {
@@ -1266,7 +1263,7 @@ pub unsafe extern "C" fn us_internal_async_wakeup(a: *mut us_internal_async) {
 // Socket error accessor
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_get_error(s: *mut us_socket_t) -> c_int {
     // SAFETY: `s` starts with a us_poll_t; fd is valid for getsockopt.
     unsafe {

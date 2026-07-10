@@ -125,12 +125,12 @@ fn get_user(root: &SniNode, idx: usize, labels: &[&[u8]]) -> *mut c_void {
 
 // ─── extern "C" ABI ────────────────────────────────────────────────────────
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn sni_new() -> *mut c_void {
     Box::into_raw(Box::new(SniNode::default())).cast()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn sni_free(sni: *mut c_void, cb: Option<FreeCb>) {
     // We want to run this callback for every remaining name.
     SNI_FREE_CB.set(cb);
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn sni_free(sni: *mut c_void, cb: Option<FreeCb>) {
 }
 
 /// Returns non-zero if this name already exists.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn sni_add(
     sni: *mut c_void,
     hostname: *const c_char,
@@ -175,7 +175,7 @@ pub unsafe extern "C" fn sni_add(
 
 /// Removes the exact match. Wildcards are treated as the verbatim asterisk
 /// char, not as an actual wildcard.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn sni_remove(sni: *mut c_void, hostname: *const c_char) -> *mut c_void {
     // SAFETY: `sni` is a live tree root from `sni_new`.
     let root = unsafe { &mut *sni.cast::<SniNode>() };
@@ -194,7 +194,7 @@ pub unsafe extern "C" fn sni_remove(sni: *mut c_void, hostname: *const c_char) -
     remove_user(root, 0, &labels[..num])
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn sni_find(sni: *mut c_void, hostname: *const c_char) -> *mut c_void {
     // SAFETY: `sni` is a live tree root from `sni_new`.
     let root = unsafe { &*sni.cast::<SniNode>() };

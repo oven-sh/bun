@@ -148,7 +148,7 @@ unsafe extern "C" fn sweep_timer_cb(cb: *mut us_internal_callback_t) {
 unsafe extern "C" fn sweep_timer_noop(_t: *mut us_timer_t) {}
 
 #[cfg(windows)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_enable_sweep_timer(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` is live; sweep_timer was allocated in loop_data_init.
     unsafe {
@@ -170,7 +170,7 @@ pub unsafe extern "C" fn us_internal_enable_sweep_timer(loop_: *mut us_loop_t) {
 }
 
 #[cfg(windows)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_disable_sweep_timer(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` is live.
     unsafe {
@@ -198,7 +198,7 @@ unsafe fn us_internal_monotonic_ns() -> c_longlong {
 }
 
 #[cfg(not(windows))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_enable_sweep_timer(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` is live.
     unsafe {
@@ -212,7 +212,7 @@ pub unsafe extern "C" fn us_internal_enable_sweep_timer(loop_: *mut us_loop_t) {
 }
 
 #[cfg(not(windows))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_disable_sweep_timer(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` is live.
     unsafe {
@@ -224,7 +224,7 @@ pub unsafe extern "C" fn us_internal_disable_sweep_timer(loop_: *mut us_loop_t) 
 }
 
 #[cfg(not(windows))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_sweep_timeout_ns(loop_: *mut us_loop_t) -> c_longlong {
     // SAFETY: `loop_` is live.
     unsafe {
@@ -237,7 +237,7 @@ pub unsafe extern "C" fn us_internal_sweep_timeout_ns(loop_: *mut us_loop_t) -> 
 }
 
 #[cfg(not(windows))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_sweep_if_due(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` is live.
     unsafe {
@@ -258,7 +258,7 @@ pub unsafe extern "C" fn us_internal_sweep_if_due(loop_: *mut us_loop_t) {
 // Loop data init / free
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_loop_data_init(
     loop_: *mut us_loop_t,
     wakeup_cb: Option<unsafe extern "C" fn(*mut us_loop_t)>,
@@ -302,7 +302,7 @@ pub unsafe extern "C" fn us_internal_loop_data_init(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_loop_data_free(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` is live; releases everything `init` allocated.
     unsafe {
@@ -326,8 +326,7 @@ pub unsafe extern "C" fn us_internal_loop_data_free(loop_: *mut us_loop_t) {
 // Wakeup
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[inline(always)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_wakeup_loop(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` is live; may be called from any thread.
     unsafe {
@@ -345,7 +344,7 @@ pub unsafe extern "C" fn us_wakeup_loop(loop_: *mut us_loop_t) {
 // Group link / unlink
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_loop_link_group(
     loop_: *mut us_loop_t,
     group: *mut us_socket_group_t,
@@ -362,7 +361,7 @@ pub unsafe extern "C" fn us_internal_loop_link_group(
 }
 
 /// Unlink is called before the embedding owner frees its storage.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_loop_unlink_group(
     loop_: *mut us_loop_t,
     group: *mut us_socket_group_t,
@@ -392,7 +391,7 @@ pub unsafe extern "C" fn us_internal_loop_unlink_group(
 /// Teardown helper: close every socket in every group currently linked to this
 /// loop. Listen sockets are left alone (owner closes them). Returns 1 if any
 /// group had open connections.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_loop_close_all_groups(loop_: *mut us_loop_t) -> c_int {
     // SAFETY: `loop_` is live; walks the intrusive group list.
     unsafe {
@@ -426,7 +425,7 @@ pub unsafe extern "C" fn us_loop_close_all_groups(loop_: *mut us_loop_t) -> c_in
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// This function should never run recursively.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_timer_sweep(loop_: *mut us_loop_t) {
     // SAFETY: walks the loop's group list and each group's socket list; timeout
     // dispatch may relink or free groups/sockets, which the iterator fields guard.
@@ -501,7 +500,7 @@ pub unsafe extern "C" fn us_internal_timer_sweep(loop_: *mut us_loop_t) {
 /// already-open connections.
 const MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION: c_int = 5;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_handle_low_priority_sockets(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` is live; walks the low-prio LIFO queue.
     unsafe {
@@ -542,7 +541,7 @@ pub unsafe extern "C" fn us_internal_handle_low_priority_sockets(loop_: *mut us_
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Called when DNS resolution completes. Does not wake up the loop.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_dns_callback(
     c: *mut us_connecting_socket_t,
     _addrinfo_req: *mut c_void,
@@ -559,7 +558,7 @@ pub unsafe extern "C" fn us_internal_dns_callback(
 }
 
 /// Called when DNS resolution completes. Wakes up the loop. Thread-safe.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_dns_callback_threadsafe(
     c: *mut us_connecting_socket_t,
     addrinfo_req: *mut c_void,
@@ -572,7 +571,7 @@ pub unsafe extern "C" fn us_internal_dns_callback_threadsafe(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_drain_pending_dns_resolve(
     _loop: *mut us_loop_t,
     mut s: *mut us_connecting_socket_t,
@@ -587,7 +586,7 @@ pub unsafe extern "C" fn us_internal_drain_pending_dns_resolve(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_handle_dns_results(loop_: *mut us_loop_t) -> c_int {
     // SAFETY: `loop_` is live; swaps the dns_ready list under the mutex.
     unsafe {
@@ -605,7 +604,7 @@ pub unsafe extern "C" fn us_internal_handle_dns_results(loop_: *mut us_loop_t) -
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Properly takes the linked list and timeout sweep into account.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_free_closed_sockets(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` is live; each list was populated by close paths that
     // relinquished ownership to the loop.
@@ -642,14 +641,13 @@ pub unsafe extern "C" fn us_internal_free_closed_sockets(loop_: *mut us_loop_t) 
 // Loop iteration hooks
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[inline(always)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_loop_iteration_number(loop_: *mut us_loop_t) -> c_longlong {
     // SAFETY: `loop_` is live.
     unsafe { (*loop_).data.iteration_nr as c_longlong }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_loop_pre(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` is live; pre_cb was set in loop_data_init.
     unsafe {
@@ -665,7 +663,7 @@ pub unsafe extern "C" fn us_internal_loop_pre(loop_: *mut us_loop_t) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_loop_post(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` is live; post_cb was set in loop_data_init.
     unsafe {
@@ -700,7 +698,7 @@ unsafe fn follow_adoption(s: *mut us_socket_t) -> *mut us_socket_t {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_dispatch_ready_poll(
     p: *mut us_poll_t,
     error: c_int,
@@ -971,7 +969,7 @@ unsafe fn dispatch_stream_socket(
                         let mut msg: libc::msghdr = core::mem::zeroed();
                         let mut iov: libc::iovec = core::mem::zeroed();
                         let mut cmsg_buf =
-                            [0u8; libc::CMSG_SPACE(size_of::<c_int>() as c_uint) as usize];
+                            [0u8; unsafe { libc::CMSG_SPACE(size_of::<c_int>() as c_uint) } as usize];
 
                         iov.iov_base = recv_buf as *mut c_void;
                         iov.iov_len = LIBUS_RECV_BUFFER_LENGTH;
@@ -1278,11 +1276,10 @@ unsafe fn drain_udp_errqueue(
 
 /// Integration only requires the timer to be set up; it is enabled dynamically
 /// by socket count.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_loop_integrate(_loop: *mut us_loop_t) {}
 
-#[inline(always)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_loop_ext(loop_: *mut us_loop_t) -> *mut c_void {
     // SAFETY: the ext area is the bytes immediately past the `us_loop_t`.
     unsafe { loop_.add(1) as *mut c_void }

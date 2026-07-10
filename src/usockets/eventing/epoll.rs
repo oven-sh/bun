@@ -36,8 +36,8 @@ unsafe fn errno() -> c_int {
 }
 
 #[inline(always)]
-unsafe fn is_eintr(rc: impl Into<isize>) -> bool {
-    rc.into() == -1 && unsafe { errno() } == libc::EINTR
+unsafe fn is_eintr(rc: isize) -> bool {
+    rc == -1 && unsafe { errno() } == libc::EINTR
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -205,7 +205,6 @@ pub unsafe extern "C" fn us_poll_free(p: *mut us_poll_t, loop_: *mut us_loop_t) 
     }
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_ext(p: *mut us_poll_t) -> *mut c_void {
     // SAFETY: `p` was allocated with trailing ext bytes.
@@ -225,7 +224,6 @@ pub unsafe extern "C" fn us_poll_init(
     }
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_events(p: *mut us_poll_t) -> c_int {
     // SAFETY: `p` is a valid poll.
@@ -241,7 +239,6 @@ pub unsafe extern "C" fn us_poll_events(p: *mut us_poll_t) -> c_int {
     })
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_fd(p: *mut us_poll_t) -> LIBUS_SOCKET_DESCRIPTOR {
     // SAFETY: `p` is a valid poll.
@@ -313,7 +310,7 @@ unsafe fn bun_epoll_pwait2(
         let mut ret: c_int;
         loop {
             ret = libc::epoll_pwait(epfd, events, maxevents, timeout_ms, mask);
-            if !is_eintr(ret) {
+            if !is_eintr(ret as isize) {
                 break;
             }
         }
@@ -633,7 +630,7 @@ pub unsafe extern "C" fn us_poll_start_rc(
         let mut ret: c_int;
         loop {
             ret = libc::epoll_ctl((*loop_).fd, libc::EPOLL_CTL_ADD, (*p).fd(), &mut event);
-            if !is_eintr(ret) {
+            if !is_eintr(ret as isize) {
                 break;
             }
         }
@@ -673,7 +670,7 @@ pub unsafe extern "C" fn us_poll_change(
         };
         loop {
             let rc = libc::epoll_ctl((*loop_).fd, libc::EPOLL_CTL_MOD, (*p).fd(), &mut event);
-            if !is_eintr(rc) {
+            if !is_eintr(rc as isize) {
                 break;
             }
         }
@@ -696,7 +693,7 @@ pub unsafe extern "C" fn us_poll_stop(p: *mut us_poll_t, loop_: *mut us_loop_t) 
                 (*p).fd(),
                 event.as_mut_ptr(),
             );
-            if !is_eintr(rc) {
+            if !is_eintr(rc as isize) {
                 break;
             }
         }

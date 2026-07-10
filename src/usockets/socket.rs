@@ -27,8 +27,8 @@ use crate::eventing::{
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
 use crate::eventing::us_internal_loop_update_pending_ready_polls;
 use crate::types::{
-    bsd_addr_t, us_connecting_socket_t, us_iovec_t, us_socket_group_t, us_socket_t,
-    Bun__addrinfo_cancel, Bun__addrinfo_freeRequest, us_dispatch_close,
+    bsd_addr_t, us_connecting_socket_t, us_iovec_t, us_listen_socket_t, us_socket_group_t,
+    us_socket_t, Bun__addrinfo_cancel, Bun__addrinfo_freeRequest, us_dispatch_close,
     us_dispatch_connecting_error, us_dispatch_open, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET,
     LIBUS_SOCKET_DESCRIPTOR, POLL_TYPE_SEMI_SOCKET, POLL_TYPE_SOCKET, POLL_TYPE_SOCKET_SHUT_DOWN,
 };
@@ -67,7 +67,7 @@ unsafe extern "C" {
         ssl_ctx: *mut bun_boringssl_sys::SSL_CTX,
         is_client: c_int,
         sni: *const c_char,
-        listener: *mut c_void,
+        listener: *mut us_listen_socket_t,
     );
     fn us_internal_ssl_ctx_unref(ssl_ctx: *mut bun_boringssl_sys::SSL_CTX);
     fn us_internal_ssl_get_native_handle(s: *mut us_socket_t) -> *mut c_void;
@@ -287,14 +287,12 @@ pub unsafe extern "C" fn us_socket_local_address(
 // Trivial accessors
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_group(s: *mut us_socket_t) -> *mut us_socket_group_t {
     // SAFETY: `s` is a live socket.
     unsafe { (*s).group }
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_kind(s: *mut us_socket_t) -> c_uchar {
     // SAFETY: `s` is a live socket.
@@ -313,7 +311,6 @@ pub unsafe extern "C" fn us_socket_set_ssl_raw_tap(s: *mut us_socket_t, enabled:
     unsafe { (*s).set_ssl_raw_tap(enabled != 0) };
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_is_tls(s: *mut us_socket_t) -> c_int {
     // SAFETY: `s` is a live socket.
@@ -338,7 +335,6 @@ pub unsafe extern "C" fn us_connecting_socket_kind(c: *mut us_connecting_socket_
 // Timeouts
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_timeout(s: *mut us_socket_t, seconds: c_uint) {
     // SAFETY: `s` is live and `s->group` is a valid pointer.
@@ -366,7 +362,6 @@ pub unsafe extern "C" fn us_connecting_socket_timeout(
     }
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_long_timeout(s: *mut us_socket_t, minutes: c_uint) {
     // SAFETY: `s` is live and `s->group` is a valid pointer.
@@ -398,7 +393,6 @@ pub unsafe extern "C" fn us_connecting_socket_long_timeout(
 // Flush / closed / established
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_flush(s: *mut us_socket_t) {
     // SAFETY: `s` is a live socket.
@@ -409,7 +403,6 @@ pub unsafe extern "C" fn us_socket_flush(s: *mut us_socket_t) {
     }
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_is_closed(s: *mut us_socket_t) -> c_int {
     // SAFETY: `s` is a live socket.
@@ -444,7 +437,6 @@ pub unsafe extern "C" fn us_connecting_socket_is_closed(c: *mut us_connecting_so
     unsafe { (*c).closed() as c_int }
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_is_established(s: *mut us_socket_t) -> c_int {
     // Everything that is not POLL_TYPE_SEMI_SOCKET is established.
@@ -634,7 +626,6 @@ pub unsafe extern "C" fn us_internal_socket_close_raw(
     }
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_close(
     s: *mut us_socket_t,
@@ -976,14 +967,12 @@ pub unsafe extern "C" fn us_socket_ipc_write_fd(
 // ext pointers
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_ext(s: *mut us_socket_t) -> *mut c_void {
     // SAFETY: `s` was allocated with trailing ext storage.
     unsafe { s.add(1).cast() }
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_connecting_socket_ext(c: *mut us_connecting_socket_t) -> *mut c_void {
     // SAFETY: `c` was allocated with trailing ext storage.
@@ -994,7 +983,6 @@ pub unsafe extern "C" fn us_connecting_socket_ext(c: *mut us_connecting_socket_t
 // Shutdown
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_is_shut_down(s: *mut us_socket_t) -> c_int {
     // SAFETY: `s` is a live socket.
@@ -1029,7 +1017,6 @@ pub unsafe extern "C" fn us_internal_socket_raw_shutdown(s: *mut us_socket_t) {
     }
 }
 
-#[inline(always)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_shutdown(s: *mut us_socket_t) {
     // SAFETY: `s` is a live socket.

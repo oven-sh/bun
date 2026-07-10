@@ -1,7 +1,7 @@
 //! Thin platform-abstraction layer over BSD-socket syscalls.
 //!
 //! Ports `packages/bun-usockets/src/bsd.c` + `internal/networking/bsd.h`. Every
-//! `bsd_*` function is `#[no_mangle] extern "C"` so the rest of uSockets and
+//! `bsd_*` function is `#[unsafe(no_mangle)] extern "C"` so the rest of uSockets and
 //! uWebSockets (C++) keep linking unchanged.
 
 #![allow(dead_code, unused_variables, unused_mut, clippy::missing_safety_doc)]
@@ -135,9 +135,9 @@ const fn htonl(n: u32) -> u32 {
 #[cfg(not(windows))]
 mod plat {
     use super::*;
-    pub use libc::{
+    pub(super) use libc::{
         sockaddr, sockaddr_in, sockaddr_in6, sockaddr_un, in_addr, in6_addr, addrinfo,
-        msghdr, iovec, ip_mreq, ipv6_mreq,
+        ip_mreq, ipv6_mreq,
         AF_INET, AF_INET6, AF_UNIX, AF_UNSPEC, SOCK_STREAM, SOCK_DGRAM,
         SOL_SOCKET, IPPROTO_IP, IPPROTO_IPV6, IPPROTO_TCP,
         SO_BROADCAST, SO_KEEPALIVE, SO_REUSEADDR,
@@ -147,81 +147,87 @@ mod plat {
         IPV6_UNICAST_HOPS, IPV6_V6ONLY, IPV6_TCLASS, IPV6_RECVTCLASS,
         TCP_NODELAY, AI_PASSIVE, SHUT_RD, SHUT_WR, MSG_TRUNC, MSG_DONTWAIT,
         INADDR_ANY, F_GETFL, F_SETFL, F_GETFD, F_SETFD, O_NONBLOCK, FD_CLOEXEC,
-        O_CLOEXEC, O_RDONLY, O_DIRECTORY,
     };
 
-    pub use libc::{
-        socket, setsockopt, getsockopt, getsockname, getpeername, connect, bind, listen,
-        accept, recv, send, recvmsg, sendmsg, recvfrom, sendto, writev, close, shutdown,
-        fcntl, open, getaddrinfo, freeaddrinfo, memset, memcpy, snprintf,
+    pub(super) use libc::{
+        socket, getsockopt, getsockname, getpeername, connect, bind, listen,
+        recv, send, recvmsg, sendmsg, writev, close, shutdown,
+        fcntl, getaddrinfo, freeaddrinfo,
     };
 
-    pub use libc::{ip_mreq_source, IP_ADD_SOURCE_MEMBERSHIP, IP_DROP_SOURCE_MEMBERSHIP};
-    pub use libc::{IPV6_RECVPKTINFO, IP_RECVTOS};
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    pub(super) use libc::accept;
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub(super) use libc::O_RDONLY;
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
+    pub(super) use libc::{open, O_CLOEXEC, O_DIRECTORY};
+
+    pub(super) use libc::{ip_mreq_source, IP_ADD_SOURCE_MEMBERSHIP, IP_DROP_SOURCE_MEMBERSHIP};
+    pub(super) use libc::{IPV6_RECVPKTINFO, IP_RECVTOS};
 
     #[cfg(target_os = "linux")]
-    pub use libc::{IPV6_ADD_MEMBERSHIP as IPV6_JOIN_GROUP, IPV6_DROP_MEMBERSHIP as IPV6_LEAVE_GROUP};
+    pub(super) use libc::{IPV6_ADD_MEMBERSHIP as IPV6_JOIN_GROUP, IPV6_DROP_MEMBERSHIP as IPV6_LEAVE_GROUP};
     #[cfg(not(target_os = "linux"))]
-    pub use libc::{IPV6_JOIN_GROUP, IPV6_LEAVE_GROUP};
+    pub(super) use libc::{IPV6_JOIN_GROUP, IPV6_LEAVE_GROUP};
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    pub use libc::{accept4, SOCK_CLOEXEC, SOCK_NONBLOCK};
+    pub(super) use libc::{accept4, SOCK_CLOEXEC, SOCK_NONBLOCK};
 
     #[cfg(target_os = "linux")]
-    pub use libc::{mmsghdr, MSG_NOSIGNAL, IP_PKTINFO, in_pktinfo, in6_pktinfo, IPV6_PKTINFO,
+    pub(super) use libc::{mmsghdr, MSG_NOSIGNAL, IP_PKTINFO, in_pktinfo, in6_pktinfo, IPV6_PKTINFO,
                    TCP_CORK, TCP_DEFER_ACCEPT, TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT,
                    IP_RECVERR, IPV6_RECVERR, O_PATH,
                    MCAST_JOIN_SOURCE_GROUP, MCAST_LEAVE_SOURCE_GROUP};
 
     #[cfg(target_os = "freebsd")]
-    pub use libc::{mmsghdr, MSG_NOSIGNAL, IP_RECVDSTADDR, in6_pktinfo, IPV6_PKTINFO,
+    pub(super) use libc::{mmsghdr, MSG_NOSIGNAL, IP_RECVDSTADDR, in6_pktinfo, IPV6_PKTINFO,
                    TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT,
                    SO_ACCEPTFILTER, accept_filter_arg};
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub use libc::{SO_NOSIGPIPE, TCP_KEEPALIVE, TCP_KEEPINTVL, TCP_KEEPCNT, MSG_PEEK,
+    pub(super) use libc::{SO_NOSIGPIPE, TCP_KEEPALIVE, TCP_KEEPINTVL, TCP_KEEPCNT, MSG_PEEK,
                    IP_PKTINFO};
 
     // `struct group_source_req` — not in the libc crate on any platform.
     #[repr(C)]
-    pub struct group_source_req {
+    pub(super) struct group_source_req {
         pub gsr_interface: u32,
         pub gsr_group: libc::sockaddr_storage,
         pub gsr_source: libc::sockaddr_storage,
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub const MCAST_JOIN_SOURCE_GROUP: c_int = 82;
+    pub(super) const MCAST_JOIN_SOURCE_GROUP: c_int = 82;
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub const MCAST_LEAVE_SOURCE_GROUP: c_int = 83;
+    pub(super) const MCAST_LEAVE_SOURCE_GROUP: c_int = 83;
     #[cfg(target_os = "freebsd")]
-    pub const MCAST_JOIN_SOURCE_GROUP: c_int = 74;
+    pub(super) const MCAST_JOIN_SOURCE_GROUP: c_int = 74;
     #[cfg(target_os = "freebsd")]
-    pub const MCAST_LEAVE_SOURCE_GROUP: c_int = 75;
+    pub(super) const MCAST_LEAVE_SOURCE_GROUP: c_int = 75;
 
     // Darwin-only `struct mmsghdr` for sendmsg_x/recvmsg_x (private XNU syscall).
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     #[repr(C)]
     #[derive(Clone, Copy)]
-    pub struct mmsghdr {
+    pub(super) struct mmsghdr {
         pub msg_hdr: libc::msghdr,
         pub msg_len: usize,
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     unsafe extern "C" {
-        pub fn recvmsg_x(s: c_int, msgp: *const mmsghdr, cnt: c_uint, flags: c_int) -> isize;
-        pub fn sendmsg_x(s: c_int, msgp: *const mmsghdr, cnt: c_uint, flags: c_int) -> isize;
+        pub(super) fn recvmsg_x(s: c_int, msgp: *const mmsghdr, cnt: c_uint, flags: c_int) -> isize;
+        pub(super) fn sendmsg_x(s: c_int, msgp: *const mmsghdr, cnt: c_uint, flags: c_int) -> isize;
         // Per-thread cwd (private, stable since macOS 10.5). Pass -1 to clear.
-        pub fn __pthread_fchdir(fd: c_int) -> c_int;
-        pub fn Bun__doesMacOSVersionSupportSendRecvMsgX() -> c_int;
+        pub(super) fn __pthread_fchdir(fd: c_int) -> c_int;
+        pub(super) fn Bun__doesMacOSVersionSupportSendRecvMsgX() -> c_int;
     }
 
     // Linux sendmmsg/recvmmsg — declared locally so musl links too.
     #[cfg(target_os = "linux")]
     unsafe extern "C" {
-        pub fn sendmmsg(sockfd: c_int, msgvec: *mut mmsghdr, vlen: c_uint, flags: c_int) -> c_int;
-        pub fn recvmmsg(
+        pub(super) fn sendmmsg(sockfd: c_int, msgvec: *mut mmsghdr, vlen: c_uint, flags: c_int) -> c_int;
+        pub(super) fn recvmmsg(
             sockfd: c_int,
             msgvec: *mut mmsghdr,
             vlen: c_uint,
@@ -231,10 +237,10 @@ mod plat {
     }
 
     #[cfg(target_os = "freebsd")]
-    pub use libc::{sendmmsg, recvmmsg};
+    pub(super) use libc::{sendmmsg, recvmmsg};
 
     #[inline(always)]
-    pub unsafe fn sso(fd: c_int, level: c_int, opt: c_int, val: *const c_void, len: socklen_t) -> c_int {
+    pub(super) unsafe fn sso(fd: c_int, level: c_int, opt: c_int, val: *const c_void, len: socklen_t) -> c_int {
         // SAFETY: thin setsockopt wrapper; caller provides valid optval/len.
         unsafe { libc::setsockopt(fd, level, opt, val, len) }
     }
@@ -247,145 +253,145 @@ mod plat {
 #[cfg(windows)]
 mod win {
     use super::*;
-    pub use bun_windows_sys::ws2_32::{
+    pub(super) use bun_windows_sys::ws2_32::{
         sockaddr, sockaddr_in, sockaddr_in6, in_addr, in6_addr, addrinfo,
         getaddrinfo, freeaddrinfo, closesocket, WSAGetLastError, WSASetLastError, SOCKET_ERROR,
         recv as ws_recv, send as ws_send,
     };
 
-    pub type SOCKET = usize;
-    pub const INVALID_SOCKET: SOCKET = usize::MAX;
+    pub(super) type SOCKET = usize;
+    pub(super) const INVALID_SOCKET: SOCKET = usize::MAX;
 
-    pub const AF_UNSPEC: c_int = 0;
-    pub const AF_UNIX: c_int = 1;
-    pub const AF_INET: c_int = 2;
-    pub const AF_INET6: c_int = 23;
-    pub const SOCK_STREAM: c_int = 1;
-    pub const SOCK_DGRAM: c_int = 2;
+    pub(super) const AF_UNSPEC: c_int = 0;
+    pub(super) const AF_UNIX: c_int = 1;
+    pub(super) const AF_INET: c_int = 2;
+    pub(super) const AF_INET6: c_int = 23;
+    pub(super) const SOCK_STREAM: c_int = 1;
+    pub(super) const SOCK_DGRAM: c_int = 2;
 
-    pub const SOL_SOCKET: c_int = 0xFFFF;
-    pub const IPPROTO_IP: c_int = 0;
-    pub const IPPROTO_TCP: c_int = 6;
-    pub const IPPROTO_IPV6: c_int = 41;
+    pub(super) const SOL_SOCKET: c_int = 0xFFFF;
+    pub(super) const IPPROTO_IP: c_int = 0;
+    pub(super) const IPPROTO_TCP: c_int = 6;
+    pub(super) const IPPROTO_IPV6: c_int = 41;
 
-    pub const SO_REUSEADDR: c_int = 0x0004;
-    pub const SO_KEEPALIVE: c_int = 0x0008;
-    pub const SO_BROADCAST: c_int = 0x0020;
-    pub const SO_EXCLUSIVEADDRUSE: c_int = !SO_REUSEADDR;
+    pub(super) const SO_REUSEADDR: c_int = 0x0004;
+    pub(super) const SO_KEEPALIVE: c_int = 0x0008;
+    pub(super) const SO_BROADCAST: c_int = 0x0020;
+    pub(super) const SO_EXCLUSIVEADDRUSE: c_int = !SO_REUSEADDR;
 
-    pub const IP_TOS: c_int = 3;
-    pub const IP_TTL: c_int = 4;
-    pub const IP_MULTICAST_IF: c_int = 9;
-    pub const IP_MULTICAST_TTL: c_int = 10;
-    pub const IP_MULTICAST_LOOP: c_int = 11;
-    pub const IP_ADD_MEMBERSHIP: c_int = 12;
-    pub const IP_DROP_MEMBERSHIP: c_int = 13;
-    pub const IP_ADD_SOURCE_MEMBERSHIP: c_int = 15;
-    pub const IP_DROP_SOURCE_MEMBERSHIP: c_int = 16;
-    pub const IP_PKTINFO: c_int = 19;
-    pub const IP_RECVTOS: c_int = 40;
+    pub(super) const IP_TOS: c_int = 3;
+    pub(super) const IP_TTL: c_int = 4;
+    pub(super) const IP_MULTICAST_IF: c_int = 9;
+    pub(super) const IP_MULTICAST_TTL: c_int = 10;
+    pub(super) const IP_MULTICAST_LOOP: c_int = 11;
+    pub(super) const IP_ADD_MEMBERSHIP: c_int = 12;
+    pub(super) const IP_DROP_MEMBERSHIP: c_int = 13;
+    pub(super) const IP_ADD_SOURCE_MEMBERSHIP: c_int = 15;
+    pub(super) const IP_DROP_SOURCE_MEMBERSHIP: c_int = 16;
+    pub(super) const IP_PKTINFO: c_int = 19;
+    pub(super) const IP_RECVTOS: c_int = 40;
 
-    pub const IPV6_UNICAST_HOPS: c_int = 4;
-    pub const IPV6_MULTICAST_IF: c_int = 9;
-    pub const IPV6_MULTICAST_HOPS: c_int = 10;
-    pub const IPV6_MULTICAST_LOOP: c_int = 11;
-    pub const IPV6_JOIN_GROUP: c_int = 12;
-    pub const IPV6_LEAVE_GROUP: c_int = 13;
-    pub const IPV6_PKTINFO: c_int = 19;
-    pub const IPV6_V6ONLY: c_int = 27;
-    pub const IPV6_TCLASS: c_int = 39;
-    pub const IPV6_RECVTCLASS: c_int = 40;
-    pub const IPV6_RECVPKTINFO: c_int = IPV6_PKTINFO;
+    pub(super) const IPV6_UNICAST_HOPS: c_int = 4;
+    pub(super) const IPV6_MULTICAST_IF: c_int = 9;
+    pub(super) const IPV6_MULTICAST_HOPS: c_int = 10;
+    pub(super) const IPV6_MULTICAST_LOOP: c_int = 11;
+    pub(super) const IPV6_JOIN_GROUP: c_int = 12;
+    pub(super) const IPV6_LEAVE_GROUP: c_int = 13;
+    pub(super) const IPV6_PKTINFO: c_int = 19;
+    pub(super) const IPV6_V6ONLY: c_int = 27;
+    pub(super) const IPV6_TCLASS: c_int = 39;
+    pub(super) const IPV6_RECVTCLASS: c_int = 40;
+    pub(super) const IPV6_RECVPKTINFO: c_int = IPV6_PKTINFO;
 
-    pub const MCAST_JOIN_SOURCE_GROUP: c_int = 45;
-    pub const MCAST_LEAVE_SOURCE_GROUP: c_int = 46;
+    pub(super) const MCAST_JOIN_SOURCE_GROUP: c_int = 45;
+    pub(super) const MCAST_LEAVE_SOURCE_GROUP: c_int = 46;
 
-    pub const TCP_NODELAY: c_int = 1;
-    pub const TCP_KEEPALIVE: c_int = 3;
+    pub(super) const TCP_NODELAY: c_int = 1;
+    pub(super) const TCP_KEEPALIVE: c_int = 3;
 
-    pub const AI_PASSIVE: c_int = 0x0001;
+    pub(super) const AI_PASSIVE: c_int = 0x0001;
 
-    pub const SD_RECEIVE: c_int = 0;
-    pub const SD_SEND: c_int = 1;
+    pub(super) const SD_RECEIVE: c_int = 0;
+    pub(super) const SD_SEND: c_int = 1;
 
-    pub const FIONBIO: u32 = 0x8004667E;
-    pub const SIO_UDP_CONNRESET: u32 = 0x9800000C;
-    pub const SIO_UDP_NETRESET: u32 = 0x9800000F;
-    pub const SIO_TCP_INITIAL_RTO: u32 = 0x98000011;
-    pub const TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS: u8 = 0xFE; // (UCHAR)-2
+    pub(super) const FIONBIO: u32 = 0x8004667E;
+    pub(super) const SIO_UDP_CONNRESET: u32 = 0x9800000C;
+    pub(super) const SIO_UDP_NETRESET: u32 = 0x9800000F;
+    pub(super) const SIO_TCP_INITIAL_RTO: u32 = 0x98000011;
+    pub(super) const TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS: u8 = 0xFE; // (UCHAR)-2
 
-    pub const WSAEINTR: c_int = 10004;
-    pub const WSAEBADF: c_int = 10009;
-    pub const WSAEINVAL: c_int = 10022;
-    pub const WSAEWOULDBLOCK: c_int = 10035;
-    pub const WSAEINPROGRESS: c_int = 10036;
-    pub const WSAEALREADY: c_int = 10037;
-    pub const WSAENOPROTOOPT: c_int = 10042;
-    pub const WSAEOPNOTSUPP: c_int = 10045;
-    pub const WSAEAFNOSUPPORT: c_int = 10047;
-    pub const WSAENETDOWN: c_int = 10050;
-    pub const WSAENETRESET: c_int = 10052;
-    pub const WSAECONNRESET: c_int = 10054;
-    pub const WSAENOBUFS: c_int = 10055;
+    pub(super) const WSAEINTR: c_int = 10004;
+    pub(super) const WSAEBADF: c_int = 10009;
+    pub(super) const WSAEINVAL: c_int = 10022;
+    pub(super) const WSAEWOULDBLOCK: c_int = 10035;
+    pub(super) const WSAEINPROGRESS: c_int = 10036;
+    pub(super) const WSAEALREADY: c_int = 10037;
+    pub(super) const WSAENOPROTOOPT: c_int = 10042;
+    pub(super) const WSAEOPNOTSUPP: c_int = 10045;
+    pub(super) const WSAEAFNOSUPPORT: c_int = 10047;
+    pub(super) const WSAENETDOWN: c_int = 10050;
+    pub(super) const WSAENETRESET: c_int = 10052;
+    pub(super) const WSAECONNRESET: c_int = 10054;
+    pub(super) const WSAENOBUFS: c_int = 10055;
 
-    pub const ERROR_PATH_NOT_FOUND: u32 = 3;
-    pub const ERROR_FILENAME_EXCED_RANGE: u32 = 206;
+    pub(super) const ERROR_PATH_NOT_FOUND: u32 = 3;
+    pub(super) const ERROR_FILENAME_EXCED_RANGE: u32 = 206;
 
-    pub const INADDR_ANY: u32 = 0;
-    pub const INADDR_LOOPBACK: u32 = 0x7F000001;
-    pub const IN6ADDR_ANY: [u8; 16] = [0; 16];
-    pub const IN6ADDR_LOOPBACK: [u8; 16] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1];
+    pub(super) const INADDR_ANY: u32 = 0;
+    pub(super) const INADDR_LOOPBACK: u32 = 0x7F000001;
+    pub(super) const IN6ADDR_ANY: [u8; 16] = [0; 16];
+    pub(super) const IN6ADDR_LOOPBACK: [u8; 16] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1];
 
     #[repr(C)]
-    pub struct sockaddr_un {
+    pub(super) struct sockaddr_un {
         pub sun_family: u16,
         pub sun_path: [c_char; 108],
     }
 
     #[repr(C)]
-    pub struct ip_mreq {
+    pub(super) struct ip_mreq {
         pub imr_multiaddr: in_addr,
         pub imr_interface: in_addr,
     }
     #[repr(C)]
-    pub struct ipv6_mreq {
+    pub(super) struct ipv6_mreq {
         pub ipv6mr_multiaddr: in6_addr,
         pub ipv6mr_interface: u32,
     }
     #[repr(C)]
-    pub struct ip_mreq_source {
+    pub(super) struct ip_mreq_source {
         pub imr_multiaddr: in_addr,
         pub imr_sourceaddr: in_addr,
         pub imr_interface: in_addr,
     }
     #[repr(C)]
-    pub struct group_source_req {
+    pub(super) struct group_source_req {
         pub gsr_interface: u32,
         pub gsr_group: sockaddr_storage,
         pub gsr_source: sockaddr_storage,
     }
     #[repr(C)]
-    pub struct TCP_INITIAL_RTO_PARAMETERS {
+    pub(super) struct TCP_INITIAL_RTO_PARAMETERS {
         pub Rtt: u16,
         pub MaxSynRetransmissions: u8,
     }
 
     #[link(name = "ws2_32")]
     unsafe extern "system" {
-        pub fn socket(af: c_int, socket_type: c_int, protocol: c_int) -> SOCKET;
-        pub fn setsockopt(s: SOCKET, level: c_int, optname: c_int, optval: *const c_char, optlen: c_int) -> c_int;
-        pub fn getsockopt(s: SOCKET, level: c_int, optname: c_int, optval: *mut c_char, optlen: *mut c_int) -> c_int;
-        pub fn getsockname(s: SOCKET, name: *mut sockaddr, namelen: *mut c_int) -> c_int;
-        pub fn getpeername(s: SOCKET, name: *mut sockaddr, namelen: *mut c_int) -> c_int;
-        pub fn connect(s: SOCKET, name: *const sockaddr, namelen: c_int) -> c_int;
-        pub fn bind(s: SOCKET, name: *const sockaddr, namelen: c_int) -> c_int;
-        pub fn listen(s: SOCKET, backlog: c_int) -> c_int;
-        pub fn accept(s: SOCKET, addr: *mut sockaddr, addrlen: *mut c_int) -> SOCKET;
-        pub fn recvfrom(s: SOCKET, buf: *mut c_char, len: c_int, flags: c_int, from: *mut sockaddr, fromlen: *mut c_int) -> c_int;
-        pub fn sendto(s: SOCKET, buf: *const c_char, len: c_int, flags: c_int, to: *const sockaddr, tolen: c_int) -> c_int;
-        pub fn shutdown(s: SOCKET, how: c_int) -> c_int;
-        pub fn ioctlsocket(s: SOCKET, cmd: u32, argp: *mut u32) -> c_int;
-        pub fn WSAIoctl(
+        pub(super) fn socket(af: c_int, socket_type: c_int, protocol: c_int) -> SOCKET;
+        pub(super) fn setsockopt(s: SOCKET, level: c_int, optname: c_int, optval: *const c_char, optlen: c_int) -> c_int;
+        pub(super) fn getsockopt(s: SOCKET, level: c_int, optname: c_int, optval: *mut c_char, optlen: *mut c_int) -> c_int;
+        pub(super) fn getsockname(s: SOCKET, name: *mut sockaddr, namelen: *mut c_int) -> c_int;
+        pub(super) fn getpeername(s: SOCKET, name: *mut sockaddr, namelen: *mut c_int) -> c_int;
+        pub(super) fn connect(s: SOCKET, name: *const sockaddr, namelen: c_int) -> c_int;
+        pub(super) fn bind(s: SOCKET, name: *const sockaddr, namelen: c_int) -> c_int;
+        pub(super) fn listen(s: SOCKET, backlog: c_int) -> c_int;
+        pub(super) fn accept(s: SOCKET, addr: *mut sockaddr, addrlen: *mut c_int) -> SOCKET;
+        pub(super) fn recvfrom(s: SOCKET, buf: *mut c_char, len: c_int, flags: c_int, from: *mut sockaddr, fromlen: *mut c_int) -> c_int;
+        pub(super) fn sendto(s: SOCKET, buf: *const c_char, len: c_int, flags: c_int, to: *const sockaddr, tolen: c_int) -> c_int;
+        pub(super) fn shutdown(s: SOCKET, how: c_int) -> c_int;
+        pub(super) fn ioctlsocket(s: SOCKET, cmd: u32, argp: *mut u32) -> c_int;
+        pub(super) fn WSAIoctl(
             s: SOCKET, dwIoControlCode: u32,
             lpvInBuffer: *mut c_void, cbInBuffer: u32,
             lpvOutBuffer: *mut c_void, cbOutBuffer: u32,
@@ -395,11 +401,11 @@ mod win {
     }
     #[link(name = "kernel32")]
     unsafe extern "system" {
-        pub fn SetLastError(dwErrCode: u32);
+        pub(super) fn SetLastError(dwErrCode: u32);
     }
 
     #[inline(always)]
-    pub unsafe fn sso(fd: SOCKET, level: c_int, opt: c_int, val: *const c_void, len: socklen_t) -> c_int {
+    pub(super) unsafe fn sso(fd: SOCKET, level: c_int, opt: c_int, val: *const c_void, len: socklen_t) -> c_int {
         // SAFETY: thin setsockopt wrapper; caller provides valid optval/len.
         unsafe { setsockopt(fd, level, opt, val as *const c_char, len) }
     }
@@ -429,7 +435,7 @@ pub enum us_fault_syscall {
     US_FAULT_COUNT = 11,
 }
 
-#[cfg(feature = "socket_fault_injection")]
+#[cfg(socket_fault_injection)]
 unsafe extern "C" {
     static us_fault_armed: core::sync::atomic::AtomicI32;
     fn us_fault_hit(syscall: c_int, fd: c_int, out: *mut ssize_t, clamp: *mut c_int) -> c_int;
@@ -442,7 +448,7 @@ unsafe fn us_fault_check(
     _out: *mut ssize_t,
     _clamp: *mut c_int,
 ) -> bool {
-    #[cfg(feature = "socket_fault_injection")]
+    #[cfg(socket_fault_injection)]
     unsafe {
         use core::sync::atomic::Ordering;
         if us_fault_armed.load(Ordering::Acquire) != 0 {
@@ -483,7 +489,7 @@ mod debug_log {
         }
     }
 
-    pub unsafe fn on_recv(buf: *const c_void, n: usize) {
+    pub(super) unsafe fn on_recv(buf: *const c_void, n: usize) {
         unsafe {
             init();
             let f = RECV_FILE.load(Ordering::Relaxed);
@@ -493,7 +499,7 @@ mod debug_log {
             }
         }
     }
-    pub unsafe fn on_send(buf: *const c_void, n: usize) {
+    pub(super) unsafe fn on_send(buf: *const c_void, n: usize) {
         unsafe {
             init();
             let f = SEND_FILE.load(Ordering::Relaxed);
@@ -512,10 +518,10 @@ mod debug_log {
 #[cfg(not(windows))]
 #[repr(C)]
 pub struct udp_recvbuf {
-    pub msgvec: [plat::mmsghdr; LIBUS_UDP_RECV_COUNT],
-    pub iov: [libc::iovec; LIBUS_UDP_RECV_COUNT],
-    pub addr: [sockaddr_storage; LIBUS_UDP_RECV_COUNT],
-    pub control: [[c_char; 256]; LIBUS_UDP_RECV_COUNT],
+    msgvec: [plat::mmsghdr; LIBUS_UDP_RECV_COUNT],
+    iov: [libc::iovec; LIBUS_UDP_RECV_COUNT],
+    addr: [sockaddr_storage; LIBUS_UDP_RECV_COUNT],
+    control: [[c_char; 256]; LIBUS_UDP_RECV_COUNT],
 }
 
 #[cfg(windows)]
@@ -569,7 +575,7 @@ pub struct udp_sendbuf {
 // UDP batched send/recv
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_sendmmsg(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     sendbuf: *mut udp_sendbuf,
@@ -652,7 +658,7 @@ pub unsafe extern "C" fn bsd_sendmmsg(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_recvmmsg(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     recvbuf: *mut udp_recvbuf,
@@ -729,7 +735,7 @@ pub unsafe extern "C" fn bsd_recvmmsg(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_udp_setup_recvbuf(
     recvbuf: *mut udp_recvbuf,
     databuf: *mut c_void,
@@ -759,7 +765,7 @@ pub unsafe extern "C" fn bsd_udp_setup_recvbuf(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_udp_setup_sendbuf(
     buf: *mut udp_sendbuf,
     bufsize: usize,
@@ -831,7 +837,7 @@ pub unsafe extern "C" fn bsd_udp_setup_sendbuf(
 // UDP packet-buffer accessors
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_udp_packet_buffer_local_ip(
     msgvec: *mut udp_recvbuf,
     index: c_int,
@@ -880,7 +886,7 @@ pub unsafe extern "C" fn bsd_udp_packet_buffer_local_ip(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_udp_packet_buffer_peer(
     msgvec: *mut udp_recvbuf,
     index: c_int,
@@ -895,7 +901,7 @@ pub unsafe extern "C" fn bsd_udp_packet_buffer_peer(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_udp_packet_buffer_payload(
     msgvec: *mut udp_recvbuf,
     index: c_int,
@@ -910,7 +916,7 @@ pub unsafe extern "C" fn bsd_udp_packet_buffer_payload(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_udp_packet_buffer_payload_length(
     msgvec: *mut udp_recvbuf,
     index: c_int,
@@ -928,7 +934,7 @@ pub unsafe extern "C" fn bsd_udp_packet_buffer_payload_length(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_udp_packet_buffer_truncated(
     msgvec: *mut udp_recvbuf,
     index: c_int,
@@ -949,7 +955,7 @@ pub unsafe extern "C" fn bsd_udp_packet_buffer_truncated(
 // Socket setup / options
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn apple_no_sigpipe(fd: LIBUS_SOCKET_DESCRIPTOR) -> LIBUS_SOCKET_DESCRIPTOR {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     if fd != LIBUS_SOCKET_ERROR {
@@ -972,7 +978,7 @@ unsafe fn win32_set_nonblocking(fd: LIBUS_SOCKET_DESCRIPTOR) -> LIBUS_SOCKET_DES
     fd
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_set_nonblocking(fd: LIBUS_SOCKET_DESCRIPTOR) -> LIBUS_SOCKET_DESCRIPTOR {
     // Libuv sets Windows sockets non-blocking itself.
     #[cfg(not(windows))]
@@ -1016,18 +1022,18 @@ unsafe fn setsockopt_6_or_4(
     res
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_nodelay(fd: LIBUS_SOCKET_DESCRIPTOR, enabled: c_int) {
     // SAFETY: optval is a live c_int.
     unsafe { plat::sso(fd, plat::IPPROTO_TCP, plat::TCP_NODELAY, (&raw const enabled).cast(), size_of::<c_int>() as _) };
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_broadcast(fd: LIBUS_SOCKET_DESCRIPTOR, enabled: c_int) -> c_int {
     unsafe { plat::sso(fd, plat::SOL_SOCKET, plat::SO_BROADCAST, (&raw const enabled).cast(), size_of::<c_int>() as _) }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_multicast_loopback(fd: LIBUS_SOCKET_DESCRIPTOR, enabled: c_int) -> c_int {
     unsafe {
         setsockopt_6_or_4(
@@ -1040,7 +1046,7 @@ pub unsafe extern "C" fn bsd_socket_multicast_loopback(fd: LIBUS_SOCKET_DESCRIPT
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_multicast_interface(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     addr: *const sockaddr_storage,
@@ -1119,7 +1125,7 @@ unsafe fn bsd_socket_set_membership6(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_set_membership(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     addr: *const sockaddr_storage,
@@ -1179,7 +1185,7 @@ unsafe fn bsd_socket_set_source_specific_membership6(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_set_source_specific_membership(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     source: *const sockaddr_storage,
@@ -1214,17 +1220,17 @@ unsafe fn bsd_socket_ttl_any(fd: LIBUS_SOCKET_DESCRIPTOR, ttl: c_int, ipv4: c_in
     unsafe { setsockopt_6_or_4(fd, ipv4, ipv6, (&raw const ttl).cast(), size_of::<c_int>() as _) }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_ttl_unicast(fd: LIBUS_SOCKET_DESCRIPTOR, ttl: c_int) -> c_int {
     unsafe { bsd_socket_ttl_any(fd, ttl, plat::IP_TTL, plat::IPV6_UNICAST_HOPS) }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_ttl_multicast(fd: LIBUS_SOCKET_DESCRIPTOR, ttl: c_int) -> c_int {
     unsafe { bsd_socket_ttl_any(fd, ttl, plat::IP_MULTICAST_TTL, plat::IPV6_MULTICAST_HOPS) }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_keepalive(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     on: c_int,
@@ -1303,7 +1309,7 @@ unsafe fn bsd_socket_tos_level(fd: LIBUS_SOCKET_DESCRIPTOR, level: *mut c_int, o
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_set_tos(fd: LIBUS_SOCKET_DESCRIPTOR, tos: c_int) -> c_int {
     unsafe {
         let mut level = 0;
@@ -1319,7 +1325,7 @@ pub unsafe extern "C" fn bsd_socket_set_tos(fd: LIBUS_SOCKET_DESCRIPTOR, tos: c_
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_get_tos(fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int {
     unsafe {
         let mut level = 0;
@@ -1341,7 +1347,7 @@ pub unsafe extern "C" fn bsd_socket_get_tos(fd: LIBUS_SOCKET_DESCRIPTOR) -> c_in
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_socket_flush(fd: LIBUS_SOCKET_DESCRIPTOR) {
     #[cfg(target_os = "linux")]
     unsafe {
@@ -1356,7 +1362,7 @@ pub unsafe extern "C" fn bsd_socket_flush(fd: LIBUS_SOCKET_DESCRIPTOR) {
 // Socket lifecycle
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_create_socket(
     domain: c_int,
     type_: c_int,
@@ -1396,7 +1402,7 @@ pub unsafe extern "C" fn bsd_create_socket(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR) {
     #[cfg(windows)]
     unsafe { win::closesocket(fd) };
@@ -1404,7 +1410,7 @@ pub unsafe extern "C" fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR) {
     unsafe { plat::close(fd) };
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_shutdown_socket(fd: LIBUS_SOCKET_DESCRIPTOR) {
     #[cfg(windows)]
     unsafe { win::shutdown(fd, win::SD_SEND) };
@@ -1412,7 +1418,7 @@ pub unsafe extern "C" fn bsd_shutdown_socket(fd: LIBUS_SOCKET_DESCRIPTOR) {
     unsafe { plat::shutdown(fd, plat::SHUT_WR) };
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_shutdown_socket_read(fd: LIBUS_SOCKET_DESCRIPTOR) {
     #[cfg(windows)]
     unsafe { win::shutdown(fd, win::SD_RECEIVE) };
@@ -1420,7 +1426,7 @@ pub unsafe extern "C" fn bsd_shutdown_socket_read(fd: LIBUS_SOCKET_DESCRIPTOR) {
     unsafe { plat::shutdown(fd, plat::SHUT_RD) };
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn internal_finalize_bsd_addr(addr: *mut bsd_addr_t) {
     // SAFETY: `mem` is first field, so the struct pointer aliases sockaddr_*.
     unsafe {
@@ -1442,7 +1448,7 @@ pub unsafe extern "C" fn internal_finalize_bsd_addr(addr: *mut bsd_addr_t) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_local_addr(fd: LIBUS_SOCKET_DESCRIPTOR, addr: *mut bsd_addr_t) -> c_int {
     unsafe {
         (*addr).len = size_of::<sockaddr_storage>() as _;
@@ -1458,7 +1464,7 @@ pub unsafe extern "C" fn bsd_local_addr(fd: LIBUS_SOCKET_DESCRIPTOR, addr: *mut 
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_remote_addr(fd: LIBUS_SOCKET_DESCRIPTOR, addr: *mut bsd_addr_t) -> c_int {
     unsafe {
         (*addr).len = size_of::<sockaddr_storage>() as _;
@@ -1474,22 +1480,22 @@ pub unsafe extern "C" fn bsd_remote_addr(fd: LIBUS_SOCKET_DESCRIPTOR, addr: *mut
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_addr_get_ip(addr: *mut bsd_addr_t) -> *mut c_char {
     unsafe { (*addr).ip }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_addr_get_ip_length(addr: *mut bsd_addr_t) -> c_int {
     unsafe { (*addr).ip_length }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_addr_get_port(addr: *mut bsd_addr_t) -> c_int {
     unsafe { (*addr).port }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_accept_socket(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     addr: *mut bsd_addr_t,
@@ -1549,7 +1555,7 @@ pub unsafe extern "C" fn bsd_accept_socket(
 // I/O wrappers
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_recv(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     buf: *mut c_void,
@@ -1579,7 +1585,7 @@ pub unsafe extern "C" fn bsd_recv(
 }
 
 #[cfg(not(windows))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_recvmsg(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     msg: *mut libc::msghdr,
@@ -1601,7 +1607,7 @@ pub unsafe extern "C" fn bsd_recvmsg(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_writev(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     iov: *const us_iovec_t,
@@ -1646,7 +1652,7 @@ pub unsafe extern "C" fn bsd_writev(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_write2(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     header: *const c_char,
@@ -1686,7 +1692,7 @@ pub unsafe extern "C" fn bsd_write2(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_send(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     buf: *const c_char,
@@ -1721,7 +1727,7 @@ pub unsafe extern "C" fn bsd_send(
 }
 
 #[cfg(not(windows))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_sendmsg(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     msg: *const libc::msghdr,
@@ -1743,7 +1749,7 @@ pub unsafe extern "C" fn bsd_sendmsg(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_would_block() -> c_int {
     #[cfg(windows)]
     { (win::WSAGetLastError() == win::WSAEWOULDBLOCK) as c_int }
@@ -1753,7 +1759,7 @@ pub unsafe extern "C" fn bsd_would_block() -> c_int {
 
 /// Transient kernel-resource exhaustion on send(): distinct from
 /// bsd_would_block() so recv() EOF-vs-error callers never spin on ENOBUFS.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_send_is_transient_error() -> c_int {
     #[cfg(windows)]
     { (win::WSAGetLastError() == win::WSAENOBUFS) as c_int }
@@ -1886,7 +1892,7 @@ unsafe fn bsd_bind_listen_fd(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_set_defer_accept(listen_fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int {
     #[cfg(target_os = "linux")]
     unsafe {
@@ -1912,7 +1918,7 @@ unsafe fn port_to_cstr(port: c_int, buf: &mut [c_char; 16]) {
     unsafe { libc::snprintf(buf.as_mut_ptr(), 16, c"%d".as_ptr(), port) };
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_create_listen_socket(
     host: *const c_char,
     port: c_int,
@@ -2107,7 +2113,7 @@ unsafe fn internal_bsd_create_listen_socket_unix(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_create_listen_socket_unix(
     path: *const c_char,
     len: usize,
@@ -2156,7 +2162,7 @@ pub unsafe extern "C" fn bsd_create_listen_socket_unix(
 // UDP bind / connect
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_create_udp_socket(
     host: *const c_char,
     port: c_int,
@@ -2265,7 +2271,7 @@ pub unsafe extern "C" fn bsd_create_udp_socket(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_connect_udp_socket(
     fd: LIBUS_SOCKET_DESCRIPTOR,
     host: *const c_char,
@@ -2300,7 +2306,7 @@ pub unsafe extern "C" fn bsd_connect_udp_socket(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_disconnect_udp_socket(fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int {
     unsafe {
         let mut addr: plat::sockaddr = zeroed();
@@ -2399,7 +2405,7 @@ unsafe fn is_loopback(addr: *const sockaddr_storage) -> c_int {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_create_connect_socket(
     mut addr: *mut sockaddr_storage,
     local_addr: *mut sockaddr_storage,
@@ -2498,7 +2504,7 @@ unsafe fn internal_bsd_create_connect_socket_unix(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bsd_create_connect_socket_unix(
     server_path: *const c_char,
     len: usize,

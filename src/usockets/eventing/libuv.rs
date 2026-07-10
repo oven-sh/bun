@@ -202,7 +202,7 @@ unsafe extern "C" fn async_cb(a: *mut uv_async_t) {
 // Poll
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_init(
     p: *mut us_poll_t,
     fd: LIBUS_SOCKET_DESCRIPTOR,
@@ -215,7 +215,7 @@ pub unsafe extern "C" fn us_poll_init(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_free(p: *mut us_poll_t, _loop: *mut us_loop_t) {
     // SAFETY: caller owns `p`.
     unsafe {
@@ -237,7 +237,7 @@ pub unsafe extern "C" fn us_poll_free(p: *mut us_poll_t, _loop: *mut us_loop_t) 
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_start(p: *mut us_poll_t, loop_: *mut us_loop_t, events: c_int) {
     // SAFETY: caller owns `p`; `loop_` is a live loop.
     unsafe {
@@ -258,7 +258,7 @@ pub unsafe extern "C" fn us_poll_start(p: *mut us_poll_t, loop_: *mut us_loop_t,
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_start_rc(
     p: *mut us_poll_t,
     loop_: *mut us_loop_t,
@@ -269,7 +269,7 @@ pub unsafe extern "C" fn us_poll_start_rc(
     0
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_change(p: *mut us_poll_t, _loop: *mut us_loop_t, events: c_int) {
     // SAFETY: caller owns `p`.
     unsafe {
@@ -287,7 +287,7 @@ pub unsafe extern "C" fn us_poll_change(p: *mut us_poll_t, _loop: *mut us_loop_t
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_stop(p: *mut us_poll_t, _loop: *mut us_loop_t) {
     // SAFETY: caller owns `p`.
     unsafe {
@@ -303,7 +303,7 @@ pub unsafe extern "C" fn us_poll_stop(p: *mut us_poll_t, _loop: *mut us_loop_t) 
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_events(p: *mut us_poll_t) -> c_int {
     // SAFETY: caller owns `p`.
     let pt = unsafe { (*p).poll_type } as c_int;
@@ -311,18 +311,18 @@ pub unsafe extern "C" fn us_poll_events(p: *mut us_poll_t) -> c_int {
         | (if pt & POLL_TYPE_POLLING_OUT != 0 { LIBUS_SOCKET_WRITABLE } else { 0 })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_accept_poll_event(_p: *mut us_poll_t) -> usize {
     0
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_poll_type(p: *mut us_poll_t) -> c_int {
     // SAFETY: caller owns `p`.
     unsafe { (*p).poll_type as c_int & POLL_TYPE_KIND_MASK }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_poll_set_type(p: *mut us_poll_t, poll_type: c_int) {
     // SAFETY: caller owns `p`.
     unsafe {
@@ -330,13 +330,13 @@ pub unsafe extern "C" fn us_internal_poll_set_type(p: *mut us_poll_t, poll_type:
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_fd(p: *mut us_poll_t) -> LIBUS_SOCKET_DESCRIPTOR {
     // SAFETY: caller owns `p`.
     unsafe { (*p).fd }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_create_poll(
     _loop: *mut us_loop_t,
     _fallthrough: c_int,
@@ -353,7 +353,7 @@ pub unsafe extern "C" fn us_create_poll(
 }
 
 /// If we move the block we must re-point `uv_p->data` at the new `us_poll_t`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_poll_resize(
     p: *mut us_poll_t,
     _loop: *mut us_loop_t,
@@ -385,13 +385,13 @@ pub unsafe extern "C" fn us_poll_resize(
 // Loop
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_loop_pump(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` is a live loop.
     unsafe { uv_run((*loop_).uv_loop, RunMode::NoWait) };
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_create_loop(
     hint: *mut c_void,
     wakeup_cb: Option<unsafe extern "C" fn(*mut us_loop_t)>,
@@ -434,7 +434,7 @@ pub unsafe extern "C" fn us_create_loop(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_loop_free(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` came from `us_create_loop`.
     unsafe {
@@ -462,7 +462,7 @@ pub unsafe extern "C" fn us_loop_free(loop_: *mut us_loop_t) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_loop_run(loop_: *mut us_loop_t) {
     // SAFETY: `loop_` is a live loop.
     unsafe {
@@ -490,7 +490,7 @@ unsafe fn cb_uv_async(cb: *mut us_internal_callback_t) -> *mut uv_async_t {
     unsafe { cb.add(1).cast() }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_create_timer(
     loop_: *mut us_loop_t,
     fallthrough: c_int,
@@ -520,7 +520,7 @@ pub unsafe extern "C" fn us_create_timer(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_timer_ext(timer: *mut us_timer_t) -> *mut c_void {
     // SAFETY: ext area is immediately past the callback header + uv_timer_t.
     unsafe {
@@ -531,7 +531,7 @@ pub unsafe extern "C" fn us_timer_ext(timer: *mut us_timer_t) -> *mut c_void {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_timer_close(t: *mut us_timer_t, _fallthrough: c_int) {
     // SAFETY: `t` is a live timer from `us_create_timer`.
     unsafe {
@@ -547,7 +547,7 @@ pub unsafe extern "C" fn us_timer_close(t: *mut us_timer_t, _fallthrough: c_int)
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_timer_set(
     t: *mut us_timer_t,
     cb: Option<unsafe extern "C" fn(*mut us_timer_t)>,
@@ -582,7 +582,7 @@ pub unsafe extern "C" fn us_timer_set(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_timer_loop(t: *mut us_timer_t) -> *mut us_loop_t {
     // SAFETY: `t` is a live timer from `us_create_timer`.
     unsafe { (*t.cast::<us_internal_callback_t>()).loop_ }
@@ -592,7 +592,7 @@ pub unsafe extern "C" fn us_timer_loop(t: *mut us_timer_t) -> *mut us_loop_t {
 // Async (internal only)
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_create_async(
     loop_: *mut us_loop_t,
     _fallthrough: c_int,
@@ -610,7 +610,7 @@ pub unsafe extern "C" fn us_internal_create_async(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_async_close(a: *mut us_internal_async) {
     // SAFETY: `a` is a live async from `us_internal_create_async`.
     unsafe {
@@ -625,7 +625,7 @@ pub unsafe extern "C" fn us_internal_async_close(a: *mut us_internal_async) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_async_set(
     a: *mut us_internal_async,
     cb: Option<unsafe extern "C" fn(*mut us_internal_async)>,
@@ -642,7 +642,7 @@ pub unsafe extern "C" fn us_internal_async_set(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_internal_async_wakeup(a: *mut us_internal_async) {
     // SAFETY: `a` is a live async that has been `us_internal_async_set`.
     unsafe { uv_async_send(cb_uv_async(a)) };
@@ -652,7 +652,7 @@ pub unsafe extern "C" fn us_internal_async_wakeup(a: *mut us_internal_async) {
 // Socket error
 // ═══════════════════════════════════════════════════════════════════════════
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn us_socket_get_error(s: *mut us_socket_t) -> c_int {
     let mut error: c_int = 0;
     let mut len: c_int = size_of::<c_int>() as c_int;

@@ -152,7 +152,7 @@ describe("Bun.connect TLS hostname verification", () => {
       assert.strictEqual(result.arg, false, "handshake callback must not report success for a hostname mismatch");
       assert.strictEqual(result.flag, false, "socket.authorized must be false for a hostname mismatch");
       assert.ok(result.error, "getAuthorizationError() must report why the socket is not authorized");
-      assert.strictEqual(result.error.code, "HOSTNAME_MISMATCH");
+      assert.strictEqual(result.error.code, "ERR_TLS_CERT_ALTNAME_INVALID");
 
       // Legitimate case: same cert, but the client asks for server name
       // "agent1", which matches the certificate. Must remain authorized.

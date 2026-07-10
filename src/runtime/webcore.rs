@@ -341,8 +341,9 @@ pub use form_data::{AsyncFormData, FormData};
 pub mod script_execution_context;
 
 #[doc(hidden)]
-#[path = "webcore/s3/multipart_options.rs"]
-pub mod multipart_options_impl;
+pub mod multipart_options_impl {
+    pub use bun_s3_signing::MultiPartUploadOptions;
+}
 // Note: inner `#[path]` inside an inline `mod s3 { }` resolves relative to
 // `<this-file's-dir>/s3/`, which would point at `src/runtime/s3/...` (does not
 // exist). Declare the file mods at this level (where `#[path]` is relative to

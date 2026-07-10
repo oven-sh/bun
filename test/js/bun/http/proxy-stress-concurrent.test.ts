@@ -9,7 +9,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isWindows } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
@@ -390,8 +390,14 @@ describe("memory probe (subprocess)", () => {
     mode: MODES,
   })) {
     // ASAN inflates RSS and slows everything down; use fewer iterations
-    // there but still enough to surface a UAF.
-    const iterations = isASAN ? 300 : isCI ? 1200 : 600;
+    // there but still enough to surface a UAF. Windows is capped for a
+    // different reason: 12 concurrent subprocesses x 1200 iterations leave
+    // ~11k loopback TIME_WAIT entries (120s drain), close to the 16384-port
+    // ephemeral range, so later tests in the shard see listen(0) and
+    // connect() hand out the same few ports and hit 4-tuple collisions
+    // with those TIME_WAITs (observed as ERR_POSTGRES_CONNECTION_REFUSED /
+    // WSAENOTCONN in test/js/sql/postgres-binary-array-bounds.test.ts).
+    const iterations = isASAN || isWindows ? 300 : isCI ? 1200 : 600;
 
     test.concurrent(
       `${proxyTls ? "https" : "http"}-proxy → https-origin mode=${mode} ×${iterations}`,

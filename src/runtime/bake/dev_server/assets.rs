@@ -4,7 +4,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{Output, fmt as bun_fmt, scoped_log};
 use bun_http::MimeType::MimeType;
 
-use super::memory_cost_body::{memory_cost_array_hash_map, memory_cost_array_list};
+use super::memory_cost::{memory_cost_array_hash_map, memory_cost_array_list};
 use super::{ASSET_PREFIX, DevServer, FileKind, Magic};
 use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;

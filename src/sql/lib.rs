@@ -205,8 +205,11 @@ pub mod postgres {
         pub mod new_reader;
         #[path = "NewWriter.rs"]
         pub mod new_writer;
-        #[path = "NoticeResponse.rs"]
-        pub mod notice_response;
+        pub mod notice_response {
+            /// Same wire format as `ErrorResponse` (length-prefixed list of
+            /// field messages), so it reuses the same decoder.
+            pub type NoticeResponse = super::error_response::ErrorResponse;
+        }
         #[path = "NotificationResponse.rs"]
         pub mod notification_response;
         #[path = "ParameterDescription.rs"]

@@ -489,7 +489,7 @@ impl SocketConfig {
     }
 
     pub fn from_generated(
-        _vm: &'static VirtualMachine,
+        vm: &'static VirtualMachine,
         global: &JSGlobalObject,
         generated: &GeneratedSocketConfig,
         mode: SocketMode,
@@ -499,17 +499,12 @@ impl SocketConfig {
                 GeneratedTls::None => None,
                 GeneratedTls::Boolean(b) => {
                     if *b {
-                        Some(SSLConfig::zero())
+                        Some(super::tls_true_defaults(vm))
                     } else {
                         None
                     }
                 }
-                GeneratedTls::Object(ssl) => {
-                    // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single
-                    // JS thread, no aliasing `&mut VirtualMachine` outlives this call.
-                    let vm_mut = global.bun_vm().as_mut();
-                    SSLConfig::from_generated(vm_mut, global, ssl)?
-                }
+                GeneratedTls::Object(ssl) => SSLConfig::from_generated(vm, global, ssl)?,
             };
             break 'blk SocketConfig {
                 hostname_or_unix: ZigStringSlice::empty(),

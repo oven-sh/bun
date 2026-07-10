@@ -110,6 +110,8 @@ const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
+// tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
+const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeTLSDeferred", 2);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
 
@@ -1723,7 +1725,7 @@ Socket.prototype.connect = function connect(...args) {
           // upgraded once it emits 'connect'.
           if (socket && !connection.connecting) {
             this[kupgraded] = connection;
-            const result = socket.upgradeTLS({
+            const result = upgradeTLSDeferred(socket, {
               data: { self: this, req: { oncomplete: afterConnect } },
               tls,
               socket: this[khandlers],
@@ -1769,7 +1771,7 @@ Socket.prototype.connect = function connect(...args) {
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
-                const result = socket.upgradeTLS({
+                const result = upgradeTLSDeferred(socket, {
                   data: { self: this, req: { oncomplete: afterConnect } },
                   tls,
                   socket: this[khandlers],

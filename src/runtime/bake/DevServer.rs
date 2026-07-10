@@ -50,7 +50,7 @@ pub(super) use crate::bake::dev_server::DirectoryWatchStore;
 pub(super) use crate::bake::dev_server::HmrSocket;
 use crate::bake::dev_server::ResponseLike;
 pub(super) use crate::bake::dev_server::assets::Assets;
-pub(super) use crate::bake::dev_server::error_report_request_body::ErrorReportRequest;
+pub(super) use crate::bake::dev_server::error_report_request::ErrorReportRequest;
 
 // ── local extension shims for upstream-crate methods missing in Rust port ──
 // LAYERING: `bake::Framework::{init_transpiler, resolve}` are now inherent
@@ -76,21 +76,21 @@ impl LogToJsAggregateErrorExt for Log {
 }
 pub(super) use crate::bake::dev_server::HotReloadEvent;
 pub(super) use crate::bake::dev_server::incremental_graph::IncrementalGraph;
-pub(super) use crate::bake::dev_server::memory_cost_body::MemoryCost;
+pub(super) use crate::bake::dev_server::memory_cost::MemoryCost;
 
 impl DevServer {
     /// `DevServer.memoryCost` — sums the per-category breakdown from
-    /// `memory_cost_detailed`. Body lives in `dev_server::memory_cost_body`.
+    /// `memory_cost_detailed`. Body lives in `dev_server::memory_cost`.
     #[inline]
     pub fn memory_cost(&self) -> usize {
-        crate::bake::dev_server::memory_cost_body::memory_cost(self)
+        crate::bake::dev_server::memory_cost::memory_cost(self)
     }
 
     /// `DevServer.memoryCostDetailed` — body lives in
-    /// `dev_server::memory_cost_body`.
+    /// `dev_server::memory_cost`.
     #[inline]
     pub fn memory_cost_detailed(&self) -> MemoryCost {
-        crate::bake::dev_server::memory_cost_body::memory_cost_detailed(self)
+        crate::bake::dev_server::memory_cost::memory_cost_detailed(self)
     }
 
     /// Recover `&VirtualMachine` from the JSC_BORROW `vm` back-reference.
@@ -1644,7 +1644,7 @@ fn hmr_socket_behavior<const SSL: bool>() -> bun_uws_sys::WebSocketBehavior {
 // `WebSocketBehavior.Wrap(ServerType, Type, ssl)` requires `Type` (= `HmrSocket`)
 // to be a `WebSocketHandler` and `ServerType` (= `DevServer`) to be a
 // `WebSocketUpgradeServer<SSL>`. The trait is wired explicitly and forward to the inherent method bodies in
-// `dev_server::hmr_socket_body`.
+// `dev_server::hmr_socket`.
 impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
     // `Wrap.apply` leaves the drain/ping/pong C callbacks `null` when
     // `HAS_ON_* == false`.

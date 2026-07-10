@@ -493,50 +493,28 @@ pub mod expect {
         fn with_quote_strings(mut self, b: bool) -> Self { self.quote_strings = b; self }
     }
 
-    // ── matcher modules (75) ──────────────────────────────────────────
+    // ── matcher modules ───────────────────────────────────────────────
     // Each file is `impl Expect { pub fn to_*(..) }` or a free
     // `#[bun_jsc::host_fn(method)] pub fn to_*(this: &mut Expect, ..)`.
+    // Trivial one-liners live together in `simple_matchers`.
     macro_rules! matchers {
         ( $( $file:literal => $mod:ident ),* $(,)? ) => {
             $( #[path = $file] pub mod $mod; )*
         };
     }
     matchers! {
+        "simple_matchers.rs"                    => simple_matchers,
         "toBe.rs"                               => to_be,
-        "toBeArray.rs"                          => to_be_array,
         "toBeArrayOfSize.rs"                    => to_be_array_of_size,
-        "toBeBoolean.rs"                        => to_be_boolean,
         "toBeCloseTo.rs"                        => to_be_close_to,
-        "toBeDate.rs"                           => to_be_date,
-        "toBeDefined.rs"                        => to_be_defined,
         "toBeEmpty.rs"                          => to_be_empty,
         "toBeEmptyObject.rs"                    => to_be_empty_object,
         "toBeEven.rs"                           => to_be_even,
-        "toBeFalse.rs"                          => to_be_false,
-        "toBeFalsy.rs"                          => to_be_falsy,
-        "toBeFinite.rs"                         => to_be_finite,
-        "toBeFunction.rs"                       => to_be_function,
-        "toBeGreaterThan.rs"                    => to_be_greater_than,
-        "toBeGreaterThanOrEqual.rs"             => to_be_greater_than_or_equal,
         "toBeInstanceOf.rs"                     => to_be_instance_of,
-        "toBeInteger.rs"                        => to_be_integer,
-        "toBeLessThan.rs"                       => to_be_less_than,
-        "toBeLessThanOrEqual.rs"                => to_be_less_than_or_equal,
-        "toBeNaN.rs"                            => to_be_nan,
-        "toBeNegative.rs"                       => to_be_negative,
-        "toBeNil.rs"                            => to_be_nil,
-        "toBeNull.rs"                           => to_be_null,
-        "toBeNumber.rs"                         => to_be_number,
         "toBeObject.rs"                         => to_be_object,
         "toBeOdd.rs"                            => to_be_odd,
         "toBeOneOf.rs"                          => to_be_one_of,
-        "toBePositive.rs"                       => to_be_positive,
-        "toBeString.rs"                         => to_be_string,
-        "toBeSymbol.rs"                         => to_be_symbol,
-        "toBeTrue.rs"                           => to_be_true,
-        "toBeTruthy.rs"                         => to_be_truthy,
         "toBeTypeOf.rs"                         => to_be_type_of,
-        "toBeUndefined.rs"                      => to_be_undefined,
         "toBeValidDate.rs"                      => to_be_valid_date,
         "toBeWithin.rs"                         => to_be_within,
         "toContain.rs"                          => to_contain,
@@ -549,7 +527,6 @@ pub mod expect {
         "toContainKeys.rs"                      => to_contain_keys,
         "toContainValue.rs"                     => to_contain_value,
         "toContainValues.rs"                    => to_contain_values,
-        "toEndWith.rs"                          => to_end_with,
         "toEqual.rs"                            => to_equal,
         "toEqualIgnoringWhitespace.rs"          => to_equal_ignoring_whitespace,
         "toHaveBeenCalled.rs"                   => to_have_been_called,
@@ -565,14 +542,12 @@ pub mod expect {
         "toHaveReturned.rs"                     => to_have_returned,
         "toHaveReturnedTimes.rs"                => to_have_returned_times,
         "toHaveReturnedWith.rs"                 => to_have_returned_with,
-        "toInclude.rs"                          => to_include,
         "toIncludeRepeated.rs"                  => to_include_repeated,
         "toMatch.rs"                            => to_match,
         "toMatchInlineSnapshot.rs"              => to_match_inline_snapshot,
         "toMatchObject.rs"                      => to_match_object,
         "toMatchSnapshot.rs"                    => to_match_snapshot,
         "toSatisfy.rs"                          => to_satisfy,
-        "toStartWith.rs"                        => to_start_with,
         "toStrictEqual.rs"                      => to_strict_equal,
         "toThrow.rs"                            => to_throw,
         "toThrowErrorMatchingInlineSnapshot.rs" => to_throw_error_matching_inline_snapshot,

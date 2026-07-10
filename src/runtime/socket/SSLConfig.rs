@@ -251,6 +251,27 @@ pub fn from_js(
     <SSLConfig as SSLConfigFromJs>::from_js(vm, global, value)
 }
 
+/// The `SSLConfig` for the `tls: true` shorthand: every option at its
+/// documented default, unlike `SSLConfig::zero()`.
+pub fn tls_true_defaults(vm: &VirtualMachine) -> SSLConfig {
+    let mut cfg = SSLConfig::zero();
+    cfg.reject_unauthorized = vm.get_tls_reject_unauthorized() as i32;
+    cfg
+}
+
+/// Whether a new TLS socket must enforce `rejectUnauthorized`: close the
+/// connection when the peer certificate fails verification.
+pub fn resolve_reject_unauthorized(
+    vm: &VirtualMachine,
+    cfg: Option<&SSLConfig>,
+    is_server: bool,
+) -> bool {
+    match cfg {
+        Some(cfg) => (!is_server || cfg.request_cert != 0) && cfg.reject_unauthorized != 0,
+        None => !is_server && vm.get_tls_reject_unauthorized(),
+    }
+}
+
 // ── handlePath / handleFile helpers ──────────────────────────────────
 
 // `field` is a runtime &'static str (not monomorphized) since it is only

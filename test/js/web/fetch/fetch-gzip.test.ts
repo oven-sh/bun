@@ -497,15 +497,17 @@ describe("corrupt compressed responses", () => {
     }
   }
 
-  it("followed redirect with a malformed chunked body rejects fetch()", async () => {
-    // The intermediate 3xx head is not the caller's Response under
-    // redirect:"follow", so a body parse failure there must reject fetch()
-    // rather than resolving with the 302.
+  it("redirect with a malformed chunked body: follow succeeds, manual surfaces the body error", async () => {
+    // Redirects are followed on the response head (WHATWG HTTP-redirect fetch),
+    // so a parse failure in the discarded 3xx body must not affect redirect:
+    // "follow"; under redirect:"manual" the 302 body surfaces the error.
+    await using final = Bun.serve({ port: 0, fetch: () => new Response("FINAL") });
+    const location = `${final.url.origin}/final`;
     const srv = createNetServer(sock => {
       sock.on("error", () => {});
       sock.end(
         "HTTP/1.1 302 Found\r\n" +
-          "Location: http://127.0.0.1:1/unreached\r\n" +
+          `Location: ${location}\r\n` +
           "Transfer-Encoding: chunked\r\n" +
           "Connection: close\r\n\r\n" +
           "ZZ\r\n",
@@ -513,18 +515,19 @@ describe("corrupt compressed responses", () => {
     });
     const port = await listen(srv);
     try {
-      const followErr = await fetch(`http://127.0.0.1:${port}/`, { redirect: "follow" }).then(
-        r => ({ status: r.status }),
-        e => e,
-      );
-      expect(followErr).toBeInstanceOf(Error);
-      expect((followErr as { code?: string }).code).toBe("InvalidHTTPResponse");
+      const res = await fetch(`http://127.0.0.1:${port}/`, { redirect: "follow" });
+      expect({ status: res.status, redirected: res.redirected, url: res.url, body: await res.text() }).toEqual({
+        status: 200,
+        redirected: true,
+        url: location,
+        body: "FINAL",
+      });
 
       // With redirect:"manual" the 302 *is* the final response.
-      const res = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
-      expect(res.status).toBe(302);
-      expect(res.headers.get("location")).toBe("http://127.0.0.1:1/unreached");
-      const bodyErr = await res.arrayBuffer().then(
+      const manual = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
+      expect(manual.status).toBe(302);
+      expect(manual.headers.get("location")).toBe(location);
+      const bodyErr = await manual.arrayBuffer().then(
         () => null,
         e => e,
       );

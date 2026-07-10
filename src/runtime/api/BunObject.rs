@@ -2446,7 +2446,6 @@ pub mod JSZlib {
         is_gzip: bool,
     ) -> JsResult<JSValue> {
         let mut opts = zlib::Options {
-            gzip: is_gzip,
             window_bits: if is_gzip { 31 } else { -15 },
             ..Default::default()
         };
@@ -2522,27 +2521,21 @@ pub mod JSZlib {
 
         match library {
             Library::Zlib => {
-                let mut reader = match zlib::ZlibReaderArrayList::init_with_options(
-                    compressed,
-                    &mut list,
-                    zlib::Options {
-                        window_bits: opts.window_bits,
-                        level: opts.level,
-                        ..Default::default()
-                    },
-                ) {
-                    Ok(r) => r,
-                    Err(err) => {
-                        // `list` is still mutably borrowed by the match
-                        // scrutinee's temporary; it drops on `return` anyway.
-                        if err == zlib::ZlibError::InvalidArgument {
-                            return Err(
-                                global_this.throw(format_args!("Zlib error: Invalid argument"))
-                            );
+                let mut reader =
+                    match zlib::ZlibReaderArrayList::init_with_options(compressed, &mut list, opts)
+                    {
+                        Ok(r) => r,
+                        Err(err) => {
+                            // `list` is still mutably borrowed by the match
+                            // scrutinee's temporary; it drops on `return` anyway.
+                            if err == zlib::ZlibError::InvalidArgument {
+                                return Err(
+                                    global_this.throw(format_args!("Zlib error: Invalid argument"))
+                                );
+                            }
+                            return Err(global_this.throw_error(err.into(), "Zlib error"));
                         }
-                        return Err(global_this.throw_error(err.into(), "Zlib error"));
-                    }
-                };
+                    };
 
                 if reader.read_all(true).is_err() {
                     let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
@@ -2612,13 +2605,32 @@ pub mod JSZlib {
         options_val_: Option<JSValue>,
         is_gzip: bool,
     ) -> JsResult<JSValue> {
-        let mut level: Option<i32> = None;
-        let mut library = Library::Zlib;
-        let mut window_bits: i32 = 0;
+        // `windowBits` selects the container format, so the defaults mirror what
+        // `Bun.gunzipSync`/`Bun.inflateSync` expect: gzip-wrapped for gzipSync,
+        // raw deflate for deflateSync.
+        let mut opts = zlib::Options {
+            window_bits: if is_gzip { 31 } else { -15 },
+            ..Default::default()
+        };
 
+        let mut library = Library::Zlib;
         if let Some(options_val) = options_val_ {
             if let Some(window) = options_val.get(global_this, "windowBits")? {
-                window_bits = window.coerce::<i32>(global_this)?;
+                opts.window_bits = window.coerce::<i32>(global_this)?;
+                library = Library::Zlib;
+            }
+
+            if let Some(level) = options_val.get(global_this, "level")? {
+                opts.level = level.coerce::<i32>(global_this)?;
+            }
+
+            if let Some(mem_level) = options_val.get(global_this, "memLevel")? {
+                opts.mem_level = mem_level.coerce::<i32>(global_this)?;
+                library = Library::Zlib;
+            }
+
+            if let Some(strategy) = options_val.get(global_this, "strategy")? {
+                opts.strategy = strategy.coerce::<i32>(global_this)?;
                 library = Library::Zlib;
             }
 
@@ -2637,13 +2649,6 @@ pub mod JSZlib {
                     }
                 };
             }
-
-            if let Some(level_value) = options_val.get(global_this, "level")? {
-                level = Some(level_value.coerce::<i32>(global_this)?);
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
-            }
         }
 
         if global_this.has_exception() {
@@ -2652,7 +2657,6 @@ pub mod JSZlib {
 
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
         let compressed = buffer.slice();
-        let _ = window_bits; // unused
 
         match library {
             Library::Zlib => {
@@ -2662,28 +2666,20 @@ pub mod JSZlib {
                     32
                 });
 
-                let mut reader = match zlib::ZlibCompressorArrayList::init(
-                    compressed,
-                    &mut list,
-                    zlib::Options {
-                        window_bits: 15,
-                        gzip: is_gzip,
-                        level: level.unwrap_or(6),
-                        ..Default::default()
-                    },
-                ) {
-                    Ok(r) => r,
-                    Err(err) => {
-                        // `list` is still mutably borrowed by the match
-                        // scrutinee's temporary; it drops on `return` anyway.
-                        if err == zlib::ZlibError::InvalidArgument {
-                            return Err(
-                                global_this.throw(format_args!("Zlib error: Invalid argument"))
-                            );
+                let mut reader =
+                    match zlib::ZlibCompressorArrayList::init(compressed, &mut list, opts) {
+                        Ok(r) => r,
+                        Err(err) => {
+                            // `list` is still mutably borrowed by the match
+                            // scrutinee's temporary; it drops on `return` anyway.
+                            if err == zlib::ZlibError::InvalidArgument {
+                                return Err(
+                                    global_this.throw(format_args!("Zlib error: Invalid argument"))
+                                );
+                            }
+                            return Err(global_this.throw_error(err.into(), "Zlib error"));
                         }
-                        return Err(global_this.throw_error(err.into(), "Zlib error"));
-                    }
-                };
+                    };
 
                 if reader.read_all().is_err() {
                     let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
@@ -2696,8 +2692,7 @@ pub mod JSZlib {
                 leak_list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
-                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level.unwrap_or(6))
-                else {
+                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(opts.level) else {
                     return Err(global_this.throw_out_of_memory());
                 };
                 let encoding = if is_gzip {

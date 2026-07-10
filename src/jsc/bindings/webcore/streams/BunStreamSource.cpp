@@ -16,7 +16,6 @@
 #include "JSReadStreamIntoSinkOperation.h"
 #include "JSReadableByteStreamController.h"
 #include "JSReadableStream.h"
-#include "JSReadableStreamBYOBRequest.h"
 #include "JSReadableStreamDefaultReader.h"
 #include "JSResumableSinkPumpOperation.h"
 #include "JSSink.h"
@@ -635,7 +634,11 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     auto* controller = WebCore::JSReadableByteStreamController::create(vm, WebCore::getDOMStructure<WebCore::JSReadableByteStreamController>(vm, *domGlobalObject));
     controller->m_algorithms.kind = SourceKind::Native;
     controller->m_algorithms.algorithmContext.set(vm, controller, adapter);
-    setUpReadableByteStreamController(globalObject, stream, controller, jsUndefined(), 0, std::nullopt);
+    // HWM > 0 keeps one pull outstanding once the queue drains (desiredSize > 0), matching
+    // the prior default-controller HWM=1. ByteStream/FileReader only surface close/error via
+    // the pending pull's promise, so without a proactive pull an abort after a satisfied
+    // read() would never reach the controller.
+    setUpReadableByteStreamController(globalObject, stream, controller, jsUndefined(), 1, std::nullopt);
     RETURN_IF_EXCEPTION(scope, );
     nativeSourceStart(globalObject, controller);
     RETURN_IF_EXCEPTION(scope, );

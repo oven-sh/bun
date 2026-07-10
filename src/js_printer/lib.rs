@@ -3013,6 +3013,39 @@ pub mod __gated_printer {
         }
 
         pub fn print_string_literal_e_string(&mut self, str: &E::String, allow_backtick: bool) {
+            // Fast path: a non-rope ASCII string with nothing that needs
+            // escaping under one of `"` / `'` can be emitted verbatim. The
+            // SIMD scan rejects bytes < 0x20, > 0x7E, `\`, and the quote
+            // char — exactly the set the slow path would re-encode — so a
+            // `None` from either probe means a single memcpy is correct.
+            // This bypasses both `best_quote_char_for_string`'s scalar scan
+            // and the per-rune `write_pre_quoted_string_inner` dispatch.
+            // `"` is tried first (matches `best_quote_char_for_string`'s tie
+            // break); `'` is only tried when the first probe failed on a
+            // literal `"` byte, since any other failure (control / non-ASCII
+            // / `\`) would fail under `'` too.
+            if !IS_JSON && str.is_utf8() && str.next.is_none() {
+                let s = str.slice8();
+                match strings::index_of_needs_escape_for_java_script_string(s, b'"') {
+                    None => {
+                        self.print(b'"');
+                        self.print(s);
+                        self.print(b'"');
+                        return;
+                    }
+                    Some(idx)
+                        if s[idx as usize] == b'"'
+                            && strings::index_of_needs_escape_for_java_script_string(s, b'\'')
+                                .is_none() =>
+                    {
+                        self.print(b'\'');
+                        self.print(s);
+                        self.print(b'\'');
+                        return;
+                    }
+                    _ => {}
+                }
+            }
             let quote = Self::best_quote_char_for_e_string(str, allow_backtick);
             self.print(quote);
             self.print_string_characters_e_string(str, quote);

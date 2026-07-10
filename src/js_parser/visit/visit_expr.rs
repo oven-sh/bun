@@ -40,7 +40,46 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.visit_expr_in_out(e, ExprIn::default())
     }
 
+    #[inline(always)]
     pub fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+        use js_ast::ExprTag as Tag;
+        // Leaves whose visitor is a no-op — skip the recursive frame.
+        // Only when `assign_target == None`: a leaf in assign-target position
+        // still needs the `is_valid_assignment_target` diagnostic in the body.
+        // `EIdentifier` is included under `skip_identifier_visit` for short
+        // names: minified identifiers are 1–3 bytes, so the length filter
+        // alone rejects almost everything before `e_identifier`'s own
+        // module/exports/require/__dirname/__filename carve-out would.
+        if in_.assign_target == js_ast::AssignTarget::None {
+            match e.data.tag() {
+                Tag::EString
+                | Tag::ENumber
+                | Tag::EBoolean
+                | Tag::ENull
+                | Tag::EUndefined
+                | Tag::EBigInt
+                | Tag::ERegExp
+                | Tag::EMissing
+                | Tag::ENewTarget => return,
+                Tag::EIdentifier if self.skip_identifier_visit => {
+                    let r = e
+                        .data
+                        .e_identifier()
+                        .expect("infallible: variant checked")
+                        .ref_;
+                    if r.is_source_contents_slice()
+                        && !matches!(r.inner_index(), 4 | 6 | 7 | 9 | 10)
+                    {
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.visit_expr_in_out_body(e, in_)
+    }
+
+    fn visit_expr_in_out_body(&mut self, e: &mut Expr, in_: ExprIn) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(e.loc);
             return;
@@ -170,6 +209,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
         let expr = *e;
+        if p.skip_identifier_visit {
+            // The parse-time `SourceContentsSlice` ref already prints
+            // correctly via `NoOpRenamer`; the scope-chain `find_symbol` walk
+            // and everything downstream of it (define substitution,
+            // `EImportIdentifier` conversion, const-reassign diagnostics) are
+            // dead for printed output under this gate. The strict-mode
+            // reserved-word diagnostic above `find_symbol` is also dropped —
+            // the engine rejects it at runtime regardless. The one observable
+            // effect that must survive is the use_count_estimate bump for
+            // `module` / `exports` / `require` / `__dirname` / `__filename`,
+            // which `to_ast` reads to derive `exports_kind` and the
+            // `uses_*_ref` flags. `eval` is also routed through so that
+            // `is_direct_eval` and the printer's `(0, eval)` indirect-eval
+            // re-wrap see a resolved Unbound symbol. `AllocatedName` refs
+            // (escaped identifiers, e.g. `\u0061bc`) always fall through —
+            // `NoOpRenamer` only special-cases `SourceContentsSlice`.
+            let r = expr.data.e_identifier().expect("infallible: variant").ref_;
+            if r.is_source_contents_slice() {
+                if !matches!(r.inner_index(), 4 | 6 | 7 | 9 | 10) {
+                    return;
+                }
+                if !matches!(
+                    p.load_name_from_ref(r),
+                    b"eval" | b"module" | b"exports" | b"require" | b"__dirname" | b"__filename"
+                ) {
+                    return;
+                }
+            }
+        }
         let mut e_ = expr
             .data
             .e_identifier()
@@ -1132,16 +1200,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // bundling because scope hoisting means these will no longer be run-time
         // errors.
         if (in_.assign_target != js_ast::AssignTarget::None || is_delete_target)
-            && matches!(e_.target.data.tag(), Tag::EIdentifier)
-            && p.symbols[e_
-                .target
-                .data
-                .e_identifier()
-                .expect("infallible: variant checked")
-                .ref_
-                .inner_index() as usize]
-                .kind
-                == js_ast::symbol::Kind::Import
+            && let Data::EIdentifier(target_id) = e_.target.data
+            && !target_id.ref_.is_source_contents_slice()
+            && p.symbols[target_id.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
         {
             let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
             p.log().add_range_error_fmt(
@@ -1183,21 +1244,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     },
                 );
-                let id_after = matches!(e_.value.data, Data::EIdentifier(..));
 
                 // The expression "typeof (0, x)" must not become "typeof x" if "x"
                 // is unbound because that could suppress a ReferenceError from "x"
                 if !id_before
-                    && id_after
-                    && p.symbols[e_
-                        .value
-                        .data
-                        .e_identifier()
-                        .expect("infallible: variant checked")
-                        .ref_
-                        .inner_index() as usize]
-                        .kind
-                        == js_ast::symbol::Kind::Unbound
+                    && let Data::EIdentifier(value_id) = e_.value.data
+                    && (value_id.ref_.is_source_contents_slice()
+                        || p.symbols[value_id.ref_.inner_index() as usize].kind
+                            == js_ast::symbol::Kind::Unbound)
                 {
                     e_.value = Expr {
                         loc: e_.value.loc,
@@ -1608,19 +1662,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.visit_expr(&mut e2.right);
                         p.decorator_class_name = None;
 
-                        if matches!(e2.left.data.tag(), Tag::EIdentifier) {
-                            let name = p.symbols[e2
-                                .left
-                                .data
-                                .e_identifier()
-                                .expect("infallible: variant checked")
-                                .ref_
-                                .inner_index()
-                                as usize]
-                                .original_name;
+                        if let Data::EIdentifier(left_id) = e2.left.data {
+                            let name = p.load_name_from_ref(left_id.ref_);
                             e2.right = p.maybe_keep_expr_symbol_name(
                                 e2.right,
-                                name.slice(),
+                                name,
                                 was_anonymous_named_expr,
                             );
                         }
@@ -1783,17 +1829,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.decorator_class_name = None;
 
                 if let Some(val) = property.value {
-                    if matches!(val.data.tag(), Tag::EIdentifier) {
-                        let name = p.symbols[val
-                            .data
-                            .e_identifier()
-                            .expect("infallible: variant checked")
-                            .ref_
-                            .inner_index() as usize]
-                            .original_name;
+                    if let Data::EIdentifier(val_id) = val.data {
+                        let name = p.load_name_from_ref(val_id.ref_);
                         property.initializer = Some(p.maybe_keep_expr_symbol_name(
                             property.initializer.expect("unreachable"),
-                            name.slice(),
+                            name,
                             was_anonymous_named_expr,
                         ));
                     }
@@ -1897,10 +1937,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // https://github.com/tc39/ecma262/issues/2062.
                 if e_.optional_chain.is_none()
                     && target_was_identifier_before_visit
-                    && p.symbols[ident.ref_.inner_index() as usize]
-                        .original_name
-                        .slice()
-                        == b"eval"
+                    && p.load_name_from_ref(ident.ref_) == b"eval"
                 {
                     e_.is_direct_eval = true;
 

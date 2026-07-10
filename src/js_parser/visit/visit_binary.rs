@@ -698,14 +698,9 @@ impl BinaryExpressionVisitor {
             Op::Code::BinAssign => {
                 // Optionally preserve the name
                 if let ExprData::EIdentifier(ident) = e_.left.data {
-                    // reshaped for borrowck — copy the `StoreStr` out of
-                    // `p.symbols` before taking `&mut self` for `maybe_keep_expr_symbol_name`.
-                    let name = p.symbols[ident.ref_.inner_index() as usize].original_name;
-                    e_.right = p.maybe_keep_expr_symbol_name(
-                        e_.right,
-                        name.slice(),
-                        was_anonymous_named_expr,
-                    );
+                    let name = p.load_name_from_ref(ident.ref_);
+                    e_.right =
+                        p.maybe_keep_expr_symbol_name(e_.right, name, was_anonymous_named_expr);
                 }
             }
             Op::Code::BinNullishCoalescingAssign | Op::Code::BinLogicalOrAssign => {

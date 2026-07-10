@@ -1551,6 +1551,38 @@ export default class {
     });
   });
 
+  describe("treeShaking parts that visit down to zero statements", () => {
+    // Under treeShaking each top-level statement is its own part. A statement
+    // like `a;` records a use of `a` and is then dropped by simplify_unused_expr,
+    // leaving a part with recorded usage and no statements. The parser must undo
+    // that part's contribution to each symbol's use count.
+    const shaken = new Bun.Transpiler({ loader: "ts", treeShaking: true });
+    const defined = new Bun.Transpiler({
+      loader: "ts",
+      treeShaking: true,
+      define: { user_undefined: "undefined" },
+    });
+
+    it.each([
+      ["bound const", `const a = 1;\na;\nconsole.log("keep");`, `const a = 1;\nconsole.log("keep");\n`],
+      ["bound let", `let b = {};\nb;\nconsole.log("keep");`, `let b = {};\nconsole.log("keep");\n`],
+      ["function decl", `function f() {}\nf;\nconsole.log("keep");`, `function f() {}\nconsole.log("keep");\n`],
+      ["repeated use", `const c = 1;\nc;\nc;\nconsole.log(c);`, `const c = 1;\nconsole.log(c);\n`],
+    ])("drops the dead part and keeps the rest: %s", (_name, input, expected) => {
+      expect(shaken.transformSync(input)).toBe(expected);
+    });
+
+    it("an identifier define whose statement becomes pure leaves no residue", () => {
+      expect(defined.transformSync(`user_undefined;\nconsole.log("keep");`)).toBe(`console.log("keep");\n`);
+    });
+
+    it("a symbol still used elsewhere survives the dead part's revert", () => {
+      // `d;` is dropped, but `console.log(d)` still uses `d` — the revert must
+      // subtract exactly one, not zero the symbol.
+      expect(shaken.transformSync(`const d = 1;\nd;\nconsole.log(d);`)).toBe(`const d = 1;\nconsole.log(d);\n`);
+    });
+  });
+
   const bunTranspiler = new Bun.Transpiler({
     loader: "tsx",
     define: {
@@ -1701,6 +1733,60 @@ export default <>hi</>
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe('console.log("bar");');
     expect(exitCode).toBe(0);
+  });
+
+  it("define: local binding in nested scope shadows the define", () => {
+    const t = new Bun.Transpiler({ loader: "js", define: { DEBUG: "false" } });
+    const out = t.transformSync("function f(){const DEBUG=1;return DEBUG}");
+    expect(out).toContain("return DEBUG");
+    expect(out).not.toContain("return false");
+  });
+
+  it("named import: local binding in nested scope shadows the import", () => {
+    const t = new Bun.Transpiler({ loader: "js" });
+    const out = t.transformSync('import {x} from "m"; function f(){let x=1; x=2; return x}');
+    expect(out).toContain("x = 2");
+  });
+
+  it("standalone JS fast path: identifiers that bypass find_symbol don't OOB symbols[]", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const T = new Bun.Transpiler({ loader: "js" });
+          for (const src of [
+            "someLongUndeclaredName = 1;",
+            "someLongUndeclaredName[0] = 1;",
+            "delete someLongUndeclaredName[x];",
+            "typeof (true ? someLongUndeclaredName : 0)",
+            "function f(){void (this || someVeryLongUndeclaredName)}",
+            "[someVeryLongUndeclaredName = 1] = a;",
+            "({someVeryLongUndeclaredName = 1} = a);",
+          ]) T.transformSync(src);
+          const annexB = T.transformSync(
+            "function outer(){ { eval(String.fromCharCode(120)); function f(){return 1} } return f() }",
+          );
+          if (annexB.includes("let f")) throw new Error("Annex-B function decl became block-scoped let");
+          for (const src of [
+            "(1 ? eval : 0)(x)",
+            "(true && eval)(x)",
+            "(false || eval)(x)",
+            "(null ?? eval)(x)",
+          ]) {
+            const out = T.transformSync(src);
+            if (!out.includes("(0, eval)")) throw new Error("indirect eval became direct: " + src + " -> " + out);
+          }
+          if (!T.transformSync("\\\\u0061bc;").includes("abc")) throw new Error("escaped identifier mis-printed");
+          process.stdout.write("ok");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
   it("JSX keys", () => {
@@ -2967,6 +3053,20 @@ class Foo {
       },
       platform: "browser",
       minify: { syntax: true },
+    });
+
+    it("minify.syntax does not drop a referenced const when no define/tsx is configured", () => {
+      // Standalone JS transpiler with no `define`, no `loader: tsx` — the
+      // configuration where the identifier-visit fast path is eligible.
+      const t = new Bun.Transpiler({ loader: "js", minify: { syntax: true } });
+      const out = t.transformSync("function f(){const x=5;return x}\n");
+      // Either the const is kept, or it's inlined as `return 5` — but never
+      // `return x` with the declaration gone.
+      expect(out.includes("const x") || out.includes("return 5")).toBe(true);
+
+      // `inline: true` alone (no minify) must still inline.
+      const ti = new Bun.Transpiler({ loader: "js", inline: true });
+      expect(ti.transformSync("function f(){const x=5;return x}\n")).toContain("return 5");
     });
 
     const parsed = (code, trim = true, autoExport = false, transpiler_ = transpiler) => {

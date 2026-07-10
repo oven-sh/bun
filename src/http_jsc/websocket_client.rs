@@ -1951,7 +1951,9 @@ export_websocket_client!(
 pub struct InitialDataHandler<const SSL: bool> {
     pub adopted: Option<NonNull<WebSocket<SSL>>>,
     /// Pending-activity ref, dropped when [`Self::handle_without_deinit`] consumes `adopted`.
-    pub ws: Option<CppWebSocketRef>,
+    /// `pub(crate)`: the tick is an internal ownership detail, and `CppWebSocketRef`'s
+    /// `adopt`/`leak` must not escape the crate.
+    pub(crate) ws: Option<CppWebSocketRef>,
     pub slice: Box<[u8]>,
 }
 

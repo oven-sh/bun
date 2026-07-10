@@ -42,6 +42,30 @@ subcommand (`pm pack`, `install`, `build`, `run`) works directly. Directory args
 | `SourceProvider` | `new Error().stack` must contain `file:line` |
 | `Strong` / `Weak` | `WeakRef` + `Bun.gc(true)`; churn thousands of promises |
 
+## Before pushing: the three gates CI runs
+
+`bun bd` passing is not "CI will be green". CI runs these, and each has caught a
+break that every host-target check missed:
+
+```sh
+bun run rust:clippy                                   # `-D` lints — a HARD gate
+bun run rust:check-all                                # all 6 targets typecheck
+cargo clippy --workspace --no-deps --keep-going \
+  --target x86_64-unknown-linux-gnu                   # CI's clippy runs on LINUX
+```
+
+- **Clippy is a compile error, not a warning.** `mem_forget`, `boxed_local`,
+  `undocumented_unsafe_blocks`, `mut_from_ref`, `vec_box`, `not_unsafe_ptr_arg_deref`
+  are all `-D`. A `Box<Self>` reclaim fn or a `&self -> &mut T` FFI accessor will trip
+  them; when the lint is wrong (heap-stable `Vec<Box<T>>`, an `unsafe fn` whose contract
+  IS the aliasing), `#[allow(...)]` **with a reason comment** — don't contort the code.
+- **Clippy's lint set is per-target.** A `#[cfg]`'d field can make an impl derivable on
+  macOS and non-compiling on Linux. Host clippy clean ≠ CI clippy clean; run the Linux
+  target explicitly. (Windows has ~32 pre-existing `bun_core` clippy errors — not a CI job.)
+- **`--keep-going` still skips crates whose dependency failed**, so clippy needs several
+  rounds. `cargo clippy --message-format=json` + collect every `level=="error"` gets the
+  whole crate's diagnostics per round instead of the first one.
+
 ## Gotchas that cost real time
 
 - **A debug assert you add is only real if it's in the binary**: `strings build/debug/bun-debug | rg '<your panic message>'`.

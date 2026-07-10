@@ -181,11 +181,6 @@ impl CppWebSocket {
         WebSocket__incrementPendingActivity(self);
     }
 
-    pub(crate) fn unref(&self) {
-        bun_jsc::mark_binding!();
-        WebSocket__decrementPendingActivity(self);
-    }
-
     pub(crate) fn set_protocol(&self, protocol: &mut BunString) {
         bun_jsc::mark_binding!();
         // SAFETY: self is a valid C++ WebCore::WebSocket; protocol outlives the call.
@@ -193,12 +188,41 @@ impl CppWebSocket {
     }
 }
 
-/// RAII owner of one pending-activity ref on a C++ `WebCore::WebSocket`.
-///
-/// Construction calls [`CppWebSocket::r#ref`]; `Drop` calls
-/// [`CppWebSocket::unref`]. For when the ref must outlive the constructing
-/// scope (e.g. stored on a queued task).
-pub struct CppWebSocketRef(core::ptr::NonNull<CppWebSocket>);
+/// Give back one pending-activity tick. Wrapped rather than named directly so the
+/// release path keeps its `mark_binding!` — `r#ref` logs, and a release that did
+/// not would make `BUN_DEBUG_JSC=1` show N refs and zero unrefs, hiding the very
+/// leak the trace exists to find.
+fn ws_pending_activity_release(ws: &CppWebSocket) {
+    bun_jsc::mark_binding!();
+    WebSocket__decrementPendingActivity(ws);
+}
+
+// One ownership unit is one pending-activity tick. `incPendingActivityCount` is
+// `m_pendingActivityCount++; ref()` and `decPendingActivityCount` is
+// `m_pendingActivityCount--; deref()` (WebSocket.h:273-287) — the pair moves the
+// activity count and the refcount together.
+//
+// A MARKER, not `ForeignOwned`: this release is not the plain intrusive deref that
+// `ForeignOwned` documents, and the crate stores tick-less `*mut CppWebSocket` in
+// several places (`WebSocket::outgoing_websocket`, `WebSocketUpgradeClient`). Making
+// `CppWebSocket: ForeignOwned` would let any `ForeignRef<CppWebSocket>` built from
+// one of those underflow `m_pendingActivityCount` on drop.
+bun_opaque::foreign_release!(pub(crate) PendingActivity => CppWebSocket, ws_pending_activity_release);
+
+bun_opaque::foreign_handle! {
+    /// RAII owner of one pending-activity ref on a C++ `WebCore::WebSocket`.
+    ///
+    /// [`Self::new`] takes the tick; `Drop` gives it back. For when the ref must
+    /// outlive the constructing scope (e.g. stored on a queued task).
+    ///
+    /// `pub(crate)`, so the macro's `adopt`/`adopt_ptr`/`leak` stay crate-local:
+    /// `adopt` on a pointer that never took a tick would drop one that was never
+    /// taken, and `leak` is a safe fn that strands one forever.
+    ///
+    /// Named for the owner, not the pointee: `CppWebSocket` still denotes the C++
+    /// object everywhere, so no `*mut CppWebSocket` changes meaning.
+    pub(crate) struct CppWebSocketRef(CppWebSocket) via marker PendingActivity;
+}
 
 impl CppWebSocketRef {
     /// Take a pending-activity ref on `ws`.
@@ -208,12 +232,8 @@ impl CppWebSocketRef {
     /// returned guard.
     pub(crate) unsafe fn new(ws: core::ptr::NonNull<CppWebSocket>) -> Self {
         CppWebSocket::opaque_ref(ws.as_ptr()).r#ref();
-        Self(ws)
-    }
-}
-
-impl Drop for CppWebSocketRef {
-    fn drop(&mut self) {
-        CppWebSocket::opaque_ref(self.0.as_ptr()).unref();
+        // SAFETY: the `r#ref()` above is the producer — it just added the tick
+        // this handle owns and `Drop` gives back exactly once.
+        unsafe { Self::adopt(ws) }
     }
 }

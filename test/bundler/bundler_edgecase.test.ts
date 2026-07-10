@@ -73,7 +73,10 @@ describe("bundler", () => {
       "/b.cjs": `;`,
     },
     onAfterBundle(api) {
+      // Before the fix the printer emitted `var b = ;` here (no initializer)
+      // with exit 0 and no debug assertion.
       api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").not.toMatch(/\bvar b = ;/);
       api.expectFile("/out.js").toContain("require_b");
     },
     run: {
@@ -83,16 +86,20 @@ describe("bundler", () => {
   itBundled("edgecase/StatementlessCommonJSModuleDynamicImport", {
     files: {
       "/entry.ts": /* js */ `
-        import('./b.cjs').then(m => console.log(typeof m));
+        const ns = await import('./b.cjs');
+        console.log(typeof ns, typeof ns.default);
       `,
-      "/b.cjs": `;`,
+      "/b.cjs": `// comment only\n`,
     },
     onAfterBundle(api) {
+      // Before the fix this emitted `Promise.resolve()__toESM(, 1)` which is a
+      // SyntaxError, with exit 0 and no debug assertion.
       api.expectFile("/out.js").not.toContain("__INVALID__REF__");
+      api.expectFile("/out.js").not.toContain("__toESM(,");
       api.expectFile("/out.js").toContain("require_b");
     },
     run: {
-      stdout: "object",
+      stdout: "object object",
     },
   });
   itBundled("edgecase/DirectiveOnlyCommonJSModule", {

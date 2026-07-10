@@ -393,11 +393,12 @@ impl EventLoopHandle {
     /// bun_runtime since it must call `vm.eventLoop()`.)
     ///
     /// `js_event_loop` is a live erased `*mut jsc::EventLoop` whose owner
-    /// outlives every dispatch through the returned handle. The pointer is not
-    /// dereferenced here — it's stored opaquely in [`JsEventLoop`] and only
-    /// dereferenced at dispatch sites. A null pointer is a documented sentinel
+    /// outlives every dispatch through the returned handle. The pointer is
+    /// stored opaquely in [`JsEventLoop`]; the generation capture reads it
+    /// once here, while it is live per this contract, and dispatch sites
+    /// dereference it afterwards. A null pointer is a documented sentinel
     /// for "never dispatched" placeholders (e.g. struct field initialisers
-    /// that are overwritten before use).
+    /// that are overwritten before use) and skips the generation read.
     #[inline]
     pub fn init(js_event_loop: *mut ()) -> EventLoopHandle {
         let owner = jsc_event_loop_handle(js_event_loop);
@@ -457,11 +458,11 @@ impl EventLoopHandle {
     ///
     /// # Safety
     /// `(tag, ptr)` must have been produced by [`into_tag_ptr`] on a still-live
-    /// event loop. The constructor itself only stores the opaque pointer, but
-    /// dispatch through the resulting handle dereferences it — this fn is the
-    /// last place the precondition can be discharged. (NOT eligible for
-    /// `unsafe-fn-narrow`: the invariant is caller-provided, not internally
-    /// guarded.)
+    /// event loop. The constructor reads the loop's registration generation
+    /// (via `js_loop_generation`) and dispatch through the resulting handle
+    /// dereferences it — this fn is the last place the precondition can be
+    /// discharged. (NOT eligible for `unsafe-fn-narrow`: the invariant is
+    /// caller-provided, not internally guarded.)
     #[inline]
     pub unsafe fn from_tag_ptr(
         tag: core::ffi::c_char,

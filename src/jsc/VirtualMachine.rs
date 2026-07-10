@@ -980,11 +980,11 @@ impl VirtualMachine {
     /// short-lived `&mut *p` at the use site instead, mirroring [`Self::get`].
     #[inline(always)]
     pub fn event_loop(&self) -> *mut EventLoop {
-        // self-pointer to regular_event_loop or macro_event_loop (or the
-        // boxed spawnSync loop). Acquire pairs with the Release stores so a
-        // cross-thread reader that observes a freshly-swapped-in loop also
-        // observes its initialization; same-thread readers are ordered by
-        // program order regardless.
+        // self-pointer to regular_event_loop or macro_event_loop. Acquire
+        // pairs with the Release stores so a cross-thread reader that
+        // observes a freshly-swapped-in loop also observes its
+        // initialization; same-thread readers are ordered by program order
+        // regardless.
         self.event_loop.load(core::sync::atomic::Ordering::Acquire)
     }
 

@@ -112,18 +112,6 @@ template<> void JSByteLengthQueuingStrategyConstructor::finishCreation(VM& vm, J
     m_instanceStructure.set(vm, this, getDOMStructure<JSByteLengthQueuingStrategy>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSC::VM& vm, JSByteLengthQueuingStrategyConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
-{
-    if (newTarget == constructor) [[likely]]
-        return constructor->instanceStructure();
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* newTargetGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* baseStructure = getDOMStructure<JSByteLengthQueuingStrategy>(vm, *uncheckedDowncast<JSDOMGlobalObject>(newTargetGlobalObject));
-    RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure));
-}
-
 // `QueuingStrategyInit init` — `highWaterMark` is a required `unrestricted double` member.
 static double convertQueuingStrategyInit(JSC::VM& vm, JSGlobalObject* globalObject, JSValue init)
 {

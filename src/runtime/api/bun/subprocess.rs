@@ -680,6 +680,18 @@ impl Subprocess<'_> {
         let _ = self.try_kill(self.kill_signal);
     }
 
+    /// Close any still-open stdout/stderr pipe readers so the sync wait loop
+    /// stops waiting for EOF after timeout/maxBuffer. Matches Node.js
+    /// `SyncProcessRunner::Kill()`. Called outside any reader callback.
+    pub fn close_readable_pipes(&self) {
+        if matches!(self.stdout.get(), Readable::Pipe(_)) {
+            self.stdout.with_mut(|s| s.close());
+        }
+        if matches!(self.stderr.get(), Readable::Pipe(_)) {
+            self.stderr.with_mut(|s| s.close());
+        }
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn kill(
         this: &Self,
@@ -964,28 +976,18 @@ impl Subprocess<'_> {
             crate::webcore::file_sink::JSSink::set_destroy_callback(existing_stdin_value, 0);
         }
 
-        if self.flags.get().contains(Flags::IS_SYNC) {
-            // This doesn't match Node.js' behavior, but for synchronous
-            // subprocesses the streams should not keep the timers going.
-            if matches!(self.stdout.get(), Readable::Pipe(_)) {
-                self.stdout.with_mut(|s| s.close());
+        // Node.js keeps reading stdout/stderr until EOF after the direct child
+        // is reaped (a grandchild may still be writing). Sync and async both
+        // resume reads here; timeout/maxBuffer bound the sync wait.
+        if let Readable::Pipe(pipe) = self.stdout.get() {
+            if !pipe.reader.is_done() {
+                Readable::pipe_reader_mut(pipe).reader.read();
             }
+        }
 
-            if matches!(self.stderr.get(), Readable::Pipe(_)) {
-                self.stderr.with_mut(|s| s.close());
-            }
-        } else {
-            // This matches Node.js behavior. Node calls resume() on the streams.
-            if let Readable::Pipe(pipe) = self.stdout.get() {
-                if !pipe.reader.is_done() {
-                    Readable::pipe_reader_mut(pipe).reader.read();
-                }
-            }
-
-            if let Readable::Pipe(pipe) = self.stderr.get() {
-                if !pipe.reader.is_done() {
-                    Readable::pipe_reader_mut(pipe).reader.read();
-                }
+        if let Readable::Pipe(pipe) = self.stderr.get() {
+            if !pipe.reader.is_done() {
+                Readable::pipe_reader_mut(pipe).reader.read();
             }
         }
 

@@ -695,7 +695,8 @@ pub unsafe trait CellRefCounted: Sized {
     #[inline]
     fn ref_(&self) {
         let rc = self.ref_count();
-        rc.set(rc.get() + 1);
+        // wrapping: see `RefCount::ref_` above.
+        rc.set(rc.get().wrapping_add(1));
     }
 
     /// Decrement the intrusive refcount; runs [`destroy`](Self::destroy) when
@@ -715,7 +716,8 @@ pub unsafe trait CellRefCounted: Sized {
         // only via `ref_count_raw` (no `&Self` formed), so this is sound even
         // when a `&mut` on a sibling field is live in a parent frame.
         let rc = unsafe { Self::ref_count_raw(this) };
-        let n = rc.get() - 1;
+        // wrapping: see `RefCount::ref_` above.
+        let n = rc.get().wrapping_sub(1);
         rc.set(n);
         if n == 0 {
             // SAFETY: refcount reached zero; no other holders.

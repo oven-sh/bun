@@ -279,12 +279,12 @@ describe("RedisClient TLS hostname verification", () => {
         while ((consumed = consumeRespArray(buf)) > 0) {
           const head = buf.subarray(0, consumed).toString("latin1");
           buf = buf.subarray(consumed);
-          if (/\bHELLO\b/.test(head)) sock.write("%1\r\n+proto\r\n:3\r\n");
-          else if (/\bSUBSCRIBE\b/.test(head))
-            for (const ch of head.match(/\$\d+\r\n([^\r]+)\r\n/g)!.slice(1)) sock.write(push("subscribe", ch, ++subs));
-          else if (/\bUNSUBSCRIBE\b/.test(head))
-            for (const ch of head.match(/\$\d+\r\n([^\r]+)\r\n/g)!.slice(1))
-              sock.write(push("unsubscribe", ch, (subs = Math.max(0, subs - 1))));
+          const args = [...head.matchAll(/\$\d+\r\n([^\r]+)\r\n/g)].map(m => m[1]);
+          if (args[0] === "HELLO") sock.write("%1\r\n+proto\r\n:3\r\n");
+          else if (args[0] === "SUBSCRIBE")
+            for (const ch of args.slice(1)) sock.write(push("subscribe", ch, ++subs));
+          else if (args[0] === "UNSUBSCRIBE")
+            for (const ch of args.slice(1)) sock.write(push("unsubscribe", ch, (subs = Math.max(0, subs - 1))));
           else sock.write("+OK\r\n");
         }
       });
@@ -294,19 +294,19 @@ describe("RedisClient TLS hostname verification", () => {
     server.listen(0);
     await once(server, "listening");
     const port = (server.address() as AddressInfo).port;
+    const sub = new RedisClient(`rediss://127.0.0.1:${port}`, {
+      autoReconnect: false,
+      connectionTimeout: 5000,
+      tls: { ca: localhostTls.cert, rejectUnauthorized: true },
+    });
     try {
-      const sub = new RedisClient(`rediss://127.0.0.1:${port}`, {
-        autoReconnect: false,
-        connectionTimeout: 5000,
-        tls: { ca: localhostTls.cert, rejectUnauthorized: true },
-      });
       await sub.connect();
       await sub.subscribe(["a", "b", "c"], () => {});
       await sub.unsubscribe("b");
       await sub.unsubscribe(["a", "c"]);
       expect(sub.connected).toBe(true);
-      sub.close();
     } finally {
+      sub.close();
       server.close();
     }
   });

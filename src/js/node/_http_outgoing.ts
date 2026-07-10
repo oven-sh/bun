@@ -32,6 +32,7 @@ const kBytesWritten = Symbol("kBytesWritten");
 const kErrored = Symbol("errored");
 const kHighWaterMark = Symbol("kHighWaterMark");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
+const kLenientValidation = Symbol("kLenientValidation");
 
 const nop = () => {};
 
@@ -100,6 +101,9 @@ function OutgoingMessage(options) {
   this[kErrored] = null;
   this[kHighWaterMark] = options?.highWaterMark ?? getDefaultHighWaterMark();
   this[kRejectNonStandardBodyWrites] = options?.rejectNonStandardBodyWrites ?? false;
+  // Declared here so the memoizing _isLenientHeaderValidation never
+  // shape-transitions the message when it caches.
+  this[kLenientValidation] = undefined;
 }
 $toClass(OutgoingMessage, "OutgoingMessage", Stream);
 
@@ -107,29 +111,38 @@ $toClass(OutgoingMessage, "OutgoingMessage", Stream);
 // For ClientRequest: checks this.httpValidation or this.insecureHTTPParser
 // For ServerResponse: checks the server's httpValidation or insecureHTTPParser
 // Falls back to global --insecure-http-parser flag.
+// Every input is fixed for the life of the message, but setHeader and
+// appendHeader consult this once per header: compute once, cache in the
+// constructor-declared slot.
 OutgoingMessage.prototype._isLenientHeaderValidation = function () {
+  const cached = this[kLenientValidation];
+  if (cached !== undefined) return cached;
+
+  let result;
   // New httpValidation option takes priority (ClientRequest case)
   const httpValidation = this.httpValidation;
   if (httpValidation !== undefined) {
-    return httpValidation !== "strict";
+    result = httpValidation !== "strict";
+  } else {
+    // ServerResponse routes both options through the owning server; walk the
+    // req -> socket -> server chain once, not once per option.
+    const server = this.req?.socket?.server;
+    const serverHttpValidation = server?.httpValidation;
+    if (serverHttpValidation !== undefined) {
+      result = serverHttpValidation !== "strict";
+    } else {
+      // Legacy insecureHTTPParser - ClientRequest has it directly
+      const insecureHTTPParser = this.insecureHTTPParser;
+      if (typeof insecureHTTPParser === "boolean") {
+        result = insecureHTTPParser;
+      } else {
+        // ServerResponse can access via the server
+        const serverOption = server?.insecureHTTPParser;
+        result = typeof serverOption === "boolean" ? serverOption : isLenient();
+      }
+    }
   }
-  // ServerResponse: check server's httpValidation option
-  const serverHttpValidation = this.req?.socket?.server?.httpValidation;
-  if (serverHttpValidation !== undefined) {
-    return serverHttpValidation !== "strict";
-  }
-  // Legacy insecureHTTPParser - ClientRequest has it directly
-  const insecureHTTPParser = this.insecureHTTPParser;
-  if (typeof insecureHTTPParser === "boolean") {
-    return insecureHTTPParser;
-  }
-  // ServerResponse can access via req.socket.server
-  const serverOption = this.req?.socket?.server?.insecureHTTPParser;
-  if (typeof serverOption === "boolean") {
-    return serverOption;
-  }
-  // Fall back to global option
-  return isLenient();
+  return (this[kLenientValidation] = result);
 };
 
 ObjectDefineProperty(OutgoingMessage.prototype, "errored", {

@@ -28,8 +28,16 @@ const ObjectDefineProperty = Object.defineProperty;
 const ArrayPrototypeSlice = Array.prototype.slice;
 
 const kHeaders = Symbol("kHeaders");
+// Cache slot for the server dispatcher's keep-alive decision (stamped once
+// per request in _http_server.ts); declared in the constructor so the stamp
+// never shape-transitions the request.
+const kReqShouldKeepAlive = Symbol("kReqShouldKeepAlive");
 const kHeadersDistinct = Symbol("kHeadersDistinct");
 const kHeadersCount = Symbol("kHeadersCount");
+// Lazy req.rawHeaders: cache slot + the native handle the bytes live on
+// (never cleared - unlike kHandle - so post-_destroy access still works).
+const kRawHeaders = Symbol("kRawHeaders");
+const kHeaderSource = Symbol("kHeaderSource");
 const kTrailers = Symbol("kTrailers");
 const kTrailersDistinct = Symbol("kTrailersDistinct");
 const kTrailersCount = Symbol("kTrailersCount");
@@ -74,6 +82,9 @@ function IncomingMessage(socket) {
   this.complete = false;
   this._closed = false;
   this[kHeaders] = null;
+  this[kReqShouldKeepAlive] = undefined;
+  this[kRawHeaders] = null;
+  this[kHeaderSource] = null;
   this[kHeadersCount] = 0;
   this[kTrailers] = null;
   this[kTrailersCount] = 0;
@@ -85,20 +96,11 @@ function IncomingMessage(socket) {
     this[typeSymbol] = NodeHTTPIncomingRequestType.NodeHTTPResponse;
     this.url = arguments[1];
     this.method = arguments[2];
-    // `headers` (arguments[3]) is intentionally not used: the lazy `headers`
-    // getter builds the object from rawHeaders with Node.js's duplicate
-    // handling (joining, cookie/set-cookie rules, joinDuplicateHeaders),
-    // which the native object does not implement.
-    let rawHeaders = arguments[4];
-    // Node.js's parser keeps at most server.maxHeadersCount header pairs
-    // (parser.maxHeaderPairs); the native parser does not enforce it, so
-    // truncate here.
-    const maxHeadersCount = arguments[7]?.server?.maxHeadersCount;
-    if (typeof maxHeadersCount === "number" && maxHeadersCount > 0 && rawHeaders.length > maxHeadersCount * 2) {
-      rawHeaders = ArrayPrototypeSlice.$call(rawHeaders, 0, maxHeadersCount * 2);
-    }
-    this.rawHeaders = rawHeaders;
-    this[kHeadersCount] = rawHeaders.length;
+    // arguments[3] carries no headers object and arguments[4] no rawHeaders
+    // on the native fast path anymore: the raw header bytes stay captured on
+    // the native handle and req.rawHeaders / req.headers are materialized by
+    // the rawHeaders accessor only when user code reads them.
+    this[kHeaderSource] = arguments[5];
     this[kHandle] = arguments[5];
     this[noBodySymbol] = !arguments[6];
     this[fakeSocketSymbol] = arguments[7];
@@ -202,20 +204,54 @@ ObjectDefineProperty(IncomingMessage.prototype, "aborted", {
   },
 });
 
+// Materializes on first read from the bytes captured on the native handle
+// (takeRawHeaders). Assignment (the llhttp client path, or user code)
+// short-circuits materialization through the setter.
+ObjectDefineProperty(IncomingMessage.prototype, "rawHeaders", {
+  __proto__: null,
+  // Node exposes rawHeaders as an enumerable own data property; a prototype
+  // accessor can at least stay visible to for-in.
+  enumerable: true,
+  get: function () {
+    let raw = this[kRawHeaders];
+    if (raw === null) {
+      const source = this[kHeaderSource];
+      let built = source != null ? source.takeRawHeaders() : undefined;
+      if (built === undefined) built = [];
+      // Node.js's parser keeps at most server.maxHeadersCount header pairs
+      // (parser.maxHeaderPairs); the native parser does not enforce it, so
+      // truncate here.
+      const maxHeadersCount = this[fakeSocketSymbol]?.server?.maxHeadersCount;
+      if (typeof maxHeadersCount === "number" && maxHeadersCount > 0 && built.length > maxHeadersCount * 2) {
+        built = ArrayPrototypeSlice.$call(built, 0, maxHeadersCount * 2);
+      }
+      raw = this[kRawHeaders] = built;
+      this[kHeadersCount] = built.length;
+    }
+    return raw;
+  },
+  set: function (value) {
+    this[kRawHeaders] = value;
+    this[kHeadersCount] = value ? value.length : 0;
+  },
+});
+
 ObjectDefineProperty(IncomingMessage.prototype, "headers", {
   __proto__: null,
   get: function () {
-    if (!this[kHeaders]) {
-      this[kHeaders] = {};
+    let dst = this[kHeaders];
+    if (!dst) {
+      dst = this[kHeaders] = {};
 
       const src = this.rawHeaders;
-      const dst = this[kHeaders];
+      const count = this[kHeadersCount];
+      const addHeaderLine = this._addHeaderLine;
 
-      for (let n = 0; n < this[kHeadersCount]; n += 2) {
-        this._addHeaderLine(src[n + 0], src[n + 1], dst);
+      for (let n = 0; n < count; n += 2) {
+        addHeaderLine.$call(this, src[n + 0], src[n + 1], dst);
       }
     }
-    return this[kHeaders];
+    return dst;
   },
   set: function (val) {
     this[kHeaders] = val;
@@ -644,4 +680,4 @@ function onError(self, error, cb) {
   }
 }
 
-export { IncomingMessage, readStart, readStop };
+export { IncomingMessage, kReqShouldKeepAlive, readStart, readStop };

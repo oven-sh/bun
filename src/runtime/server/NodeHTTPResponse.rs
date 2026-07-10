@@ -2288,7 +2288,9 @@ pub unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
     // SAFETY: see the function-level contract above.
     let response = unsafe { &*response };
     let bytes = unsafe { core::slice::from_raw_parts(data, length) };
-    response.raw_request_headers.with_mut(|v| v.append_slice(bytes));
+    response
+        .raw_request_headers
+        .with_mut(|v| v.append_slice(bytes));
 }
 
 /// # Safety

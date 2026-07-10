@@ -677,4 +677,4 @@ function onError(self, error, cb) {
   }
 }
 
-export { IncomingMessage, readStart, readStop, kReqShouldKeepAlive };
+export { IncomingMessage, kReqShouldKeepAlive, readStart, readStop };

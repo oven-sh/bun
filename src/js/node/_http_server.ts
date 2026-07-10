@@ -866,7 +866,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
-        handle.onabort = (socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket));
+        handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket);
         // start buffering data if any, the user will need to resume() or .on("data") to read it
         if (hasBody) {
           handle.pause();
@@ -2391,10 +2391,10 @@ function onResponseFinishHandleSocket(server, socket, res) {
     return;
   }
   const rawKeepAliveTimeout = server.keepAliveTimeout;
-  const keepAliveTimeout =
-    Number.isFinite(rawKeepAliveTimeout) && rawKeepAliveTimeout >= 0 ? rawKeepAliveTimeout : 0;
+  const keepAliveTimeout = Number.isFinite(rawKeepAliveTimeout) && rawKeepAliveTimeout >= 0 ? rawKeepAliveTimeout : 0;
   const rawKeepAliveBuffer = server.keepAliveTimeoutBuffer;
-  const keepAliveTimeoutBuffer = Number.isFinite(rawKeepAliveBuffer) && rawKeepAliveBuffer >= 0 ? rawKeepAliveBuffer : 1000;
+  const keepAliveTimeoutBuffer =
+    Number.isFinite(rawKeepAliveBuffer) && rawKeepAliveBuffer >= 0 ? rawKeepAliveBuffer : 1000;
   if (keepAliveTimeout) {
     // Extend the internal timeout by the configured buffer to reduce
     // the likelihood of ECONNRESET errors, like Node.js's resOnFinish.

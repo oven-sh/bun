@@ -441,10 +441,11 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 impl<T, const CAPACITY: usize> Drop for HiveArray<T, CAPACITY> {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: every non-deprecated entry point writes the slot before
-        // setting `used`; the deprecated `get()` family has no external
-        // callers, so by the time the pool itself is dropped every `used`
-        // slot is fully initialized.
+        // SAFETY: `alloc`/`get_init`/`emplace` set `used` and write the slot
+        // in one `&self` call, and `claim()` hands out a `HiveSlot<'_>` that
+        // borrows the pool (its Drop unsets the bit if never written), so by
+        // the time `&mut self` is obtainable every `used` slot is fully
+        // initialized. The deprecated `get()` family has no external callers.
         unsafe { self.drop_all() };
     }
 }

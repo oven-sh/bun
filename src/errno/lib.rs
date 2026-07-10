@@ -295,6 +295,15 @@ impl SystemErrno {
     }
 }
 
+/// Map a raw OS errno to `SystemErrno`. Unknown / out-of-range codes collapse
+/// to `EIO`. This is the migration target for the deleted
+/// `bun_core::errno_to_zig_err`; every caller's `Error` enum wraps the result
+/// via `Sys(#[from] SystemErrno)`.
+#[inline]
+pub fn from_errno(errno: i32) -> SystemErrno {
+    SystemErrno::init(errno as i64).unwrap_or(SystemErrno::EIO)
+}
+
 #[cfg(not(windows))]
 impl SystemErrno {
     // `i64` covers every concrete call site (errno-range values).

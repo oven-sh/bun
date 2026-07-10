@@ -105,6 +105,8 @@ pub enum Error {
     Hpack(#[from] crate::lshpack::HpackError),
     #[error(transparent)]
     Core(#[from] bun_core::Error),
+    #[error(transparent)]
+    Sys(#[from] bun_errno::SystemErrno),
 }
 
 impl Error {
@@ -162,6 +164,7 @@ impl Error {
             Self::Alloc(_) => "OutOfMemory",
             Self::Hpack(e) => <&'static str>::from(e),
             Self::Core(e) => e.name(),
+            Self::Sys(e) => <&'static str>::from(e),
         }
     }
 }

@@ -2984,14 +2984,6 @@ pub fn get_thread_count() -> u16 {
     })
 }
 
-// ── errno_to_zig_err ──────────────────────────────────────────────────────
-#[inline]
-pub fn errno_to_zig_err(errno: i32) -> crate::CrateError {
-    debug_assert!(errno != 0);
-    let _ = errno;
-    crate::CrateError::Unexpected
-}
-
 // ── time ──────────────────────────────────────────────────────────────────
 // Time-unit constants plus `{nano,milli,}timestamp()`. Callers `as`-cast at the
 // use-site (`NS_PER_S as i128`, `MS_PER_S as f64`, …). Every value fits in

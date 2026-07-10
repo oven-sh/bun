@@ -933,10 +933,6 @@ use core::ffi::{c_char, c_void};
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
-/// Re-exported here so callers
-/// that already depend on `bun_sys` (e.g. `bun_install` Windows paths) can
-/// write `bun_sys::errno_to_zig_err(..)` without also importing `bun_core`.
-pub use bun_core::errno_to_zig_err;
 pub use bun_core::{Fd, FdKind, FdNative, FdOptional, FileKind, Mode, Stdio, kind_from_mode};
 
 /// Anything that can hand out an [`Fd`] without giving up ownership: a raw

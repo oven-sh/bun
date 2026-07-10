@@ -1135,12 +1135,11 @@ impl<'a> SecurityScanSubprocess<'a> {
         let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
         // Use the translating overlay (`ReturnCodeExt::err_enum_e`) — the inherent
         // `ReturnCode::err_enum()` returns the raw |uv_code| (e.g. 4071 for
-        // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`, which would
-        // make `errno_to_zig_err` index the wrong table.
+        // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`.
         if let Some(e) = pipe_rc.err_enum_e() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
-            return Err(bun_core::errno_to_zig_err(e as i32).into());
+            return Err(bun_errno::from_errno(e as i32).into());
         }
         // Track ownership with optionals: None means the fd has been transferred
         // or closed, so the errdefer skips it. Prevents double-close on error paths

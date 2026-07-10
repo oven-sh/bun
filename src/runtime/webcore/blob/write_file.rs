@@ -247,7 +247,7 @@ impl WriteFile {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
         // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
         let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
-        this.errno = Some(bun_core::errno_to_zig_err(err.errno as i32).into());
+        this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         this.system_error = Some(err.to_system_error().into());
         this.task = WorkPoolTask {
             node: Default::default(),
@@ -363,7 +363,7 @@ impl WriteFile {
                         self.wait_for_writable();
                         return false;
                     } else {
-                        self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32).into());
+                        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
                         self.system_error = Some(err.to_system_error().into());
                         return false;
                     }

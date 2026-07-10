@@ -1,5 +1,13 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
+    #[error("FileNotFound")]
+    FileNotFound,
+    #[error("AccessDenied")]
+    AccessDenied,
+    #[error("NotDir")]
+    NotDir,
+    #[error("NameTooLong")]
+    NameTooLong,
     #[error("FileTooBig")]
     FileTooBig,
     #[error("SymLinkLoop")]
@@ -270,6 +278,10 @@ pub enum Error {
 impl Error {
     pub fn name(&self) -> &'static str {
         match self {
+            Self::FileNotFound => "FileNotFound",
+            Self::AccessDenied => "AccessDenied",
+            Self::NotDir => "NotDir",
+            Self::NameTooLong => "NameTooLong",
             Self::FileTooBig => "FileTooBig",
             Self::SymLinkLoop => "SymLinkLoop",
             Self::ProcessFdQuotaExceeded => "ProcessFdQuotaExceeded",

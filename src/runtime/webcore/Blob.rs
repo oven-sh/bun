@@ -4460,7 +4460,7 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
                     return Retry::Continue;
                 }
                 bun_sys::Result::Err(err2) => {
-                    this.set_errno_if_present(bun_core::errno_to_zig_err(err2.errno as i32).into());
+                    this.set_errno_if_present(bun_errno::from_errno(err2.errno as i32).into());
                     this.set_system_error(err.with_path(err_path).to_system_error());
                     this.set_opened_fd_if_present(Fd::INVALID);
                     return Retry::Fail;
@@ -7130,7 +7130,7 @@ pub trait FileOpener: Sized {
                             PathOrFileDescriptor::Path(p) => p.clone(),
                             PathOrFileDescriptor::Fd(_) => unreachable!(),
                         };
-                        self_.set_errno(bun_core::errno_to_zig_err(err_enum as i32).into());
+                        self_.set_errno(bun_errno::from_errno(err_enum as i32).into());
                         self_.set_system_error(
                             bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
                                 .with_path(path_string_2.slice())
@@ -7175,7 +7175,7 @@ pub trait FileOpener: Sized {
                 )
             };
             if let Some(errno) = rc.err_enum_e() {
-                self.set_errno(bun_core::errno_to_zig_err(errno as i32).into());
+                self.set_errno(bun_errno::from_errno(errno as i32).into());
                 self.set_system_error(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::open)
                         .with_path(path_string.slice())
@@ -7216,7 +7216,7 @@ pub trait FileOpener: Sized {
                                 Retry::No => {}
                             }
                         }
-                        self.set_errno(bun_core::errno_to_zig_err(err.errno as i32).into());
+                        self.set_errno(bun_errno::from_errno(err.errno as i32).into());
                         self.set_system_error(jsc::SysErrorJsc::to_system_error(
                             &err.with_path(path_string.slice()),
                         ));

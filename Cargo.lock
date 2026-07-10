@@ -836,6 +836,7 @@ dependencies = [
  "bun_dispatch",
  "bun_dns",
  "bun_dotenv",
+ "bun_errno",
  "bun_event_loop",
  "bun_http_types",
  "bun_io",

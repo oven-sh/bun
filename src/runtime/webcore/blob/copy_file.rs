@@ -239,13 +239,13 @@ impl<'a> CopyFile<'a> {
                         bun_sys::Result::Ok(result_fd) => result_fd,
                         bun_sys::Result::Err(errno) => {
                             self.system_error = Some(errno.to_system_error());
-                            return Err(bun_core::errno_to_zig_err(errno.errno as i32).into());
+                            return Err(bun_errno::from_errno(errno.errno as i32).into());
                         }
                     }
                 }
                 bun_sys::Result::Err(errno) => {
                     self.system_error = Some(errno.to_system_error());
-                    return Err(bun_core::errno_to_zig_err(errno.errno as i32).into());
+                    return Err(bun_errno::from_errno(errno.errno as i32).into());
                 }
             };
         }
@@ -273,7 +273,7 @@ impl<'a> CopyFile<'a> {
                             bun_sys::Result::Ok(result_fd) => self.destination_fd = result_fd,
                             bun_sys::Result::Err(errno) => {
                                 self.system_error = Some(errno.to_system_error());
-                                return Err(bun_core::errno_to_zig_err(errno.errno as i32).into());
+                                return Err(bun_errno::from_errno(errno.errno as i32).into());
                             }
                         }
                     }
@@ -285,7 +285,7 @@ impl<'a> CopyFile<'a> {
                                     self.source_fd.close();
                                     self.source_fd = Fd::INVALID;
                                 }
-                                return Err(bun_core::errno_to_zig_err(errno.errno as i32).into());
+                                return Err(bun_errno::from_errno(errno.errno as i32).into());
                             }
                             Retry::No => {}
                         }
@@ -300,7 +300,7 @@ impl<'a> CopyFile<'a> {
                                 .with_path(self.destination_file_store.pathlike.path().slice())
                                 .to_system_error(),
                         );
-                        return Err(bun_core::errno_to_zig_err(errno.errno as i32).into());
+                        return Err(bun_errno::from_errno(errno.errno as i32).into());
                     }
                 }
                 break;
@@ -353,7 +353,7 @@ impl<'a> CopyFile<'a> {
             ) {
                 bun_sys::Result::Err(err) => {
                     self.system_error = Some(err.to_system_error());
-                    return Err(bun_core::errno_to_zig_err(err.errno as i32).into());
+                    return Err(bun_errno::from_errno(err.errno as i32).into());
                 }
                 bun_sys::Result::Ok(()) => {
                     // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
@@ -428,7 +428,7 @@ impl<'a> CopyFile<'a> {
                     ) {
                         bun_sys::Result::Err(err) => {
                             self.system_error = Some(err.to_system_error());
-                            return Err(bun_core::errno_to_zig_err(err.errno as i32).into());
+                            return Err(bun_errno::from_errno(err.errno as i32).into());
                         }
                         bun_sys::Result::Ok(()) => {
                             // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
@@ -485,7 +485,7 @@ impl<'a> CopyFile<'a> {
                         ) {
                             bun_sys::Result::Err(err) => {
                                 self.system_error = Some(err.to_system_error());
-                                return Err(bun_core::errno_to_zig_err(err.errno as i32).into());
+                                return Err(bun_errno::from_errno(err.errno as i32).into());
                             }
                             bun_sys::Result::Ok(()) => {
                                 // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
@@ -509,7 +509,7 @@ impl<'a> CopyFile<'a> {
                         }
                         .to_system_error(),
                     );
-                    return Err(bun_core::errno_to_zig_err(bun_sys::E::EINVAL as i32).into());
+                    return Err(bun_errno::from_errno(bun_sys::E::EINVAL as i32).into());
                 }
                 errno => {
                     self.system_error = Some(
@@ -521,7 +521,7 @@ impl<'a> CopyFile<'a> {
                         }
                         .to_system_error(),
                     );
-                    return Err(bun_core::errno_to_zig_err(errno as i32).into());
+                    return Err(bun_errno::from_errno(errno as i32).into());
                 }
             }
 
@@ -567,14 +567,14 @@ impl<'a> CopyFile<'a> {
                         ) {
                             bun_sys::Result::Err(err) => {
                                 self.system_error = Some(err.to_system_error());
-                                return Err(bun_core::errno_to_zig_err(err.errno as i32).into());
+                                return Err(bun_errno::from_errno(err.errno as i32).into());
                             }
                             bun_sys::Result::Ok(()) => {}
                         }
                     }
                     _ => {
                         self.system_error = Some(errno.to_system_error());
-                        return Err(bun_core::errno_to_zig_err(errno.errno as i32).into());
+                        return Err(bun_errno::from_errno(errno.errno as i32).into());
                     }
                 }
             }
@@ -617,7 +617,7 @@ impl<'a> CopyFile<'a> {
                         Retry::No => {}
                     }
                     self.system_error = Some(errno.to_system_error());
-                    return Err(bun_core::errno_to_zig_err(errno.errno as i32).into());
+                    return Err(bun_errno::from_errno(errno.errno as i32).into());
                 }
                 bun_sys::Result::Ok(()) => {}
             }

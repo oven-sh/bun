@@ -188,7 +188,7 @@ impl Failure {
     #[inline]
     pub(crate) fn is_package_missing_from_cache(&self) -> bool {
         (self.err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-            || self.err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT))
+            || self.err == crate::Error::FileNotFound)
             && self.step == Step::OpeningCacheDir
     }
 }
@@ -2156,10 +2156,10 @@ impl<'a> PackageInstall<'a> {
         let realpath_err = |e: bun_sys::Error| -> crate::Error {
             use sys::E;
             match e.get_errno() {
-                E::ENOENT => crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
-                E::EACCES => crate::Error::Sys(bun_errno::SystemErrno::EACCES),
-                E::ENOTDIR => crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR),
-                E::ENAMETOOLONG => crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
+                E::ENOENT => crate::Error::FileNotFound,
+                E::EACCES => crate::Error::AccessDenied,
+                E::ENOTDIR => crate::Error::NotDir,
+                E::ENAMETOOLONG => crate::Error::NameTooLong,
                 E::ELOOP => crate::Error::SymLinkLoop,
                 E::ENOMEM => crate::Error::SystemResources,
                 _ => e.into(),
@@ -2269,7 +2269,7 @@ impl<'a> PackageInstall<'a> {
                     }
 
                     return InstallResult::fail(
-                        bun_sys::errno_to_zig_err(err.errno.into()).into(),
+                        bun_errno::from_errno(err.errno.into()).into(),
                         Step::LinkingDependency,
                         None,
                     );

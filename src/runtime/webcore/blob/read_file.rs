@@ -427,7 +427,7 @@ impl ReadFile {
 
     pub fn on_io_error(&mut self, err: &bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
-        self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32).into());
+        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         self.system_error = Some(err.to_system_error().into());
         self.task = WorkPoolTask {
             node: Default::default(),
@@ -544,7 +544,7 @@ impl ReadFile {
                             return true;
                         }
                         _ => {
-                            self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32).into());
+                            self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
                             self.system_error = Some(err.to_system_error().into());
                             if self.system_error.as_ref().unwrap().path.is_empty() {
                                 self.system_error.as_mut().unwrap().path =
@@ -673,7 +673,7 @@ impl ReadFile {
         let stat: Stat = match bun_sys::fstat(fd) {
             Ok(result) => result,
             Err(err) => {
-                self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32).into());
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
                 self.system_error = Some(err.to_system_error().into());
                 return;
             }
@@ -1176,7 +1176,7 @@ impl<'a> ReadFileUV<'a> {
             )
         };
         if let Some(errno) = rc.err_enum_e() {
-            self.errno = Some(bun_core::errno_to_zig_err(errno as i32).into());
+            self.errno = Some(bun_errno::from_errno(errno as i32).into());
             self.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
                     .to_system_error()
@@ -1197,7 +1197,7 @@ impl<'a> ReadFileUV<'a> {
         // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
         // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
         if let Some(errno) = this.req.result.err_enum_e() {
-            this.errno = Some(bun_core::errno_to_zig_err(errno as i32).into());
+            this.errno = Some(bun_errno::from_errno(errno as i32).into());
             this.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
                     .to_system_error()
@@ -1268,7 +1268,7 @@ impl<'a> ReadFileUV<'a> {
         }
         // Out of memory we can't read more than 4GB at a time (ULONG) on Windows
         if this.size as usize > bun_sys::windows::ULONG::MAX as usize {
-            this.errno = Some(bun_core::errno_to_zig_err(bun_sys::E::NOMEM as i32).into());
+            this.errno = Some(bun_errno::from_errno(bun_sys::E::NOMEM as i32).into());
             this.system_error = Some(
                 bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
                     .to_system_error()
@@ -1365,7 +1365,7 @@ impl<'a> ReadFileUV<'a> {
             };
             self.req.data = core::ptr::from_mut(self).cast::<c_void>();
             if let Some(errno) = res.err_enum_e() {
-                self.errno = Some(bun_core::errno_to_zig_err(errno as i32).into());
+                self.errno = Some(bun_errno::from_errno(errno as i32).into());
                 self.system_error = Some(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::read)
                         .to_system_error()
@@ -1392,7 +1392,7 @@ impl<'a> ReadFileUV<'a> {
         let result = this.req.result;
 
         if let Some(errno) = result.err_enum_e() {
-            this.errno = Some(bun_core::errno_to_zig_err(errno as i32).into());
+            this.errno = Some(bun_errno::from_errno(errno as i32).into());
             this.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::read)
                     .to_system_error()

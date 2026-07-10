@@ -6199,10 +6199,7 @@ impl<'a> Resolver<'a> {
             info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
 
             if let Some(parent_package_json) = parent_.package_json() {
-                // https://github.com/oven-sh/bun/issues/229
-                if !parent_package_json.name.is_empty() || self.care_about_bin_folder {
-                    info.enclosing_package_json = Some(parent_package_json);
-                }
+                info.enclosing_package_json = Some(parent_package_json);
 
                 if parent_package_json.dependencies.map.count() > 0
                     || parent_package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID
@@ -6342,9 +6339,7 @@ impl<'a> Resolver<'a> {
                             info.package_json_for_browser_field = Some(pkg);
                         }
 
-                        if !pkg.name.is_empty() || self.care_about_bin_folder {
-                            info.enclosing_package_json = Some(pkg);
-                        }
+                        info.enclosing_package_json = Some(pkg);
 
                         if pkg.dependencies.map.count() > 0
                             || pkg.package_manager_package_id != Install::INVALID_PACKAGE_ID

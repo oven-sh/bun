@@ -2213,20 +2213,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         name,
                     ) {
                     Ok(r) => r,
-                    Err(err) => {
-                        if err == crate::Error::MacroFailed {
-                            if p.log().msgs.len() == start_error_count {
-                                p.log().add_error(
-                                    Some(p.source),
-                                    expr.loc,
-                                    b"macro threw exception",
-                                );
-                            }
-                        } else {
-                            p.log().add_error_fmt(
+                    Err(_) => {
+                        if p.log().msgs.len() == start_error_count {
+                            p.log().add_error(
                                 Some(p.source),
                                 expr.loc,
-                                format_args!("\"{}\" error in macro", err.name()),
+                                b"macro threw exception",
                             );
                         }
                         return;

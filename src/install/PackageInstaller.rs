@@ -1990,7 +1990,11 @@ impl<'a> PackageInstaller<'a> {
                             bstr::BStr::new(alias.slice(string_buf!())),
                         );
                         self.summary.fail += 1;
-                    } else if cause.err == crate::Error::Sys(bun_errno::SystemErrno::EACCES) {
+                    } else if matches!(
+                        cause.err,
+                        crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                            | crate::Error::AccessDenied
+                    ) {
                         // there are two states this can happen
                         // - Access Denied because node_modules/ is unwritable
                         // - Access Denied because this specific package is unwritable

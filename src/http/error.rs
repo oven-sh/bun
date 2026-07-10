@@ -97,8 +97,8 @@ pub enum Error {
     FailedToOpenSocket,
     #[error("UnsupportedProxyProtocol")]
     UnsupportedProxyProtocol,
-    #[error("{0}")]
-    Cert(&'static str),
+    #[error(transparent)]
+    Cert(#[from] CertError),
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
@@ -107,6 +107,84 @@ pub enum Error {
     Core(#[from] bun_core::Error),
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
+    #[error(transparent)]
+    Zlib(bun_zlib::ZlibError),
+    #[error(transparent)]
+    Brotli(bun_brotli::Error),
+    #[error(transparent)]
+    Zstd(bun_zstd::ZstdError),
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
+pub enum CertError {
+    #[error("OK")] OK,
+    #[error("UNABLE_TO_GET_ISSUER_CERT")] UNABLE_TO_GET_ISSUER_CERT,
+    #[error("UNABLE_TO_GET_CRL")] UNABLE_TO_GET_CRL,
+    #[error("UNABLE_TO_DECRYPT_CERT_SIGNATURE")] UNABLE_TO_DECRYPT_CERT_SIGNATURE,
+    #[error("UNABLE_TO_DECRYPT_CRL_SIGNATURE")] UNABLE_TO_DECRYPT_CRL_SIGNATURE,
+    #[error("UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY")] UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY,
+    #[error("CERT_SIGNATURE_FAILURE")] CERT_SIGNATURE_FAILURE,
+    #[error("CRL_SIGNATURE_FAILURE")] CRL_SIGNATURE_FAILURE,
+    #[error("CERT_NOT_YET_VALID")] CERT_NOT_YET_VALID,
+    #[error("CERT_HAS_EXPIRED")] CERT_HAS_EXPIRED,
+    #[error("CRL_NOT_YET_VALID")] CRL_NOT_YET_VALID,
+    #[error("CRL_HAS_EXPIRED")] CRL_HAS_EXPIRED,
+    #[error("ERROR_IN_CERT_NOT_BEFORE_FIELD")] ERROR_IN_CERT_NOT_BEFORE_FIELD,
+    #[error("ERROR_IN_CERT_NOT_AFTER_FIELD")] ERROR_IN_CERT_NOT_AFTER_FIELD,
+    #[error("ERROR_IN_CRL_LAST_UPDATE_FIELD")] ERROR_IN_CRL_LAST_UPDATE_FIELD,
+    #[error("ERROR_IN_CRL_NEXT_UPDATE_FIELD")] ERROR_IN_CRL_NEXT_UPDATE_FIELD,
+    #[error("OUT_OF_MEM")] OUT_OF_MEM,
+    #[error("DEPTH_ZERO_SELF_SIGNED_CERT")] DEPTH_ZERO_SELF_SIGNED_CERT,
+    #[error("SELF_SIGNED_CERT_IN_CHAIN")] SELF_SIGNED_CERT_IN_CHAIN,
+    #[error("UNABLE_TO_GET_ISSUER_CERT_LOCALLY")] UNABLE_TO_GET_ISSUER_CERT_LOCALLY,
+    #[error("UNABLE_TO_VERIFY_LEAF_SIGNATURE")] UNABLE_TO_VERIFY_LEAF_SIGNATURE,
+    #[error("CERT_CHAIN_TOO_LONG")] CERT_CHAIN_TOO_LONG,
+    #[error("CERT_REVOKED")] CERT_REVOKED,
+    #[error("INVALID_CA")] INVALID_CA,
+    #[error("PATH_LENGTH_EXCEEDED")] PATH_LENGTH_EXCEEDED,
+    #[error("INVALID_PURPOSE")] INVALID_PURPOSE,
+    #[error("CERT_UNTRUSTED")] CERT_UNTRUSTED,
+    #[error("CERT_REJECTED")] CERT_REJECTED,
+    #[error("SUBJECT_ISSUER_MISMATCH")] SUBJECT_ISSUER_MISMATCH,
+    #[error("AKID_SKID_MISMATCH")] AKID_SKID_MISMATCH,
+    #[error("AKID_ISSUER_SERIAL_MISMATCH")] AKID_ISSUER_SERIAL_MISMATCH,
+    #[error("KEYUSAGE_NO_CERTSIGN")] KEYUSAGE_NO_CERTSIGN,
+    #[error("UNABLE_TO_GET_CRL_ISSUER")] UNABLE_TO_GET_CRL_ISSUER,
+    #[error("UNHANDLED_CRITICAL_EXTENSION")] UNHANDLED_CRITICAL_EXTENSION,
+    #[error("KEYUSAGE_NO_CRL_SIGN")] KEYUSAGE_NO_CRL_SIGN,
+    #[error("UNHANDLED_CRITICAL_CRL_EXTENSION")] UNHANDLED_CRITICAL_CRL_EXTENSION,
+    #[error("INVALID_NON_CA")] INVALID_NON_CA,
+    #[error("PROXY_PATH_LENGTH_EXCEEDED")] PROXY_PATH_LENGTH_EXCEEDED,
+    #[error("KEYUSAGE_NO_DIGITAL_SIGNATURE")] KEYUSAGE_NO_DIGITAL_SIGNATURE,
+    #[error("PROXY_CERTIFICATES_NOT_ALLOWED")] PROXY_CERTIFICATES_NOT_ALLOWED,
+    #[error("INVALID_EXTENSION")] INVALID_EXTENSION,
+    #[error("INVALID_POLICY_EXTENSION")] INVALID_POLICY_EXTENSION,
+    #[error("NO_EXPLICIT_POLICY")] NO_EXPLICIT_POLICY,
+    #[error("DIFFERENT_CRL_SCOPE")] DIFFERENT_CRL_SCOPE,
+    #[error("UNSUPPORTED_EXTENSION_FEATURE")] UNSUPPORTED_EXTENSION_FEATURE,
+    #[error("UNNESTED_RESOURCE")] UNNESTED_RESOURCE,
+    #[error("PERMITTED_VIOLATION")] PERMITTED_VIOLATION,
+    #[error("EXCLUDED_VIOLATION")] EXCLUDED_VIOLATION,
+    #[error("SUBTREE_MINMAX")] SUBTREE_MINMAX,
+    #[error("APPLICATION_VERIFICATION")] APPLICATION_VERIFICATION,
+    #[error("UNSUPPORTED_CONSTRAINT_TYPE")] UNSUPPORTED_CONSTRAINT_TYPE,
+    #[error("UNSUPPORTED_CONSTRAINT_SYNTAX")] UNSUPPORTED_CONSTRAINT_SYNTAX,
+    #[error("UNSUPPORTED_NAME_SYNTAX")] UNSUPPORTED_NAME_SYNTAX,
+    #[error("CRL_PATH_VALIDATION_ERROR")] CRL_PATH_VALIDATION_ERROR,
+    #[error("SUITE_B_INVALID_VERSION")] SUITE_B_INVALID_VERSION,
+    #[error("SUITE_B_INVALID_ALGORITHM")] SUITE_B_INVALID_ALGORITHM,
+    #[error("SUITE_B_INVALID_CURVE")] SUITE_B_INVALID_CURVE,
+    #[error("SUITE_B_INVALID_SIGNATURE_ALGORITHM")] SUITE_B_INVALID_SIGNATURE_ALGORITHM,
+    #[error("SUITE_B_LOS_NOT_ALLOWED")] SUITE_B_LOS_NOT_ALLOWED,
+    #[error("SUITE_B_CANNOT_SIGN_P_384_WITH_P_256")] SUITE_B_CANNOT_SIGN_P_384_WITH_P_256,
+    #[error("HOSTNAME_MISMATCH")] HOSTNAME_MISMATCH,
+    #[error("EMAIL_MISMATCH")] EMAIL_MISMATCH,
+    #[error("IP_ADDRESS_MISMATCH")] IP_ADDRESS_MISMATCH,
+    #[error("INVALID_CALL")] INVALID_CALL,
+    #[error("STORE_LOOKUP")] STORE_LOOKUP,
+    #[error("NAME_CONSTRAINTS_WITHOUT_SANS")] NAME_CONSTRAINTS_WITHOUT_SANS,
+    #[error("UNKNOWN_CERTIFICATE_VERIFICATION_ERROR")] UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
 }
 
 impl Error {
@@ -160,11 +238,14 @@ impl Error {
             Self::HTTP3ContentLengthMismatch => "HTTP3ContentLengthMismatch",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
-            Self::Cert(name) => name,
+            Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Hpack(e) => <&'static str>::from(e),
             Self::Core(e) => e.name(),
             Self::Sys(e) => <&'static str>::from(e),
+            Self::Zlib(e) => <&'static str>::from(e),
+            Self::Brotli(e) => e.name(),
+            Self::Zstd(e) => <&'static str>::from(e),
         }
     }
 }
@@ -179,7 +260,7 @@ impl From<bun_zlib::ZlibError> for Error {
     fn from(e: bun_zlib::ZlibError) -> Self {
         match e {
             bun_zlib::ZlibError::ShortRead => Error::ShortRead,
-            _ => Error::CompressionFailed,
+            _ => Error::Zlib(e),
         }
     }
 }
@@ -188,7 +269,7 @@ impl From<bun_brotli::Error> for Error {
     fn from(e: bun_brotli::Error) -> Self {
         match e {
             bun_brotli::Error::ShortRead => Error::ShortRead,
-            _ => Error::CompressionFailed,
+            _ => Error::Brotli(e),
         }
     }
 }
@@ -197,7 +278,7 @@ impl From<bun_zstd::ZstdError> for Error {
     fn from(e: bun_zstd::ZstdError) -> Self {
         match e {
             bun_zstd::ZstdError::ShortRead => Error::ShortRead,
-            _ => Error::CompressionFailed,
+            _ => Error::Zstd(e),
         }
     }
 }

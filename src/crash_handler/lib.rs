@@ -1497,7 +1497,7 @@ mod draft {
                 );
                 show_trace = true;
             }
-        } else if name == "ENOENT" {
+        } else if matches!(name, "ENOENT" | "FileNotFound") {
             Output::err(
                 "ENOENT",
                 "Bun could not find a file, and the code that produces this error is missing a better error.",

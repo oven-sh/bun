@@ -831,17 +831,14 @@ impl BlobExt for Blob {
 
         let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
             Ok(v) => v,
-            Err(crate::Error::EndOfStream)
-            | Err(crate::Error::TooSmall)
-            | Err(crate::Error::InvalidValue) => {
+            Err(e) if e.name() == "OutOfMemory" => {
+                return Err(global_this.throw_out_of_memory());
+            }
+            Err(_) => {
                 return Err(
                     global_this.throw(format_args!("Blob.onStructuredCloneDeserialize failed"))
                 );
             }
-            Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
-                return Err(global_this.throw_out_of_memory());
-            }
-            Err(_) => unreachable!(),
         };
 
         // Advance the caller's cursor by the number of bytes consumed.

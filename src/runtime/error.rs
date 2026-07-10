@@ -851,7 +851,7 @@ impl From<Error> for bun_crash_handler::Error {
             Error::Unexpected => C::Unexpected,
             Error::Clap(bun_clap::Error::InvalidArgument) => C::InvalidArgument,
             Error::Bunfig(_) => C::InvalidBunfig,
-            other => C::Named(other.name()),
+            _ => C::Unexpected,
         }
     }
 }

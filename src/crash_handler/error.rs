@@ -30,8 +30,6 @@ pub enum Error {
     InvalidDebugInfo,
     #[error("EndOfFile")]
     EndOfFile,
-    #[error("{0}")]
-    Named(&'static str),
 
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
@@ -67,7 +65,6 @@ impl Error {
             Self::DumpStackTrace => "DumpStackTrace",
             Self::InvalidDebugInfo => "InvalidDebugInfo",
             Self::EndOfFile => "EndOfFile",
-            Self::Named(s) => s,
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),

@@ -173,7 +173,7 @@ pub enum Result {
     Err(&'static ZStr),
 }
 
-#[derive(strum::IntoStaticStr, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZstdError {
     InvalidZstdData,
     DecompressionFailed,

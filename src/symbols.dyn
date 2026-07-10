@@ -1,6 +1,3 @@
 {
-    global:
-        Bun__dlopen;
-    local:
-        *;
+    Bun__dlopen;
 };

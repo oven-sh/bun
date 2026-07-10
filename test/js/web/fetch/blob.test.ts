@@ -638,7 +638,7 @@ describe("Blob.prototype.stream() is a byte stream (supports BYOB readers)", () 
           const r = new Blob([new Uint8Array([1, 2, 3])]).stream().getReader({ mode: "byob" });
           const err = await r.read(new Uint32Array(4)).then(() => null, e => e);
           console.log(err instanceof TypeError ? "rejected" : "resolved");
-          await Bun.sleep(10);
+          await r.closed.catch(() => {});
         `,
       ],
       env: bunEnv,

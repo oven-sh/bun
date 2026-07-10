@@ -4155,11 +4155,32 @@ unsafe fn transpile_file(
         }
         // regex /\.[jt]s$/
         if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
-            // Use the package.json module type if it exists.
-            break 'brk lr
-                .package_json
-                .map(|pkg| pkg.module_type)
-                .unwrap_or(ModuleType::Unknown);
+            // Node refuses `.js` under a malformed/non-string-`"type"`
+            // package.json; falling back to content-sniffing here would
+            // silently change module semantics vs Node.
+            if let Some(pkg) = lr.package_json {
+                if pkg.invalid {
+                    let js = global_ref
+                        .err(
+                            bun_jsc::ErrCode::ERR_INVALID_PACKAGE_CONFIG,
+                            format_args!(
+                                "Invalid package config {}.",
+                                bstr::BStr::new(pkg.source.path.text)
+                            ),
+                        )
+                        .to_js();
+                    // SAFETY: per fn contract — `ret` is a valid out-param.
+                    unsafe {
+                        *ret = ErrorableResolvedSource::err(
+                            bun_core::err!("JSErrorObject"),
+                            js,
+                        );
+                    }
+                    return ptr::null_mut();
+                }
+                break 'brk pkg.module_type;
+            }
+            break 'brk ModuleType::Unknown;
         }
         // For JSX/TSX and other extensions, let the file contents decide.
         ModuleType::Unknown

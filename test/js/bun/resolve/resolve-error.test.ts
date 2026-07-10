@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 describe("ResolveMessage", () => {
   it("position object does not segfault", async () => {
@@ -180,5 +180,143 @@ describe.concurrent("long import path overflow", () => {
     using dir = makeDir();
     // Walk-up loop indexed into a fixed [256]DirEntryResolveQueueItem
     await run(String(dir), `\`/\${"a/".repeat(300)}x\``);
+  });
+});
+
+// Node.js refuses to load any module whose format must be determined by an
+// invalid package.json (malformed JSON, non-object root, or non-string "type"),
+// throwing ERR_INVALID_PACKAGE_CONFIG. Bun previously swallowed the parse
+// error and silently fell through to content-sniffing or the parent scope.
+describe.concurrent("ERR_INVALID_PACKAGE_CONFIG", () => {
+  const invalidCases = [
+    ["malformed JSON", "{\n"],
+    ["non-object root", "42"],
+    ["non-string type", `{"name":"p","type":42}`],
+  ] as const;
+
+  function makeDir(pkgJson: string, extra: Record<string, string> = {}) {
+    return tempDir("invalid-pkg-config", {
+      "package.json": `{"name":"root"}`,
+      "pkg/package.json": pkgJson,
+      "pkg/t.js": `export const x = 7;\nconsole.log("loaded");\n`,
+      "p.mjs": `import * as N from "./pkg/t.js"; console.log("ns", Object.keys(N));`,
+      "p.cjs": `const N = require("./pkg/t.js"); console.log("ns", Object.keys(N));`,
+      "dyn.mjs": `const N = await import("./pkg/t.js"); console.log("ns", Object.keys(N));`,
+      ...extra,
+    });
+  }
+
+  async function run(dir: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  describe.each(invalidCases)("%s", (_name, pkgJson) => {
+    it("static import throws ERR_INVALID_PACKAGE_CONFIG", async () => {
+      using dir = makeDir(pkgJson);
+      const { stdout, stderr, exitCode } = await run(String(dir), ["p.mjs"]);
+      expect(stdout).not.toContain("loaded");
+      expect(stderr).toContain("ERR_INVALID_PACKAGE_CONFIG");
+      expect(stderr).toContain("Invalid package config");
+      expect(stderr).toContain("package.json");
+      expect(exitCode).toBe(1);
+    });
+
+    it("entrypoint throws ERR_INVALID_PACKAGE_CONFIG", async () => {
+      using dir = makeDir(pkgJson);
+      const { stdout, stderr, exitCode } = await run(String(dir), ["pkg/t.js"]);
+      expect(stdout).not.toContain("loaded");
+      expect(stderr).toContain("ERR_INVALID_PACKAGE_CONFIG");
+      expect(exitCode).toBe(1);
+    });
+
+    it("require() throws ERR_INVALID_PACKAGE_CONFIG", async () => {
+      using dir = makeDir(pkgJson);
+      const { stdout, stderr, exitCode } = await run(String(dir), ["p.cjs"]);
+      expect(stdout).not.toContain("loaded");
+      expect(stderr).toContain("ERR_INVALID_PACKAGE_CONFIG");
+      expect(exitCode).toBe(1);
+    });
+
+    it("dynamic import() rejects with ERR_INVALID_PACKAGE_CONFIG", async () => {
+      using dir = makeDir(pkgJson);
+      const { stdout, stderr, exitCode } = await run(String(dir), ["dyn.mjs"]);
+      expect(stdout).not.toContain("loaded");
+      expect(stderr).toContain("ERR_INVALID_PACKAGE_CONFIG");
+      expect(exitCode).toBe(1);
+    });
+
+    it(".mjs under the invalid scope loads without error (format from extension)", async () => {
+      using dir = makeDir(pkgJson, {
+        "pkg/t.mjs": `export const x = 7;\nconsole.log("loaded");\n`,
+        "p.mjs": `import * as N from "./pkg/t.mjs"; console.log("ns", Object.keys(N));`,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), ["p.mjs"]);
+      expect(normalizeBunSnapshot(stdout, dir)).toBe("loaded\nns [ \"x\" ]");
+      expect(stderr).not.toContain("ERR_INVALID_PACKAGE_CONFIG");
+      expect(exitCode).toBe(0);
+    });
+
+    it(".cjs under the invalid scope loads without error (format from extension)", async () => {
+      using dir = makeDir(pkgJson, {
+        "pkg/t.cjs": `module.exports.x = 7;\nconsole.log("loaded");\n`,
+        "p.cjs": `const N = require("./pkg/t.cjs"); console.log("ns", Object.keys(N));`,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), ["p.cjs"]);
+      expect(normalizeBunSnapshot(stdout, dir)).toBe("loaded\nns [ \"x\" ]");
+      expect(stderr).not.toContain("ERR_INVALID_PACKAGE_CONFIG");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it("error is catchable and has .code", async () => {
+    using dir = makeDir("{\n", {
+      "catch.mjs": `
+        try {
+          await import("./pkg/t.js");
+          console.log("FAIL: did not throw");
+        } catch (e) {
+          console.log(JSON.stringify({ code: e.code, hasMessage: e.message.includes("package.json") }));
+        }
+      `,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["catch.mjs"]);
+    expect(JSON.parse(stdout.trim())).toEqual({ code: "ERR_INVALID_PACKAGE_CONFIG", hasMessage: true });
+    expect(exitCode).toBe(0);
+  });
+
+  it("unknown string type value does NOT error (matches Node)", async () => {
+    using dir = makeDir(`{"name":"p","type":"nonsense"}`);
+    const { stdout, exitCode } = await run(String(dir), ["p.mjs"]);
+    expect(stdout).toContain("loaded");
+    expect(exitCode).toBe(0);
+  });
+
+  it("invalid package.json in a child dir poisons that scope, not the parent", async () => {
+    using dir = tempDir("invalid-pkg-config-nested", {
+      "package.json": `{"name":"root","type":"module"}`,
+      "ok.js": `console.log("parent-ok");`,
+      "sub/package.json": "{\n",
+      "sub/t.js": `console.log("child");`,
+    });
+    // Parent scope still works.
+    {
+      const { stdout, exitCode } = await run(String(dir), ["ok.js"]);
+      expect(stdout.trim()).toBe("parent-ok");
+      expect(exitCode).toBe(0);
+    }
+    // Child scope fails.
+    {
+      const { stderr, exitCode } = await run(String(dir), ["sub/t.js"]);
+      expect(stderr).toContain("ERR_INVALID_PACKAGE_CONFIG");
+      expect(exitCode).toBe(1);
+    }
   });
 });

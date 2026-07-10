@@ -679,6 +679,71 @@ it("throws a validation error when a route parameter name is duplicated", () => 
   }).toThrow("Support for duplicate route parameter names is not yet implemented.");
 });
 
+describe("rejects route patterns the router can never match", () => {
+  const wildcardMsg = "Wildcard '*' is only supported as the final path segment";
+  const queryMsg = "Route patterns cannot contain '?'";
+
+  describe.each([
+    ["function", () => () => new Response("x")],
+    ["per-method object", () => ({ GET: () => new Response("x") })],
+    ["static Response", () => new Response("x")],
+    ["negative (false)", () => false],
+  ] as const)("with %s value", (_, makeValue) => {
+    it.each([
+      ["/a/*/b", wildcardMsg],
+      ["/*/a", wildcardMsg],
+      ["/*/*", wildcardMsg],
+      ["/a/*x/b", wildcardMsg],
+      ["/a/*/", wildcardMsg],
+      ["/q?x", queryMsg],
+      ["/a/b?", queryMsg],
+      ["/?", queryMsg],
+    ])("rejects %s", (pattern, msg) => {
+      expect(() => {
+        Bun.serve({ port: 0, routes: { [pattern]: makeValue() as any }, fetch: () => new Response("f") });
+      }).toThrow(msg);
+    });
+  });
+
+  it("rejects on server.reload() as well", async () => {
+    await using server = Bun.serve({ port: 0, routes: { "/ok": () => new Response("ok") } });
+    expect(() => {
+      server.reload({ routes: { "/a/*/b": () => new Response("x") } });
+    }).toThrow(wildcardMsg);
+    expect(() => {
+      server.reload({ routes: { "/q?x": () => new Response("x") } });
+    }).toThrow(queryMsg);
+  });
+
+  it("still accepts a trailing wildcard segment", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/*": () => new Response("root"),
+        "/a/*": () => new Response("a"),
+        "/a/b/*": () => new Response("ab"),
+      },
+      fetch: () => new Response("fallback"),
+    });
+    const get = (p: string) => fetch(new URL(p, server.url)).then(r => r.text());
+    expect(await get("/a/x/y")).toBe("a");
+    expect(await get("/a/b/c")).toBe("ab");
+    expect(await get("/a/b/c/d/e")).toBe("ab");
+    expect(await get("/z")).toBe("root");
+  });
+
+  it("still accepts '*' inside a literal segment", async () => {
+    // '*' not at the start of a segment is an ordinary path character and matches literally.
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/a*b/c": () => new Response("lit") },
+      fetch: () => new Response("fallback"),
+    });
+    expect(await fetch(new URL("/a*b/c", server.url)).then(r => r.text())).toBe("lit");
+    expect(await fetch(new URL("/axb/c", server.url)).then(r => r.text())).toBe("fallback");
+  });
+});
+
 it("fetch() is optional when routes are specified", async () => {
   await using server = Bun.serve({
     port: 0,

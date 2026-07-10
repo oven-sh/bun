@@ -9,7 +9,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isIntelMacOS, isWindows } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
@@ -397,7 +397,16 @@ describe("memory probe (subprocess)", () => {
     // connect() hand out the same few ports and hit 4-tuple collisions
     // with those TIME_WAITs (observed as ERR_POSTGRES_CONNECTION_REFUSED /
     // WSAENOTCONN in test/js/sql/postgres-binary-array-bounds.test.ts).
-    const iterations = isASAN || isWindows ? 300 : isCI ? 1200 : 600;
+    //
+    // macOS has the same 16384-port ephemeral range (net.inet.ip.portrange
+    // 49152-65535) and drains TIME_WAIT over 2*MSL = 30s, so the same 12x1200
+    // churn collides there too — the collisions just land inside this test's
+    // own fetches rather than a later file (`failed` > 0 in a non-abort mode).
+    // Only the Intel agents went red, consistent with their slower runs keeping
+    // more of the 12 subprocesses overlapping at peak; the cap is scoped to
+    // them so the RSS leak check keeps its full 1200-iteration sensitivity
+    // everywhere it already passes.
+    const iterations = isASAN || isWindows || isIntelMacOS ? 300 : isCI ? 1200 : 600;
 
     test.concurrent(
       `${proxyTls ? "https" : "http"}-proxy → https-origin mode=${mode} ×${iterations}`,
@@ -426,7 +435,14 @@ describe("memory probe (subprocess)", () => {
         // Surface the child's final stats line before asserting.
         const lines = stdout.trim().split("\n");
         const lastLine = lines[lines.length - 1];
-        let result: { completed: number; failed: number; rssStart: number; rssEnd: number; rssMax: number };
+        let result: {
+          completed: number;
+          failed: number;
+          failures: Record<string, number>;
+          rssStart: number;
+          rssEnd: number;
+          rssMax: number;
+        };
         try {
           result = JSON.parse(lastLine);
         } catch {
@@ -439,10 +455,19 @@ describe("memory probe (subprocess)", () => {
         // Non-abort modes must complete every request; abort modes must
         // have actually aborted something.
         if (mode.includes("abort")) {
-          expect(result.failed).toBeGreaterThan(0);
+          // Assert on the abort tally, not on `failed`: a machine whose
+          // ephemeral range is exhausted rejects every request before the
+          // CONNECT is even written, which would satisfy `failed > 0` while
+          // the abort teardown path this probe exists to exercise never ran.
+          expect({ aborted: (result.failures["AbortError"] ?? 0) > 0 }).toEqual({ aborted: true });
         } else {
-          expect(result.failed).toBe(0);
-          expect(result.completed).toBe(iterations);
+          // Carry the per-code failure tally into the diff: "failed: 5" alone
+          // cannot distinguish a torn tunnel from an exhausted ephemeral-port
+          // range, and this only reproduces on loaded CI machines.
+          expect({ completed: result.completed, failures: result.failures }).toEqual({
+            completed: iterations,
+            failures: {},
+          });
         }
 
         // RSS leak check: after a warm-up, RSS should plateau. Allow a

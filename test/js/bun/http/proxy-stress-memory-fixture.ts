@@ -3,8 +3,9 @@
  * requests through a local CONNECT proxy to a local HTTPS origin, under
  * one of several modes (complete, abort-immediate, abort-after-connect,
  * concurrent-32, concurrent-32-abort, redirect), tracking RSS across the
- * run. Emits a single JSON summary line on stdout and exits 0 on clean
- * completion.
+ * run. Emits a single JSON summary line on stdout — including a `failures`
+ * tally keyed by error code, so a nonzero `failed` says why — and exits 0 on
+ * clean completion.
  *
  * Usage: bun proxy-stress-memory-fixture.ts <http|https> <mode> <iterations>
  */
@@ -99,6 +100,21 @@ let failed = 0;
 let rssStart = 0;
 let rssMax = 0;
 
+// Why requests failed, keyed by `code` (or name, when a request rejects
+// without one). A bare `failed: 5` tells the reader nothing about whether the
+// run hit an abort, a refused connect, or a torn tunnel, so carry the reasons
+// into the summary line the test asserts on.
+const failures: Record<string, number> = {};
+
+function recordFailure(e: unknown): void {
+  failed++;
+  const err = e as { code?: unknown; name?: unknown } | undefined;
+  // `code` must be a string: a DOMException carries the legacy numeric code
+  // (AbortError is 20), which would key the tally by a meaningless integer.
+  const key = (typeof err?.code === "string" && err.code) || (typeof err?.name === "string" && err.name) || "unknown";
+  failures[key] = (failures[key] ?? 0) + 1;
+}
+
 const rss = () => process.memoryUsage.rss();
 
 async function one(i: number): Promise<void> {
@@ -120,8 +136,8 @@ async function one(i: number): Promise<void> {
     });
     await res.arrayBuffer();
     completed++;
-  } catch {
-    failed++;
+  } catch (e) {
+    recordFailure(e);
   }
 }
 
@@ -149,8 +165,8 @@ async function run() {
               await r.arrayBuffer();
               completed++;
             })
-            .catch(() => {
-              failed++;
+            .catch(e => {
+              recordFailure(e);
             });
           queueMicrotask(() => ac.abort());
           tasks.push(p);
@@ -179,7 +195,7 @@ async function run() {
 
   Bun.gc(true);
   const rssEnd = rss();
-  console.log(JSON.stringify({ completed, failed, rssStart, rssEnd, rssMax }));
+  console.log(JSON.stringify({ completed, failed, failures, rssStart, rssEnd, rssMax }));
 }
 
 await run();

@@ -983,10 +983,18 @@ describe.concurrent("bun-install", () => {
         expect(auth).toBe("Bearer BARE");
       });
 
-      // `//host:username` and `//host/:_password` are two config paths, neither of
-      // which is a complete credential. npm composes nothing from them.
+      // `//host:username` and `//host/:_password` are two config keys, neither of which
+      // is a complete credential. npm composes nothing from them, and neither may Bun —
+      // including when the registry sits at the host root, so both keys are its own.
       it("a username and a _password split across the two host-root spellings authenticate with neither", async () => {
         const auth = await probeAuthorization(host => `//${host}:username=gandalf\n//${host}/:_password=${password}`);
+        expect(auth).toBe(null);
+      });
+
+      it("the same split, with the registry at the host root, still authenticates with neither", async () => {
+        const auth = await probeAuthorization(host => `//${host}:username=gandalf\n//${host}/:_password=${password}`, {
+          path: "/",
+        });
         expect(auth).toBe(null);
       });
     });
@@ -1195,6 +1203,43 @@ describe.concurrent("bun-install", () => {
       it("leaves a plain colon in the registry path alone when no credential is configured", async () => {
         const seen = await probeEmbedded("/a:b/c/", () => "");
         expect(seen).toEqual({ path: "/a:b/c/@myorg%2fpkg", auth: null });
+      });
+
+      // The scan anchors on the `:<name>=` marker, not on any `:`, so a colon inside the
+      // value neither ends it nor splits it.
+      it("strips an embedded _authToken whose value contains a colon", async () => {
+        const seen = await probeEmbedded("/api/:_authToken=aa:bb", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer aa:bb" });
+      });
+
+      // An embedded `_password` is used verbatim, unlike an `.npmrc` one, which is base64.
+      it("strips an embedded username and _password whose value contains a colon", async () => {
+        const seen = await probeEmbedded("/api/:username=u/:_password=p:q", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${Buffer.from("u:p:q").toString("base64")}` });
+      });
+
+      // `_authToken` ends what is read, not what is stripped: a segment to its left is
+      // still a secret, and leaving it behind puts it in the request path.
+      it("strips a _password written to the left of the _authToken it loses to", async () => {
+        const seen = await probeEmbedded("/api/:_password=cA==:_authToken=T", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+      });
+
+      it("strips a username written to the left of the _authToken it loses to", async () => {
+        const seen = await probeEmbedded("/api/:username=u:_authToken=T", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+      });
+
+      // The rightmost terminal marker is the one that is read; a second one to its left
+      // is stripped but never recorded, so it cannot outrank the first.
+      it("reads the rightmost terminal marker, not the leftmost", async () => {
+        const seen = await probeEmbedded("/api/:_authToken=T:_auth=WDpZ", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Basic WDpZ" });
+      });
+
+      it("reads the leftmost of two duplicate non-terminal markers", async () => {
+        const seen = await probeEmbedded("/api/:username=a:username=b:_password=p", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${Buffer.from("a:p").toString("base64")}` });
       });
     });
 

@@ -324,6 +324,19 @@ pub mod registry {
         needs_normalize: bool,
     }
 
+    /// The rightmost `:<name>=` credential marker in `pathname`, as `(colon, name_len)`.
+    /// Anchoring on the marker rather than on any `:` keeps a colon inside the value from
+    /// ending the scan, and leaves a colon that merely belongs to the path alone.
+    fn last_embedded_marker(pathname: &[u8]) -> Option<(usize, usize)> {
+        const MARKERS: [&[u8]; 4] = [b":_authToken=", b":_auth=", b":username=", b":_password="];
+        MARKERS
+            .iter()
+            .filter_map(|marker| {
+                bun_core::last_index_of(pathname, marker).map(|i| (i, marker.len() - 2))
+            })
+            .max_by_key(|&(i, _)| i)
+    }
+
     /// Strip trailing yarn-style credential segments out of `url.pathname`. Runs before
     /// the registry's own credentials are consulted: the pathname must be sanitized
     /// whether or not the credential is adopted, or the secret ships in the request path.
@@ -334,37 +347,30 @@ pub mod registry {
         let mut pathname: &'a [u8] = url.pathname;
         let mut needs_to_check_slash = true;
 
-        // Right to left: the credentials are appended after the path. A segment that is
-        // not one of them ends the scan — a bare `:` belongs to the path and must not be
-        // truncated away.
-        while let Some(colon) = strings::last_index_of_char(pathname, b':') {
-            let segment = &pathname[colon + 1..];
-
-            let Some(eql_i) = strings::index_of_char(segment, b'=') else {
-                break;
-            };
-            let value = &segment[eql_i as usize + 1..];
-            let name = &segment[..eql_i as usize];
+        // Right to left: the credentials are appended after the path. A terminal marker
+        // ends what is *read*, never what is stripped — a segment left of it is still a
+        // secret, and leaving it behind puts it in the request path.
+        while let Some((colon, name_len)) = last_embedded_marker(pathname) {
+            let name = &pathname[colon + 1..colon + 1 + name_len];
+            let value = &pathname[colon + name_len + 2..];
 
             let field = match name {
                 b"_authToken" => &mut out.token,
                 b"_auth" => &mut out.auth,
                 b"username" => &mut out.username,
                 b"_password" => &mut out.password,
-                _ => break,
+                _ => unreachable!(),
             };
-            *field = Some(value);
+            if !out.terminal {
+                *field = Some(value);
+                out.terminal = matches!(name, b"_authToken" | b"_auth");
+            }
 
             pathname = &pathname[..colon];
             needs_to_check_slash = false;
             out.needs_normalize = true;
             if pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
                 pathname = &pathname[..pathname.len() - 1];
-            }
-
-            if matches!(name, b"_authToken" | b"_auth") {
-                out.terminal = true;
-                break;
             }
         }
 

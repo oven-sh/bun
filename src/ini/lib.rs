@@ -127,9 +127,11 @@ impl ConfigOpt {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct ConfigItem {
-    /// npm's registry key: the raw text between `//` and `:<optname>=`, so
-    /// `//127.0.0.1:1234/api/:_authToken=T` yields `127.0.0.1:1234/api/`.
+    /// The raw text between `//` and `:<optname>=`, exactly as written. Diagnostics
+    /// quote it back, so it is never normalized; match on `key` instead.
     pub registry_url: Box<[u8]>,
+    /// `registry_url` with its authority lowercased: npm's registry key.
+    pub key: Box<[u8]>,
     pub optname: ConfigOpt,
     pub value: Box<[u8]>,
     pub loc: Loc,
@@ -143,6 +145,7 @@ impl ConfigItem {
     pub fn dupe(&self) -> OOM<Option<ConfigItem>> {
         Ok(Some(ConfigItem {
             registry_url: Box::<[u8]>::from(&*self.registry_url),
+            key: Box::<[u8]>::from(&*self.key),
             optname: self.optname,
             value: Box::<[u8]>::from(&*self.value),
             loc: self.loc,
@@ -1190,6 +1193,7 @@ mod draft {
                                     if let Some(value) = value_expr.as_utf8_string_literal() {
                                         return Some(IniOption::Some(ConfigItem {
                                             registry_url: Box::<[u8]>::from(url_part),
+                                            key: key_with_lowercased_host(url_part),
                                             value: Box::<[u8]>::from(value),
                                             optname: opt,
                                             loc: keyexpr.loc,
@@ -1384,6 +1388,34 @@ mod draft {
         }
     }
 
+    /// The authority npm keys on: it builds the key from a WHATWG URL, whose `host` is
+    /// lowercased and drops a default port. `bun_url` does neither.
+    fn registry_key_parts(url: &URL<'_>) -> (Box<[u8]>, Box<[u8]>) {
+        let mut protocol = url.protocol.to_vec();
+        protocol.make_ascii_lowercase();
+        let default_port: &[u8] = match &protocol[..] {
+            b"https" | b"wss" => b"443",
+            b"http" | b"ws" => b"80",
+            _ => b"",
+        };
+        let host = if !default_port.is_empty() && url.port == default_port {
+            url.hostname
+        } else {
+            url.host
+        };
+        let mut host = host.to_vec();
+        host.make_ascii_lowercase();
+        (host.into_boxed_slice(), Box::from(url.pathname))
+    }
+
+    /// Hosts are case-insensitive, paths are not, so only the authority is folded.
+    fn key_with_lowercased_host(key: &[u8]) -> Box<[u8]> {
+        let end = bun_core::strings::index_of_char(key, b'/').map_or(key.len(), |i| i as usize);
+        let mut out = key.to_vec();
+        out[..end].make_ascii_lowercase();
+        out.into_boxed_slice()
+    }
+
     /// The registry's own config key, `//<host><pathname>/`. Also npm's walk start:
     /// `regFetch` appends `/<pkg>` to the registry URL and the first iteration of the
     /// walk strips it right back off.
@@ -1407,7 +1439,7 @@ mod draft {
     fn lookup(configs: &[ConfigItem], key: &[u8], opt: ConfigOpt) -> Option<usize> {
         configs
             .iter()
-            .rposition(|conf_item| conf_item.optname == opt && *conf_item.registry_url == *key)
+            .rposition(|conf_item| conf_item.optname == opt && *conf_item.key == *key)
     }
 
     /// `lookup` plus npm's `opts[k]` truthiness test: an empty value supplies nothing.
@@ -1471,12 +1503,19 @@ mod draft {
                 items.extend(lookup_truthy(configs, &key, ConfigOpt::Username));
                 items.extend(lookup_truthy(configs, &key, ConfigOpt::_Password));
             }
-            // Bun-only second credential layer: a lone `username`/`_password` layers
-            // over `bunfig.toml`'s. Own-key only — an ancestor's stray `username=` must
-            // not rebind a deeper registry's stored password.
+            // Bun-only second credential layer: a lone `username`/`_password` layers over
+            // `bunfig.toml`'s. One key, and only the registry's own — neither an
+            // ancestor nor the other spelling may supply the half this one is missing.
             None => {
-                items.extend(lookup_own(configs, &own_key, ConfigOpt::Username));
-                items.extend(lookup_own(configs, &own_key, ConfigOpt::_Password));
+                for key in [&own_key[..], &own_key[..own_key.len() - 1]] {
+                    let username = lookup_truthy(configs, key, ConfigOpt::Username);
+                    let password = lookup_truthy(configs, key, ConfigOpt::_Password);
+                    if username.is_some() || password.is_some() {
+                        items.extend(username);
+                        items.extend(password);
+                        break;
+                    }
+                }
             }
         }
 
@@ -1505,8 +1544,7 @@ mod draft {
                 Some(dr) => &dr.url,
                 None => bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes(),
             };
-            let url = URL::parse(url_bytes);
-            (Box::from(url.host), Box::from(url.pathname))
+            registry_key_parts(&URL::parse(url_bytes))
         };
 
         let mut registry_map = install.scoped.take().unwrap_or_default();
@@ -1527,13 +1565,10 @@ mod draft {
             }
             let names_a_registry = names_registry(
                 &registry_own_key(&default_host, &default_pathname),
-                &conf_item.registry_url,
+                &conf_item.key,
             ) || scope_urls.iter().any(|url_bytes| {
-                let url = URL::parse(url_bytes);
-                names_registry(
-                    &registry_own_key(url.host, url.pathname),
-                    &conf_item.registry_url,
-                )
+                let (host, pathname) = registry_key_parts(&URL::parse(url_bytes));
+                names_registry(&registry_own_key(&host, &pathname), &conf_item.key)
             });
             if names_a_registry {
                 log.add_error_opts(
@@ -1572,8 +1607,8 @@ mod draft {
         }
 
         for (url_bytes, v) in scope_urls.iter().zip(registry_map.scopes.values_mut()) {
-            let url = URL::parse(url_bytes);
-            for &i in &credential_items(configs, url.host, url.pathname) {
+            let (host, pathname) = registry_key_parts(&URL::parse(url_bytes));
+            for &i in &credential_items(configs, &host, &pathname) {
                 let conf_item = &configs[i];
                 apply_conf_item(v, conf_item, log, &sources[conf_item.source_idx as usize])?;
             }

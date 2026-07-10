@@ -770,4 +770,45 @@ describe("scoped registry routing", () => {
     // The request must have been attempted against scopeA's own registry.
     expect(reqsA.some(r => r.path.includes("probe"))).toBe(true);
   });
+
+  // npm keys on a WHATWG URL's `host`, which is lowercased and drops a default port.
+  // The config key's path stays case-sensitive; only its authority is folded.
+  describe("the config key's authority is normalized like a WHATWG URL", () => {
+    const token = (ini: string) => loadNpmrc(ini).default_registry_token;
+
+    it("matches a lowercase key against an uppercase registry host", () => {
+      expect(token(`registry=https://Registry.Example.COM/api/\n//registry.example.com/:_authToken=T\n`)).toBe("T");
+    });
+
+    it("matches an uppercase key against an uppercase registry host", () => {
+      expect(token(`registry=https://Registry.Example.COM/api/\n//Registry.Example.COM/:_authToken=T\n`)).toBe("T");
+    });
+
+    it("keeps the key's path case-sensitive", () => {
+      expect(token(`registry=https://example.com/API/\n//example.com/api/:_authToken=T\n`)).toBe("");
+    });
+
+    it("drops a default https port from the registry host", () => {
+      expect(token(`registry=https://example.com:443/api/\n//example.com/:_authToken=T\n`)).toBe("T");
+    });
+
+    it("drops a default http port from the registry host", () => {
+      expect(token(`registry=http://example.com:80/api/\n//example.com/:_authToken=T\n`)).toBe("T");
+    });
+
+    it("keeps a non-default port in the registry host", () => {
+      expect(token(`registry=https://example.com:8443/api/\n//example.com:8443/:_authToken=T\n`)).toBe("T");
+      expect(token(`registry=https://example.com:8443/api/\n//example.com/:_authToken=T\n`)).toBe("");
+    });
+
+    it("drops a default port from an uppercase scheme too", () => {
+      expect(token(`registry=HTTPS://example.com:443/api/\n//example.com/:_authToken=T\n`)).toBe("T");
+    });
+
+    // npm's key never spells out a default port, so neither does ours: a key written
+    // as `//host:443/` matches nothing. Released Bun matched it.
+    it("does not match a key that spells out the default port", () => {
+      expect(token(`registry=https://example.com:443/api/\n//example.com:443/:_authToken=T\n`)).toBe("");
+    });
+  });
 });

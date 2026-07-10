@@ -126,11 +126,74 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let name_static = E::Str::new(name);
 
+        let can_track_dynamic_import_member = identifier_opts.assign_target()
+            == js_ast::AssignTarget::None
+            && !identifier_opts.is_delete_target();
+
         // Loop + match with mutable scrutinee (a restartable switch).
         let mut sw_data = target.data;
         'sw: loop {
             match sw_data {
+                js_ast::ExprData::EAwait(aw) => {
+                    // `(await import("str")).foo` — route the namespace into the
+                    // EIdentifier arm so the existing import-item machinery
+                    // generates an `E::ImportIdentifier` and tree-shaking applies.
+                    if let js_ast::ExprData::EImport(im) = aw.value.data {
+                        if im.namespace_ref.is_valid() && can_track_dynamic_import_member {
+                            if p.options.code_splitting {
+                                // Split mode: track the alias only; keep the
+                                // expression as-is so the chunk loads lazily.
+                                p.import_items_for_namespace
+                                    .get_mut(&im.namespace_ref)
+                                    .unwrap()
+                                    .put(
+                                        name,
+                                        LocRef {
+                                            loc: name_loc,
+                                            ref_: bun_ast::Ref::NONE,
+                                        },
+                                    )
+                                    .expect("oom");
+                                p.ignore_usage(im.namespace_ref);
+                            } else {
+                                sw_data = js_ast::ExprData::EIdentifier(E::Identifier {
+                                    ref_: im.namespace_ref,
+                                });
+                                continue 'sw;
+                            }
+                        }
+                    }
+                }
                 js_ast::ExprData::EIdentifier(id) => {
+                    // Dynamic-import namespace local (`const ns = await import(...)`,
+                    // `.then(ns => ...)`, `{...rest}`):
+                    // - assign/delete target → leave intact so the namespace use
+                    //   stays counted (avoids the "Cannot assign to import"
+                    //   build error the import-item arm below would emit; real
+                    //   `import * as` / unwrapped-require refs are not in this
+                    //   map and keep the error).
+                    // - track-only → record the alias so the dynamic chunk can
+                    //   drop unreferenced exports, leave the access intact.
+                    // - inline-mode → fall through to the import-item arm.
+                    if let Some(&track_only) = p.dynamic_import_namespace_locals.get(&id.ref_) {
+                        if !can_track_dynamic_import_member {
+                            break 'sw;
+                        }
+                        if track_only {
+                            if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
+                                map.put(
+                                    name,
+                                    LocRef {
+                                        loc: name_loc,
+                                        ref_: bun_ast::Ref::NONE,
+                                    },
+                                )
+                                .expect("oom");
+                                p.ignore_usage(id.ref_);
+                            }
+                            break 'sw;
+                        }
+                    }
                     // Rewrite property accesses on explicit namespace imports as an identifier.
                     // This lets us replace them easily in the printer to rebind them to
                     // something else without paying the cost of a whole-tree traversal during

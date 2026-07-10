@@ -620,6 +620,11 @@ pub(crate) const LOC_MODULE_SCOPE: bun_ast::Loc = bun_ast::Loc { start: -100 };
 pub struct DeferredImportNamespace {
     pub namespace: LocRef,
     pub import_record_id: u32,
+    /// Scope the namespace binding lives in. Used by
+    /// `imports_to_convert_from_dynamic_import` to bail when a direct
+    /// `eval()` can observe the binding by name. Unused by
+    /// `imports_to_convert_from_require`.
+    pub scope: Option<bun_ast::StoreRef<bun_ast::Scope>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

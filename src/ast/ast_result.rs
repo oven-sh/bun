@@ -74,6 +74,11 @@ pub struct Ast<'a> {
     pub named_imports: NamedImports,
     pub named_exports: NamedExports,
     pub export_star_import_records: AstVec<u32>,
+    /// `import_record_index → aliases`. An entry means every use of that
+    /// `import()` call's result was a tracked property access / destructuring
+    /// of exactly these names; absence means the namespace escaped (keep all
+    /// exports).
+    pub dynamic_import_aliases: DynamicImportAliases,
 
     pub top_level_symbols_to_parts: TopLevelSymbolToParts,
 
@@ -129,6 +134,7 @@ impl<'a> Ast<'a> {
             named_imports: Default::default(),
             named_exports: Default::default(),
             export_star_import_records: AstAlloc::vec(),
+            dynamic_import_aliases: Default::default(),
             top_level_symbols_to_parts: Default::default(),
             commonjs_named_exports: Default::default(),
             redirect_import_record_index: None,
@@ -165,6 +171,8 @@ impl Default for CommonJSNamedExport {
 pub type CommonJSNamedExports = StringArrayHashMap<CommonJSNamedExport, StringContext, AstAlloc>;
 
 pub type NamedImports = ArrayHashMap<Ref, NamedImport, AutoContext, AstAlloc>;
+pub type DynamicImportAliases =
+    ArrayHashMap<u32, crate::StoreSlice<crate::StoreStr>, AutoContext, AstAlloc>;
 pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>;
 pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
 pub type TsEnumsMap =

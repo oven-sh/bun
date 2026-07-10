@@ -159,7 +159,11 @@ console.log(url, disposed);`,
     // of that closure as `var` + assignment; `using` must be exempt from that
     // hoist or disposal semantics are lost.
     using dir = tempDir("using-esm-wrap", {
+      // `Object.keys(mod)` keeps the namespace observed as a whole so the
+      // bundler emits the `__esm` wrapper this test exercises (a fully-tracked
+      // dynamic import would otherwise be hoisted to a static import).
       "entry.js": `const mod = await import("./lazy.js");
+Object.keys(mod);
 console.log("result:", mod.result);
 `,
       "lazy.js": `using handle = { val: 42, [Symbol.dispose]() { console.log("disposed"); } };

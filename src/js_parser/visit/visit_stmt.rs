@@ -1134,11 +1134,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
 
         // visit_decls returns the surviving decl count; truncate `data.decls.len` to it.
-        let was_const = data.kind == S::Kind::KConst;
         let new_len = if !(data.is_export && p.options.features.replace_exports.entries.len() > 0) {
-            p.visit_decls::<false>(data.decls.slice_mut(), was_const)
+            p.visit_decls::<false>(data.decls.slice_mut(), data.kind, data.is_export)
         } else {
-            p.visit_decls::<true>(data.decls.slice_mut(), was_const)
+            p.visit_decls::<true>(data.decls.slice_mut(), data.kind, data.is_export)
         };
         // Drop the whole statement when every decl was
         // eliminated; otherwise we'd emit an empty `var;`/`let;`/`const;`.

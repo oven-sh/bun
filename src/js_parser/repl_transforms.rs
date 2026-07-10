@@ -268,6 +268,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             expr: str_expr,
                             options: Expr::EMPTY,
                             import_record_index: u32::MAX,
+                            namespace_ref: bun_ast::Ref::NONE,
                         },
                         stmt.loc,
                     );

@@ -2340,7 +2340,14 @@ impl<'a> LinkerContext<'a> {
                 Ref::NONE
             },
             is_wrapper_async: flags.is_async_or_has_async_dependency,
-            wrapper_ref: self.graph.ast.items_wrapper_ref()[source_index as usize],
+            // `wrap == None` means no wrapper definition is emitted for this
+            // source (reachable for a self-dynamic-import under splitting), so
+            // the printer must not be handed a wrapper symbol to call.
+            wrapper_ref: if flags.wrap != WrapKind::None {
+                self.graph.ast.items_wrapper_ref()[source_index as usize]
+            } else {
+                Ref::NONE
+            },
 
             was_unwrapped_require: was_unwrapped_require
                 && self.graph.ast.items_flags()[source_index as usize]
@@ -2805,7 +2812,11 @@ impl<'a> LinkerContext<'a> {
                 let import_index = ctx.parts[source_index as usize].as_slice()[part_index]
                     .import_record_indices[ii];
                 let record = &ctx.import_records[source_index as usize][import_index as usize];
-                if record.kind != ImportKind::Stmt {
+                if record.kind != ImportKind::Stmt
+                    && !record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::TREE_SHAKEN_DYNAMIC_IMPORT)
+                {
                     continue;
                 }
                 let record_source_index = record.source_index;

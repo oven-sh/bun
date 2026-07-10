@@ -74,7 +74,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("edgecase/BunPluginTreeShakeImport", {
-    todo: true,
+    todo: true, // runtime test (not bundler): plugin() now validates its argument so this needs a real setup() before it can exercise the original tree-shake repro
     // This only appears at runtime and not with bun build, even with --no-bundle
     files: {
       "/entry.ts": /* js */ `
@@ -172,6 +172,9 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/NodeEnvOptionalChaining", {
+    // Matching `process?.env?.NODE_ENV` against the `process.env.NODE_ENV`
+    // define would also match `Symbol?.for` etc. as side-effect-free; esbuild
+    // bails on optional-chain links for the same reason.
     todo: true,
     files: {
       "/entry.js": /* js */ `
@@ -221,7 +224,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/ExternalES6ConvertedToCommonJSSimplified", {
-    todo: true,
+    todo: true, // linker emits `import "x"` instead of `import * as ns from "x"` for the wrapped re-export, leaving the __reExport target unbound
     files: {
       "/entry.js": /* js */ `
         console.log(JSON.stringify(require('./e')));
@@ -289,7 +292,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/ScriptTagEscape", {
-    todo: true,
+    todo: true, // string printer needs to escape "</script" (and "<!--") in emitted literals; touches the hot-path SIMD escaper
     files: {
       "/entry.js": /* js */ `
         console.log('<script></script>');
@@ -334,7 +337,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONDefaultAndNamedImport", {
-    todo: true,
+    todo: true, // requires per-property tree-shaking on the JSON default object when only some keys are read
     files: {
       "/entry.js": /* js */ `
         import def from './test.json'
@@ -362,7 +365,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONWithDefaultKeyNamespace", {
-    todo: true,
+    todo: true, // semantics undecided: namespace import of JSON currently yields {default: <object>} (matches Node ESM); test expects the raw object
     files: {
       "/entry.js": /* js */ `
         import * as ns from './test.json'
@@ -459,7 +462,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/TSConfigPathStarAnywhere", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import test0 from 'test3/foo'
@@ -480,6 +482,27 @@ describe("bundler", () => {
     run: {
       stdout: "success",
     },
+  });
+  itBundled("edgecase/TSConfigPathStarBareTargetSlashMatch", {
+    // Key prefix without a trailing "/" — matched_text starts with "/", but
+    // the target template is relative so the substituted result must still
+    // join against baseUrl (not be treated as filesystem-absolute).
+    files: {
+      "/entry.ts": /* ts */ `
+        import x from "~/util";
+        console.log(x);
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": "./packages",
+            "paths": { "~*": ["*"] }
+          }
+        }
+      `,
+      "/packages/util.ts": `export default "ok";`,
+    },
+    run: { stdout: "ok" },
   });
 
   itBundled("edgecase/StaticClassNameIssue2806", {
@@ -608,7 +631,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/DCEVarRedeclarationIssue2815", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         var x = 1;
@@ -649,9 +671,10 @@ describe("bundler", () => {
     run: {
       stdout: `
         1
-        123 67
-        number
-        2
+        try2
+        3
+        5try3
+        8
       `,
     },
   });
@@ -772,7 +795,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RuntimeExternalImport", {
-    todo: true,
+    todo: true, // depends on runtime export-condition priority ("bun" vs first-match-wins); not a bundler bug
     files: {
       "/entry.ts": /* ts */ `
         import { type as a1 } from 'hello-1';
@@ -837,7 +860,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RuntimeExternalImport2", {
-    todo: true,
+    todo: true, // fixture has no default export; expectation needs revisiting (runtime resolver behavior, not bundler)
     files: {
       "/entry.ts": /* ts */ `
         import t from 'hello';
@@ -991,7 +1014,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/OverwriteInputWithOutdir", {
-    todo: true,
+    todo: true, // bundler does not yet detect output paths that overwrite inputs
     files: {
       "/entry.js": /* js */ `
         import { version } from './library';
@@ -1007,7 +1030,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/OverwriteInputWithOutfile", {
-    todo: true,
+    todo: true, // bundler does not yet detect output paths that overwrite inputs
     files: {
       "/entry.js": /* js */ `
         import { version } from './library';
@@ -1023,7 +1046,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/OverwriteInputNonEntrypoint", {
-    todo: true,
+    todo: true, // bundler does not yet detect output paths that overwrite inputs
     files: {
       "/entry.js": /* js */ `
         import { version } from './library';

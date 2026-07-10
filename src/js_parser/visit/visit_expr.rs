@@ -1411,6 +1411,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     has_catch: p.then_catch_chain.has_catch || p.then_catch_chain.has_multiple_args,
                     has_multiple_args: false,
                 };
+            } else if e_.name == b"finally" {
+                p.then_catch_chain = ThenCatchChain {
+                    next_target: e_.target.data,
+                    has_catch: p.then_catch_chain.has_catch,
+                    has_multiple_args: false,
+                };
             }
         }
 
@@ -1932,6 +1938,103 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             _ => {}
+        }
+
+        // `import("str").then(<fn>)` — record which exports the callback
+        // observes so a split chunk can drop the rest. The call itself is
+        // left untouched (lazy load preserved); inline-mode hoisting is
+        // handled for the `await` shapes only.
+        'dyn_import_then: {
+            if !p.options.bundle {
+                break 'dyn_import_then;
+            }
+            let Data::EDot(dot) = e_.target.data else {
+                break 'dyn_import_then;
+            };
+            if dot.name.slice() != b"then" {
+                break 'dyn_import_then;
+            }
+            let Data::EImport(im) = dot.target.data else {
+                break 'dyn_import_then;
+            };
+            if !im.namespace_ref.is_valid() {
+                break 'dyn_import_then;
+            }
+            let args = e_.args.slice_mut();
+            if args.is_empty() || args.len() > 2 {
+                break 'dyn_import_then;
+            }
+            // `.then(fn).catch(err)` / `.then(fn, err)` — a rejection handler
+            // is an explicit signal the import may fail; hoisting would make
+            // it dead, so force track-only. Split-mode narrowing is still
+            // sound (the rejection handler never observes the namespace).
+            let has_error_handler = args.len() == 2
+                || p.import_records.items()[im.import_record_index as usize]
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+            let inline = !p.options.code_splitting && !has_error_handler;
+            // Only arrows are safe: a `function(m){…}` body can reach the
+            // namespace via `arguments[0]` without ever referencing `m`, which
+            // would be tracked as zero exports observed and over-tree-shake.
+            let (fn_args, has_rest_arg) = match args[0].data {
+                Data::EArrow(arrow) => (arrow.args.slice_mut(), arrow.has_rest_arg),
+                _ => break 'dyn_import_then,
+            };
+            // `(...ns) => …` binds `ns` to `[namespace]`, not the namespace.
+            if has_rest_arg {
+                break 'dyn_import_then;
+            }
+            match fn_args.first_mut() {
+                None => {
+                    // `.then(() => …)` — no exports observed.
+                    p.ignore_usage(im.namespace_ref);
+                }
+                Some(first_param) => {
+                    if first_param.default.is_some() {
+                        break 'dyn_import_then;
+                    }
+                    match first_param.binding.data {
+                        js_ast::binding::Data::BObject(obj) => {
+                            let Some(keep_decl) = p.try_track_dynamic_import_destructure(
+                                im.namespace_ref,
+                                im.import_record_index,
+                                obj.properties(),
+                                inline,
+                            ) else {
+                                break 'dyn_import_then;
+                            };
+                            p.ignore_usage(im.namespace_ref);
+                            if inline && !keep_decl {
+                                // The body's references to the destructured
+                                // locals will rewrite to `E::ImportIdentifier`
+                                // (they were marked `is_import_item`). Replace
+                                // the destructuring pattern with a dead temp
+                                // so `Promise.resolve().then(_ => …)` doesn't
+                                // throw on `undefined`.
+                                let temp = p.generate_temp_ref(None);
+                                first_param.binding = p.b(
+                                    bun_ast::B::Identifier { r#ref: temp },
+                                    first_param.binding.loc,
+                                );
+                            }
+                        }
+                        js_ast::binding::Data::BIdentifier(id) => {
+                            // `.then(ns => …)` — register `ns` as a namespace
+                            // so `ns.foo` inside the body is recorded. The
+                            // body is visited *after* this block so the
+                            // registration is observed there.
+                            p.register_dynamic_import_namespace_local(
+                                id.r#ref,
+                                first_param.binding.loc,
+                                im.import_record_index,
+                                !inline,
+                            );
+                            p.ignore_usage(im.namespace_ref);
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
 
         let is_macro_ref: bool = if Self::ALLOW_MACROS {

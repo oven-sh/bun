@@ -30,14 +30,14 @@ pub struct ImportRecord {
     // &'static [u8] as a placeholder.
     pub original_path: &'static [u8],
 
-    /// Pack all boolean flags into 2 bytes to reduce padding overhead.
+    /// Pack all boolean flags into 4 bytes to reduce padding overhead.
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     pub flags: Flags,
 }
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
-    pub struct Flags: u16 {
+    pub struct Flags: u32 {
         /// True for the following cases:
         ///
         ///   try { require('x') } catch { handle }
@@ -100,6 +100,13 @@ bitflags::bitflags! {
         /// imported module until a property on the namespace object is
         /// accessed. Requires `CONTAINS_IMPORT_STAR`.
         const PHASE_DEFER = 1 << 15;
+
+        /// `import("str")` whose result was fully tracked (every consumer of
+        /// the namespace was a property access / simple destructure). The
+        /// referenced aliases are recorded in `dynamic_import_aliases`; the
+        /// linker treats this like a static import for wrapping purposes so
+        /// the importee tree-shakes instead of being CJS/ESM-wrapped.
+        const TREE_SHAKEN_DYNAMIC_IMPORT = 1 << 16;
     }
 }
 

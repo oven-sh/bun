@@ -115,6 +115,39 @@ pub mod js_meta {
     pub type ProbablyTypescriptType = ArrayHashMap<Ref, (), AutoContext, AstAlloc>;
     pub type SortedAndFilteredExportAliases = AstVec<Box<[u8], AstAlloc>>;
     pub type CjsExportCopies = AstVec<Ref>;
+    /// Union of export aliases observed across every `import()` that targets
+    /// this file. `None` is the default before any importer is seen; `All`
+    /// means at least one importer captured the full namespace (sticky), so
+    /// the dynamic-import chunk must keep every export.
+    #[derive(Default)]
+    pub enum DynamicImportReferencedAliases {
+        #[default]
+        None,
+        Partial(StringArrayHashMap<(), StringContext, AstAlloc>),
+        All,
+    }
+    impl DynamicImportReferencedAliases {
+        pub fn merge_all(&mut self) {
+            *self = Self::All;
+        }
+        pub fn merge_partial(&mut self, aliases: &[bun_ast::StoreStr]) {
+            match self {
+                Self::All => {}
+                Self::None => {
+                    let mut set = StringArrayHashMap::<(), StringContext, AstAlloc>::default();
+                    for a in aliases {
+                        bun_core::handle_oom(set.put(a.slice(), ()));
+                    }
+                    *self = Self::Partial(set);
+                }
+                Self::Partial(set) => {
+                    for a in aliases {
+                        bun_core::handle_oom(set.put(a.slice(), ()));
+                    }
+                }
+            }
+        }
+    }
     pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
     #[derive(Clone, Copy, Default)]
@@ -139,6 +172,7 @@ pub mod js_meta {
         pub cjs_export_copies: CjsExportCopies,
         pub wrapper_part_index: Index,
         pub entry_point_part_index: Index,
+        pub dynamic_import_referenced_aliases: DynamicImportReferencedAliases,
         pub flags: Flags,
     }
 
@@ -154,6 +188,7 @@ pub mod js_meta {
                 cjs_export_copies: AstAlloc::vec(),
                 wrapper_part_index: Index::default(),
                 entry_point_part_index: Index::default(),
+                dynamic_import_referenced_aliases: DynamicImportReferencedAliases::default(),
                 flags: Flags::default(),
             }
         }
@@ -170,6 +205,7 @@ pub mod js_meta {
             cjs_export_copies: CjsExportCopies,
             wrapper_part_index: Index,
             entry_point_part_index: Index,
+            dynamic_import_referenced_aliases: DynamicImportReferencedAliases,
             flags: Flags,
         }
     }

@@ -127,6 +127,10 @@ pub fn scan_imports_and_exports(
         meta.sorted_and_filtered_export_aliases;
     let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
     let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
+    let dynamic_import_aliases: *mut [bun_ast::ast_result::DynamicImportAliases] =
+        ast.dynamic_import_aliases;
+    let dyn_ref_aliases: *mut [js_meta::DynamicImportReferencedAliases] =
+        meta.dynamic_import_referenced_aliases;
 
     {
         // Step 1: Figure out what modules must be CommonJS
@@ -165,7 +169,11 @@ pub fn scan_imports_and_exports(
                 continue;
             }
 
-            for record in col_ref!(import_records_list)[id].as_slice() {
+            for (import_record_index, record) in col_ref!(import_records_list)[id]
+                .as_slice()
+                .iter()
+                .enumerate()
+            {
                 if !record.source_index.is_valid() {
                     continue;
                 }
@@ -177,6 +185,43 @@ pub fn scan_imports_and_exports(
                     continue;
                 }
                 let other_kind = col_ref!(exports_kind)[other_file];
+
+                if this.graph.code_splitting && record.kind != ImportKind::Dynamic {
+                    // A file reachable non-dynamically must keep every export
+                    // the static side may need. For named ESM imports the
+                    // needed set is exactly the importer's aliases for this
+                    // record, so merge those instead of the whole namespace.
+                    match record.kind {
+                        ImportKind::Stmt
+                            if !record
+                                .flags
+                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                                && !col_ref!(export_star_import_records)[id]
+                                    .contains(&(import_record_index as u32)) =>
+                        {
+                            let mut aliases: Vec<bun_ast::StoreStr> = Vec::new();
+                            let mut all = false;
+                            for ni in col_ref!(named_imports)[id].values() {
+                                if ni.import_record_index != import_record_index as u32 {
+                                    continue;
+                                }
+                                if ni.alias_is_star {
+                                    all = true;
+                                    break;
+                                }
+                                if let Some(alias) = ni.alias {
+                                    aliases.push(alias);
+                                }
+                            }
+                            if all {
+                                col!(dyn_ref_aliases)[other_file].merge_all();
+                            } else if !aliases.is_empty() {
+                                col!(dyn_ref_aliases)[other_file].merge_partial(&aliases);
+                            }
+                        }
+                        _ => col!(dyn_ref_aliases)[other_file].merge_all(),
+                    }
+                }
 
                 match record.kind {
                     ImportKind::Stmt => {
@@ -235,7 +280,36 @@ pub fn scan_imports_and_exports(
                         }
                     }
                     ImportKind::Dynamic => {
-                        if !this.graph.code_splitting {
+                        if this.graph.code_splitting {
+                            // Merge this importer's tracked alias set (if any)
+                            // into the importee's referenced-export set so the
+                            // dynamic-entry chunk can drop unused exports.
+                            // Only ESM importees have a stable resolved-export
+                            // set; CJS synthesizes `default` from the filtered
+                            // alias list itself, so narrowing would drop the
+                            // value `m.default` resolves to.
+                            if other_kind != ExportsKind::Esm {
+                                col!(dyn_ref_aliases)[other_file].merge_all();
+                            } else {
+                                match col_ref!(dynamic_import_aliases)[id]
+                                    .get(&(import_record_index as u32))
+                                {
+                                    None => col!(dyn_ref_aliases)[other_file].merge_all(),
+                                    Some(aliases) => col!(dyn_ref_aliases)[other_file]
+                                        .merge_partial(aliases.slice()),
+                                }
+                            }
+                        } else if record
+                            .flags
+                            .contains(ImportRecordFlags::TREE_SHAKEN_DYNAMIC_IMPORT)
+                        {
+                            // Every consumer of this `import()` was a tracked
+                            // property access / destructure, so the importee
+                            // does not need wrapping — its used exports are
+                            // bound via the synthetic `S::Import` the parser
+                            // emitted and the surviving `import()` expression
+                            // (if any) prints as `Promise.resolve()`.
+                        } else {
                             // If we're not splitting, then import() is just a require() that
                             // returns a promise, so the imported file must be a CommonJS module
                             if col_ref!(exports_kind)[other_file] == ExportsKind::Esm {

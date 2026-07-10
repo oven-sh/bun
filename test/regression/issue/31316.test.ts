@@ -484,4 +484,47 @@ describe.concurrent("mock.module per-file scoping", () => {
     expect(stderr + stdout).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
+
+  test("re-mocking a mock-born path still evicts its cached importers", async () => {
+    // The first mock installs before ./dep is loaded (mock-born); a dynamic
+    // import materializes dep from the factory; a second mock then finds the
+    // mock-born registry entry. Snapshotting that entry would record the
+    // first mock's values as "originals" and suppress the transitive
+    // eviction, leaking M1 into the next file through the cached barrel.
+    using dir = tempDir("issue-31316-remock-born", {
+      "dep.ts": `export const v = "REAL";`,
+      "consumer.ts": `export { v } from "./dep";`,
+      "a.test.ts": `
+        import { mock, it, expect } from "bun:test";
+        mock.module("./dep", () => ({ v: "M1" }));
+        it("a", async () => {
+          const { v } = await import("./consumer");
+          expect(v).toBe("M1");
+          mock.module("./dep", () => ({ v: "M2" }));
+          const { v: v2 } = await import("./consumer");
+          expect(v2).toBe("M2");
+        });
+      `,
+      "b.test.ts": `
+        import { it, expect } from "bun:test";
+        import { v } from "./consumer";
+        it("b sees real through consumer", () => {
+          expect(v).toBe("REAL");
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "a.test.ts", "b.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr + stdout).toContain("2 pass");
+    expect(stderr + stdout).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -43,6 +43,12 @@ public:
         /// through the same module environment slot revert to the real value.
         JSC::Strong<JSC::JSModuleNamespaceObject> esmNamespace;
         WTF::Vector<std::pair<JSC::Identifier, JSC::Strong<JSC::Unknown>>> esmOriginals;
+        /// True when the first transient mock for this path installed before
+        /// the module was ever loaded, so any module record for the path was
+        /// materialized from a mock factory. Such records have no real
+        /// originals to restore and must be evicted transitively — even if a
+        /// later re-mock found a loaded (mock-born) namespace to snapshot.
+        bool wasMockBorn { false };
     };
     using InstalledMocksMap = WTF::UncheckedKeyHashMap<String, InstalledMockRecord>;
 
@@ -113,7 +119,7 @@ public:
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
-        void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock, bool persistent);
+        void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock, bool persistent, bool mockBorn);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 

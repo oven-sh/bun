@@ -150,7 +150,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     // `Bun.plugin({ module })` virtual modules persist across per-file
     // `bun test` teardown — they're process-level plugin registrations,
     // not test-local mocks.
-    global->onLoadPlugins.addModuleMock(vm, moduleId, uncheckedDowncast<JSC::JSObject>(functionValue), /*persistent=*/true);
+    global->onLoadPlugins.addModuleMock(vm, moduleId, uncheckedDowncast<JSC::JSObject>(functionValue), /*persistent=*/true, /*mockBorn=*/false);
 
     auto* requireMap = global->requireMap();
     RETURN_IF_EXCEPTION(scope, {});
@@ -396,7 +396,7 @@ JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String&
     return nullptr;
 }
 
-void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject, bool persistent)
+void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject, bool persistent, bool mockBorn)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
     auto& onLoad = globalObject->onLoadPlugins;
@@ -452,6 +452,7 @@ void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSOb
             InstalledMockRecord record;
             record.displacedEntry = std::move(displacedEntry);
             record.displacedWasPersistent = displacedWasPersistent;
+            record.wasMockBorn = mockBorn;
             onLoad.transientMockRecords->set(path, std::move(record));
         }
     }
@@ -792,7 +793,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock, persistent);
+    // No loaded-and-linked namespace at install time means any module record
+    // this path acquires afterwards was materialized from the mock factory.
+    globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock, persistent, /*mockBorn=*/!mockedNamespace);
 
     // Attach the ESM teardown snapshot (if any) to the freshly-created
     // transient record. `addModuleMock` already set up the record slot;
@@ -801,7 +804,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     if (!persistent && mockedNamespace) {
         auto& onLoad = globalObject->onLoadPlugins;
         if (onLoad.transientMockRecords) {
-            if (auto it = onLoad.transientMockRecords->find(specifier); it != onLoad.transientMockRecords->end()) {
+            // Skip records whose first install was mock-born: the namespace a
+            // later re-mock finds was itself materialized from a mock factory,
+            // so "originals" snapshotted from it are mock values. Leaving the
+            // record snapshot-free keeps teardown on the eviction path.
+            if (auto it = onLoad.transientMockRecords->find(specifier); it != onLoad.transientMockRecords->end() && !it->value.wasMockBorn) {
                 if (!it->value.esmNamespace) {
                     it->value.esmNamespace = JSC::Strong<JSC::JSModuleNamespaceObject> { vm, mockedNamespace };
                 }
@@ -1249,11 +1256,11 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
             }
             // ESM: with a snapshot, step 1 already restored the cached
             // record's environment to the values it held before this
-            // install (the preload mock's values), so keep it. Without a
-            // snapshot, any registry record was materialized from the
-            // transient factory after install — evict it so the next import
+            // install (the preload mock's values), so keep it. Mock-born:
+            // any registry record was materialized from the transient
+            // factory after install — evict it so the next import
             // re-resolves through the restored preload shim.
-            if (!record.esmNamespace) {
+            if (record.wasMockBorn) {
                 auto ident = collectMockBornRecord(path);
                 WTF::Locker locker { moduleLoader->cellLock() };
                 moduleLoader->removeEntry(ident);
@@ -1265,8 +1272,8 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
             // Evict caches only when there's no persistent replacement —
             // otherwise the next import should go straight back to the
             // (restored) preload mock.
-            auto ident = record.esmNamespace ? JSC::Identifier::fromString(vm, path)
-                                             : collectMockBornRecord(path);
+            auto ident = record.wasMockBorn ? collectMockBornRecord(path)
+                                            : JSC::Identifier::fromString(vm, path);
             {
                 // JSModuleLoader::visitChildrenImpl iterates the registry maps
                 // on the GC thread under cellLock(); take the same lock so

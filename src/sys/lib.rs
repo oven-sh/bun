@@ -6570,6 +6570,12 @@ fn nt_clamp_prefix_len(nt: &[u16], vol_rel: &[u16]) -> Option<(usize, bool)> {
             && (device_len == full || nt[full] == SEP)
     };
     if !device_is(b"Mup") && !device_is(b"LanmanRedirector") {
+        // A raced pair can shear the boundary anywhere; only accept a real
+        // `\Device\<name…>` prefix, else the `..` clamp gets a forged depth
+        // budget. Nested device names (`HarddiskDmVolumes\…`) stay legal.
+        if !is_device || device_len == DEVICE.len() {
+            return None;
+        }
         return Some((device_len, false));
     }
     // UNC volume-relative names start at `\server\share` (ntifs
@@ -6838,7 +6844,7 @@ pub fn normalize_path_windows_opts<'a>(
                 _ => 1,
             };
             if depth < 0 {
-                return Err(Error::from_code(E::BADFD, Tag::open));
+                return Err(Error::from_code(E::EINVAL, Tag::open));
             }
         }
     }
@@ -9813,6 +9819,19 @@ mod normalize_path_windows_tests {
         }
     }
 
+    /// `..` steps from `dir`'s base to the clamp floor, probed behaviorally —
+    /// device names may span multiple components (`HarddiskDmVolumes\…`), so
+    /// counting components after `\Device\` would overcount there.
+    fn floor_depth(dir: Fd) -> usize {
+        for k in 1..64 {
+            let mut buf = bun_paths::w_path_buffer_pool::get();
+            if normalize_path_windows(dir, &wide(&"..\\".repeat(k)), &mut buf.0[..]).is_err() {
+                return k - 1;
+            }
+        }
+        panic!("no clamp floor within 64 levels");
+    }
+
     /// Open a directory handle with raw `CreateFileW` so the fixture fd does
     /// not depend on the code under test.
     fn open_dir_handle(path: &std::path::Path) -> Fd {
@@ -9894,17 +9913,130 @@ mod normalize_path_windows_tests {
             let _ = close(fd);
         });
         let base = normalize(*dir, ".");
-        // Components below the volume root, from the base's own NT name.
-        let depth = base["\\Device\\".len()..].split('\\').count() - 1;
+        let depth = floor_depth(*dir);
+        assert!(depth >= 1, "{base}");
         // Enough `..` to cross the volume-root floor: local volumes are not
-        // share-rooted, so the clamp is refused instead of applied silently.
+        // share-rooted, so the walk refuses instead of clamping silently.
         let over = format!("{}x", "..\\".repeat(depth + 1));
-        assert_eq!(normalize_err(*dir, &over).get_errno(), E::BADFD, "{over}");
+        assert_eq!(normalize_err(*dir, &over).get_errno(), E::EINVAL, "{over}");
         // Same without a trailing component.
         let over_only = "..\\".repeat(depth + 1);
-        assert_eq!(normalize_err(*dir, &over_only).get_errno(), E::BADFD);
+        assert_eq!(normalize_err(*dir, &over_only).get_errno(), E::EINVAL);
         // Within-tree `..` (never crosses the floor) still resolves.
         assert_eq!(normalize(*dir, "sub\\..\\ok"), format!("{base}\\ok"));
+    }
+
+    #[test]
+    fn forward_slash_dotdot_through_walk() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_fwd");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let base = normalize(*dir, ".");
+        // `/` separates components in the floor walk exactly like `\`.
+        assert_eq!(normalize(*dir, "a/../b"), format!("{base}\\b"));
+        let over = format!("{}x", "../".repeat(floor_depth(*dir) + 1));
+        assert_eq!(normalize_err(*dir, &over).get_errno(), E::EINVAL, "{over}");
+    }
+
+    #[test]
+    fn exact_floor_dotdot_lands_on_volume_root() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_floor");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let base = normalize(*dir, ".");
+        // Exactly base-depth `..` lands ON the floor (allowed): the volume
+        // root DIRECTORY — the device prefix plus its lone separator.
+        let root = normalize(*dir, &"..\\".repeat(floor_depth(*dir)));
+        assert!(root.starts_with("\\Device\\"), "{root}");
+        assert!(root.ends_with('\\'), "{root}");
+        assert!(base.starts_with(&root), "{base} vs {root}");
+    }
+
+    #[test]
+    fn bare_dotdot_resolves_to_parent() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_bare_dotdot");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        let base = normalize(*parent, ".");
+        assert_eq!(normalize(*child, ".."), base);
+        assert_eq!(normalize(*child, "..\\"), base);
+        // From the volume root itself, `..` crosses the floor.
+        let root = scopeguard::guard(open_dir_handle(std::path::Path::new("C:\\")), |fd| {
+            let _ = close(fd);
+        });
+        assert_eq!(normalize_err(*root, "..").get_errno(), E::EINVAL);
+    }
+
+    #[test]
+    fn dot_components_neutral_in_dotdot_rel() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_dotneutral");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let parent = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        // `.` and empty components cost no depth in the floor walk.
+        let got = normalize(*child, ".\\..\\\\.\\x");
+        assert_eq!(got, format!("{}\\x", normalize(*parent, ".")));
+    }
+
+    #[test]
+    fn colon_components_flow_through() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_colon");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let base = normalize(*dir, ".");
+        // Colon components survive normalization verbatim — running under
+        // debug_assertions, these ARE the no-panic proof; the invalid stream
+        // spelling is NtCreateFile's to reject at open time.
+        assert_eq!(normalize(*dir, ":\\x"), format!("{base}\\:\\x"));
+        assert_eq!(normalize(*dir, ":a.b"), format!("{base}\\:a.b"));
+        assert_eq!(normalize(*dir, ".\\:\\x"), format!("{base}\\:\\x"));
+        assert_eq!(normalize(*dir, "a\\:\\x"), format!("{base}\\a\\:\\x"));
+        // `..` collapse promoting `:` toward the front of the output.
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        assert_eq!(normalize(*child, "..\\:\\x"), format!("{base}\\:\\x"));
+        // All the way to the clamp floor: `\:\x` directly after the device.
+        let floored = normalize(*dir, &format!("{}:\\x", "..\\".repeat(floor_depth(*dir))));
+        assert!(floored.ends_with("\\:\\x"), "{floored}");
+        assert!(
+            base.starts_with(floored.strip_suffix(":\\x").unwrap()),
+            "{floored} vs {base}"
+        );
+        // Bare ADS names (no separator or dot) still pass through verbatim.
+        assert_eq!(normalize(Fd::INVALID, ":stream"), ":stream");
+        // The emitted name opens with a clean error, not a panic.
+        assert!(
+            open_file_at_windows_a(
+                *dir,
+                b":\\x",
+                NtCreateFileOptions {
+                    access_mask: w::GENERIC_READ | w::SYNCHRONIZE,
+                    disposition: w::FILE_OPEN,
+                    options: w::FILE_SYNCHRONOUS_IO_NONALERT,
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -10031,6 +10163,28 @@ mod normalize_path_windows_tests {
         fails("\\Device\\Mup\\", "\\"); // redirector root
         fails("\\Device\\HarddiskVolume3", "\\Device\\HarddiskVolume3"); // vol_rel == nt
 
+        // Rename-race forgeries must not shear the boundary above the device.
+        fails("\\Device\\HarddiskVolume4\\p", "\\HarddiskVolume4\\p"); // bare `\Device`
+        fails("\\Device\\\\x", "\\x"); // empty device name
+        split_at(
+            "\\Device\\HarddiskVolume4\\p",
+            "\\p",
+            "\\Device\\HarddiskVolume4",
+            false,
+        );
+        // Ancestor-rename shear lands DEEPER than the true device: the clamp
+        // only tightens, so the shape stays accepted (indistinguishable from
+        // nested device names); the floor walk still fails closed.
+        split_at(
+            "\\Device\\HarddiskVolume3\\a\\b\\x",
+            "\\b\\x",
+            "\\Device\\HarddiskVolume3\\a",
+            false,
+        );
+        // `share_rooted == true` is what makes the caller skip the floor walk
+        // (silent share-root clamp). A normalize-level Mup case would need a
+        // real UNC handle, so the gate's input is pinned at this unit level.
+
         // LanmanRedirector direct (no Mup) is share-rooted too.
         split_at(
             "\\Device\\LanmanRedirector\\;X:0\\srv\\share\\f",
@@ -10110,7 +10264,7 @@ mod normalize_path_windows_tests {
         assert_eq!(normalize(*windows_dir, "."), format!("{dot}Windows"));
         assert_eq!(normalize(*root, ".\\x"), format!("{dot}x"));
         // Any `..` from the volume root would cross the floor: fail closed.
-        assert_eq!(normalize_err(*root, "..\\x").get_errno(), E::BADFD);
+        assert_eq!(normalize_err(*root, "..\\x").get_errno(), E::EINVAL);
     }
 
     #[test]
@@ -10216,3 +10370,7 @@ mod normalize_path_windows_tests {
         assert!(fstat(*sub).is_ok());
     }
 }
+
+// Test-only shims for native symbols (see the module doc).
+#[cfg(test)]
+mod native_test_shims;

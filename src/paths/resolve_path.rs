@@ -1145,9 +1145,9 @@ pub fn normalize_string_generic_tz<
 
     let result = &mut buf[0..buf_i];
 
-    if cfg!(debug_assertions) && is_windows {
-        debug_assert!(!strings::has_prefix_t::<T>(result, T::lit(b"\\:\\")));
-    }
+    // No `\:\`-prefix assert here: the NT-join caller (normalize_path_windows'
+    // dirfd branch) legitimately yields `\:\…` when a leading-colon component
+    // survives collapse; NtCreateFile rejects bad stream spellings at runtime.
 
     result
 }

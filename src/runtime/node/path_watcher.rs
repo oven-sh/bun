@@ -1195,7 +1195,7 @@ impl Darwin {
                 Ok(())
             }
             Err(e) => Err(sys::Error::from_code(
-                if e == crate::Error::FailedToCreateCoreFoudationSourceLoop {
+                if matches!(e, crate::Error::FailedToCreateCoreFoudationSourceLoop) {
                     E::EINVAL
                 } else {
                     E::ENOMEM

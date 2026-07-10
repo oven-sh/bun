@@ -1033,7 +1033,7 @@ impl PathLikeExt for PathLike {
                     // The cwd root + path don't fit `buf` (UNC cwds can push
                     // a near-MAX_PATH_BYTES path over); fall through to the
                     // plain copy / too-long handling below.
-                    Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => None,
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => None,
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
                 if let Some(len) = resolved_len {
@@ -1155,7 +1155,7 @@ impl PathLikeExt for PathLike {
                     // The cwd root + path don't fit the resolution buffer
                     // (UNC cwds can push a near-MAX_PATH_BYTES path over) —
                     // such a path can't exist on NT.
-                    Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => return Err(NameTooLong),
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => return Err(NameTooLong),
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
                 let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(

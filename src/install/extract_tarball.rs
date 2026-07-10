@@ -780,7 +780,7 @@ impl ExtractTarball {
                     Ok(pair) => pair,
                     Err(err) => {
                         if self.resolution.tag == ResolutionTag::Github
-                            && err.get_errno() == bun_errno::SystemErrno::ENOENT
+                            && err.get_errno() == sys::E::ENOENT
                         {
                             // allow git dependencies without package.json
                             return Ok(ExtractData {

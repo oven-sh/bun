@@ -451,20 +451,16 @@ pub use bun_windows_sys::Win32Error;
 pub use bun_errno::Win32ErrorExt;
 
 /// `Win32Error::unwrap()` — extension trait because
-/// `Win32Error` is a foreign type and `bun_core::Error` is unavailable in
-/// `bun_errno` (orphan rule + layering).
+/// `Win32Error` is a foreign type (orphan rule).
 pub trait Win32ErrorUnwrap: Copy {
-    fn unwrap(self) -> Result<(), bun_core::Error>;
+    fn unwrap(self) -> Result<(), SystemErrno>;
 }
 impl Win32ErrorUnwrap for Win32Error {
-    fn unwrap(self) -> Result<(), bun_core::Error> {
+    fn unwrap(self) -> Result<(), SystemErrno> {
         if self == Win32Error::SUCCESS {
             return Ok(());
         }
-        Err(self
-            .to_system_errno()
-            .unwrap_or(SystemErrno::EUNKNOWN)
-            .to_error())
+        Err(self.to_system_errno().unwrap_or(SystemErrno::EUNKNOWN))
     }
 }
 
@@ -3345,13 +3341,13 @@ pub fn get_last_errno() -> E {
         .to_e()
 }
 
-pub fn get_last_error() -> bun_core::Error {
-    bun_core::errno_to_zig_err(get_last_errno() as i32)
+pub fn get_last_error() -> SystemErrno {
+    SystemErrno::init(kernel32::GetLastError()).unwrap_or(SystemErrno::EUNKNOWN)
 }
 
 /// `kernel32.GetLastError()` as `Win32Error` — raw
 /// `DWORD` error truncated to the documented 16-bit code space. Callers that
-/// want the POSIX-style `bun_core::Error` should use [`get_last_error`].
+/// want the POSIX-style `SystemErrno` should use [`get_last_error`].
 #[inline]
 pub fn get_last_win32_error() -> Win32Error {
     Win32Error(kernel32::GetLastError() as u16)
@@ -3521,9 +3517,9 @@ pub fn user_unique_id() -> u32 {
 
 pub fn win_sock_error_to_zig_error(
     err: win32::ws2_32::WinsockError,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), SystemErrno> {
     use win32::ws2_32::WinsockError as W;
-    let tag = match err {
+    let _tag = match err {
         W::WSA_INVALID_HANDLE => "WSA_INVALID_HANDLE",
         W::WSA_NOT_ENOUGH_MEMORY => "WSA_NOT_ENOUGH_MEMORY",
         W::WSA_INVALID_PARAMETER => "WSA_INVALID_PARAMETER",
@@ -3627,7 +3623,7 @@ pub fn win_sock_error_to_zig_error(
             return Ok(());
         }
     };
-    Err(bun_core::Error::intern(tag))
+    Err(SystemErrno::init(err.0).unwrap_or(SystemErrno::EUNKNOWN))
 }
 
 pub fn WSAGetLastError() -> Option<E> {
@@ -4110,6 +4106,8 @@ pub mod rescle {
         FailedToCommit,
         #[error("WindowsMetadataEditError")]
         WindowsMetadataEditError,
+        #[error(transparent)]
+        Utf16(#[from] bun_core::strings::ToUTF16Error),
     }
 
     pub fn set_icon(exe_path: *const u16, icon: *const u16) -> Result<(), RescleError> {
@@ -4130,7 +4128,7 @@ pub mod rescle {
         version: Option<&[u8]>,
         description: Option<&[u8]>,
         copyright: Option<&[u8]>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), RescleError> {
         const _: () = assert!(cfg!(windows));
 
         // Validate version string format if provided
@@ -4281,7 +4279,7 @@ pub struct UpdateStdioModeFlagsOpts {
 pub fn update_stdio_mode_flags(
     i: bun_sys::Stdio,
     opts: UpdateStdioModeFlagsOpts,
-) -> Result<DWORD, bun_core::Error> {
+) -> Result<DWORD, SystemErrno> {
     let fd = i.fd();
     let mut original_mode: DWORD = 0;
     if kernel32_2::GetConsoleMode(fd.native(), &mut original_mode) != 0 {

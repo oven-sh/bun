@@ -41,7 +41,7 @@ pub fn write_output_files_to_disk(
     let root_dir = match bun_sys::Dir::cwd().make_open_path(root_path, Default::default()) {
         Ok(dir) => dir,
         Err(e) => {
-            if e.get_errno() == bun_errno::SystemErrno::ENOTDIR {
+            if bun_errno::SystemErrno::from(e.clone()) == bun_errno::SystemErrno::ENOTDIR {
                 c.log_mut()
                     .add_error_fmt(
                         None,

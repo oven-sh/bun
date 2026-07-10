@@ -1898,7 +1898,7 @@ pub fn to_executable(
             ) {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "Failed to set Windows metadata: {}",
-                    e.name()
+                    e
                 )));
             }
         }

@@ -262,6 +262,8 @@ pub enum Error {
     #[error(transparent)]
     Paths(#[from] bun_paths::Error),
     #[error(transparent)]
+    PathOptions(#[from] bun_paths::path_options::Error),
+    #[error(transparent)]
     Fmt(#[from] core::fmt::Error),
 }
 
@@ -398,6 +400,7 @@ impl Error {
             Self::Transpiler(e) => e.name(),
             Self::Zlib(e) => <&'static str>::from(e),
             Self::Paths(e) => e.name(),
+            Self::PathOptions(e) => <&'static str>::from(e),
             Self::Fmt(_) => "FmtError",
         }
     }
@@ -422,6 +425,7 @@ impl From<bun_libarchive::Error> for Error {
             bun_libarchive::Error::Sys(s) => Self::Sys(s),
             bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
             bun_libarchive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
+            bun_libarchive::Error::Paths(p) => Self::Paths(p),
         }
     }
 }

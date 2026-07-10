@@ -1945,7 +1945,7 @@ mod spawn_process_body {
                             Ok(p) => p,
                             Err(e) => {
                                 cleanup_uv_files(&uv_files_to_close, loop_);
-                                return Err(e);
+                                return Err(crate::Error::Sys(e));
                             }
                         };
                         // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv
@@ -2029,7 +2029,7 @@ mod spawn_process_body {
                         Ok(p) => p,
                         Err(e) => {
                             cleanup_uv_files(&uv_files_to_close, loop_);
-                            return Err(e);
+                            return Err(crate::Error::Sys(e));
                         }
                     };
                     // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv loop,

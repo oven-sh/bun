@@ -41,11 +41,15 @@ impl Default for WindowsWatcher {
     }
 }
 
-#[derive(Debug, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, thiserror::Error)]
 pub enum Error {
+    #[error("IocpFailed")]
     IocpFailed,
+    #[error("ReadDirectoryChangesFailed")]
     ReadDirectoryChangesFailed,
+    #[error("CreateFileFailed")]
     CreateFileFailed,
+    #[error("InvalidPath")]
     InvalidPath,
 }
 

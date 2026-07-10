@@ -4,6 +4,9 @@ pub enum Error {
     KQueueError,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
+    #[cfg(windows)]
+    #[error(transparent)]
+    Windows(#[from] crate::windows_watcher::Error),
 }
 
 impl Error {
@@ -11,6 +14,8 @@ impl Error {
         match self {
             Self::KQueueError => "KQueueError",
             Self::Sys(e) => <&'static str>::from(e),
+            #[cfg(windows)]
+            Self::Windows(e) => <&'static str>::from(e),
         }
     }
 }
@@ -18,6 +23,13 @@ impl Error {
 impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
         (*self).name().as_bytes()
+    }
+}
+
+impl From<bun_sys::Error> for Error {
+    #[inline]
+    fn from(e: bun_sys::Error) -> Self {
+        Self::Sys(e.into())
     }
 }
 

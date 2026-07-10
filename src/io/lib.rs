@@ -2118,7 +2118,7 @@ pub mod waker {
             }
         }
 
-        pub fn init() -> crate::Result<Self> {
+        pub fn init() -> crate::error::Result<Self> {
             let kq = crate::safe_c::kqueue();
             if kq < 0 {
                 return Err(bun_errno::SystemErrno::init(bun_errno::posix::errno() as i64)
@@ -2128,7 +2128,7 @@ pub mod waker {
             Self::init_with_file_descriptor(kq)
         }
 
-        pub fn init_with_file_descriptor(kq: i32) -> crate::Result<Self> {
+        pub fn init_with_file_descriptor(kq: i32) -> crate::error::Result<Self> {
             debug_assert!(kq > -1);
             // Box<[u8]> owns the buffer for the machport's lifetime.
             let mut machport_buf = vec![0u8; 1024].into_boxed_slice();

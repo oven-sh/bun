@@ -1140,7 +1140,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         if let Some(e) = pipe_rc.err_enum_e() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
-            return Err(bun_core::errno_to_zig_err(e as i32));
+            return Err(bun_core::errno_to_zig_err(e as i32).into());
         }
         // Track ownership with optionals: None means the fd has been transferred
         // or closed, so the errdefer skips it. Prevents double-close on error paths

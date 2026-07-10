@@ -141,7 +141,9 @@ impl us_socket_t {
         if length < 0 {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
-            return Err(crate::Error::Sys(errno));
+            return Err(crate::Error::Sys(
+                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
+            ));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
@@ -157,7 +159,9 @@ impl us_socket_t {
         if length < 0 {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
-            return Err(crate::Error::Sys(errno));
+            return Err(crate::Error::Sys(
+                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
+            ));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])

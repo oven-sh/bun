@@ -681,7 +681,7 @@ impl HardLinkWindowsInstallTask {
             return None;
         }
 
-        Some(windows::get_last_error())
+        Some(windows::get_last_error().into())
     }
 }
 
@@ -1101,7 +1101,7 @@ impl<'a> PackageInstall<'a> {
             OpenDirOptions::default(),
         ) {
             Ok(d) => d,
-            Err(err) => return Ok(InstallResult::fail(err, Step::OpeningDestDir, None)),
+            Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None)),
         };
         self.file_count = match copy(&subdir, &mut walker_) {
             Ok(n) => n,
@@ -1256,7 +1256,7 @@ impl<'a> PackageInstall<'a> {
                 let e = windows::Win32Error::get();
                 let err = if dest_path_length == 0 {
                     e.to_system_errno()
-                        .map(|s| s.to_error())
+                        .map(crate::Error::Sys)
                         .unwrap_or(crate::Error::Unexpected)
                 } else {
                     crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
@@ -1295,7 +1295,7 @@ impl<'a> PackageInstall<'a> {
                 let e = windows::Win32Error::get();
                 let err = if cache_path_length == 0 {
                     e.to_system_errno()
-                        .map(|s| s.to_error())
+                        .map(crate::Error::Sys)
                         .unwrap_or(crate::Error::Unexpected)
                 } else {
                     crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
@@ -2206,7 +2206,7 @@ impl<'a> PackageInstall<'a> {
                 let e = windows::Win32Error::get();
                 let err = if dest_path_length == 0 {
                     e.to_system_errno()
-                        .map(|s| s.to_error())
+                        .map(crate::Error::Sys)
                         .unwrap_or(crate::Error::Unexpected)
                 } else {
                     crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
@@ -2263,7 +2263,7 @@ impl<'a> PackageInstall<'a> {
                     }
 
                     return InstallResult::fail(
-                        bun_sys::errno_to_zig_err(err.errno.into()),
+                        bun_sys::errno_to_zig_err(err.errno.into()).into(),
                         Step::LinkingDependency,
                         None,
                     );

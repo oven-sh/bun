@@ -190,6 +190,7 @@ describe.concurrent("long import path overflow", () => {
 describe.concurrent("ERR_INVALID_PACKAGE_CONFIG", () => {
   const invalidCases = [
     ["malformed JSON", "{\n"],
+    ["empty file", ""],
     ["non-object root", "42"],
     ["non-string type", `{"name":"p","type":42}`],
   ] as const;
@@ -317,6 +318,32 @@ describe.concurrent("ERR_INVALID_PACKAGE_CONFIG", () => {
       const { stderr, exitCode } = await run(String(dir), ["sub/t.js"]);
       expect(stderr).toContain("ERR_INVALID_PACKAGE_CONFIG");
       expect(exitCode).toBe(1);
+    }
+  });
+
+  it("valid nameless package.json between an invalid ancestor and the file is the scope boundary", async () => {
+    // A nameless `{}` or `{"type":...}` package.json is still Node's package
+    // scope boundary; an invalid grandparent above it must not poison files
+    // below it.
+    using dir = tempDir("invalid-pkg-config-mid", {
+      "package.json": `{"name":"root"}`,
+      "gp/package.json": "{\n",
+      "gp/mid/package.json": "{}",
+      "gp/mid/sub/foo.js": `console.log("ok");`,
+      "gp/mid2/package.json": `{"type":"commonjs"}`,
+      "gp/mid2/sub/foo.js": `console.log("ok2");`,
+    });
+    {
+      const { stdout, stderr, exitCode } = await run(String(dir), ["gp/mid/sub/foo.js"]);
+      expect(stderr).not.toContain("ERR_INVALID_PACKAGE_CONFIG");
+      expect(stdout.trim()).toBe("ok");
+      expect(exitCode).toBe(0);
+    }
+    {
+      const { stdout, stderr, exitCode } = await run(String(dir), ["gp/mid2/sub/foo.js"]);
+      expect(stderr).not.toContain("ERR_INVALID_PACKAGE_CONFIG");
+      expect(stdout.trim()).toBe("ok2");
+      expect(exitCode).toBe(0);
     }
   });
 });

@@ -6200,9 +6200,8 @@ impl<'a> Resolver<'a> {
 
             if let Some(parent_package_json) = parent_.package_json() {
                 // https://github.com/oven-sh/bun/issues/229
-                if parent_package_json.invalid
-                    || !parent_package_json.name.is_empty()
-                    || self.care_about_bin_folder
+                if !parent_package_json.invalid
+                    && (!parent_package_json.name.is_empty() || self.care_about_bin_folder)
                 {
                     info.enclosing_package_json = Some(parent_package_json);
                 }
@@ -6220,6 +6219,7 @@ impl<'a> Resolver<'a> {
             info.enclosing_package_json = info
                 .enclosing_package_json
                 .or(parent_.enclosing_package_json);
+            info.nearest_package_json = parent_.package_json().or(parent_.nearest_package_json);
             info.package_json_for_dependencies = info
                 .package_json_for_dependencies
                 .or(parent_.package_json_for_dependencies);
@@ -6340,15 +6340,16 @@ impl<'a> Resolver<'a> {
                     };
 
                     if let Some(pkg) = info.package_json() {
+                        // Any package.json (named, nameless, or invalid) is
+                        // Node's module-type scope boundary.
+                        info.nearest_package_json = Some(pkg);
+
                         if pkg.browser_map.count() > 0 {
                             info.enclosing_browser_scope = result.index;
                             info.package_json_for_browser_field = Some(pkg);
                         }
 
-                        // An invalid package.json is still a scope boundary
-                        // (Node throws `ERR_INVALID_PACKAGE_CONFIG` rather
-                        // than inheriting the parent scope).
-                        if pkg.invalid || !pkg.name.is_empty() || self.care_about_bin_folder {
+                        if !pkg.invalid && (!pkg.name.is_empty() || self.care_about_bin_folder) {
                             info.enclosing_package_json = Some(pkg);
                         }
 

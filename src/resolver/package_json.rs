@@ -514,7 +514,7 @@ impl PackageJSON {
 
         // An unparseable package.json is still a package scope boundary in
         // Node (`ERR_INVALID_PACKAGE_CONFIG`); return a poisoned entry so
-        // `enclosing_package_json` stops here instead of inheriting the parent.
+        // `nearest_package_json` stops here instead of inheriting the parent.
         let invalid = |path: &'static [u8]| {
             Some(PackageJSON {
                 source: bun_ast::Source::init_path_string(path, b""),
@@ -522,6 +522,12 @@ impl PackageJSON {
                 ..PackageJSON::default()
             })
         };
+
+        // `parse_package_json` short-circuits empty input to a synthetic `{}`
+        // before the parser runs; Node rejects a 0-byte file.
+        if entry_contents.is_empty() {
+            return invalid(package_json_path);
+        }
 
         let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
             Ok(Some(v)) => v,

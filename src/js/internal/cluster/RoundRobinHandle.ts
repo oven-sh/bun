@@ -39,7 +39,22 @@ export default class RoundRobinHandle {
     // early: node's primary never reacts to EOF on a pending handle, and the
     // worker that adopts the fd still observes the EOF itself.
     this.server = net.createServer({ pauseOnConnect: true, allowHalfOpen: true }, socket => {
-      this.distribute(0, makeAcceptedHandle(socket));
+      const handle = makeAcceptedHandle(socket);
+      // RST-while-queued closes the fd (pause() does not gate EPOLLERR) and
+      // the kernel recycles the number: drop the dead entry so it is not
+      // redistributed with a stale fd; if in flight, return worker to rotation.
+      socket.once("close", () => {
+        remove(handle);
+        for (const [id, pending] of this.inFlight) {
+          if (pending === handle) {
+            this.inFlight.delete(id);
+            const worker = this.all.get(id);
+            if (worker !== undefined) this.handoff(worker);
+            break;
+          }
+        }
+      });
+      this.distribute(0, handle);
     });
 
     if (fd >= 0) this.server.listen({ fd, backlog });
@@ -174,13 +189,14 @@ export default class RoundRobinHandle {
       this.handoff(worker);
     });
     if (sent === null) {
-      // Hard send failure (closed channel, or the Windows socket export
-      // failed on a live worker): the reply callback will never fire, so
-      // reclaim the connection for another worker. `false` means queued
-      // under backpressure and must NOT be reclaimed - the reply is coming.
+      // Hard send failure (closed channel, dead handle, dup() failure, or
+      // Windows export failure): the reply callback will never fire, so
+      // reclaim for another worker. `false` = queued, reply IS coming.
       const { id } = worker;
       this.inFlight.delete(id);
-      this.distribute(0, handle);
+      // A dead handle must not be redistributed (it would loop forever).
+      if (handle.fd >= 0) this.distribute(0, handle);
+      else handle.close();
       // Return the worker to rotation AFTER redistributing, so the
       // distribute() above cannot synchronously pick the same failing
       // worker and spin; a dead worker self-heals via remove(), and a
@@ -192,13 +208,14 @@ export default class RoundRobinHandle {
   }
 }
 
-// The fd handed to the worker is the accepted socket's. The paused node
-// Socket keeps it alive (and unread) until the worker accepts (then we close
-// our copy — the worker holds a dup) or every worker rejects (then destroy
-// sends nothing because no bytes were read or written here).
+// `.fd` is a live getter: RST-while-queued closes the fd (which the kernel
+// recycles), so a snapshotted number could ship an unrelated descriptor.
+// sendHelperPrimary rejects fd < 0 and dup()s the value it reads.
 function makeAcceptedHandle(socket) {
   return {
-    fd: socket._handle.fd,
+    get fd() {
+      return socket.destroyed ? -1 : socket._handle.fd;
+    },
     close(cb?) {
       socket.destroy();
       if (typeof cb === "function") process.nextTick(cb);

@@ -4,9 +4,8 @@
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 
-use bun_core::String as BunString;
 use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
 
@@ -16,15 +15,6 @@ use crate::api::bun::subprocess::Subprocess;
 pub use bun_jsc::ipc::InternalMsgHolder;
 
 bun_output::declare_scope!(IPC, visible);
-
-// `JSGlobalObject` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` — `&JSGlobalObject`
-// is ABI-identical to a non-null pointer with no `readonly`/`noalias`. Both
-// shims take only the global plus by-value `JSValue`s, so the validity proof
-// lives in the type signature.
-unsafe extern "C" {
-    pub safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, f: JSValue, arg: JSValue);
-    pub(crate) safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JSValue);
-}
 
 // ArrayHashMap::new() is not const, so the global is lazily seeded on first
 // access via `child_singleton()`.
@@ -47,95 +37,6 @@ fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
     // `'a`. Aliasing: each of the three callers borrows for a single
     // statement/block with no nested call to this fn.
     unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
-}
-
-#[bun_jsc::host_fn]
-pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_output::scoped_log!(IPC, "sendHelperChild");
-
-    let arguments = frame.arguments_old::<3>().ptr;
-    let message = arguments[0];
-    let handle = arguments[1];
-    let callback = arguments[2];
-
-    let vm = global.bun_vm().as_mut();
-    // SAFETY: `bun_vm()` never returns null for a Bun-owned global; sole &mut on JS thread.
-
-    if vm.ipc.is_none() {
-        return Ok(JSValue::FALSE);
-    }
-    if message.is_undefined() {
-        return Err(global.throw_missing_arguments_value(&["message"]));
-    }
-    if !handle.is_null() {
-        return Err(global.throw(format_args!("passing 'handle' not implemented yet")));
-    }
-    if !message.is_object() {
-        return Err(global.throw_invalid_argument_type_value("message", "object", message));
-    }
-    let singleton = child_singleton();
-    if callback.is_function() {
-        // TODO: remove this strong. This is expensive and would be an easy way to create a memory leak.
-        // These sequence numbers shouldn't exist from JavaScript's perspective at all.
-        let _ = singleton
-            .callbacks
-            .put(singleton.seq, StrongOptional::create(callback, global));
-    }
-
-    // sequence number for InternalMsgHolder
-    message.put(global, b"seq", JSValue::js_number(singleton.seq as f64));
-    singleton.seq = singleton.seq.wrapping_add(1);
-
-    // similar code as Bun__Process__send
-    #[cfg(debug_assertions)]
-    {
-        let mut formatter = bun_jsc::console_object::Formatter::new(global);
-        bun_output::scoped_log!(
-            IPC,
-            "child: {}",
-            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)
-        );
-    }
-
-    let ipc_instance = vm.get_ipc_instance().unwrap();
-    // SAFETY: `get_ipc_instance` returns a live owned IPCInstance pointer; sole &mut on JS thread.
-    let ipc_instance = unsafe { &mut *ipc_instance };
-
-    #[bun_jsc::host_fn]
-    fn impl_(global_: &JSGlobalObject, frame_: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = frame_.arguments_old::<1>();
-        let arguments_ = arguments_.slice();
-        let ex = arguments_[0];
-        Process__emitErrorEvent(global_, ex.to_error().unwrap_or(ex));
-        Ok(JSValue::UNDEFINED)
-    }
-
-    let good = ipc_instance.data.serialize_and_send(
-        global,
-        message,
-        IsInternal::Internal,
-        JSValue::NULL,
-        None,
-    );
-
-    if good == SerializeAndSendResult::Failure {
-        let ex = global.create_type_error_instance(format_args!("sendInternal() failed"));
-        ex.put(
-            global,
-            b"syscall",
-            BunString::static_str("write").to_js(global)?,
-        );
-        let fnvalue =
-            bun_jsc::JSFunction::create(global, "", __jsc_host_impl_, 1, Default::default());
-        JSValue::call_next_tick_1(fnvalue, global, ex)?;
-        return Ok(JSValue::FALSE);
-    }
-
-    Ok(if good == SerializeAndSendResult::Success {
-        JSValue::TRUE
-    } else {
-        JSValue::FALSE
-    })
 }
 
 #[bun_jsc::host_fn]
@@ -203,13 +104,14 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         if !fd_value.is_number() {
             return Err(global.throw_invalid_argument_type_value("handle.fd", "number", fd_value));
         }
-        // POSIX: a plain fd; Windows: the raw SOCKET value (see
-        // `to_js_without_making_lib_uv_owned`).
+        // POSIX: a plain fd; Windows: the raw SOCKET value. fd < 0 means the
+        // handle is dead (RoundRobinHandle's live getter): report send
+        // failure so the JS side reclaims/drops it.
         #[cfg(not(windows))]
         let native_fd = {
             let raw_fd = fd_value.to_int32();
             if raw_fd < 0 {
-                return Err(global.throw(format_args!("cluster handle has invalid fd")));
+                return Ok(JSValue::NULL);
             }
             bun_sys::Fd::from_uv(raw_fd)
         };
@@ -217,7 +119,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         let native_fd = {
             let raw = fd_value.to_number(global)?;
             if !(raw.is_finite() && raw >= 0.0) {
-                return Err(global.throw(format_args!("cluster handle has invalid fd")));
+                return Ok(JSValue::NULL);
             }
             bun_sys::Fd::from_system(raw as u64 as usize as *mut core::ffi::c_void)
         };
@@ -230,30 +132,44 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         // runs before the reply callback is registered and before `seq` is
         // bumped, so nothing is orphaned by the early return.
         #[cfg(windows)]
-        if !crate::ipc_host::attach_windows_socket_payload(
-            global,
-            message,
-            native_fd,
-            subprocess.pid() as u32,
-        ) {
-            return Ok(JSValue::NULL);
+        {
+            let peer_pid = subprocess.pid() as u32;
+            let Some(hex) =
+                crate::ipc_host::attach_windows_socket_payload(global, message, native_fd, peer_pid)
+            else {
+                return Ok(JSValue::NULL);
+            };
+            let mut h = bun_jsc::ipc::Handle::init(native_fd, handle);
+            h.win_export_hex = Some(hex);
+            h.peer_pid = peer_pid;
+            native_handle = Some(h);
         }
-        native_handle = Some(bun_jsc::ipc::Handle::init(native_fd, handle));
+        // POSIX: dup so an RST-triggered close while queued behind an ack
+        // cannot invalidate/recycle the fd SCM_RIGHTS ships (do_send parity).
+        #[cfg(not(windows))]
+        {
+            native_handle = match bun_jsc::ipc::Handle::init_dup(native_fd, handle, false) {
+                Ok(h) => Some(h),
+                Err(_) => return Ok(JSValue::NULL),
+            };
+        }
     }
+    let this_seq = ipc_data.internal_msg_queue.seq;
     if callback.is_function() {
-        let _ = ipc_data.internal_msg_queue.callbacks.put(
-            ipc_data.internal_msg_queue.seq,
-            StrongOptional::create(callback, global),
-        );
+        let _ = ipc_data
+            .internal_msg_queue
+            .callbacks
+            .put(this_seq, StrongOptional::create(callback, global));
+        // on_ack_nack's NACK-giveup path uses this to reclaim the seq-level
+        // callback with `{accepted:false}` instead of stranding it.
+        if let Some(h) = &mut native_handle {
+            h.cluster_seq = Some(this_seq);
+        }
     }
 
     // sequence number for InternalMsgHolder
-    message.put(
-        global,
-        b"seq",
-        JSValue::js_number(ipc_data.internal_msg_queue.seq as f64),
-    );
-    ipc_data.internal_msg_queue.seq = ipc_data.internal_msg_queue.seq.wrapping_add(1);
+    message.put(global, b"seq", JSValue::js_number(this_seq as f64));
+    ipc_data.internal_msg_queue.seq = this_seq.wrapping_add(1);
 
     // similar code as bun.jsc.Subprocess.doSend
     #[cfg(debug_assertions)]
@@ -924,10 +840,10 @@ pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) ->
     }
     #[cfg(windows)]
     {
-        // Windows shared handles never take the pre-bound-fd path (UDP/pipe
-        // return ENOTSUP earlier); accept so the ENOTSUP is the visible error.
+        // No shared cross-process fd space on Windows: refuse so SharedHandle
+        // never stores N and feeds it to WSADuplicateSocketW / closesocket.
         let _ = value;
-        Ok(JSValue::js_number_from_int32(0))
+        Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL))
     }
 }
 

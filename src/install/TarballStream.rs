@@ -28,7 +28,7 @@ use bun_core::strings;
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
 use bun_paths::resolve_path::{self, platform};
-use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
+use bun_paths::{self, OSPathChar, OSPathSliceZ};
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
 use bun_sys::{self, Dir, Fd, FdExt, FileKind, Mode, O};
@@ -673,7 +673,7 @@ impl TarballStream {
                 self.invalid_name = true;
                 return Err(bun_core::err!("InstallFailed"));
             };
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
         // allocator.dupeZ → owned NUL-terminated copy.
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
@@ -770,7 +770,7 @@ impl TarballStream {
         // `OSPathSliceZ` suffix view here.
         let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..]);
 
-        let mut norm_buf = OSPathBuffer::uninit();
+        let mut norm_buf = bun_paths::os_path_buffer_pool::get();
         let normalized =
             resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..]);
         let norm_len = normalized.len();
@@ -1436,7 +1436,7 @@ fn make_symlink(
                 _ => seen_named_component = true,
             }
         }
-        let mut join_buf = PathBuffer::uninit();
+        let mut join_buf = bun_paths::path_buffer_pool::get();
         if symlink_dir.len() + 1 + target_bytes.len() >= join_buf.len() {
             return false;
         }
@@ -1450,7 +1450,7 @@ fn make_symlink(
         join_buf[written..written + target_bytes.len()].copy_from_slice(target_bytes);
         written += target_bytes.len();
 
-        let mut norm_buf = PathBuffer::uninit();
+        let mut norm_buf = bun_paths::path_buffer_pool::get();
         let resolved = resolve_path::normalize_string_generic_t::<u8, true, false>(
             &join_buf[..written],
             &mut norm_buf[..],

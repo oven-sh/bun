@@ -24,9 +24,11 @@ pub mod listener;
 #[path = "UpgradedDuplex.rs"]
 pub mod upgraded_duplex;
 
+#[cfg(windows)]
 #[path = "WindowsNamedPipe.rs"]
 pub mod windows_named_pipe;
 
+#[cfg(windows)]
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
 

@@ -385,7 +385,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // use resolvePosix since we asserted above all seps are '/'
             #[cfg(windows)]
             if strings::index_of(&rel_path, b"/./").is_some() {
-                let mut buf = bun_paths::PathBuffer::uninit();
+                let mut buf = bun_paths::path_buffer_pool::get();
                 let rel_path_fixed: Box<[u8]> = Box::from(&*path::resolve_path::normalize_buf::<
                     path::platform::Posix,
                 >(&rel_path, &mut buf));
@@ -1024,7 +1024,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     if matches!(chunk.content, crate::chunk::Content::Javascript(_))
                         && loader.is_javascript_like()
                     {
-                        let mut fdpath = bun_paths::PathBuffer::uninit();
+                        let mut fdpath = bun_paths::path_buffer_pool::get();
                         // For --compile builds, the bytecode URL must match the module name
                         // that will be used at runtime. The module name is:
                         //   public_path + final_rel_path (e.g., "/$bunfs/root/app.js")

@@ -1,7 +1,6 @@
 use crate::bun_schema::api as Api;
 use bun_core::ZStr;
 use bun_core::{Output, env_var};
-use bun_paths::PathBuffer;
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
@@ -301,7 +300,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [b"install", b"global"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
@@ -313,7 +312,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
         .get()
         .or_else(|| env_var::HOME.get())
     {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 3] = [b".bun", b"install", b"global"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
@@ -347,7 +346,7 @@ pub(crate) fn open_global_bin_dir(
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 1] = [b"bin"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
@@ -359,7 +358,7 @@ pub(crate) fn open_global_bin_dir(
         .get()
         .or_else(|| env_var::HOME.get())
     {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [b".bun", b"bin"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()

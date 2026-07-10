@@ -643,7 +643,7 @@ impl AnyRoute {
                     // NOTE: `sys::exists_at_type` takes `&ZStr`; the store
                     // path is a borrowed byte slice. NUL-terminate into a path
                     // buffer for the syscall.
-                    let mut buf = bun_paths::PathBuffer::default();
+                    let mut buf = bun_paths::path_buffer_pool::get();
                     let zpath = bun_paths::resolve_path::z(store_path, &mut buf);
                     match sys::exists_at_type(sys::Fd::cwd(), zpath) {
                         Ok(sys::ExistsAtType::Directory) => {
@@ -2495,15 +2495,18 @@ where
     pub fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
         let rc = self.get_all_closed_promise(&self.global());
 
-        if self.has_listener() {
-            let abrupt = 'brk: {
-                if let Some(val) = abruptly {
-                    if val.is_boolean() && val.to_boolean() {
-                        break 'brk true;
-                    }
+        let abrupt = 'brk: {
+            if let Some(val) = abruptly {
+                if val.is_boolean() && val.to_boolean() {
+                    break 'brk true;
                 }
-                false
-            };
+            }
+            false
+        };
+        // An abrupt stop must also fire when only the HTTP/3 drain from a
+        // prior graceful stop remains — the listener handles are gone but
+        // conns are still live (see ServerFlags::H3_DRAINING).
+        if self.has_listener() || (abrupt && self.flags.contains(ServerFlags::H3_DRAINING)) {
             self.stop(abrupt);
         }
 
@@ -2511,7 +2514,7 @@ where
     }
 
     pub fn dispose_from_js(&mut self) -> JSValue {
-        if self.has_listener() {
+        if self.has_listener() || self.flags.contains(ServerFlags::H3_DRAINING) {
             self.stop(true);
         }
         JSValue::UNDEFINED

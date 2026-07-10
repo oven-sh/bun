@@ -57,12 +57,3 @@ unsafe impl crate::ffi::Zeroable for CONSOLE_SCREEN_BUFFER_INFO {}
 pub use bun_windows_sys::kernel32;
 // `c::` alias used by `output.rs`.
 pub use kernel32 as c;
-
-/// `bun.windows.libuv` — only `uv_disable_stdio_inheritance` is called from
-/// `bun_core`; declared directly to avoid a `bun_libuv_sys` dep at tier-0.
-pub mod libuv {
-    unsafe extern "C" {
-        /// No preconditions; walks the CRT fd table and clears HANDLE_FLAG_INHERIT.
-        pub(crate) safe fn uv_disable_stdio_inheritance();
-    }
-}

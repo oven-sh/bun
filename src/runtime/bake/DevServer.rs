@@ -872,7 +872,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             #[cfg(not(windows))]
             bun_core::write_any_to_hasher(&mut h, stat.st_mtime as i64);
             #[cfg(windows)]
-            bun_core::write_any_to_hasher(&mut h, &(stat.mtim.sec as i64));
+            bun_core::write_any_to_hasher(&mut h, stat.st_mtim.sec);
             h.update(crate::bake::bake_body::get_hmr_runtime(bake::Side::Client).code);
             h.update(crate::bake::bake_body::get_hmr_runtime(bake::Side::Server).code);
         } else {
@@ -5681,7 +5681,7 @@ pub fn dump_bundle_for_chunk(
     is_ssr_graph: bool,
 ) {
     let cwd = &dev.root;
-    let mut a = PathBuffer::uninit();
+    let mut a = bun_paths::path_buffer_pool::get();
     let mut b = [0u8; MAX_PATH_BYTES * 2];
     let rel_path = paths::resolve_path::relative_buf_z(&mut a, cwd, key);
     let from = const_format::concatcp!("..", paths::SEP_STR);

@@ -100,10 +100,6 @@ use crate::cli::open::Editor;
 use bun_core::{String as BunString, ZigString, strings};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_paths::MAX_PATH_BYTES;
-#[cfg(not(windows))]
-use bun_paths::PathBuffer;
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
 use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
@@ -941,7 +937,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
             #[cfg(windows)]
             {
-                let mut wpath = WPathBuffer::uninit();
+                let mut wpath = bun_paths::w_path_buffer_pool::get();
                 let Ok(fdpath) = bun_sys::get_fd_path_w(fd, &mut wpath) else {
                     break 'use_resolved_path;
                 };
@@ -949,7 +945,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             }
             #[cfg(not(windows))]
             {
-                let mut path = PathBuffer::uninit();
+                let mut path = bun_paths::path_buffer_pool::get();
                 let Ok(fdpath) = bun_sys::get_fd_path(fd, &mut path) else {
                     break 'use_resolved_path;
                 };
@@ -1737,7 +1733,7 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
         let vm = global_this.bun_vm();
         let mut args = ArgumentsSlice::init(vm, arguments_.slice());
 
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let path = 'brk: {
             if let Some(path) = args.next_eat() {
                 if path.is_string() {
@@ -3016,7 +3012,7 @@ mod stdio_stores {
     }
 
     fn build_store(uv_fd: i32, is_atty: bool) -> StoreRef {
-        let fd = bun_sys::Fd::from_uv(uv_fd);
+        let fd = bun_sys::Fd::from_js_fd(uv_fd);
         let mode: bun_sys::Mode = match bun_sys::fstat(fd) {
             Ok(stat) => stat.st_mode as bun_sys::Mode,
             Err(_) => 0,
@@ -3059,7 +3055,7 @@ mod stdio_stores {
     }
 
     pub(super) fn stdin(global_this: &JSGlobalObject) -> JSValue {
-        let is_atty = bun_sys::isatty(bun_sys::Fd::from_uv(0));
+        let is_atty = bun_sys::isatty(bun_sys::Fd::from_js_fd(0));
         make_blob(
             global_this,
             &STDIN,

@@ -2165,9 +2165,9 @@ pub(super) extern "C" fn napi_get_node_version(
     env.ok()
 }
 
-#[cfg(windows)]
-type napi_event_loop = *mut bun_sys::windows::libuv::Loop;
-#[cfg(not(windows))]
+// Every platform returns Bun's own EventLoop* — there is no libuv loop.
+// Addons that pass this to real uv_* APIs were already crashing on POSIX;
+// Windows now matches (platform consistency, not a new gap).
 type napi_event_loop = *mut EventLoop;
 
 #[unsafe(no_mangle)]
@@ -2182,7 +2182,9 @@ pub(super) extern "C" fn napi_get_uv_event_loop(
     {
         // A past alignment assertion here fired spuriously.
         // TODO(@190n) investigate
-        *loop_out = VirtualMachine::get().uv_loop();
+        // Transitional: addons receive the uws wrapper pointer; the real
+        // `uv_loop_t`-ABI answer lands with the N-API stub/polyfill pass.
+        *loop_out = VirtualMachine::get().platform_loop().cast();
     }
     #[cfg(not(windows))]
     {

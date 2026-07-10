@@ -441,6 +441,9 @@ impl App {
     pub fn close(&mut self) {
         c::uws_h3_app_close(self)
     }
+    pub fn close_listeners(&mut self) {
+        c::uws_h3_app_close_listeners(self)
+    }
     pub fn clear_routes(&mut self) {
         c::uws_h3_app_clear_routes(self)
     }
@@ -596,6 +599,7 @@ mod c {
         ) -> *mut App;
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(app: &mut App);
+        pub(super) safe fn uws_h3_app_close_listeners(app: &mut App);
         pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,

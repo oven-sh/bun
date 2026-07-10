@@ -4146,8 +4146,8 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
 #else
     // When a title was explicitly set (`--title` CLI flag or a prior
     // `process.title = ...`), the store is authoritative — the console title
-    // that uv_get_process_title reads is unavailable in console-less
-    // processes (CI) and never reflects the CLI flag.
+    // is unavailable in console-less processes (CI) and never reflects the CLI
+    // flag.
     if (Bun__Process__hasTitle()) {
         BunString str;
         Bun__Process__getTitle(globalObject, &str);
@@ -4157,13 +4157,12 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
         RELEASE_AND_RETURN(scope, JSValue::encode(result));
     }
 
-    char title[1024];
-    title[0] = '\0'; // Initialize buffer to empty string
-    if (uv_get_process_title(title, sizeof(title)) != 0 || title[0] == '\0') {
+    wchar_t title[1024];
+    DWORD len = GetConsoleTitleW(title, 1024);
+    if (len == 0) {
         RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, String("bun"_s))));
     }
-
-    auto* result = jsString(vm, WTF::String::fromUTF8(title));
+    auto* result = jsString(vm, WTF::String({ reinterpret_cast<const char16_t*>(title), len }));
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 #endif
@@ -4185,12 +4184,16 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
 #else
     WTF::String wtfStr = jsString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    // Update the store first so the getter reflects the assignment; the uv
-    // call is best-effort (it fails in console-less processes).
+    // Update the store first so the getter reflects the assignment; the
+    // console title is best-effort (it fails in console-less processes).
     BunString str = Bun::toStringRef(globalObject, jsString);
     Bun__Process__setTitle(globalObject, &str);
-    CString cstr = wtfStr.utf8();
-    uv_set_process_title(cstr.data());
+    Vector<wchar_t> wide;
+    wide.reserveInitialCapacity(wtfStr.length() + 1);
+    for (unsigned i = 0; i < wtfStr.length(); ++i)
+        wide.append(static_cast<wchar_t>(wtfStr[i]));
+    wide.append(L'\0');
+    SetConsoleTitleW(wide.span().data());
     return true;
 #endif
 }

@@ -1779,6 +1779,40 @@ it.concurrent("setTypeOfService validates its argument instead of asserting", as
   void stderr;
 });
 
+describe("first network operation in a fresh process", () => {
+  // Winsock init is lazy; every entry path (TCP listen, UDP bind — both hit
+  // getaddrinfo before socket()) must ensure it, not just socket creation.
+  it.concurrent("TCP listen works as the very first operation", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const l = Bun.listen({ hostname: "localhost", port: 0, socket: { data() {} } }); console.log("port", l.port); l.stop();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: out.startsWith("port "), err, code }).toEqual({ out: true, err: "", code: 0 });
+  });
+
+  it.concurrent("UDP bind works as the very first operation", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const s = await Bun.udpSocket({ hostname: "localhost", port: 0 }); console.log("port", s.port); s.close();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: out.startsWith("port "), err, code }).toEqual({ out: true, err: "", code: 0 });
+  });
+});
+
 it("socket handler validation errors throw instead of crashing", async () => {
   // Handlers protects its callbacks only after validation succeeds, so the
   // validation error paths must throw without tearing down a never-protected

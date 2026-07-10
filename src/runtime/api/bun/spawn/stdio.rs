@@ -1,7 +1,5 @@
 use bun_collections::VecExt;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
@@ -83,7 +81,6 @@ pub enum ToSpawnOptsError {
     StdinUsedAsOut,
     OutUsedAsStdin,
     BlobUsedAsOut,
-    UvPipe(sys::E),
 }
 
 impl ToSpawnOptsError {
@@ -92,7 +89,6 @@ impl ToSpawnOptsError {
             Self::StdinUsedAsOut => b"Stdin cannot be used for stdout or stderr",
             Self::OutUsedAsStdin => b"Stdout and stderr cannot be used for stdin",
             Self::BlobUsedAsOut => b"Blobs are immutable, and cannot be used for stdout/stderr",
-            Self::UvPipe(_) => panic!("TODO"),
         }
     }
 
@@ -208,28 +204,14 @@ impl Stdio {
         }
     }
 
-    /// On windows this function allocates a `*mut uv::Pipe` (via `heap::alloc`);
-    /// the caller must transfer ownership (e.g. into `WindowsStdioResult::Buffer`
-    /// via `heap::take`) or free it with `close_and_destroy`.
     pub fn as_spawn_option(&mut self, i: i32) -> Result {
-        // `SpawnOptionsStdio` is already a cfg-gated alias to PosixStdio /
-        // WindowsStdio; only three variant *constructors* differ in arity
-        // between targets, so spell those per-cfg and share the rest.
-        #[cfg(not(windows))]
+        // `SpawnOptionsStdio` is a cfg-gated alias to PosixStdio /
+        // WindowsStdio; the variant shapes used here match on both targets.
         fn buffer() -> SpawnOptionsStdio {
             SpawnOptionsStdio::Buffer
         }
-        #[cfg(windows)]
-        fn buffer() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Buffer(create_zeroed_pipe())
-        }
-        #[cfg(not(windows))]
         fn ipc() -> SpawnOptionsStdio {
             SpawnOptionsStdio::Ipc
-        }
-        #[cfg(windows)]
-        fn ipc() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Ipc(create_zeroed_pipe())
         }
 
         let result = match self {
@@ -290,8 +272,8 @@ impl Stdio {
             }
             #[cfg(not(windows))]
             Self::SocketFd => SpawnOptionsStdio::SocketFd,
-            // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
-            // to transfer), so `socket-fd` behaves identically to `pipe` there.
+            // Windows extra-stdio is a pipe-pair server HANDLE (no raw-fd
+            // ownership to transfer), so `socket-fd` behaves like `pipe` there.
             #[cfg(windows)]
             Self::SocketFd => buffer(),
             Self::Ipc => ipc(),
@@ -310,15 +292,14 @@ impl Stdio {
     }
 
     pub fn is_piped(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Self::Capture(_)
-            | Self::ArrayBuffer(_)
-            | Self::Blob(_)
-            | Self::Pipe
-            | Self::ReadableStream(_) => true,
-            Self::Ipc => cfg!(windows),
-            _ => false,
-        }
+                | Self::ArrayBuffer(_)
+                | Self::Blob(_)
+                | Self::Pipe
+                | Self::ReadableStream(_)
+        ) || (cfg!(windows) && matches!(self, Self::Ipc))
     }
 
     fn extract_body_value(
@@ -453,10 +434,10 @@ impl Stdio {
             }
             return Ok(());
         } else if value.is_number() {
-            // `bun.FD.fromUV(this.toInt32())` inlined here since the
+            // `bun.FD.fromJS(this.toInt32())` inlined here since the
             // upstream `bun_jsc::JSValue` doesn't expose a wrapper.
-            let fd = Fd::from_uv(value.to_int32());
-            let file_fd = fd.uv();
+            let fd = Fd::from_js_fd(value.to_int32());
+            let file_fd = fd.js_fd();
             if file_fd < 0 {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "file descriptor must be a positive integer"
@@ -672,16 +653,4 @@ impl Drop for Stdio {
             _ => {}
         }
     }
-}
-
-/// Allocate a zero-initialized uv.Pipe. Zero-init ensures `pipe.loop` is null
-/// for pipes that never reach `uv_pipe_init`, so `closeAndDestroy` can tell
-/// whether `uv_close` is needed.
-#[cfg(windows)]
-fn create_zeroed_pipe() -> *mut uv::Pipe {
-    // `bun.new` → heap::alloc(Box::new(..)). WindowsSpawnOptions.Stdio.{buffer,ipc}
-    // store the pipe as a raw FFI-owned `*mut uv::Pipe` so `spawn_process_windows`
-    // can transfer sole ownership into `WindowsStdioResult::Buffer` via
-    // `heap::take` without aliasing a live `Box` (which would double-free).
-    bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))
 }

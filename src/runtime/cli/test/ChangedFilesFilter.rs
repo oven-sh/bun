@@ -31,7 +31,7 @@ use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use bun_paths::SEP;
-use bun_paths::{self, PathBuffer, platform, resolve_path};
+use bun_paths::{self, platform, resolve_path};
 use bun_ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
@@ -461,6 +461,8 @@ bun_core::named_error_set!(GitError);
 /// unioned with untracked files (a brand-new file is "changed since"
 /// any prior commit). Paths that do not exist on disk (deletions) are
 /// skipped since they cannot appear in the module graph.
+// Once per test run (changed-files scan).
+#[allow(clippy::large_stack_frames)]
 fn get_changed_files(
     top_level_dir: &[u8],
     since: &[u8],
@@ -662,7 +664,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
 /// Parse newline-delimited repo-relative paths from git output, join each
 /// with the repository root, and insert existing files into `set`.
 fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     for line in stdout
         .split(|b| *b == b'\r' || *b == b'\n')
         .filter(|s| !s.is_empty())

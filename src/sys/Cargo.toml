@@ -23,6 +23,8 @@ bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_errno.workspace = true
+bun_winfs.workspace = true
+bun_fdtable.workspace = true
 bun_paths.workspace = true
 bun_windows_sys.workspace = true
 bun_wyhash.workspace = true
@@ -39,5 +41,4 @@ rustix = { workspace = true }
 memchr = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
-bun_libuv_sys.workspace = true
 bun_output.workspace = true

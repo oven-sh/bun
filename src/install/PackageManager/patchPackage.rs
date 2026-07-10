@@ -48,7 +48,7 @@ pub fn do_patch_commit(
     pathbuf: &mut PathBuffer,
     log_level: LogLevel,
 ) -> Result<Option<PatchCommitResult>, bun_core::Error> {
-    let mut folder_path_buf = PathBuffer::uninit();
+    let mut folder_path_buf = bun_paths::path_buffer_pool::get();
     let mut lockfile: Box<Lockfile> = Box::default();
     let log = manager.log_mut();
     match lockfile.load_from_cwd::<true>(Some(manager), log) {
@@ -317,8 +317,8 @@ pub fn do_patch_commit(
 
     let patchfile_contents: Vec<u8> = 'brk: {
         let new_folder = changes_dir;
-        let mut buf2 = PathBuffer::uninit();
-        let mut buf3 = PathBuffer::uninit();
+        let mut buf2 = bun_paths::path_buffer_pool::get();
+        let mut buf3 = bun_paths::path_buffer_pool::get();
         let old_folder: &[u8] = 'old_folder: {
             let cache_dir_path = match sys::get_fd_path(cache_dir, &mut buf2) {
                 Ok(s) => s,
@@ -478,7 +478,7 @@ pub fn do_patch_commit(
             }
         }
 
-        let mut cwdbuf = PathBuffer::uninit();
+        let mut cwdbuf = bun_paths::path_buffer_pool::get();
         let cwd = match sys::getcwd_z(&mut cwdbuf) {
             Ok(fd) => fd,
             Err(e) => {
@@ -486,7 +486,7 @@ pub fn do_patch_commit(
                 Global::crash();
             }
         };
-        let mut gitbuf = PathBuffer::uninit();
+        let mut gitbuf = bun_paths::path_buffer_pool::get();
         let git = match bun_which::which(
             &mut gitbuf,
             bun_core::env_var::PATH.get().unwrap_or(b""),
@@ -723,11 +723,11 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
 
     let arg_kind: PatchArgKind = PatchArgKind::from_arg(argument);
 
-    let mut folder_path_buf = PathBuffer::uninit();
+    let mut folder_path_buf = bun_paths::path_buffer_pool::get();
     let mut resolution_buf = [0u8; 1024];
 
     #[cfg(windows)]
-    let mut win_normalizer = PathBuffer::uninit();
+    let mut win_normalizer = bun_paths::path_buffer_pool::get();
 
     let workspace_name_hash = manager.workspace_name_hash;
     let workspace_package_id = manager
@@ -994,7 +994,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
     }
 
     if not_in_workspace_root {
-        let mut bufn = PathBuffer::uninit();
+        let mut bufn = bun_paths::path_buffer_pool::get();
         bun_core::pretty!(
             "\nTo patch <b>{}<r>, edit the following folder:\n\n  <cyan>{}<r>\n",
             bstr::BStr::new(pkg_name),
@@ -1037,7 +1037,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
     // platform separator so `undo()`/`basename()` walk the path correctly on
     // Windows and the lstat/getFileAttributes calls below see a native path.
     #[cfg(windows)]
-    let mut native_buf = PathBuffer::uninit();
+    let mut native_buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
     let native: &[u8] = {
         native_buf[0..module_folder.len()].copy_from_slice(module_folder);
@@ -1155,7 +1155,7 @@ fn overwrite_package_in_node_modules_folder(
     > = 'src_path: {
         #[cfg(windows)]
         {
-            let mut path_buf = bun_paths::WPathBuffer::uninit();
+            let mut path_buf = bun_paths::w_path_buffer_pool::get();
             let abs_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
 
             let mut sp = bun_paths::AbsPath::<

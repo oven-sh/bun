@@ -909,6 +909,12 @@ describe("mkdirSync", () => {
     expect(existsSync(tempdir)).toBe(true);
   });
 
+  it.if(isWindows)("throws EINVAL for a malformed device-style name", () => {
+    // libuv fs__mkdir remaps both ERROR_INVALID_NAME and ERROR_DIRECTORY
+    // to EINVAL; Node-on-Windows throws EINVAL for "con:".
+    expect(() => mkdirSync("con:")).toThrow(expect.objectContaining({ code: "EINVAL" }));
+  });
+
   it("should throw ENOENT for empty string", () => {
     expect(() => mkdirSync("", { recursive: true })).toThrow("no such file or directory");
     expect(() => mkdirSync("")).toThrow("no such file or directory");
@@ -5328,6 +5334,173 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
 
   expect(detachedDuringOptions).toBe(false);
   expect(readFileSync(file, "utf8")).toBe("hello world");
+});
+
+describe.skipIf(isWindows)("POSIX rmdir errno", () => {
+  it("rmdir on a file is ENOTDIR", () => {
+    using dir = tempDir("rmdir-enotdir", { "plain.txt": "x" });
+    expect(() => fs.rmdirSync(join(String(dir), "plain.txt"))).toThrow(expect.objectContaining({ code: "ENOTDIR" }));
+  });
+});
+
+describe.skipIf(!isWindows)("Windows device files and errno parity", () => {
+  // Positional reads on non-seekable kinds pass through to the kernel
+  // (libuv fs__read shape) instead of a pre-rejection that surfaced as
+  // EUNKNOWN and crashed process.stdin in children spawned with the
+  // default (NUL) stdin.
+  it("pread on the NUL device returns 0 at any offset", () => {
+    const fd = fs.openSync("\\\\.\\NUL", "r");
+    try {
+      expect(fs.readSync(fd, Buffer.alloc(16), 0, 16, 0)).toBe(0);
+      expect(fs.readSync(fd, Buffer.alloc(16), 0, 16, 12345)).toBe(0);
+      // Sequential read is also EOF.
+      expect(fs.readSync(fd, Buffer.alloc(16), 0, 16, null)).toBe(0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    // Write neighbor: NUL swallows writes (needs its own writable fd).
+    const wfd = fs.openSync("\\\\.\\NUL", "w");
+    try {
+      expect(fs.writeSync(wfd, Buffer.from("discard"))).toBe(7);
+    } finally {
+      fs.closeSync(wfd);
+    }
+  });
+
+  it("rmdir on a file is ENOENT (frozen libuv behavior), siblings intact", () => {
+    using dir = tempDir("rmdir-errno", { "plain.txt": "x", "sub/.keep": "" });
+    const file = join(String(dir), "plain.txt");
+    expect(() => fs.rmdirSync(file)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    // +1/-1 around it: rm-on-file works, rmdir-on-empty-dir works,
+    // rmdir-on-missing is ENOENT.
+    expect(() => fs.rmSync(file)).not.toThrow();
+    fs.rmSync(join(String(dir), "sub", ".keep"));
+    expect(() => fs.rmdirSync(join(String(dir), "sub"))).not.toThrow();
+    expect(() => fs.rmdirSync(join(String(dir), "missing"))).toThrow(expect.objectContaining({ code: "ENOENT" }));
+  });
+
+  it("mkdir on a malformed device-ish name is EINVAL (fs__mkdir remap)", () => {
+    using dir = tempDir("mkdir-errno", {});
+    expect(() => fs.mkdirSync("con:")).toThrow(expect.objectContaining({ code: "EINVAL" }));
+    // Neighbors: a normal mkdir works; repeating it is EEXIST; a missing
+    // parent is ENOENT (the remap must not swallow other codes).
+    const fresh = join(String(dir), "fresh");
+    fs.mkdirSync(fresh);
+    expect(() => fs.mkdirSync(fresh)).toThrow(expect.objectContaining({ code: "EEXIST" }));
+    expect(() => fs.mkdirSync(join(String(dir), "no", "parent"))).toThrow(expect.objectContaining({ code: "ENOENT" }));
+  });
+
+  it("mkdir recursive on a malformed name fails bounded (no retry loop)", () => {
+    // The recursive walker retries parents on ENOENT; a malformed name must
+    // still fail promptly instead of walking forever.
+    expect(() => fs.mkdirSync("con:", { recursive: true })).toThrow();
+    // +1 neighbor: recursive creation through several levels still works.
+    using dir = tempDir("mkdir-recursive-ok", {});
+    const deep = join(String(dir), "a", "b", "c");
+    fs.mkdirSync(deep, { recursive: true });
+    expect(fs.existsSync(deep)).toBe(true);
+  });
+
+  // A duplicated fd shares one file offset with the original (POSIX dup
+  // contract). Bun.file(fd).writer() dups internally, so interleaved writes
+  // through both must append in order instead of overwriting.
+  it("Bun.file(fd).writer() shares the file offset with writeSync", async () => {
+    using dir = tempDir("dup-offset", {});
+    const file = join(String(dir), "interleaved.txt");
+    const fd = fs.openSync(file, "w");
+    try {
+      fs.writeSync(fd, "AAA");
+      const writer = Bun.file(fd).writer();
+      writer.write("BBB");
+      await writer.flush();
+      fs.writeSync(fd, "CCC");
+      writer.write("DDD");
+      await writer.end();
+    } finally {
+      fs.closeSync(fd);
+    }
+    expect(fs.readFileSync(file, "utf8")).toBe("AAABBBCCCDDD");
+  });
+
+  it("utimes round-trips sub-millisecond timestamps (#28017 family)", () => {
+    using dir = tempDir("utimes-subms", { "t.txt": "x" });
+    const file = join(String(dir), "t.txt");
+    const when = 1700000000.5005; // .5 ms fraction
+    fs.utimesSync(file, when, when);
+    const st = fs.statSync(file);
+    expect(Number.isInteger(st.mtimeMs)).toBe(false);
+    expect(st.mtimeMs).toBeCloseTo(1700000000500.5, 3);
+    // futimes sibling takes the same path.
+    const fd = fs.openSync(file, "r+");
+    try {
+      fs.futimesSync(fd, when + 1, when + 1);
+    } finally {
+      fs.closeSync(fd);
+    }
+    expect(Number.isInteger(fs.statSync(file).mtimeMs)).toBe(false);
+    // -1 neighbor: whole-millisecond values stay exact.
+    fs.utimesSync(file, 1700000001.25, 1700000001.25);
+    expect(fs.statSync(file).mtimeMs).toBe(1700000001250);
+  });
+});
+
+describe("fs.promises.writeFile with iterables", () => {
+  // The synchronous file-write arm ran its completion chain inside the
+  // write() frame; a nested drain clobbered the result to 0 bytes and the
+  // path-form cleanup then ftruncate(fd, 0)'d the data away.
+  it("multi-chunk async iterable lands on disk (path form)", async () => {
+    using dir = tempDir("writefile-iter", {});
+    const file = join(String(dir), "multi.txt");
+    async function* chunks() {
+      yield "1 ";
+      yield "Hello, ";
+      yield "world!";
+    }
+    await fs.promises.writeFile(file, chunks());
+    expect(fs.readFileSync(file, "utf8")).toBe("1 Hello, world!");
+  });
+
+  it("single-chunk and empty iterables behave (±1 around the multi-chunk case)", async () => {
+    using dir = tempDir("writefile-iter-edges", {});
+    const one = join(String(dir), "one.txt");
+    async function* single() {
+      yield "only";
+    }
+    await fs.promises.writeFile(one, single());
+    expect(fs.readFileSync(one, "utf8")).toBe("only");
+
+    const empty = join(String(dir), "empty.txt");
+    async function* none() {}
+    await fs.promises.writeFile(empty, none());
+    expect(fs.readFileSync(empty, "utf8")).toBe("");
+  });
+
+  it("Buffer chunks and FileHandle form (the no-ftruncate sibling)", async () => {
+    using dir = tempDir("writefile-iter-fh", {});
+    const viaHandle = join(String(dir), "handle.txt");
+    const fh = await fs.promises.open(viaHandle, "w");
+    async function* bufs() {
+      yield Buffer.from("bin");
+      yield Buffer.from("ary");
+    }
+    try {
+      await fs.promises.writeFile(fh, bufs());
+    } finally {
+      await fh.close();
+    }
+    expect(fs.readFileSync(viaHandle, "utf8")).toBe("binary");
+  });
+
+  it("append flag preserves existing content with an iterable body", async () => {
+    using dir = tempDir("writefile-iter-append", { "log.txt": "start;" });
+    const file = join(String(dir), "log.txt");
+    async function* more() {
+      yield "then;";
+      yield "end";
+    }
+    await fs.promises.writeFile(file, more(), { flag: "a" });
+    expect(fs.readFileSync(file, "utf8")).toBe("start;then;end");
+  });
 });
 
 describe("fs.close on stdio descriptors", () => {

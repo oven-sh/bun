@@ -186,8 +186,12 @@ where
 
     #[cfg(windows)]
     {
-        *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
-            != 0
+        // Exact type match (a PIPE bitmask matches DISK too): PIPE and
+        // CHAR take the async writer (console writes need the UTF-16 path);
+        // DISK is the synchronous file arm.
+        let ty = bun_sys::windows::GetFileType(fd.native());
+        *pollable = (ty == bun_sys::windows::FILE_TYPE_PIPE
+            || ty == bun_sys::windows::FILE_TYPE_CHAR)
             && !force_sync;
         return Ok(fd);
     }

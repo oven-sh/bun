@@ -78,6 +78,8 @@ impl<'a> DirEntryIterator for ScannerDirIter<'a> {
 }
 
 impl<'a> Scanner<'a> {
+    // One scanner per test run; embedded path scratch.
+    #[allow(clippy::large_stack_frames)]
     pub fn init(
         transpiler: &'a Transpiler,
         initial_results_capacity: usize,

@@ -2634,7 +2634,7 @@ impl PathTemplate {
             while let Some(i) = strings::index_of_char(remain, b'/') {
                 let i = i as usize;
                 w.write_all(&remain[0..i])?;
-                w.write_all(&[b'\\'])?;
+                w.write_all(b"\\")?;
                 remain = &remain[i + 1..];
             }
             w.write_all(remain)

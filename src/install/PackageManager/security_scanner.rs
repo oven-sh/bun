@@ -5,11 +5,9 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-// `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
-// uws wrapper — `WindowsLoop` on Windows, `PosixLoop` on POSIX), not
-// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
-// on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
-// on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
+// `BufferedReaderParent::loop_` is typed `*mut bun_io::Loop` — the uws
+// wrapper IS the platform loop on every target, so the inherent `loop_()`
+// (`AnyEventLoop::native_loop()`) is an identity projection.
 use crate::bun_fs::FileSystem;
 use crate::bun_json::{Expr, ExprData};
 use crate::package_manager_real::Command::Context as CommandContext;
@@ -1114,42 +1112,43 @@ impl<'a> SecurityScanSubprocess<'a> {
         })
     }
 
-    /// Windows fd 4: .buffer stdio for extra_fds sets UV_OVERLAPPED_PIPE on the
-    /// child's handle, which breaks sync reads in the child.
-    /// Instead, create the pipe ourselves with asymmetric flags so only the
-    /// parent's write end is overlapped. Child inherits the non-overlapped read
-    /// end via .pipe (inherit_fd); parent wraps the overlapped write end in a
-    /// uv.Pipe for IOCP-based async writes.
+    /// Windows fd 4: `.buffer` extra stdio would give the child an OVERLAPPED
+    /// handle, which breaks sync reads in the child. Instead create the pair
+    /// ourselves: the child inherits the synchronous read end via `.pipe`
+    /// (inherit_fd); the parent adopts the overlapped write end onto its loop
+    /// for IOCP-based async writes.
     #[cfg(windows)]
     fn spawn_windows(
         &mut self,
         argv: &mut [*const core::ffi::c_char; 5],
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
-        use bun_sys::ReturnCodeExt as _;
-        use bun_sys::windows::libuv as uv;
+        use bun_sys::windows::win_error;
 
-        let mut json_fds: [uv::uv_file; 2] = [0; 2];
-        // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
-        let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
-        // Use the translating overlay (`ReturnCodeExt::err_enum_e`) — the inherent
-        // `ReturnCode::err_enum()` returns the raw |uv_code| (e.g. 4071 for
-        // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`, which would
-        // make `errno_to_zig_err` index the wrong table.
-        if let Some(e) = pipe_rc.err_enum_e() {
-            ipc_output_fds[0].close();
-            ipc_output_fds[1].close();
-            return Err(bun_core::errno_to_zig_err(e as i32));
-        }
+        let (json_server, json_client) = match bun_iocp::create_pair(&bun_iocp::PairOptions {
+            server_readable: false,
+            server_writable: true,
+            client_readable: true,
+            client_writable: false,
+            client_overlapped: false,
+            client_inheritable: false,
+        }) {
+            Ok(pair) => pair,
+            Err(w) => {
+                ipc_output_fds[0].close();
+                ipc_output_fds[1].close();
+                return Err(bun_core::errno_to_zig_err(win_error::translate(w) as i32));
+            }
+        };
         // Track ownership with optionals: None means the fd has been transferred
         // or closed, so the errdefer skips it. Prevents double-close on error paths
-        // after pipe.open() takes ownership or after the explicit closes below.
+        // after the engine adopts the write end or after the explicit closes below.
         // State is moved INTO the guard so later `= None` mutations are observed
         // by the cleanup closure (PORTING.md: errdefer side-effects → scopeguard state).
         let mut fds = scopeguard::guard(
             (
-                Some(Fd::from_uv(json_fds[0])), // .0 = child_read_fd
-                Some(Fd::from_uv(json_fds[1])), // .1 = parent_write_fd
+                Some(Fd::from_system(json_client)), // .0 = child_read_fd
+                Some(Fd::from_system(json_server)), // .1 = parent_write_fd
             ),
             |(child_read, parent_write)| {
                 if let Some(fd) = child_read {
@@ -1161,31 +1160,34 @@ impl<'a> SecurityScanSubprocess<'a> {
             },
         );
 
-        let pipe_ptr: *mut uv::Pipe =
-            bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
-        // errdefer pipe.closeAndDestroy() — guard owns the raw Box ptr; libuv's
-        // close callback frees the heap allocation, so do NOT re-box on the
-        // cleanup path (would double-free). Disarmed only after finish_spawn
-        // succeeds: it must stay armed
-        // across `ipc_reader.start()` inside finish_spawn (the pre-writer error
-        // window) so a registered-but-unowned uv handle is never leaked.
-        let mut pipe = scopeguard::guard(pipe_ptr, |p| {
-            // SAFETY: p is the live Box-allocated uv_pipe_t; close_and_destroy
-            // schedules uv_close + frees the allocation.
-            unsafe { uv::Pipe::close_and_destroy(p) };
+        // Adopt the overlapped write end onto the loop.
+        // SAFETY: the loop wrapper is live for the manager's lifetime;
+        // `json_server` ownership transfers to the engine on success.
+        let adopted = unsafe {
+            bun_iocp::PipeHandle::open(
+                bun_iocp::usockets::native_loop(self.loop_().cast()),
+                json_server,
+            )
+        };
+        let pipe_box = match adopted {
+            Ok(p) => p,
+            Err(w) => {
+                // open() failed → we still own the handle; the guard closes it.
+                return Err(bun_core::errno_to_zig_err(win_error::translate(w) as i32));
+            }
+        };
+        fds.1 = None; // the engine owns it now
+        let pipe_ptr: *mut bun_iocp::PipeHandle = bun_core::heap::into_raw(pipe_box);
+        // errdefer: the engine handle may only be freed from its close
+        // callback. Disarmed only after finish_spawn succeeds: it must stay
+        // armed across `ipc_reader.start()` inside finish_spawn (the
+        // pre-writer error window) so an adopted-but-unowned handle is never
+        // leaked.
+        let pipe = scopeguard::guard(pipe_ptr, |p| {
+            // SAFETY: `p` is the live heap-pinned engine handle; sole owner on
+            // every error path (the thunk below was never called).
+            spawn::close_engine_pipe(unsafe { bun_core::heap::take(p) });
         });
-        // `self.loop_()` already projects to the libuv `uv_loop_t*` on
-        // Windows (see the `.uv_loop` projection in `loop_()`); pass through.
-        let uv_loop = self.loop_();
-        // SAFETY: *pipe was just heap-allocated above and is non-null.
-        if let Some(e) = unsafe { (**pipe).init(uv_loop, false) }.to_error(bun_sys::Tag::pipe) {
-            return Err(e.into());
-        }
-        if let Some(e) = unsafe { (**pipe).open(fds.1.unwrap().uv()) }.to_error(bun_sys::Tag::open)
-        {
-            return Err(e.into());
-        }
-        fds.1 = None; // pipe owns it now
 
         let extra_fds: Box<[Stdio]> = Box::new([
             Stdio::Pipe(ipc_output_fds[1]), // fd 3: child inherits write end
@@ -1225,15 +1227,15 @@ impl<'a> SecurityScanSubprocess<'a> {
             .flags
             .insert(bun_io::pipe_reader::WindowsFlags::NONBLOCKING);
 
-        // Hand the pipe to StaticPipeWriter lazily: the closure captures only the
-        // raw `*mut uv::Pipe` (Copy, no Drop) and reconstitutes the Box at the
-        // exact `StaticPipeWriter::create` call site inside `finish_spawn`. If
-        // `finish_spawn` errors before that point (`ipc_reader.start()`), the
-        // closure drops as a no-op and the still-armed cleanup guard performs
-        // `close_and_destroy`. After the writer takes
-        // the pipe, post-create errors leave the writer leaked at refcount >= 1
-        // (RefPtr has no Drop), so the Box is never auto-freed and the guard's
-        // `close_and_destroy` remains the sole cleanup.
+        // Hand the pipe to StaticPipeWriter lazily: the closure captures only
+        // the raw `*mut PipeHandle` (Copy, no Drop) and reconstitutes the Box
+        // at the exact `StaticPipeWriter::create` call site inside
+        // `finish_spawn`. If `finish_spawn` errors before that point
+        // (`ipc_reader.start()`), the closure drops as a no-op and the
+        // still-armed cleanup guard performs the engine close. After the
+        // writer takes the pipe, post-create errors leave the writer leaked at
+        // refcount >= 1 (RefPtr has no Drop), so the Box is never auto-freed
+        // and the guard's engine close remains the sole cleanup.
         self.finish_spawn(&mut spawned, ipc_output_fds[0], move || {
             // SAFETY: `pipe_ptr` is the same allocation produced by
             // heap::alloc above and has not been freed; ownership transfers
@@ -1242,7 +1244,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         })?;
 
         // Success: pipe ownership now lives in StaticPipeWriter; disarm the
-        // close_and_destroy errdefer.
+        // engine-close errdefer.
         scopeguard::ScopeGuard::into_inner(pipe);
         // fd slots are already None.
         scopeguard::ScopeGuard::into_inner(fds);
@@ -1256,11 +1258,11 @@ impl<'a> SecurityScanSubprocess<'a> {
         spawned: &mut spawn::SpawnResult,
         ipc_read_fd: Fd,
         // Deferred constructor: a by-value
-        // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` would auto-free the
-        // allocation without `uv_close()` if `ipc_reader.start()` below failed,
-        // leaking a registered libuv handle. Taking a thunk and calling it only
-        // at the `StaticPipeWriter::create` site keeps the caller's
-        // `close_and_destroy` errdefer authoritative for the pre-writer window.
+        // `WindowsStdioResult::Buffer(Box<PipeHandle>)` would auto-free the
+        // allocation without the engine close handshake if
+        // `ipc_reader.start()` below failed. Taking a thunk and calling it
+        // only at the `StaticPipeWriter::create` site keeps the caller's
+        // engine-close errdefer authoritative for the pre-writer window.
         make_json_stdio: impl FnOnce() -> StdioResult,
     ) -> Result<(), Error> {
         // Allocate the blob copy before registering any event loop callbacks. If
@@ -1439,9 +1441,10 @@ impl<'a> SecurityScanSubprocess<'a> {
             // readable+HUP, `read_with_fn` drains to `Ok(0)`, and
             // `on_reader_done` decrements `remaining_fds` exactly once.
             //
-            // Windows reads via libuv (async) and the fd here is a uv-owned
-            // pipe handle — skip the sync drain there and keep the spec's
-            // teardown (the libuv exit/read ordering is not the failing path).
+            // Windows reads via the engine (async) and the fd here is an
+            // engine-owned pipe handle — skip the sync drain there and keep
+            // the spec's teardown (the exit/read ordering is not the failing
+            // path).
             #[cfg(not(windows))]
             {
                 let fd = self.ipc_reader.get_fd();

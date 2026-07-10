@@ -62,6 +62,8 @@ struct H3App {
     }
     /* GOAWAY + drain. The engine itself is torn down in the destructor. */
     void close() { http3Context->shutdown(); }
+    /* Force-close the listen sockets (aborts remaining conns). */
+    void closeListeners() { http3Context->closeListeners(); }
     bool addServerNameWithOptions(const char *hostname, SocketContextOptions options) {
         us_bun_socket_context_options_t raw;
         memcpy(&raw, &options, sizeof(raw));

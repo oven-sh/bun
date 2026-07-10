@@ -9,7 +9,7 @@ use bun_core::{self as bun, Error, Global, Output, UnwrapOrOom, err};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::BufferedReader;
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
 use crate::Command;
@@ -167,7 +167,7 @@ impl<'a> ProcessHandle<'a> {
         #[cfg(windows)]
         let mut spawned = spawned;
         // POSIX-only: pipe FDs are read before `to_process` consumes `spawned`.
-        // On Windows the readers are wired via `Source::Pipe` taken from
+        // On Windows the readers are wired via `start_with_pipe` from
         // `spawned.stdout/stderr` below, and `WindowsStdioResult` is not `Copy`.
         #[cfg(unix)]
         let stdout_fd = spawned.stdout;
@@ -183,24 +183,6 @@ impl<'a> ProcessHandle<'a> {
         self.stdout_reader.reader.set_parent(stdout_parent);
         let stderr_parent = (&raw mut self.stderr_reader).cast::<c_void>();
         self.stderr_reader.reader.set_parent(stderr_parent);
-
-        #[cfg(windows)]
-        {
-            // `spawn_process_windows` has *already* reclaimed
-            // sole ownership of that heap pipe into
-            // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` (see
-            // src/spawn/process.rs WindowsStdio::Buffer doc). Reconstructing a
-            // second Box from `self.options.stdout` here would alias the same
-            // allocation and double-free when `spawned` drops. Instead, move
-            // the Box out of the spawn *result* — `WindowsStdioResult::take()`
-            // leaves `Unavailable` behind so `spawned`'s drop is a no-op.
-            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
-                self.stdout_reader.reader.source = Some(bun_io::Source::Pipe(pipe));
-            }
-            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-                self.stderr_reader.reader.source = Some(bun_io::Source::Pipe(pipe));
-            }
-        }
 
         #[cfg(unix)]
         {
@@ -221,14 +203,20 @@ impl<'a> ProcessHandle<'a> {
         }
         #[cfg(not(unix))]
         {
-            self.stdout_reader
-                .reader
-                .start_with_current_pipe()
-                .map_err(Error::from)?;
-            self.stderr_reader
-                .reader
-                .start_with_current_pipe()
-                .map_err(Error::from)?;
+            // Take the adopted engine pipe ends out of the spawn *result* —
+            // `take()` leaves `Unavailable` so `spawned`'s Drop is a no-op.
+            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
+                self.stdout_reader
+                    .reader
+                    .start_with_pipe(pipe)
+                    .map_err(Error::from)?;
+            }
+            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
+                self.stderr_reader
+                    .reader
+                    .start_with_pipe(pipe)
+                    .map_err(Error::from)?;
+            }
         }
 
         self.process = Some(ProcessSlot {
@@ -508,7 +496,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub(crate) fn finalize(&self) -> u8 {
+    pub(crate) fn finalize(&self) -> u32 {
         for handle in self.handles.iter() {
             if let Some(proc) = &handle.process {
                 match &proc.status {
@@ -518,7 +506,7 @@ impl<'a> State<'a> {
                         }
                     }
                     Status::Signaled(signal) => {
-                        return bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(1);
+                        return u32::from(bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(1));
                     }
                     _ => return 1,
                 }
@@ -844,7 +832,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         };
         let mut patterns: Vec<Box<[u8]>> = Vec::new();
 
-        let mut root_buf = PathBuffer::uninit();
+        let mut root_buf = bun_paths::path_buffer_pool::get();
         let resolve_root = FilterArg::get_candidate_package_patterns(
             // SAFETY: single-threaded CLI path; the returned `&mut Log` is the only live borrow
             // of the process-static log for the duration of this call.
@@ -1139,18 +1127,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             next_dependents: Vec::new(),
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,
-                #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
-                #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
                 cwd: config.cwd.clone(),
                 #[cfg(windows)]
                 windows: spawn::WindowsOptions {
@@ -1219,7 +1197,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     }
 
     let status = state.finalize();
-    Global::exit(status as u32);
+    Global::exit(status);
 }
 
 fn has_runnable_extension(name: &[u8]) -> bool {

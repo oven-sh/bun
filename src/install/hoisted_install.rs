@@ -55,6 +55,8 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
     }
 }
 
+// One PackageInstaller per install run; it embeds its iterators' scratch.
+#[allow(clippy::large_stack_frames)]
 pub(crate) fn install_hoisted_packages(
     this: &mut PackageManager,
     ctx: Command::Context,

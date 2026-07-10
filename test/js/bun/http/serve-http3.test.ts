@@ -1085,3 +1085,195 @@ describe("Bun.serve HTTP/3 production", () => {
   // (HttpContext.h / Http3Context.h call writeContinue before routing); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
 });
+
+describe("h3 listen failure", () => {
+  // A fixed port whose UDP side is already taken: Bun.serve must throw AND
+  // close whichever listeners it opened — leaking the TCP listener corrupts
+  // the socket group at context teardown (crash under US_ASSERT). Which
+  // protocol's bind fails first depends on admin port reservations, so only
+  // the throw itself is asserted.
+  test("port conflict throws cleanly and leaks nothing", async () => {
+    const script = `
+      const tlsOptions = ${JSON.stringify(tls)};
+      const squatter = await Bun.udpSocket({ port: 0 });
+      try {
+        Bun.serve({ port: squatter.port, tls: tlsOptions, http3: true, fetch: () => new Response("x") });
+        console.log("unexpected-success");
+      } catch (e) {
+        console.log("threw=" + (e instanceof Error ? "yes" : e));
+      }
+      squatter.close();
+      // A fresh serve must work — nothing from the failed attempt lingers.
+      const server = Bun.serve({ port: 0, tls: tlsOptions, http3: true, fetch: () => new Response("ok") });
+      const r = await fetch("https://127.0.0.1:" + server.port + "/", {
+        protocol: "http3",
+        tls: { rejectUnauthorized: false },
+      });
+      console.log("second-serve=" + (await r.text()));
+      server.stop(true);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("threw=yes\nsecond-serve=ok\n");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("abrupt stop with live http/3 sessions", () => {
+  // server.stop(true) fires CONNECTION_CLOSE and closes the UDP fd in the
+  // same call, so the closing handshake can never complete. The engine must
+  // reap the connections immediately rather than waiting out idleTimeout —
+  // otherwise the process hangs for the full idle window after stop.
+  test("process exits promptly after stop(true)", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const server = Bun.serve({
+        port: 0, tls, http3: true, http1: false, idleTimeout: 60,
+        fetch: () => new Response("ok"),
+      });
+      const r = await fetch("https://127.0.0.1:" + server.port + "/", {
+        protocol: "http3",
+        tls: { rejectUnauthorized: false },
+      });
+      console.log("status=" + r.status + " body=" + (await r.text()));
+      server.stop(true);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("status=200 body=ok\n");
+    // Exited on its own — a hang here means undead conns pinned the loop
+    // until idleTimeout and the harness had to kill the child.
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+
+  // A graceful stop() surrenders the listener handle, so a later stop(true)
+  // has to force-close through the app instead. The in-flight request keeps
+  // the drain from ever finishing on its own; the client abort keeps the
+  // fetch promise from pinning the loop so only server-side conns can hang.
+  test("stop(true) after a graceful stop() still reaps draining conns", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const server = Bun.serve({
+        port: 0, tls, http3: true, http1: false, idleTimeout: 60,
+        fetch: async () => { await new Promise(() => {}); return new Response("never"); },
+      });
+      const controller = new AbortController();
+      const pending = fetch("https://127.0.0.1:" + server.port + "/", {
+        protocol: "http3",
+        tls: { rejectUnauthorized: false },
+        signal: controller.signal,
+      }).catch(e => e.name);
+      // A fetch that settles before the request registers means the connect
+      // failed — surface that instead of polling forever.
+      await Promise.race([
+        new Promise(resolve => {
+          const iv = setInterval(() => {
+            if (server.pendingRequests > 0) { clearInterval(iv); resolve(); }
+          }, 10);
+        }),
+        pending.then(name => { throw new Error("fetch settled early: " + name); }),
+      ]);
+      server.stop();
+      server.stop(true);
+      controller.abort();
+      console.log("pending=" + (await pending));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("pending=AbortError\n");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+
+  test("stop(true) twice is idempotent and exits promptly", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const server = Bun.serve({
+        port: 0, tls, http3: true, http1: false, idleTimeout: 60,
+        fetch: () => new Response("ok"),
+      });
+      const r = await fetch("https://127.0.0.1:" + server.port + "/", {
+        protocol: "http3",
+        tls: { rejectUnauthorized: false },
+      });
+      console.log("status=" + r.status);
+      server.stop(true);
+      server.stop(true);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("status=200\n");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+
+  // Same two-step stop on a mixed http1+http3 server: the forced stop lands
+  // in the no-listener branch, which must still close the TCP app or live
+  // HTTP/1 connections are never aborted (a bare TERMINATED insert also
+  // suppresses schedule_deinit's app.close). Sockets don't pin the loop on
+  // every platform, so assert the client observes the close instead.
+  test("stop(true) after graceful stop() also aborts HTTP/1 conns", async () => {
+    const script = `
+      const tlsOptions = ${JSON.stringify(tls)};
+      const CRLF = String.fromCharCode(13, 10);
+      const server = Bun.serve({
+        port: 0, tls: tlsOptions, http3: true, idleTimeout: 60,
+        fetch: async () => { await new Promise(() => {}); return new Response("never"); },
+      });
+      const closed = Promise.withResolvers();
+      const sock = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { rejectUnauthorized: false },
+        socket: {
+          // Write only after the TLS handshake — earlier bytes are dropped.
+          handshake(s) { s.write("GET / HTTP/1.1" + CRLF + "Host: x" + CRLF + CRLF); },
+          data() {}, error() {},
+          close() { closed.resolve(); },
+        },
+      });
+      sock.unref();
+      await new Promise(resolve => {
+        const iv = setInterval(() => {
+          if (server.pendingRequests > 0) { clearInterval(iv); resolve(); }
+        }, 10);
+      });
+      console.log("in-flight=" + server.pendingRequests);
+      server.stop();
+      server.stop(true);
+      // Keep the loop alive until the client observes the server-side close;
+      // if the conn is never aborted this pins until the harness kills us.
+      const iv = setInterval(() => {}, 50);
+      await closed.promise;
+      clearInterval(iv);
+      console.log("client-closed=yes");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("in-flight=1\nclient-closed=yes\n");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+});

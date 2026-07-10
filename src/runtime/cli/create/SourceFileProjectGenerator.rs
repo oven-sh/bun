@@ -220,7 +220,7 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), bun_core::Error> {
                 }
 
                 if let bun_process::Status::Exited(exited) = spawn_result.status {
-                    Global::exit(exited.code as u32);
+                    Global::exit(exited.code);
                 }
 
                 Global::crash();
@@ -247,7 +247,7 @@ pub fn generate_files(
     }
 
     // Normalize file paths
-    let mut normalized_buf = bun_paths::PathBuffer::uninit();
+    let mut normalized_buf = bun_paths::path_buffer_pool::get();
     let mut normalized_name: &[u8] = if bun_paths::is_absolute(entry_point) {
         resolve_path::relative_normalized_buf::<path::platform::Loose, true>(
             &mut normalized_buf,
@@ -396,7 +396,7 @@ pub fn generate_files(
                             }
 
                             if let bun_process::Status::Exited(exited) = spawn_result.status {
-                                Global::exit(exited.code as u32);
+                                Global::exit(exited.code);
                             }
 
                             Global::crash();
@@ -458,7 +458,7 @@ pub fn generate_files(
                 }
 
                 if let bun_process::Status::Exited(exited) = spawn_result.status {
-                    Global::exit(exited.code as u32);
+                    Global::exit(exited.code);
                 }
 
                 Global::crash();
@@ -612,7 +612,7 @@ fn get_shadcn_components(
 // Local wrapper for `bun.sys.exists([]const u8)` — bun_sys currently exposes
 // only `exists_z(&ZStr)`, so NUL-terminate via `resolve_path::z`.
 fn exists(path: &[u8]) -> bool {
-    let mut buf = bun_paths::PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     bun_sys::exists_z(resolve_path::z(path, &mut buf))
 }
 

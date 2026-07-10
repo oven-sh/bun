@@ -32,8 +32,6 @@ pub(crate) type Int = u16;
 pub struct Error {
     pub errno: Int,
     pub fd: Fd,
-    #[cfg(windows)]
-    pub from_libuv: bool,
     // Box<[u8]> per PORTING.md; `with_path*` eagerly clones. Revisit if
     // profiling shows regressions.
     pub path: Box<[u8]>,
@@ -46,8 +44,6 @@ impl Default for Error {
         Self {
             errno: TODO_ERRNO,
             fd: Fd::INVALID,
-            #[cfg(windows)]
-            from_libuv: false,
             path: Box::default(),
             syscall: Tag::TODO,
             dest: Box::default(),
@@ -113,34 +109,7 @@ impl Error {
         }
     }
 
-    /// `Some(err)` when a libuv `ReturnCode` is negative; `None` on success.
-    /// `ReturnCode::errno()` already maps the `UV_E*` code to the POSIX `E`
-    /// discriminant, so `from_libuv` stays at its default `false`.
-    #[cfg(windows)]
     #[inline]
-    pub fn from_uv_rc(rc: crate::windows::libuv::ReturnCode, syscall_tag: Tag) -> Option<Error> {
-        rc.errno().map(|e| Error {
-            errno: e,
-            syscall: syscall_tag,
-            ..Default::default()
-        })
-    }
-
-    /// `Some(err)` when a libuv `ReturnCodeI64` is negative; `None` on success.
-    /// `from_libuv` left at default `false`.
-    #[cfg(windows)]
-    #[inline]
-    pub fn from_uv_rc64(
-        rc: crate::windows::libuv::ReturnCodeI64,
-        syscall_tag: Tag,
-    ) -> Option<Error> {
-        rc.errno().map(|e| Error {
-            errno: e,
-            syscall: syscall_tag,
-            ..Default::default()
-        })
-    }
-
     pub fn from_code(errno: E, syscall_tag: Tag) -> Error {
         Error {
             errno: errno as Int,
@@ -243,19 +212,14 @@ impl Error {
         }
     }
 
-    /// Unlike `with_path`/`with_path_dest` (which
-    /// reset `fd`/`from_libuv`), this only overlays `dest` and
-    /// preserves every other field — chained on a libuv-sourced error
-    /// (`from_libuv=true`, errno in the 4000-range) it must keep `from_libuv`
-    /// so `name()`/`msg()` still route through the uv→errno mapper.
+    /// Unlike `with_path`/`with_path_dest` (which reset `fd`), this only
+    /// overlays `dest` and preserves every other field.
     #[inline]
     pub fn with_dest(&self, dest: &[u8]) -> Error {
         Error {
             errno: self.errno,
             syscall: self.syscall,
             fd: self.fd,
-            #[cfg(windows)]
-            from_libuv: self.from_libuv,
             path: self.path.clone(),
             dest: Box::from(dest),
         }
@@ -281,27 +245,18 @@ impl Error {
         Error {
             errno: self.errno,
             fd: self.fd,
-            #[cfg(windows)]
-            from_libuv: self.from_libuv,
             syscall: self.syscall,
             path: Box::default(),
             dest: Box::default(),
         }
     }
 
-    /// Decode `self.errno` (+ `from_libuv` on Windows) into a validated `SystemErrno`.
-    /// Shared by `name()` / `get_error_code_tag_name()`; a fallible discriminant lookup.
+    /// Decode `self.errno` into a validated `SystemErrno`. Shared by
+    /// `name()` / `get_error_code_tag_name()`; a fallible discriminant lookup.
     #[inline]
     fn resolve_system_errno(&self) -> Option<SystemErrno> {
         #[cfg(windows)]
         {
-            if self.from_libuv {
-                // `self.errno` is the positive `UV_E*` magnitude; negate back to the signed
-                // uv code, map to `E`, then to `SystemErrno` via the shared #[repr(u16)]
-                // discriminant table.
-                let translated = crate::windows::translate_uv_error_to_e(-c_int::from(self.errno));
-                return Some(SystemErrno::from_raw(translated as u16));
-            }
             // `self.errno` may be out-of-range (TODO_ERRNO etc.); validate first.
             // Do NOT call `SystemErrno::init` here — on Windows its u16/i32 entry points map
             // Win32/WSA error codes to errnos and would corrupt a value that is already a
@@ -375,12 +330,12 @@ impl Error {
         if let Some(valid) = fd_unwrap_valid(self.fd) {
             // When the FD is a windows handle, there is no sane way to report this.
             #[cfg(windows)]
-            if valid.kind() == crate::FdKind::Uv {
-                err.fd = valid.uv();
+            if valid.kind() == crate::FdKind::Table {
+                err.fd = valid.js_fd();
             }
             #[cfg(not(windows))]
             {
-                err.fd = valid.uv();
+                err.fd = valid.js_fd();
             }
         }
 
@@ -519,67 +474,5 @@ impl bun_core::output::ErrName for &Error {
     }
     fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
         (**self).as_sys_err_info()
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// `ReturnCodeExt` — `ReturnCode::to_error(tag) -> Option<Error>` lives here (not
-// in `bun_libuv_sys`) because `Error`/`Tag` are higher-tier types.
-// ──────────────────────────────────────────────────────────────────────────
-#[cfg(windows)]
-pub trait ReturnCodeExt: Sized {
-    /// `Some(err)` when negative; `None` on success.
-    /// `from_libuv` stays at default `false`.
-    fn to_error(self, syscall_tag: Tag) -> Option<Error>;
-    /// `Ok(())` on success, `Err` on negative rc.
-    /// `bun_libuv_sys` returns the raw
-    /// `ReturnCode` for layering; this trait promotes it.
-    #[inline]
-    fn to_result(self, syscall_tag: Tag) -> crate::Result<()> {
-        match self.to_error(syscall_tag) {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
-    }
-    /// Alias for [`to_error`].
-    #[inline]
-    fn as_err(self, syscall_tag: Tag) -> Option<Error> {
-        self.to_error(syscall_tag)
-    }
-    /// Translate the negative libuv errno to `bun.sys.E`.
-    /// `bun_libuv_sys::ReturnCode::err_enum()` only yields the raw `u16`
-    /// (layering: it can't name `E`); this overlay yields the typed enum.
-    fn err_enum_e(self) -> Option<crate::E>;
-}
-#[cfg(windows)]
-impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
-    #[inline]
-    fn to_error(self, syscall_tag: Tag) -> Option<Error> {
-        Error::from_uv_rc(self, syscall_tag)
-    }
-    #[inline]
-    fn err_enum_e(self) -> Option<crate::E> {
-        if self.int() < 0 {
-            Some(crate::windows::translate_uv_error_to_e(self.int()))
-        } else {
-            None
-        }
-    }
-}
-#[cfg(windows)]
-impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
-    #[inline]
-    fn to_error(self, syscall_tag: Tag) -> Option<Error> {
-        Error::from_uv_rc64(self, syscall_tag)
-    }
-    #[inline]
-    fn err_enum_e(self) -> Option<crate::E> {
-        if self.int() < 0 {
-            Some(crate::windows::translate_uv_error_to_e(
-                self.int() as core::ffi::c_int
-            ))
-        } else {
-            None
-        }
     }
 }

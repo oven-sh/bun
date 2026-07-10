@@ -268,7 +268,7 @@ impl ArrayBuffer {
         let (prot, map_flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
         #[cfg(not(unix))]
         let (prot, map_flags) = (0i32, 0i32);
-        let map_len = usize::try_from(size.max(0)).expect("int cast");
+        let map_len = usize::try_from(size).expect("int cast");
         let result = bun_sys::mmap(ptr::null_mut(), map_len, prot, map_flags, fd, 0);
         fd.close();
 

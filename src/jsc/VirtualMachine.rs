@@ -1302,6 +1302,9 @@ impl VirtualMachine {
     /// generates) the synthetic `MacroEntryPoint` source for `(entry_path,
     /// function_name, hash)` and evaluates it under the JSC API lock via
     /// [`run_with_api_lock`].
+    // Box::new temporary is heap-destined (the macro entry point embeds its
+    // path scratch by design, same as the bundler entry points).
+    #[allow(clippy::large_stack_frames)]
     pub fn load_macro_entry_point(
         &mut self,
         entry_path: &[u8],
@@ -1841,6 +1844,11 @@ bun_io::link_impl_EventLoopCtx! {
         // and `{,un}ref_concurrently` take `&self` (atomic fetch_add + wakeup).
         ref_concurrently()   => (*(*this).event_loop()).ref_concurrently(),
         unref_concurrently() => (*(*this).event_loop()).unref_concurrently(),
+        // SAME-THREAD only (KeepAlive::unref runs on the owner's JS thread);
+        // `&self` accessor, Cell mutation is thread-confined like update_counts.
+        note_concurrent_ref_released_locally() => {
+            (*(*this).event_loop()).note_concurrent_ref_released_locally();
+        },
         after_event_loop_callback() => vm_from_owner(this.cast()).after_event_loop_callback,
         set_after_event_loop_callback(cb, ctx) => {
             let vm = vm_from_owner(this.cast());
@@ -3146,7 +3154,7 @@ impl VirtualMachine {
     }
 
     /// Returns this VM's libuv event loop handle (must already be initialized).
-    pub fn uv_loop(&self) -> *mut Async::Loop {
+    pub fn platform_loop(&self) -> *mut Async::Loop {
         #[cfg(debug_assertions)]
         {
             return self
@@ -3248,7 +3256,7 @@ impl VirtualMachine {
                 .ok()
                 .filter(|&n| n >= 0)
             {
-                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd), mode),
+                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_js_fd(fd), mode),
                 None => bun_core::warn!(
                     "Failed to parse IPC channel number '{}'",
                     bstr::BStr::new(&fd_s[..])
@@ -6521,13 +6529,12 @@ impl VirtualMachine {
             let data_ptr = unsafe { core::ptr::addr_of_mut!((*instance).data) };
             // SAFETY: `data_ptr` points at the freshly-initialized SendQueue
             // stored inline in `*instance`; no other live `&mut` aliases it.
-            if let Err(_) = unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }
-            {
+            if unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }.is_err() {
                 // SAFETY: `instance` was produced by `IPCInstance::new`
                 // (heap::alloc) above and is not yet aliased.
                 unsafe { IPCInstance::deinit(instance) };
                 self.ipc = None;
-                bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
+                bun_core::warn!("Unable to start IPC pipe '{:?}'", fd);
                 return None;
             }
 

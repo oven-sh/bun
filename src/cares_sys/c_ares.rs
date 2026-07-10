@@ -11,6 +11,9 @@ use core::ffi::{c_char, c_int, c_long, c_uint, c_ushort, c_void};
 use core::ptr;
 
 #[cfg(windows)]
+use bun_windows_sys::ws2_32::WinsockError;
+
+#[cfg(windows)]
 use crate::winsock::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
 #[cfg(not(windows))]
 use libc::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
@@ -52,18 +55,34 @@ pub mod AF {
 
 /// `EAI_*` getaddrinfo error codes. The `libc` crate is missing
 /// `EAI_ADDRFAMILY` and the glibc-only async-getaddrinfo extensions, so we
-/// hardcode those raw values from `<netdb.h>`.
-#[cfg(not(windows))]
+/// hardcode those raw values from `<netdb.h>`. On Windows, `ws2tcpip.h`
+/// defines each `EAI_*` macro as an alias of a `WSA*` code.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct EAI(c_int);
 
-#[cfg(not(windows))]
 impl EAI {
     #[inline]
     pub const fn from_raw(rc: i32) -> Self {
         Self(rc as c_int)
     }
+}
 
+// `ws2tcpip.h` aliases, in `<netdb.h>` const-name terms.
+#[cfg(windows)]
+impl EAI {
+    pub const BADFLAGS: Self = Self(WinsockError::WSAEINVAL.0 as c_int);
+    pub const FAIL: Self = Self(WinsockError::WSANO_RECOVERY.0 as c_int);
+    pub const FAMILY: Self = Self(WinsockError::WSAEAFNOSUPPORT.0 as c_int);
+    pub const MEMORY: Self = Self(WinsockError::WSA_NOT_ENOUGH_MEMORY.0 as c_int);
+    pub const NODATA: Self = Self(WinsockError::WSANO_DATA.0 as c_int);
+    pub const NONAME: Self = Self(WinsockError::WSAHOST_NOT_FOUND.0 as c_int);
+    pub const SERVICE: Self = Self(WinsockError::WSATYPE_NOT_FOUND.0 as c_int);
+    pub const TRY_AGAIN: Self = Self(WinsockError::WSATRY_AGAIN.0 as c_int);
+    pub const SOCKTYPE: Self = Self(WinsockError::WSAESOCKTNOSUPPORT.0 as c_int);
+}
+
+#[cfg(not(windows))]
+impl EAI {
     #[cfg(target_os = "linux")]
     pub const ADDRFAMILY: Self = Self(-9);
     #[cfg(not(target_os = "linux"))]
@@ -1868,31 +1887,31 @@ impl Error {
     // aliases deleted — live in bun_runtime::dns_jsc (extension trait).
 
     pub fn init_eai(rc: i32) -> Option<Error> {
+        // `ws2_32!getaddrinfo` reports failures as `WSA*` codes (the `EAI_*`
+        // macros in `ws2tcpip.h` are aliases of them); mirror the POSIX arm
+        // below so both platforms surface the same JS-visible error codes.
         #[cfg(windows)]
         {
-            use bun_libuv_sys as libuv;
+            let eai = EAI::from_raw(rc);
+
             // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
-            if rc == libuv::UV_EAI_NODATA || rc == libuv::UV_EAI_NONAME {
+            if eai == EAI::NODATA || eai == EAI::NONAME {
                 return Some(Error::ENOTFOUND);
             }
-            // TODO: revisit this
-            return match rc {
-                0 => None,
-                libuv::UV_EAI_AGAIN => Some(Error::ETIMEOUT),
-                libuv::UV_EAI_ADDRFAMILY => Some(Error::EBADFAMILY),
-                libuv::UV_EAI_BADFLAGS => Some(Error::EBADFLAGS),
-                libuv::UV_EAI_BADHINTS => Some(Error::EBADHINTS),
-                libuv::UV_EAI_CANCELED => Some(Error::ECANCELLED),
-                libuv::UV_EAI_FAIL => Some(Error::ENOTFOUND),
-                libuv::UV_EAI_FAMILY => Some(Error::EBADFAMILY),
-                libuv::UV_EAI_MEMORY => Some(Error::ENOMEM),
-                libuv::UV_EAI_NODATA => Some(Error::ENODATA),
-                libuv::UV_EAI_NONAME => Some(Error::ENONAME),
-                libuv::UV_EAI_OVERFLOW => Some(Error::ENOMEM),
-                libuv::UV_EAI_PROTOCOL => Some(Error::EBADQUERY),
-                libuv::UV_EAI_SERVICE => Some(Error::ESERVICE),
-                libuv::UV_EAI_SOCKTYPE => Some(Error::ECONNREFUSED),
-                _ => Some(Error::ENOTFOUND), // UV_ENOENT and non documented errors
+
+            if rc == 0 {
+                return None;
+            }
+            return match eai {
+                EAI::BADFLAGS => Some(Error::EBADFLAGS),
+                EAI::FAIL => Some(Error::EBADRESP),
+                EAI::FAMILY => Some(Error::EBADFAMILY),
+                EAI::MEMORY => Some(Error::ENOMEM),
+                EAI::SERVICE => Some(Error::ESERVICE),
+                EAI::SOCKTYPE => Some(Error::ECONNREFUSED),
+                // Transient resolver failure — retryable (libuv: EAI_AGAIN).
+                EAI::TRY_AGAIN => Some(Error::ETIMEOUT),
+                _ => Some(Error::ENOTIMP),
             };
         }
 
@@ -2146,9 +2165,14 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
     let addr_ptr = copy_nul_terminated(&mut buf, addr);
 
     {
-        // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in.
-        let in_: &mut sockaddr_in =
-            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in>() };
+        // SAFETY: `sa` is backed by caller-provided `sockaddr_storage` (size and
+        // alignment fit every family). The `c_void` hop is clippy's documented
+        // `cast_ptr_alignment` escape hatch (`src/ast/e.rs` precedent).
+        let in_: &mut sockaddr_in = unsafe {
+            &mut *std::ptr::from_mut::<sockaddr>(sa)
+                .cast::<c_void>()
+                .cast::<sockaddr_in>()
+        };
         // SAFETY: c-ares FFI; `addr_ptr` is a NUL-terminated stack buffer, dst is `sin_addr` storage.
         if unsafe { ares_inet_pton(AF::INET, addr_ptr, (&raw mut in_.sin_addr).cast::<c_void>()) }
             == 1
@@ -2159,9 +2183,14 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
         }
     }
     {
-        // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in6.
-        let in6: &mut sockaddr_in6 =
-            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in6>() };
+        // SAFETY: `sa` is backed by caller-provided `sockaddr_storage` (size and
+        // alignment fit every family). The `c_void` hop is clippy's documented
+        // `cast_ptr_alignment` escape hatch (`src/ast/e.rs` precedent).
+        let in6: &mut sockaddr_in6 = unsafe {
+            &mut *std::ptr::from_mut::<sockaddr>(sa)
+                .cast::<c_void>()
+                .cast::<sockaddr_in6>()
+        };
         // SAFETY: c-ares FFI; `addr_ptr` is a NUL-terminated stack buffer, dst is `sin6_addr` storage.
         if unsafe {
             ares_inet_pton(

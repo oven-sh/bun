@@ -1,0 +1,31 @@
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -8621,6 +8621,28 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
+             goto end_write;
+         }
+     }
++    else if (!(conn->ifc_flags & IFC_SERVER)
++                && conn->ifc_u.cli.crypto_streams[ENC_LEV_HSK]
++                && (conn->ifc_u.cli.crypto_streams[ENC_LEV_HSK]->sm_qflags
++                                                        & SMQF_WRITE_Q_FLAGS))
++    {
++        /* handshake_ok() flips HANDSHAKE_DONE the moment TLS completes --
++         * before the client's Finished has necessarily been written.  If
++         * application data fills the congestion window in the same tick
++         * (large first request), the generic write path bails on
++         * write_is_possible() before ever dispatching the crypto stream,
++         * and every RTO's 2-packet budget is consumed by rescheduled data
++         * packets: the Finished is starved forever and the server cannot
++         * decrypt anything.  Flush pending crypto here, ungated by the
++         * congestion window -- CRYPTO frames schedule at highest priority
++         * and unlock the peer.
++         */
++        s = lsquic_send_ctl_schedule_buffered(&conn->ifc_send_ctl,
++                                                            BPT_HIGHEST_PRIO);
++        conn->ifc_flags |= (s < 0) << IFC_BIT_ERROR;
++        if (0 == s)
++            process_crypto_stream_write_events(conn);
++    }
+ 
+     maybe_conn_flush_special_streams(conn);
+ 

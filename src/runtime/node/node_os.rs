@@ -43,14 +43,12 @@ mod _impl {
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
     use bun_jsc::{CallFrame, JSArray, StringJsc as _, SysErrorJsc as _, SystemError};
-    #[cfg(windows)]
-    use bun_paths::PathBuffer;
-    #[cfg(windows)]
-    use bun_sys::ReturnCodeExt as _;
     #[cfg(not(windows))]
     use bun_sys::c;
     #[cfg(windows)]
-    use bun_sys::windows::{self, libuv};
+    use bun_sys::windows;
+    #[cfg(windows)]
+    use bun_sys::windows::Win32ErrorExt as _;
     use std::io::Write as _;
 
     // ─── local shims for upstream API gaps (Phase D) ──────────────────────────
@@ -656,48 +654,120 @@ mod _impl {
 
     #[cfg(windows)]
     fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
-        let mut cpu_infos: *mut libuv::uv_cpu_info_t = core::ptr::null_mut();
-        let mut count: c_int = 0;
-        // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_cpu_info(&mut cpu_infos, &mut count) };
-        if err != 0 {
-            return Err(OsError::Any);
-        }
-        scopeguard::defer! {
-            // SAFETY: returned by uv_cpu_info
-            unsafe { libuv::uv_free_cpu_info(cpu_infos, count) };
+        use bun_windows_sys::advapi32::{
+            HKEY, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, RegCloseKey, RegOpenKeyExW, RegQueryValueExW,
+        };
+        use bun_windows_sys::ntdll::{
+            NtQuerySystemInformation, SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION,
+            SystemProcessorPerformanceInformation,
         };
 
-        let values =
-            JSValue::create_empty_array(global_this, usize::try_from(count).expect("int cast"))?;
+        // SAFETY: out-param struct fully written by GetSystemInfo.
+        let mut sysinfo: bun_windows_sys::SYSTEM_INFO = bun_core::ffi::zeroed();
+        // SAFETY: valid out-pointer.
+        unsafe { bun_windows_sys::GetSystemInfo(&raw mut sysinfo) };
+        let count = sysinfo.dwNumberOfProcessors as usize;
 
-        // SAFETY: cpu_infos points to `count` entries per uv_cpu_info contract
-        let infos =
-            unsafe { bun_core::ffi::slice(cpu_infos, usize::try_from(count).expect("int cast")) };
-        for (i, cpu_info) in infos.iter().enumerate() {
+        let mut sppi = vec![SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION::default(); count];
+        let bytes = u32::try_from(core::mem::size_of_val(&sppi[..])).expect("int cast");
+        let mut ret_len: u32 = 0;
+        // SAFETY: buffer sized for `count` rows; class 8 fills one per CPU.
+        let status = unsafe {
+            NtQuerySystemInformation(
+                SystemProcessorPerformanceInformation,
+                sppi.as_mut_ptr().cast(),
+                bytes,
+                &raw mut ret_len,
+            )
+        };
+        if status != bun_windows_sys::NTSTATUS::SUCCESS {
+            return Err(OsError::Any);
+        }
+
+        let values = JSValue::create_empty_array(global_this, count)?;
+        let mut key_buf = [0u16; 128];
+        let mut brand = [0u16; 256];
+        for (i, row) in sppi.iter().enumerate() {
+            // HARDWARE\DESCRIPTION\System\CentralProcessor\<i>
+            let prefix: &[u16] =
+                bun_core::wstr!("HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\");
+            // wstr! appends a NUL; copy only the characters or the key path
+            // ends at the embedded NUL and the per-CPU index is lost.
+            let mut n = prefix.len() - 1;
+            key_buf[..n].copy_from_slice(&prefix[..n]);
+            let digits = i.to_string();
+            for d in digits.bytes() {
+                key_buf[n] = u16::from(d);
+                n += 1;
+            }
+            key_buf[n] = 0;
+
+            let mut key: HKEY = core::ptr::null_mut();
+            // SAFETY: NUL-terminated key path; out-param local.
+            if unsafe {
+                RegOpenKeyExW(
+                    HKEY_LOCAL_MACHINE,
+                    key_buf.as_ptr(),
+                    0,
+                    KEY_QUERY_VALUE,
+                    &raw mut key,
+                )
+            } != 0
+            {
+                return Err(OsError::Any);
+            }
+            let mut speed: u32 = 0;
+            let mut speed_size = 4u32;
+            let mut brand_size =
+                u32::try_from(core::mem::size_of_val(&brand[..])).expect("int cast");
+            // SAFETY: value buffers sized; `key` live until RegCloseKey.
+            let ok = unsafe {
+                let a = RegQueryValueExW(
+                    key,
+                    bun_core::wstr!("~MHz").as_ptr(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    (&raw mut speed).cast(),
+                    &raw mut speed_size,
+                );
+                let b = RegQueryValueExW(
+                    key,
+                    bun_core::wstr!("ProcessorNameString").as_ptr(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    brand.as_mut_ptr().cast(),
+                    &raw mut brand_size,
+                );
+                RegCloseKey(key);
+                a == 0 && b == 0
+            };
+            if !ok {
+                return Err(OsError::Any);
+            }
+
+            // 100ns → ms; kernel time includes idle, subtract it (libuv parity).
             let times = CPUTimes {
-                user: cpu_info.cpu_times.user,
-                nice: cpu_info.cpu_times.nice,
-                sys: cpu_info.cpu_times.sys,
-                idle: cpu_info.cpu_times.idle,
-                irq: cpu_info.cpu_times.irq,
+                user: (row.UserTime / 10_000) as u64,
+                nice: 0,
+                sys: ((row.KernelTime - row.IdleTime) / 10_000) as u64,
+                idle: (row.IdleTime / 10_000) as u64,
+                irq: (row.InterruptTime / 10_000) as u64,
             };
 
             let cpu = JSValue::create_empty_object(global_this, 3);
-            // SAFETY: cpu_info.model is a NUL-terminated C string from libuv
-            let model = unsafe { bun_core::ffi::cstr(cpu_info.model) }.to_bytes();
+            let brand_len = brand[..(brand_size as usize / 2)]
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(brand_size as usize / 2);
+            let mut model = Vec::new();
+            bun_core::convert_wtf16_to_wtf8_append(&mut model, &brand[..brand_len]);
             cpu.put(
                 global_this,
                 b"model",
-                ZigString::init(model).with_encoding().to_js(global_this),
+                ZigString::init(&model).with_encoding().to_js(global_this),
             );
-            cpu.put(
-                global_this,
-                b"speed",
-                JSValue::js_number(cpu_info.speed as f64),
-            );
+            cpu.put(global_this, b"speed", JSValue::js_number(f64::from(speed)));
             cpu.put(global_this, b"times", times.to_value(global_this));
-
             values.put_index(global_this, u32::try_from(i).expect("int cast"), cpu)?;
         }
 
@@ -717,7 +787,8 @@ mod _impl {
                 #[cfg(not(windows))]
                 errno: -(bun_sys::posix::E::ESRCH as c_int),
                 #[cfg(windows)]
-                errno: libuv::UV_ESRCH,
+                // node-visible errno domain keeps uv numbering. ESRCH = -4040.
+                errno: -4040,
                 syscall: BunString::static_("uv_os_getpriority"),
                 ..system_error_default()
             };
@@ -730,15 +801,58 @@ mod _impl {
         // In Node.js, this is a wrapper around uv_os_homedir.
         #[cfg(windows)]
         {
-            let mut out = PathBuffer::uninit();
-            let mut size: usize = out.len();
-            // SAFETY: valid buffer + size out-param
-            if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }
-                .to_error(bun_sys::Tag::uv_os_homedir)
-            {
+            // USERPROFILE first, then the token's profile directory (the
+            // same order node documents for os.homedir on Windows).
+            let mut wide = [0u16; 1024];
+            // SAFETY: NUL-terminated name; buffer sized; returns chars copied.
+            let n = unsafe {
+                bun_windows_sys::GetEnvironmentVariableW(
+                    bun_core::wstr!("USERPROFILE").as_ptr(),
+                    wide.as_mut_ptr(),
+                    1024,
+                )
+            } as usize;
+            // libuv treats a set-but-shorter-than-"C:\" USERPROFILE as
+            // invalid (uv_os_homedir's `*size < 3` check).
+            if n >= 3 && n < 1024 {
+                return Ok(BunString::clone_utf16(&wide[..n]));
+            }
+            let mut token: bun_windows_sys::HANDLE = core::ptr::null_mut();
+            // SAFETY: pseudo-handle process; out-param local; token closed below.
+            let opened = unsafe {
+                bun_windows_sys::advapi32::OpenProcessToken(
+                    bun_windows_sys::GetCurrentProcess(),
+                    bun_windows_sys::advapi32::TOKEN_READ,
+                    &raw mut token,
+                )
+            };
+            if opened == 0 {
+                let err = bun_sys::Error::new(
+                    bun_sys::windows::Win32Error::get().to_e(),
+                    bun_sys::Tag::uv_os_homedir,
+                );
                 return Err(global.throw_value(err.to_js(global)));
             }
-            return Ok(BunString::clone_utf8(&out[0..size]));
+            let mut size: u32 = 1024;
+            // SAFETY: live token; buffer sized; size in/out in chars.
+            let ok = unsafe {
+                let r = bun_windows_sys::userenv::GetUserProfileDirectoryW(
+                    token,
+                    wide.as_mut_ptr(),
+                    &raw mut size,
+                );
+                bun_windows_sys::CloseHandle(token);
+                r
+            };
+            if ok == 0 || size < 2 {
+                let err = bun_sys::Error::new(
+                    bun_sys::windows::Win32Error::get().to_e(),
+                    bun_sys::Tag::uv_os_homedir,
+                );
+                return Err(global.throw_value(err.to_js(global)));
+            }
+            // size includes the NUL.
+            return Ok(BunString::clone_utf16(&wide[..size as usize - 1]));
         }
         #[cfg(not(windows))]
         {
@@ -844,7 +958,7 @@ mod _impl {
 
             let mut result: windows::ws2_32::WSADATA = bun_core::ffi::zeroed();
             // SAFETY: valid out-pointer
-            if unsafe { windows::ws2_32::WSAStartup(0x202, &mut result) } == 0 {
+            if unsafe { windows::ws2_32::WSAStartup(0x202, &raw mut result) } == 0 {
                 // SAFETY: valid buffer
                 if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
                     let y = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
@@ -1231,175 +1345,259 @@ mod _impl {
 
     #[cfg(windows)]
     pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let mut ifaces: *mut libuv::uv_interface_address_t = core::ptr::null_mut();
-        let mut count: c_int = 0;
-        // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_interface_addresses(&mut ifaces, &mut count) };
-        if err != 0 {
-            let sys_err = SystemError {
-                message: BunString::static_("uv_interface_addresses failed"),
-                code: BunString::static_("ERR_SYSTEM_ERROR"),
-                //.info = info,
-                errno: err,
-                syscall: BunString::static_("uv_interface_addresses"),
-                ..system_error_default()
-            };
-            return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
-        }
-        scopeguard::defer! {
-            // SAFETY: returned by uv_interface_addresses
-            unsafe { libuv::uv_free_interface_addresses(ifaces, count) };
+        use bun_sys::posix::{AF, sockaddr_in, sockaddr_in6};
+        use bun_windows_sys::Win32Error;
+        use bun_windows_sys::iphlpapi::{
+            GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST,
+            GetAdaptersAddresses, IF_TYPE_SOFTWARE_LOOPBACK, IP_ADAPTER_ADDRESSES, IfOperStatusUp,
         };
 
         let ret = JSValue::create_empty_object(global_this, 8);
 
+        // GetAdaptersAddresses size-probe loop: retry while the adapter set
+        // grows between probe and fill. `u64` storage keeps the 8-aligned
+        // adapter records readable from an aligned base.
+        let flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+        let mut buf: Vec<u64> = Vec::new();
+        let mut size: u32 = 0;
+        loop {
+            // SAFETY: the buffer pointer spans `size` writable bytes (null on
+            // the zero-size first probe); `size` is a valid in/out pointer.
+            let r = unsafe {
+                GetAdaptersAddresses(
+                    AF::UNSPEC as u32,
+                    flags,
+                    core::ptr::null_mut(),
+                    if buf.is_empty() {
+                        core::ptr::null_mut()
+                    } else {
+                        buf.as_mut_ptr().cast()
+                    },
+                    &raw mut size,
+                )
+            };
+            match Win32Error(u16::try_from(r).unwrap_or(u16::MAX)) {
+                Win32Error::SUCCESS => break,
+                Win32Error::BUFFER_OVERFLOW => {
+                    buf = vec![0u64; (size as usize).div_ceil(8)];
+                }
+                // No adapters at all — an empty result, not an error.
+                Win32Error::NO_DATA => return Ok(ret),
+                code => {
+                    // node-visible errno domain keeps uv numbering.
+                    let errno: c_int = match code {
+                        Win32Error::ADDRESS_NOT_ASSOCIATED => -4088, // UV_EAGAIN
+                        Win32Error::INVALID_PARAMETER => -4060,      // UV_ENOBUFS
+                        Win32Error::NOT_ENOUGH_MEMORY => -4057,      // UV_ENOMEM
+                        _ => -4094,                                  // UV_UNKNOWN
+                    };
+                    let sys_err = SystemError {
+                        message: BunString::static_("uv_interface_addresses failed"),
+                        code: BunString::static_("ERR_SYSTEM_ERROR"),
+                        errno,
+                        syscall: BunString::static_("uv_interface_addresses"),
+                        ..system_error_default()
+                    };
+                    return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
+                }
+            }
+        }
+
         // 65 comes from: https://stackoverflow.com/questions/39443413/why-is-inet6-addrstrlen-defined-as-46-in-c
         let mut ip_buf = [0u8; 65];
+        let mut name: Vec<u8> = Vec::new();
 
-        // SAFETY: ifaces points to `count` entries per uv_interface_addresses contract
-        let iface_slice =
-            unsafe { bun_core::ffi::slice(ifaces, usize::try_from(count).expect("int cast")) };
-        for iface in iface_slice {
-            let interface = JSValue::create_empty_object(global_this, 7);
+        let mut next_adapter: *const IP_ADAPTER_ADDRESSES = if buf.is_empty() {
+            core::ptr::null()
+        } else {
+            buf.as_ptr().cast()
+        };
+        while !next_adapter.is_null() {
+            // SAFETY: head of `buf` or a `Next` link written by
+            // GetAdaptersAddresses; records live in `buf` until it drops.
+            let adapter = unsafe { &*next_adapter };
+            next_adapter = adapter.Next.cast_const();
 
-            // address <string> The assigned IPv4 or IPv6 address
-            // cidr <string> The assigned IPv4 or IPv6 address with the routing prefix in CIDR notation. If the netmask is invalid, this property is set to null.
-            let mut cidr = JSValue::NULL;
+            // Skip interfaces that are not up or carry no unicast address
+            // (libuv parity); loopback stays, flagged `internal` below.
+            if adapter.OperStatus != IfOperStatusUp || adapter.FirstUnicastAddress.is_null() {
+                continue;
+            }
+
+            name.clear();
             {
-                // Compute the CIDR suffix; returns null if the netmask cannot
-                //  be converted to a CIDR suffix
-                // SAFETY: union read tagged by family
-                let family = unsafe { iface.address.address4.sin_family } as c_int;
-                let maybe_suffix: Option<u8> = match family {
-                    bun_sys::posix::AF::INET => {
-                        netmask_to_cidr_suffix(unsafe { iface.netmask.netmask4.sin_addr.s_addr })
+                // SAFETY: FriendlyName is a NUL-terminated UTF-16 string in `buf`.
+                let name_w = unsafe {
+                    let p = adapter.FriendlyName;
+                    let mut len = 0usize;
+                    while *p.add(len) != 0 {
+                        len += 1;
                     }
-                    bun_sys::posix::AF::INET6 => {
-                        netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe {
-                            iface.netmask.netmask6.sin6_addr.s6_addr
-                        }))
+                    bun_core::ffi::slice(p, len)
+                };
+                bun_core::convert_wtf16_to_wtf8_append(&mut name, name_w);
+            }
+
+            // All-zero MAC unless the adapter reports exactly 6 bytes (libuv parity).
+            let mut phys_addr = [0u8; 6];
+            let mac_len = phys_addr.len();
+            if adapter.PhysicalAddressLength as usize == mac_len {
+                phys_addr.copy_from_slice(&adapter.PhysicalAddress[..mac_len]);
+            }
+            let is_internal = adapter.IfType == IF_TYPE_SOFTWARE_LOOPBACK;
+
+            // One entry per (adapter, unicast address) pair.
+            let mut next_unicast = adapter.FirstUnicastAddress.cast_const();
+            while !next_unicast.is_null() {
+                // SAFETY: unicast list node written by GetAdaptersAddresses into `buf`.
+                let unicast = unsafe { &*next_unicast };
+                next_unicast = unicast.Next.cast_const();
+
+                let sa = unicast.Address.lpSockaddr;
+                // SAFETY: lpSockaddr points at a sockaddr in `buf`; the family
+                // tag is always readable.
+                let family = c_int::from(unsafe { (*sa).sa_family });
+                let prefix_len = unicast.OnLinkPrefixLength;
+
+                // Copy the reported address; synthesize the netmask from
+                // OnLinkPrefixLength, exactly as libuv composes them.
+                let mut scope_id: u32 = 0;
+                let (addr, netmask, maybe_suffix) = if family == AF::INET6 {
+                    // SAFETY: AF_INET6 ⇒ the record is a sockaddr_in6 in `buf`.
+                    let addr6 = unsafe { sa.cast::<sockaddr_in6>().read_unaligned() };
+                    scope_id = addr6.sin6_scope_id;
+                    let mut mask6: sockaddr_in6 = bun_core::ffi::zeroed();
+                    mask6.sin6_family = AF::INET6 as u16;
+                    let full_bytes = usize::from(prefix_len >> 3).min(16);
+                    mask6.sin6_addr.s6_addr[..full_bytes].fill(0xff);
+                    if prefix_len % 8 != 0 && full_bytes < 16 {
+                        mask6.sin6_addr.s6_addr[full_bytes] = 0xff << (8 - prefix_len % 8);
                     }
-                    _ => None,
+                    let suffix =
+                        netmask_to_cidr_suffix(u128::from_ne_bytes(mask6.sin6_addr.s6_addr));
+                    // SAFETY: both locals are fully-initialized sockaddr_in6 values.
+                    unsafe {
+                        (
+                            bun_sys::net::Address::init_posix((&raw const addr6).cast()),
+                            bun_sys::net::Address::init_posix((&raw const mask6).cast()),
+                            suffix,
+                        )
+                    }
+                } else {
+                    // SAFETY: GetAdaptersAddresses(AF_UNSPEC) yields only INET
+                    // and INET6 records; non-INET6 is a sockaddr_in in `buf`.
+                    let addr4 = unsafe { sa.cast::<sockaddr_in>().read_unaligned() };
+                    let mut mask4: sockaddr_in = bun_core::ffi::zeroed();
+                    mask4.sin_family = AF::INET as u16;
+                    mask4.sin_addr.s_addr = if prefix_len > 0 {
+                        (u32::MAX << (32 - u32::from(prefix_len.min(32)))).to_be()
+                    } else {
+                        0
+                    };
+                    let suffix = netmask_to_cidr_suffix(mask4.sin_addr.s_addr);
+                    // SAFETY: both locals are fully-initialized sockaddr_in values.
+                    unsafe {
+                        (
+                            bun_sys::net::Address::init_posix((&raw const addr4).cast()),
+                            bun_sys::net::Address::init_posix((&raw const mask4).cast()),
+                            suffix,
+                        )
+                    }
                 };
 
-                // Format the address and then, if valid, the CIDR suffix; both
-                //  the address and cidr values can be slices into this same buffer
-                // e.g. addr_str = "192.168.88.254", cidr_str = "192.168.88.254/24"
-                let addr_str = bun_fmt::format_ip(
-                    // bun_sys::net::Address will do ptrCast depending on the family so this is ok
-                    // SAFETY: the address union backs a valid sockaddr_in/sockaddr_in6; pointer derived
-                    // from the whole union so provenance covers the full 28 bytes init_posix may copy.
-                    &unsafe {
-                        bun_sys::net::Address::init_posix(
-                            core::ptr::from_ref(&iface.address).cast::<bun_sys::posix::sockaddr>(),
-                        )
-                    },
-                    &mut ip_buf,
-                )
-                .expect("unreachable");
-                let addr_len = addr_str.len();
-                let start = addr_str.as_ptr() as usize - ip_buf.as_ptr() as usize;
-                if let Some(suffix) = maybe_suffix {
-                    //NOTE addr_str might not start at buf[0] due to slicing in formatIp
-                    // Start writing the suffix immediately after the address
-                    let suffix_len = {
-                        let mut cursor = &mut ip_buf[start + addr_len..];
-                        write!(cursor, "/{}", suffix).expect("unreachable");
-                        let remaining = cursor.len();
-                        (ip_buf.len() - (start + addr_len)) - remaining
-                    };
-                    // The full cidr value is the address + the suffix
-                    let cidr_str = &ip_buf[start..start + addr_len + suffix_len];
-                    cidr = ZigString::init(cidr_str).with_encoding().to_js(global_this);
+                let interface = JSValue::create_empty_object(global_this, 7);
+
+                // address <string> The assigned IPv4 or IPv6 address
+                // cidr <string> The assigned IPv4 or IPv6 address with the routing prefix in CIDR notation. If the netmask is invalid, this property is set to null.
+                let mut cidr = JSValue::NULL;
+                {
+                    // Format the address and then, if valid, the CIDR suffix; both
+                    //  the address and cidr values can be slices into this same buffer
+                    // e.g. addr_str = "192.168.88.254", cidr_str = "192.168.88.254/24"
+                    let addr_str = bun_fmt::format_ip(&addr, &mut ip_buf).expect("unreachable");
+                    let addr_len = addr_str.len();
+                    let start = addr_str.as_ptr() as usize - ip_buf.as_ptr() as usize;
+                    if let Some(suffix) = maybe_suffix {
+                        //NOTE addr_str might not start at buf[0] due to slicing in formatIp
+                        // Start writing the suffix immediately after the address
+                        let suffix_len = {
+                            let mut cursor = &mut ip_buf[start + addr_len..];
+                            write!(cursor, "/{}", suffix).expect("unreachable");
+                            let remaining = cursor.len();
+                            (ip_buf.len() - (start + addr_len)) - remaining
+                        };
+                        // The full cidr value is the address + the suffix
+                        let cidr_str = &ip_buf[start..start + addr_len + suffix_len];
+                        cidr = ZigString::init(cidr_str).with_encoding().to_js(global_this);
+                    }
+
+                    interface.put(
+                        global_this,
+                        b"address",
+                        ZigString::init(&ip_buf[start..start + addr_len])
+                            .with_encoding()
+                            .to_js(global_this),
+                    );
                 }
 
+                // netmask
+                {
+                    let str = bun_fmt::format_ip(&netmask, &mut ip_buf).expect("unreachable");
+                    interface.put(
+                        global_this,
+                        b"netmask",
+                        ZigString::init(str).with_encoding().to_js(global_this),
+                    );
+                }
+
+                // family
                 interface.put(
                     global_this,
-                    b"address",
-                    ZigString::init(&ip_buf[start..start + addr_len])
-                        .with_encoding()
-                        .to_js(global_this),
-                );
-            }
-
-            // netmask
-            {
-                let str = bun_fmt::format_ip(
-                    // bun_sys::net::Address will do ptrCast depending on the family so this is ok
-                    // SAFETY: the netmask union backs a valid sockaddr_in/sockaddr_in6; pointer derived
-                    // from the whole union so provenance covers the full 28 bytes init_posix may copy.
-                    &unsafe {
-                        bun_sys::net::Address::init_posix(
-                            core::ptr::from_ref(&iface.netmask).cast::<bun_sys::posix::sockaddr>(),
-                        )
+                    b"family",
+                    match family {
+                        AF::INET => global_this.common_strings().ipv4(),
+                        AF::INET6 => global_this.common_strings().ipv6(),
+                        _ => ZigString::static_("unknown").to_js(global_this),
                     },
-                    &mut ip_buf,
-                )
-                .expect("unreachable");
-                interface.put(
-                    global_this,
-                    b"netmask",
-                    ZigString::init(str).with_encoding().to_js(global_this),
                 );
-            }
-            // family
-            // SAFETY: union read tagged by family
-            let family = unsafe { iface.address.address4.sin_family } as c_int;
-            interface.put(
-                global_this,
-                b"family",
-                match family {
-                    bun_sys::posix::AF::INET => global_this.common_strings().ipv4(),
-                    bun_sys::posix::AF::INET6 => global_this.common_strings().ipv6(),
-                    _ => ZigString::static_("unknown").to_js(global_this),
-                },
-            );
 
-            // mac
-            {
-                let mac_buf = bun_fmt::mac_address_lower(iface.phys_addr);
-                interface.put(
-                    global_this,
-                    b"mac",
-                    ZigString::init(&mac_buf).with_encoding().to_js(global_this),
-                );
-            }
+                // mac
+                {
+                    let mac_buf = bun_fmt::mac_address_lower(phys_addr);
+                    interface.put(
+                        global_this,
+                        b"mac",
+                        ZigString::init(&mac_buf).with_encoding().to_js(global_this),
+                    );
+                }
 
-            // internal
-            {
-                interface.put(
-                    global_this,
-                    b"internal",
-                    JSValue::from(iface.is_internal != 0),
-                );
-            }
+                // internal
+                interface.put(global_this, b"internal", JSValue::from(is_internal));
 
-            // cidr. this is here to keep ordering consistent with the node implementation
-            interface.put(global_this, b"cidr", cidr);
+                // cidr. this is here to keep ordering consistent with the node implementation
+                interface.put(global_this, b"cidr", cidr);
 
-            // scopeid
-            if family == bun_sys::posix::AF::INET6 {
-                // SAFETY: union read; family == INET6
-                interface.put(
-                    global_this,
-                    b"scopeid",
-                    JSValue::js_number(unsafe { iface.address.address6.sin6_scope_id } as f64),
-                );
-            }
+                // scopeid
+                if family == AF::INET6 {
+                    interface.put(
+                        global_this,
+                        b"scopeid",
+                        JSValue::js_number(f64::from(scope_id)),
+                    );
+                }
 
-            // Does this entry already exist?
-            // SAFETY: iface.name is a NUL-terminated C string from libuv
-            let interface_name = unsafe { bun_core::ffi::cstr(iface.name) }.to_bytes();
-            if let Some(array) = ret.get(global_this, interface_name)? {
-                // Add this interface entry to the existing array
-                let next_index: u32 =
-                    u32::try_from(array.get_length(global_this)?).expect("int cast");
-                array.put_index(global_this, next_index, interface)?;
-            } else {
-                // Add it as an array with this interface as an element
-                let array = JSValue::create_empty_array(global_this, 1)?;
-                array.put_index(global_this, 0, interface)?;
-                ret.put(global_this, interface_name, array);
+                // Does this entry already exist?
+                if let Some(array) = ret.get(global_this, name.as_slice())? {
+                    // Add this interface entry to the existing array
+                    let next_index: u32 =
+                        u32::try_from(array.get_length(global_this)?).expect("int cast");
+                    array.put_index(global_this, next_index, interface)?;
+                } else {
+                    // Add it as an array with this interface as an element
+                    let array = JSValue::create_empty_array(global_this, 1)?;
+                    array.put_index(global_this, 0, interface)?;
+                    ret.put(global_this, name.as_slice(), array);
+                }
             }
         }
 
@@ -1425,17 +1623,24 @@ mod _impl {
             bun_core::slice_to_nul(&name_buffer)
         };
         #[cfg(windows)]
-        let value: &[u8] = 'slice: {
-            // SAFETY: zeroed POD
-            let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
-            // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_os_uname(&mut info) };
-            if err != 0 {
-                break 'slice b"unknown";
-            }
-            let value = bun_core::slice_to_nul(&info.release);
-            name_buffer[0..value.len()].copy_from_slice(value);
-            &name_buffer[0..value.len()]
+        let value: &[u8] = {
+            use bun_windows_sys::ntdll::{RTL_OSVERSIONINFOW, RtlGetVersion};
+            let mut info: RTL_OSVERSIONINFOW = bun_core::ffi::zeroed();
+            info.dwOSVersionInfoSize = core::mem::size_of::<RTL_OSVERSIONINFOW>() as u32;
+            // Cannot fail; "major.minor.build" matches libuv's uv_os_uname release.
+            let _ = RtlGetVersion(&mut info);
+            let written = {
+                let mut cursor = &mut name_buffer[..];
+                write!(
+                    cursor,
+                    "{}.{}.{}",
+                    info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber
+                )
+                .expect("unreachable");
+                let remaining = cursor.len();
+                name_buffer.len() - remaining
+            };
+            &name_buffer[..written]
         };
 
         BunString::clone_utf8(value)
@@ -1473,7 +1678,8 @@ mod _impl {
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
-                    errno: libuv::UV_ESRCH,
+                    // node-visible errno domain keeps uv numbering. ESRCH = -4040.
+                    errno: -4040,
                     syscall: BunString::static_("uv_os_getpriority"),
                     ..system_error_default()
                 };
@@ -1486,7 +1692,8 @@ mod _impl {
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::EACCES as c_int),
                     #[cfg(windows)]
-                    errno: libuv::UV_EACCES,
+                    // node-visible errno domain keeps uv numbering. EACCES = -4092.
+                    errno: -4092,
                     syscall: BunString::static_("uv_os_getpriority"),
                     ..system_error_default()
                 };
@@ -1499,7 +1706,8 @@ mod _impl {
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
-                    errno: libuv::UV_ESRCH,
+                    // node-visible errno domain keeps uv numbering. ESRCH = -4040.
+                    errno: -4040,
                     syscall: BunString::static_("uv_os_getpriority"),
                     ..system_error_default()
                 };
@@ -1543,28 +1751,22 @@ mod _impl {
         }
         #[cfg(windows)]
         {
-            // SAFETY: pure FFI getter
-            return unsafe { libuv::uv_get_total_memory() };
+            use bun_windows_sys::kernel32::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+            let mut status: MEMORYSTATUSEX = bun_core::ffi::zeroed();
+            status.dwLength = core::mem::size_of::<MEMORYSTATUSEX>() as u32;
+            if GlobalMemoryStatusEx(&mut status) == 0 {
+                return 0;
+            }
+            return status.ullTotalPhys;
         }
     }
 
     pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
         #[cfg(windows)]
         {
-            let mut uptime_value: f64 = 0.0;
-            // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_uptime(&mut uptime_value) };
-            if err != 0 {
-                let sys_err = SystemError {
-                    message: BunString::static_("failed to get system uptime"),
-                    code: BunString::static_("ERR_SYSTEM_ERROR"),
-                    errno: err,
-                    syscall: BunString::static_("uv_uptime"),
-                    ..system_error_default()
-                };
-                return Err(global.throw_value(sys_err.to_error_instance(global)));
-            }
-            return Ok(uptime_value);
+            let _ = global;
+            // GetTickCount64 (ms since boot) cannot fail — libuv's uv_uptime.
+            return Ok(bun_windows_sys::kernel32::GetTickCount64() as f64 / 1000.0);
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
@@ -1656,16 +1858,76 @@ mod _impl {
         };
         #[cfg(windows)]
         let slice: &[u8] = 'slice: {
-            // SAFETY: zeroed POD
-            let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
-            // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_os_uname(&mut info) };
-            if err != 0 {
+            use bun_windows_sys::advapi32::{
+                HKEY, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_WOW64_64KEY, RRF_RT_REG_SZ,
+                RegCloseKey, RegGetValueW, RegOpenKeyExW,
+            };
+            use bun_windows_sys::ntdll::{RTL_OSVERSIONINFOW, RtlGetVersion};
+
+            let mut info: RTL_OSVERSIONINFOW = bun_core::ffi::zeroed();
+            info.dwOSVersionInfoSize = core::mem::size_of::<RTL_OSVERSIONINFOW>() as u32;
+            let _ = RtlGetVersion(&mut info);
+
+            // libuv's uv_os_uname version composition: registry ProductName
+            // (with the Windows 11 fixup), then the service-pack suffix.
+            let mut composed: Vec<u8> = Vec::new();
+            let mut product = [0u16; 256];
+            let mut key: HKEY = core::ptr::null_mut();
+            // SAFETY: NUL-terminated key path; out-param local.
+            if unsafe {
+                RegOpenKeyExW(
+                    HKEY_LOCAL_MACHINE,
+                    bun_core::wstr!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion").as_ptr(),
+                    0,
+                    KEY_QUERY_VALUE | KEY_WOW64_64KEY,
+                    &raw mut key,
+                )
+            } == 0
+            {
+                let mut product_bytes =
+                    u32::try_from(core::mem::size_of_val(&product[..])).expect("int cast");
+                // SAFETY: value buffer sized; `key` live until RegCloseKey.
+                let ok = unsafe {
+                    let r = RegGetValueW(
+                        key,
+                        core::ptr::null(),
+                        bun_core::wstr!("ProductName").as_ptr(),
+                        RRF_RT_REG_SZ,
+                        core::ptr::null_mut(),
+                        product.as_mut_ptr().cast(),
+                        &raw mut product_bytes,
+                    );
+                    RegCloseKey(key);
+                    r == 0
+                };
+                if ok {
+                    let len = slice_to_nul_u16(&product).len();
+                    let product = &mut product[..len];
+                    // Windows 11 kept dwMajorVersion == 10; rewrite a leading
+                    // "Windows 10" by build number, as libuv does.
+                    if info.dwMajorVersion == 10
+                        && info.dwBuildNumber >= 22000
+                        && product.starts_with(&bun_core::wstr!("Windows 10")[..10])
+                    {
+                        product[9] = u16::from(b'1');
+                    }
+                    bun_core::convert_wtf16_to_wtf8_append(&mut composed, product);
+                }
+            }
+
+            let csd = slice_to_nul_u16(&info.szCSDVersion);
+            if !csd.is_empty() {
+                if !composed.is_empty() {
+                    composed.push(b' ');
+                }
+                bun_core::convert_wtf16_to_wtf8_append(&mut composed, csd);
+            }
+
+            if composed.len() > name_buffer.len() {
                 break 'slice b"unknown";
             }
-            let s = bun_core::slice_to_nul(&info.version);
-            name_buffer[0..s.len()].copy_from_slice(s);
-            &name_buffer[0..s.len()]
+            name_buffer[..composed.len()].copy_from_slice(&composed);
+            &name_buffer[..composed.len()]
         };
 
         Ok(BunString::clone_utf8(slice))

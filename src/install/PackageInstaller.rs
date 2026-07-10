@@ -130,7 +130,7 @@ impl NodeModulesFolder {
         root_node_modules_dir: &Dir,
         file_path: &ZStr,
     ) -> bool {
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
         bun_sys::directory_exists_at(
             root_node_modules_dir.fd(),
@@ -163,7 +163,7 @@ impl NodeModulesFolder {
         root_node_modules_dir: &Dir,
         file_path: &ZStr,
     ) -> bun_sys::Result<bun_sys::File> {
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
         root_node_modules_dir.open_file(
             join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
@@ -220,7 +220,7 @@ impl NodeModulesFolder {
         #[cfg(unix)]
         {
             // Copy into a NUL-terminated PathBuffer.
-            let mut path_buf = PathBuffer::uninit();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
             let path_z = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
             return root
                 .open_at_with(path_z.as_bytes(), 0)
@@ -471,9 +471,9 @@ impl<'a> PackageInstaller<'a> {
         if self.trees[tree_id as usize].binaries.count() > 0 {
             self.seen_bin_links.clear();
 
-            let mut link_target_buf = PathBuffer::uninit();
-            let mut link_dest_buf = PathBuffer::uninit();
-            let mut link_rel_buf = PathBuffer::uninit();
+            let mut link_target_buf = bun_paths::path_buffer_pool::get();
+            let mut link_dest_buf = bun_paths::path_buffer_pool::get();
+            let mut link_rel_buf = bun_paths::path_buffer_pool::get();
             // reshaped for borrowck — pass tree_id, re-borrow tree inside.
             self.link_tree_bins(
                 tree_id,
@@ -667,12 +667,12 @@ impl<'a> PackageInstaller<'a> {
 
     pub(crate) fn link_remaining_bins(&mut self, log_level: Options::LogLevel) {
         let mut depth_buf: lockfile::tree::DepthBuf = [0u32; lockfile::tree::MAX_DEPTH];
-        let mut node_modules_rel_path_buf = PathBuffer::uninit();
+        let mut node_modules_rel_path_buf = bun_paths::path_buffer_pool::get();
         node_modules_rel_path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
 
-        let mut link_target_buf = PathBuffer::uninit();
-        let mut link_dest_buf = PathBuffer::uninit();
-        let mut link_rel_buf = PathBuffer::uninit();
+        let mut link_target_buf = bun_paths::path_buffer_pool::get();
+        let mut link_dest_buf = bun_paths::path_buffer_pool::get();
+        let mut link_rel_buf = bun_paths::path_buffer_pool::get();
 
         let trees_len = self.trees.len();
         for tree_id in 0..trees_len {

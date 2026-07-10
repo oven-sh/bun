@@ -24,8 +24,6 @@ use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
     JSValue, JsCell, JsRef, JsResult,
 };
-#[cfg(not(target_os = "macos"))]
-use bun_paths::PathBuffer;
 use bun_paths::{self as path};
 use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
@@ -80,10 +78,10 @@ trait CronJobBase: Sized {
     unsafe fn maybe_finished(this: *mut Self);
 
     fn loop_(&self) -> *mut AsyncLoop {
-        // `VirtualMachine::uv_loop` already returns the native loop on both
-        // targets (jsc/VirtualMachine.rs:2975); the prior POSIX arm's
-        // `bun_uws::Loop::get()` named the same per-thread singleton.
-        vm_mut().uv_loop()
+        // `VirtualMachine::platform_loop` already returns the native loop on
+        // both targets; the prior POSIX arm's `bun_uws::Loop::get()` named
+        // the same per-thread singleton.
+        vm_mut().platform_loop()
     }
 
     /// May free `this` via `maybe_finished`.
@@ -273,6 +271,7 @@ impl CronRegisterJob {
                                  To fix this, either run Bun as a regular user account, or create the scheduled task manually with: \
                                  schtasks /create /xml <file> /tn <name> /ru SYSTEM /f"
                             ));
+                            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                             return unsafe { Self::finish(this) };
                         }
                     }
@@ -814,6 +813,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     unsafe {
         CronRegisterJob::start_mac(job)
     };
+    // SAFETY: `job` is the freshly-leaked Box (see above); `start_*` takes ownership.
     #[cfg(windows)]
     unsafe {
         CronRegisterJob::start_windows(job)
@@ -903,14 +903,14 @@ impl CronRegisterJob {
         let _ = file.close(); // close error is non-actionable
 
         let mut argv: [*const c_char; 9] = [
-            b"schtasks\0".as_ptr().cast(),
-            b"/create\0".as_ptr().cast(),
-            b"/xml\0".as_ptr().cast(),
+            c"schtasks".as_ptr(),
+            c"/create".as_ptr(),
+            c"/xml".as_ptr(),
             xml_path_ptr.cast(),
-            b"/tn\0".as_ptr().cast(),
+            c"/tn".as_ptr(),
             task_name.as_ptr().cast(),
-            b"/np\0".as_ptr().cast(),
-            b"/f\0".as_ptr().cast(),
+            c"/np".as_ptr(),
+            c"/f".as_ptr(),
             core::ptr::null(),
         ];
         // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
@@ -1335,6 +1335,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     unsafe {
         CronRemoveJob::start_mac(job)
     };
+    // SAFETY: `job` is the freshly-leaked Box (see above); `start_*` takes ownership.
     #[cfg(windows)]
     unsafe {
         CronRemoveJob::start_windows(job)
@@ -1366,11 +1367,11 @@ impl CronRemoveJob {
             }
         };
         let mut argv: [*const c_char; 6] = [
-            b"schtasks\0".as_ptr().cast(),
-            b"/delete\0".as_ptr().cast(),
-            b"/tn\0".as_ptr().cast(),
+            c"schtasks".as_ptr(),
+            c"/delete".as_ptr(),
+            c"/tn".as_ptr(),
             task_name.as_ptr().cast(),
-            b"/f\0".as_ptr().cast(),
+            c"/f".as_ptr(),
             core::ptr::null(),
         ];
         // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
@@ -2165,7 +2166,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     // Hoisted to function scope: `resolved_argv0` borrows into this buffer on
     // Windows and must outlive the SpawnOptions construction below.
     #[cfg(windows)]
-    let mut path_buf = PathBuffer::uninit();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
     {
         // Resolve the executable via bun.which, matching Bun.spawn's behavior.
@@ -2181,6 +2182,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
                     "Could not find '{}' in PATH",
                     bstr::BStr::new(argv0)
                 ));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { T::finish(this) };
             }
         }
@@ -2205,38 +2207,18 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             }
             Err(_) => {
                 s.set_err(format_args!("Failed to create environment block"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { T::finish(this) };
             }
         }
     };
 
-    // Ownership note: BOTH
-    // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,
-    // and `spawn_process_windows` `heap::take`s the raw `Stdio::Buffer`
-    // pointer into `WindowsStdioResult::Buffer` on success. Pre-stashing the
-    // Box in `stderr_reader.source` here (the original transliteration) would
-    // create TWO `Box<uv::Pipe>` over one allocation — UB under Stacked
-    // Borrows even with a `mem::forget` of the duplicate, because moving the
-    // first Box into `Source::Pipe` reasserts its `Unique` tag and kills the
-    // raw pointer's provenance before `spawn_process_windows` ever
-    // dereferences it. Instead hand the raw heap pointer to `Stdio::Buffer`
-    // alone (sole owner), let `spawn_process_windows` round-trip it through
-    // `heap::take`, and stash the returned Box in `stderr_reader.source`
-    // AFTER spawn — see the `#[cfg(windows)]` block below and
-    // `lifecycle_script_runner.rs` / `filter_run.rs` for the canonical
-    // pattern. On spawn error, `WindowsStdio` has no `Drop`; reclaim
-    // explicitly via `spawn_options.stderr.deinit()`.
-    #[cfg(windows)]
-    let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe =
-        bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-            bun_sys::windows::libuv::Pipe,
-        >()));
     let cwd = FileSystem::get().top_level_dir;
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,
         #[cfg(windows)]
-        stderr: spawn::Stdio::Buffer(stderr_pipe_ptr),
+        stderr: spawn::Stdio::Buffer,
         #[cfg(not(windows))]
         stderr: spawn::Stdio::Ignore,
         cwd: cwd.into(),
@@ -2248,9 +2230,6 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         },
         ..SpawnOptions::default()
     };
-    // `mut` only for the Windows error-path `spawn_options.stderr.deinit()`.
-    #[cfg(windows)]
-    let mut spawn_options = spawn_options;
 
     // SAFETY: `argv`/`envp` are local null-terminated C-string arrays with
     // argv[0] non-null; valid for this call.
@@ -2258,12 +2237,6 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         match unsafe { spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) } {
             Ok(Ok(sp)) => sp,
             Ok(Err(err)) => {
-                // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-                // raw `*mut uv::Pipe` on the SUCCESS path; on every error return
-                // ownership stays with the caller and `WindowsStdio` has no
-                // `Drop`. Reclaim it (uv_close + free if init'd) here.
-                #[cfg(windows)]
-                spawn_options.stderr.deinit();
                 s.set_err(format_args!(
                     "Failed to spawn process: {}",
                     bstr::BStr::new(err.name())
@@ -2272,8 +2245,6 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
                 return unsafe { T::finish(this) };
             }
             Err(e) => {
-                #[cfg(windows)]
-                spawn_options.stderr.deinit();
                 s.set_err(format_args!("Failed to spawn process: {}", e.name()));
                 // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { T::finish(this) };
@@ -2316,23 +2287,15 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     }
     #[cfg(windows)]
     {
-        // `spawn_process_windows` has `heap::take`n `stderr_pipe_ptr` out of
-        // `Stdio::Buffer` into `spawned.stderr` as
-        // `WindowsStdioResult::Buffer(Box<uv::Pipe>)`. Take that Box out
-        // *here* (sole owner — single `into_raw` → `from_raw` round-trip, no
-        // aliasing Box) and stash it in `stderr_reader.source` BEFORE
-        // `start_with_current_pipe` (which reads `source.?.pipe`) and BEFORE
-        // `spawned` drops — otherwise `WindowsSpawnResult::Drop` would
-        // `uv_close`+free the live, libuv-registered handle (UAF in the read
-        // callback + double-free on reader close).
+        // Take the adopted engine pipe end out of `spawned` BEFORE it drops
+        // (its Drop would otherwise close it) and hand it to the reader.
         if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-            debug_assert!(core::ptr::eq(Box::as_ref(&pipe), stderr_pipe_ptr));
-            s.stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
             s.stderr_reader()
                 .set_parent(this.cast::<core::ffi::c_void>());
             *s.remaining_fds() += 1;
-            if s.stderr_reader().start_with_current_pipe().is_err() {
+            if s.stderr_reader().start_with_pipe(pipe).is_err() {
                 s.set_err(format_args!("Failed to start reading stderr"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { T::finish(this) };
             }
         }
@@ -2430,7 +2393,7 @@ fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::A
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
 #[cfg(not(target_os = "macos"))]
 fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError> {
-    let mut name_buf = PathBuffer::uninit();
+    let mut name_buf = bun_paths::path_buffer_pool::get();
     let mut full_prefix = Vec::with_capacity(prefix.len() + 3);
     full_prefix.extend_from_slice(prefix.as_bytes());
     full_prefix.extend_from_slice(b"tmp");

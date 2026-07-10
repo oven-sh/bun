@@ -30,7 +30,7 @@ use bun_event_loop::{Task, task_tag};
 
 // `FilePoll::on_update` dispatch is POSIX-only (the symbol is declared
 // `extern "Rust"` in `aio::posix_event_loop` and never referenced on Windows,
-// where libuv drives I/O readiness directly).
+// where the iocp engine delivers completions to typed callbacks directly).
 #[cfg(not(windows))]
 use bun_io::posix_event_loop::{FilePoll, Flags as PollFlag, poll_tag};
 
@@ -142,7 +142,6 @@ use crate::node::zlib::{
 };
 
 use crate::dns_jsc::Resolver as DNSResolver;
-#[cfg(not(windows))]
 use crate::dns_jsc::get_addr_info_request;
 use crate::server::ServerAllConnectionsClosedTask;
 
@@ -379,9 +378,6 @@ pub fn run_task(
 
         // ── DNS ──────────────────────────────────────────────────────────
         task_tag::GetAddrInfoRequestTask => {
-            #[cfg(windows)]
-            panic!("This should not be reachable on Windows");
-            #[cfg(not(windows))]
             run_then_destroy!(work get_addr_info_request::Task);
         }
 
@@ -602,6 +598,14 @@ pub fn tick_queue_with_count(
     let global: &JSGlobalObject = unsafe { el.global.expect("EventLoop.global unset").as_ref() };
     let global_vm = global.vm();
 
+    // Windows: bound one pass to the tasks queued at entry. Same-thread
+    // re-enqueues (and per-task microtask drains) otherwise extend a single
+    // pass indefinitely, and the engine — which unlike libuv is only polled
+    // between passes — never dispatches socket/timer events. A count bound,
+    // never a clock: timing bounds mask starvation instead of removing it.
+    #[cfg(windows)]
+    let mut budget = el.tasks.readable_length();
+
     while let Some(task) = el.tasks.read_item() {
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
@@ -617,6 +621,13 @@ pub fn tick_queue_with_count(
             }
         }
         el.drain_microtasks_with_global(global, global_vm)?;
+        #[cfg(windows)]
+        {
+            budget = budget.saturating_sub(1);
+            if budget == 0 {
+                break;
+            }
+        }
     }
     el.tasks.reset_head_if_empty();
     Ok(())

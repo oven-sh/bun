@@ -602,8 +602,8 @@ mod platform {
                             let len_bytes = u16::try_from(len * 2).expect("name_filter too long");
                             filter_us.Length = len_bytes;
                             filter_us.MaximumLength = len_bytes;
-                            filter_us.Buffer = ptr as *mut u16;
-                            &mut filter_us
+                            filter_us.Buffer = ptr.cast_mut();
+                            &raw mut filter_us
                         }
                         None => core::ptr::null_mut(),
                     };
@@ -616,7 +616,7 @@ mod platform {
                             core::ptr::null_mut(),
                             core::ptr::null_mut(),
                             core::ptr::null_mut(),
-                            &mut io,
+                            &raw mut io,
                             self.buf.as_mut_ptr().cast(),
                             self.buf.len() as u32,
                             w::FILE_INFORMATION_CLASS::FileDirectoryInformation,
@@ -667,36 +667,52 @@ mod platform {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = io.Information;
+                    // Never trust a kernel/filter-driver byte count past the
+                    // buffer: it is the walk's only bound.
+                    self.end_index = io.Information.min(self.buf.len());
 
                     sys::syslog!("NtQueryDirectoryFile({}) = {}", self.dir, self.end_index);
                 }
 
                 let entry_offset = self.index;
+                // A truncated/garbage trailing record (misbehaving driver or
+                // redirector) must not push the header reads past the buffer;
+                // treat it as end-of-batch and refill.
+                if entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileName) > self.end_index
+                {
+                    self.index = self.buf.len();
+                    continue;
+                }
                 let p = self.buf.as_ptr();
                 // While the official api docs guarantee FILE_DIRECTORY_INFORMATION to
                 // be aligned properly this may not always be the case (e.g. due to
                 // faulty VM/Sandboxing tools) — read fields via unaligned loads.
-                // SAFETY: entry_offset < end_index ≤ buf.len(); the header up through
-                // FileName lies within `buf` per the kernel contract.
-                let next_entry_offset =
-                    unsafe {
-                        core::ptr::read_unaligned(p.add(
+                // SAFETY: entry_offset + the fixed header ≤ end_index ≤ buf.len()
+                // (guard above); reads stay within `buf`.
+                let next_entry_offset = unsafe {
+                    core::ptr::read_unaligned(
+                        p.add(
                             entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, NextEntryOffset),
-                        ) as *const u32)
-                    };
+                        )
+                        .cast::<u32>(),
+                    )
+                };
                 // SAFETY: see above.
                 let file_name_length = unsafe {
                     core::ptr::read_unaligned(
-                        p.add(entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileNameLength))
-                            as *const u32,
+                        p.add(
+                            entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileNameLength),
+                        )
+                        .cast::<u32>(),
                     )
                 } as usize;
                 // SAFETY: see above.
                 let file_attributes = unsafe {
                     core::ptr::read_unaligned(
-                        p.add(entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileAttributes))
-                            as *const u32,
+                        p.add(
+                            entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileAttributes),
+                        )
+                        .cast::<u32>(),
                     )
                 };
 
@@ -725,9 +741,15 @@ mod platform {
                 // it is itself 8-byte aligned, and per MS docs each record (and
                 // thus its FileName at offset 64) lands on an 8-byte boundary —
                 // bytemuck checks the u8→u16 alignment at runtime.
-                let dir_info_name: &[u16] = bytemuck::cast_slice(
+                let mut dir_info_name: &[u16] = bytemuck::cast_slice(
                     &self.buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
                 );
+                // SharePoint/WebDAV redirectors count a trailing NUL in
+                // FileNameLength; strip it or "." and ".." leak through the
+                // dot filter below. // quirk: FSLNK-33
+                if let [rest @ .., 0] = dir_info_name {
+                    dir_info_name = rest;
+                }
 
                 if dir_info_name == [b'.' as u16] || dir_info_name == [b'.' as u16, b'.' as u16] {
                     continue;

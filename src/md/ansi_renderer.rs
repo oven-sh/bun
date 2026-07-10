@@ -2642,7 +2642,7 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     // for any entry, including directories — and emitKittyImageFile sets
     // q=2 so the terminal silently drops directory paths without falling
     // through to alt text.
-    let mut zbuf = bun_paths::PathBuffer::uninit();
+    let mut zbuf = bun_paths::path_buffer_pool::get();
     let abs_z = bun_paths::resolve_path::z(&abs, &mut zbuf);
     match bun_sys::stat(abs_z) {
         Ok(s) => {

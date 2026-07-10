@@ -1,6 +1,6 @@
 //! `bun_spawn_sys` — raw OS process-spawn layer split out of `bun_spawn`.
 //!
-//! This crate owns everything that talks directly to the kernel/libuv to
+//! This crate owns everything that talks directly to the kernel to
 //! create a child process and read its exit status, with **no** event-loop
 //! integration:
 //!
@@ -12,7 +12,7 @@
 //!   - signal-forwarding / no-orphans `extern "C"` decls
 //!
 //! Dependencies are deliberately leaf-only: `libc`, `bun_sys`, `bun_core`,
-//! `bun_analytics`, and (Windows-only) `bun_libuv_sys`. There is **no**
+//! and `bun_analytics`. There is **no**
 //! `bun_event_loop`/`bun_io`/`bun_io`/`bun_threading` dependency — `Process`,
 //! `Poller`, `WaiterThread`, and the `sync` runner stay in `bun_spawn` and
 //! depend on this crate.
@@ -177,10 +177,10 @@ pub mod pdeathsig {
 // Public surface — flat re-exports so `bun_spawn` can `pub use bun_spawn_sys::*`.
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(windows)]
+pub use spawn_process::process_rusage;
 #[cfg(unix)]
 pub use spawn_process::spawn_process_posix;
-#[cfg(windows)]
-pub use spawn_process::uv_getrusage;
 pub use spawn_process::{
     Dup2, ExtraPipe, FdT, IoCounters, PidFdType, PidT, PosixSpawnOptions, PosixSpawnResult,
     PosixStdio, Rusage, RusageFields, StdioKind, WinRusage, WinTimeval, rusage_zeroed,

@@ -19,7 +19,7 @@ use bun_jsc::zig_string::ZigString;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
-use bun_paths::{self as bun_path, PathBuffer};
+use bun_paths::{self as bun_path};
 use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
@@ -268,7 +268,7 @@ impl JunitReporter {
         if self.hostname_value.is_none() {
             #[cfg(windows)]
             {
-                return None;
+                self.hostname_value = Some(Box::default());
             }
 
             #[cfg(not(windows))]
@@ -732,7 +732,7 @@ impl JunitReporter {
             self.contents.extend_from_slice(b"</testsuites>\n");
         }
 
-        let mut junit_path_buf = PathBuffer::uninit();
+        let mut junit_path_buf = bun_paths::path_buffer_pool::get();
 
         junit_path_buf[..path.len()].copy_from_slice(path);
         junit_path_buf[path.len()] = 0;
@@ -1676,7 +1676,7 @@ impl CommandLineReporter {
         // --- Text ---
 
         // --- LCOV ---
-        let mut lcov_name_buf = PathBuffer::uninit();
+        let mut lcov_name_buf = bun_paths::path_buffer_pool::get();
         let mut lcov_state: Option<(File, &bun_core::ZStr, /*buffered*/ Vec<u8>)> =
             if REPORTERS_LCOV {
                 'brk: {
@@ -1962,6 +1962,8 @@ impl TestCommand {
     // pub use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
     // Re-exports moved to top-level `use` per crate map.
 
+    // One scanner per test run; it embeds its path scratch by design.
+    #[allow(clippy::large_stack_frames)]
     pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
         Output::IS_GITHUB_ACTION.store(
             Output::is_github_action(),

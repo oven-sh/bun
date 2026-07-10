@@ -231,47 +231,38 @@ impl Debugger {
 
         #[cfg(windows)]
         {
-            // Arm a one-shot libuv timer that unrefs `poll_ref` after the
+            // Arm a one-shot engine timer that unrefs `poll_ref` after the
             // delay (Windows lacks a working `tickWithTimeout`). TODO: remove
             // this when tickWithTimeout actually works properly on Windows.
-            use bun_sys::windows::libuv as uv;
-            use bun_sys::windows::libuv::UvHandle as _;
             if wait == Wait::Shortly {
-                let uv_loop = this.uv_loop();
-                // SAFETY: `uv_loop` is a live initialized `uv_loop_t`.
-                unsafe { uv::uv_update_time(uv_loop) };
-                let timer: *mut uv::Timer =
-                    bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed()));
-                // SAFETY: `timer` freshly allocated; `uv_loop` valid.
-                unsafe { (*timer).init(uv_loop) };
-
-                extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
-                    // SAFETY: `vm` is the per-thread singleton; called on the
-                    // JS thread (libuv timer callback). Unwinding across
-                    // `extern "C"` is UB so we early-return if no debugger.
+                /// One-shot: release the loop slot and free the boxed handle.
+                unsafe fn on_debugger_timer(lp: &mut bun_iocp::Loop, data: *mut core::ffi::c_void) {
+                    // SAFETY: called on the JS thread (loop timer dispatch);
+                    // `data` is the boxed Timer armed below, freed exactly once.
                     if let Some(d) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
                         d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
                     }
-                    // SAFETY: `handle` is a live `uv_timer_t` (`uv_handle_t`
-                    // at offset 0); `deinit_timer` matches `uv_close_cb`.
+                    let timer = data.cast::<bun_iocp::Timer>();
+                    // SAFETY: `timer` is live until the take below; one-shot
+                    // timers disarm before dispatch so the slot is idle.
                     unsafe {
-                        uv::uv_close(handle.cast(), Some(deinit_timer));
+                        lp.timer_release(&mut *timer);
+                        drop(bun_core::heap::take(timer));
                     }
                 }
-                extern "C" fn deinit_timer(handle: *mut uv::uv_handle_t) {
-                    // SAFETY: `handle` is the `Box<Timer>` allocated above
-                    // (cast through `uv_handle_t` at offset 0); this is the
-                    // sole owner reclaiming it after `uv_close` completes.
-                    drop(unsafe { bun_core::heap::take(handle.cast::<uv::Timer>()) });
-                }
-                // SAFETY: `timer` initialized above.
+                // SAFETY: the VM's uws wrapper is live; the engine loop sits
+                // behind it.
                 unsafe {
-                    (*timer).start(
+                    let lp = bun_iocp::usockets::native_loop(this.platform_loop().cast());
+                    let timer: *mut bun_iocp::Timer =
+                        bun_core::heap::into_raw(Box::new(bun_iocp::Timer::new()));
+                    (*lp).timer_start(
+                        &mut *timer,
+                        on_debugger_timer,
+                        timer.cast(),
                         WAIT_FOR_CONNECTION_DELAY_MS as u64,
                         0,
-                        Some(on_debugger_timer),
                     );
-                    (*timer).ref_();
                 }
             }
         }
@@ -307,7 +298,6 @@ impl Debugger {
                 }
                 Wait::Shortly => {
                     // Handle .incrementRefConcurrently
-                    #[cfg(unix)]
                     {
                         let pending_unref = this.take_pending_unref();
                         if pending_unref > 0 {

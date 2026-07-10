@@ -217,6 +217,15 @@ bitflags::bitflags! {
         const DEINIT_SCHEDULED            = 1 << 0;
         const TERMINATED                  = 1 << 1;
         const HAS_HANDLED_ALL_CLOSED_PROMISE = 1 << 2;
+        /// A graceful stop surrendered `h3_listener` and left the HTTP/3
+        /// engine draining; a later abrupt stop must force-close through
+        /// `h3_app` since the listener handle is gone. May remain set after
+        /// the drain completes naturally — the force-close is then a no-op.
+        const H3_DRAINING                 = 1 << 3;
+        /// A TCP listen attempt inside the http3 same-port retry loop:
+        /// `on_listen_failed` records the failure without throwing so the
+        /// loop can rebind at a different port.
+        const LISTEN_RETRYING             = 1 << 4;
     }
 }
 
@@ -1511,9 +1520,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                         bun_opaque::opaque_deref_mut(h3a).close();
                     }
+                    self.flags.insert(ServerFlags::H3_DRAINING);
                 } else {
                     // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                     bun_opaque::opaque_deref_mut(h3l).close();
+                }
+            } else if abrupt && self.flags.contains(ServerFlags::H3_DRAINING) {
+                self.flags.remove(ServerFlags::H3_DRAINING);
+                if let Some(h3a) = self.h3_app {
+                    // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                    bun_opaque::opaque_deref_mut(h3a).close_listeners();
                 }
             }
         }
@@ -1522,8 +1538,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if Self::HAS_H3 && self.h3_app.is_some() {
                 self.unref();
                 self.notify_inspector_server_stopped();
-                if abrupt {
+                if abrupt && !self.flags.contains(ServerFlags::TERMINATED) {
+                    // Mirror the listener-present abrupt path below: a bare
+                    // TERMINATED insert would suppress schedule_deinit's
+                    // app.close(), leaving live HTTP/1 conns un-aborted.
+                    if let Some(ws) = self.config.websocket.as_mut() {
+                        ws.handler.app = None;
+                    }
                     self.flags.insert(ServerFlags::TERMINATED);
+                    if let Some(app) = self.app {
+                        // S012: `NewApp<SSL>` is a ZST opaque — safe deref.
+                        bun_opaque::opaque_deref_mut(app).close();
+                    }
                 }
             }
             return;
@@ -1727,6 +1753,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     #[cold]
     pub fn on_listen_failed(&mut self) {
         self.listener = None;
+        if self.flags.contains(ServerFlags::LISTEN_RETRYING) {
+            // The http3 same-port retry loop handles this failure by
+            // rebinding elsewhere; only the final attempt may throw.
+            return;
+        }
         let global = self.global_this();
 
         let error_instance = match &self.config.address {
@@ -2730,21 +2761,39 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         match addr {
             Addr::Tcp { port, host } => {
-                // With `{port: 0, http3: true}` we bind TCP:0 (kernel picks N),
-                // then must bind UDP:N for QUIC so Alt-Svc works. UDP:N may
-                // already be held by an unrelated process. When the user asked
-                // for "any port" (0), close TCP:N and retry the whole TCP+UDP
-                // bind so the kernel picks a fresh N. Never retry a
-                // user-specified non-zero port.
+                // With `{port: 0, http3: true}` we bind TCP:N (kernel-picked),
+                // then must bind UDP:N for QUIC so Alt-Svc works. UDP:N may be
+                // held by another process — and on Windows, admin-reserved
+                // port ranges (Hyper-V/WSL) span hundreds of consecutive ports
+                // per protocol, so a sequential kernel allocator can be parked
+                // where the OTHER protocol's bind always fails. Retries
+                // therefore jump to a random ephemeral port instead of asking
+                // the kernel again. Never retry a user-specified non-zero port.
                 let max_attempts: u8 = if Self::HAS_H3 && http1 && port == 0 {
-                    3
+                    6
                 } else {
                     1
                 };
                 let mut attempt: u8 = 0;
                 loop {
                     attempt += 1;
+                    let attempt_port: u16 = if attempt == 1 {
+                        port
+                    } else {
+                        use std::hash::{BuildHasher, Hasher};
+                        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+                        h.write_u8(attempt);
+                        const EPHEMERAL_START: u16 = 49152;
+                        EPHEMERAL_START
+                            + (h.finish() % u64::from(u16::MAX - EPHEMERAL_START)) as u16
+                    };
                     if http1 {
+                        if attempt > 1 && attempt < max_attempts {
+                            // A random pick can land on a taken/reserved TCP
+                            // port; fail silently and jump again.
+                            // SAFETY: `this` is the live boxed server; no other borrow is live across this write.
+                            unsafe { (*this).flags.insert(ServerFlags::LISTEN_RETRYING) };
+                        }
                         // SAFETY: app is a live uws handle owned by this server. No
                         // `&*this` is live across this call; the trampoline's
                         // `&mut *this` is the sole borrow while it runs.
@@ -2753,15 +2802,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 Some(trampoline::on_listen::<SSL, DEBUG>),
                                 this.cast::<c_void>(),
                                 uws_app_c::uws_app_listen_config_t {
-                                    port: port as c_int,
+                                    port: attempt_port as c_int,
                                     host,
                                     options,
                                 },
                             );
                         }
+                        // SAFETY: `this` is the live boxed server; no other borrow is live across this write.
+                        unsafe { (*this).flags.remove(ServerFlags::LISTEN_RETRYING) };
+                        if attempt > 1 && attempt < max_attempts && this_ref.listener.is_none() {
+                            continue;
+                        }
                     }
 
-                    if Self::HAS_H3 {
+                    // A TCP failure already threw: don't bind a UDP socket
+                    // that construction teardown would have to unwind.
+                    if Self::HAS_H3 && !global.has_exception() {
                         // Re-derive: `listener` was just written by `on_listen`.
                         if let Some(h3_app) = this_ref.h3_app {
                             // Same UDP port as the TCP listener so Alt-Svc works.
@@ -2771,7 +2827,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 Some(ls) => {
                                     bun_opaque::opaque_deref_mut(ls).get_local_port() as u16
                                 }
-                                None => port,
+                                None => attempt_port,
                             };
                             // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                             // No `&*this` is live across this call; the h3
@@ -2792,13 +2848,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             if this_ref.h3_listener.is_none() {
                                 if attempt < max_attempts {
                                     // UDP:N is taken — release TCP:N so the next
-                                    // attempt gets a fresh kernel-chosen port.
+                                    // attempt can bind both at a random port.
                                     // Only retry if TCP actually succeeded.
                                     // SAFETY: `this` is the live boxed server; no other borrow is live across this take.
                                     if let Some(ls) = unsafe { (*this).listener.take() } {
                                         bun_opaque::opaque_deref_mut(ls).close();
                                         continue;
                                     }
+                                }
+                                // Failed for good: the TCP listener from this
+                                // attempt must not outlive the failed h3 bind —
+                                // construction teardown frees the context group
+                                // and a still-linked listener there is a UAF.
+                                // SAFETY: `this` is the live boxed server; no other borrow is live across this take.
+                                if let Some(ls) = unsafe { (*this).listener.take() } {
+                                    bun_opaque::opaque_deref_mut(ls).close();
                                 }
                                 if !global.has_exception() {
                                     let _ = global.throw(format_args!(

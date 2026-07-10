@@ -865,14 +865,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // the `has_pending_immediate` read below is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
-    #[cfg(windows)]
-    if !unsafe { &*el }.immediate_tasks.is_empty() {
-        // SAFETY: `el` is the live per-thread event loop.
-        unsafe { (*el).wakeup() };
-    }
 
     // ── pending unref ───────────────────────────────────────────────────
-    #[cfg(unix)]
     {
         // SAFETY: per fn contract. `swap(0)` so a concurrent
         // `increment_pending_unref_counter()` (cross-thread, see
@@ -975,7 +969,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         }
     }
 
-    #[cfg(unix)]
     {
         // Note (§Forbidden aliased-&mut): `drain_timers` fires user
         // `setTimeout` callbacks which may re-enter `timer::All::insert`/
@@ -986,8 +979,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // field address is stable for the VM lifetime.
         unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
     }
-    #[cfg(not(unix))]
-    let _ = state;
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -1012,13 +1003,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
-    #[cfg(windows)]
-    if !unsafe { &*el }.immediate_tasks.is_empty() {
-        // SAFETY: `el` is the live per-thread event loop.
-        unsafe { (*el).wakeup() };
-    }
 
-    #[cfg(unix)]
     {
         // SAFETY: per fn contract. `swap(0)` so a concurrent
         // `increment_pending_unref_counter()` (cross-thread, see
@@ -1089,14 +1074,11 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         }
     }
 
-    #[cfg(unix)]
     {
         // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
         // on `auto_tick` re: aliased-&mut across `fire()`.
         unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
     }
-    #[cfg(not(unix))]
-    let _ = state;
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -1195,7 +1177,7 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
         None
     };
     bun_core::heap::into_raw(Box::new(NodeFS {
-        sync_error_buf: bun_paths::PathBuffer::uninit(),
+        sync_error_buf: bun_paths::path_buffer_pool::get(),
         vm: vm_field,
     }))
     .cast::<c_void>()

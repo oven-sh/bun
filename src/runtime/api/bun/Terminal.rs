@@ -1190,7 +1190,13 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         let mut pc: windows::HPCON = core::ptr::null_mut();
         // SAFETY: in_client/out_client are valid open HANDLEs; pc is a valid out-ptr.
         if unsafe {
-            windows::CreatePseudoConsole(size, in_client.unwrap(), out_client.unwrap(), 0, &mut pc)
+            windows::CreatePseudoConsole(
+                size,
+                in_client.unwrap(),
+                out_client.unwrap(),
+                0,
+                &raw mut pc,
+            )
         } < 0
         {
             cleanup!();
@@ -1206,16 +1212,13 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         let _ = windows::CloseHandle(out_client.take().unwrap());
     }
 
-    // Wrap server (overlapped) ends as libuv-owned FDs so they can be passed
-    // to BufferedReader/StreamingWriter.start() which calls uv_pipe_open.
-    // Do not .take() until after success — on Err the cleanup! must still see
-    // Some(h) so the HANDLE isn't leaked; clear `out_server` only after the
-    // fallible call succeeds.
-    let read_fd = match Fd::from_system(out_server.unwrap()).make_libuv_owned() {
-        Ok(fd) => {
-            out_server = None;
-            fd
-        }
+    // Wrap server (overlapped) ends as table-owned FDs so they can be passed
+    // to BufferedReader/StreamingWriter.start(), which adopts them onto the
+    // engine via Source::open.
+    // make_table_owned consumes the handle on every path (closes it on
+    // failure) — take() first so cleanup! cannot double-close it.
+    let read_fd = match Fd::from_system(out_server.take().unwrap()).make_table_owned() {
+        Ok(fd) => fd,
         Err(_) => {
             cleanup!();
             return Err(CreatePtyError::DupFailed);
@@ -1224,7 +1227,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     // errdefer read_fd.close()
     let read_fd_guard = scopeguard::guard(read_fd, |fd| fd.close());
 
-    let write_fd = match Fd::from_system(in_server.unwrap()).make_libuv_owned() {
+    let write_fd = match Fd::from_system(in_server.take().unwrap()).make_table_owned() {
         Ok(fd) => fd,
         Err(_) => {
             cleanup!();
@@ -1843,7 +1846,7 @@ impl Terminal {
     pub(crate) fn loop_(&self) -> *mut AsyncLoop {
         #[cfg(windows)]
         {
-            self.event_loop_handle.uv_loop()
+            self.event_loop_handle.platform_loop()
         }
         #[cfg(not(windows))]
         {
@@ -1908,8 +1911,8 @@ impl BufferedReaderParent for Terminal {
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
-        // on Windows it projects `.uv_loop()` (the `*mut uv_loop_t` field of
-        // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper.
+        // on Windows it returns `.platform_loop()` (the uws `WindowsLoop`
+        // wrapper, which IS the platform loop).
         Self::from_parent_ptr(this).loop_().cast()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
@@ -1950,9 +1953,9 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::Loop {
         // SAFETY: BACKREF set via writer.parent; shared-only read.
-        unsafe { (*this).event_loop_handle.uv_loop() }
+        unsafe { (*this).event_loop_handle.platform_loop() }
     }
     unsafe fn ref_(this: *mut Self) {
         // SAFETY: see loop_. Intrusive refcount bump via raw pointer — do NOT

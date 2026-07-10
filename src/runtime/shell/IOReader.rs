@@ -137,7 +137,14 @@ impl IOReader {
         }
         #[cfg(windows)]
         {
-            reader.source = Some(bun_io::Source::File(bun_io::Source::open_file(fd)));
+            // Pipe-kind fds (pipeline stdin ends) are left for `start()` to
+            // adopt into the IOCP engine: a synchronous `read` on the loop
+            // thread blocks until the write end closes, which deadlocks
+            // against engine-delivered completions the writer side is
+            // waiting on. Everything else keeps the synchronous file shape.
+            if !bun_io::Source::is_pipe_kind(fd) {
+                reader.source = Some(bun_io::Source::File(bun_io::Source::open_file(fd)));
+            }
         }
         let this = std::sync::Arc::new_cyclic(|w| IOReader {
             reader: UnsafeCell::new(reader),
@@ -246,7 +253,16 @@ impl IOReader {
                 return Yield::suspended();
             }
             s.is_reading = true;
-            if let Err(e) = self.reader().start_with_current_pipe() {
+            let fd = s.fd;
+            let r = self.reader();
+            // Pipe-kind fds have no pre-set source (see `init`): adopt the
+            // fd into the IOCP engine here, like the POSIX first-start path.
+            let res = if r.source.is_none() {
+                r.start(fd, true)
+            } else {
+                r.start_with_current_pipe()
+            };
+            if let Err(e) = res {
                 self.on_reader_error(&e);
                 return Yield::failed();
             }
@@ -308,7 +324,7 @@ impl IOReader {
             // itself after the callback returns based on the `bool` we return
             // (PipeReader.rs:731/755/846/920/986). On Windows the re-arm is
             // also handled by the caller (`on_file_read`'s defer block /
-            // `uv_read_start` for streams) — but `startWithCurrentPipe()` had
+            // the engine's read_start for streams) — but `startWithCurrentPipe()` had
             // a SECOND load-bearing side effect: `buffer().clearRetainingCapacity()`,
             // which keeps `WindowsBufferedReader._buffer` bounded between
             // chunks. That clear is now performed by
@@ -344,6 +360,13 @@ impl IOReader {
         // Hold a strong ref across the body.
         let _keepalive = self.keepalive();
         self.set_reading(false);
+        #[cfg(windows)]
+        {
+            // The windows reader reaches `done` only through its close path,
+            // which already released `fd` via the source (table protocol).
+            // Invalidate our copy so a late Drop can't close a recycled slot.
+            self.state().fd = Fd::INVALID;
+        }
         let s = self.state();
         let readers: Vec<ChildPtr> = s.readers.clone();
         let interp = s.interp;
@@ -410,6 +433,10 @@ impl Drop for IOReader {
                 // windows reader closes the file descriptor
                 if r.source.is_some() && !r.source.as_ref().is_some_and(|src| src.is_closed()) {
                     r.close_impl::<false>();
+                } else if r.source.is_none() {
+                    // Pipe-kind fd that was never started (see `init`): no
+                    // source owns it, so release it here.
+                    let _ = sys::close(s.fd);
                 }
             }
             #[cfg(not(windows))]

@@ -141,7 +141,7 @@ struct us_quic_stream_s {
  * free the stream while a method is still touching it.
  */
 
-#ifdef LIBUS_USE_LIBUV
+#ifdef LIBUS_USE_BUN_IOCP
 static void us_quic_on_timer(struct us_timer_t *t) {
     us_quic_loop_process(us_timer_loop(t));
 }
@@ -161,12 +161,14 @@ void us_quic_loop_process(struct us_loop_t *loop) {
             have_tick = 1;
         }
     }
-    /* Relative µs from now (≤0 means "tick due"). On epoll/kqueue,
-     * getTimeout() in src/runtime/timer/mod.rs folds this into the epoll_pwait2 timeout —
-     * no timerfd. On libuv there's no equivalent hook into the poll
-     * timeout, so arm a fallthrough uv_timer instead. */
+    /* Relative µs from now (≤0 means "tick due"). getTimeout() in
+     * src/runtime/timer/mod.rs folds this into the poll timeout on every
+     * backend (epoll_pwait2 / kevent / GetQueuedCompletionStatus). */
     loop->data.quic_next_tick_us = have_tick ? (min_diff < 0 ? 0 : min_diff) : -1;
-#ifdef LIBUS_USE_LIBUV
+#ifdef LIBUS_USE_BUN_IOCP
+    /* Armed after the computation, so the deadline the loop sleeps on is
+     * the one this iteration produced — entry-time folds read the previous
+     * iteration's value, stale right after a pre-hook send. */
     if (have_tick) {
         if (!loop->data.quic_timer)
             loop->data.quic_timer = us_create_timer(loop, 1, 0);
@@ -487,11 +489,10 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     qs->ctx = ctx;
     /* QUIC connections share one UDP fd, so they aren't real polls. Count
      * each as a virtual poll so the loop stays alive while conns are open —
-     * the same invariant H1 gets from each TCP socket being a us_poll_t.
-     * libuv loop liveness is per-handle (uv_ref) rather than per-poll-count;
-     * the listen socket's uv_poll_t already keeps the loop alive until
-     * conn_count drops to 0 and we close it. */
-#ifndef LIBUS_USE_LIBUV
+     * the same invariant H1 gets from each TCP socket being a us_poll_t. */
+#ifdef LIBUS_USE_BUN_IOCP
+    us_loop_add_active(ctx->loop, 1);
+#else
     ctx->loop->num_polls++;
 #endif
     ctx->conn_count++;
@@ -512,7 +513,9 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     }
     free(qs->hostname);
     free(qs);
-#ifndef LIBUS_USE_LIBUV
+#ifdef LIBUS_USE_BUN_IOCP
+    us_loop_sub_active(ctx->loop, 1);
+#else
     ctx->loop->num_polls--;
 #endif
     ctx->conn_count--;
@@ -760,6 +763,13 @@ void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx) {
     }
 }
 
+void us_quic_socket_context_close_listeners(us_quic_socket_context_t *ctx) {
+    if (!ctx) return;
+    /* us_quic_listen_socket_close unlinks the head synchronously (fd close
+     * runs udp_on_close inline), so this terminates. */
+    while (ctx->listeners) us_quic_listen_socket_close(ctx->listeners);
+}
+
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     if (!ctx) return;
     ctx->closing = 1;
@@ -861,6 +871,16 @@ void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
         lsquic_engine_cooldown(ls->ctx->engine);
         us_quic_process(ls->ctx);
         lsquic_engine_send_unsent_packets(ls->ctx->engine);
+        /* The fd is about to disappear, so the closing handshake can never
+         * complete; abort so the engine reaps the conns now instead of
+         * pinning the loop until each conn's idle timeout. */
+        for (us_quic_socket_t *qs = ls->ctx->conns; qs; qs = qs->next) {
+            if (qs->conn) lsquic_conn_abort(qs->conn);
+        }
+        us_quic_process(ls->ctx);
+        /* Reaping the last conn can re-enter the drain path and close the
+         * udp socket (on_conn_closed when ctx->closing); re-check. */
+        if (!ls->udp) return;
     }
     us_udp_socket_close(ls->udp);
 }

@@ -399,7 +399,7 @@ pub fn write_output_files_to_disk(
                 };
 
                 if loader.is_javascript_like() {
-                    let mut fdpath = PathBuffer::uninit();
+                    let mut fdpath = bun_paths::path_buffer_pool::get();
                     let source_provider_url = BunString::create_format(format_args!(
                         "{}{}",
                         bstr::BStr::new(&chunk.final_rel_path),

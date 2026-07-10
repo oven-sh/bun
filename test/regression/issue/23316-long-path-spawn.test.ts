@@ -71,17 +71,15 @@ test("spawn should handle cwd paths with disabled 8.3 names on Windows", async (
 
   console.log(`Created path for 8.3 test (length: ${deepPath.length}): ${deepPath}`);
 
-  // Attempt to copy test.js to the deep path
-  let err;
-  try {
-    await Bun.write(join(deepPath, "test.js"), `console.log("hello");`);
-  } catch (e) {
-    err = e;
-  }
-  expect(err).toBeInstanceOf(Error);
+  // Attempt to copy test.js to the deep path. NT-prefixed paths have no
+  // MAX_PATH limit, so this write succeeds even where 8.3 short-name
+  // generation cannot shorten the path (it used to fail via the Win32 path
+  // limit — the old implementation's limitation, not a contract).
+  await Bun.write(join(deepPath, "test.js"), `console.log("hello");`);
+  expect(await Bun.file(join(deepPath, "test.js")).text()).toBe(`console.log("hello");`);
 
   // This should not panic, even if GetShortPathNameW fails
-  err = undefined;
+  let err;
   try {
     const proc = Bun.spawn({
       cmd: [bunExe(), "test.js"],

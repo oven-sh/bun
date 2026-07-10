@@ -79,3 +79,63 @@ it("setImmediate should not keep the process alive forever", async () => {
 
   expect(await Promise.race([success(), fail()])).toBe(true);
 });
+
+// Differential event-loop liveness battery: each case spawns a subprocess and
+// asserts it exits on its own. A parked or spinning loop never resolves
+// `proc.exited`, so the test times out and `await using` kills the child.
+it.concurrent("pure setImmediate chain 10k deep exits cleanly", async () => {
+  const src = `
+    let n = 0;
+    function next() {
+      if (++n < 10_000) setImmediate(next);
+      else console.log("done " + n);
+    }
+    setImmediate(next);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("done 10000\n");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("setImmediate scheduled from a timer callback fires", async () => {
+  const src = `
+    setTimeout(() => {
+      setImmediate(() => console.log("immediate-after-timer"));
+    }, 10);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("immediate-after-timer\n");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("process with only a drained setImmediate chain exits 0 with no output", async () => {
+  const src = `
+    setImmediate(() => {
+      setImmediate(() => {});
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});

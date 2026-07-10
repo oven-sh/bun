@@ -7,7 +7,9 @@ use bun_io as aio;
 use bun_io::{BufferedReader, FileType, ReadState};
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
-use bun_sys::{self as sys, Fd, FdExt};
+#[cfg(not(windows))]
+use bun_sys::FdExt as _;
+use bun_sys::{self as sys, Fd};
 
 use crate::webcore::blob;
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
@@ -150,7 +152,7 @@ impl Lazy {
             fd: Fd::INVALID,
             ..Default::default()
         };
-        let mut file_buf = bun_paths::PathBuffer::uninit();
+        let mut file_buf = bun_paths::path_buffer_pool::get();
         #[cfg(unix)]
         let mut is_nonblocking = false;
 
@@ -187,7 +189,7 @@ impl Lazy {
                         }
                     }
 
-                    fd.make_lib_uv_owned_for_syscall(sys::Tag::dup, sys::ErrorCase::CloseOnFail)?
+                    fd
                 }
             }
             PathOrFileDescriptor::Path(path) => {
@@ -230,7 +232,7 @@ impl Lazy {
 
             let mode = stat.st_mode as _;
             if sys::S::ISDIR(mode) {
-                aio::Closer::close(fd, ());
+                aio::Closer::close(fd);
                 return Err(sys::Error::from_code(sys::Errno::EISDIR, sys::Tag::fstat));
             }
 
@@ -287,10 +289,7 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_error = |this, err| (&*this).on_reader_error(err);
     loop_ = |this| {
         let ev = (&*this).event_loop.get();
-        // The event loop is a libuv
-        // `uv_loop_t*` on Windows. `.cast()` reconciles the impl-declared
-        // `bun_uws_sys::Loop` nominal with `bun_io::Loop` (= `uv::Loop`).
-        #[cfg(windows)] { ev.uv_loop().cast() }
+        #[cfg(windows)] { ev.native_loop() }
         #[cfg(not(windows))] { ev.r#loop() }
     };
     event_loop = |this| (&*this).event_loop.get().as_event_loop_ctx();
@@ -866,6 +865,9 @@ impl FileReader {
         }
 
         if self.reader().is_done() {
+            if let Some(err) = self.take_stashed_error() {
+                return err;
+            }
             return streams::Result::Done;
         }
 
@@ -913,6 +915,9 @@ impl FileReader {
                     }
 
                     if self.reader().is_done() {
+                        if let Some(err) = self.take_stashed_error() {
+                            return err;
+                        }
                         return streams::Result::Done;
                     }
                     // fallthrough — but `buffer` was moved into read_inside_on_pull.
@@ -996,6 +1001,22 @@ impl FileReader {
         if self.buffered.get().capacity() == 0 {
             self.buffered.set(mem::take(self.reader().buffer()));
         }
+    }
+
+    /// A read error delivered while `pending` was not armed (synchronous
+    /// completion inside `reader().start()`/`read()` — the Windows file
+    /// drain) is stashed in `pending.result` by `on_reader_error` but never
+    /// run. Take it so the done paths surface it instead of a clean close.
+    fn take_stashed_error(&self) -> Option<streams::Result> {
+        if self.pending.get().state != streams::PendingState::Pending
+            && matches!(self.pending.get().result, streams::Result::Err(_))
+        {
+            return Some(
+                self.pending
+                    .with_mut(|p| mem::replace(&mut p.result, streams::Result::Done)),
+            );
+        }
+        None
     }
 
     pub fn on_reader_done(&self) {

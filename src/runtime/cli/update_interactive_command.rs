@@ -217,7 +217,7 @@ impl UpdateInteractiveCommand {
         // Write the updated package.json
         // Routes through `bun_sys::File::write_file` (cwd-relative
         // open + write + close) per src/CLAUDE.md.
-        let mut path_zbuf = PathBuffer::uninit();
+        let mut path_zbuf = bun_paths::path_buffer_pool::get();
         let path_z = path::resolve_path::z(package_json_path, &mut path_zbuf);
         if let Err(err) =
             bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z, &new_package_json_source)
@@ -298,7 +298,7 @@ impl UpdateInteractiveCommand {
             // Build the package.json path for this workspace
             // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
             let root_dir = FileSystem::get().top_level_dir;
-            let mut path_buf = PathBuffer::uninit();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
@@ -428,7 +428,7 @@ impl UpdateInteractiveCommand {
             // Build the package.json path for this workspace
             // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
             let root_dir = FileSystem::get().top_level_dir;
-            let mut path_buf = PathBuffer::uninit();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
@@ -748,7 +748,7 @@ impl UpdateInteractiveCommand {
             workspace_pkg_ids.push(pkg_id as PackageID);
         }
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
 
         let converted_filters: Vec<WorkspaceFilter> = filters
             .iter()
@@ -1195,7 +1195,7 @@ impl UpdateInteractiveCommand {
             // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
             let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
             // SAFETY: handle is valid; csbi is a valid out-ptr.
-            if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
+            if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &raw mut csbi) }
                 != windows::FALSE
             {
                 let width = csbi.srWindow.Right - csbi.srWindow.Left + 1;

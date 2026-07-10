@@ -10,7 +10,7 @@ use bun_jsc::{
     StringJsc as _, SysErrorJsc as _,
 };
 use bun_paths::resolve_path::join_string_buf;
-use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, platform};
+use bun_paths::{self as resolve_path, MAX_PATH_BYTES, platform};
 use bun_sys as syscall;
 
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
@@ -31,6 +31,8 @@ struct ScanOpts {
 }
 
 impl ScanOpts {
+    // Glob state embeds its pattern scratch by design.
+    #[allow(clippy::large_stack_frames)]
     fn parse_cwd(
         global_this: &JSGlobalObject,
         _arena: &Arena,
@@ -68,7 +70,7 @@ impl ScanOpts {
             }
 
             // Convert to an absolute path
-            let mut path_buf = PathBuffer::uninit();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
             let cwd_len = match bun_sys::getcwd(&mut path_buf[..]) {
                 bun_sys::Result::Ok(len) => len,
                 bun_sys::Result::Err(err) => {

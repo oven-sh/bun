@@ -218,7 +218,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
         // after_resolve will see c->closed and finish teardown.
         if (c->addrinfo_req && Bun__addrinfo_cancel(c->addrinfo_req, c)) {
 #ifdef _WIN32
-            group->loop->uv_loop->active_handles--;
+            us_loop_sub_active(group->loop, 1);
 #else
             group->loop->num_polls--;
 #endif
@@ -234,7 +234,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
              * touching the (possibly freed) group. Balance the keep-alive here
              * for the same reason. */
 #ifdef _WIN32
-            group->loop->uv_loop->active_handles--;
+            us_loop_sub_active(group->loop, 1);
 #else
             group->loop->num_polls--;
 #endif
@@ -385,7 +385,7 @@ struct us_socket_t *us_socket_detach(struct us_socket_t *s) {
 }
 
 struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
+#ifdef WIN32
     return 0;
 #else
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
@@ -410,7 +410,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 }
 
 struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
+#ifdef WIN32
     return 0;
 #else
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
@@ -688,11 +688,10 @@ unsigned int us_get_local_address_info(char *buf, struct us_socket_t *s, const c
     return length;
 }
 
+/* Loop liveness is poll-count based on every backend; the socket's poll
+ * already counts, so there is nothing to add. Kept for API compatibility. */
 void us_socket_ref(struct us_socket_t *s) {
-#ifdef LIBUS_USE_LIBUV
-    uv_ref((uv_handle_t *) s->p.uv_p);
-#endif
-    // do nothing if not using libuv
+    (void) s;
 }
 
 void us_socket_nodelay(struct us_socket_t *s, int enabled) {
@@ -723,9 +722,7 @@ int us_socket_get_tos(struct us_socket_t *s) {
 
 /// Returns 0 on success. Returned error values depend on the platform.
 /// - on posix, returns `errno`
-/// - on windows, when libuv is used, returns a UV err code
-/// - on windows, LIBUS_USE_LIBUV is set, returns `WSAGetLastError()`
-/// - on windows, otherwise returns result of `WSAGetLastError`
+/// - on windows, returns the result of `WSAGetLastError()`
 int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay) {
     if (!us_socket_is_shut_down(s)) {
         return bsd_socket_keepalive(us_poll_fd((struct us_poll_t *) s), enabled, delay);
@@ -733,11 +730,9 @@ int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay) {
     return 0;
 }
 
+/* See us_socket_ref. */
 void us_socket_unref(struct us_socket_t *s) {
-#ifdef LIBUS_USE_LIBUV
-    uv_unref((uv_handle_t *) s->p.uv_p);
-#endif
-    // do nothing if not using libuv
+    (void) s;
 }
 
 struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c) {

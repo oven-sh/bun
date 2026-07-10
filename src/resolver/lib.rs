@@ -269,6 +269,9 @@ pub mod fs {
         /// the singleton even if already loaded — used by the router test
         /// harness which `chdir`s between fixtures and needs a fresh
         /// `top_level_dir`.
+        // One-time static init; the FileSystem value is written in place
+        // into the static, not kept on a hot stack.
+        #[allow(clippy::large_stack_frames)]
         pub fn init_with_force<const FORCE: bool>(
             top_level_dir: Option<&[u8]>,
         ) -> core::result::Result<*mut FileSystem, bun_core::Error> {
@@ -646,10 +649,10 @@ pub mod fs {
                 // If `pretty` contains no backslashes it is already POSIX-style.
                 // Short-circuiting preserves the `pretty.ptr == text.ptr` aliasing
                 // optimisation inside `dupe_alloc` and avoids a fresh FilenameStore alloc.
-                if !self.pretty.iter().any(|&b| b == b'\\') {
+                if !self.pretty.contains(&b'\\') {
                     return self.dupe_alloc(alloc);
                 }
-                let mut new = self.clone();
+                let mut new = *self;
                 new.pretty = b"";
                 let mut new = new.dupe_alloc(alloc)?;
                 // The posix-normalized
@@ -876,6 +879,8 @@ pub mod fs {
 
         /// Renames the temp file from `from_name` to `name` relative to the
         /// current working directory.
+        // Cold path (chdir promotion); scratch buffers only.
+        #[allow(clippy::large_stack_frames)]
         pub fn promote_to_cwd(
             &mut self,
             from_name: &ZStr,
@@ -1424,7 +1429,7 @@ pub mod fs {
                 use bun_sys::windows as w;
                 let _ = (existing_fd, store_fd);
                 let file = bun_sys::get_file_attributes(absolute_path_c)
-                    .ok_or(bun_core::err!("FileNotFound"))?;
+                    .ok_or_else(|| bun_core::err!("FileNotFound"))?;
                 // A Windows reparse point carries FILE_ATTRIBUTE_DIRECTORY iff
                 // the link is a directory link (junctions always do; symlinks
                 // do iff created with SYMBOLIC_LINK_FLAG_DIRECTORY; AppExec
@@ -1491,7 +1496,7 @@ pub mod fs {
 
                 let mut info: w::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
                 // SAFETY: `handle` is valid; `info` is a valid out-param.
-                if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
+                if unsafe { w::GetFileInformationByHandle(handle, &raw mut info) } != 0 {
                     cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
                         EntryKind::Dir
                     } else {
@@ -1666,6 +1671,8 @@ pub mod fs {
             Some(unsafe { &mut *result_ptr })
         }
 
+        // Cold init (once per process); scratch PathBuffer only.
+        #[allow(clippy::large_stack_frames)]
         fn platform_temp_dir_compute() -> &'static [u8] {
             use bun_core::env_var;
             // Try TMPDIR, TMP, and TEMP in that order, matching Node.js.
@@ -1794,7 +1801,7 @@ pub mod fs {
             #[cfg(unix)]
             let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
             #[cfg(windows)]
-            let mtime: i128 = (stat.mtim.sec as i128) * NS_PER_S + stat.mtim.nsec as i128;
+            let mtime: i128 = (stat.st_mtim.sec as i128) * NS_PER_S + stat.st_mtim.nsec as i128;
             let seconds = mtime / NS_PER_S;
 
             // We can't detect changes if the file system zeros out the

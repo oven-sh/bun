@@ -12,9 +12,6 @@ use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, SysErrorJsc};
-use bun_paths::PathBuffer;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_uws::{self as uws, us_bun_verify_error_t};
 
@@ -362,10 +359,7 @@ impl WindowsNamedPipeContext {
         }
         #[cfg(windows)]
         {
-            let named_pipe = {
-                let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
-                WindowsNamedPipe::from(pipe, handlers, vm)
-            };
+            let named_pipe = WindowsNamedPipe::from(handlers, vm);
             // Build the erased AnyTask directly.
             let task = AnyTask {
                 ctx: ptr::NonNull::new(this.cast::<c_void>()),
@@ -449,7 +443,7 @@ impl WindowsNamedPipeContext {
             let slice_z = ZStr::from_slice_with_nul(path);
             named_pipe.connect(slice_z, ssl_config, owned_ctx)?;
         } else {
-            let mut path_buf = PathBuffer::uninit();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
             // we need to null terminate the path
             let len = path.len().min(path_buf.len() - 1);
 

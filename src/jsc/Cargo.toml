@@ -60,3 +60,6 @@ bun_url.workspace = true
 bun_uws.workspace = true
 bun_watcher.workspace = true
 bun_wyhash.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_iocp.workspace = true

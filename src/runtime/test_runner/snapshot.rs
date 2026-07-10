@@ -8,7 +8,7 @@ use bun_core::{self, Error};
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::{self, PathBuffer};
+use bun_paths::{self};
 use bun_sys::{self};
 use bun_wyhash::hash;
 
@@ -237,7 +237,7 @@ impl<'a> Snapshots<'a> {
         let test_filename = name.filename;
         let dir_path = name.dir_with_trailing_slash();
 
-        let mut snapshot_file_path_buf = PathBuffer::uninit();
+        let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
         let buf = snapshot_file_path_buf.0.as_mut_slice();
         let mut pos = 0usize;
         buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
@@ -836,7 +836,7 @@ impl<'a> Snapshots<'a> {
             let test_filename = name.filename;
             let dir_path = name.dir_with_trailing_slash();
 
-            let mut snapshot_file_path_buf = PathBuffer::uninit();
+            let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
             let buf = snapshot_file_path_buf.0.as_mut_slice();
             let mut pos = 0usize;
             buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);

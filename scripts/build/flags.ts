@@ -1537,10 +1537,10 @@ export function bunIncludes(cfg: Config): string[] {
 
   if (cfg.windows) {
     includes.push(join(cwd, "src/jsc/bindings/windows"));
-  } else {
-    // libuv stubs for unix (real libuv used on windows)
-    includes.push(join(cwd, "src/jsc/bindings/libuv"));
   }
+  // uv stub headers on every platform — no real libuv anywhere; the
+  // uv_* export surface is crash stubs + polyfills (uv-posix-*.c).
+  includes.push(join(cwd, "src/jsc/bindings/libuv"));
 
   // musl doesn't ship sys/queue.h (glibc-only BSDism). lshpack bundles
   // a compat copy for this case.

@@ -10,7 +10,12 @@ use crate::{BundleV2, Transpiler};
 
 /// Used to keep the bundle thread from spinning on Windows
 #[cfg(windows)]
-pub(crate) extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) {}
+mod keepalive_c {
+    unsafe extern "C" {
+        // `bun_io::Loop` is the uws wrapper (`WindowsLoop`) on Windows.
+        pub(super) fn us_loop_add_active(loop_: *mut bun_io::Loop, count: u32);
+    }
+}
 
 /// Port of `std.Thread.ResetEvent` — single-shot manual-reset event used to
 /// block `spawn()` until the bundle thread has initialized its `Waker`.
@@ -192,21 +197,14 @@ impl<C: CompletionStruct> BundleThread<C> {
         // SAFETY: raw-ptr field projection; spawning thread is blocked in `ready_event.wait()`.
         unsafe { (*instance).ready_event.set() };
 
-        // The libuv Timer lives on stack for the lifetime of this never-returning fn.
-        // It MUST be declared at function scope (not inside the `#[cfg(windows)] { ... }`
-        // block below) because `timer.init()`/`timer.start()` register `&timer`'s address
-        // into the uv loop's intrusive handle queue / timer min-heap, and `waker.wait()`
-        // (→ `uv_run`) in the `loop {}` below dereferences that address.
-        #[cfg(windows)]
-        let mut timer: bun_sys::windows::libuv::Timer = bun_core::ffi::zeroed();
         #[cfg(windows)]
         {
-            // SAFETY: raw place read of `waker.loop_.uv_loop` (Copy ptr); field is
-            // write-once in `Waker::init()` above and never mutated by `wake()`, so a
-            // concurrent `enqueue()` (possible now that `ready_event.set()` has fired)
-            // does not conflict. No `&Waker`/`&mut Waker` is materialized here.
-            timer.init(unsafe { (*instance).waker.uv_loop() });
-            timer.start(u64::MAX, u64::MAX, Some(timer_callback));
+            // Hold one active unit for the thread's lifetime so `waker.wait()`
+            // blocks when idle instead of returning with nothing active.
+            // SAFETY: the waker's loop is the live process-global singleton.
+            unsafe {
+                keepalive_c::us_loop_add_active((*instance).waker.us_loop(), 1);
+            }
         }
 
         let mut has_bundled = false;

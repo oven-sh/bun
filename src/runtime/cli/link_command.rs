@@ -2,7 +2,7 @@ use bstr::BStr;
 
 use bun_core::strings;
 use bun_core::{Global, Output, err};
-use bun_paths::{AbsPath, PathBuffer};
+use bun_paths::AbsPath;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{Dir, Fd, FdDirExt};
 
@@ -172,7 +172,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                 use bun_paths::{platform, resolve_path};
                 // create the junction
                 let top_level = FileSystem::instance().top_level_dir_without_trailing_slash();
-                let mut link_path_buf = PathBuffer::uninit();
+                let mut link_path_buf = bun_paths::path_buffer_pool::get();
                 link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
                 link_path_buf.0[top_level.len()] = 0;
                 // SAFETY: NUL written at link_path_buf[top_level.len()] above.
@@ -180,10 +180,10 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                 let global_path = pm::global_link_dir_path(manager);
                 let dest_path =
                     resolve_path::join_abs_string_z::<platform::Windows>(global_path, &[name]);
-                match bun_sys::sys_uv::symlink_uv(
+                match bun_sys::windows::fs::symlink(
                     link_path,
                     dest_path,
-                    bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
+                    bun_sys::windows::fs::SYMLINK_JUNCTION,
                 ) {
                     Err(e) => {
                         bun_core::pretty_errorln!(
@@ -217,9 +217,9 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
 
         // Step 3b. Link any global bins
         if package.bin.tag != bin::Tag::None {
-            let mut link_target_buf = PathBuffer::uninit();
-            let mut link_dest_buf = PathBuffer::uninit();
-            let mut link_rel_buf = PathBuffer::uninit();
+            let mut link_target_buf = bun_paths::path_buffer_pool::get();
+            let mut link_dest_buf = bun_paths::path_buffer_pool::get();
+            let mut link_rel_buf = bun_paths::path_buffer_pool::get();
 
             // `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`)
             // cannot alias the same value, so resolve the fd path twice (cheap:

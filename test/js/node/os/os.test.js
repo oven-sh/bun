@@ -259,3 +259,41 @@ it("getPriority system error object", () => {
     expect(err.syscall).toBe("uv_os_getpriority");
   }
 });
+
+describe("homedir USERPROFILE handling (Windows)", () => {
+  const itWin = process.platform === "win32" ? it : it.skip;
+  // libuv treats a USERPROFILE shorter than a drive root ("C:\\") as unset
+  // and falls back to the token profile directory instead of returning the
+  // invalid value verbatim.
+  itWin("falls back when USERPROFILE is too short, honors a valid one", () => {
+    const prev = process.env.USERPROFILE;
+    try {
+      process.env.USERPROFILE = "C:";
+      const fallback = os.homedir();
+      expect(fallback).not.toBe("C:");
+      expect(fallback.length).toBeGreaterThan(3);
+
+      // +1 neighbor: a syntactically valid dir is returned verbatim.
+      process.env.USERPROFILE = "C:\\Users\\Public";
+      expect(os.homedir()).toBe("C:\\Users\\Public");
+
+      // -1 neighbor: unset falls back too.
+      delete process.env.USERPROFILE;
+      expect(os.homedir().length).toBeGreaterThan(3);
+    } finally {
+      if (prev === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = prev;
+    }
+  });
+});
+
+describe("process priority error handling", () => {
+  it("getPriority on a bogus pid throws instead of returning garbage", () => {
+    expect(() => os.getPriority(999999999)).toThrow();
+    // ±1 neighbors: own-process get/set round-trips.
+    const own = os.getPriority();
+    expect(typeof own).toBe("number");
+    os.setPriority(0, own);
+    expect(os.getPriority()).toBe(own);
+  });
+});

@@ -623,7 +623,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     us_internal_socket_group_link_connecting_socket(group, c);
 
 #ifdef _WIN32
-    loop->uv_loop->active_handles++;
+    us_loop_add_active(loop, 1);
 #else
     loop->num_polls++;
 #endif
@@ -716,7 +716,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     struct us_socket_group_t *group = c->group;
 #ifdef _WIN32
-    group->loop->uv_loop->active_handles--;
+    us_loop_sub_active(group->loop, 1);
 #else
     group->loop->num_polls--;
 #endif

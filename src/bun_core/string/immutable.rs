@@ -372,7 +372,7 @@ pub use self::unicode::to_utf16_literal;
 pub use crate::string::w;
 pub use crate::strings_impl::{
     EncodeIntoResult, copy_latin1_into_utf8, copy_utf16_into_utf8,
-    copy_utf16_into_utf8_with_utf8_len, element_length_latin1_into_utf8,
+    copy_utf16_into_utf8_with_utf8_len, copy_wtf16_into_wtf8, element_length_latin1_into_utf8,
     element_length_utf16_into_utf8, encode_surrogate_pair, push_codepoint_utf16, to_utf8_alloc_z,
     to_utf8_from_latin1_z, u16_lead, u16_trail,
 };
@@ -2797,8 +2797,9 @@ unsafe extern "C" {
 // through `bun_core::strings`.
 pub use crate::strings_impl::{
     allocate_latin1_into_utf8_with_list, convert_utf16_to_utf8, convert_utf16_to_utf8_append,
-    encode_wtf8_rune, is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii, narrow_ascii_u16,
-    to_utf8_alloc, to_utf8_alloc_from_le_bytes, to_utf8_append_to_list, to_utf8_from_latin1,
+    convert_wtf16_to_wtf8_append, encode_wtf8_rune, is_all_ascii, is_valid_wtf8,
+    latin1_to_codepoint_bytes_assume_not_ascii, narrow_ascii_u16, to_utf8_alloc,
+    to_utf8_alloc_from_le_bytes, to_utf8_append_to_list, to_utf8_from_latin1,
 };
 
 #[inline]

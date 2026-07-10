@@ -30,3 +30,5 @@ thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true
+bun_fdtable.workspace = true
+bun_iocp.workspace = true

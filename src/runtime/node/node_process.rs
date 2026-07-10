@@ -129,7 +129,7 @@ mod _impl {
     use bun_jsc::{
         JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker, ZigStringJsc as _,
     };
-    use bun_paths::{PathBuffer, SEP};
+    use bun_paths::SEP;
     use bun_sys as Syscall;
 
     #[cfg(windows)]
@@ -144,8 +144,8 @@ mod _impl {
 
     // Windows `process.title` getter support: the C++ getter needs to know
     // whether a title was explicitly set (CLI `--title` or assignment) so it
-    // can prefer the store over `uv_get_process_title` without comparing
-    // against the "bun" default string.
+    // can prefer the store over the console title without comparing against
+    // the "bun" default string.
     #[unsafe(export_name = "Bun__Process__hasTitle")]
     pub(super) extern "C" fn has_title() -> bool {
         crate::cli::Bun__Node__ProcessTitle.lock().is_some()
@@ -406,7 +406,7 @@ mod _impl {
     }
 
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         match crate::node::path::get_cwd(&mut buf) {
             bun_sys::Result::Ok(r) => Ok(ZigString::init(r).with_encoding().to_js(global_object)),
             bun_sys::Result::Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
@@ -435,7 +435,7 @@ mod _impl {
         // the process-lifetime singleton (centralised single-unsafe deref).
         let fs = vm.transpiler.fs_mut();
 
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let Ok(slice) = to.slice_z_buf(&mut buf) else {
             return Err(global_object.throw(format_args!("Invalid path")));
         };
@@ -453,7 +453,7 @@ mod _impl {
                     bun_sys::Result::Ok(r) => r,
                     bun_sys::Result::Err(err) => {
                         // roll back to the previous top_level_dir
-                        let mut rollback = PathBuffer::uninit();
+                        let mut rollback = bun_paths::path_buffer_pool::get();
                         let _ = Syscall::chdir(bun_paths::resolve_path::z(
                             fs.top_level_dir,
                             &mut rollback,

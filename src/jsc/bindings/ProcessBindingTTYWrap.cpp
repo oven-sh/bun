@@ -21,36 +21,15 @@
 #include <sys/utsname.h>
 #else
 #include <uv.h>
-#include <io.h>
-#include <fcntl.h>
-
 #endif
 
 #if OS(WINDOWS)
 
+// Rust tty bridges (src/io/source.rs); the loop pointer is the bun_io loop
+// that uvLoop() hands out. Errors are positive errno values.
 extern "C" int Source__setRawModeStdin(uv_loop_t* uv_loop, bool raw);
-
-namespace UV {
-
-class TTY {
-public:
-    uv_tty_t handle {};
-
-    uv_tty_t* tty() { return &handle; }
-
-    void close()
-    {
-        uv_close((uv_handle_t*)(tty()), [](uv_handle_t* handle) -> void {
-            uv_tty_t* ttyHandle = (uv_tty_t*)handle;
-            ptrdiff_t offset = offsetof(UV::TTY, handle);
-
-            UV::TTY* tty = (UV::TTY*)((char*)ttyHandle - offset);
-            delete tty;
-        });
-    }
-};
-
-}
+extern "C" int Bun__Tty__setMode(uv_loop_t* uv_loop, int fd, int mode);
+extern "C" int Bun__Tty__getWindowSize(int fd, int* width, int* height);
 
 #endif
 
@@ -61,29 +40,13 @@ using namespace JSC;
 static bool getWindowSize(int fd, size_t* width, size_t* height)
 {
 #if OS(WINDOWS)
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    HANDLE handle = INVALID_HANDLE_VALUE;
-    switch (fd) {
-    case 0:
-        handle = GetStdHandle(STD_INPUT_HANDLE);
-        break;
-    case 1:
-        handle = GetStdHandle(STD_OUTPUT_HANDLE);
-        break;
-    case 2:
-        handle = GetStdHandle(STD_ERROR_HANDLE);
-        break;
-    default:
-        break;
-    }
-    if (handle == INVALID_HANDLE_VALUE)
+    int cols = 0;
+    int rows = 0;
+    if (Bun__Tty__getWindowSize(fd, &cols, &rows) != 0)
         return false;
 
-    if (!GetConsoleScreenBufferInfo(handle, &csbi))
-        return false;
-
-    *width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-    *height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+    *width = cols;
+    *height = rows;
     return true;
 #else
     struct winsize ws;
@@ -141,20 +104,9 @@ public:
         static_cast<TTYWrapObject*>(cell)->TTYWrapObject::~TTYWrapObject();
     }
 
-    ~TTYWrapObject()
-    {
-#if OS(WINDOWS)
-        if (handle) {
-            handle->close();
-        }
-#endif
-    }
+    ~TTYWrapObject() = default;
 
     int fd = -1;
-
-#if OS(WINDOWS)
-    UV::TTY* handle;
-#endif
 
 private:
     TTYWrapObject(JSC::VM& vm, JSC::Structure* structure, const int fd)
@@ -162,9 +114,6 @@ private:
         , fd(fd)
 
     {
-#if OS(WINDOWS)
-        handle = nullptr;
-#endif
     }
 
     void finishCreation(JSC::VM& vm)
@@ -252,11 +201,12 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     }
 
 #if OS(WINDOWS)
-    if (mode.toInt32(globalObject) == 0) {
+    int modeInt = mode.toInt32(globalObject);
+    if (modeInt == 0) {
         Bun__setCTRLHandler(1);
     }
 
-    int err = uv_tty_set_mode(ttyWrap->handle->tty(), mode.toInt32(globalObject));
+    int err = Bun__Tty__setMode(uncheckedDowncast<Zig::GlobalObject>(globalObject)->uvLoop(), fd, modeInt);
 #else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
     int err = Bun__ttySetMode(fd, mode.toInt32(globalObject));
@@ -449,15 +399,12 @@ public:
         }
 
 #if OS(WINDOWS)
-        auto* handle = new UV::TTY();
-        memset(handle, 0, sizeof(UV::TTY));
-        int rc = uv_tty_init(uncheckedDowncast<Zig::GlobalObject>(globalObject)->uvLoop(), handle->tty(), fd, 0);
-        if (rc < 0) {
-            delete handle;
+        // The uv_tty_init replacement: a TTY wrap is only constructible over
+        // a console fd (same TypeError as the old init failure).
+        if (uv_guess_handle(fd) != UV_TTY) {
             throwTypeError(globalObject, scope, "Failed to initialize TTY handle"_s);
             return {};
         }
-        ASSERT(handle->tty()->loop);
 #else
         if (!isatty(fd)) {
             throwTypeError(globalObject, scope, makeString("fd"_s, fd, " is not a tty"_s));
@@ -467,10 +414,6 @@ public:
 
         auto* structure = TTYWrapObject::createStructure(vm, globalObject, prototypeValue.getObject());
         auto* object = TTYWrapObject::create(vm, globalObject, structure, fd);
-
-#if OS(WINDOWS)
-        object->handle = handle;
-#endif
 
         return JSValue::encode(object);
     }

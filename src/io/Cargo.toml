@@ -29,3 +29,8 @@ bun_uws_sys.workspace = true
 bun_paths.workspace = true
 bun_errno.workspace = true
 bun_threading.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_iocp.workspace = true
+bun_windows_sys.workspace = true
+bun_fdtable.workspace = true

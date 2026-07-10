@@ -472,7 +472,7 @@ impl ShellMvBatchedTask {
         }
         // Moving one entry into a directory.
         if let Some(dir) = this.target_fd {
-            let mut buf = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             if let Err(e) = Self::move_in_dir(
                 this.cwd,
                 dir,
@@ -524,7 +524,7 @@ impl ShellMvBatchedTask {
     }
 
     fn move_multiple_into_dir(&mut self) {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         // `target_fd` is always Some when sources.len() > 1 — `next` rejected
         // the multi-source-into-non-directory case before scheduling.
         let dir = self.target_fd.expect("target_fd set for multi-source mv");

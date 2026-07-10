@@ -165,6 +165,9 @@ impl Watcher {
     /// To integrate a started watcher into bundle_v2:
     ///
     ///     bundle_v2.bun_watcher = watcher;
+    // One Box::new per watcher at startup; the large inline buffers are
+    // heap-destined and never live on a hot stack.
+    #[allow(clippy::large_stack_frames)]
     pub fn init<T: WatcherContext>(
         ctx: *mut T,
         top_level_dir: &'static [u8],

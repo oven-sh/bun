@@ -2,7 +2,7 @@
 
 // Rust only compiles a `.rs` file if it is reachable via a `mod` declaration —
 // `#[no_mangle]` alone does NOT make an orphaned file link. Every Windows-only
-// sibling (`uv_signal_handle_windows`, `win_watcher`) must have a
+// sibling (`signal_handle_windows`, `win_watcher`) must have a
 // `#[cfg(windows)] pub mod` entry here or its C-ABI exports will be missing at
 // link time.
 
@@ -111,8 +111,8 @@ pub mod node_fs_stat_watcher;
 #[path = "node/node_fs_watcher.rs"]
 pub mod node_fs_watcher;
 #[cfg(windows)]
-#[path = "node/uv_signal_handle_windows.rs"]
-pub mod uv_signal_handle_windows;
+#[path = "node/signal_handle_windows.rs"]
+pub mod signal_handle_windows;
 
 // Type defs + non-JSC FFI bodies are live; every `#[bun_jsc::host_fn]` /
 // `#[bun_jsc::JsClass]` item is wrapped in ` mod _impl` inside
@@ -168,12 +168,12 @@ pub mod zlib {
 #[cfg(unix)]
 pub type uid_t = libc::uid_t;
 #[cfg(not(unix))]
-pub type uid_t = bun_sys::windows::libuv::uv_uid_t;
+pub type uid_t = u8; // uv_uid_t layout (Windows has no uid; chown is a no-op)
 
 #[cfg(unix)]
 pub type gid_t = libc::gid_t;
 #[cfg(not(unix))]
-pub type gid_t = bun_sys::windows::libuv::uv_gid_t;
+pub type gid_t = u8; // uv_gid_t layout (see uid_t)
 
 /// Node.js expects the error to include contextual information
 /// - "syscall"

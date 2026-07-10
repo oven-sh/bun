@@ -101,11 +101,16 @@ extern "C" uint64_t Bun__Os__getFreeMemory(void)
 #endif
 
 #if OS(WINDOWS)
-extern "C" uint64_t uv_get_available_memory(void);
+#include <windows.h>
 
 extern "C" uint64_t Bun__Os__getFreeMemory(void)
 {
-    return uv_get_available_memory();
+    // Same source libuv reads: available physical memory.
+    MEMORYSTATUSEX status;
+    status.dwLength = sizeof(status);
+    if (!GlobalMemoryStatusEx(&status))
+        return 0;
+    return status.ullAvailPhys;
 }
 #endif
 

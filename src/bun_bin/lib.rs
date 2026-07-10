@@ -170,21 +170,10 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
     }
 
-    // Windows-only startup. Must run BEFORE the first libuv
-    // call (uv allocator) and before anything reads `Bun.env`/`process.env`
-    // (env conversion).
+    // Windows-only startup. Must run before anything reads
+    // `Bun.env`/`process.env` (env conversion).
     #[cfg(windows)]
     {
-        // SAFETY: mimalloc fns match the libuv allocator signatures; called
-        // exactly once before any uv handle is created.
-        unsafe {
-            let _ = bun_sys::windows::libuv::uv_replace_allocator(
-                Some(bun_alloc::mimalloc::mi_malloc),
-                Some(bun_alloc::mimalloc::mi_realloc),
-                Some(bun_alloc::mimalloc::mi_calloc),
-                Some(bun_alloc::mimalloc::mi_free),
-            );
-        }
         // `bun.handleOom(convertEnvToWTF8())` — converts the OS UTF-16 env
         // block to WTF-8 and publishes it via `bun_core::os::set_environ()`.
         // Without this, `Bun.env`/`process.env` see only `.env`-file vars.

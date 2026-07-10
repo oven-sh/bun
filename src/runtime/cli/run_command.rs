@@ -24,7 +24,7 @@ use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 use bun_which::which;
 
 use crate::cli;
@@ -467,7 +467,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         Output::flush();
                     }
 
-                    Global::exit(exit_code.code as u32);
+                    Global::exit(exit_code.code);
                 }
             }
 
@@ -909,7 +909,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         mini.top_level_dir = Box::<[u8]>::from(top_level_dir);
 
         // `initAndRunFromFile`: read source then hand off to the interpreter.
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         path_buf[..entry_path.len()].copy_from_slice(entry_path);
         path_buf[entry_path.len()] = 0;
         // SAFETY: NUL-terminated above; `path_buf` outlives the call.
@@ -1023,7 +1023,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 runner_arena().alloc_slice_copy(cron_script.as_bytes());
 
             // entry_path must end with /[eval] for the transpiler to use eval_source
-            let mut cwd_buf = PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let cwd = bun_core::getcwd(&mut cwd_buf)?;
             let cwd_bytes = cwd.as_bytes();
             let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
@@ -1827,8 +1827,8 @@ impl RunCommand {
         }
         #[cfg(windows)]
         {
-            let mut temp_path_buffer = WPathBuffer::uninit();
-            let mut target_path_buffer = PathBuffer::uninit();
+            let mut temp_path_buffer = bun_paths::w_path_buffer_pool::get();
+            let mut target_path_buffer = bun_paths::path_buffer_pool::get();
             // SAFETY: FFI Win32 `GetTempPathW`. `temp_path_buffer` is a valid
             // writable WCHAR[MAX_PATH+] buffer and `nBufferLength` is its
             // capacity in WCHARs; the call writes at most that many wide chars.
@@ -1868,7 +1868,7 @@ impl RunCommand {
                 runner_arena().alloc_slice_copy(&target_path_buffer[..=total]);
             // SAFETY: `stored[total] == 0` (written above before the copy);
             // arena-backed slice lives for process lifetime.
-            Ok(ZStr::from_buf(&stored[..], total))
+            Ok(ZStr::from_buf(stored, total))
         }
     }
 
@@ -2335,7 +2335,7 @@ impl RunCommand {
                             }
                         }
 
-                        Global::exit(code as u32);
+                        Global::exit(code);
                     }
                     SpawnStatus::Running => panic!("Unexpected state: process is running"),
                 }
@@ -2657,6 +2657,8 @@ impl RunCommand {
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_core::w!("\\??\\");
             buf[..root.len()].copy_from_slice(root);
+            // SAFETY: `buf` is a pool buffer; the write starts after the
+            // 4-unit prefix and the length passed excludes it.
             let cwd_len = unsafe {
                 sys::windows::kernel32::GetCurrentDirectoryW(
                     (buf.len() - 4) as u32,
@@ -2704,7 +2706,7 @@ impl RunCommand {
             }
 
             if !path_for_which.is_empty() {
-                let mut path_buf = PathBuffer::uninit();
+                let mut path_buf = bun_paths::path_buffer_pool::get();
                 if let Some(destination) =
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
@@ -2800,7 +2802,7 @@ impl RunCommand {
         // absolute path via `get_fd_path` before booting. The
         // get_fd_path step matters: it resolves symlinks so module-relative
         // resolution sees the real location.
-        let mut script_name_buf = PathBuffer::uninit();
+        let mut script_name_buf = bun_paths::path_buffer_pool::get();
 
         // Build a NUL-terminated path to open (branching for
         // absolute vs. simple-relative vs. `..`/`~`-prefixed).
@@ -2831,7 +2833,7 @@ impl RunCommand {
             target.len()
         } else {
             // `..foo` / `~foo` — resolve against cwd via joinAbsStringBuf.
-            let mut cwd_buf = PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
                 return false;
             };
@@ -2854,12 +2856,6 @@ impl RunCommand {
 
         // Open read-only.
         let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
-            return false;
-        };
-        // `.makeLibUVOwnedForSyscall(.open, .close_on_fail)` — hands the
-        // HANDLE off to libuv ownership on Windows; pass-through on POSIX.
-        let Ok(fd) = fd.make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-        else {
             return false;
         };
 
@@ -2921,7 +2917,7 @@ impl RunCommand {
         const STDIN_TRIGGER: &[u8] = b"/[stdin]";
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + STDIN_TRIGGER.len()];
-        let mut cwd_buf = PathBuffer::uninit();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd = bun_core::getcwd(&mut cwd_buf)?;
         let cwd_bytes = cwd.as_bytes();
         let cwd_len = cwd_bytes.len();
@@ -2965,7 +2961,7 @@ impl RunCommand {
         }
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-        let mut cwd_buf = PathBuffer::uninit();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd = bun_core::getcwd(&mut cwd_buf)?;
         let cwd_bytes = cwd.as_bytes();
         let cwd_len = cwd_bytes.len();
@@ -2986,7 +2982,7 @@ impl RunCommand {
         if !ctx.runtime_options.eval.script.is_empty() {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-            let mut cwd_buf = PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let cwd = bun_core::getcwd(&mut cwd_buf)?;
             let cwd_bytes = cwd.as_bytes();
             let cwd_len = cwd_bytes.len();
@@ -3013,11 +3009,11 @@ impl RunCommand {
             // `cwd_buf[cwd_len] = b'/'` (always `/`, NOT the
             // platform separator) and then run the result through
             // `join_abs_string_buf::<Loose>` to collapse `.`/`..`.
-            let mut cwd_buf = PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let cwd = bun_core::getcwd(&mut cwd_buf)?;
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = b'/';
-            let mut out_buf = PathBuffer::uninit();
+            let mut out_buf = bun_paths::path_buffer_pool::get();
             let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Loose>(
                 &cwd_buf[..cwd_len + 1],
                 &mut out_buf.0,
@@ -3484,7 +3480,7 @@ impl RunCommand {
                     // is a valid console output HANDLE from GetStdHandle and
                     // `csbi` is a valid mutable CONSOLE_SCREEN_BUFFER_INFO out-ptr.
                     if unsafe {
-                        sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi)
+                        sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &raw mut csbi)
                     } != sys::windows::FALSE
                     {
                         let w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
@@ -3515,8 +3511,8 @@ impl RunCommand {
         // `bun ./docs/README.md` from `/home/user` can't find `./img.png`
         // that sits next to README.md. Resolve to an absolute dir first
         // so joinAbsString downstream doesn't double-apply cwd.
-        let mut base_buf = PathBuffer::uninit();
-        let mut cwd_buf = PathBuffer::uninit();
+        let mut base_buf = bun_paths::path_buffer_pool::get();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let abs_md_path: &[u8] = 'blk: {
             if paths::is_absolute(path) {
                 break 'blk path;
@@ -3666,7 +3662,7 @@ impl RunCommand {
                     .flatten()
                 {
                     if let Some(entries) = bin_dir.get_entries_const() {
-                        let mut path_buf = PathBuffer::uninit();
+                        let mut path_buf = bun_paths::path_buffer_pool::get();
                         let mut iter = entries.data.iter();
                         let mut has_copied = false;
                         let mut dir_slice_len: usize = 0;

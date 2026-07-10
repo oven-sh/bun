@@ -247,7 +247,6 @@ use bun_collections::VecExt;
 use bun_core::Output;
 use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
-use bun_paths::PathBuffer;
 use std::io::Write as _;
 // Forward to the real module (now declared in `crate::api`). `take` is reshaped
 // from `Option<NonNull<T>>` to an unbounded exclusive borrow so call sites can invoke
@@ -1733,7 +1732,7 @@ where
         let crate::webcore::blob::store::Data::File(file) = &self.blob.store().unwrap().data else {
             unreachable!("do_sendfile called with non-file blob");
         };
-        let mut file_buf = PathBuffer::uninit();
+        let mut file_buf = bun_paths::path_buffer_pool::get();
         let auto_close = !matches!(
             file.pathlike,
             crate::webcore::node_types::PathOrFileDescriptor::Fd(_)
@@ -1813,7 +1812,7 @@ where
             AnyBlob::Blob(b) => b.size.get(),
             _ => unreachable!(),
         };
-        let stat_size: BlobSizeType = BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
+        let stat_size: BlobSizeType = bun_sys::stat_size(&stat) as BlobSizeType;
         if let AnyBlob::Blob(b) = &mut self.blob {
             b.size.set(if is_regular {
                 stat_size

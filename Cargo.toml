@@ -9,12 +9,14 @@ members = [
   "src/collections",
   "src/css",
   "src/errno",
+  "src/fdtable",
   "src/glob",
   "src/http",
   "src/install",
   "src/install/windows-shim",
   "src/parsers",
   "src/io",
+  "src/iocp",
   "src/libarchive",
   "src/md",
   "src/paths",
@@ -27,6 +29,7 @@ members = [
   "src/threading",
   "src/valkey",
   "src/watcher",
+  "src/winfs",
   "src/cares_sys",
   "src/clap",
   "src/clap_macros",
@@ -47,7 +50,6 @@ members = [
   "src/js_parser_jsc",
   "src/js_printer",
   "src/libdeflate_sys",
-  "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
   "src/picohttp",
@@ -357,11 +359,13 @@ bun_bundler = { path = "src/bundler" }
 bun_collections = { path = "src/collections" }
 bun_css = { path = "src/css" }
 bun_errno = { path = "src/errno" }
+bun_fdtable = { path = "src/fdtable" }
 bun_glob = { path = "src/glob" }
 bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
+bun_iocp = { path = "src/iocp" }
 bun_libarchive = { path = "src/libarchive" }
 bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
@@ -394,7 +398,6 @@ bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
 bun_libdeflate_sys = { path = "src/libdeflate_sys" }
-bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
 bun_picohttp = { path = "src/picohttp" }
@@ -414,6 +417,7 @@ bun_resolve_builtins = { path = "src/resolve_builtins" }
 bun_sourcemap_jsc = { path = "src/sourcemap_jsc" }
 bun_url = { path = "src/url" }
 bun_windows_sys = { path = "src/windows_sys" }
+bun_winfs = { path = "src/winfs" }
 bun_jsc = { path = "src/jsc" }
 bun_jsc_macros = { path = "src/jsc_macros" }
 bun_ptr = { path = "src/ptr" }

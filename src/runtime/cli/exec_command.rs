@@ -5,7 +5,7 @@ use bun_core::{Global, Output};
 use bun_options_types::schema::api;
 
 use crate::shell::Interpreter;
-use bun_paths::{self, PathBuffer};
+use bun_paths::{self};
 use bun_sys;
 
 use crate::command::Context;
@@ -54,7 +54,7 @@ impl ExecCommand {
         // Read the field before the `&mut` method call (borrowck).
         let disable_default_env_files = bundle.options.env.disable_default_env_files;
         bundle.run_env_loader(disable_default_env_files)?;
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let cwd: &[u8] = match bun_sys::getcwd(&mut *buf) {
             Ok(n) => &buf[..n],
             Err(e) => {

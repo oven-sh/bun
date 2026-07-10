@@ -13,8 +13,6 @@ use crate::bun_json::Expr;
 // `bun_js_printer::PrintJsonOptions` see no mismatch.
 use bun_ast::Indentation;
 use bun_ast::{Log, Source};
-#[cfg(windows)]
-use bun_paths::PathBuffer;
 use bun_paths::is_absolute;
 
 use crate::bun_json as json;
@@ -140,7 +138,7 @@ impl WorkspacePackageJSONCache {
         debug_assert!(is_absolute(abs_package_json_path));
 
         #[cfg(windows)]
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         #[cfg(not(windows))]
         let path: &[u8] = abs_package_json_path;
         #[cfg(windows)]
@@ -216,7 +214,7 @@ impl WorkspacePackageJSONCache {
         debug_assert!(is_absolute(source.path.text()));
 
         #[cfg(windows)]
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         #[cfg(not(windows))]
         let path: &[u8] = source.path.text();
         #[cfg(windows)]

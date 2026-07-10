@@ -139,7 +139,7 @@ pub trait VecExt<T>: Sized {
     unsafe fn writable_slice_exact(&mut self, additional: usize) -> &mut [T];
     /// Reserves `additional` and returns the first `additional` slots of
     /// spare capacity as `MaybeUninit<T>`. Safe sibling of [`writable_slice`]:
-    /// caller writes some prefix then calls `set_len` (or [`uv_commit`] for
+    /// caller writes some prefix then calls `set_len` (or [`alloc_cb_commit`] for
     /// `Vec<u8>`) to commit. Unlike `spare_capacity_mut()` the returned slice
     /// is exactly `additional` long, not `capacity - len`.
     fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>];
@@ -587,7 +587,7 @@ pub trait ByteVecExt {
     /// # Safety
     /// The returned bytes are **uninitialised**. Caller must only treat the
     /// prefix actually written by the FFI/syscall as initialised (typically by
-    /// committing with [`uv_commit`]); the bytes must not be read before then.
+    /// committing with [`alloc_cb_commit`]); the bytes must not be read before then.
     unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8];
     /// Commit `nread` bytes that the FFI/syscall just wrote into the slice
     /// returned by [`uv_alloc_spare`] / [`uv_alloc_spare_u8`]: bumps `len` by
@@ -596,7 +596,7 @@ pub trait ByteVecExt {
     /// # Safety
     /// The `nread` bytes at `[len, len + nread)` must have been initialised by
     /// the preceding write into the spare slice.
-    unsafe fn uv_commit(&mut self, nread: usize);
+    unsafe fn alloc_cb_commit(&mut self, nread: usize);
 }
 
 impl ByteVecExt for Vec<u8> {
@@ -655,8 +655,8 @@ impl ByteVecExt for Vec<u8> {
         unsafe { bun_core::vec::reserve_spare_bytes(self, suggested) }
     }
     #[inline]
-    unsafe fn uv_commit(&mut self, nread: usize) {
-        // SAFETY: caller contract on `uv_commit` — `[len, len+nread)` was
+    unsafe fn alloc_cb_commit(&mut self, nread: usize) {
+        // SAFETY: caller contract on `alloc_cb_commit` — `[len, len+nread)` was
         // initialised by the preceding write into the spare slice.
         unsafe { bun_core::vec::commit_spare(self, nread) }
     }

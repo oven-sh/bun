@@ -50,6 +50,8 @@ struct ApplyState {
 }
 
 impl ApplyState {
+    // One ApplyState per `bun patch` invocation (CLI cold path).
+    #[allow(clippy::large_stack_frames)]
     fn new() -> Self {
         Self {
             pathbuf: PathBuffer::uninit(),
@@ -81,6 +83,8 @@ impl ApplyState {
 }
 
 impl<'a> PatchFile<'a> {
+    // CLI cold path; one state per invocation.
+    #[allow(clippy::large_stack_frames)]
     pub fn apply(&self, patch_dir: Fd) -> Option<sys::Error> {
         let mut state = ApplyState::new();
 
@@ -236,7 +240,7 @@ impl<'a> PatchFile<'a> {
                                 &mut buf[..],
                                 &[absfilepath.as_bytes(), filepath.as_bytes()],
                             );
-                        let fd = match sys::open(&joined_absfilepath, sys::O::RDWR, 0) {
+                        let fd = match sys::open(joined_absfilepath, sys::O::RDWR, 0) {
                             sys::Result::Err(e) => return Some(e.without_path()),
                             sys::Result::Ok(f) => f,
                         };
@@ -271,12 +275,12 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         let r = sys::fstatat(patch_dir, &file_path);
         #[cfg(not(unix))]
         let r = {
-            let p = match state.patch_dir_abs_path(patch_dir) {
-                sys::Result::Ok(p) => paths::resolve_path::join_z::<paths::platform::Auto>(&[
+            let p = {
+                let p = state.patch_dir_abs_path(patch_dir)?;
+                paths::resolve_path::join_z::<paths::platform::Auto>(&[
                     p.as_bytes(),
                     file_path.as_bytes(),
-                ]),
-                sys::Result::Err(e) => return sys::Result::Err(e),
+                ])
             };
             sys::stat(p)
         };
@@ -1930,6 +1934,8 @@ pub fn git_diff_internal(
 ///   .replace(new RegExp(`(a|b)${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(bFolder)}/`)}`, "g"), "$1/")
 ///   .replace(new RegExp(escapeStringRegexp(`${aFolder}/`), "g"), "")
 ///   .replace(new RegExp(escapeStringRegexp(`${bFolder}/`), "g"), "");
+// CLI cold path (`bun patch --commit`).
+#[allow(clippy::large_stack_frames)]
 fn git_diff_postprocess(
     stdout: &mut Vec<u8>,
     old_folder: &[u8],

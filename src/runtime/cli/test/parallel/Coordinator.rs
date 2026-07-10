@@ -669,7 +669,7 @@ impl<'a> Coordinator<'a> {
             if windows::SetInformationJobObject(
                 job,
                 windows::JobObjectExtendedLimitInformation,
-                (&mut jeli as *mut windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                (&raw mut jeli).cast(),
                 core::mem::size_of::<windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             ) == 0
             {

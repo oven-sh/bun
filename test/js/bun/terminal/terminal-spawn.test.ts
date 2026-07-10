@@ -46,6 +46,31 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(terminal.controlFlags).toBe(0);
   });
 
+  test("windowsHide does not detach the child from the terminal", async () => {
+    // CREATE_NO_WINDOW on a pseudoconsole spawn disconnects the child from
+    // the ConPTY entirely — the hide flag must defer to the terminal.
+    let output = "";
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const terminal = new Bun.Terminal({
+      cols: 80,
+      rows: 24,
+      data(_term, chunk: Uint8Array) {
+        output += new TextDecoder().decode(chunk);
+        if (output.includes("hidden-but-connected")) resolve();
+      },
+    });
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "console.log('hidden-but-connected')"],
+      env: bunEnv,
+      windowsHide: true,
+      terminal,
+    });
+    await promise;
+    await proc.exited;
+    terminal.close();
+    expect(output).toContain("hidden-but-connected");
+  });
+
   test("data callback receives output from spawned process", async () => {
     let output = "";
     let callbackTerminal: Bun.Terminal | undefined;

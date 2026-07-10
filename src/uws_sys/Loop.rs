@@ -3,9 +3,6 @@ use core::ffi::{c_int, c_uint, c_void};
 use crate::InternalLoopData;
 use crate::Timespec;
 
-#[cfg(windows)]
-use bun_libuv_sys as uv;
-
 bun_core::declare_scope!(Loop, visible);
 
 // ───────────────────────────── PosixLoop ─────────────────────────────
@@ -391,10 +388,13 @@ impl Handler {
 pub struct WindowsLoop {
     pub internal_loop_data: InternalLoopData,
 
-    pub uv_loop: *mut uv::Loop,
-    pub is_default: c_int,
-    pub pre: *mut uv::uv_prepare_t,
-    pub check: *mut uv::uv_check_t,
+    /// Incremented by shared `us_wakeup_loop`; exchanged to 0 at the top of
+    /// `us_loop_run_bun_tick` (the GC-safepoint gate). Atomic on both sides.
+    pub pending_wakeups: u32,
+    /// Opaque Rust backend state (bun_iocp usockets::Backend) — never read
+    /// or written from this side. Layout-asserted in bun_iocp.h +
+    /// src/iocp/usockets.rs.
+    pub bun_backend: [*mut c_void; 4],
 }
 
 #[cfg(windows)]
@@ -409,51 +409,30 @@ impl WindowsLoop {
     }
 
     pub fn get() -> *mut WindowsLoop {
-        // SAFETY: uv::Loop::get() returns the libuv default loop; uws wraps it
-        unsafe { c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
+        c::uws_get_loop()
     }
 
     pub fn iteration_number(&self) -> u64 {
         self.internal_loop_data.iteration_nr
     }
 
-    /// Shared borrow of the backing libuv loop.
-    ///
-    /// `uv_loop` is a back-reference set once by C `us_create_loop` and never
-    /// reassigned for the `WindowsLoop`'s lifetime, so projecting `&uv::Loop`
-    /// from `&self` is sound. Consolidates the `unsafe { (*self.uv_loop).… }`
-    /// pattern (one `unsafe`, N safe callers).
-    #[inline]
-    pub fn uv(&self) -> &uv::Loop {
-        // SAFETY: `uv_loop` is non-null after `us_create_loop` and remains
-        // valid for the entire lifetime of `*self`; `&self` bounds the
-        // returned borrow so it cannot outlive the wrapper.
-        unsafe { &*self.uv_loop }
-    }
-
-    /// Exclusive borrow of the backing libuv loop. Used only for the
-    /// `active_handles` bookkeeping field (Bun-private; libuv itself only
-    /// reads it inside `uv__loop_alive`). `&mut self` provides exclusivity
-    /// over the wrapper; the `uv_loop_t` is the per-thread singleton so no
-    /// other Rust `&mut` to it is live on this thread.
-    #[inline]
-    fn uv_mut(&mut self) -> &mut uv::Loop {
-        // SAFETY: see `uv()` for liveness; `&mut self` is the sole Rust
-        // borrow path to the wrapper, and the only mutation performed via
-        // this accessor is the `active_handles` counter.
-        unsafe { &mut *self.uv_loop }
-    }
-
     pub fn add_active(&mut self, val: u32) {
-        self.uv_mut().add_active(val);
+        // SAFETY: self is a valid loop pointer.
+        unsafe { c::us_loop_add_active(self, val) };
     }
 
     pub fn sub_active(&mut self, val: u32) {
-        self.uv_mut().sub_active(val);
+        // SAFETY: self is a valid loop pointer.
+        unsafe { c::us_loop_sub_active(self, val) };
+    }
+
+    pub fn active_count(&self) -> u32 {
+        // SAFETY: self is a valid loop pointer; read-only count query.
+        unsafe { c::us_loop_active_count(core::ptr::from_ref(self).cast_mut()) }
     }
 
     pub fn is_active(&self) -> bool {
-        self.uv().is_active()
+        self.active_count() > 0
     }
 
     pub fn wakeup(&mut self) {
@@ -466,9 +445,12 @@ impl WindowsLoop {
         self.wakeup();
     }
 
-    pub fn tick_with_timeout(&mut self, _: Option<&Timespec>) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run(self) };
+    pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>) {
+        // SAFETY: self is a valid loop pointer; the backend reads the
+        // timespec as {i64 sec, i64 nsec} and never retains the pointer.
+        unsafe {
+            c::us_loop_run_bun_tick(self, timespec.map_or(core::ptr::null(), std::ptr::from_ref))
+        };
     }
 
     pub fn tick_without_idle(&mut self) {
@@ -509,11 +491,17 @@ impl WindowsLoop {
     }
 
     pub fn inc(&mut self) {
-        self.uv_mut().inc();
+        self.add_active(1);
     }
 
     pub fn dec(&mut self) {
-        self.uv_mut().dec();
+        self.sub_active(1);
+    }
+
+    pub fn unref_count(&mut self, count: i32) {
+        if count > 0 {
+            self.sub_active(count as u32);
+        }
     }
 
     #[inline]
@@ -548,6 +536,15 @@ impl WindowsLoop {
     pub fn update_date(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::uws_loop_date_header_timer_update(self) };
+    }
+
+    /// Install the engine's GC-safepoint slot: `cb` runs with
+    /// `internal_loop_data.jsc_vm` right before an idle blocking wait
+    /// (bun_iocp.h). POSIX has no slot — epoll_kqueue.c calls
+    /// `Bun__JSC_onBeforeWait` directly.
+    pub fn set_on_before_wait(&mut self, cb: Option<unsafe extern "C" fn(*mut c_void)>) {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::us_loop_set_on_before_wait(self, cb) };
     }
 
     /// # Safety
@@ -638,14 +635,21 @@ mod c {
         pub(super) fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub(super) fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub(super) fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        #[cfg(not(windows))]
         pub(super) fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
-        #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]
-        pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
+        pub(super) fn us_loop_add_active(loop_: *mut Loop, count: c_uint);
+        #[cfg(windows)]
+        pub(super) fn us_loop_sub_active(loop_: *mut Loop, count: c_uint);
+        #[cfg(windows)]
+        pub(super) fn us_loop_active_count(loop_: *mut Loop) -> c_uint;
+        #[cfg(windows)]
+        pub(super) fn us_loop_set_on_before_wait(
+            loop_: *mut Loop,
+            cb: Option<unsafe extern "C" fn(*mut c_void)>,
+        );
         pub(super) fn uws_loop_defer(loop_: *mut Loop, ctx: *mut c_void, cb: DeferCb);
         pub(super) fn uws_res_clear_corked_socket(loop_: *mut Loop);
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);

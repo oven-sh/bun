@@ -1369,14 +1369,22 @@ struct RouteBufs {
     normalized_abs_path_buf: bun_sys::windows::PathBuffer,
 }
 
-thread_local! {
-    // bun.ThreadlocalBuffers: heap-backed so only a Box pointer lives in TLS
-    // (keeps PT_TLS MemSiz small — see test/js/bun/binary/tls-segment-size).
-    static ROUTE_BUFS: RefCell<Box<RouteBufs>> = RefCell::new(Box::new(RouteBufs {
+// The Box::new temporary is heap-destined (that is the point of the TLS
+// indirection); the allow lives on this helper because the built-in `allow`
+// is ignored on macro invocations.
+#[allow(clippy::large_stack_frames)]
+fn route_bufs_init() -> RefCell<Box<RouteBufs>> {
+    RefCell::new(Box::new(RouteBufs {
         route_file_buf: PathBuffer::ZEROED,
         #[cfg(windows)]
         normalized_abs_path_buf: bun_sys::windows::PathBuffer::ZEROED,
-    }));
+    }))
+}
+
+thread_local! {
+    // bun.ThreadlocalBuffers: heap-backed so only a Box pointer lives in TLS
+    // (keeps PT_TLS MemSiz small — see test/js/bun/binary/tls-segment-size).
+    static ROUTE_BUFS: RefCell<Box<RouteBufs>> = route_bufs_init();
 }
 
 pub struct Match<'a> {

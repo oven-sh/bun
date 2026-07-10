@@ -17,8 +17,10 @@ use bun_jsc::{
 use bun_jsc::{JsCell, SysErrorJsc as _};
 #[cfg(unix)]
 use bun_sys::Fd;
+#[cfg(not(windows))]
+use bun_sys::FdExt as _;
 use bun_sys::UV_E;
-use bun_sys::{self as sys, FdExt as _, SignalCode};
+use bun_sys::{self as sys, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 #[cfg(unix)]
@@ -628,10 +630,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                                     return Err(e.throw_js(global_this));
                                 }
                             };
-                            #[cfg(not(windows))]
                             let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc);
-                            #[cfg(windows)]
-                            let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc(_));
                             if is_ipc {
                                 ipc_channel = i32::try_from(extra_fds.len()).expect("int cast");
                             }
@@ -1087,7 +1086,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
-    let mut spawn_options = SpawnOptions {
+    let spawn_options = SpawnOptions {
         // Empty means "inherit the parent's working directory". Only chdir
         // when the user asked for it: the stored cwd path string can be stale
         // if the directory was renamed out from under the process (#33819).
@@ -1156,12 +1155,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
     } {
         Err(err) if err == bun_core::err!("EMFILE") || err == bun_core::err!("ENFILE") => {
-            // Windows: close+free the heap `uv::Pipe` handles that
-            // `as_spawn_option` allocated and `spawn_process_windows` may have
-            // `uv_pipe_init`-registered on the spawn-sync loop. Skipping this
-            // leaks them and trips `assert(err == 0)` in `uv_loop_delete` at
-            // `SpawnSyncEventLoop::Drop`. POSIX: no-op.
-            spawn_options.deinit();
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is non-null and points at a NUL-terminated
                 // string we built above (lives in `arg0_backing`/`arg_backing`).
@@ -1187,15 +1180,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             return Err(global_this.throw_value(sys_system_error_to_js(&systemerror, global_this)));
         }
         Err(err) => {
-            // See EMFILE arm above.
-            spawn_options.deinit();
             let _ = global_this.throw_error(err, ": failed to spawn process");
             return Ok(JSValue::ZERO);
         }
         Ok(maybe) => match maybe {
             sys::Result::Err(err) => {
-                // See EMFILE arm above.
-                spawn_options.deinit();
                 match err.get_errno() {
                     errno @ (sys::Errno::EACCES
                     | sys::Errno::ENOENT
@@ -1363,18 +1352,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
             #[cfg(not(unix))]
             {
-                use bun_libuv_sys::UvHandle as _;
                 for r in [spawned_stdout, spawned_stderr] {
                     match r {
-                        spawn::WindowsStdioResult::Buffer(pipe) => {
-                            // `uv_close` is async — libuv keeps the raw handle pointer
-                            // until the next loop tick and then calls `on_pipe_close`,
-                            // which reclaims the allocation via `heap::take`. Leak the
-                            // Box so it outlives this scope; dropping it here would be
-                            // a use-after-free + double-free when the callback fires.
-                            Box::leak(pipe).close(Subprocess::on_pipe_close)
-                        }
-                        spawn::WindowsStdioResult::BufferFd(fd) => fd.close(),
+                        // Unconsumed engine pipe end — async engine close,
+                        // freed in the close callback on the next loop tick.
+                        spawn::WindowsStdioResult::Buffer(pipe) => spawn::close_engine_pipe(pipe),
                         spawn::WindowsStdioResult::Unavailable => {}
                     }
                 }
@@ -1525,27 +1507,26 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             use crate::node::MaybeExt as _;
             let idx = usize::try_from(ipc_channel).expect("int cast");
             // The IPC channel is always a `buffer` pipe on Windows.
-            // Ownership of the heap `uv::Pipe` transfers to `ipc_data.socket`;
-            // neutralize the slot up front so `finalizeStreams` can't
-            // double-close it (the Box would otherwise drop on reassignment).
-            let ipc_pipe: *mut bun_libuv_sys::Pipe = subprocess.stdio_pipes.with_mut(|pipes| {
+            // Ownership of the adopted duplex engine pipe end transfers to
+            // `ipc_data.socket`; neutralize the slot up front so
+            // `finalizeStreams` can't double-close it.
+            let ipc_pipe: Box<bun_iocp::PipeHandle> = subprocess.stdio_pipes.with_mut(|pipes| {
                 match core::mem::take(&mut pipes[idx]) {
-                    spawn::WindowsStdioResult::Buffer(pipe) => bun_core::heap::into_raw(pipe),
+                    spawn::WindowsStdioResult::Buffer(pipe) => pipe,
                     other => {
                         // Restore the slot before panicking so the
                         // `Subprocess` finalizer still sees the original
                         // variant. Use
                         // `unreachable!` (NOT `debug_assert!` — that would
-                        // compile out in release and feed null to
-                        // `windows_configure_server`, which immediately
-                        // dereferences it).
+                        // compile out in release and feed a dead value to
+                        // `windows_configure_server`).
                         pipes[idx] = other;
                         unreachable!("IPC channel stdio is not a buffer pipe");
                     }
                 }
             });
             // PROVENANCE: `windows_configure_server` STORES the `*mut SendQueue`
-            // in `uv_handle_t.data` for the pipe's lifetime, so it takes a raw
+            // as its read context for the pipe's lifetime, so it takes a raw
             // pointer (not `&mut self`) — see its safety doc. NOTE: this still
             // derives from the `ipc_data` reborrow (same as the unix branch's
             // `ptr::from_mut(ipc_data)` above); a true root-raw projection

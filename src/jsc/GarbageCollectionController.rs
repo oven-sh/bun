@@ -29,6 +29,13 @@ use crate::virtual_machine::VirtualMachine;
 
 const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
 
+// The GC-safepoint hook (BunJSCEventLoop.cpp) the engine invokes with
+// `internal_loop_data.jsc_vm` right before an idle blocking wait.
+#[cfg(windows)]
+unsafe extern "C" {
+    fn Bun__JSC_onBeforeWait(jsc_vm: *mut core::ffi::c_void);
+}
+
 pub struct GarbageCollectionController {
     pub gc_timer: EventLoopTimer,
     pub gc_repeating_timer: EventLoopTimer,
@@ -98,6 +105,11 @@ impl GarbageCollectionController {
         // SAFETY: uws::Loop::get() returns the live process-global loop.
         let actual = unsafe { &mut *uws::Loop::get() };
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
+        // POSIX ticks call `Bun__JSC_onBeforeWait` directly (epoll_kqueue.c);
+        // the Windows engine exposes a slot instead — wire it once per VM
+        // loop, right after `jsc_vm`, as bun_iocp.h prescribes.
+        #[cfg(windows)]
+        actual.set_on_before_wait(Some(Bun__JSC_onBeforeWait));
 
         let env = vm.env_loader_opt();
 

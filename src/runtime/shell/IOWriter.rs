@@ -117,7 +117,6 @@ struct Writer {
 }
 
 impl Writer {
-    #[cfg(not(windows))]
     #[inline]
     fn wrote_everything(&self) -> bool {
         self.written >= self.len
@@ -420,9 +419,9 @@ impl IOWriter {
             {
                 // This might happen if the file descriptor points to NUL.
                 // On Windows GetFileType(NUL) returns FILE_TYPE_CHAR, so
-                // `this.writer.start()` will try to open it as a tty with
-                // uv_tty_init, but this returns EBADF. As a workaround,
-                // we'll try opening the file descriptor as a file.
+                // `this.writer.start()` tries to open it as a tty, and the
+                // engine's console probe rejects NUL with EBADF. As a
+                // workaround, we'll try opening the fd as a file.
                 if e.get_errno() == E::EBADF {
                     s.flags.pollable = false;
                     s.flags.nonblock = false;
@@ -432,25 +431,12 @@ impl IOWriter {
             }
             return Err(e);
         }
-        #[cfg(windows)]
-        {
-            // When `Source::open` produced a uv pipe/tty, libuv has TAKEN
-            // OWNERSHIP of the underlying HANDLE
-            // (`uv_pipe_open`/`uv_tty_init`) and `uv_close` (issued by
-            // `s.writer.close()` in Drop) will close it.
-            // `BaseWindowsPipeWriter::start` does not invalidate the stored
-            // fd (TODO at PipeWriter.rs:1277), so disarm the Drop close here
-            // instead. The `Source::File`/`SyncFile` case (incl. the
-            // EBADF→`start_with_file` fallback above, which `return`s early)
-            // keeps `s.fd` valid: with `owns_fd=false` PipeWriter does NOT
-            // close it there, so Drop must.
-            if matches!(
-                s.writer.source,
-                Some(bun_io::Source::Pipe(_) | bun_io::Source::Tty(_))
-            ) {
-                s.fd = Fd::INVALID;
-            }
-        }
+        // NOTE: `Source::open` adopts a PRIVATE DUPLICATE of pipe/tty handles
+        // into the engine (`s.writer.close()` in Drop closes only that
+        // duplicate, `owns_fd=false` stops `source.close` from touching the
+        // original). `s.fd` therefore stays valid on every source shape so
+        // Drop's `sys::close(s.fd)` releases the original — for a pipeline
+        // write end this close is what delivers EOF to the read side.
         #[cfg(not(windows))]
         {
             use bun_io::FilePollFlag;
@@ -693,8 +679,7 @@ impl IOWriter {
 
     // ── file write (non-pollable sync path) ─────────────────────────────
 
-    /// POSIX-only. `child` is the writer being enqueued (see `on_sync_error`).
-    #[cfg(not(windows))]
+    /// `child` is the writer being enqueued (see `on_sync_error`).
     fn do_file_write(&self, child: ChildPtr) -> Yield {
         {
             let s = self.state();
@@ -976,7 +961,6 @@ impl IOWriter {
         None
     }
 
-    #[cfg(not(windows))]
     fn enqueue_file(&self, child: ChildPtr) -> Yield {
         let s = self.state();
         if s.is_writing {
@@ -994,7 +978,6 @@ impl IOWriter {
     fn enqueue_internal(&self, child: ChildPtr) -> Yield {
         debug_assert!(!self.state().flags.broken_pipe);
         debug_assert!(self.state().err.is_none());
-        #[cfg(not(windows))]
         if !self.state().flags.pollable {
             return self.enqueue_file(child);
         }
@@ -1111,18 +1094,17 @@ bun_io::impl_buffered_writer_parent! {
     on_close   = on_close,
     get_buffer = |this| (*this).get_buffer(),
     event_loop = |this| (*this).io_evtloop(),
-    uv_loop    = |this| (*(*this).evtloop().loop_()).uv_loop,
+    windows_loop = |this| (*this).evtloop().loop_(),
     // INVARIANT: `this` is `Arc::as_ptr` stashed via `writer.set_parent` in
     // `IOWriter::init` (sole constructor); passing a non-Arc ptr is UB.
-    ref_       = |this| std::sync::Arc::increment_strong_count(this as *const Self),
-    deref      = |this| std::sync::Arc::decrement_strong_count(this as *const Self),
+    ref_       = |this| std::sync::Arc::increment_strong_count(this.cast_const()),
+    deref      = |this| std::sync::Arc::decrement_strong_count(this.cast_const()),
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // drainBufferedData / tryWrite (POSIX file path)
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(not(windows))]
 fn try_write_with_write_fn(
     fd: Fd,
     buf: &[u8],
@@ -1151,7 +1133,6 @@ fn try_write_with_write_fn(
 
 /// TODO: This function and `try_write_with_write_fn` are copy-pastes from
 /// PipeWriter; it would be nice to not have to do that.
-#[cfg(not(windows))]
 fn drain_buffered_data(
     parent: &IOWriter,
     buf: &[u8],

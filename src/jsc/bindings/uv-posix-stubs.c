@@ -1,7 +1,7 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 #include "uv-posix-polyfills.h"
 
-#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD) || OS(WINDOWS)
 UV_EXTERN int uv_accept(uv_stream_t* server, uv_stream_t* client)
 {
     __bun_throw_not_implemented("uv_accept");
@@ -144,12 +144,6 @@ UV_EXTERN void uv_cond_wait(uv_cond_t* cond, uv_mutex_t* mutex)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_cpu_info(uv_cpu_info_t** cpu_infos, int* count)
-{
-    __bun_throw_not_implemented("uv_cpu_info");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_cpumask_size(void)
 {
     __bun_throw_not_implemented("uv_cpumask_size");
@@ -219,19 +213,6 @@ UV_EXTERN int uv_exepath(char* buffer, size_t* size)
 UV_EXTERN int uv_fileno(const uv_handle_t* handle, uv_os_fd_t* fd)
 {
     __bun_throw_not_implemented("uv_fileno");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_free_cpu_info(uv_cpu_info_t* cpu_infos, int count)
-{
-    __bun_throw_not_implemented("uv_free_cpu_info");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_free_interface_addresses(uv_interface_address_t* addresses,
-    int count)
-{
-    __bun_throw_not_implemented("uv_free_interface_addresses");
     __builtin_unreachable();
 }
 
@@ -725,12 +706,6 @@ UV_EXTERN uint64_t uv_get_free_memory(void)
     __builtin_unreachable();
 }
 
-UV_EXTERN uv_os_fd_t uv_get_osfhandle(int fd)
-{
-    __bun_throw_not_implemented("uv_get_osfhandle");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_get_process_title(char* buffer, size_t size)
 {
     __bun_throw_not_implemented("uv_get_process_title");
@@ -764,12 +739,6 @@ UV_EXTERN int uv_getnameinfo(uv_loop_t* loop,
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_getrusage(uv_rusage_t* rusage)
-{
-    __bun_throw_not_implemented("uv_getrusage");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_getrusage_thread(uv_rusage_t* rusage)
 {
     __bun_throw_not_implemented("uv_getrusage_thread");
@@ -779,12 +748,6 @@ UV_EXTERN int uv_getrusage_thread(uv_rusage_t* rusage)
 UV_EXTERN int uv_gettimeofday(uv_timeval64_t* tv)
 {
     __bun_throw_not_implemented("uv_gettimeofday");
-    __builtin_unreachable();
-}
-
-UV_EXTERN uv_handle_type uv_guess_handle(uv_file file)
-{
-    __bun_throw_not_implemented("uv_guess_handle");
     __builtin_unreachable();
 }
 
@@ -864,22 +827,9 @@ UV_EXTERN int uv_if_indextoname(unsigned int ifindex,
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_inet_ntop(int af, const void* src, char* dst, size_t size)
-{
-    __bun_throw_not_implemented("uv_inet_ntop");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_inet_pton(int af, const char* src, void* dst)
 {
     __bun_throw_not_implemented("uv_inet_pton");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_interface_addresses(uv_interface_address_t** addresses,
-    int* count)
-{
-    __bun_throw_not_implemented("uv_interface_addresses");
     __builtin_unreachable();
 }
 
@@ -958,12 +908,6 @@ UV_EXTERN void* uv_key_get(uv_key_t* key)
 UV_EXTERN void uv_key_set(uv_key_t* key, void* value)
 {
     __bun_throw_not_implemented("uv_key_set");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_kill(int pid, int signum)
-{
-    __bun_throw_not_implemented("uv_kill");
     __builtin_unreachable();
 }
 
@@ -1063,11 +1007,23 @@ UV_EXTERN uint64_t uv_now(const uv_loop_t*)
     __builtin_unreachable();
 }
 
+#if OS(WINDOWS)
+/* Adopt a HANDLE into Bun's fd table (the JS-visible fd space) — the
+ * inverse of uv_get_osfhandle; -1 on failure (the CRT _open_osfhandle
+ * contract libuv exposed verbatim). */
+extern int Bun__FdTable__adoptHandle(void* handle);
+
+UV_EXTERN int uv_open_osfhandle(uv_os_fd_t os_fd)
+{
+    return Bun__FdTable__adoptHandle((void*)os_fd);
+}
+#else
 UV_EXTERN int uv_open_osfhandle(uv_os_fd_t os_fd)
 {
     __bun_throw_not_implemented("uv_open_osfhandle");
     __builtin_unreachable();
 }
+#endif
 
 UV_EXTERN int uv_os_environ(uv_env_item_t** envitems, int* count)
 {
@@ -1123,12 +1079,6 @@ UV_EXTERN int uv_os_gethostname(char* buffer, size_t* size)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_os_getpriority(uv_pid_t pid, int* priority)
-{
-    __bun_throw_not_implemented("uv_os_getpriority");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_os_homedir(char* buffer, size_t* size)
 {
     __bun_throw_not_implemented("uv_os_homedir");
@@ -1138,12 +1088,6 @@ UV_EXTERN int uv_os_homedir(char* buffer, size_t* size)
 UV_EXTERN int uv_os_setenv(const char* name, const char* value)
 {
     __bun_throw_not_implemented("uv_os_setenv");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_os_setpriority(uv_pid_t pid, int priority)
-{
-    __bun_throw_not_implemented("uv_os_setpriority");
     __builtin_unreachable();
 }
 
@@ -1411,12 +1355,6 @@ UV_EXTERN const char* uv_req_type_name(uv_req_type type)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_resident_set_memory(size_t* rss)
-{
-    __bun_throw_not_implemented("uv_resident_set_memory");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_run(uv_loop_t*, uv_run_mode mode)
 {
     __bun_throw_not_implemented("uv_run");
@@ -1594,12 +1532,6 @@ UV_EXTERN size_t uv_stream_get_write_queue_size(const uv_stream_t* stream)
 UV_EXTERN int uv_stream_set_blocking(uv_stream_t* handle, int blocking)
 {
     __bun_throw_not_implemented("uv_stream_set_blocking");
-    __builtin_unreachable();
-}
-
-UV_EXTERN const char* uv_strerror(int err)
-{
-    __bun_throw_not_implemented("uv_strerror");
     __builtin_unreachable();
 }
 
@@ -2068,12 +2000,6 @@ UV_EXTERN int uv_utf16_to_wtf8(const uint16_t* utf16,
 UV_EXTERN unsigned int uv_version(void)
 {
     __bun_throw_not_implemented("uv_version");
-    __builtin_unreachable();
-}
-
-UV_EXTERN const char* uv_version_string(void)
-{
-    __bun_throw_not_implemented("uv_version_string");
     __builtin_unreachable();
 }
 

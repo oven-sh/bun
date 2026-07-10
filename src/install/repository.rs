@@ -55,6 +55,8 @@ fn tl_bufs() -> *mut TlBufs {
     //   `try_ssh`/`try_https` can return slices into the buffer.
     //   Callers must not retain a slice into a given field across a subsequent reborrow
     //   of that SAME field.
+    // Git-dependency cold path; per-checkout scratch.
+    #[allow(clippy::large_stack_frames)]
     TL_BUFS.with(|c| {
         let mut p = c.get();
         if p.is_null() {
@@ -120,7 +122,7 @@ impl SloppyGlobalGitConfig {
             return SloppyGlobalGitConfig::default();
         };
 
-        let mut config_file_path_buf = PathBuffer::uninit();
+        let mut config_file_path_buf = bun_paths::path_buffer_pool::get();
         let config_file_path = bun_paths::resolve_path::join_abs_string_buf_z::<
             bun_paths::platform::Auto,
         >(home_dir, &mut config_file_path_buf, &[b".gitconfig"]);
@@ -371,7 +373,7 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
     // `bun_spawn::run` does POSIX argv/envp marshalling
     // + `process::sync::spawn`. On Windows it supplies the thread's
     // `MiniEventLoop` (idempotent `init_global` — same handle PackageManager
-    // already published) so `spawn_process_windows` has a real `uv_loop_t*`.
+    // already published) so `spawn_process_windows` has a real event loop.
     let result = bun_spawn::run(bun_spawn::RunOptions {
         argv,
         env_map: std_map.get(),

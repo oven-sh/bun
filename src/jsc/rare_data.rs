@@ -903,7 +903,7 @@ impl RareData {
     pub fn stderr(&mut self) -> *mut c_void {
         bun_analytics::features::bun_stderr.fetch_add(1, Ordering::Relaxed);
         if self.stderr_store.is_none() {
-            let fd = Fd::from_uv(2);
+            let fd = Fd::from_js_fd(2);
             let mode: Mode = match syscall::fstat(fd) {
                 Ok(stat) => stat.st_mode as Mode,
                 Err(_) => 0,
@@ -922,7 +922,7 @@ impl RareData {
     pub fn stdout(&mut self) -> *mut c_void {
         bun_analytics::features::bun_stdout.fetch_add(1, Ordering::Relaxed);
         if self.stdout_store.is_none() {
-            let fd = Fd::from_uv(1);
+            let fd = Fd::from_js_fd(1);
             let mode: Mode = match syscall::fstat(fd) {
                 Ok(stat) => stat.st_mode as Mode,
                 Err(_) => 0,
@@ -941,7 +941,7 @@ impl RareData {
     pub fn stdin(&mut self) -> *mut c_void {
         bun_analytics::features::bun_stdin.fetch_add(1, Ordering::Relaxed);
         if self.stdin_store.is_none() {
-            let fd = Fd::from_uv(0);
+            let fd = Fd::from_js_fd(0);
             let mode: Mode = match syscall::fstat(fd) {
                 Ok(stat) => stat.st_mode as Mode,
                 Err(_) => 0,

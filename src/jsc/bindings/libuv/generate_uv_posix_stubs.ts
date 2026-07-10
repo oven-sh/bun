@@ -290,7 +290,7 @@ const final_contents = `// GENERATED CODE - DO NOT MODIFY BY HAND
 #include "uv-posix-polyfills.h"
 
 
-#if OS(LINUX) || OS(DARWIN)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD) || OS(WINDOWS)
 ${parts.map(([stub, _]) => stub).join("\n\n")}
 #endif
 
@@ -307,7 +307,9 @@ const test_plugin_contents = ` // GENERATED CODE ... NO TOUCHY!!
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <uv.h>
 
 napi_value call_uv_func(napi_env env, napi_callback_info info) {

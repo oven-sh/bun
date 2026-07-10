@@ -6,7 +6,7 @@ use core::sync::atomic::Ordering;
 use crate::bun_fs::FileSystem;
 use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
-use bun_paths::{self as Path, PathBuffer};
+use bun_paths::{self as Path};
 use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPool;
@@ -1862,7 +1862,7 @@ fn enqueue_local_tarball(
     // can be reallocated concurrently by the main thread while processing
     // other dependencies (e.g. `appendPackage` / `StringBuilder.allocate`
     // in `Package.fromNPM`).
-    let mut abs_buf = PathBuffer::uninit();
+    let mut abs_buf = bun_paths::path_buffer_pool::get();
     let (tarball_path, normalize): (&[u8], bool) = 'tarball_path: {
         let workspace_pkg_id = this
             .lockfile
@@ -2564,7 +2564,7 @@ fn get_or_put_resolved_package(
                     // SAFETY: `get_or_put` copies `folder_path_abs` into the
                     // lockfile string buffer before any other mutation.
                     let folder_path = this.lockfile.str_detached(&folder);
-                    let mut buf2 = PathBuffer::uninit();
+                    let mut buf2 = bun_paths::path_buffer_pool::get();
                     let folder_path_abs = if bun_paths::is_absolute(folder_path) {
                         folder_path
                     } else {
@@ -2678,7 +2678,7 @@ fn get_or_put_resolved_package(
             // SAFETY: `get_or_put` copies `workspace_path_u8` into the
             // lockfile string buffer before any other mutation.
             let workspace_path = this.lockfile.str_detached(&workspace_path_raw);
-            let mut buf2 = PathBuffer::uninit();
+            let mut buf2 = bun_paths::path_buffer_pool::get();
             let workspace_path_u8 = if bun_paths::is_absolute(workspace_path) {
                 workspace_path
             } else {

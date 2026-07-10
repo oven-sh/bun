@@ -529,3 +529,100 @@ it("clearTimeout with a numeric id is a no-op after a timeout promoted to an int
   expect(stdout).toBe("converted: ok\nsurvived\n");
   expect(exitCode).toBe(0);
 });
+
+// Differential event-loop liveness battery: each case spawns a subprocess and
+// asserts it exits on its own. A parked or spinning loop never resolves
+// `proc.exited`, so the test times out and `await using` kills the child.
+it.concurrent("lone setTimeout(100) fires and the process exits", async () => {
+  const src = `setTimeout(() => console.log("fired"), 100);`;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("fired\n");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("setTimeout scheduled from a setImmediate callback fires", async () => {
+  const src = `
+    setImmediate(() => {
+      setTimeout(() => console.log("timer-after-immediate"), 10);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("timer-after-immediate\n");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("an unref'd setTimeout does not hold the process open", async () => {
+  const src = `
+    setTimeout(() => {
+      console.log("should-not-fire");
+    }, 5000).unref();
+    console.log("end-of-script");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("end-of-script\n");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("an interval cleared after 3 ticks lets the process exit", async () => {
+  const src = `
+    let n = 0;
+    const iv = setInterval(() => {
+      if (++n === 3) {
+        clearInterval(iv);
+        console.log("ticks=" + n);
+      }
+    }, 10);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("ticks=3\n");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("setImmediate runs before setTimeout(0) when both are scheduled from a timer callback", async () => {
+  // Scheduled from within a timer callback this ordering is deterministic in
+  // both Node.js and Bun (unlike the main-script case in Node.js).
+  const src = `
+    setTimeout(() => {
+      setTimeout(() => console.log("t"), 0);
+      setImmediate(() => console.log("i"));
+    }, 1);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("i\nt\n");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});

@@ -198,13 +198,11 @@ impl<'a> Writable<'a> {
         {
             match stdio {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
-                    if let StdioResult::Buffer(buffer) = result {
-                        // Ownership of the `Box<uv::Pipe>` transfers to the
-                        // FileSink's writer (the sink takes over the heap
-                        // pointer).
-                        let uv_pipe: *mut _ = bun_core::heap::into_raw(buffer);
+                    if let StdioResult::Buffer(pipe) = result {
+                        // Ownership of the adopted engine pipe end transfers
+                        // to the FileSink's writer.
                         // `create_with_pipe` returns a freshly-boxed non-null pointer.
-                        let pipe_nn = NonNull::new(FileSink::create_with_pipe(evtloop, uv_pipe))
+                        let pipe_nn = NonNull::new(FileSink::create_with_pipe(evtloop, pipe))
                             .expect("FileSink::create_with_pipe returns non-null");
                         let pipe_ptr = pipe_nn.as_ptr();
                         let pipe = Self::pipe_sink_mut(&pipe_nn);
@@ -259,7 +257,7 @@ impl<'a> Writable<'a> {
                     };
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
                         evtloop,
-                        subprocess as *mut Subprocess<'a>,
+                        std::ptr::from_mut::<Subprocess<'a>>(subprocess),
                         result,
                         super::source_from_blob(blob),
                     )));
@@ -267,7 +265,7 @@ impl<'a> Writable<'a> {
                 Stdio::ArrayBuffer(array_buffer) => {
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
                         evtloop,
-                        subprocess as *mut Subprocess<'a>,
+                        std::ptr::from_mut::<Subprocess<'a>>(subprocess),
                         result,
                         super::source_from_array_buffer(core::mem::take(array_buffer)),
                     )));

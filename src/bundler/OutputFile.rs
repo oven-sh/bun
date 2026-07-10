@@ -470,7 +470,7 @@ impl OutputFile {
         };
         // NUL-terminate both paths into stack buffers via `resolve_path::z`.
         let mut src_buf = PathBuffer::uninit();
-        let mut dst_buf = PathBuffer::uninit();
+        let mut dst_buf = bun_paths::path_buffer_pool::get();
         let src = resolve_path::z(mv.get_pathname(), &mut src_buf);
         let dst = resolve_path::z(rel_path, &mut dst_buf);
         bun_sys::move_file_z(mv.dir, src, dir, dst)?;
@@ -478,14 +478,14 @@ impl OutputFile {
     }
 
     pub fn copy_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        let mut out_buf = PathBuffer::uninit();
+        let mut out_buf = bun_paths::path_buffer_pool::get();
         let fd_out = bun_sys::openat(
             dir,
             resolve_path::z(rel_path, &mut out_buf),
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o644,
         )?;
-        let mut in_buf = PathBuffer::uninit();
+        let mut in_buf = bun_paths::path_buffer_pool::get();
         let fd_in = bun_sys::openat(
             Fd::cwd(),
             resolve_path::z(self.src_path.text, &mut in_buf),

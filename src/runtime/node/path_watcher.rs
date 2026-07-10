@@ -42,8 +42,6 @@ use bun_core::strings;
 use bun_core::{Output, zstr};
 use bun_core::{ZStr, handle_oom};
 use bun_paths as path;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_paths::PathBuffer;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_paths::platform;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
@@ -858,7 +856,7 @@ impl Linux {
                 b.assume_init()
             }
         };
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
 
         while running.load(Ordering::Acquire) {
             // SAFETY: buf is valid for buf.0.len() bytes; fd is a plain c_int.
@@ -1556,7 +1554,3 @@ impl Kqueue {
         }
     }
 }
-
-// ────────────────────────────────────────────────────────────────────────────────
-// Windows stub
-// ────────────────────────────────────────────────────────────────────────────────

@@ -194,7 +194,7 @@ pub fn load_config(
         config_path_len = config_path_.len();
     } else {
         if ctx.args.absolute_working_dir.is_none() {
-            let mut secondbuf = PathBuffer::uninit();
+            let mut secondbuf = bun_paths::path_buffer_pool::get();
             let cwd_len = match bun_sys::getcwd(&mut *secondbuf) {
                 Ok(n) => n,
                 Err(_) => return Ok(()),

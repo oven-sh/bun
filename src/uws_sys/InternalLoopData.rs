@@ -33,8 +33,10 @@ pub struct InternalLoopData {
     pub head: *mut SocketGroup,
     pub quic_head: *mut c_void,
     pub quic_next_tick_us: i64,
+    /// Windows engine only (matches the #ifdef in loop_data.h) — POSIX
+    /// keeps the libuv-era layout without this slot.
     #[cfg(windows)]
-    pub quic_timer: *mut Timer,
+    pub quic_timer: *mut c_void,
     pub iterator: *mut SocketGroup,
     pub recv_buf: *mut u8,
     pub send_buf: *mut u8,

@@ -28,3 +28,6 @@ bun_ptr.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
 bun_uws.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_iocp.workspace = true

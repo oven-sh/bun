@@ -128,6 +128,24 @@ describe("ChildProcess.spawn()", () => {
 });
 
 describe("spawn()", () => {
+  it("writeSync after a child shared the fd appends instead of overwriting", () => {
+    // The child inherits the fd's kernel file object; parent sequential
+    // writes must follow the shared file pointer (libuv passed a NULL
+    // OVERLAPPED), not a stale private position over the child's output.
+    const log = path.join(tmpdirSync(), "build.log");
+    const fd = fs.openSync(log, "w");
+    fs.writeSync(fd, "== start ==\n");
+    spawnSync(bunExe(), ["-e", "console.log('CHILD-OUTPUT-LINE')"], {
+      stdio: ["ignore", fd, "ignore"],
+      env: bunEnv,
+    });
+    fs.writeSync(fd, "== done ==\n");
+    fs.closeSync(fd);
+    const content = fs.readFileSync(log, "utf8");
+    expect(content).toContain("CHILD-OUTPUT-LINE");
+    expect(content.indexOf("== done ==")).toBeGreaterThan(content.indexOf("CHILD-OUTPUT-LINE"));
+  });
+
   it("should spawn a process", () => {
     const child = spawn("bun", ["-v"]);
     expect(!!child).toBe(true);
@@ -870,5 +888,24 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
 
     const r = spawnSync("cmd.exe", ["/c", "exit 0"], { gid: 0 });
     expect(r.error?.code).toBe("ENOTSUP");
+  });
+});
+
+describe("kill() return value on exited children", () => {
+  // node contract: kill() on an already-exited child returns false and does
+  // not flip .killed; on a live child it returns true.
+  it("returns false after exit, true on a live child", async () => {
+    const dead = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: "ignore" });
+    await new Promise(resolve => dead.on("exit", resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(dead.kill()).toBe(false);
+    expect(dead.killed).toBe(false);
+
+    const live = spawn(bunExe(), ["-e", "await new Promise(r => setTimeout(r, 30_000))"], {
+      env: bunEnv,
+      stdio: "ignore",
+    });
+    expect(live.kill()).toBe(true);
+    await new Promise(resolve => live.on("exit", resolve));
   });
 });

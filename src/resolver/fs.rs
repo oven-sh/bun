@@ -1000,6 +1000,9 @@ thread_local! {
 }
 
 impl RealFS {
+    // Cold init (once per process); the scratch PathBuffer never lives on a
+    // hot stack.
+    #[allow(clippy::large_stack_frames)]
     fn platform_temp_dir_compute() -> &'static [u8] {
         // Try TMPDIR, TMP, and TEMP in that order, matching Node.js.
         // https://github.com/nodejs/node/blob/e172be269890702bf2ad06252f2f152e7604d76c/src/node_credentials.cc#L132
@@ -1369,7 +1372,7 @@ impl ModKey {
         #[cfg(unix)]
         let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
         #[cfg(windows)]
-        let mtime: i128 = (stat.mtim.sec as i128) * NS_PER_S + stat.mtim.nsec as i128;
+        let mtime: i128 = (stat.st_mtim.sec as i128) * NS_PER_S + stat.st_mtim.nsec as i128;
         let seconds = mtime / NS_PER_S;
 
         // We can't detect changes if the file system zeros out the modification time
@@ -2184,7 +2187,7 @@ impl RealFS {
         #[cfg(windows)]
         {
             let file = bun_sys::get_file_attributes(absolute_path_c)
-                .ok_or(bun_core::err!("FileNotFound"))?;
+                .ok_or_else(|| bun_core::err!("FileNotFound"))?;
             // A Windows reparse point carries FILE_ATTRIBUTE_DIRECTORY iff
             // the link is a directory link (junctions always do; symlinks
             // do iff created with SYMBOLIC_LINK_FLAG_DIRECTORY; AppExec
@@ -2253,7 +2256,7 @@ impl RealFS {
                 // SAFETY: all-zero is a valid BY_HANDLE_FILE_INFORMATION (POD)
                 unsafe { bun_core::ffi::zeroed_unchecked() };
             // SAFETY: `handle` is a valid file handle for the scope.
-            if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
+            if unsafe { w::GetFileInformationByHandle(handle, &raw mut info) } != 0 {
                 cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
                     EntryKind::Dir
                 } else {

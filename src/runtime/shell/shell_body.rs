@@ -54,9 +54,9 @@ pub type GlobWalker = bun_glob::BunGlobWalkerZ;
 pub const SUBSHELL_TODO_ERROR: &str = "Subshells are not implemented, please open GitHub issue!";
 
 /// Using these instead of the file descriptor decl literals to make sure we use LibUV fds on Windows
-pub const STDIN_FD: Fd = Fd::from_uv(0);
-pub const STDOUT_FD: Fd = Fd::from_uv(1);
-pub const STDERR_FD: Fd = Fd::from_uv(2);
+pub const STDIN_FD: Fd = Fd::from_js_fd(0);
+pub const STDOUT_FD: Fd = Fd::from_js_fd(1);
+pub const STDERR_FD: Fd = Fd::from_js_fd(2);
 
 pub const POSIX_DEV_NULL: &ZStr = bun_core::zstr!("/dev/null");
 pub const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
@@ -306,9 +306,9 @@ impl<'a> GlobalJS<'a> {
     pub fn platform_event_loop(self) -> &'a PlatformEventLoop {
         let vm = self.event_loop_ctx();
         #[cfg(windows)]
-        // SAFETY: uv_loop() returns the live libuv loop owned by the VM; lifetime tied to 'a.
+        // SAFETY: platform_loop() returns the VM's live event loop; lifetime tied to 'a.
         unsafe {
-            return &*vm.uv_loop();
+            return &*vm.platform_loop();
         }
         #[cfg(not(windows))]
         // SAFETY: `event_loop_handle` is set during VM init and never freed before the VM.
@@ -421,17 +421,9 @@ impl<'a> GlobalMini<'a> {
 
     #[inline]
     pub fn platform_event_loop(self) -> &'a PlatformEventLoop {
-        #[cfg(windows)]
-        // SAFETY: see `MiniEventLoop::loop_ptr()` invariant; `uv_loop` is its
-        // embedded libuv loop, set once by `us_create_loop` and immutable.
-        unsafe {
-            return &*(*self.mini.loop_ptr()).uv_loop;
-        }
-        #[cfg(not(windows))]
+        // The uws wrapper IS the platform loop on every target.
         // SAFETY: see `MiniEventLoop::loop_ptr()` invariant.
-        unsafe {
-            &*self.mini.loop_ptr()
-        }
+        unsafe { &*self.mini.loop_ptr().cast() }
     }
 }
 

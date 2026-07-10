@@ -20,7 +20,6 @@ import { libarchive } from "./libarchive.ts";
 import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
 import { libspng } from "./libspng.ts";
-import { libuv } from "./libuv.ts";
 import { libwebp } from "./libwebp.ts";
 import { lolhtml } from "./lolhtml.ts";
 import { lshpack } from "./lshpack.ts";
@@ -59,7 +58,6 @@ export const allDeps: readonly Dependency[] = [
   cares,
   hdrhistogram,
   highway,
-  libuv,
   lolhtml,
   lshpack,
   lsqpack,
@@ -87,7 +85,6 @@ export {
   libdeflate,
   libjpegTurbo,
   libspng,
-  libuv,
   libwebp,
   lolhtml,
   lshpack,

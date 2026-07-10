@@ -1284,11 +1284,27 @@ impl WebWorker {
             // SAFETY: loop owned by this thread's VM; no concurrent access.
             unsafe { (*loop_).internal_loop_data.jsc_vm = core::ptr::null_mut() };
         }
+        // Concurrent tasks queued but never delivered (terminate() mid-flight)
+        // applied keep-alive refs whose balancing deref will never run.
         #[cfg(windows)]
-        {
-            // Per-thread libuv loop teardown; closes any handles still open on
-            // this worker's loop and drops the thread-local pointer.
-            bun_sys::windows::libuv::Loop::shutdown();
+        if !vm_ptr.is_null() {
+            // SAFETY: vm_ptr valid; sole owner; single-threaded teardown; the
+            // loop is live until on_thread_exit below.
+            let el = unsafe { (*vm_ptr).event_loop() };
+            if !el.is_null() {
+                // SAFETY: `el` points at the VM-embedded event loop.
+                unsafe {
+                    (*el).reconcile_concurrent_refs_for_teardown(
+                        loop_.unwrap_or(core::ptr::null_mut()),
+                    )
+                };
+            }
+        }
+        if !vm_ptr.is_null() {
+            // SAFETY: vm_ptr valid; sole owner.
+            // Must precede `on_thread_exit` below — the GC timers live on the
+            // loop it frees.
+            unsafe { (*vm_ptr).gc_controller.deinit() };
         }
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr valid; sole owner.

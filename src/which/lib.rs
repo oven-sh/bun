@@ -52,14 +52,16 @@ pub fn which_for_spawn<'a>(
     #[cfg(windows)]
     {
         let has_sep = bin.iter().any(|&b| b == b'/' || b == b'\\');
-        // The NoDefaultCurrentDirectoryInExePath env var is Windows' standard
-        // binary-planting opt-out; libuv gates its cwd search on it via
-        // NeedCurrentDirectoryForExePathW (libuv/libuv#3895), so spawn must too.
-        if !bin.is_empty()
-            && !has_sep
-            && !is_absolute(bin)
-            && !cwd.is_empty()
-            && std::env::var_os("NoDefaultCurrentDirectoryInExePath").is_none()
+        // NeedCurrentDirectoryForExePathW is Windows' live check of the
+        // NoDefaultCurrentDirectoryInExePath binary-planting opt-out; libuv
+        // gates its cwd search on it (libuv/libuv#3895), so spawn must too.
+        // Live per-call (never cached): the variable can be set mid-process
+        // and the engine's own path_search consults the same API.
+        // SAFETY: empty NUL-terminated wide string; pure env consult.
+        let cwd_search_allowed = unsafe {
+            bun_windows_sys::externs::NeedCurrentDirectoryForExePathW([0u16].as_ptr()) != 0
+        };
+        if !bin.is_empty() && !has_sep && !is_absolute(bin) && !cwd.is_empty() && cwd_search_allowed
         {
             let mut rel: Vec<u8> = Vec::with_capacity(bin.len() + 2);
             rel.extend_from_slice(b"./");

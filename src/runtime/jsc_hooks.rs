@@ -4171,10 +4171,7 @@ unsafe fn transpile_file(
                         .to_js();
                     // SAFETY: per fn contract — `ret` is a valid out-param.
                     unsafe {
-                        *ret = ErrorableResolvedSource::err(
-                            bun_core::err!("JSErrorObject"),
-                            js,
-                        );
+                        *ret = ErrorableResolvedSource::err(bun_core::err!("JSErrorObject"), js);
                     }
                     return ptr::null_mut();
                 }

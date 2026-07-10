@@ -259,7 +259,7 @@ describe.concurrent("ERR_INVALID_PACKAGE_CONFIG", () => {
         "p.mjs": `import * as N from "./pkg/t.mjs"; console.log("ns", Object.keys(N));`,
       });
       const { stdout, stderr, exitCode } = await run(String(dir), ["p.mjs"]);
-      expect(normalizeBunSnapshot(stdout, dir)).toBe("loaded\nns [ \"x\" ]");
+      expect(normalizeBunSnapshot(stdout, dir)).toBe('loaded\nns [ "x" ]');
       expect(stderr).not.toContain("ERR_INVALID_PACKAGE_CONFIG");
       expect(exitCode).toBe(0);
     });
@@ -270,7 +270,7 @@ describe.concurrent("ERR_INVALID_PACKAGE_CONFIG", () => {
         "p.cjs": `const N = require("./pkg/t.cjs"); console.log("ns", Object.keys(N));`,
       });
       const { stdout, stderr, exitCode } = await run(String(dir), ["p.cjs"]);
-      expect(normalizeBunSnapshot(stdout, dir)).toBe("loaded\nns [ \"x\" ]");
+      expect(normalizeBunSnapshot(stdout, dir)).toBe('loaded\nns [ "x" ]');
       expect(stderr).not.toContain("ERR_INVALID_PACKAGE_CONFIG");
       expect(exitCode).toBe(0);
     });

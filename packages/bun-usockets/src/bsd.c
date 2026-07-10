@@ -1734,6 +1734,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
      * `localAddress`/`localPort` connect options). A failure here - typically
      * EADDRINUSE or EADDRNOTAVAIL - fails the connect with that errno. */
     if (local_addr) {
+#ifndef _WIN32
+        /* Match libuv's uv__tcp_bind: set SO_REUSEADDR so binding the local
+         * port succeeds when earlier connections on that port are still in
+         * TIME_WAIT. Not set on Windows, where SO_REUSEADDR would allow
+         * stealing a port that is actively in use (see libuv win/tcp.c). */
+        int on = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+#endif
         socklen_t local_len = local_addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
         if (bind(fd, (struct sockaddr *) local_addr, local_len)) {
 #ifdef _WIN32

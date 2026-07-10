@@ -6,6 +6,7 @@ import * as CJSArrayLike from "./cjs-defineProperty-arraylike.cjs";
 import * as CJS from "./cjs-defineProperty-fixture.cjs";
 import * as FnEsmNS from "./cjs-function-esmodule-fixture.cjs";
 import * as FnNS from "./cjs-function-exports-fixture.cjs";
+import * as NativeCtorNS from "./cjs-native-constructor-fixture.cjs";
 import * as Self from "./esm-defineProperty.test.ts";
 // https://github.com/oven-sh/bun/issues/4432
 test("defineProperty", () => {
@@ -75,6 +76,15 @@ describe("module.exports = function: intrinsics are not named exports", () => {
     expect(Object.getOwnPropertyNames(FnEsmNS).sort()).toEqual(["default", "foo"]);
     expect(FnEsmNS.default).toBe("D");
     expect(FnEsmNS.foo).toBe(1);
+  });
+
+  test("native constructor (fast enumeration path)", () => {
+    const names = Object.getOwnPropertyNames(NativeCtorNS).sort();
+    expect(names).not.toContain("length");
+    expect(names).not.toContain("name");
+    expect(names).not.toContain("prototype");
+    expect(names).toContain("default");
+    expect(NativeCtorNS.default).toBe(globalThis.AbortController);
   });
 
   test.each(["name", "length", "prototype"])("import { %s } is a link error", async intrinsic => {

@@ -1036,6 +1036,9 @@ void populateESMExports(
                     if (key->isSymbol() || key == esModuleMarker)
                         return true;
 
+                    if (exportsIsCallable && (key == vm.propertyNames->length || key == vm.propertyNames->name || key == vm.propertyNames->prototype))
+                        return true;
+
                     needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
 
                     JSValue value = exports->getDirect(entry.offset());
@@ -1099,6 +1102,9 @@ void populateESMExports(
                 if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
                     return true;
 
+                if (exportsIsCallable && (key == vm.propertyNames->length || key == vm.propertyNames->name || key == vm.propertyNames->prototype))
+                    return true;
+
                 JSValue value = exports->getDirect(entry.offset());
 
                 exportNames.append(Identifier::fromUid(vm, key));
@@ -1121,8 +1127,9 @@ void populateESMExports(
                 if (property == vm.propertyNames->constructor)
                     continue;
 
-                // When module.exports is a function/class, don't expose its own
-                // intrinsic properties (length, name, prototype) as named exports.
+                // When module.exports is a function/class, skip its intrinsic
+                // length/name/prototype. This also drops explicit
+                // `module.exports.prototype = ...` which Node's lexer exports.
                 if (exportsIsCallable && (property == vm.propertyNames->length || property == vm.propertyNames->name || property == vm.propertyNames->prototype))
                     continue;
 

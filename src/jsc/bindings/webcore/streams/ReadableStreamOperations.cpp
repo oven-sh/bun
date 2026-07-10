@@ -1050,10 +1050,10 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
     std::span<const uint8_t> bytes;
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
         if (!view->isDetached())
-            bytes = std::span { static_cast<const uint8_t*>(view->vector()), view->byteLength() };
+            bytes = view->span();
     } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
         if (buffer->impl() && !buffer->impl()->isDetached())
-            bytes = std::span { static_cast<const uint8_t*>(buffer->impl()->data()), buffer->impl()->byteLength() };
+            bytes = buffer->impl()->span();
     } else {
         auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not a BufferSource"_s);
         RETURN_IF_EXCEPTION(scope, void());

@@ -140,6 +140,32 @@ describe.concurrent("explicit CommonJS module type rejects ESM-only syntax", () 
     expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
   });
 
+  test('nameless nested {"type":"module"} overrides outer {"type":"commonjs"} (dual-package layout)', async () => {
+    // e.g. puppeteer: root `{"type":"commonjs"}`, `lib/esm/package.json` = `{"type":"module"}`.
+    using dir = tempDir("nested-esm", {
+      "package.json": `{"name":"pkg","type":"commonjs"}`,
+      "lib/esm/package.json": `{"type":"module"}`,
+      "lib/esm/inner/t.js": exportBody,
+      "entry.mjs": `await import("./lib/esm/inner/t.js");\n`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).not.toContain("Cannot use 'export' in a CommonJS module");
+    expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
+  });
+
+  test('nameless nested {"type":"commonjs"} overrides outer {"type":"module"}', async () => {
+    using dir = tempDir("nested-cjs", {
+      "package.json": `{"name":"pkg","type":"module"}`,
+      "dist/cjs/package.json": `{"type":"commonjs"}`,
+      "dist/cjs/inner/t.js": exportBody,
+      "entry.mjs": `await import("./dist/cjs/inner/t.js");\n`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toContain("Cannot use 'export' in a CommonJS module");
+    expect(stderr).toContain('the nearest package.json sets "type": "commonjs"');
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  });
+
   test("module.exports in .cjs still runs as CJS", async () => {
     using dir = tempDir("cjs-modexp", {
       "t.cjs": `module.exports = { x: 7 };\nconsole.log("ran");\n`,

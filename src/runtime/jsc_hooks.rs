@@ -3909,6 +3909,9 @@ struct LoaderResult<'a> {
     specifier: &'a [u8],
     /// Always `None` for non-JS-like loaders (not needed there).
     package_json: Option<&'a bun_resolver::package_json::PackageJSON>,
+    /// `"type"` from the nearest ancestor package.json, including nameless ones
+    /// that `enclosing_package_json` skips. `Unknown` for non-JS-like loaders.
+    nearest_module_type: ModuleType,
 }
 
 /// `options.getLoaderAndVirtualSource` — high-tier body.
@@ -4032,15 +4035,34 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // package.json sniff for `.js`/`.ts` module-type.
     let dir = path.name().dir;
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
-    let package_json = if is_js_like && bun_paths::is_absolute(dir) {
+    let (package_json, nearest_module_type) = if is_js_like && bun_paths::is_absolute(dir) {
         // SAFETY: per fn contract — `transpiler.resolver` is a value field of
         // the VM; `read_dir_info` is re-entrant on the JS thread.
         match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
-            Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
-            _ => None,
+            Ok(Some(dir_info)) => {
+                // `enclosing_package_json` skips nameless package.json files, but
+                // Node's "type" determination uses the nearest one regardless of
+                // name (e.g. puppeteer `lib/esm/package.json` = {"type":"module"}
+                // under a root `{"type":"commonjs"}`).
+                let mut walk = Some(dir_info);
+                let nearest_module_type = loop {
+                    match walk {
+                        Some(di) => match di.package_json() {
+                            Some(pj) => break pj.module_type,
+                            None => walk = di.get_parent(),
+                        },
+                        None => break ModuleType::Unknown,
+                    }
+                };
+                (
+                    dir_info.package_json().or(dir_info.enclosing_package_json),
+                    nearest_module_type,
+                )
+            }
+            _ => (None, ModuleType::Unknown),
         }
     } else {
-        None
+        (None, ModuleType::Unknown)
     };
 
     Ok(LoaderResult {
@@ -4050,6 +4072,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
         is_main,
         specifier,
         package_json,
+        nearest_module_type,
     })
 }
 
@@ -4269,11 +4292,8 @@ unsafe fn transpile_file(
         }
         // regex /\.[jt]s$/
         if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
-            // Use the package.json module type if it exists.
-            break 'brk lr
-                .package_json
-                .map(|pkg| pkg.module_type)
-                .unwrap_or(ModuleType::Unknown);
+            // Use the nearest package.json's "type" (including nameless ones).
+            break 'brk lr.nearest_module_type;
         }
         // For JSX/TSX and other extensions, let the file contents decide.
         ModuleType::Unknown

@@ -1228,13 +1228,9 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     expect(output).toContain("hello");
   });
 
-  // On macOS, xnu flushes the pty output queue when the last slave fd closes
-  // (ptsclose -> ttyclose -> ttyflush). If a short-lived child writes and
-  // exits before the parent's event loop reads the master, the output is
-  // dropped and only the exit callback fires. Spawning many terminals back to
-  // back keeps the parent busy long enough to hit that window on slow hosts.
-  // Not `test.concurrent`: these run concurrently inside the test body, and we
-  // want the serial `Bun.spawn` loop to be the only contention.
+  // https://github.com/oven-sh/bun/issues/33187
+  // Not `test.concurrent`: spawns run concurrently inside the body; the serial
+  // `Bun.spawn` loop must be the only contention to reproduce the race.
   test("many fast-exiting subprocesses all deliver pty output", async () => {
     const N = isWindows ? 8 : 20;
     const outcomes: string[] = [];

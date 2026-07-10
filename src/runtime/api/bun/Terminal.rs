@@ -173,11 +173,9 @@ bitflags::bitflags! {
         const CONNECTED      = 1 << 4;
         const READER_DONE    = 1 << 5;
         const WRITER_DONE    = 1 << 6;
-        /// Set when an inline-created terminal has been attached to a subprocess
-        /// via spawn; prevents reusing the same inline terminal for a second
-        /// spawn. On Windows the first exit's ClosePseudoConsole would silently
-        /// kill the second; on POSIX slave_fd is held until the first exit
-        /// (see `drain_and_close_slave_fd`).
+        /// Set once an inline-created terminal is attached to a spawn; blocks
+        /// reuse. Windows: first exit's ClosePseudoConsole would kill a second
+        /// child. POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
         const INLINE_SPAWNED = 1 << 7;
     }
 }

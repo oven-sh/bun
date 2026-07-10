@@ -183,10 +183,10 @@ async function diagnose(
     },
     getCurrentDirectory: () => fixtureDir,
     getCompilationSettings: () => options,
-    getDefaultLibFileName: options => {
-      const defaultLibFileName = ts.getDefaultLibFileName(options);
-      return join(fixtureDir, "node_modules", "typescript", "lib", defaultLibFileName);
-    },
+    // Resolve lib.*.d.ts from the same TypeScript install that provides this compiler API.
+    // typescript@7 (native) no longer ships lib/lib.*.d.ts in its npm package, so the
+    // fixture's `typescript` dep cannot be used as the lib source.
+    getDefaultLibFileName: options => ts.getDefaultLibFilePath(options),
     fileExists: ts.sys.fileExists,
     readFile: ts.sys.readFile,
     readDirectory: ts.sys.readDirectory,

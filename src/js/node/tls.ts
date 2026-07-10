@@ -1379,19 +1379,22 @@ function Server(options, secureConnectionListener): void {
       }
       this.secureOptions = secureOptions;
 
-      const requestCert = options.requestCert || false;
-
-      if (requestCert) this._requestCert = requestCert;
-      else this._requestCert = undefined;
+      // Node only sets requestCert/rejectUnauthorized in the constructor, not
+      // in setSecureContext(), and the constructor runs through here - so
+      // update only when the option was explicitly passed. These reach the
+      // native listener again on every rotation below, so fail closed:
+      // rejectUnauthorized is true unless explicitly `false`.
+      const requestCert = options.requestCert;
+      if (typeof requestCert !== "undefined") {
+        this._requestCert = requestCert || undefined;
+      }
 
       const rejectUnauthorized = options.rejectUnauthorized;
-
-      // Node only disables verification on an explicit `false` (null, 0, ""
-      // all mean enabled), and this field now reaches the native listener
-      // again on every rotation below - fail closed.
       if (typeof rejectUnauthorized !== "undefined") {
         this._rejectUnauthorized = rejectUnauthorized !== false;
-      } else this._rejectUnauthorized = rejectUnauthorizedDefault();
+      } else if (typeof this._rejectUnauthorized !== "boolean") {
+        this._rejectUnauthorized = rejectUnauthorizedDefault();
+      }
 
       const ciphers = options.ciphers;
       if (typeof ciphers !== "undefined") {
@@ -1419,7 +1422,13 @@ function Server(options, secureConnectionListener): void {
       // accepted keep the certificate they handshook with, matching Node.
       const handle = this._handle;
       if (handle) {
-        setListenerSecureContext(handle, this[buntls](0, undefined, false)[0]);
+        const tls = this[buntls](0, undefined, false)[0];
+        // Same transformation net.ts's listen path applies before Bun.listen:
+        // without it the verify mode on the rebuilt context ends up at
+        // SSL_VERIFY_FAIL_IF_NO_PEER_CERT for any server that has `ca` but did
+        // not set `requestCert`.
+        if (!tls.requestCert) tls.rejectUnauthorized = false;
+        setListenerSecureContext(handle, tls);
       }
     }
   };

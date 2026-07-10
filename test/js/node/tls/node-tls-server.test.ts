@@ -1215,6 +1215,81 @@ it("setSecureContext() with an unusable certificate throws and keeps the live co
   await once(server, "close");
 });
 
+it("setSecureContext() keeps the verify mode a server without requestCert listened with", async () => {
+  // A server with `ca` but no `requestCert` listens with reject_unauthorized
+  // clamped to 0 (net.ts does this before Bun.listen). The rotation path has
+  // to apply the same clamp, or the rebuilt context ends up with
+  // SSL_VERIFY_FAIL_IF_NO_PEER_CERT and every certless client is aborted at the
+  // handshake - `secureConnection` never fires, `tlsClientError` does.
+  const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f), "utf8");
+  const server: Server = createServer({
+    key: keys("agent1-key.pem"),
+    cert: keys("agent1-cert.pem"),
+    ca: [keys("ca1-cert.pem")],
+  });
+  const accepted = Promise.withResolvers<true>();
+  server.on("secureConnection", socket => {
+    accepted.resolve(true);
+    socket.end();
+  });
+  server.on("tlsClientError", err => accepted.reject(err));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  server.setSecureContext({ key: keys("agent1-key.pem"), cert: keys("agent1-cert.pem"), ca: [keys("ca1-cert.pem")] });
+
+  const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+  client.on("error", () => {});
+  expect(await accepted.promise).toBe(true);
+  client.destroy();
+  await once(client, "close");
+
+  server.close();
+  await once(server, "close");
+});
+
+it("setSecureContext() keeps requesting a client certificate when requestCert was omitted", async () => {
+  // Node never touches requestCert/rejectUnauthorized in setSecureContext(); a
+  // key/cert-only rotation on an mTLS server has to keep sending
+  // CertificateRequest so getPeerCertificate() stays populated.
+  const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f), "utf8");
+  const server: Server = createServer({
+    key: keys("agent1-key.pem"),
+    cert: keys("agent1-cert.pem"),
+    ca: [keys("ca1-cert.pem")],
+    requestCert: true,
+    rejectUnauthorized: false,
+  });
+  const seen = Promise.withResolvers<string | undefined>();
+  server.on("secureConnection", socket => {
+    seen.resolve((socket.getPeerCertificate() as PeerCertificate)?.subject?.CN);
+    socket.end();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  server.setSecureContext({ key: keys("agent1-key.pem"), cert: keys("agent1-cert.pem") });
+  expect((server as any)._requestCert).toBe(true);
+  expect((server as any)._rejectUnauthorized).toBe(false);
+
+  const client = connect({
+    port,
+    host: "127.0.0.1",
+    rejectUnauthorized: false,
+    key: keys("agent1-key.pem"),
+    cert: keys("agent1-cert.pem"),
+  });
+  await once(client, "secureConnect");
+  expect(await seen.promise).toBe("agent1");
+  client.destroy();
+  await once(client, "close");
+
+  server.close();
+  await once(server, "close");
+});
+
 it("SNICallback rejecting with a non-Error value drops the connection (no hang)", async () => {
   // cb(true) / cb("reason"): Node treats any truthy err as an abort. The
   // boolean form must not be confused with internal sentinels - the

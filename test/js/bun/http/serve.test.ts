@@ -656,7 +656,11 @@ describe("non-persistent connection never dispatches a pipelined follow-up", () 
 
   it.each([
     ["HTTP/1.0, no Connection header", "GET / HTTP/1.0\r\nHost: a\r\n\r\n", "one-response-only"],
-    ["HTTP/1.0, client offered keep-alive", "GET / HTTP/1.0\r\nHost: a\r\nConnection: keep-alive\r\n\r\n", "one-response-only"],
+    [
+      "HTTP/1.0, client offered keep-alive",
+      "GET / HTTP/1.0\r\nHost: a\r\nConnection: keep-alive\r\n\r\n",
+      "one-response-only",
+    ],
     ["HTTP/1.1, Connection: close", "GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n", "one-response-only"],
     ["HTTP/1.0, HEAD (end-without-body path)", "HEAD / HTTP/1.0\r\nHost: a\r\n\r\n", ""],
   ])("%s", async (_label, payload, body) => {

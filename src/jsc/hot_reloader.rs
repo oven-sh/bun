@@ -37,7 +37,7 @@ pub enum ImportWatcher {
 const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
 
 impl ImportWatcher {
-    pub fn start(&mut self) -> Result<(), crate::Error> {
+    pub fn start(&mut self) -> Result<(), crate::CrateError> {
         match self {
             ImportWatcher::Hot(w) => w.start().map_err(Into::into),
             ImportWatcher::Watch(w) => w.start().map_err(Into::into),

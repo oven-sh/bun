@@ -35,8 +35,8 @@ use bun_jsc::virtual_machine::{
     InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
 };
 use bun_jsc::{
-    AnyPromise, ErrorableResolvedSource, ErrorableString, JSGlobalObject, JSInternalPromise,
-    JSModuleLoader, JSValue, JsResult, ResolvedSource,
+    AnyPromise, ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject,
+    JSInternalPromise, JSModuleLoader, JSValue, JsResult, ResolvedSource,
 };
 
 use bun_ast::ImportKind;
@@ -1947,7 +1947,7 @@ unsafe fn transpile_source_code(
         // SAFETY: per fn contract — `ret` is a valid out-param.
         unsafe {
             *ret = ErrorableResolvedSource::err(
-                crate::Error::MissingTranspileExtra,
+                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
                 JSValue::UNDEFINED,
             );
         }
@@ -1962,14 +1962,19 @@ unsafe fn transpile_source_code(
             // `transpile_file` hook owns that. Do NOT reset here.
             true
         }
-        Err(e) => {
+        Err(_) => {
             // Note: on `error.ParseError` /
             // `error.AsyncModule` the caller (`Bun__transpileFile`) catches and
             // routes through `processFetchLog`. Mirror that: write `.err` so the
             // low tier surfaces it; `process_fetch_log` is invoked by the
             // `transpile_file` hook, not here.
             // SAFETY: per fn contract.
-            unsafe { *ret = ErrorableResolvedSource::err(e, JSValue::UNDEFINED) };
+            unsafe {
+                *ret = ErrorableResolvedSource::err(
+                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                    JSValue::UNDEFINED,
+                )
+            };
             false
         }
     }
@@ -4106,7 +4111,7 @@ unsafe fn transpile_file(
                 .to_js();
             // SAFETY: per fn contract — `ret` is a valid out-param.
             unsafe {
-                *ret = ErrorableResolvedSource::err(crate::Error::JSErrorObject, js);
+                *ret = ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), js);
             }
             return ptr::null_mut();
         }
@@ -4381,7 +4386,7 @@ unsafe fn transpile_file(
                 let exc = global_ref.take_error(bun_jsc::JsError::Thrown);
                 // SAFETY: per fn contract.
                 unsafe {
-                    *ret = ErrorableResolvedSource::err(crate::Error::JSError, exc);
+                    *ret = ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), exc);
                 }
                 return ptr::null_mut();
             }
@@ -4548,7 +4553,7 @@ unsafe fn transpile_virtual_module(
                 let exc = global_ref.take_error(bun_jsc::JsError::Thrown);
                 // SAFETY: per fn contract.
                 unsafe {
-                    *ret = ErrorableResolvedSource::err(crate::Error::JSError, exc);
+                    *ret = ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), exc);
                 }
                 return true;
             }
@@ -4989,7 +4994,7 @@ unsafe fn resolve_hook(
             Err(_) => return false,
         };
         // SAFETY: per fn contract.
-        unsafe { *res = ErrorableString::err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG), js_err) };
+        unsafe { *res = ErrorableString::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), js_err) };
         return true;
     }
 
@@ -5134,7 +5139,7 @@ unsafe fn resolve_hook(
             Err(_) => return false,
         };
         // SAFETY: per fn contract.
-        unsafe { *res = ErrorableString::err(err, js_err) };
+        unsafe { *res = ErrorableString::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), js_err) };
         return true;
     }
 

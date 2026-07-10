@@ -291,13 +291,9 @@ private:
                 return nullptr;
             }
 
-            /* A previous request on this connection marked it for close (HTTP/1.0
-             * or Connection: close, set below). RFC 9112 9.3/9.6: the connection
-             * is non-persistent; do not dispatch a pipelined follow-up. Runs
-             * before the per-request timeout/offset resets so a backpressured
-             * prior response keeps its armed idle timeout. Uncork first:
-             * uws_res_end_without_body / uws_res_end_sendfile markDone without
-             * uncorking, and getBufferedAmount() does not count corked bytes. */
+            /* Non-persistent (HTTP/1.0 or Connection: close, RFC 9112 9.3/9.6):
+             * drop pipelined follow-ups. Uncork first (end_without_body/sendfile
+             * don't) so corked bytes flush; placed before the per-request resets. */
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
                 auto *asyncSocket = (AsyncSocket<SSL> *) s;
                 asyncSocket->uncork();

@@ -412,8 +412,9 @@ bool MessagePort::hasPendingActivity() const
         return true;
     if (!scriptExecutionContext() || m_isDetached)
         return false;
-    // A 'close' listener has to outlive a GC until the event lands: the peer's
-    // notifyPeerClosed() task only holds a weak ref back to this port.
+    // A 'close' listener must outlive a GC until the event lands: notifyPeerClosed()
+    // holds only a weak ref back here. This does pin both ends of an idle channel until
+    // the context dies; node retains more — it never collects an entangled port at all.
     if (m_hasCloseEventListener.load(std::memory_order_acquire) && !m_closeEventDispatched)
         return true;
     if (!m_hasMessageEventListener)

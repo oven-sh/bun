@@ -281,13 +281,7 @@ private:
         auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
 
-            /* For every request we reset the timeout and hang until user makes action */
-            /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
-            us_socket_timeout((us_socket_t *) s, 0);
-
-            /* Reset httpResponse */
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
-            httpResponseData->offset = 0;
 
             /* Are we not ready for another request yet? Terminate the connection.
              * Important for denying async pipelining until, if ever, we want to support it.
@@ -299,7 +293,9 @@ private:
 
             /* A previous request on this connection marked it for close (HTTP/1.0
              * or Connection: close, set below). RFC 9112 9.3/9.6: the connection
-             * is non-persistent; do not dispatch a pipelined follow-up. */
+             * is non-persistent; do not dispatch a pipelined follow-up. Runs
+             * before the per-request timeout/offset resets so a backpressured
+             * prior response keeps its armed idle timeout. */
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
                 if (((AsyncSocket<SSL> *) s)->getBufferedAmount() == 0) {
                     ((AsyncSocket<SSL> *) s)->shutdown();
@@ -307,6 +303,13 @@ private:
                 }
                 return nullptr;
             }
+
+            /* For every request we reset the timeout and hang until user makes action */
+            /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
+            us_socket_timeout((us_socket_t *) s, 0);
+
+            /* Reset httpResponse */
+            httpResponseData->offset = 0;
 
             /* Mark pending request and emit it */
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;

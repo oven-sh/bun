@@ -1375,6 +1375,40 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     expect(exitCode).toBe(0);
   });
 
+  // node roots a main-founded SHARE_ENV tree at its RealEnvStore, so a worker writing
+  // through it reaches the real environment a child process inherits; a snapshot
+  // worker's store is private and never does. (On Windows this is what the
+  // SetEnvironmentVariableW write-through in JSSharedEnvMap keeps true.)
+  it.each([
+    ["SHARE_ENV", "written-by-worker"],
+    ["snapshot", "absent"],
+  ])("a %s worker's env write is %s to a child process", async (mode, want) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, SHARE_ENV, isMainThread, parentPort } = require("worker_threads");
+         const { execFileSync } = require("child_process");
+         if (isMainThread) {
+           const opts = ${JSON.stringify(mode)} === "SHARE_ENV" ? { env: SHARE_ENV, eval: true } : { eval: true };
+           const w = new Worker('process.env.FROM_WORKER = "written-by-worker";', opts);
+           w.on("exit", () => {
+             // no env option: the child inherits the parent's environment
+             const out = execFileSync(process.execPath, ["-e", "console.log(process.env.FROM_WORKER ?? 'absent')"], {
+               encoding: "utf8",
+             }).trim();
+             console.log(out);
+           });
+         }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(want);
+    expect(exitCode).toBe(0);
+  });
+
   // Integer-like keys reach JSC through the indexed hooks; without ByIndex overrides
   // they land in JSObject's indexed storage and never touch the shared store.
   it("routes integer-like env keys through the shared store", async () => {

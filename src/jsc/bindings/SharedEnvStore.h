@@ -14,7 +14,11 @@ namespace Bun {
 // chains stay isolated. Refcounted: threads in a tree die in any order.
 class SharedEnvStore : public ThreadSafeRefCounted<SharedEnvStore> {
 public:
-    static Ref<SharedEnvStore> create() { return adoptRef(*new SharedEnvStore()); }
+    // `mainRooted` records whether the founding thread was the main thread. Node roots
+    // a main-founded tree at its RealEnvStore, so *any* thread writing through the tree
+    // reaches the OS environment; a tree founded by a snapshot worker never does.
+    static Ref<SharedEnvStore> create(bool mainRooted) { return adoptRef(*new SharedEnvStore(mainRooted)); }
+    bool isMainRooted() const { return m_mainRooted; }
 
     String get(const String& key)
     {
@@ -71,7 +75,12 @@ public:
     }
 
 private:
-    SharedEnvStore() = default;
+    explicit SharedEnvStore(bool mainRooted)
+        : m_mainRooted(mainRooted)
+    {
+    }
+
+    const bool m_mainRooted;
 
     // `name` is the key as first written; on POSIX it always equals the map key.
     struct Entry {

@@ -347,19 +347,20 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 
 // Founding a SHARE_ENV tree swaps main's process.env off the windowsEnv Proxy that
 // called SetEnvironmentVariableW, so every mutation of a main-rooted shared store has
-// to re-apply that write-through. `value == nullptr` deletes.
-static ALWAYS_INLINE void syncWindowsEnv(JSGlobalObject* globalObject, const String& key, const String* value)
+// to re-apply that write-through. Gated on the *store*, not the writing thread: node
+// roots a main-founded tree at its RealEnvStore, so a worker writing through that tree
+// reaches the OS env too. `value == nullptr` deletes.
+static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& key, const String* value)
 {
 #if OS(WINDOWS)
-    auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
-    if (!context || !context->isMainThread())
+    if (!store || !store->isMainRooted())
         return;
     if (value)
         Bun__Process__editWindowsEnvVar(Bun::toString(key), Bun::toString(*value));
     else
         Bun__Process__editWindowsEnvVar(Bun::toString(key), { .tag = BunStringTag::Dead });
 #else
-    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(store);
     UNUSED_PARAM(key);
     UNUSED_PARAM(value);
 #endif
@@ -563,7 +564,7 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
 
     String keyStr = String(uid);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
-    syncWindowsEnv(globalObject, keyStr, &stringValue);
+    syncWindowsEnv(store, keyStr, &stringValue);
     store->set(keyStr, stringValue);
     return true;
 }
@@ -581,7 +582,7 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
-    syncWindowsEnv(globalObject, String(uid), nullptr);
+    syncWindowsEnv(store, String(uid), nullptr);
     store->remove(String(uid));
     // Also drop any own property the Base fallback installed (accessor descriptors).
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
@@ -613,7 +614,7 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
             if (auto* store = sharedEnvStoreFor(object)) {
                 String existing = store->get(String(uid));
                 if (!existing.isNull()) {
-                    syncWindowsEnv(globalObject, String(uid), nullptr);
+                    syncWindowsEnv(store, String(uid), nullptr);
                     store->remove(String(uid));
                     object->putDirect(vm, propertyName, jsString(vm, existing), 0);
                 }
@@ -633,7 +634,7 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
 
     String keyStr = String(uid);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
-    syncWindowsEnv(globalObject, keyStr, &stringValue);
+    syncWindowsEnv(store, keyStr, &stringValue);
     store->set(keyStr, stringValue);
     return true;
 }
@@ -662,7 +663,7 @@ bool JSSharedEnvMap::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalO
     }
 
     String keyStr = String::number(index);
-    syncWindowsEnv(globalObject, keyStr, nullptr);
+    syncWindowsEnv(store, keyStr, nullptr);
     store->remove(keyStr);
     return Base::deletePropertyByIndex(cell, globalObject, index);
 }
@@ -697,7 +698,7 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Seed unconditionally: this thread's env is the new tree's initial contents.
-    auto store = SharedEnvStore::create();
+    auto store = SharedEnvStore::create(globalObject->scriptExecutionContext()->isMainThread());
     for (const auto& key : keys) {
         JSValue value = envObject->get(globalObject, key);
         RETURN_IF_EXCEPTION(scope, nullptr);

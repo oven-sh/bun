@@ -1280,6 +1280,14 @@ impl WebWorker {
         live_workers::mark_exited();
 
         // ---- 5. Free worker-thread resources -------------------------------
+        if !vm_ptr.is_null() {
+            // A TranspilerJob still on the work pool (terminate() racing an
+            // async import) reads the VM allocation throughout `run()` and
+            // wakes this thread's loop when it finishes — join it before the
+            // loop teardown below and the VM free in `destroy()`.
+            // SAFETY: vm_ptr valid (sole owner); leaf-field borrow only.
+            unsafe { &(*vm_ptr).transpiler_store }.wait_for_inflight_jobs();
+        }
         if let Some(loop_) = loop_ {
             // SAFETY: loop owned by this thread's VM; no concurrent access.
             unsafe { (*loop_).internal_loop_data.jsc_vm = core::ptr::null_mut() };

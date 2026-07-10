@@ -4429,6 +4429,12 @@ impl VirtualMachine {
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
+        // Pool-thread `TranspilerJob::run()` reads `self.transpiler`, the
+        // event loop, `source_mappings`, and the job slot inside
+        // `transpiler_store` itself — join in-flight jobs before freeing any
+        // of it.
+        self.transpiler_store.wait_for_inflight_jobs();
+
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
 

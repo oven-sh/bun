@@ -455,29 +455,29 @@ fn get_value_simple(param: &Param<Help>) -> &'static [u8] {
     param.id.value
 }
 
-pub struct Args<Id: 'static> {
-    pub clap: ComptimeClap<Id>,
-    pub exe_arg: Option<&'static [u8]>,
+pub struct Args<'a, Id: 'static> {
+    pub clap: ComptimeClap<'a, Id>,
+    pub exe_arg: Option<&'a [u8]>,
 }
 
-impl<Id: 'static> Args<Id> {
+impl<'a, Id: 'static> Args<'a, Id> {
     pub fn flag(&self, name: &'static [u8]) -> bool {
         self.clap.flag(name)
     }
 
-    pub fn option(&self, name: &'static [u8]) -> Option<&'static [u8]> {
+    pub fn option(&self, name: &'static [u8]) -> Option<&'a [u8]> {
         self.clap.option(name)
     }
 
-    pub fn options(&self, name: &'static [u8]) -> &[&'static [u8]] {
+    pub fn options(&self, name: &'static [u8]) -> &[&'a [u8]] {
         self.clap.options(name)
     }
 
-    pub fn positionals(&self) -> &[&'static [u8]] {
+    pub fn positionals(&self) -> &[&'a [u8]] {
         self.clap.positionals()
     }
 
-    pub fn remaining(&self) -> &[&'static [u8]] {
+    pub fn remaining(&self) -> &[&'a [u8]] {
         self.clap.remaining()
     }
 
@@ -497,7 +497,7 @@ impl<Id: 'static> Args<Id> {
 pub fn parse<Id: 'static>(
     params: &'static [Param<Id>],
     opt: ParseOptions<'_>,
-) -> Result<Args<Id>, bun_core::Error> {
+) -> Result<Args<'static, Id>, bun_core::Error> {
     let mut iter = args::OsIterator::init();
     let exe_arg = iter.exe_arg;
 
@@ -518,7 +518,7 @@ pub fn parse<Id: 'static>(
 pub fn parse_with_table<Id: 'static>(
     table: &'static ConvertedTable,
     opt: ParseOptions<'_>,
-) -> Result<Args<Id>, bun_core::Error> {
+) -> Result<Args<'static, Id>, bun_core::Error> {
     let mut iter = args::OsIterator::init();
     let exe_arg = iter.exe_arg;
     let clap = ComptimeClap::<Id>::parse_with_table(
@@ -538,13 +538,13 @@ pub fn parse_with_table<Id: 'static>(
 /// **Cold path** — see [`parse`]; the startup hot path is [`parse_with_table`].
 #[cold]
 #[inline(never)]
-pub fn parse_ex<Id: 'static, I>(
+pub fn parse_ex<'a, Id: 'static, I>(
     params: &'static [Param<Id>],
     iter: &mut I,
     opt: ParseOptions<'_>,
-) -> Result<ComptimeClap<Id>, bun_core::Error>
+) -> Result<ComptimeClap<'a, Id>, bun_core::Error>
 where
-    I: args::ArgIter<'static>,
+    I: args::ArgIter<'a>,
 {
     ComptimeClap::<Id>::parse(params, iter, opt)
 }

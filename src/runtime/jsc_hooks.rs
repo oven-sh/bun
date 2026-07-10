@@ -1456,14 +1456,7 @@ unsafe fn apply_standalone_runtime_flags(
 /// `RunCommand` param table and return `!args.flag("--no-addons")`, or `None`
 /// on parse error.
 ///
-/// Note: the Rust `bun_clap::parse_ex` port currently constrains
-/// `ArgIter<'static>` (parsed values are stored by reference), which would
-/// force leaking the per-call UTF-8 copies of `exec_argv`. Spec only ever
-/// reads the single `--no-addons` flag from the result (per the in-tree
-/// `// TODO: currently this only checks for --no-addons`), so this body scans
-/// the converted argv directly with the same `stop_after_positional_at = 1`
-/// short-circuit. Full clap routing can return when `ComptimeClap` grows a
-/// borrowed-lifetime variant.
+/// Currently only honours `--no-addons`.
 ///
 /// # Safety
 /// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
@@ -1471,27 +1464,27 @@ unsafe fn apply_standalone_runtime_flags(
 unsafe fn parse_worker_exec_argv_allow_addons(
     exec_argv: &[bun_core::WTFStringImpl],
 ) -> Option<bool> {
-    let mut no_addons = false;
-    for &arg in exec_argv {
-        if arg.is_null() {
-            continue;
-        }
-        // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
-        let owned = unsafe { &*arg }.to_owned_slice_z();
-        let bytes = owned.as_bytes();
-        // `stop_after_positional_at = 1` — first non-flag token ends parsing.
-        if bytes.first() != Some(&b'-') {
-            break;
-        }
-        if bytes == b"--" {
-            break;
-        }
-        if bytes == b"--no-addons" {
-            no_addons = true;
-        }
-    }
-    // Override `allow_addons` unconditionally on successful parse.
-    Some(!no_addons)
+    let owned: Vec<_> = exec_argv
+        .iter()
+        .filter(|a| !a.is_null())
+        // SAFETY: per fn contract — each `arg` is a live `WTFStringImpl*`.
+        .map(|&a| unsafe { &*a }.to_owned_slice_z())
+        .collect();
+    let argv: Vec<&[u8]> = owned.iter().map(|s| s.as_bytes()).collect();
+
+    let mut iter = bun_clap::args::SliceIterator::init(&argv);
+    let args = bun_clap::ComptimeClap::<bun_clap::Help>::parse_with_table(
+        crate::cli::arguments::RUN_TABLE,
+        &mut iter,
+        bun_clap::ParseOptions {
+            diagnostic: None,
+            stop_after_positional_at: 1,
+        },
+    )
+    .ok()?;
+
+    // override the existing even if it was set
+    Some(!args.flag(b"--no-addons"))
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —

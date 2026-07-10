@@ -5518,6 +5518,13 @@ impl<'a> HTTPClient<'a> {
                 || self.state.transfer_encoding == Encoding::Chunked
                 || is_server_sent_events)
         {
+            if self.state.flags.is_redirect_pending {
+                // WHATWG HTTP-redirect fetch runs on the response head; the 3xx
+                // body is discarded, not awaited. The socket still carries
+                // undrained body bytes so it must be closed, not pooled.
+                self.state.flags.allow_keepalive = false;
+                return Ok(ShouldContinue::Finished);
+            }
             Ok(ShouldContinue::ContinueStreaming)
         } else {
             Ok(ShouldContinue::Finished)

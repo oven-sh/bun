@@ -140,7 +140,8 @@ describe.concurrent("ES module syntax in a .cjs/.cts file is an error", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Type-only TypeScript imports/exports are erased and leave valid CommonJS.
+  // Type-only and CommonJS-equivalent TypeScript forms are not ES-module
+  // statement syntax and must remain accepted in .cts.
   for (const [label, src] of [
     ["import type {X}", "import type { Readable } from 'node:stream';\nmodule.exports = 1;\n"],
     ["import type * as X", "import type * as stream from 'node:stream';\nmodule.exports = 1;\n"],
@@ -149,6 +150,7 @@ describe.concurrent("ES module syntax in a .cjs/.cts file is an error", () => {
     ["export interface", "export interface Foo {}\nmodule.exports = 1;\n"],
     ["export {type X}", "type Foo = number; export { type Foo };\nmodule.exports = 1;\n"],
     ["export declare", "export declare const x: number;\nmodule.exports = 1;\n"],
+    ["export as namespace", "export as namespace Foo;\nmodule.exports = 1;\n"],
   ] as const) {
     test(`.cts with ${label} is still allowed`, async () => {
       const { stdout, stderr, exitCode } = await run(

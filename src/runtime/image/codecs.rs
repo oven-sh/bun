@@ -479,7 +479,7 @@ impl Default for EncodeOptions {
 /// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
 /// the matching free — one allocation, zero copies, for the final output.
 ///
-/// `free` matches `jsc.C.JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
+/// `free` matches `jsc::JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
 /// be passed straight through; the `ctx` arg is unused.
 pub struct Encoded {
     // SAFETY: fat pointer (ptr+len) owned by whichever C allocator produced

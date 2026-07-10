@@ -372,6 +372,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let jsc_vm: &mut jsc::VirtualMachineRef = global_this.bun_vm().as_mut();
 
     let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let mut user_specified_cwd = false;
 
     let mut stdio: [Stdio; 3] = [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit];
 
@@ -475,6 +476,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // `cwd_owned` is never mutated again, so this borrow is valid
                     // for every read of `cwd` below.
                     cwd = cwd_owned.as_bytes();
+                    user_specified_cwd = true;
                 }
             }
         }
@@ -1086,7 +1088,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
     let mut spawn_options = SpawnOptions {
-        cwd: cwd.to_vec().into_boxed_slice(),
+        // Empty means "inherit the parent's working directory". Only chdir
+        // when the user asked for it: the stored cwd path string can be stale
+        // if the directory was renamed out from under the process (#33819).
+        cwd: if user_specified_cwd {
+            cwd.to_vec().into_boxed_slice()
+        } else {
+            Box::default()
+        },
         detached,
         uid,
         gid,

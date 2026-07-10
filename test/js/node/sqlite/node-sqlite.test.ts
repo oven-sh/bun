@@ -1156,7 +1156,7 @@ describe("backup()", () => {
       `,
     });
     const destPath = path.join(String(dir), "locked.db");
-    const holder = new DatabaseSync(destPath);
+    using holder = new DatabaseSync(destPath);
     // BEGIN IMMEDIATE takes a RESERVED lock so a writer from another
     // connection sees SQLITE_BUSY.
     holder.exec("BEGIN IMMEDIATE");
@@ -1173,8 +1173,6 @@ describe("backup()", () => {
     // the poll the worker's JS thread is stuck in sqlite3_sleep and the
     // await never resolves (the test times out).
     expect(typeof exitCode).toBe("number");
-    holder.exec("ROLLBACK");
-    holder.close();
   });
 
   test("re-checks the source is open after reading options", () => {

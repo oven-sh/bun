@@ -173,10 +173,13 @@ describe.concurrent("bun test --isolate", () => {
         });
       `,
     });
-    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./plugin.test.ts"]);
-    expect(normalizeBunSnapshot(stderr, dir)).toContain("1 pass");
-    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
-    expect(exitCode).toBe(0);
+    for (const flag of ["--isolate", "--parallel"]) {
+      const { stderr, exitCode } = await runTests(String(dir), [flag], ["./plugin.test.ts"]);
+      const output = normalizeBunSnapshot(stderr, dir);
+      expect(output, flag).toContain("1 pass");
+      expect(output, flag).toContain("0 fail");
+      expect(exitCode, flag).toBe(0);
+    }
   });
 
   test("with --isolate, module state is not shared between files", async () => {

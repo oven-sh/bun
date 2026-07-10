@@ -639,10 +639,7 @@ describe("crypto.KeyObjects", () => {
       sec1NoPub,
     ]);
     const fromDerPkcs8 = createPrivateKey({ key: pkcs8, format: "der", type: "pkcs8" });
-    const pem =
-      "-----BEGIN EC PRIVATE KEY-----\n" +
-      sec1NoPub.toString("base64") +
-      "\n-----END EC PRIVATE KEY-----\n";
+    const pem = "-----BEGIN EC PRIVATE KEY-----\n" + sec1NoPub.toString("base64") + "\n-----END EC PRIVATE KEY-----\n";
     const fromPem = createPrivateKey(pem);
 
     const jwkSec1 = fromDerSec1.export({ format: "jwk" });

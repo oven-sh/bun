@@ -421,14 +421,11 @@ unsafe fn init_runtime_state(
                                 ctx: *mut core::ffi::c_void,
                                 dep: &bun_resolver::install_types::Dependency,
                                 id: bun_resolver::install_types::DependencyID,
-                                err: bun_core::Error,
+                                err: &'static str,
                             ) {
                                 unsafe {
                                     bun_jsc::async_module::Queue::on_dependency_error(
-                                        ctx,
-                                        dep,
-                                        id,
-                                        err.into(),
+                                        ctx, dep, id, err,
                                     )
                                 }
                             }

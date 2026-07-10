@@ -71,13 +71,13 @@ pub type Id = u32;
 pub(crate) struct PackageDownloadError<'a> {
     pub name: &'a [u8],
     pub resolution: Resolution,
-    pub err: crate::CrateError,
+    pub err: &'static str,
     pub url: &'a [u8],
 }
 
 pub(crate) struct PackageResolveError<'a> {
     pub name: &'a [u8],
-    pub err: crate::CrateError,
+    pub err: &'static str,
     pub url: &'a [u8],
     pub version: bun_install::dependency::Version,
 }
@@ -287,7 +287,7 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
         err: bun_install::Error,
         url: &[u8],
     ) {
-        ctx.on_package_manifest_error(name, err.into(), url)
+        ctx.on_package_manifest_error(name, err.name(), url)
     }
 
     fn on_package_download_error_pkg(
@@ -298,7 +298,7 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
         err: bun_install::Error,
         url: &[u8],
     ) {
-        ctx.on_package_download_error(package_id, name, resolution, err.into(), url)
+        ctx.on_package_download_error(package_id, name, resolution, err.name(), url)
     }
 }
 
@@ -322,7 +322,7 @@ impl Queue {
         ctx: *mut c_void,
         dependency: &Dependency,
         root_dependency_id: DependencyID,
-        err: crate::CrateError,
+        err: &'static str,
     ) {
         // SAFETY: ctx was registered as *Queue when installing this callback.
         let this: &mut Queue = unsafe { bun_ptr::callback_ctx::<Queue>(ctx) };
@@ -414,7 +414,7 @@ impl Queue {
         }
     }
 
-    pub fn on_package_manifest_error(&mut self, name: &[u8], err: crate::CrateError, url: &[u8]) {
+    pub fn on_package_manifest_error(&mut self, name: &[u8], err: &'static str, url: &[u8]) {
         bun_core::scoped_log!(
             AsyncModule,
             "onPackageManifestError: {}",
@@ -458,7 +458,7 @@ impl Queue {
         package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
-        err: crate::CrateError,
+        err: &'static str,
         url: &[u8],
     ) {
         bun_core::scoped_log!(
@@ -779,7 +779,7 @@ impl AsyncModule {
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
-        if e == crate::CrateError::PackageManifestHTTP400 {
+        if e == "PackageManifestHTTP400" {
             write!(
                 &mut msg,
                 "HTTP 400 while resolving package '{}' at '{}'",
@@ -787,7 +787,7 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == crate::CrateError::PackageManifestHTTP401 {
+        } else if e == "PackageManifestHTTP401" {
             write!(
                 &mut msg,
                 "HTTP 401 while resolving package '{}' at '{}'",
@@ -795,7 +795,7 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == crate::CrateError::PackageManifestHTTP402 {
+        } else if e == "PackageManifestHTTP402" {
             write!(
                 &mut msg,
                 "HTTP 402 while resolving package '{}' at '{}'",
@@ -803,7 +803,7 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == crate::CrateError::PackageManifestHTTP403 {
+        } else if e == "PackageManifestHTTP403" {
             write!(
                 &mut msg,
                 "HTTP 403 while resolving package '{}' at '{}'",
@@ -811,14 +811,14 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == crate::CrateError::PackageManifestHTTP404 {
+        } else if e == "PackageManifestHTTP404" {
             write!(
                 &mut msg,
                 "Package '{}' was not found",
                 bstr::BStr::new(result.name)
             )
             .ok();
-        } else if e == crate::CrateError::PackageManifestHTTP4xx {
+        } else if e == "PackageManifestHTTP4xx" {
             write!(
                 &mut msg,
                 "HTTP 4xx while resolving package '{}' at '{}'",
@@ -826,7 +826,7 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == crate::CrateError::PackageManifestHTTP5xx {
+        } else if e == "PackageManifestHTTP5xx" {
             write!(
                 &mut msg,
                 "HTTP 5xx while resolving package '{}' at '{}'",
@@ -834,21 +834,18 @@ impl AsyncModule {
                 bstr::BStr::new(result.url)
             )
             .ok();
-        } else if e == crate::CrateError::DistTagNotFound
-            || e == crate::CrateError::NoMatchingVersion
-        {
+        } else if matches!(e, "DistTagNotFound" | "NoMatchingVersion") {
             // `Version::try_npm()` performs the tag guard and yields the
             // `NpmInfo` (whose `.version` is the semver query group).
             let npm = result.version.try_npm();
-            let prefix: &[u8] = if e == crate::CrateError::NoMatchingVersion
-                && npm.map(|n| n.version.is_exact()).unwrap_or(false)
-            {
-                b"Version not found"
-            } else if npm.map(|n| !n.version.is_exact()).unwrap_or(false) {
-                b"No matching version found"
-            } else {
-                b"No match found"
-            };
+            let prefix: &[u8] =
+                if e == "NoMatchingVersion" && npm.map(|n| n.version.is_exact()).unwrap_or(false) {
+                    b"Version not found"
+                } else if npm.map(|n| !n.version.is_exact()).unwrap_or(false) {
+                    b"No matching version found"
+                } else {
+                    b"No match found"
+                };
 
             write!(
                 &mut msg,
@@ -862,7 +859,7 @@ impl AsyncModule {
             write!(
                 &mut msg,
                 "{} resolving package '{}' at '{}'",
-                e.name(),
+                e,
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
             )
@@ -870,16 +867,12 @@ impl AsyncModule {
         }
         // msg dropped at scope exit (defer bun.default_allocator.free(msg)).
 
-        let name: &[u8] = if e == crate::CrateError::NoMatchingVersion {
-            b"PackageVersionNotFound"
-        } else if e == crate::CrateError::DistTagNotFound {
-            b"PackageTagNotFound"
-        } else if e == crate::CrateError::PackageManifestHTTP403 {
-            b"PackageForbidden"
-        } else if e == crate::CrateError::PackageManifestHTTP404 {
-            b"PackageNotFound"
-        } else {
-            b"PackageResolveError"
+        let name: &[u8] = match e {
+            "NoMatchingVersion" => b"PackageVersionNotFound",
+            "DistTagNotFound" => b"PackageTagNotFound",
+            "PackageManifestHTTP403" => b"PackageForbidden",
+            "PackageManifestHTTP404" => b"PackageNotFound",
+            _ => b"PackageResolveError",
         };
 
         let error_instance = ZigString::from_bytes(&msg)
@@ -1004,7 +997,7 @@ impl AsyncModule {
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
-        if e == crate::CrateError::TarballHTTP400 {
+        if e == "TarballHTTP400" {
             write!(
                 &mut msg,
                 "HTTP 400 downloading package '{}@{}'",
@@ -1012,7 +1005,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == crate::CrateError::TarballHTTP401 {
+        } else if e == "TarballHTTP401" {
             write!(
                 &mut msg,
                 "HTTP 401 downloading package '{}@{}'",
@@ -1020,7 +1013,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == crate::CrateError::TarballHTTP402 {
+        } else if e == "TarballHTTP402" {
             write!(
                 &mut msg,
                 "HTTP 402 downloading package '{}@{}'",
@@ -1028,7 +1021,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == crate::CrateError::TarballHTTP403 {
+        } else if e == "TarballHTTP403" {
             write!(
                 &mut msg,
                 "HTTP 403 downloading package '{}@{}'",
@@ -1036,7 +1029,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == crate::CrateError::TarballHTTP404 {
+        } else if e == "TarballHTTP404" {
             write!(
                 &mut msg,
                 "HTTP 404 downloading package '{}@{}'",
@@ -1044,7 +1037,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == crate::CrateError::TarballHTTP4xx {
+        } else if e == "TarballHTTP4xx" {
             write!(
                 &mut msg,
                 "HTTP 4xx downloading package '{}@{}'",
@@ -1052,7 +1045,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == crate::CrateError::TarballHTTP5xx {
+        } else if e == "TarballHTTP5xx" {
             write!(
                 &mut msg,
                 "HTTP 5xx downloading package '{}@{}'",
@@ -1060,7 +1053,7 @@ impl AsyncModule {
                 resolution_fmt
             )
             .ok();
-        } else if e == crate::CrateError::TarballFailedToExtract {
+        } else if e == "TarballFailedToExtract" {
             write!(
                 &mut msg,
                 "Failed to extract tarball for package '{}@{}'",
@@ -1072,7 +1065,7 @@ impl AsyncModule {
             write!(
                 &mut msg,
                 "{} downloading package '{}@{}'",
-                e.name(),
+                e,
                 bstr::BStr::new(result.name),
                 result.resolution.fmt(
                     vm.package_manager()
@@ -1087,14 +1080,11 @@ impl AsyncModule {
         }
         // msg dropped at scope exit.
 
-        let name: &[u8] = if e == crate::CrateError::TarballFailedToExtract {
-            b"PackageExtractionError"
-        } else if e == crate::CrateError::TarballHTTP403 {
-            b"TarballForbiddenError"
-        } else if e == crate::CrateError::TarballHTTP404 {
-            b"TarballNotFoundError"
-        } else {
-            b"TarballDownloadError"
+        let name: &[u8] = match e {
+            "TarballFailedToExtract" => b"PackageExtractionError",
+            "TarballHTTP403" => b"TarballForbiddenError",
+            "TarballHTTP404" => b"TarballNotFoundError",
+            _ => b"TarballDownloadError",
         };
 
         let error_instance = ZigString::from_bytes(&msg)

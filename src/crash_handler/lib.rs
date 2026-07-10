@@ -1349,23 +1349,21 @@ mod draft {
         }
 
         let mut show_trace = Environment::SHOW_CRASH_TRACE;
+        let name = err.name();
 
-        if err == crate::Error::Alloc(bun_alloc::AllocError) {
+        if name == "OutOfMemory" {
             super::out_of_memory();
-        } else if err == crate::Error::InvalidArgument
-            || err == crate::Error::InvalidBunfig
-            || err == crate::Error::InstallFailed
-        {
+        } else if matches!(name, "InvalidArgument" | "Invalid Bunfig" | "InstallFailed") {
             if !show_trace {
                 Global::exit(1);
             }
-        } else if err == crate::Error::SyntaxError {
+        } else if name == "SyntaxError" {
             Output::err("SyntaxError", "An error occurred while parsing code", ());
-        } else if err == crate::Error::CurrentWorkingDirectoryUnlinked {
+        } else if name == "CurrentWorkingDirectoryUnlinked" {
             err_generic!(
                 "The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
             );
-        } else if err == crate::Error::SystemFdQuotaExceeded {
+        } else if name == "SystemFdQuotaExceeded" {
             #[cfg(unix)]
             {
                 let limit = getrlimit_nofile().map(|l| l.rlim_cur);
@@ -1408,7 +1406,7 @@ mod draft {
                     "<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>",
                 );
             }
-        } else if err == crate::Error::ProcessFdQuotaExceeded {
+        } else if name == "ProcessFdQuotaExceeded" {
             #[cfg(unix)]
             {
                 let limit = getrlimit_nofile().map(|l| l.rlim_cur);
@@ -1451,7 +1449,7 @@ mod draft {
                     "<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>",
                 );
             }
-        } else if err == crate::Error::NotOpenForReading || err == crate::Error::Unexpected {
+        } else if matches!(name, "NotOpenForReading" | "Unexpected") {
             // The file descriptor problem may show up as other errors
             #[cfg(unix)]
             {
@@ -1486,7 +1484,7 @@ mod draft {
                 } else {
                     err_generic!(
                         "An unknown error occurred <d>(<red>{}<r><d>)<r>",
-                        bstr::BStr::new(err.name()),
+                        bstr::BStr::new(name),
                     );
                     show_trace = true;
                 }
@@ -1495,31 +1493,28 @@ mod draft {
             {
                 err_generic!(
                     "An unknown error occurred <d>(<red>{}<r><d>)<r>",
-                    bstr::BStr::new(err.name()),
+                    bstr::BStr::new(name),
                 );
                 show_trace = true;
             }
-        } else if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+        } else if name == "ENOENT" {
             Output::err(
                 "ENOENT",
                 "Bun could not find a file, and the code that produces this error is missing a better error.",
                 (),
             );
-        } else if err == crate::Error::MissingPackageJSON {
+        } else if name == "MissingPackageJSON" {
             err_generic!("Bun could not find a package.json file to install from");
             bun_core::note!("Run \"bun init\" to initialize a project");
         } else {
             // The macros need
             // `:literal`, so branch on the const and call separately.
             if Environment::SHOW_CRASH_TRACE {
-                err_generic!(
-                    "'main' returned <red>error.{}<r>",
-                    bstr::BStr::new(err.name())
-                );
+                err_generic!("'main' returned <red>error.{}<r>", bstr::BStr::new(name));
             } else {
                 err_generic!(
                     "An internal error occurred (<red>{}<r>)",
-                    bstr::BStr::new(err.name())
+                    bstr::BStr::new(name)
                 );
             }
             show_trace = true;

@@ -950,7 +950,7 @@ impl PackageManager {
                     ctx.as_ptr(),
                     dependency,
                     dependency_id,
-                    err.into(),
+                    err.name(),
                 );
             }
         }

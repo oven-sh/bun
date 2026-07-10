@@ -57,6 +57,12 @@ pub struct NodeHTTPResponse {
     /// body finishes (still inside the parser), because a pipelined request's
     /// parse would otherwise overwrite it before this request's JS reads it.
     pub request_trailers: JsCell<Vec<u8>>,
+    /// node:http: this request's header section captured at dispatch as
+    /// [u16 nameLen][u16 valueLen][name][value]... so req.rawHeaders /
+    /// req.headers materialize lazily (takeRawHeaders) instead of paying
+    /// 2N JSStrings + a JSArray on every request. One-shot: emptied on first
+    /// access.
+    pub raw_request_headers: JsCell<Vec<u8>>,
     pub bytes_written: Cell<usize>,
 
     pub upgrade_context: JsCell<UpgradeCTX>,
@@ -193,6 +199,13 @@ unsafe extern "C" {
         data: *const u8,
         length: usize,
         use_insecure_http_parser: bool,
+    ) -> JSValue;
+    // Builds req.rawHeaders' flat [name, value, ...] JSArray from the header
+    // bytes captured at dispatch ([u16 nameLen][u16 valueLen][name][value]...).
+    safe fn Bun__NodeHTTP__buildRawHeadersArray(
+        global_object: &JSGlobalObject,
+        data: *const u8,
+        length: usize,
     ) -> JSValue;
 
     // `&JSGlobalObject` encodes non-null/aligned; `status_message` is the
@@ -1950,6 +1963,22 @@ impl NodeHTTPResponse {
         self.write_or_end::<true>(global_object, arguments, callframe.this())
     }
 
+    /// `handle.takeRawHeaders()` — this request's captured header section
+    /// materialized into the rawHeaders flat [name, value, ...] array, or
+    /// undefined when there were no headers (or they were already taken).
+    /// Consumes the captured bytes.
+    pub(crate) fn take_raw_headers(
+        &self,
+        global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JSValue {
+        let section = self.raw_request_headers.replace(Vec::new());
+        if section.is_empty() {
+            return JSValue::UNDEFINED;
+        }
+        Bun__NodeHTTP__buildRawHeadersArray(global_object, section.as_ptr(), section.len())
+    }
+
     /// `handle.takeRequestTrailers()` — this request's captured trailer section
     /// parsed into a flat [name, value, ...] array, or undefined. Consumes it.
     pub(crate) fn take_request_trailers(
@@ -2173,6 +2202,22 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
 }
 
 /// # Safety
+/// `response` is the pointer written to `node_response_ptr` by
+/// `NodeHTTPResponse__createForJS` earlier in the same dispatch and is live;
+/// `data`/`length` describe a caller-owned buffer valid for the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
+    response: *mut NodeHTTPResponse,
+    data: *const u8,
+    length: usize,
+) {
+    // SAFETY: see the function-level contract above.
+    let response = unsafe { &*response };
+    let bytes = unsafe { core::slice::from_raw_parts(data, length) };
+    response.raw_request_headers.with_mut(|v| v.append_slice(bytes));
+}
+
+/// # Safety
 /// `has_body`, `request`, `response_ptr`, `upgrade_ctx`, and `node_response_ptr`
 /// are provided by C++ NodeHTTPServer and must be valid for the duration of the
 /// call; `has_body` and `node_response_ptr` must be writable.
@@ -2242,6 +2287,7 @@ pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
         promise: JsCell::new(StrongOptional::empty()),
         buffered_request_body_data_during_pause: JsCell::new(Vec::new()),
         request_trailers: JsCell::new(Vec::new()),
+        raw_request_headers: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         auto_flusher: JsCell::new(AutoFlusher::default()),
     }));

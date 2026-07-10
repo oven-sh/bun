@@ -168,10 +168,57 @@ static JSString* joinedRequestHeaderValue(JSC::JSGlobalObject* globalObject, JSC
     }
     return jsString(vm, merged);
 }
+// Bit layout must stay in sync with kDispatchBits* in src/js/node/_http_server.ts.
+static constexpr uint32_t kDispatchConnClose = 1 << 0;
+static constexpr uint32_t kDispatchConnUpgrade = 1 << 1;
+static constexpr uint32_t kDispatchHasUpgrade = 1 << 2;
+static constexpr uint32_t kDispatchHasHost = 1 << 3;
+static constexpr uint32_t kDispatchHasExpect = 1 << 4;
+static constexpr uint32_t kDispatchExpectContinue = 1 << 5;
+static constexpr uint32_t kDispatchHasContentLength = 1 << 6;
+static constexpr uint32_t kDispatchHasTransferEncoding = 1 << 7;
 
-static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+static bool svEqualsIgnoreCase(std::string_view a, std::string_view lower)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (a.length() != lower.length())
+        return false;
+    for (size_t i = 0; i < a.length(); i++) {
+        if ((static_cast<unsigned char>(a[i]) | 0x20) != static_cast<unsigned char>(lower[i]))
+            return false;
+    }
+    return true;
+}
+
+// `1#token` list scan (RFC 9110): does `value` contain `lowerToken` at
+// non-alphanumeric boundaries, ASCII-case-insensitively? Mirrors the
+// /(?:^|\W)tok(?:$|\W)/i checks node:http uses for Connection/Expect values.
+static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
+{
+    const size_t n = value.length(), m = lowerToken.length();
+    if (m == 0 || n < m)
+        return false;
+    for (size_t i = 0; i + m <= n; i++) {
+        if ((static_cast<unsigned char>(value[i]) | 0x20) != static_cast<unsigned char>(lowerToken[0]))
+            continue;
+        if (!svEqualsIgnoreCase(value.substr(i, m), lowerToken))
+            continue;
+        bool leftOk = i == 0 || !isASCIIAlphanumeric(value[i - 1]);
+        size_t end = i + m;
+        bool rightOk = end >= n || !isASCIIAlphanumeric(value[end]);
+        if (leftOk && rightOk)
+            return true;
+        i = end - 1;
+    }
+    return false;
+}
+
+// One pass over the request: append url, method, jsNumber(dispatch bitfield)
+// and jsUndefined() (the legacy rawHeaders slot) to `args`, and capture the
+// raw header bytes into `flatHeaders` as [u16 nameLen][u16 valueLen][name]
+// [value]... so req.rawHeaders / req.headers can be materialized lazily
+// (Bun__NodeHTTP__buildRawHeadersArray) only when user code reads them.
+static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, WTF::Vector<uint8_t, 1024>& flatHeaders, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+{
     {
         std::string_view fullURLStdStr = request->getFullUrl();
         String fullURL = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const Latin1Character*>(fullURLStdStr.data()), fullURLStdStr.length() });
@@ -187,21 +234,93 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         args.append(methodString);
     }
 
-    // Only the rawHeaders flat array is built here. The IncomingMessage
-    // constructor rebuilds `headers` lazily from rawHeaders with Node.js's
-    // duplicate-handling rules (joining, cookie/set-cookie rules,
-    // joinDuplicateHeaders), so a native headers object would be allocated and
-    // then thrown away on every request - the slot is passed as undefined.
+    uint32_t bits = 0;
+    for (auto it = request->begin(); it != request->end(); ++it) {
+        auto pair = *it;
+        const std::string_view name = pair.first;
+        const std::string_view value = pair.second;
+
+        // Header name/value lengths are parser-bounded well below 64 KiB.
+        const uint16_t nameLen = static_cast<uint16_t>(name.length());
+        const uint16_t valueLen = static_cast<uint16_t>(value.length());
+        uint8_t lens[4] = {
+            static_cast<uint8_t>(nameLen & 0xff), static_cast<uint8_t>(nameLen >> 8),
+            static_cast<uint8_t>(valueLen & 0xff), static_cast<uint8_t>(valueLen >> 8)
+        };
+        flatHeaders.append(std::span<const uint8_t> { lens, 4 });
+        flatHeaders.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(name.data()), name.length() });
+        flatHeaders.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(value.data()), value.length() });
+
+        // Duplicate headers OR their token bits (the lazy header build joins
+        // duplicates with ", ", and a token match on the joined value is a
+        // token match on one of the parts).
+        switch (name.length()) {
+        case 4:
+            if (svEqualsIgnoreCase(name, "host"))
+                bits |= kDispatchHasHost;
+            break;
+        case 6:
+            if (svEqualsIgnoreCase(name, "expect")) {
+                bits |= kDispatchHasExpect;
+                if (svValueHasToken(value, "100-continue"))
+                    bits |= kDispatchExpectContinue;
+            }
+            break;
+        case 7:
+            if (svEqualsIgnoreCase(name, "upgrade"))
+                bits |= kDispatchHasUpgrade;
+            break;
+        case 10:
+            if (svEqualsIgnoreCase(name, "connection")) {
+                if (svValueHasToken(value, "close"))
+                    bits |= kDispatchConnClose;
+                if (svValueHasToken(value, "upgrade"))
+                    bits |= kDispatchConnUpgrade;
+            }
+            break;
+        case 14:
+            if (svEqualsIgnoreCase(name, "content-length"))
+                bits |= kDispatchHasContentLength;
+            break;
+        case 17:
+            if (svEqualsIgnoreCase(name, "transfer-encoding"))
+                bits |= kDispatchHasTransferEncoding;
+            break;
+        }
+    }
+
+    // The headers-object slot now carries the dispatch bitfield; the
+    // rawHeaders slot is materialized lazily from the captured bytes.
+    args.append(jsNumber(bits));
+    args.append(jsUndefined());
+}
+
+// Builds the rawHeaders flat array [name, value, ...] from the bytes captured
+// by assignHeadersFromUWebSocketsForCall. Runs only when user code first
+// touches req.rawHeaders / req.headers (via NodeHTTPResponse.takeRawHeaders).
+extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObject* globalObject, const uint8_t* data, size_t length)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     MarkedArgumentBuffer arrayValues;
     HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
 
-    for (auto it = request->begin(); it != request->end(); ++it) {
-        auto pair = *it;
-        StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(pair.first.data()), pair.first.length() });
-        std::span<Latin1Character> data;
-        auto value = String::createUninitialized(pair.second.length(), data);
-        if (pair.second.length() > 0)
-            memcpy(data.data(), pair.second.data(), pair.second.length());
+    size_t offset = 0;
+    while (offset + 4 <= length) {
+        const uint16_t nameLen = static_cast<uint16_t>(data[offset]) | (static_cast<uint16_t>(data[offset + 1]) << 8);
+        const uint16_t valueLen = static_cast<uint16_t>(data[offset + 2]) | (static_cast<uint16_t>(data[offset + 3]) << 8);
+        offset += 4;
+        if (offset + nameLen + valueLen > length) [[unlikely]]
+            break;
+        StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(data + offset), nameLen });
+        offset += nameLen;
+
+        std::span<Latin1Character> valueData;
+        auto value = String::createUninitialized(valueLen, valueData);
+        if (valueLen > 0)
+            memcpy(valueData.data(), data + offset, valueLen);
+        offset += valueLen;
 
         HTTPHeaderName name;
         JSString* jsValue = jsString(vm, value);
@@ -224,28 +343,27 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         arrayValues.append(jsValue);
     }
 
-    // The headers slot: unused by the IncomingMessage native fast-path (see
-    // _http_incoming.ts), kept for argument-position compatibility.
-    args.append(jsUndefined());
-
     JSC::JSArray* array;
     {
-
         ObjectInitializationScope initializationScope(vm);
         if ((array = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), arrayValues.size()))) [[likely]] {
-            EncodedJSValue* data = arrayValues.data();
+            EncodedJSValue* argValues = arrayValues.data();
             for (size_t i = 0, size = arrayValues.size(); i < size; ++i) {
-                array->initializeIndex(initializationScope, i, JSValue::decode(data[i]));
+                array->initializeIndex(initializationScope, i, JSValue::decode(argValues[i]));
             }
         } else {
-            RETURN_IF_EXCEPTION(scope, );
+            RETURN_IF_EXCEPTION(scope, {});
             array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), arrayValues);
-            RETURN_IF_EXCEPTION(scope, );
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
-    args.append(array);
+    RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
+
+// Defined in Rust (NodeHTTPResponse.rs): moves the captured raw header bytes
+// onto the native response so takeRawHeaders can materialize them on demand.
+extern "C" void NodeHTTPResponse__adoptRawRequestHeaders(void* nodeHttpResponse, const uint8_t* data, size_t length);
 
 // This is an 8% speedup.
 static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
@@ -519,11 +637,17 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     MarkedArgumentBuffer args;
     args.append(thisValue);
 
-    assignHeadersFromUWebSocketsForCall(request, methodString, args, globalObject, vm);
+    // Typical request header sections are a few hundred bytes; the inline
+    // capacity keeps the capture heap-allocation-free for the common case.
+    WTF::Vector<uint8_t, 1024> flatHeaders;
+    assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
     RETURN_IF_EXCEPTION(scope, {});
 
     bool hasBody = false;
     WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
+    if (!flatHeaders.isEmpty()) {
+        NodeHTTPResponse__adoptRawRequestHeaders(*nodeHttpResponsePtr, flatHeaders.span().data(), flatHeaders.size());
+    }
 
     args.append(nodeHTTPResponseObject);
     args.append(jsBoolean(hasBody));

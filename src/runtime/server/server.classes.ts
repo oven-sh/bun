@@ -159,6 +159,10 @@ export default [
         fn: "takeRequestTrailers",
         length: 0,
       },
+      takeRawHeaders: {
+        fn: "takeRawHeaders",
+        length: 0,
+      },
       dumpRequestBody: {
         fn: "dumpRequestBody",
         length: 0,

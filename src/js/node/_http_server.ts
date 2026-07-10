@@ -73,7 +73,7 @@ const NumberIsNaN = Number.isNaN;
 
 const { format } = require("internal/util/inspect");
 
-const { IncomingMessage } = require("node:_http_incoming");
+const { IncomingMessage, kReqShouldKeepAlive } = require("node:_http_incoming");
 const {
   OutgoingMessage,
   kErrored,
@@ -706,7 +706,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         bunServer,
         url: string,
         method: string,
-        headersObject: Record<string, string>,
+        // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and
+        // token bits for the headers the dispatcher consults, so no header
+        // object or array is materialized unless user code reads them.
+        dispatchBits: number,
         headersArray: string[],
         handle,
         hasBody: boolean,
@@ -743,12 +746,20 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           socket._unrefTimer();
         }
 
-        const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody, socket);
+        const http_req = new RequestClass(kHandle, url, method, undefined, headersArray, handle, hasBody, socket);
         if (isAncientHTTP) {
           http_req.httpVersion = "1.0";
           http_req.httpVersionMajor = 1;
           http_req.httpVersionMinor = 0;
         }
+        // Pull the handful of headers the dispatcher consults out of
+        // rawHeaders in one pass, instead of reading req.headers (each read
+        // of which would force the lazy header-object build even when user
+        // code never touches headers). Copy to locals before any callback
+        // can re-enter the dispatcher.
+        // HTTP/1.0 (ancient) responses never advertise keep-alive on this
+        // server; otherwise honor a Connection: close token from the request.
+        http_req[kReqShouldKeepAlive] = isAncientHTTP ? false : (dispatchBits & DISPATCH_CONN_CLOSE) === 0;
         if (server.joinDuplicateHeaders) {
           http_req.joinDuplicateHeaders = true;
         }
@@ -806,8 +817,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // unconditionally adding it (even as undefined) forced a hidden-class
         // transition on every ServerResponse, which measurably slowed every
         // later property access on it (renderNativeHeaders in particular).
+        // parseUniqueHeadersOption yields null when the option is unset, so
+        // test != null: stamping null would still shape-transition every
+        // response for a value renderNativeHeaders treats as absent anyway.
         const uniqueHeaders = server[kUniqueHeaders];
-        if (uniqueHeaders !== undefined) http_res[kUniqueHeaders] = uniqueHeaders;
+        if (uniqueHeaders != null) http_res[kUniqueHeaders] = uniqueHeaders;
 
         // The request itself forbids connection reuse (HTTP/1.0, or the
         // client sent Connection: close): end the server's writable side as
@@ -816,7 +830,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // ended inside user 'finish' listeners. (Not done for the
         // maxRequestsPerSocket limit - pipelined requests past the limit
         // still need to be answered with 503.)
-        if (!requestShouldKeepAlive(http_req)) {
+        if (!http_req[kReqShouldKeepAlive]) {
           http_res[kMustCloseConnection] = true;
         }
         http_res.once("finish", emitResponseFinishHandleSocket);
@@ -878,11 +892,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // 'upgrade' listener is installed) and otherwise dispatches the
         // request normally.
         let is_upgrade = false;
-        if (!isPipelined && http_req.headers.upgrade !== undefined) {
-          const connectionHeader = http_req.headers.connection;
-          if (typeof connectionHeader === "string" && RE_CONN_UPGRADE.test(connectionHeader)) {
-            is_upgrade = !!server.shouldUpgradeCallback(http_req);
-          }
+        if (
+          !isPipelined &&
+          (dispatchBits & DISPATCH_HAS_UPGRADE) !== 0 &&
+          (dispatchBits & DISPATCH_CONN_UPGRADE) !== 0
+        ) {
+          is_upgrade = !!server.shouldUpgradeCallback(http_req);
         }
         // Like Node.js's parserOnIncoming: req.upgrade is true inside the
         // 'upgrade' listener and false for a declined upgrade that falls
@@ -934,8 +949,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (
           server[kOptimizeEmptyRequests] &&
           !is_upgrade &&
-          http_req.headers["content-length"] === undefined &&
-          http_req.headers["transfer-encoding"] === undefined
+          (dispatchBits & (DISPATCH_HAS_CONTENT_LENGTH | DISPATCH_HAS_TRANSFER_ENCODING)) === 0
         ) {
           http_req._dumpAndCloseReadable();
         }
@@ -994,7 +1008,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           return upgradePromise;
         } else if (
           server.requireHostHeader &&
-          http_req.headers.host === undefined &&
+          (dispatchBits & DISPATCH_HAS_HOST) === 0 &&
           http_req.httpVersionMajor === 1 &&
           http_req.httpVersionMinor >= 1
         ) {
@@ -1005,12 +1019,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.writeHead(400, { Connection: "close" });
           http_res.end();
         } else {
-          const expectHeader = http_req.headers.expect;
-          if (expectHeader !== undefined) {
+          if ((dispatchBits & DISPATCH_HAS_EXPECT) !== 0) {
             // Case-insensitive, token-boundary match like Node's
             // parserOnIncoming (RFC 7231 5.1.1: expectation values compare
-            // case-insensitively).
-            if (continueExpression.test(expectHeader)) {
+            // case-insensitively); computed natively into the bitfield.
+            if ((dispatchBits & DISPATCH_EXPECT_CONTINUE) !== 0) {
               if (server.listenerCount("checkContinue") > 0) {
                 server.emit("checkContinue", http_req, http_res);
               } else {
@@ -2155,8 +2168,12 @@ function renderNativeHeaders(res) {
   // chunked Transfer-Encoding on such a response could confuse reverse
   // proxies, so like Node.js the body framing is suppressed and the
   // connection is forcibly closed after the response.
+  // headersMap already holds res[kOutHeaders]; index the two framing headers
+  // once instead of re-reading the symbol per check below.
+  const storedTransferEncoding = headersMap === null ? undefined : headersMap["transfer-encoding"];
+  const storedContentLength = headersMap === null ? undefined : headersMap["content-length"];
   let defectiveNoBodyResponse = false;
-  if (res[kOutHeaders]?.["transfer-encoding"] !== undefined) {
+  if (storedTransferEncoding !== undefined) {
     const statusCode = res[kSnapshotStatusCode] ?? res.statusCode;
     if (statusCode === 204 || statusCode === 304) {
       defectiveNoBodyResponse = true;
@@ -2171,7 +2188,7 @@ function renderNativeHeaders(res) {
   // header is rendered so the advertised value matches the transport.
   let closeDelimited = false;
   let forceChunked = false;
-  if (res[kOutHeaders]?.["content-length"] === undefined && res[kOutHeaders]?.["transfer-encoding"] === undefined) {
+  if (storedContentLength === undefined && storedTransferEncoding === undefined) {
     if (res._hasBody === false) {
       // HEAD / 204 / 304 / 1xx: there is no body to delimit, so removing the
       // framing headers must not close the connection (Node's _storeHeader
@@ -2301,12 +2318,11 @@ function onResponseFinishHandleSocket(server, socket, res) {
   if (socket[kPipelinedResponses]?.length) {
     return;
   }
+  const rawKeepAliveTimeout = server.keepAliveTimeout;
   const keepAliveTimeout =
-    Number.isFinite(server.keepAliveTimeout) && server.keepAliveTimeout >= 0 ? server.keepAliveTimeout : 0;
-  const keepAliveTimeoutBuffer =
-    Number.isFinite(server.keepAliveTimeoutBuffer) && server.keepAliveTimeoutBuffer >= 0
-      ? server.keepAliveTimeoutBuffer
-      : 1000;
+    Number.isFinite(rawKeepAliveTimeout) && rawKeepAliveTimeout >= 0 ? rawKeepAliveTimeout : 0;
+  const rawKeepAliveBuffer = server.keepAliveTimeoutBuffer;
+  const keepAliveTimeoutBuffer = Number.isFinite(rawKeepAliveBuffer) && rawKeepAliveBuffer >= 0 ? rawKeepAliveBuffer : 1000;
   if (keepAliveTimeout) {
     // Extend the internal timeout by the configured buffer to reduce
     // the likelihood of ECONNRESET errors, like Node.js's resOnFinish.
@@ -2497,10 +2513,25 @@ function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
 
 const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
 const RE_CONN_UPGRADE = /(?:^|\W)upgrade(?:$|\W)/i;
+
+// Native dispatch bitfield: presence/token bits for the request headers the
+// dispatcher consults, computed in one native pass over the raw headers
+// (kDispatch* in src/jsc/bindings/NodeHTTP.cpp - keep in sync). This is what
+// lets the framework never materialize req.headers/req.rawHeaders unless
+// user code reads them.
+const DISPATCH_CONN_CLOSE = 1 << 0;
+const DISPATCH_CONN_UPGRADE = 1 << 1;
+const DISPATCH_HAS_UPGRADE = 1 << 2;
+const DISPATCH_HAS_HOST = 1 << 3;
+const DISPATCH_HAS_EXPECT = 1 << 4;
+const DISPATCH_EXPECT_CONTINUE = 1 << 5;
+const DISPATCH_HAS_CONTENT_LENGTH = 1 << 6;
+const DISPATCH_HAS_TRANSFER_ENCODING = 1 << 7;
+
 // Whether the response should advertise a persistent connection.
-function requestShouldKeepAlive(req) {
+// `connection` is the request's Connection header value (or undefined).
+function shouldKeepAliveForConnection(req, connection) {
   if (!req) return true;
-  const connection = req.headers.connection;
   if (req.httpVersionMajor === 1 && req.httpVersionMinor === 0) {
     // The native server always closes HTTP/1.0 connections after the
     // response, even when the request asked for keep-alive, so the response
@@ -2510,6 +2541,17 @@ function requestShouldKeepAlive(req) {
     return false;
   }
   return !(typeof connection === "string" && RE_CONN_CLOSE.test(connection));
+}
+
+// Result of shouldKeepAliveForConnection, computed once at dispatch and
+// reused by renderNativeHeaders / the pipelined-response path so neither has
+// to re-read req.headers (which would materialize the lazy header object).
+
+function requestShouldKeepAlive(req) {
+  if (!req) return true;
+  const cached = req[kReqShouldKeepAlive];
+  if (cached !== undefined) return cached;
+  return (req[kReqShouldKeepAlive] = shouldKeepAliveForConnection(req, req.headers.connection));
 }
 
 function isHTTPServerHeaderStateSentOrAssigned(state) {

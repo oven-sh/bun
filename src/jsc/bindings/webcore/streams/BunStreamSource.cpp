@@ -473,12 +473,6 @@ static void nativeAdjustChunkSize(JSNativeStreamSourceAdapter* adapter, size_t r
     }
 }
 
-static JSC::JSUint8Array* uint8Subarray(JSGlobalObject* globalObject, JSC::JSUint8Array* view, size_t offset, size_t length)
-{
-    RefPtr<JSC::ArrayBuffer> buffer = view->possiblySharedBuffer();
-    return JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), WTF::move(buffer), view->byteOffset() + offset, length);
-}
-
 // Reuse the pending view only when its BACKING BUFFER is large enough.
 static JSC::JSUint8Array* nativeGetInternalBuffer(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
@@ -524,12 +518,15 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         if (written > 0 && view) {
             size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
             JSC::JSArrayBufferView* toEnqueue = view;
+            // readableByteStreamControllerEnqueue detaches the chunk's backing buffer; a
+            // subarray of the scratch buffer would detach the scratch buffer too and defeat
+            // its reuse. Copy the filled prefix into a fresh Uint8Array and keep the scratch
+            // buffer (rewound to offset 0) as the pending view for the next pull.
             if (view->length() - count > 0) {
-                toEnqueue = uint8Subarray(globalObject, view, 0, count);
+                auto* copy = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), count);
                 RETURN_IF_EXCEPTION(scope, {});
-                auto* tail = uint8Subarray(globalObject, view, count, view->length() - count);
-                RETURN_IF_EXCEPTION(scope, {});
-                newView = tail;
+                memcpy(copy->typedVector(), static_cast<const uint8_t*>(view->typedVector()), count);
+                toEnqueue = copy;
             } else
                 newView = jsUndefined();
             if (controller) {

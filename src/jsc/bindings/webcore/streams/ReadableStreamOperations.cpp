@@ -499,8 +499,11 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
         }
         break;
     }
-    case ControllerKind::Default: {
-        auto* controller = defaultControllerOf(stream);
+    case ControllerKind::Default:
+        defaultControllerOf(stream)->releaseSteps();
+        break;
+    case ControllerKind::Byte: {
+        auto* controller = byteControllerOf(stream);
         controller->releaseSteps();
         // Bun: drop the native handle's event-loop ref when its consumer releases the lock.
         if (stream->m_nativePtr && controller->m_algorithms.kind == SourceKind::Native) {
@@ -520,9 +523,6 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
         }
         break;
     }
-    case ControllerKind::Byte:
-        byteControllerOf(stream)->releaseSteps();
-        break;
     }
     stream->m_reader.clear();
     reader->m_stream.clear();

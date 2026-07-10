@@ -523,7 +523,16 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ASAN binaries to run from subprocesses (shadow memory layout conflict
   // with ELF_ET_DYN_BASE, see sanitizers/856). We try with setarch first,
   // fall back to direct invocation.
-  emitSmokeTest(n, cfg, exe, exeName);
+  //
+  // We order the smoke-test AFTER strip (when strip runs) because
+  // `cfg.jsRuntime` — the bun that wraps the smoke-test command — is
+  // typically `${buildDir}/bun` on a dev's PATH, i.e. the same file
+  // `strip` writes to. Without an explicit dep, ninja can schedule the
+  // smoke test concurrently with strip on a full rebuild and the
+  // jsRuntime invocation races against strip's write with an
+  // `EACCES`-family failure ("Permission denied"). Making the stripped
+  // binary an order-only input to the smoke test serializes them.
+  emitSmokeTest(n, cfg, exe, exeName, strippedExe);
 
   return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects };
 }
@@ -635,7 +644,10 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
     linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
   });
 
-  // Strip + smoke test — same as full mode.
+  // Strip + smoke test — same as full mode. Pass `strippedExe` through
+  // to the smoke test as an order-only dep so ninja serializes `strip`
+  // against the smoke-test's `cfg.jsRuntime` (see the comment at the
+  // emit site above).
   let strippedExe: string | undefined;
   let dsym: string | undefined;
   if (shouldStrip(cfg)) {
@@ -643,7 +655,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
     if (cfg.darwin) dsym = emitDsymutil(n, cfg, exe, exeName);
   }
   if (strippedExe === undefined) n.phony("bun", [exe]);
-  emitSmokeTest(n, cfg, exe, exeName);
+  emitSmokeTest(n, cfg, exe, exeName, strippedExe);
 
   return {
     exe,
@@ -661,7 +673,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
  * linker didn't catch (missing symbol only referenced at init, ICU ABI
  * mismatch, etc.).
  */
-function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): void {
+function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, strippedExe?: string): void {
   // Cross-compiled binaries can't run on the build host. Skip the smoke
   // test entirely — `ninja check` becomes a no-op alias for the exe.
   if (cfg.crossTarget !== undefined) {
@@ -706,6 +718,10 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): voi
     outputs: [stamp],
     rule: "smoke_test",
     inputs: [exe],
+    // `strippedExe` as an order-only input keeps ninja from racing
+    // `strip bun` against this smoke test's use of the same file as
+    // `cfg.jsRuntime` on a dev's PATH. See the emit site above.
+    orderOnlyInputs: strippedExe !== undefined ? [strippedExe] : undefined,
   });
 
   // Phony target — `ninja check` runs the smoke test.

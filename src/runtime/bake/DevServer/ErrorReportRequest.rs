@@ -245,8 +245,8 @@ impl ErrorReportRequest {
                     line_start_byte: 0,
                 };
                 let index = remapped_position.source_index;
-                if index >= 1 && (index as usize - 1) < result.file_paths.len() {
-                    let abs_path: &[u8] = &result.file_paths[index as usize - 1];
+                if let Some(src) = result.entry.lookup_source(index as usize) {
+                    let abs_path: &[u8] = src.path;
                     frame.source_url = BunString::init(abs_path);
                     let mut relative_path_buf = path_buffer_pool::get();
                     let rel_path = dev.relative_path(&mut relative_path_buf, abs_path);
@@ -255,21 +255,18 @@ impl ErrorReportRequest {
                     }
                     frame.remapped = true;
 
-                    if runtime_lines.is_none() {
-                        let file = &result.entry_files[index as usize - 1];
-                        if let Some(source_map) = file.get() {
-                            let json_encoded_source_code = source_map.quoted_contents();
-                            // First line of interest is two above the target line.
-                            let target_line = frame.position.line.zero_based() as usize;
-                            first_line_of_interest = target_line.saturating_sub(2);
-                            region_of_interest_line = (target_line - first_line_of_interest) as u32;
-                            runtime_lines = extract_json_encoded_source_code::<5>(
-                                json_encoded_source_code,
-                                first_line_of_interest as u32,
-                                &arena,
-                            )?;
-                            top_frame_position = frame.position;
-                        }
+                    if runtime_lines.is_none() && !src.escaped_content.is_empty() {
+                        let json_encoded_source_code = src.escaped_content;
+                        // First line of interest is two above the target line.
+                        let target_line = frame.position.line.zero_based() as usize;
+                        first_line_of_interest = target_line.saturating_sub(2);
+                        region_of_interest_line = (target_line - first_line_of_interest) as u32;
+                        runtime_lines = extract_json_encoded_source_code::<5>(
+                            json_encoded_source_code,
+                            first_line_of_interest as u32,
+                            &arena,
+                        )?;
+                        top_frame_position = frame.position;
                     }
                 } else if index == 0 {
                     // Should be picked up by above but just in case.

@@ -1474,11 +1474,15 @@ function onSocketTimeoutTimerExpired(socket) {
       return;
     }
   }
-  // The timer has fired and is dead; drop the reference so the next
+  // A fired keep-alive idle timer is dead; drop the reference so the next
   // response-finish re-arms via setTimeout instead of trusting a fired
   // timer whose _idleTimeout still matches (a 'timeout' listener may keep
-  // the socket alive).
-  socket[kSocketTimeoutTimer] = undefined;
+  // the socket alive). Only for the keep-alive case: the server.timeout
+  // path relies on _unrefTimer() refreshing the fired timer in the slot,
+  // like net.Socket.
+  if (socket[kKeepAliveTimeoutSet]) {
+    socket[kSocketTimeoutTimer] = undefined;
+  }
   socket._onTimeout();
 }
 

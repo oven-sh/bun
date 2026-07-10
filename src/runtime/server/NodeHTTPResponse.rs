@@ -211,6 +211,8 @@ unsafe extern "C" {
     // `&JSGlobalObject` encodes non-null/aligned; `status_message` is the
     // ptr/len of a Rust `&[u8]` and `response` is a live `uws::Response<SSL>*`
     // from the matched `AnyResponse` arm. Module-private with one call site.
+    // Returns false when the C++ header writer left a JS exception pending
+    // (checked inside its own ThrowScope).
     safe fn NodeHTTPServer__writeHead_http(
         global_object: &JSGlobalObject,
         status_message: *const u8,
@@ -219,7 +221,7 @@ unsafe extern "C" {
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
         response: *mut c_void,
-    );
+    ) -> bool;
 
     safe fn NodeHTTPServer__writeHead_https(
         global_object: &JSGlobalObject,
@@ -229,7 +231,7 @@ unsafe extern "C" {
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
         response: *mut c_void,
-    );
+    ) -> bool;
 }
 
 /// `VirtualMachine::get()` returns `*mut`; deref once for callers that need `&mut`.
@@ -886,12 +888,13 @@ impl NodeHTTPResponse {
             }
         }
 
+        let wrote_head_ok;
         'do_it: {
             if status_message_bytes.is_empty() {
                 if let Some(status_message) =
                     HTTPStatusText::get(u16::try_from(status_code).expect("int cast"))
                 {
-                    write_head_internal(
+                    wrote_head_ok = write_head_internal(
                         &raw_response,
                         global_object,
                         status_message,
@@ -921,7 +924,7 @@ impl NodeHTTPResponse {
                 stack_buf[..code.len()].copy_from_slice(code);
                 stack_buf[code.len()] = b' ';
                 stack_buf[code.len() + 1..n].copy_from_slice(message);
-                write_head_internal(
+                wrote_head_ok = write_head_internal(
                     &raw_response,
                     global_object,
                     &stack_buf[..n],
@@ -935,7 +938,7 @@ impl NodeHTTPResponse {
                 heap.extend_from_slice(code);
                 heap.push(b' ');
                 heap.extend_from_slice(message);
-                write_head_internal(
+                wrote_head_ok = write_head_internal(
                     &raw_response,
                     global_object,
                     &heap,
@@ -947,10 +950,11 @@ impl NodeHTTPResponse {
         }
 
         // The C++ header writer can throw (invalid header characters, header
-        // conversion). When this runs inside writeHeadAndEnd there is no JS
-        // binding wrapper to observe the pending exception, so check here -
+        // conversion) and reports it via its return value, checked inside its
+        // own ThrowScope. When this runs inside writeHeadAndEnd there is no
+        // JS binding wrapper between the phases, so propagate here -
         // otherwise the end phase would run with an exception pending.
-        if global_object.has_exception() {
+        if !wrote_head_ok {
             return Err(jsc::JsError::Thrown);
         }
 
@@ -1048,7 +1052,7 @@ fn write_head_internal(
     headers: JSValue,
     auto_header_bits: u32,
     keep_alive_timeout_secs: u32,
-) {
+) -> bool {
     scoped_log!(
         NodeHTTPResponse,
         "writeHeadInternal({})",

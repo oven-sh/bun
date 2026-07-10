@@ -6236,6 +6236,13 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     flushHeaders() {
       writeHeadToSocket(null);
     },
+    writeHeadAndEnd(statusCode, statusMessage, headers, chunk, encoding, strictContentLength) {
+      // The native NodeHTTPResponse batches writeHead + end into one call;
+      // this fallback composes the same two steps (auto-header bits and the
+      // keep-alive timeout are rendered by writeHeadToSocket here).
+      this.writeHead(statusCode, statusMessage, headers);
+      return this.end(chunk, encoding, undefined, strictContentLength);
+    },
     write(chunk, encoding, _callback, _strictContentLength) {
       const buf = toBuffer(chunk, encoding);
       writeHeadToSocket(null);

@@ -55,18 +55,21 @@ impl ModuleLoader {
     /// `VirtualMachine`, so passing both would alias (PORTING.md §Forbidden).
     /// Access `module_loader` through `jsc_vm` instead.
     pub fn reset_arena(jsc_vm: &mut VirtualMachine) {
-        // PERF: this unconditionally calls `reset()`. Per
-        // `MimallocArena::reset_retain_with_limit`'s doc comment, the
-        // "mimalloc's segment cache keeps pages warm anyway" theory behind
-        // unconditional `reset()` proved wrong (purged pages get re-committed
-        // and re-zeroed each cycle), which is why the cap-gated retain exists
-        // and the other call sites use `reset_retain_with_limit(8 MiB)`.
-        // Switching to the retain-with-limit form (when not in smol mode) is
-        // a perf-sensitive change that
-        // needs benchmarking (transpile arena RSS vs cycle cost), so it is
-        // tracked as a dedicated work order rather than changed inline.
+        let smol = jsc_vm.smol;
         if let Some(arena) = jsc_vm.module_loader.transpile_source_code_arena.as_mut() {
-            arena.reset();
+            if smol {
+                // --smol prioritizes RSS: always destroy, retain nothing.
+                arena.reset();
+                bun_core::scoped_log!(ModuleLoader, "reset_arena: free_all");
+            } else {
+                let retained = arena.reset_retain_with_limit(8 * 1024 * 1024);
+                // Asserted by load-same-js-file-a-lot.test.ts.
+                bun_core::scoped_log!(
+                    ModuleLoader,
+                    "reset_arena: {}",
+                    if retained { "retained" } else { "recycled" }
+                );
+            }
         }
     }
 }

@@ -49,6 +49,17 @@ describe("null byte injection protection", () => {
       }).toThrow(/must be a string without null bytes/);
     });
 
+    test("throws error for null byte in argv0", async () => {
+      try {
+        Bun.spawn({ cmd: ["echo", "hello"], argv0: "AAA\0BBB" });
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e.code).toBe("ERR_INVALID_ARG_VALUE");
+        expect(e.message).toMatch(/options\.argv0/);
+        expect(e.message).toMatch(/must be a string without null bytes/);
+      }
+    });
+
     test("works normally with valid arguments", async () => {
       await using proc = Bun.spawn(["echo", "hello"], { stdout: "pipe" });
       const stdout = await new Response(proc.stdout).text();
@@ -80,6 +91,23 @@ describe("null byte injection protection", () => {
       expect(() => {
         Bun.spawnSync(["echo", arg]);
       }).toThrow(/must be a string without null bytes/);
+    });
+
+    test("throws error for null byte in argv0", () => {
+      try {
+        Bun.spawnSync({ cmd: ["echo", "hello"], argv0: "AAA\0BBB" });
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e.code).toBe("ERR_INVALID_ARG_VALUE");
+        expect(e.message).toMatch(/options\.argv0/);
+        expect(e.message).toMatch(/must be a string without null bytes/);
+      }
+    });
+
+    test("works normally with valid argv0", () => {
+      const result = Bun.spawnSync({ cmd: ["echo", "hello"], argv0: "myecho" });
+      expect(result.stdout.toString().trim()).toBe("hello");
+      expect(result.exitCode).toBe(0);
     });
 
     test("works normally with valid arguments", () => {

@@ -1410,7 +1410,13 @@ function Server(options, secureConnectionListener): void {
       // accepted keep the certificate they handshook with, matching Node.
       const handle = this._handle;
       if (handle) {
-        setListenerSecureContext(handle, this[buntls](0, undefined, false)[0]);
+        const tls = this[buntls](0, undefined, false)[0];
+        // Same transformation net.ts's listen path applies before Bun.listen:
+        // without it the verify mode on the rebuilt context ends up at
+        // SSL_VERIFY_FAIL_IF_NO_PEER_CERT for any server that has `ca` but did
+        // not set `requestCert`.
+        if (!tls.requestCert) tls.rejectUnauthorized = false;
+        setListenerSecureContext(handle, tls);
       }
     }
     this._sharedCreds = serverTLSOptions instanceof InternalSecureContext ? serverTLSOptions : null;

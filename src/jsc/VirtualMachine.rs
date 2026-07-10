@@ -367,8 +367,8 @@ unsafe extern "C" {
     ) -> c_int;
     safe fn Bun__emitHandledPromiseEvent(global: &JSGlobalObject, promise: JSValue) -> bool;
 
-    safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
-    safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: i32);
+    safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: i32);
     safe fn Bun__closeAllSQLiteDatabasesForTermination();
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
@@ -482,18 +482,28 @@ pub fn is_smol_mode() -> bool {
 
 #[derive(Default)]
 pub struct ExitHandler {
-    pub exit_code: u8,
+    /// `process.exitCode` / the argument to `process.exit()`. Node stores
+    /// this in an int32 slot, so the raw value (e.g. `-1`, `300`) survives
+    /// for the getter and the `beforeExit`/`exit` event arguments; only the
+    /// final `exit(2)` masks it to 0-255.
+    pub exit_code: i32,
 }
 
 impl ExitHandler {
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__getExitCode(vm: &VirtualMachine) -> u8 {
+    pub extern "C" fn Bun__getExitCode(vm: &VirtualMachine) -> i32 {
         vm.exit_handler.exit_code
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__setExitCode(vm: &mut VirtualMachine, code: u8) {
+    pub extern "C" fn Bun__setExitCode(vm: &mut VirtualMachine, code: i32) {
         vm.exit_handler.exit_code = code;
+    }
+
+    /// The status to hand to `exit(2)`: the low 8 bits, matching what the OS
+    /// reports for out-of-range codes like `-1` (255) or `300` (44).
+    pub fn os_exit_code(&self) -> u32 {
+        (self.exit_code & 0xff) as u32
     }
 
     /// Note: spec calls `this.exit_handler.dispatchOnExit()` from a
@@ -1600,7 +1610,7 @@ impl VirtualMachine {
 
             self.destroy();
         }
-        bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
+        bun_core::Global::exit(self.exit_handler.os_exit_code())
     }
 }
 
@@ -1714,7 +1724,7 @@ pub struct RuntimeHooks {
     /// it returns and the caller `panic!`s. Lives in `bun_runtime::node`
     /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
     /// slot instead of the linker.
-    pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
+    pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: i32),
     /// `node_cluster_binding.handleInternalMessageChild(global, data)`.
     pub handle_ipc_internal_child: unsafe fn(global: *mut JSGlobalObject, data: JSValue),
     /// `node_cluster_binding.child_singleton.deinit()`.
@@ -3386,14 +3396,11 @@ impl VirtualMachine {
                     wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
                 if self.uncaught_exception(global_object, wrapped, true) {
                     drain(self);
-                    return;
                 }
-                // continue to default handler — but RETURN if this drain
-                // errors (the VM is dead; don't bump the counter or invoke the
-                // handler).
-                if self.event_loop_mut().drain_microtasks().is_err() {
-                    return;
-                }
+                // `uncaught_exception` already reported the error and set the
+                // exit code to 1 when nothing handled it; falling through to
+                // the default handler would report it a second time.
+                return;
             }
         }
         self.unhandled_error_counter += 1;

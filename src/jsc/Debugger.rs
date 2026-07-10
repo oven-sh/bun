@@ -622,15 +622,15 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
         return false;
     }
 
-    if !wait_for_connection {
-        // The waiting path calls this from `wait_for_debugger_if_necessary`;
-        // without it the inspected global never gets its inspector controller.
-        let ctx_id = match this.debugger.as_deref() {
-            Some(d) => d.script_execution_context_id,
-            None => return false,
-        };
-        Bun__ensureDebugger(ctx_id, false);
-    }
+    // Install Bun's controller before any yield can let a client
+    // connectFrontend() to JSC's default one; the waiting path's later call
+    // from wait_for_debugger_if_necessary is then a bunControllerInstalled
+    // no-op that only handles the block.
+    let ctx_id = match this.debugger.as_deref() {
+        Some(d) => d.script_execution_context_id,
+        None => return false,
+    };
+    Bun__ensureDebugger(ctx_id, false);
 
     true
 }

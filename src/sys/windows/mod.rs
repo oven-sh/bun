@@ -216,34 +216,6 @@ pub const fn from_sys_time(nt_time: i64) -> i128 {
     (nt_time as i128 - EPOCH_DIFFERENCE_100NS as i128) * 100
 }
 
-/// Convert a 64-bit Windows `FILETIME` (100-ns ticks since 1601-01-01 UTC)
-/// into a libuv `uv_timespec_t` (seconds + nanoseconds since the Unix epoch).
-/// Matches libuv's `uv__filetime_to_timespec`.
-#[inline]
-pub fn filetime_to_timespec(filetime: i64) -> bun_libuv_sys::uv_timespec_t {
-    let t = filetime - EPOCH_DIFFERENCE_100NS;
-    let mut sec = t / 10_000_000;
-    let mut nsec = (t - sec * 10_000_000) * 100;
-    if nsec < 0 {
-        sec -= 1;
-        nsec += 1_000_000_000;
-    }
-    bun_libuv_sys::uv_timespec_t {
-        sec: sec as _,
-        nsec: nsec as _,
-    }
-}
-
-/// Convert a [`TimeLike`](crate::TimeLike) (seconds + nanoseconds since the
-/// Unix epoch) into a Windows `FILETIME`.
-#[inline]
-pub fn timespec_to_filetime(t: crate::TimeLike) -> FILETIME {
-    let ticks = (t.sec as i64 * 10_000_000 + t.nsec as i64 / 100 + EPOCH_DIFFERENCE_100NS) as u64;
-    FILETIME {
-        dwLowDateTime: ticks as u32,
-        dwHighDateTime: (ticks >> 32) as u32,
-    }
-}
 
 pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
 

@@ -5651,7 +5651,7 @@ impl NodeFS {
                 Err(err) => {
                     Err(err.with_path_and_syscall(&prefix_buf[..len + 6], sys::Tag::mkdtemp))
                 }
-                Ok(()) => Ok(ZigString::dupe_for_js(&out).expect("oom")),
+                Ok(()) => Ok(encode_path_result(&out, args.encoding)),
             };
         }
 

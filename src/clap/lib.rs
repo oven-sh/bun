@@ -89,9 +89,8 @@ macro_rules! comptime_table {
     // long-name index, and `ConvertedTable` header in with one shared
     // fault-around window. Non-PIE `bun` has zero runtime relocations, so these
     // stay in plain rodata even with the `&'static [u8]` help strings they point
-    // at. Linux-only: the section-name syntax is ELF-specific (mirrors
-    // `bun_core::err!`'s `.bun_err` clustering). Use sparingly — only
-    // `AUTO_TABLE` should take this arm; everything else passes `, cold`.
+    // at. Linux-only: the section-name syntax is ELF-specific. Use sparingly —
+    // only `AUTO_TABLE` should take this arm; everything else passes `, cold`.
     ($params:expr) => {
         $crate::comptime_table!(
             @build

@@ -649,12 +649,9 @@ function doSend(ex, self, ip, list, address, port, callback) {
     return;
   }
   if (ip && state.sendBlockList?.check(ip, `ipv${isIP(ip)}`)) {
-    const blocked = $ERR_IP_BLOCKED(ip);
     if (typeof callback === "function") {
-      process.nextTick(callback, blocked);
-      return;
+      process.nextTick(callback, $ERR_IP_BLOCKED(ip));
     }
-    process.nextTick(() => self.emit("error", blocked));
     return;
   }
   const socket = state.handle.socket;

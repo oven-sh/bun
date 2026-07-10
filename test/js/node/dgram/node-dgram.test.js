@@ -123,11 +123,10 @@ describe("node:dgram blockList options", () => {
     expect(cbErr).toBeInstanceOf(Error);
     expect(cbErr.code).toBe("ERR_IP_BLOCKED");
 
-    // Without a callback the error is emitted on the socket.
-    const emitted = once(tx, "error");
+    // Without a callback Node drops the datagram silently (no 'error' event).
+    const txErrors = [];
+    tx.on("error", e => txErrors.push(e));
     tx.send("blocked-out-2", port, "127.0.0.1");
-    const [emittedErr] = await emitted;
-    expect(emittedErr.code).toBe("ERR_IP_BLOCKED");
 
     // An allowed send reaches rx; once it arrives, rx has processed everything
     // addressed to it (the blocked sends never hit the wire).
@@ -137,7 +136,7 @@ describe("node:dgram blockList options", () => {
     const gotAllowed = once(rx, "message");
     await new Promise((resolve, reject) => tx2.send("allowed", port, "127.0.0.1", e => (e ? reject(e) : resolve())));
     await gotAllowed;
-    expect(received).toEqual(["allowed"]);
+    expect({ received, txErrors }).toEqual({ received: ["allowed"], txErrors: [] });
   });
 
   test("sendBlockList: connect() to blocked destination fails with ERR_IP_BLOCKED", async () => {

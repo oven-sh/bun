@@ -6532,9 +6532,9 @@ impl Default for NtCreateFileOptions {
 #[cfg(windows)]
 #[derive(Copy, Clone)]
 pub struct NormalizePathWindowsOpts {
-    /// Applies to the absolute-input branch only: `false` emits a Win32 path
-    /// (no `\??\`) for kernel32 APIs. Dirfd-relative resolution always yields
-    /// an NT `\Device\…` object name regardless of this flag.
+    /// `false` emits Win32-consumable paths for kernel32 APIs: plain (no
+    /// `\??\`) for absolute inputs, `\\?\GLOBALROOT\Device\…` for dotted or
+    /// multi-component relatives. Bare names still pass through verbatim.
     pub add_nt_prefix: bool,
 }
 #[cfg(windows)]
@@ -6546,11 +6546,11 @@ impl Default for NormalizePathWindowsOpts {
     }
 }
 
-/// `..`-clamp boundary from the kernel's own two answers: the handle's full
-/// NT object name minus its volume-relative name; Mup/LanmanRedirector extend
-/// past `\server\share`. `None` when the names don't compose (rename race).
+/// `..`-clamp boundary from the kernel's own two answers (full NT object name
+/// minus volume-relative name), plus whether the device is an allowlisted
+/// share-rooted redirector. `None` when the names don't compose (rename race).
 #[cfg(windows)]
-fn nt_clamp_prefix_len(nt: &[u16], vol_rel: &[u16]) -> Option<usize> {
+fn nt_clamp_prefix_len(nt: &[u16], vol_rel: &[u16]) -> Option<(usize, bool)> {
     const SEP: u16 = b'\\' as u16;
     const DEVICE: &[u8] = b"\\Device\\";
     if vol_rel.first() != Some(&SEP)
@@ -6570,21 +6570,29 @@ fn nt_clamp_prefix_len(nt: &[u16], vol_rel: &[u16]) -> Option<usize> {
             && (device_len == full || nt[full] == SEP)
     };
     if !device_is(b"Mup") && !device_is(b"LanmanRedirector") {
-        return Some(device_len);
+        return Some((device_len, false));
     }
     // UNC volume-relative names start at `\server\share` (ntifs
-    // FileNameInformation); fewer components → the boundary is unknowable.
-    let component_end = |start: usize| {
-        vol_rel[start..]
-            .iter()
-            .position(|&c| c == SEP)
-            .map_or(vol_rel.len(), |i| start + i)
-    };
-    let server_end = component_end(1);
-    if server_end == vol_rel.len() {
+    // FileNameInformation); a missing or empty share (`\srv`, `\srv\`) →
+    // boundary unknowable. Trailing separators would fake an empty share.
+    let mut scan = vol_rel;
+    while scan.last() == Some(&SEP) {
+        scan = &scan[..scan.len() - 1];
+    }
+    if scan.is_empty() {
         return None;
     }
-    Some(device_len + component_end(server_end + 1))
+    let component_end = |start: usize| {
+        scan[start..]
+            .iter()
+            .position(|&c| c == SEP)
+            .map_or(scan.len(), |i| start + i)
+    };
+    let server_end = component_end(1);
+    if server_end == scan.len() {
+        return None;
+    }
+    Some((device_len + component_end(server_end + 1), true))
 }
 
 /// `normalizePathWindows` — convert a (possibly relative) path into an NT
@@ -6599,8 +6607,10 @@ pub fn normalize_path_windows<'a>(
     normalize_path_windows_opts(dir_fd, path, buf, NormalizePathWindowsOpts::default())
 }
 
-/// Like [`normalize_path_windows`]; `opts.add_nt_prefix` applies to the
-/// absolute branch only — dirfd-relative inputs always resolve to `\Device\…`.
+/// Like [`normalize_path_windows`]; `opts.add_nt_prefix = false` makes the
+/// output Win32-consumable: absolute inputs lose `\??\`, dotted or
+/// multi-component relatives become `\\?\GLOBALROOT\Device\…`, and bare names
+/// pass through verbatim (Win32 resolves those against the cwd).
 #[cfg(windows)]
 pub fn normalize_path_windows_opts<'a>(
     dir_fd: Fd,
@@ -6736,10 +6746,14 @@ pub fn normalize_path_windows_opts<'a>(
     }
 
     // Otherwise: resolve `dir_fd` to its NT device path, join, normalize.
-    debug_assert!(
-        opts.add_nt_prefix,
-        "Win32-path output (add_nt_prefix = false) is only supported for absolute inputs"
-    );
+    // Win32 consumers (`add_nt_prefix = false`) get the `\\?\GLOBALROOT`
+    // spelling of the same object — no mount manager, valid for kernel32.
+    const GLOBALROOT: &[u16] = bun_core::w!("\\\\?\\GLOBALROOT");
+    let g = if opts.add_nt_prefix {
+        0
+    } else {
+        GLOBALROOT.len()
+    };
     let base_fd = if dir_fd.is_valid() {
         dir_fd.native()
     } else {
@@ -6757,6 +6771,7 @@ pub fn normalize_path_windows_opts<'a>(
         &mut base_buf.0[..],
     ) {
         Ok(p) => p,
+        Err(windows::GetFinalPathNameByHandleError::NameTooLong) => return Err(too_long()),
         // `E.BADFD` (errno 77 'file descriptor in bad state'),
         // not `EBADF` (9).
         Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
@@ -6765,6 +6780,7 @@ pub fn normalize_path_windows_opts<'a>(
     // The clamp boundary only matters when `..` can climb into the copied
     // prefix (`base` is already normalized); without one, any split yields
     // identical output, so skip the volume-relative query entirely.
+    let mut share_rooted = false;
     let mut prefix_len = if !has_dotdot {
         base.len()
     } else {
@@ -6780,12 +6796,16 @@ pub fn normalize_path_windows_opts<'a>(
             &mut rel_buf.0[..],
         ) {
             Ok(p) => p,
+            Err(windows::GetFinalPathNameByHandleError::NameTooLong) => return Err(too_long()),
             Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
         };
         // A mis-placed boundary would resolve `..` to the wrong file; fail
         // loud when the two names don't compose (e.g. a rename race).
         match nt_clamp_prefix_len(base, vol_rel) {
-            Some(len) => len,
+            Some((len, rooted)) => {
+                share_rooted = rooted;
+                len
+            }
             None => return Err(Error::from_code(E::BADFD, Tag::open)),
         }
     };
@@ -6804,16 +6824,37 @@ pub fn normalize_path_windows_opts<'a>(
         rest = &rest[..rest.len() - 1];
     }
 
+    // Unknown devices may multiplex namespaces (many mounts under one device
+    // root); a `..` that would touch the clamp floor cannot be clamped safely
+    // — fail loud. Allowlisted redirectors keep the silent share-root clamp.
+    if has_dotdot && !share_rooted {
+        const DOT: u16 = b'.' as u16;
+        let is_sep = |&c: &u16| bun_paths::is_sep_any_t(c);
+        let mut depth = 0isize;
+        for component in rest.split(is_sep).chain(rel.split(is_sep)) {
+            depth += match component {
+                [] | [DOT] => 0,
+                [DOT, DOT] => -1,
+                _ => 1,
+            };
+            if depth < 0 {
+                return Err(Error::from_code(E::BADFD, Tag::open));
+            }
+        }
+    }
+
     let mut joined = bun_paths::w_path_buffer_pool::get();
     let joined_len = rest.len() + 1 + rel.len();
-    // `buf` holds the copied prefix + the normalized remainder (never longer
-    // than `joined_len`) + NUL; keep 8 u16 of headroom to stay conservative.
+    // `buf` holds `\\?\GLOBALROOT` (Win32 output only) + the copied prefix +
+    // the normalized remainder (never longer than `joined_len`) + NUL; keep
+    // 8 u16 of headroom to stay conservative.
     if joined_len > joined.0.len().saturating_sub(8)
-        || prefix_len + joined_len > buf.len().saturating_sub(8)
+        || g + prefix_len + joined_len > buf.len().saturating_sub(8)
     {
         return Err(too_long());
     }
-    buf[..prefix_len].copy_from_slice(&base[..prefix_len]);
+    buf[..g].copy_from_slice(&GLOBALROOT[..g]);
+    buf[g..g + prefix_len].copy_from_slice(&base[..prefix_len]);
     joined.0[..rest.len()].copy_from_slice(rest);
     joined.0[rest.len()] = b'\\' as u16;
     joined.0[rest.len() + 1..joined_len].copy_from_slice(rel);
@@ -6828,7 +6869,7 @@ pub fn normalize_path_windows_opts<'a>(
         /*ADD_NT_PREFIX*/ false,
     >(
         &joined.0[..joined_len],
-        &mut buf[prefix_len..],
+        &mut buf[g + prefix_len..],
         b'\\' as u16,
         bun_paths::is_sep_any_t::<u16>,
     )
@@ -6837,11 +6878,11 @@ pub fn normalize_path_windows_opts<'a>(
     // directory-path prefix, keep it for a bare device name where it selects
     // the root directory over the volume device.
     if sub_len == 1 && whole_base {
-        buf[prefix_len] = 0;
-        return Ok(WStr::from_buf(&buf[..], prefix_len));
+        buf[g + prefix_len] = 0;
+        return Ok(WStr::from_buf(&buf[..], g + prefix_len));
     }
-    // ZERO_TERMINATE wrote NUL at buf[prefix_len + sub_len].
-    Ok(WStr::from_buf(&buf[..], prefix_len + sub_len))
+    // ZERO_TERMINATE wrote NUL at buf[g + prefix_len + sub_len].
+    Ok(WStr::from_buf(&buf[..], g + prefix_len + sub_len))
 }
 
 /// Open a `\\.\…` device path via kernel32 `CreateFileW`
@@ -6871,6 +6912,15 @@ fn open_windows_device_path(
         return Err(Error::from_code(errno, Tag::open));
     }
     Ok(Fd::from_system(rc))
+}
+
+/// Absolute NT object names our producers emit: `\??\…` or `\Device\…`. Only
+/// these get `RootDirectory = null`; any other rooted string stays
+/// dirfd-relative so `NtCreateFile` rejects it (`OBJECT_PATH_SYNTAX_BAD`).
+#[cfg(windows)]
+fn is_nt_object_name(p: &[u16]) -> bool {
+    bun_core::strings::has_prefix_comptime_utf16(p, &windows::NT_OBJECT_PREFIX_U8)
+        || bun_core::strings::has_prefix_comptime_utf16(p, b"\\Device\\")
 }
 
 /// `openDirAtWindowsNtPath` — `NtCreateFile` with
@@ -6941,7 +6991,7 @@ pub fn open_dir_at_windows_nt_path(
     };
     let mut attr = w::OBJECT_ATTRIBUTES {
         Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-        RootDirectory: if bun_paths::is_absolute_windows_wtf16(p) {
+        RootDirectory: if is_nt_object_name(p) {
             core::ptr::null_mut()
         } else if dir_fd.is_valid() {
             dir_fd.native()
@@ -7011,7 +7061,7 @@ pub fn open_file_at_windows_nt_path(
         // name of a device object (`\??\…`, `\Device\…`), unless it is the
         // name of a file relative to the directory specified by RootDirectory.
         ObjectName: &mut nt_name,
-        RootDirectory: if bun_paths::is_absolute_windows_wtf16(p) {
+        RootDirectory: if is_nt_object_name(p) {
             core::ptr::null_mut()
         } else if dir.is_valid() {
             dir.native()
@@ -7361,7 +7411,7 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     };
     let attr = w::OBJECT_ATTRIBUTES {
         Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-        RootDirectory: if bun_paths::is_absolute_windows_wtf16(path) {
+        RootDirectory: if is_nt_object_name(path) {
             core::ptr::null_mut()
         } else if dir.is_valid() {
             dir.native()
@@ -9740,6 +9790,29 @@ mod normalize_path_windows_tests {
         String::from_utf16(norm.as_slice()).unwrap()
     }
 
+    fn normalize_opts(dir: Fd, path: &str, add_nt_prefix: bool) -> String {
+        let mut buf = bun_paths::w_path_buffer_pool::get();
+        let norm = normalize_path_windows_opts(
+            dir,
+            &wide(path),
+            &mut buf.0[..],
+            NormalizePathWindowsOpts { add_nt_prefix },
+        )
+        .expect(path);
+        String::from_utf16(norm.as_slice()).unwrap()
+    }
+
+    fn normalize_err(dir: Fd, path: &str) -> Error {
+        let mut buf = bun_paths::w_path_buffer_pool::get();
+        match normalize_path_windows(dir, &wide(path), &mut buf.0[..]) {
+            Ok(p) => panic!(
+                "expected error for {path}, got {}",
+                String::from_utf16_lossy(p.as_slice())
+            ),
+            Err(e) => e,
+        }
+    }
+
     /// Open a directory handle with raw `CreateFileW` so the fixture fd does
     /// not depend on the code under test.
     fn open_dir_handle(path: &std::path::Path) -> Fd {
@@ -9814,27 +9887,24 @@ mod normalize_path_windows_tests {
     }
 
     #[test]
-    fn excess_dotdot_clamps_at_volume_root() {
+    fn excess_dotdot_fails_closed_on_local_volume() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_clamp");
         let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
             let _ = close(fd);
         });
-        let got = normalize(*dir, "..\\..\\..\\..\\..\\..\\..\\x");
-        assert!(got.starts_with("\\Device\\"), "{got}");
-        assert_eq!(got.matches("\\Device\\").count(), 1, "{got}");
-        // Exactly two components after `\Device\`: the volume and the
-        // clamped `x`; the volume matches the base directory's volume.
-        let comps: Vec<&str> = got["\\Device\\".len()..].split('\\').collect();
-        assert_eq!(comps.len(), 2, "{got}");
-        assert!(!comps[0].is_empty(), "{got}");
-        assert_eq!(comps[1], "x", "{got}");
         let base = normalize(*dir, ".");
-        let base_vol = base["\\Device\\".len()..].split('\\').next().unwrap();
-        assert_eq!(comps[0], base_vol, "{got} vs {base}");
-        // `..`-only rel clamps to the volume root DIRECTORY: device + `\`.
-        let root = normalize(*dir, "..\\..\\..\\..\\..\\..\\..\\..\\..");
-        assert_eq!(root, format!("\\Device\\{base_vol}\\"), "{root}");
+        // Components below the volume root, from the base's own NT name.
+        let depth = base["\\Device\\".len()..].split('\\').count() - 1;
+        // Enough `..` to cross the volume-root floor: local volumes are not
+        // share-rooted, so the clamp is refused instead of applied silently.
+        let over = format!("{}x", "..\\".repeat(depth + 1));
+        assert_eq!(normalize_err(*dir, &over).get_errno(), E::BADFD, "{over}");
+        // Same without a trailing component.
+        let over_only = "..\\".repeat(depth + 1);
+        assert_eq!(normalize_err(*dir, &over_only).get_errno(), E::BADFD);
+        // Within-tree `..` (never crosses the floor) still resolves.
+        assert_eq!(normalize(*dir, "sub\\..\\ok"), format!("{base}\\ok"));
     }
 
     #[test]
@@ -9900,37 +9970,41 @@ mod normalize_path_windows_tests {
 
     #[test]
     fn clamp_prefix_len_pairs() {
-        let split_at = |nt: &str, vol_rel: &str, prefix: &str| {
+        let split_at = |nt: &str, vol_rel: &str, prefix: &str, share_rooted: bool| {
             assert!(nt.starts_with(prefix), "{nt}");
             assert_eq!(
                 nt_clamp_prefix_len(&wide(nt), &wide(vol_rel)),
-                Some(prefix.len()),
+                Some((prefix.len(), share_rooted)),
                 "{nt} / {vol_rel}"
             );
         };
-        // Local volume.
+        // Local volume: not share-rooted.
         split_at(
             "\\Device\\HarddiskVolume3\\Users\\x",
             "\\Users\\x",
             "\\Device\\HarddiskVolume3",
+            false,
         );
         // Volume root.
         split_at(
             "\\Device\\HarddiskVolume3\\",
             "\\",
             "\\Device\\HarddiskVolume3",
+            false,
         );
         // Nested device name (dynamic-disk volume set).
         split_at(
             "\\Device\\HarddiskDmVolumes\\MachineDg0\\Volume1\\dir\\f",
             "\\dir\\f",
             "\\Device\\HarddiskDmVolumes\\MachineDg0\\Volume1",
+            false,
         );
-        // UNC: boundary extends past `\server\share`.
+        // UNC: boundary extends past `\server\share`; share-rooted.
         split_at(
             "\\Device\\Mup\\srv\\share\\dir",
             "\\srv\\share\\dir",
             "\\Device\\Mup\\srv\\share",
+            true,
         );
         // Session-qualified redirector: `;…` components sit on the device
         // side of the subtraction; the share extension follows.
@@ -9938,6 +10012,7 @@ mod normalize_path_windows_tests {
             "\\Device\\Mup\\;LanmanRedirector\\;X:00000000000003e7\\srv\\share\\f",
             "\\srv\\share\\f",
             "\\Device\\Mup\\;LanmanRedirector\\;X:00000000000003e7\\srv\\share",
+            true,
         );
         // Guard failures report an unknowable boundary.
         let fails = |nt: &str, vol_rel: &str| {
@@ -9952,6 +10027,157 @@ mod normalize_path_windows_tests {
         fails("\\x", "\\Device\\HarddiskVolume3\\x"); // vol_rel >= nt
         fails("\\Device\\HarddiskVolume3\\x", "\\y"); // suffix mismatch
         fails("\\Device\\Mup\\srv", "\\srv"); // UNC server without share
+        fails("\\Device\\Mup\\srv\\", "\\srv\\"); // trailing sep, still no share
+        fails("\\Device\\Mup\\", "\\"); // redirector root
+        fails("\\Device\\HarddiskVolume3", "\\Device\\HarddiskVolume3"); // vol_rel == nt
+
+        // LanmanRedirector direct (no Mup) is share-rooted too.
+        split_at(
+            "\\Device\\LanmanRedirector\\;X:0\\srv\\share\\f",
+            "\\srv\\share\\f",
+            "\\Device\\LanmanRedirector\\;X:0\\srv\\share",
+            true,
+        );
+        // Device match is ordinal case-insensitive.
+        split_at(
+            "\\device\\MUP\\srv\\share\\dir",
+            "\\srv\\share\\dir",
+            "\\device\\MUP\\srv\\share",
+            true,
+        );
+        // Trailing separator after a real share still splits after the share.
+        split_at(
+            "\\Device\\Mup\\srv\\share\\",
+            "\\srv\\share\\",
+            "\\Device\\Mup\\srv\\share",
+            true,
+        );
+        // Prefix-extension lookalike is NOT a redirector.
+        split_at("\\Device\\Mupp\\x", "\\x", "\\Device\\Mupp", false);
+    }
+
+    #[test]
+    fn win32_output_uses_globalroot() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_gr");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let got = normalize_opts(*dir, "a\\b", false);
+        assert!(got.starts_with("\\\\?\\GLOBALROOT\\Device\\"), "{got}");
+        assert!(got.ends_with("\\a\\b"), "{got}");
+        // rel `.`: GLOBALROOT + base, no trailing separator.
+        assert_eq!(
+            normalize_opts(*dir, ".", false),
+            format!("\\\\?\\GLOBALROOT{}", normalize(*dir, "."))
+        );
+    }
+
+    #[test]
+    fn win32_globalroot_output_creates_directories() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_gr_mkdir");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let name = normalize_opts(*dir, ".\\fresh", false);
+        let wname: Vec<u16> = wide(&name).into_iter().chain([0u16]).collect();
+        // SAFETY: `wname` is NUL-terminated.
+        let ok = unsafe { w::CreateDirectoryW(wname.as_ptr(), core::ptr::null_mut()) };
+        assert_ne!(ok, 0, "CreateDirectoryW({name})");
+        assert!(std::fs::metadata(tree.0.join("fresh")).unwrap().is_dir());
+    }
+
+    // ── branch-review matrix ────────────────────────────────────────────
+
+    #[test]
+    fn volume_root_base_shapes() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let root = scopeguard::guard(open_dir_handle(std::path::Path::new("C:\\")), |fd| {
+            let _ = close(fd);
+        });
+        let dot = normalize(*root, ".");
+        assert!(dot.starts_with("\\Device\\"), "{dot}");
+        // The lone separator is load-bearing: `\Device\<vol>\` is the root
+        // directory, `\Device\<vol>` the volume device.
+        assert!(dot.ends_with('\\'), "{dot}");
+        // Generic across device shapes (incl. nested `HarddiskDmVolumes\…`):
+        // a child of the root carries exactly the root's prefix + its name.
+        let windows_dir =
+            scopeguard::guard(open_dir_handle(std::path::Path::new("C:\\Windows")), |fd| {
+                let _ = close(fd);
+            });
+        assert_eq!(normalize(*windows_dir, "."), format!("{dot}Windows"));
+        assert_eq!(normalize(*root, ".\\x"), format!("{dot}x"));
+        // Any `..` from the volume root would cross the floor: fail closed.
+        assert_eq!(normalize_err(*root, "..\\x").get_errno(), E::BADFD);
+    }
+
+    #[test]
+    fn buffer_boundary_exact_fit() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_bound");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let base_len = wide(&normalize(*dir, ".")).len();
+        let rel = "a\\b";
+        // `..`-free path: prefix = whole base, `joined` = `\` + rel, and the
+        // function reserves 8 u16 of headroom.
+        let needed = base_len + 1 + rel.len() + 8;
+        let mut exact = vec![0u16; needed];
+        assert!(normalize_path_windows(*dir, &wide(rel), &mut exact[..]).is_ok());
+        let mut small = vec![0u16; needed - 1];
+        let err = match normalize_path_windows(*dir, &wide(rel), &mut small[..]) {
+            Ok(p) => panic!("expected ENAMETOOLONG, got {:?}", p.as_slice()),
+            Err(e) => e,
+        };
+        assert_eq!(err.get_errno(), E::ENAMETOOLONG);
+    }
+
+    #[test]
+    fn non_file_dirfd_fails_with_badfd() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        // A NUL-device handle is valid but has no file name, so the base
+        // query fails deterministically (no closed-handle recycling races).
+        // The compose/None-query failure arms are not constructible from a
+        // real handle; `clamp_prefix_len_pairs` covers them at the unit level.
+        let nul_path = wide("\\\\.\\NUL\0");
+        let nul = scopeguard::guard(
+            open_windows_device_path(
+                bun_core::WStr::from_buf(&nul_path[..], nul_path.len() - 1),
+                w::GENERIC_READ,
+                w::OPEN_EXISTING,
+                0,
+            )
+            .expect("open NUL"),
+            |fd| {
+                let _ = close(fd);
+            },
+        );
+        assert_eq!(normalize_err(*nul, ".\\x").get_errno(), E::BADFD);
+    }
+
+    #[test]
+    fn drive_qualified_bare_name_passes_through() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        // The bypass copies the ORIGINAL path (drive prefix included); only
+        // the post-strip remainder decides the routing.
+        assert_eq!(normalize(Fd::INVALID, "C:foo"), "C:foo");
+    }
+
+    #[test]
+    fn win32_globalroot_dotdot_composes() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_gr_dotdot");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        assert_eq!(
+            normalize_opts(*child, "..\\x", false),
+            format!("\\\\?\\GLOBALROOT{}", normalize(*child, "..\\x"))
+        );
     }
 
     #[test]

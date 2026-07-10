@@ -91,6 +91,12 @@ mod tests {
         // Doubled separator: empty component, then a `..` component.
         check("a\\\\..", W, (true, true, true));
         check("a\\", W, (true, false, false));
+        // The `!other` guard: dots mixed with other chars never form `..`.
+        check("..a\\x", W, (true, true, false));
+        check("a..\\x", W, (true, true, false));
+        check(".a.\\x", W, (true, true, false));
+        // Field-exactness: the closing separator flips has_sep, nothing else.
+        check("..\\", W, (true, true, true));
     }
 
     #[test]

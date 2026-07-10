@@ -103,6 +103,8 @@ pub enum Error {
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
     Hpack(#[from] crate::lshpack::HpackError),
+    #[error(transparent)]
+    Core(#[from] bun_core::Error),
 }
 
 impl Error {
@@ -159,7 +161,47 @@ impl Error {
             Self::Cert(name) => name,
             Self::Alloc(_) => "OutOfMemory",
             Self::Hpack(e) => <&'static str>::from(e),
+            Self::Core(e) => e.name(),
         }
+    }
+}
+
+impl From<bun_zlib::ZlibError> for Error {
+    fn from(e: bun_zlib::ZlibError) -> Self {
+        match e {
+            bun_zlib::ZlibError::ShortRead => Error::ShortRead,
+            _ => Error::CompressionFailed,
+        }
+    }
+}
+
+impl From<bun_brotli::Error> for Error {
+    fn from(e: bun_brotli::Error) -> Self {
+        match e {
+            bun_brotli::Error::ShortRead => Error::ShortRead,
+            _ => Error::CompressionFailed,
+        }
+    }
+}
+
+impl From<bun_zstd::ZstdError> for Error {
+    fn from(e: bun_zstd::ZstdError) -> Self {
+        match e {
+            bun_zstd::ZstdError::ShortRead => Error::ShortRead,
+            _ => Error::CompressionFailed,
+        }
+    }
+}
+
+impl From<bun_uws::ConnectError> for Error {
+    fn from(_: bun_uws::ConnectError) -> Self {
+        Error::FailedToOpenSocket
+    }
+}
+
+impl From<bun_picohttp::ParseResponseError> for Error {
+    fn from(_: bun_picohttp::ParseResponseError) -> Self {
+        Error::InvalidHTTPResponse
     }
 }
 

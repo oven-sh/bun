@@ -72,7 +72,7 @@ impl<T> HandleOom for Result<T, Error> {
     fn handle_oom(self) -> Result<T, Error> {
         match self {
             Ok(success) => Ok(success),
-            Err(err) if err == Error::OUT_OF_MEMORY => crate::out_of_memory(),
+            Err(Error::Alloc(_)) => crate::out_of_memory(),
             Err(other_error) => Err(other_error),
         }
     }
@@ -82,7 +82,7 @@ impl<T> HandleOom for Result<T, Error> {
 impl HandleOom for Error {
     type Output = Error;
     fn handle_oom(self) -> Error {
-        if self == Error::OUT_OF_MEMORY {
+        if matches!(self, Error::Alloc(_)) {
             crate::out_of_memory()
         } else {
             self

@@ -8,6 +8,10 @@ pub enum Error {
     Backtrack,
     #[error("MacroFailed")]
     MacroFailed,
+    #[error(transparent)]
+    Lexer(#[from] crate::lexer::Error),
+    #[error(transparent)]
+    Core(#[from] bun_core::Error),
 }
 
 impl Error {
@@ -17,6 +21,8 @@ impl Error {
             Self::StackOverflow => "StackOverflow",
             Self::Backtrack => "Backtrack",
             Self::MacroFailed => "MacroFailed",
+            Self::Lexer(e) => <&'static str>::from(e),
+            Self::Core(e) => e.name(),
         }
     }
 }

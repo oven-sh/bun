@@ -1494,7 +1494,7 @@ function ServerResponse(req, options): void {
 
   if (req.httpVersionMajor < 1 || req.httpVersionMinor < 1) {
     this.useChunkedEncodingByDefault = chunkExpression.test(req.headers?.te ?? "");
-    this.shouldKeepAlive = false;
+    this.shouldKeepAlive = RE_CONN_KEEP_ALIVE.test(req.headers?.connection ?? "");
   }
 
   if (options) {
@@ -1595,11 +1595,18 @@ function renderNativeHeaders(res) {
   // header is rendered so the advertised value matches the transport.
   let closeDelimited = false;
   let forceChunked = false;
-  if (res[kOutHeaders]?.["content-length"] === undefined && res[kOutHeaders]?.["transfer-encoding"] === undefined) {
+  const hasContentLength = res[kOutHeaders]?.["content-length"] !== undefined;
+  const hasTransferEncoding = res[kOutHeaders]?.["transfer-encoding"] !== undefined;
+  if (!hasContentLength && !hasTransferEncoding) {
     if (res._hasBody === false) {
       // HEAD / 204 / 304 / 1xx: there is no body to delimit, so removing the
       // framing headers must not close the connection (Node's _storeHeader
       // checks !_hasBody before its close-delimited else-branch).
+    } else if (!res.useChunkedEncodingByDefault) {
+      // HTTP/1.0 cannot fall back to chunked: the body is close-delimited, so
+      // the transport must close after the response regardless of any
+      // Connection: keep-alive advertisement (Node's _storeHeader: _last=true).
+      res[kMustCloseConnection] = true;
     } else if (res._removedTE) {
       closeDelimited = true;
       res[kMustCloseConnection] = true;
@@ -1616,9 +1623,15 @@ function renderNativeHeaders(res) {
       res[kMustCloseConnection] = true;
     }
   } else if (!hasConnection) {
+    // Node's _storeHeader: shouldSendKeepAlive requires contLen or chunked-
+    // by-default. HTTP/1.0 without a user Content-Length/Transfer-Encoding is
+    // close-delimited, so the default advertises close even when the client
+    // offered keep-alive.
+    const canFrameWithoutClose = res.useChunkedEncodingByDefault || hasContentLength || hasTransferEncoding;
     if (
       !defectiveNoBodyResponse &&
       !closeDelimited &&
+      canFrameWithoutClose &&
       !res.maxRequestsOnConnectionReached &&
       res.shouldKeepAlive !== false &&
       requestShouldKeepAlive(res.req)
@@ -1691,18 +1704,18 @@ function endSocketOnFinishIfNeeded(socket, res) {
 }
 
 const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
+const RE_CONN_KEEP_ALIVE = /(?:^|\W)keep-alive(?:$|\W)/i;
 const RE_CONN_UPGRADE = /(?:^|\W)upgrade(?:$|\W)/i;
 // Whether the response should advertise a persistent connection.
 function requestShouldKeepAlive(req) {
   if (!req) return true;
   const connection = req.headers.connection;
   if (req.httpVersionMajor === 1 && req.httpVersionMinor === 0) {
-    // The native server always closes HTTP/1.0 connections after the
-    // response, even when the request asked for keep-alive, so the response
-    // must advertise Connection: close to stay consistent with the transport.
-    // (Node.js answers Connection: close here too whenever it cannot frame
-    // the response without closing, which is the common case for HTTP/1.0.)
-    return false;
+    // HTTP/1.0 defaults to close; only persist when the request explicitly
+    // offered Connection: keep-alive (RFC 2068 §19.7.1). The native server
+    // mirrors this: an HTTP/1.0 request with the keep-alive token leaves the
+    // transport open when the response is framed with Content-Length.
+    return typeof connection === "string" && RE_CONN_KEEP_ALIVE.test(connection);
   }
   return !(typeof connection === "string" && RE_CONN_CLOSE.test(connection));
 }

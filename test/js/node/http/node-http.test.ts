@@ -3749,3 +3749,174 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   c.outputData.push({ data: "y", encoding: "utf8", callback: null });
   expect(d.outputData.length).toBe(0);
 });
+
+describe("HTTP/1.0 keep-alive", () => {
+  // Send two HTTP/1.0 requests with Connection: keep-alive on ONE socket and
+  // resolve with { head1, answered2, closedEarly }. The first response is
+  // delimited by its Content-Length (2), so the second request is written as
+  // soon as head1+body1 have arrived - no timing waits.
+  async function twoRequestsOneSocket(port: number) {
+    const line = "GET / HTTP/1.0\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n";
+    const socket = connect(port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    let onData: () => void = () => {};
+    let closedEarly = false;
+    const closed = new Promise<void>(r => socket.once("close", () => r()));
+    socket.on("data", c => {
+      chunks.push(c);
+      onData();
+    });
+    socket.on("error", () => {});
+    await once(socket, "connect");
+    socket.write(line);
+    // Wait for the first response (head terminated by \r\n\r\n + 2 body bytes).
+    let buf = "";
+    while (true) {
+      buf = Buffer.concat(chunks).toString("latin1");
+      const i = buf.indexOf("\r\n\r\n");
+      if (i !== -1 && buf.length >= i + 4 + 2) break;
+      await Promise.race([new Promise<void>(r => (onData = r)), closed]);
+      if (socket.destroyed) break;
+    }
+    const head1 = buf.slice(0, buf.indexOf("\r\n\r\n")).replace(/^Date: .*$/m, "Date: <D>");
+    const mark = buf.length;
+    // Second request on the same socket.
+    closedEarly = socket.destroyed || !socket.writable;
+    if (!closedEarly) socket.write(line);
+    // Wait for a second status line, or for close.
+    while (!socket.destroyed) {
+      buf = Buffer.concat(chunks).toString("latin1");
+      if (/^HTTP\/1\.[01] 200/.test(buf.slice(mark))) break;
+      await Promise.race([new Promise<void>(r => (onData = r)), closed]);
+    }
+    buf = Buffer.concat(chunks).toString("latin1");
+    const answered2 = /^HTTP\/1\.[01] 200/.test(buf.slice(mark));
+    socket.destroy();
+    return { head1, answered2, closedEarly };
+  }
+
+  it("honours a handler-set Connection: keep-alive with Content-Length", async () => {
+    // The handler accepts the client's keep-alive offer: the response head
+    // advertises keep-alive, so the transport must stay open and serve the
+    // second request on the same socket (RFC 9112 §9.6).
+    const server = createServer((req, res) => {
+      req.resume();
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("Content-Length", "2");
+      res.end("hi");
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const { head1, answered2, closedEarly } = await twoRequestsOneSocket(port);
+      expect(head1).toContain("Connection: keep-alive");
+      expect({ answered2, closedEarly }).toEqual({ answered2: true, closedEarly: false });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("keeps the connection alive when the client offers keep-alive with Content-Length", async () => {
+    // No explicit Connection header from the handler: like Node's
+    // _storeHeader, shouldSendKeepAlive is true for HTTP/1.0 + Connection:
+    // keep-alive + Content-Length, so the default advertises keep-alive.
+    const server = createServer((req, res) => {
+      req.resume();
+      res.setHeader("Content-Length", "2");
+      res.end("hi");
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const { head1, answered2, closedEarly } = await twoRequestsOneSocket(port);
+      expect(head1).toContain("Connection: keep-alive");
+      expect({ answered2, closedEarly }).toEqual({ answered2: true, closedEarly: false });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("advertises close and closes when HTTP/1.0 has no framing headers", async () => {
+    // No Content-Length, no Transfer-Encoding, no chunked fallback: the body
+    // is close-delimited, so the default advertises close and the transport
+    // closes after the first response (matches Node).
+    const server = createServer((req, res) => {
+      req.resume();
+      res.end("hi");
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      const out = await new Promise<string>((resolve, reject) => {
+        let data = "";
+        socket.on("data", c => (data += c));
+        socket.on("end", () => resolve(data));
+        socket.on("error", reject);
+        socket.once("connect", () =>
+          socket.write("GET / HTTP/1.0\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"),
+        );
+      });
+      expect(out).toContain("Connection: close");
+      expect(out).not.toContain("Connection: keep-alive");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("still closes HTTP/1.0 without a Connection: keep-alive offer", async () => {
+    // Plain HTTP/1.0 default: close after the response.
+    const server = createServer((req, res) => {
+      req.resume();
+      res.setHeader("Content-Length", "2");
+      res.end("hi");
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const socket = connect(port, "127.0.0.1");
+      const out = await new Promise<string>((resolve, reject) => {
+        let data = "";
+        socket.on("data", c => (data += c));
+        socket.on("end", () => resolve(data));
+        socket.on("error", reject);
+        socket.once("connect", () => socket.write("GET / HTTP/1.0\r\nHost: localhost\r\n\r\n"));
+      });
+      expect(out).toContain("Connection: close");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("exposes res.shouldKeepAlive based on the HTTP/1.0 request's Connection header", async () => {
+    const seen: boolean[] = [];
+    const server = createServer((req, res) => {
+      req.resume();
+      seen.push(res.shouldKeepAlive);
+      res.setHeader("Content-Length", "2");
+      res.end("hi");
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      for (const conn of ["Connection: keep-alive\r\n", ""]) {
+        const socket = connect(port, "127.0.0.1");
+        await new Promise<void>((resolve, reject) => {
+          socket.on("data", () => resolve());
+          socket.on("close", () => resolve());
+          socket.on("error", reject);
+          socket.once("connect", () => socket.write(`GET / HTTP/1.0\r\nHost: localhost\r\n${conn}\r\n`));
+        });
+        socket.destroy();
+      }
+      expect(seen).toEqual([true, false]);
+    } finally {
+      server.close();
+    }
+  });
+});

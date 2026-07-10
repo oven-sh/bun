@@ -588,6 +588,76 @@ it("request.url should be based on the Host header", async () => {
   );
 });
 
+it("honours HTTP/1.0 Connection: keep-alive when the response advertises it", async () => {
+  // An HTTP/1.0 client that offers Connection: keep-alive and receives a
+  // Connection: keep-alive response expects the transport to stay open
+  // (RFC 2068 §19.7.1). Two requests on one socket must both be answered.
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      return new Response("hi", { headers: { Connection: "keep-alive" } });
+    },
+  });
+  const line = "GET / HTTP/1.0\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n";
+  const socket = net.connect(server.port, "127.0.0.1");
+  const chunks: Buffer[] = [];
+  let onData: () => void = () => {};
+  const closed = new Promise<void>(r => socket.once("close", () => r()));
+  socket.on("data", c => {
+    chunks.push(c);
+    onData();
+  });
+  socket.on("error", () => {});
+  await new Promise<void>((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+  socket.write(line);
+  // First response: head + 2 body bytes (Content-Length: 2 is auto-added).
+  let buf = "";
+  while (!socket.destroyed) {
+    buf = Buffer.concat(chunks).toString("latin1");
+    const i = buf.indexOf("\r\n\r\n");
+    if (i !== -1 && buf.length >= i + 4 + 2) break;
+    await Promise.race([new Promise<void>(r => (onData = r)), closed]);
+  }
+  const head1 = buf.slice(0, buf.indexOf("\r\n\r\n"));
+  const mark = buf.length;
+  const closedEarly = socket.destroyed || !socket.writable;
+  if (!closedEarly) socket.write(line);
+  while (!socket.destroyed) {
+    buf = Buffer.concat(chunks).toString("latin1");
+    if (/^HTTP\/1\.[01] 200/.test(buf.slice(mark))) break;
+    await Promise.race([new Promise<void>(r => (onData = r)), closed]);
+  }
+  buf = Buffer.concat(chunks).toString("latin1");
+  const answered2 = /^HTTP\/1\.[01] 200/.test(buf.slice(mark));
+  socket.destroy();
+  expect(head1).toContain("Connection: keep-alive");
+  expect({ answered2, closedEarly }).toEqual({ answered2: true, closedEarly: false });
+});
+
+it("still closes HTTP/1.0 without a Connection: keep-alive offer", async () => {
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      return new Response("hi");
+    },
+  });
+  const socket = net.connect(server.port, "127.0.0.1");
+  const out = await new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    socket.on("data", c => chunks.push(c));
+    socket.on("close", () => resolve(Buffer.concat(chunks).toString("latin1")));
+    socket.on("error", reject);
+    socket.once("connect", () => socket.write("GET / HTTP/1.0\r\nHost: localhost\r\n\r\n"));
+  });
+  expect(out).toStartWith("HTTP/1.1 200");
+  expect(out.slice(out.indexOf("\r\n\r\n") + 4)).toBe("hi");
+});
+
 it.each([
   ["HTTP/1.0", "GET /helloooo HTTP/1.0\r\nHost: a/b\r\n\r\n"],
   ["HTTP/1.1", "GET /helloooo HTTP/1.1\r\nHost: a b\r\nConnection: close\r\n\r\n"],

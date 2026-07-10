@@ -572,6 +572,13 @@ public:
             }
 
          } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+            /* HTTP/1.0 streamed body without Content-Length is close-delimited
+             * (no chunked fallback): the connection must close after it so an
+             * HTTP/1.0 keep-alive socket is not left open with an undelimited
+             * body. No-body responses have nothing to delimit. */
+            if (httpResponseData->fromAncientRequest && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->noBodyStatus) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+            }
             writeMark();
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
@@ -647,6 +654,13 @@ public:
             writeUnsignedHex((unsigned int) data.length());
             Super::write("\r\n", 2);
         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+            /* HTTP/1.0 streamed body without Content-Length is close-delimited
+             * (no chunked fallback): the connection must close after it so an
+             * HTTP/1.0 keep-alive socket is not left open with an undelimited
+             * body. */
+            if (httpResponseData->fromAncientRequest && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+            }
             writeMark();
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;

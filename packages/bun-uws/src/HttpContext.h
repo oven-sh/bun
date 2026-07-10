@@ -301,8 +301,13 @@ private:
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
 
-            /* Mark this response as connectionClose if ancient or connection: close */
-            if (httpRequest->isAncient() || httpRequest->getHeader("connection").length() == 5) {
+            /* Mark this response as connectionClose: HTTP/1.1 with Connection: close,
+             * or HTTP/1.0 without Connection: keep-alive (HTTP/1.0 defaults to close,
+             * but an offered keep-alive may be honoured when the response is framed). */
+            std::string_view requestConnection = httpRequest->getHeader("connection");
+            if (httpRequest->isAncient()
+                    ? !(requestConnection.length() == 10 && strncasecmp(requestConnection.data(), "keep-alive", 10) == 0)
+                    : requestConnection.length() == 5) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
             }
 

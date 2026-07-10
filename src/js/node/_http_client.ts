@@ -862,6 +862,10 @@ function responseOnEnd() {
 }
 
 function responseOnTimeout() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], responseOnTimeoutInner, this);
+}
+
+function responseOnTimeoutInner() {
   const req = this._httpMessage;
   if (!req) return;
   const res = req.res;

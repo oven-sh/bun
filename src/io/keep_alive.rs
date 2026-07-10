@@ -182,7 +182,10 @@ pub struct UserKeepAlive {
 
 impl UserKeepAlive {
     pub fn init() -> Self {
-        Self { allowed: true, wanted: false }
+        Self {
+            allowed: true,
+            wanted: false,
+        }
     }
 
     /// JS-facing `.ref()`/`.unref()` (the 0↔1 crossing). Returns

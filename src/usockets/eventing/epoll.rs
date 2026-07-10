@@ -1,4 +1,4 @@
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "android"))]
 //! epoll eventing backend. Port of `packages/bun-usockets/src/eventing/epoll_kqueue.c`
 //! (epoll arms only) and `internal/eventing/epoll_kqueue.h`.
 

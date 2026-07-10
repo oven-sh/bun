@@ -910,7 +910,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let _ = &inherited_env_storage;
 
     for fd_index in 0..stdio.len() {
-        if stdio[fd_index].can_use_memfd(IS_SYNC, fd_index > 0 && max_buffer.is_some()) {
+        if stdio[fd_index].can_use_memfd() {
             if stdio[fd_index].use_memfd(fd_index as u32) {
                 jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
             }
@@ -1857,6 +1857,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
 
         let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);
+        let mut bun_test_fired = false;
 
         // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
         let sync_loop = unsafe { &mut *jsc_vm_ptr }
@@ -1865,12 +1866,13 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
-            let bun_test_timeout: Timespec =
-                if let Some(runner) = crate::test_runner::jest::Jest::runner() {
-                    runner.get_active_timeout()
-                } else {
-                    Timespec::EPOCH
-                };
+            let bun_test_timeout: Timespec = if bun_test_fired {
+                Timespec::EPOCH
+            } else if let Some(runner) = crate::test_runner::jest::Jest::runner() {
+                runner.get_active_timeout()
+            } else {
+                Timespec::EPOCH
+            };
             let has_bun_test_timeout = !bun_test_timeout.eql(&Timespec::EPOCH);
 
             if has_bun_test_timeout {
@@ -1922,6 +1924,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // different test fails, and that SHOULD be okay.
                     if has_bun_test_timeout {
                         if bun_test_timeout.order(&now) == core::cmp::Ordering::Less {
+                            bun_test_fired = true;
                             let mut active_file_strong = crate::test_runner::jest::Jest::runner()
                                 .unwrap()
                                 .bun_test_root
@@ -1947,10 +1950,20 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 // SAFETY: jsc_vm_ptr is the live thread VM.
                                 unsafe { &*jsc_vm_ptr },
                             );
+                            // The direct child may already be reaped (and
+                            // gone from the auto-killer), so kill it here too.
+                            let _ = subprocess.try_kill(subprocess.kill_signal);
                             // active_file_strong / taken_active_file drop here (was `defer .deinit()`).
                         }
                     }
                 }
+            }
+
+            // Once the wait is being terminated (timeout, maxBuffer, bun:test
+            // per-test timeout), stop waiting on pipe EOF; a grandchild may
+            // still hold the write end (Node.js SyncProcessRunner::Kill()).
+            if did_timeout || bun_test_fired || subprocess.exited_due_to_maxbuf.get().is_some() {
+                subprocess.close_readable_pipes();
             }
         }
     }

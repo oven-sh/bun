@@ -627,6 +627,31 @@ describe("Blob.prototype.stream() is a byte stream (supports BYOB readers)", () 
     expect(done).toBe(true);
     expect(value!.byteLength).toBe(0);
   });
+
+  test("closing with a partially-filled multi-byte-element BYOB view rejects read() without an uncaught exception", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          process.on("uncaughtException", e => { console.log("UNCAUGHT"); process.exitCode = 1; });
+          const r = new Blob([new Uint8Array([1, 2, 3])]).stream().getReader({ mode: "byob" });
+          const err = await r.read(new Uint32Array(4)).then(() => null, e => e);
+          console.log(err instanceof TypeError ? "rejected" : "resolved");
+          await Bun.sleep(10);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "rejected",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // structuredClone/postMessage of sliced Blobs and Files is covered by

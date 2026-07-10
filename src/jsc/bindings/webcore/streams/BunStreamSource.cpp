@@ -452,7 +452,12 @@ static void nativeSourceCallClose(JSC::VM& vm, JSGlobalObject* globalObject, JSN
             JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
             if (thrown.isEmpty())
                 return;
-            Bun__reportError(globalObject, JSValue::encode(thrown));
+            // readableByteStreamControllerClose throws by spec when the head pull-into's
+            // bytesFilled is not a multiple of its element size; it has already errored the
+            // stream and rejected the pending read, so swallow that throw rather than
+            // surfacing a spurious uncaught exception.
+            if (controller->m_stream->m_state != ReadableStreamState::Errored)
+                Bun__reportError(globalObject, JSValue::encode(thrown));
         }
     }
     nativeSourceSever(globalObject, adapter);

@@ -1068,7 +1068,7 @@ process.exit(0);
 // async uv_fs_close calls, an unrelated open could be handed the recycled
 // slot and have it closed under it. On POSIX the reader honors CLOSE_HANDLE,
 // so this is effectively a Windows regression test.
-test("Response(Bun.file) does not double-close the fd on Windows", async () => {
+test.skipIf(!isWindows)("Response(Bun.file) does not double-close the fd on Windows", async () => {
   using dir = tempDir("serve-file-double-close", {
     "served.bin": Buffer.alloc(32 * 1024, 65),
     "victim.json": JSON.stringify({ ok: true }),

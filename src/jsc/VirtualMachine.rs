@@ -280,16 +280,18 @@ pub struct VirtualMachine {
     pub overridden_performance_now: Option<u64>,
     pub macro_event_loop: EventLoop,
     pub regular_event_loop: EventLoop,
-    /// BORROW_FIELD — points at sibling `regular_event_loop`/`macro_event_loop`
-    /// (or the boxed spawnSync loop). Written only by the JS thread (init,
-    /// macro-mode swap, spawnSync swap); atomic because the checked
+    /// BORROW_FIELD — points at one of the sibling embedded loops
+    /// (`regular_event_loop`/`macro_event_loop`), never the boxed spawnSync
+    /// loop (spawnSync swaps only `event_loop_handle`). Written only by the
+    /// JS thread (init, macro-mode swaps); atomic because the checked
     /// cross-thread enqueue helpers ([`Self::with_live_vm`] closures) read it
     /// from producer threads while a swap may be in progress.
     pub event_loop: core::sync::atomic::AtomicPtr<EventLoop>,
-    /// Registration generation from [`live_vm_registry`], stamped once in
-    /// `register_vm` (0 = not yet registered). Atomic only because the
-    /// lock-free main-VM fast paths read it from producer threads; a stale
-    /// read there falls through to the locked registry check.
+    /// Registration generation from [`live_vm_registry`], stamped once by
+    /// `stamp_generation` early in `init` (0 = not yet stamped). Atomic only
+    /// because the lock-free main-VM fast paths read it from producer
+    /// threads; a stale read there falls through to the locked registry
+    /// check.
     pub(crate) live_generation: core::sync::atomic::AtomicU64,
 
     pub ref_strings: crate::ref_string::Map,
@@ -541,7 +543,8 @@ pub(crate) mod live_vm_registry {
 
     /// Process-unique generation source. Starts at 1 so generation 0 can
     /// serve as the "never matches anything" value of a zeroed/placeholder
-    /// handle (zero-initialised VM allocations carry it until `register_vm`).
+    /// handle (zero-initialised VM allocations carry it until
+    /// `stamp_generation`).
     static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
     fn mint_generation() -> u64 {
@@ -1402,7 +1405,7 @@ impl VirtualMachine {
             self.macro_event_loop.global = NonNull::new(self.global);
             self.macro_event_loop.concurrent_tasks = Default::default();
             // `EventLoop::default()` zeroed the registration generation that
-            // `register_vm` stamped; restore it (same address, same
+            // `stamp_generation` stamped; restore it (same address, same
             // registration — the registry entry is untouched).
             self.macro_event_loop.live_generation = self
                 .live_generation
@@ -2285,8 +2288,12 @@ impl VirtualMachine {
         // NOTE: `MAIN_THREAD_VM` is deliberately NOT published here — it is
         // the lock-free liveness fast path in `with_live_vm` /
         // `get_main_thread_vm`, which dereference it from other threads, so
-        // it must not point at this still-zeroed allocation. Published at the
-        // end of `init`, next to `register_vm`.
+        // it must not point at this still-zeroed allocation. The first
+        // publish is `Bun__setDefaultGlobalObject` during
+        // `Zig__GlobalObject__create`, by which point the fields those
+        // readers touch (`event_loop`, `live_generation`,
+        // `event_loop_handle`) are initialized; `init` re-stores it at the
+        // end, next to `register_vm`.
 
         // ConsoleObject is self-referential (buffers + adapters) — allocate
         // stable storage and init in place.
@@ -2486,10 +2493,11 @@ impl VirtualMachine {
         // unregistered in `WebWorker::shutdown()` before the allocation is
         // freed; the main VM stays registered forever.
         //
-        // `MAIN_THREAD_VM` is published only now, for the same reason:
-        // `with_live_vm` / `get_main_thread_vm` dereference it from other
-        // threads without the registry lock, so it must never point at a
-        // partially initialized VM.
+        // Re-store `MAIN_THREAD_VM` next to the registration it pairs with.
+        // The first publish happened in `Bun__setDefaultGlobalObject` during
+        // `Zig__GlobalObject__create`, after the fields the lock-free
+        // readers touch were initialized; this store is the explicit
+        // end-of-init anchor.
         if opts.is_main_thread {
             MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
         }

@@ -108,8 +108,9 @@ pub struct EventLoop {
     pub signal_handler: (),
 
     /// Registration generation from the live-VM registry, stamped by
-    /// `register_vm` / `register_extra_loop` (0 = not registered). Read on
-    /// the owning thread only, by [`EventLoop::concurrent_handle`] and the
+    /// `stamp_generation` (embedded VM loops) / `register_extra_loop` (boxed
+    /// spawnSync loops); 0 = not stamped. Read on the owning thread only, by
+    /// [`EventLoop::concurrent_handle`] and the
     /// `JsEventLoop::live_generation` dispatch.
     pub(crate) live_generation: u64,
 }

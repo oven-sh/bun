@@ -2956,6 +2956,10 @@ impl RunCommand {
     /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
     /// which is Bun's own native REPL.
     pub fn exec_node_repl(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+        // Every caller has already established there's no user script target;
+        // any remaining positionals are dispatch artifacts (e.g. RunCommand's
+        // leading "run"), not user data — keep them out of `process.argv`.
+        ctx.positionals.clear();
         let bootstrap = bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts").as_bytes();
         // Stash the user's `-e` (so `process._eval` is correct) and boot the
         // bootstrap via `[eval]`; it runs `process._eval` like Node's

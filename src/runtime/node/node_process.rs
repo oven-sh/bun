@@ -396,10 +396,10 @@ mod _impl {
             if script.is_empty() {
                 return JSValue::UNDEFINED;
             }
-            return ZigString::init(script).to_js(global_object);
+            return ZigString::init(script).with_encoding().to_js(global_object);
         }
         if let Some(source) = vm.module_loader.eval_source.as_deref() {
-            return ZigString::init(source.contents()).to_js(global_object);
+            return ZigString::init(source.contents()).with_encoding().to_js(global_object);
         }
         JSValue::UNDEFINED
     }

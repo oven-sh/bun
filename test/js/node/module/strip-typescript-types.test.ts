@@ -56,6 +56,12 @@ test("keeps value imports that are only used as types", () => {
   expect(stripTypeScriptTypes('import type { T } from "x"; const a: T = 1;')).toBe("const a = 1;\n");
 });
 
+test("does not inject the Bun require shim for ESM code calling require()", () => {
+  const src = 'export const x: number = require("y");';
+  expect(stripTypeScriptTypes(src)).toBe('export const x = require("y");\n');
+  expect(stripTypeScriptTypes(src, { mode: "transform" })).toBe('export const x = require("y");\n');
+});
+
 test("does not inline process.env", () => {
   expect(stripTypeScriptTypes("console.log(process.env.NODE_ENV);")).toBe("console.log(process.env.NODE_ENV);\n");
 });

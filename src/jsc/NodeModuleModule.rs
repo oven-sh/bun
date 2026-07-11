@@ -270,10 +270,14 @@ fn strip_typescript_types(
         return Err(jsc::ErrorCode::ERR_INVALID_TYPESCRIPT_SYNTAX
             .throw(global, format_args!("{}", bstr::BStr::new(text))));
     }
-    let Some(parse_result) = parse_result else {
+    let Some(mut parse_result) = parse_result else {
         return Err(jsc::ErrorCode::ERR_INVALID_TYPESCRIPT_SYNTAX
             .throw(global, format_args!("Failed to parse TypeScript")));
     };
+    // The output is returned to the caller as portable JS, not executed by
+    // Bun's module loader: suppress the Bun-runtime `var {require}=import.meta;`
+    // hoist the printer emits for ESM trees with an unbound `require`.
+    parse_result.ast.uses_require_ref = false;
 
     // amaro rejects the `module` keyword in both modes.
     if parse_result.ast.uses_ts_module_keyword {

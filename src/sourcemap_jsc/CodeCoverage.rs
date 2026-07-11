@@ -586,6 +586,8 @@ impl ByteRangeMapping {
                 let mut min_line: u32 = u32::MAX;
                 let mut max_line: u32 = 0;
 
+                let did_fn_execute = function.execution_count > 0 || function.has_executed;
+
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
@@ -603,18 +605,14 @@ impl ByteRangeMapping {
                     let line: u32 = u32::try_from(new_line_index).expect("int cast");
                     min_line = min_line.min(line);
                     max_line = max_line.max(line);
-                }
 
-                let did_fn_execute = function.execution_count > 0 || function.has_executed;
-
-                // only mark the lines as executable if the function has not executed
-                // functions that have executed have non-executable lines in them and thats fine.
-                if !did_fn_execute {
-                    let end = max_line.min(line_count);
-                    line_hits_slice[min_line as usize..end as usize].fill(0);
-                    for line in min_line..end {
+                    // Mark only lines the function's code actually lands on as
+                    // executable-but-not-executed; functions that have executed
+                    // already have their lines tracked via statement blocks.
+                    if !did_fn_execute && line < line_count {
                         executable_lines.set(line as usize);
                         lines_which_have_executed.unset(line as usize);
+                        line_hits_slice[line as usize] = 0;
                     }
                 }
 
@@ -730,6 +728,8 @@ impl ByteRangeMapping {
                 let mut min_line: u32 = u32::MAX;
                 let mut max_line: u32 = 0;
 
+                let did_fn_execute = function.execution_count > 0 || function.has_executed;
+
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
@@ -778,25 +778,21 @@ impl ByteRangeMapping {
                         }
                         min_line = min_line.min(line);
                         max_line = max_line.max(line);
+
+                        // Mark only lines the function's code actually maps to as
+                        // executable-but-not-executed; functions that have executed
+                        // already have their lines tracked via statement blocks.
+                        if !did_fn_execute {
+                            executable_lines.set(line as usize);
+                            lines_which_have_executed.unset(line as usize);
+                            line_hits_slice[line as usize] = 0;
+                        }
                     }
                 }
 
                 // no sourcemaps? ignore it
                 if min_line == u32::MAX && max_line == 0 {
                     continue;
-                }
-
-                let did_fn_execute = function.execution_count > 0 || function.has_executed;
-
-                // only mark the lines as executable if the function has not executed
-                // functions that have executed have non-executable lines in them and thats fine.
-                if !did_fn_execute {
-                    let end = max_line.min(line_count);
-                    for line in min_line..end {
-                        executable_lines.set(line as usize);
-                        lines_which_have_executed.unset(line as usize);
-                        line_hits_slice[line as usize] = 0;
-                    }
                 }
 
                 functions.push(Block {

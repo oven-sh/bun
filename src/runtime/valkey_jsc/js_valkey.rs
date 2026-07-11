@@ -376,15 +376,11 @@ impl SubscriptionCtx {
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut RedisClient` — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. `JsCell` is
-// `#[repr(transparent)]`, so `from_field_ptr!`/`owner!` recovery (dispatch.rs,
-// `ValkeyClient::parent`) sees identical offsets.
+// auto-derefs to `&T` so the impls below compile against either.
 //
-// `#[repr(C)]`: `client` MUST be
-// at offset 0. `ValkeyClient::parent()` recovers the outer pointer via
-// `from_field_ptr!`, but belt-and-suspenders against any path that assumes
-// `*mut JSValkeyClient` and `*mut ValkeyClient` alias (the socket ext slot did
-// — see `connect()` below).
+// `#[repr(C)]`: `client` at offset 0 — belt-and-suspenders against any path
+// that assumes `*mut JSValkeyClient` and `*mut ValkeyClient` alias (the
+// socket ext slot did; see `connect()`).
 #[repr(C)]
 pub struct JSValkeyClient {
     pub client: JsCell<valkey::ValkeyClient>,

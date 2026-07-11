@@ -745,7 +745,7 @@ macro_rules! from_field_ptr {
 /// bun_core::impl_field_parent! { Assets => DevServer.assets; pub fn owner; fn owner_mut; }
 ///
 /// // (2) ref-only                   (&self -> &P)
-/// bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
+/// bun_core::impl_field_parent! { Child => Parent.child; fn parent; }
 ///
 /// // (3) mut-only                   (&mut self -> *mut P)
 /// bun_core::impl_field_parent! { DirectoryWatchStore => DevServer.directory_watchers; fn mut owner; }

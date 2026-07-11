@@ -43,9 +43,8 @@ bun_core::declare_scope!(MySQLConnection, visible);
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut JSMySQLConnection` — `&mut T` auto-derefs
 // to `&T` so the impls below compile against either.
-// `JsCell` is `#[repr(transparent)]`, so `from_field_ptr!` recovery
-// (`from_timer_ptr` / `MySQLConnection::get_js_connection`) sees identical
-// offsets.
+// `JsCell` is `#[repr(transparent)]`, so `from_timer_ptr` recovery sees
+// identical offsets.
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLConnection {
@@ -62,8 +61,7 @@ pub struct JSMySQLConnection {
 
     // pub(crate): MySQLRequestQueue::advance reaches `connection.get().queue`
     // via a `ParentRef<JSMySQLConnection>` shared borrow; the inner protocol
-    // struct's `get_js_connection()` recovers the embedding via
-    // `from_field_ptr!` (offset unchanged — `JsCell` is transparent).
+    // struct recovers the embedding via its stored `owner` back-pointer.
     pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
 
     pub auto_flusher: JsCell<AutoFlusher>,

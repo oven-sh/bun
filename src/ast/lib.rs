@@ -2414,6 +2414,30 @@ impl Log {
         })
     }
 
+    /// `add_warning`, with `AddErrorOptions`. Use when the offending source line can
+    /// contain a credential: `redact_sensitive_information` masks the value in the frame.
+    #[cold]
+    pub fn add_warning_opts(&mut self, text: Str, opts: AddErrorOptions<'_>) {
+        if !Kind::Warn.should_print(self.level) {
+            return;
+        }
+        self.warnings += 1;
+        let data = self.tracked_range_data(
+            opts.source,
+            Range {
+                loc: opts.loc,
+                len: opts.len,
+            },
+            text,
+        );
+        self.add_msg(Msg {
+            kind: Kind::Warn,
+            data,
+            redact_sensitive_information: opts.redact_sensitive_information,
+            ..Default::default()
+        })
+    }
+
     // TODO(dylan-conway): rename and replace `addError`
     #[cold]
     pub fn add_error_opts(&mut self, text: Str, opts: AddErrorOptions<'_>) {

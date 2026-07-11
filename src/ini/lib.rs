@@ -127,11 +127,10 @@ impl ConfigOpt {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct ConfigItem {
-    /// The raw text between `//` and `:<optname>=`, exactly as written. Diagnostics
-    /// quote it back, so it is never normalized; match on `key` instead.
+    /// npm's registry key: the raw text between `//` and `:<optname>=`, so
+    /// `//127.0.0.1:1234/api/:_authToken=T` yields `127.0.0.1:1234/api/`. Matched
+    /// literally, as npm does — `nerfDart` already lowercased the keys npm writes.
     pub registry_url: Box<[u8]>,
-    /// `registry_url` with its authority lowercased: npm's registry key.
-    pub key: Box<[u8]>,
     pub optname: ConfigOpt,
     pub value: Box<[u8]>,
     pub loc: Loc,
@@ -145,7 +144,6 @@ impl ConfigItem {
     pub fn dupe(&self) -> OOM<Option<ConfigItem>> {
         Ok(Some(ConfigItem {
             registry_url: Box::<[u8]>::from(&*self.registry_url),
-            key: Box::<[u8]>::from(&*self.key),
             optname: self.optname,
             value: Box::<[u8]>::from(&*self.value),
             loc: self.loc,
@@ -1193,7 +1191,6 @@ mod draft {
                                     if let Some(value) = value_expr.as_utf8_string_literal() {
                                         return Some(IniOption::Some(ConfigItem {
                                             registry_url: Box::<[u8]>::from(url_part),
-                                            key: key_with_lowercased_host(url_part),
                                             value: Box::<[u8]>::from(value),
                                             optname: opt,
                                             loc: keyexpr.loc,
@@ -1390,14 +1387,19 @@ mod draft {
 
     /// The authority npm keys on: it builds the key from a WHATWG URL, whose `host` is
     /// lowercased and drops a default port. `bun_url` does neither.
-    fn registry_key_parts(url: &URL<'_>) -> (Box<[u8]>, Box<[u8]>) {
-        let mut protocol = url.protocol.to_vec();
+    /// The port a WHATWG URL drops from `host` for this scheme.
+    fn default_port_for(protocol: &[u8]) -> &'static [u8] {
+        let mut protocol = protocol.to_vec();
         protocol.make_ascii_lowercase();
-        let default_port: &[u8] = match &protocol[..] {
+        match &protocol[..] {
             b"https" | b"wss" => b"443",
             b"http" | b"ws" => b"80",
             _ => b"",
-        };
+        }
+    }
+
+    fn registry_key_parts(url: &URL<'_>) -> (Box<[u8]>, Box<[u8]>) {
+        let default_port = default_port_for(url.protocol);
         let host = if !default_port.is_empty() && url.port == default_port {
             url.hostname
         } else {
@@ -1408,11 +1410,19 @@ mod draft {
         (host.into_boxed_slice(), Box::from(url.pathname))
     }
 
-    /// Hosts are case-insensitive, paths are not, so only the authority is folded.
-    fn key_with_lowercased_host(key: &[u8]) -> Box<[u8]> {
+    /// The key `npm config set` would have written for the same authority: lowercase, and
+    /// without a default port. Paths are case-sensitive, so only the authority is touched.
+    /// Used to tell a user their hand-written key applies to nothing.
+    fn normalize_conf_key(key: &[u8], default_port: &[u8]) -> Box<[u8]> {
         let end = bun_core::strings::index_of_char(key, b'/').map_or(key.len(), |i| i as usize);
         let mut out = key.to_vec();
         out[..end].make_ascii_lowercase();
+        if !default_port.is_empty() && end > default_port.len() + 1 {
+            let colon = end - default_port.len() - 1;
+            if out[colon] == b':' && out[colon + 1..end] == *default_port {
+                out.drain(colon..end);
+            }
+        }
         out.into_boxed_slice()
     }
 
@@ -1439,7 +1449,7 @@ mod draft {
     fn lookup(configs: &[ConfigItem], key: &[u8], opt: ConfigOpt) -> Option<usize> {
         configs
             .iter()
-            .rposition(|conf_item| conf_item.optname == opt && *conf_item.key == *key)
+            .rposition(|conf_item| conf_item.optname == opt && *conf_item.registry_url == *key)
     }
 
     /// `lookup` plus npm's `opts[k]` truthiness test: an empty value supplies nothing.
@@ -1485,6 +1495,7 @@ mod draft {
         }
         None
     }
+
 
     /// Indices into `configs` of the lines that apply to this registry, in file order
     /// so the last write wins.
@@ -1539,12 +1550,14 @@ mod draft {
 
         // `URL<'a>` borrows its input; copy the parts so the borrow of
         // `install.default_registry` ends before it is mutated below.
-        let (default_host, default_pathname): (Box<[u8]>, Box<[u8]>) = {
+        let (default_host, default_pathname, default_default_port): (Box<[u8]>, Box<[u8]>, &[u8]) = {
             let url_bytes: &[u8] = match &install.default_registry {
                 Some(dr) => &dr.url,
                 None => bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes(),
             };
-            registry_key_parts(&URL::parse(url_bytes))
+            let url = URL::parse(url_bytes);
+            let (h, p) = registry_key_parts(&url);
+            (h, p, default_port_for(url.protocol))
         };
 
         let mut registry_map = install.scoped.take().unwrap_or_default();
@@ -1565,10 +1578,10 @@ mod draft {
             }
             let names_a_registry = names_registry(
                 &registry_own_key(&default_host, &default_pathname),
-                &conf_item.key,
+                &conf_item.registry_url,
             ) || scope_urls.iter().any(|url_bytes| {
                 let (host, pathname) = registry_key_parts(&URL::parse(url_bytes));
-                names_registry(&registry_own_key(&host, &pathname), &conf_item.key)
+                names_registry(&registry_own_key(&host, &pathname), &conf_item.registry_url)
             });
             if names_a_registry {
                 log.add_error_opts(
@@ -1576,6 +1589,55 @@ mod draft {
                     bun_ast::AddErrorOptions {
                         source: Some(&sources[conf_item.source_idx as usize]),
                         loc: conf_item.loc,
+                        redact_sensitive_information: true,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+
+        // npm compares keys literally, and `nerfDart` writes them lowercase and without a
+        // default port, so a hand-written key spelled otherwise silently applies to
+        // nothing. Warn only where spelling it npm's way would change what is selected.
+        let mut warned = vec![false; configs.len()];
+        for url_bytes in core::iter::once(None).chain(scope_urls.iter().map(Some)) {
+            let (host, pathname, default_port) = match url_bytes {
+                Some(bytes) => {
+                    let url = URL::parse(bytes);
+                    let (h, p) = registry_key_parts(&url);
+                    (h, p, default_port_for(url.protocol))
+                }
+                None => (
+                    default_host.clone(),
+                    default_pathname.clone(),
+                    default_default_port,
+                ),
+            };
+
+            let differs = |c: &ConfigItem| *normalize_conf_key(&c.registry_url, default_port) != *c.registry_url;
+            if !configs.iter().any(differs) {
+                continue;
+            }
+
+            let mut normalized: Vec<ConfigItem> = Vec::with_capacity(configs.len());
+            for conf_item in configs.iter() {
+                let Some(mut dup) = conf_item.dupe()? else { continue };
+                dup.registry_url = normalize_conf_key(&conf_item.registry_url, default_port);
+                normalized.push(dup);
+            }
+
+            let before = credential_items(configs, &host, &pathname);
+            let after = credential_items(&normalized, &host, &pathname);
+            for i in after {
+                if before.contains(&i) || warned[i] || !differs(&configs[i]) {
+                    continue;
+                }
+                warned[i] = true;
+                log.add_warning_opts(
+                    b"this .npmrc line applies to no registry: keys are matched literally, so the host must be lowercase and must not spell out a default port",
+                    bun_ast::AddErrorOptions {
+                        source: Some(&sources[configs[i].source_idx as usize]),
+                        loc: configs[i].loc,
                         redact_sensitive_information: true,
                         ..Default::default()
                     },

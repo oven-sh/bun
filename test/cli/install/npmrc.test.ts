@@ -773,42 +773,129 @@ describe("scoped registry routing", () => {
 
   // npm keys on a WHATWG URL's `host`, which is lowercased and drops a default port.
   // The config key's path stays case-sensitive; only its authority is folded.
-  describe("the config key's authority is normalized like a WHATWG URL", () => {
-    const token = (ini: string) => loadNpmrc(ini).default_registry_token;
+});
 
-    it("matches a lowercase key against an uppercase registry host", () => {
-      expect(token(`registry=https://Registry.Example.COM/api/\n//registry.example.com/:_authToken=T\n`)).toBe("T");
-    });
+describe("the config key's authority is normalized like a WHATWG URL", () => {
+  const token = (ini: string) => loadNpmrc(ini).default_registry_token;
 
-    it("matches an uppercase key against an uppercase registry host", () => {
-      expect(token(`registry=https://Registry.Example.COM/api/\n//Registry.Example.COM/:_authToken=T\n`)).toBe("T");
-    });
+  it("matches a lowercase key against an uppercase registry host", () => {
+    expect(token(`registry=https://Registry.Example.COM/api/\n//registry.example.com/:_authToken=T\n`)).toBe("T");
+  });
 
-    it("keeps the key's path case-sensitive", () => {
-      expect(token(`registry=https://example.com/API/\n//example.com/api/:_authToken=T\n`)).toBe("");
-    });
+  // npm compares config keys literally, and its own `nerfDart` lowercases the keys it
+  // writes, so a hand-written uppercase host applies to nothing. Matched, plus a warning.
+  it("does not match an uppercase key, even against an uppercase registry host", () => {
+    expect(token(`registry=https://Registry.Example.COM/api/\n//Registry.Example.COM/:_authToken=T\n`)).toBe("");
+  });
 
-    it("drops a default https port from the registry host", () => {
-      expect(token(`registry=https://example.com:443/api/\n//example.com/:_authToken=T\n`)).toBe("T");
-    });
+  it("keeps the key's path case-sensitive", () => {
+    expect(token(`registry=https://example.com/API/\n//example.com/api/:_authToken=T\n`)).toBe("");
+  });
 
-    it("drops a default http port from the registry host", () => {
-      expect(token(`registry=http://example.com:80/api/\n//example.com/:_authToken=T\n`)).toBe("T");
-    });
+  it("drops a default https port from the registry host", () => {
+    expect(token(`registry=https://example.com:443/api/\n//example.com/:_authToken=T\n`)).toBe("T");
+  });
 
-    it("keeps a non-default port in the registry host", () => {
-      expect(token(`registry=https://example.com:8443/api/\n//example.com:8443/:_authToken=T\n`)).toBe("T");
-      expect(token(`registry=https://example.com:8443/api/\n//example.com/:_authToken=T\n`)).toBe("");
-    });
+  it("drops a default http port from the registry host", () => {
+    expect(token(`registry=http://example.com:80/api/\n//example.com/:_authToken=T\n`)).toBe("T");
+  });
 
-    it("drops a default port from an uppercase scheme too", () => {
-      expect(token(`registry=HTTPS://example.com:443/api/\n//example.com/:_authToken=T\n`)).toBe("T");
-    });
+  it("keeps a non-default port in the registry host", () => {
+    expect(token(`registry=https://example.com:8443/api/\n//example.com:8443/:_authToken=T\n`)).toBe("T");
+    expect(token(`registry=https://example.com:8443/api/\n//example.com/:_authToken=T\n`)).toBe("");
+  });
 
-    // npm's key never spells out a default port, so neither does ours: a key written
-    // as `//host:443/` matches nothing. Released Bun matched it.
-    it("does not match a key that spells out the default port", () => {
-      expect(token(`registry=https://example.com:443/api/\n//example.com:443/:_authToken=T\n`)).toBe("");
+  it("drops a default port from an uppercase scheme too", () => {
+    expect(token(`registry=HTTPS://example.com:443/api/\n//example.com/:_authToken=T\n`)).toBe("T");
+  });
+
+  // npm's key never spells out a default port, so neither does ours: a key written
+  // as `//host:443/` matches nothing. Released Bun matched it.
+  it("does not match a key that spells out the default port", () => {
+    expect(token(`registry=https://example.com:443/api/\n//example.com:443/:_authToken=T\n`)).toBe("");
+  });
+});
+
+// A key that would have matched but for its host's case is almost always a mistake.
+// Dropping the credential silently is how #30311 went unnoticed, so say something —
+// without echoing the secret into the log.
+describe("a config key that differs from the registry only by host case", () => {
+  async function stderrOf(npmrc: string) {
+    using dir = tempDir("npmrc-case-warning", {
+      ".npmrc": npmrc,
+      "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "home/.gitkeep": "",
     });
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-cache"],
+      cwd: String(dir),
+      env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return stderr;
+  }
+
+  it("warns, and redacts the credential", async () => {
+    const stderr = await stderrOf(
+      `registry=https://Registry.Example.COM/api/\n//Registry.Example.COM/:_authToken=SECRETTOKEN\n`,
+    );
+    expect(stderr).toContain("applies to no registry");
+    expect(stderr).not.toContain("SECRETTOKEN");
+  });
+
+  it("says nothing when the key already matches", async () => {
+    const stderr = await stderrOf(
+      `registry=https://Registry.Example.COM/api/\n//registry.example.com/:_authToken=SECRETTOKEN\n`,
+    );
+    expect(stderr).not.toContain("applies to no registry");
+  });
+
+  it("says nothing about an uppercase key for an unrelated host", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/api/\n//Other.Example.COM/:_authToken=X\n`);
+    expect(stderr).not.toContain("applies to no registry");
+  });
+
+  it("warns about a key that spells out the default port", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/api/\n//example.com:443/:_authToken=SECRETTOKEN\n`);
+    expect(stderr).toContain("applies to no registry");
+    expect(stderr).not.toContain("SECRETTOKEN");
+  });
+
+  it("says nothing about a non-default port spelled out", async () => {
+    const stderr = await stderrOf(`registry=https://example.com:8443/api/\n//example.com:8443/:_authToken=S\n`);
+    expect(stderr).not.toContain("applies to no registry");
+  });
+
+  // The warning promises that respelling the key changes something. These are the shapes
+  // where it would not, so it must stay quiet or the advice is a lie.
+  it("says nothing when a deeper lowercase key already wins", async () => {
+    const stderr = await stderrOf(
+      `registry=https://example.com/api/\n//example.com/api/:_authToken=GOOD\n//Example.COM/:_authToken=BAD\n`,
+    );
+    expect(stderr).not.toContain("applies to no registry");
+  });
+
+  it("says nothing about an ancestor email, which never walks", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM/:email=me@x.com\n`);
+    expect(stderr).not.toContain("applies to no registry");
+  });
+
+  it("says nothing about an ancestor's lone username, which never applies", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM/:username=bob\n`);
+    expect(stderr).not.toContain("applies to no registry");
+  });
+
+  it("says nothing about an empty value", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM/:_authToken=\n`);
+    expect(stderr).not.toContain("applies to no registry");
+  });
+
+  it("says nothing when the path case differs, since paths are case-sensitive", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/api/\n//example.com/API/:_authToken=X\n`);
+    expect(stderr).not.toContain("applies to no registry");
   });
 });

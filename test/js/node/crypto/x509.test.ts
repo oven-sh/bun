@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -70,5 +71,55 @@ describe("X509Certificate.checkHost()", () => {
     expect(cnOnly.checkEmail("ry@TINYCLOUDS.ORG")).toBe("ry@TINYCLOUDS.ORG");
     expect(cnOnly.checkEmail("sally@example.com")).toBeUndefined();
     expect(cnOnly.checkIP("127.0.0.1")).toBeUndefined();
+  });
+});
+
+describe("X509Certificate.publicKey", () => {
+  // Self-signed Ed25519 test certificate.
+  const ed25519CertPem = `-----BEGIN CERTIFICATE-----
+MIIBSDCB+6ADAgECAhQScW0cf3AoBWG+pfP8IGRDFa4P6TAFBgMrZXAwGTEXMBUG
+A1UEAwwOaG9zdGRlc2VyLnRlc3QwIBcNMjYwNzEwMTEwNjUyWhgPMjEwODA4Mjkx
+MTA2NTJaMBkxFzAVBgNVBAMMDmhvc3RkZXNlci50ZXN0MCowBQYDK2VwAyEANqKB
+hxkqynE2XjMoDzeULcq8G/G+DzijqXPeLb8On+SjUzBRMB0GA1UdDgQWBBQftk8C
+UxJTuAkfCoa5Fmpflv+aMTAfBgNVHSMEGDAWgBQftk8CUxJTuAkfCoa5Fmpflv+a
+MTAPBgNVHRMBAf8EBTADAQH/MAUGAytlcANBAAxWtTEGbwEC7ZzAOjAb3zSyI6wT
+s4nGv40lYuU/gOeeCnTPm0tXztCtR+aWb1dXArVI8KXZ/7Ri9jQXfmDnMgo=
+-----END CERTIFICATE-----`;
+
+  test("returns the same KeyObject on every access", () => {
+    const cert = new X509Certificate(ed25519CertPem);
+    const key = cert.publicKey;
+    expect(key.asymmetricKeyType).toBe("ed25519");
+    expect(cert.publicKey).toBe(key);
+  });
+
+  test("throws on every access when the SPKI algorithm is unsupported", async () => {
+    const src = `
+      const { X509Certificate } = require("node:crypto");
+      const der = Buffer.from(new X509Certificate(${JSON.stringify(ed25519CertPem)}).raw);
+      // Flip the SPKI algorithm OID (1.3.101.112 -> 1.3.101.48) so EVP can't load the key.
+      der[der.indexOf(Buffer.from("302a300506032b6570032100", "hex")) + 8] ^= 0x40;
+      const cert = new X509Certificate(der);
+      if (cert.subject !== "CN=hostdeser.test") throw new Error("subject: " + cert.subject);
+      const read = () => {
+        try {
+          return "value=" + typeof cert.publicKey;
+        } catch (e) {
+          return "threw=" + e.constructor.name;
+        }
+      };
+      console.log(JSON.stringify([read(), read(), read()]));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify(["threw=Error", "threw=Error", "threw=Error"]),
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });

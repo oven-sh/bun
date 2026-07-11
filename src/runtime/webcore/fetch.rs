@@ -1625,12 +1625,21 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // after body/header extraction so Request-constructor errors (GET+body,
     // already-used body) win and `request.bodyUsed` is set, matching Node.
     if let Some(sig) = signal.0 {
-        if let Some(reason) = bun_ptr::BackRef::from(sig).reason_if_aborted(global_this) {
+        let sig = bun_ptr::BackRef::from(sig);
+        if sig.aborted() {
+            // `abort_reason()` is the stored `m_reason` (same object as
+            // `signal.reason`), not a reconstructed DOMException.
+            let reason = sig.abort_reason();
+            if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
+                if let Some(stream) = stream_ref.get(global_this) {
+                    stream.cancel_with_reason(global_this, reason);
+                }
+            }
             body.detach();
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global_this,
-                    reason.to_js(global_this),
+                    reason,
                 ),
             );
         }

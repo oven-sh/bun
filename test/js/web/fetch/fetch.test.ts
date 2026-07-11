@@ -403,7 +403,7 @@ describe("AbortSignal", () => {
       await p.catch(() => {});
     }
     {
-      // default reason → DOMException AbortError
+      // default reason → DOMException AbortError, identical to signal.reason
       const controller = new AbortController();
       controller.abort();
       const p = fetch("http://127.0.0.1:1/", { signal: controller.signal });
@@ -411,6 +411,7 @@ describe("AbortSignal", () => {
       const err = Bun.peek(p);
       expect(err).toBeInstanceOf(DOMException);
       expect((err as DOMException).name).toBe("AbortError");
+      expect(err).toBe(controller.signal.reason);
       await p.catch(() => {});
     }
     {
@@ -471,6 +472,27 @@ describe("AbortSignal", () => {
       expect(Bun.peek(p)).toBe(reason);
       expect(req.bodyUsed).toBe(true);
       await p.catch(() => {});
+    }
+    {
+      // ReadableStream body is cancelled with the abort reason (abort-a-fetch
+      // step: "cancel request's body with error").
+      let cancelReason: unknown = "not called";
+      const stream = new ReadableStream({
+        cancel(r) {
+          cancelReason = r;
+        },
+      });
+      const reason = new Error("pre-aborted-stream");
+      const p = fetch("http://127.0.0.1:1/", {
+        method: "POST",
+        body: stream,
+        signal: AbortSignal.abort(reason),
+      });
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+      expect(cancelReason).toBe(reason);
+      expect(stream.locked).toBe(false);
     }
   });
 });

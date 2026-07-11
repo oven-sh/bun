@@ -4991,6 +4991,7 @@ private:
 
     JSValue readTerminal()
     {
+        const uint8_t* preTagPtr = m_ptr;
         SerializationTag tag = readTag();
         // if (!isTypeExposedToGlobalObject(*m_globalObject, tag))
         //     return JSValue();
@@ -5199,6 +5200,10 @@ private:
             }
             VM& vm = m_lexicalGlobalObject->vm();
             RegExp* regExp = RegExp::create(vm, pattern->string(), reFlags.value());
+            if (!regExp->isValid()) [[unlikely]] {
+                fail();
+                return JSValue();
+            }
             RegExpObject* obj = RegExpObject::create(vm, m_globalObject->regExpStructure(), regExp);
             addTerminalToObjectPool(obj);
             return obj;
@@ -5472,7 +5477,7 @@ private:
             // ?
 
         default:
-            m_ptr--; // Push the tag back
+            m_ptr = preTagPtr; // Push the tag back
             return JSValue();
         }
     }
@@ -5480,9 +5485,10 @@ private:
     template<SerializationTag Tag>
     bool consumeCollectionDataTerminationIfPossible()
     {
+        const uint8_t* savedPtr = m_ptr;
         if (readTag() == Tag)
             return true;
-        m_ptr--;
+        m_ptr = savedPtr;
         return false;
     }
 

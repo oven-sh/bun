@@ -1,5 +1,5 @@
 import { $ as Shell, fileURLToPath } from "bun";
-import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, makeTree } from "harness";
 import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -7,8 +7,6 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import ts from "typescript";
-
-setDefaultTimeout(isDebug ? 60_000 : 30_000);
 
 const BUN_REPO_ROOT = fileURLToPath(import.meta.resolve("../../../"));
 const BUN_TYPES_PACKAGE_ROOT = join(BUN_REPO_ROOT, "packages", "bun-types");
@@ -115,8 +113,9 @@ async function createIsolatedFixture(packages?: string[]): Promise<string> {
 }
 
 function typeTest(name: string, config: TypeTestConfig) {
-  // Driving the TypeScript LanguageService in-process is ~40x slower under a debug build;
-  // CI runs this file with a release bun, so skip the in-process checker here.
+  // This file only tests the bun-types .d.ts, not bun's own code. Driving the
+  // TypeScript LanguageService in-process under a debug build is ~40x slower,
+  // so run the type-checking cases on release builds only.
   test.skipIf(isDebug)(name, async () => {
     const fixtureDir = await createIsolatedFixture(config.packages);
     const { diagnostics, emptyInterfaces } = await diagnose(fixtureDir, {
@@ -329,7 +328,7 @@ describe("@types/bun integration test", () => {
   // so unlike the tests above we have to write a real tsconfig and spawn the CLI.
   // https://devblogs.microsoft.com/typescript/announcing-typescript-7-0-beta/
   describe("tsgo (TypeScript 7 native preview)", () => {
-    test("checks without lib.dom.d.ts", async () => {
+    test.skipIf(isDebug)("checks without lib.dom.d.ts", async () => {
       const fixtureDir = await createIsolatedFixture(["@typescript/native-preview"]);
 
       const tsconfig = structuredClone(sourceTsconfig);

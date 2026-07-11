@@ -1008,8 +1008,7 @@ impl Connection {
         let cap = (self.enforced_max_header_list_size as usize).max(65536);
         if self.header_block.len().saturating_add(payload.len()) > cap {
             // nghttp2's NGHTTP2_MAX_HEADERSLEN (65536) overflow returns NGHTTP2_ERR_HEADER_COMP,
-            // which node surfaces as a session COMPRESSION_ERROR
-            // (test-http2-options-max-headers-exceeds-nghttp2.js).
+            // which node surfaces as a session COMPRESSION_ERROR.
             self.send_go_away(sink, ErrorCode::CompressionError, b"header block too large");
             return true;
         }

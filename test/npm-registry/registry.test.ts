@@ -1038,7 +1038,7 @@ describe("conditional requests after a metadata write", () => {
     const tgz = Buffer.from(buildTarball({ "package.json": '{"name":"shift","version":"0.5.0"}' }).bytes).toString(
       "base64",
     );
-    await fetch(`${registry.url}shift`, {
+    const res = await fetch(`${registry.url}shift`, {
       method: "PUT",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify({
@@ -1050,8 +1050,12 @@ describe("conditional requests after a metadata write", () => {
         },
       }),
     });
+    expect(res.status).toBe(201);
     const after = await readTime();
-    expect({ "1.0.0": after["1.0.0"], "2.0.0": after["2.0.0"] }).toEqual({
+    // `0.5.0` proves the write landed; a rejected PUT would leave the record
+    // unmutated and satisfy the unchanged-form assertion vacuously.
+    expect({ "0.5.0": typeof after["0.5.0"], "1.0.0": after["1.0.0"], "2.0.0": after["2.0.0"] }).toEqual({
+      "0.5.0": "string",
       "1.0.0": before["1.0.0"],
       "2.0.0": before["2.0.0"],
     });
@@ -1067,7 +1071,7 @@ describe("conditional requests after a metadata write", () => {
     const tgz = Buffer.from(buildTarball({ "package.json": '{"name":"prior","version":"2.0.0"}' }).bytes).toString(
       "base64",
     );
-    await fetch(`${registry.url}prior`, {
+    const res = await fetch(`${registry.url}prior`, {
       method: "PUT",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify({
@@ -1079,10 +1083,12 @@ describe("conditional requests after a metadata write", () => {
         },
       }),
     });
+    expect(res.status).toBe(201);
     const after = await readTime();
-    expect({ createdBefore: before.created, createdAfter: after.created }).toEqual({
+    expect({ createdBefore: before.created, createdAfter: after.created, "2.0.0": typeof after["2.0.0"] }).toEqual({
       createdBefore: "1985-10-26T08:15:00.000Z",
       createdAfter: "1985-10-26T08:15:00.000Z",
+      "2.0.0": "string",
     });
   });
 

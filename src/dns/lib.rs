@@ -312,9 +312,8 @@ impl Default for Backend {
 /// passes (only `[0-9.]`), IPv6 contains `:` and must be exempted by the
 /// caller.
 pub fn is_valid_lookup_name(name: &[u8]) -> bool {
-    name.iter().all(|&b| {
-        b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_') || !b.is_ascii()
-    })
+    name.iter()
+        .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_') || !b.is_ascii())
 }
 
 pub type Address = bun_sys::net::Address;

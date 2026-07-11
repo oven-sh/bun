@@ -108,9 +108,9 @@ pub enum Error {
     // Returned by `output_file`.
     #[error("OutputError")]
     OutputError,
+    #[error(transparent)]
+    Alloc(#[from] bun_alloc::AllocError),
 }
-
-bun_core::named_error_set!(Error);
 
 #[repr(i32)] // c_int == i32 on all Bun targets
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -178,7 +178,7 @@ impl State {
     /// Create and initialize a new TCC compilation context
     pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
         config: &Config<ErrCtx>,
-    ) -> Result<NonNull<State>, bun_core::Error> {
+    ) -> Result<NonNull<State>, Error> {
         let state_ptr = State::new()?;
         // errdefer state.destroy() — State is an FFI handle without Drop, so use scopeguard.
         let guard = scopeguard::guard(state_ptr, |p| {

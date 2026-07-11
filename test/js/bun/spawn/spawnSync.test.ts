@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, isPosix } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isPosix, isWindows } from "harness";
 import { join } from "path";
 describe("spawnSync", () => {
   it("should throw a RangeError if timeout is less than 0", () => {
@@ -32,6 +32,26 @@ describe("spawnSync", () => {
       expect(result.exitCode).toBe(0);
     });
   }
+
+  // https://github.com/oven-sh/bun/issues/33932
+  // Windows-only: the timeout timer lives on a cached libuv loop whose clock
+  // freezes between calls; the POSIX path compares against the real clock.
+  it.skipIf(!isWindows)("timeout is measured from the current call, not from the previous spawnSync", async () => {
+    const echo = (s: string) => ["cmd", "/c", `echo ${s}`];
+    // Populate the cached isolated event loop, then let its clock go stale
+    // for longer than the next call's timeout.
+    const first = Bun.spawnSync({ cmd: echo("first"), stdout: "pipe", stderr: "pipe" });
+    expect(first.exitCode).toBe(0);
+
+    await Bun.sleep(2000);
+
+    const result = Bun.spawnSync({ cmd: echo("ok"), stdout: "pipe", stderr: "pipe", timeout: 1500 });
+    expect({
+      stdout: result.stdout.toString().trim(),
+      exitedDueToTimeout: result.exitedDueToTimeout,
+      exitCode: result.exitCode,
+    }).toEqual({ stdout: "ok", exitedDueToTimeout: false, exitCode: 0 });
+  });
 
   it.skipIf(process.platform !== "linux")("should use memfd when possible", () => {
     expect([join(import.meta.dir, "spawnSync-memfd-fixture.ts")]).toRun();

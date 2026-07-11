@@ -1,6 +1,6 @@
 import { BunFile, Loader } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, makeTree, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isMusl, makeTree, tempDirWithFiles } from "harness";
 import path from "path";
 import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import source from "./native_plugin.cc" with { type: "file" };
@@ -407,8 +407,11 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     expect.unreachable("Should have caught an error");
   });
 
-  // don't know how to reliably test this on windows
-  it.skipIf(process.platform === "win32")("prints name when plugin crashes", async () => {
+  // This test segfaults on purpose. Windows: never worked. ASAN: traps the SEGV
+  // and aborts before the crash handler can print the name. musl: the crash
+  // handler re-raises and the agent writes a core, which the runner counts as a
+  // failed job even though every test passed.
+  it.skipIf(process.platform === "win32" || isASAN || isMusl)("prints name when plugin crashes", async () => {
     const prelude = /* ts */ `import values from "./stuff.ts"
   const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       `;

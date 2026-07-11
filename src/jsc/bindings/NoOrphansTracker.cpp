@@ -23,8 +23,12 @@
 // has been ENOTSUP since 10.5 (sys/event.h: "NOTE_TRACK, NOTE_TRACKERR, and
 // NOTE_CHILD are no longer supported as of 10.5"). The remaining race — an
 // intermediate that forks-and-exits before the scan triggered by its own
-// birth records its uniqueid — is narrowed by the freeze-then-rescan loop in
-// `killTracked()` but cannot be fully closed from userspace.
+// birth records its uniqueid — is closed by an inherited-fd sentinel: the
+// script is spawned with an open fd on a per-spawn temp file, fork() inherits
+// it unconditionally (across setsid and double-fork), and at cleanup
+// `proc_listpidspath` returns every pid that still holds it regardless of
+// whether any intermediate was ever observed. The `p_puniqueid` chain remains
+// the primary mechanism because it also catches descendants that closefrom(3).
 //
 // All state is process-global; spawnSync is single-threaded by design (see
 // Bun__currentSyncPID), so no locking.
@@ -33,6 +37,7 @@
 
 #if OS(DARWIN)
 
+#include <fcntl.h>
 #include <libproc.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -74,6 +79,28 @@ public:
         return instance;
     }
 
+    // Called once per spawnSync *before* the script is spawned. Creates the
+    // sentinel file whose open fd is inherited into the script (and therefore
+    // every fork()ed descendant). The returned fd must be added to the spawn's
+    // file_actions (dup2-to-self; POSIX_SPAWN_CLOEXEC_DEFAULT would close it
+    // otherwise). Returns -1 on failure — the sentinel is best-effort and the
+    // p_puniqueid scan proceeds without it.
+    int openTracker()
+    {
+        // mkstemp in the per-user tmpdir; proc_listpidspath resolves the path
+        // at call time, so the file must outlive killTracked().
+        const char* dir = getenv("TMPDIR");
+        int n = snprintf(m_trackerPath, sizeof m_trackerPath,
+            "%s/bun-no-orphans.XXXXXX", (dir && *dir) ? dir : "/tmp");
+        if (n <= 0 || static_cast<size_t>(n) >= sizeof m_trackerPath) {
+            m_trackerPath[0] = '\0';
+            return -1;
+        }
+        m_trackerFd = mkstemp(m_trackerPath);
+        if (m_trackerFd < 0) m_trackerPath[0] = '\0';
+        return m_trackerFd;
+    }
+
     // Called once per spawnSync after the script is spawned. Seeds the scan
     // root with the *script's* uniqueid (not ours — we don't track or kill
     // unrelated siblings) and stashes kq so `scan()` can EV_ADD on each
@@ -87,14 +114,30 @@ public:
         ProcUniqIdentifierInfo r;
         if (ProcUniqIdentifierInfo::read(root, r)) {
             m_seen.add(r.p_uniqueid);
+            m_rootUniqueid = r.p_uniqueid;
             m_tracked.append({ root, r.p_uniqueid });
         }
     }
 
     // Detach from the borrowed kqueue before its owner closes it, so the
     // EV_ADD in `scan()` and the drain in `killTracked()` don't kevent() on
-    // a closed (or worse, reused) fd.
-    void releaseKq() { m_kq = -1; }
+    // a closed (or worse, reused) fd. Also drops the sentinel file — our own
+    // open fd and path must both stay live until after `killTracked()` so
+    // `proc_listpidspath` can resolve it; this runs in the LIFO defer stack
+    // after `kill_sync_script_tree()` (see spawn_posix).
+    void releaseKq()
+    {
+        m_kq = -1;
+        if (m_trackerFd >= 0) {
+            close(m_trackerFd);
+            m_trackerFd = -1;
+        }
+        if (m_trackerPath[0] != '\0') {
+            unlink(m_trackerPath);
+            m_trackerPath[0] = '\0';
+        }
+        m_rootUniqueid = 0;
+    }
 
     // A tracked pid sent NOTE_EXIT. Drop it from the live list so we don't
     // try to signal a recycled pid later. Its uniqueid stays in `m_seen` so
@@ -200,6 +243,36 @@ public:
                 kill(t.pid, SIGCONT);
         }
 
+        // Sentinel-fd sweep: every descendant that still holds the inherited
+        // tracker fd, regardless of whether its p_puniqueid chain was ever
+        // observable (a fast-exit intermediate can die before scan() reads it;
+        // proc_pidinfo(PROC_PIDUNIQIDENTIFIERINFO) rejects zombies). The fd is
+        // inherited at fork time by the kernel, so this predicate is
+        // independent of scan() timing. Guard against matching a stale holder
+        // of a recycled path by requiring uniqueid > m_rootUniqueid (spawned
+        // strictly after the script — uniqueids are per-boot monotone).
+        if (m_trackerPath[0] != '\0' && m_rootUniqueid != 0) {
+            const pid_t self = getpid();
+            // Holders of a per-spawn mkstemp file are us + the script's tree,
+            // so a fixed buffer is plenty; `proc_listpidspath` walks the full
+            // proc table internally regardless of buffer size.
+            pid_t holders[256];
+            int nbytes = proc_listpidspath(PROC_ALL_PIDS, 0, m_trackerPath, 0,
+                holders, static_cast<int>(sizeof holders));
+            if (nbytes > 0) {
+                const int n = nbytes / static_cast<int>(sizeof(pid_t));
+                for (int i = 0; i < n; ++i) {
+                    pid_t p = holders[i];
+                    if (p <= 1 || p == self) continue;
+                    ProcUniqIdentifierInfo u;
+                    if (!ProcUniqIdentifierInfo::read(p, u)) continue;
+                    if (u.p_uniqueid <= m_rootUniqueid) continue;
+                    if (m_seen.contains(u.p_uniqueid)) continue; // SIGKILLed above
+                    kill(p, SIGKILL);
+                }
+            }
+        }
+
         m_tracked.clear();
         m_seen.clear();
         m_kq = -1;
@@ -258,10 +331,15 @@ private:
     // fork-heavy script (e.g. `make -j`) isn't reallocating every NOTE_FORK.
     WTF::Vector<pid_t> m_pids;
     int m_kq = -1; // borrowed; owned by spawnPosix
+    // Inherited-fd sentinel for the fast-exit-intermediate backstop sweep.
+    int m_trackerFd = -1;
+    char m_trackerPath[PATH_MAX] = { 0 };
+    uint64_t m_rootUniqueid = 0;
 };
 
 } // namespace Bun
 
+extern "C" int Bun__noOrphans_openTracker() { return Bun::NoOrphansTracker::get().openTracker(); }
 extern "C" void Bun__noOrphans_begin(int kq, pid_t root) { Bun::NoOrphansTracker::get().begin(kq, root); }
 extern "C" void Bun__noOrphans_releaseKq() { Bun::NoOrphansTracker::get().releaseKq(); }
 extern "C" void Bun__noOrphans_onFork() { Bun::NoOrphansTracker::get().scan(); }
@@ -270,6 +348,7 @@ extern "C" void Bun__noOrphans_killTracked() { Bun::NoOrphansTracker::get().kill
 
 #else // !OS(DARWIN)
 
+extern "C" int Bun__noOrphans_openTracker() { return -1; }
 extern "C" void Bun__noOrphans_begin(int, int) {}
 extern "C" void Bun__noOrphans_releaseKq() {}
 extern "C" void Bun__noOrphans_onFork() {}

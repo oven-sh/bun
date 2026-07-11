@@ -433,18 +433,18 @@ test.concurrent.skipIf(!isSupported || !hasPerl)(
 );
 
 // Same daemon shape but the outer and the intermediate exit *immediately* —
-// no spinning on the pidfile. Linux-only: subreaper is armed pre-spawn so the
-// daemon reparents to us regardless of intermediate timing and
-// `killSubreaperAdoptees()` catches it deterministically. macOS is excluded:
-// NOTE_TRACK is ENOTSUP since 10.5 and the NOTE_FORK + p_puniqueid scan that
-// replaces it has a fast-exit race NoOrphansTracker.cpp documents as not
-// closable from userspace; the pidfile-spin variant above keeps the macOS
-// scan-path coverage.
+// no spinning on the pidfile. Linux: subreaper is armed pre-spawn so the
+// daemon reparents to us regardless of intermediate timing. macOS: NOTE_TRACK
+// is ENOTSUP since 10.5 and the NOTE_FORK + p_puniqueid scan can miss an
+// intermediate that dies before scan() reads it, so `bun run` also inherits
+// an open fd on a per-spawn sentinel file into the script; fork() carries it
+// across setsid+double-fork, and `proc_listpidspath` at cleanup finds the
+// daemon independent of whether any intermediate was ever observed.
 //
 // `bun run` may finish before the daemon writes its pidfile. Poll for the
 // file from the *test*; if it never appears the daemon was reaped before it
 // could write — also a pass. Only fail if the file appears AND the pid lives.
-test.concurrent.skipIf(!isLinux || !hasPerl)(
+test.concurrent.skipIf(!isSupported || !hasPerl)(
   "bun run --no-orphans (perl): fast-exit intermediate (no pidfile spin) — daemon still reaped",
   async () => {
     using dir = tempDir("no-orphans-fast-daemon", {

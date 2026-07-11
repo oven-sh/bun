@@ -343,6 +343,11 @@ pub struct PosixSpawnOptions {
     /// no-orphans mode is enabled (see `ParentDeathWatchdog`), else 0 (no
     /// PDEATHSIG). Not exposed to JS yet.
     pub linux_pdeathsig: Option<u8>,
+    /// macOS `--no-orphans` only: fd to inherit into the child at the same
+    /// number (dup2-to-self in file_actions, bypassing CLOEXEC_DEFAULT).
+    /// `NoOrphansTracker::killTracked()` finds descendants that outlived a
+    /// fast-exit intermediate via `proc_listpidspath` on the backing file.
+    pub no_orphans_tracker_fd: Fd,
 }
 
 impl Default for PosixSpawnOptions {
@@ -368,6 +373,7 @@ impl Default for PosixSpawnOptions {
             pty_slave_fd: -1,
             pseudoconsole: (),
             linux_pdeathsig: None,
+            no_orphans_tracker_fd: Fd::INVALID,
         }
     }
 }
@@ -735,6 +741,14 @@ pub unsafe fn spawn_process_posix(
     if let Some(ipc) = options.ipc {
         actions.inherit(ipc)?;
         spawned.ipc = Some(ipc);
+    }
+
+    #[cfg(target_os = "macos")]
+    if options.no_orphans_tracker_fd != Fd::INVALID {
+        // dup2-to-self exempts the fd from POSIX_SPAWN_CLOEXEC_DEFAULT so the
+        // script (and every fork()ed descendant) inherits it. See
+        // NoOrphansTracker.cpp for the matching proc_listpidspath sweep.
+        actions.inherit(options.no_orphans_tracker_fd)?;
     }
 
     let stdio_options: [&PosixStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];

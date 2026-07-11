@@ -126,22 +126,13 @@ public:
 
     // Detach from the borrowed kqueue before its owner closes it, so the
     // EV_ADD in `scan()` and the drain in `killTracked()` don't kevent() on
-    // a closed (or worse, reused) fd. Also drops the sentinel file — our own
-    // open fd and path must both stay live until after `killTracked()` so
-    // `proc_listpidspath` can resolve it; this runs in the LIFO defer stack
-    // after `kill_sync_script_tree()` (see spawn_posix).
+    // a closed (or worse, reused) fd. Also drops the sentinel — already a
+    // no-op on the normal path where `killTracked()` ran first, but this is
+    // the only cleanup site on a spawn-failure early return.
     void releaseKq()
     {
         m_kq = -1;
-        if (m_trackerFd >= 0) {
-            close(m_trackerFd);
-            m_trackerFd = -1;
-        }
-        if (m_trackerPath[0] != '\0') {
-            unlink(m_trackerPath);
-            m_trackerPath[0] = '\0';
-        }
-        m_rootUniqueid = 0;
+        dropTracker();
     }
 
     // A tracked pid sent NOTE_EXIT. Drop it from the live list so we don't
@@ -281,10 +272,27 @@ public:
         m_tracked.clear();
         m_seen.clear();
         m_kq = -1;
+        // Drop the sentinel here too: on the parent-died path this runs from
+        // atexit (`Global::exit` → `kill_sync_script_tree`) and the stack never
+        // unwinds, so the spawn_posix `releaseKq` defer never fires.
+        dropTracker();
     }
 
 private:
     NoOrphansTracker() = default;
+
+    void dropTracker()
+    {
+        if (m_trackerFd >= 0) {
+            close(m_trackerFd);
+            m_trackerFd = -1;
+        }
+        if (m_trackerPath[0] != '\0') {
+            unlink(m_trackerPath);
+            m_trackerPath[0] = '\0';
+        }
+        m_rootUniqueid = 0;
+    }
 
     // Record `pid` if its spawning-parent uniqueid is in `m_seen` and we
     // haven't seen it before. Registers NOTE_FORK|NOTE_EXIT so its forks

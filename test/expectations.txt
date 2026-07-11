@@ -21,6 +21,12 @@
 test/cli/install/bunx.test.ts [ FAIL ] # should handle package that requires node 24: @angular/cli@latest needs a newer Node.js than Bun reports (24.3.0), unskip after the Node.js version bump
 [ WINDOWS-AARCH64 ] test/js/node/test/parallel/test-repl-close.js [ FAIL ] # EPIPE on stdin.write to closed child process
 
+# The whole file's beforeAll builds a napi addon with node-gyp, and the Windows
+# agents have no ClangCL toolset ("MSB8020: The build tools for ClangCL cannot
+# be found"), so nothing in the file can run there. Remove once the agent image
+# ships ClangCL. Runs everywhere else.
+[ WINDOWS ] test/bundler/native-plugin.test.ts [ SKIP ] # node-gyp needs a ClangCL toolset the Windows agents do not have
+
 # Verbatim node v26.3.0 test asserting a FinalizationRegistry callback fires
 # within ONE globalThis.gc() + ONE setImmediate after the connect callback's
 # closure is unreferenced. The FinalizationRegistry spec gives no timing

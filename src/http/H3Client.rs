@@ -56,9 +56,8 @@ pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
 
 /// Test-only: the HTTP/3 application error code (RFC 9114 §8.1) Bun.serve's
-/// h3 server last observed on a peer RESET_STREAM or STOP_SENDING. Written
-/// only by the debug-build `x-bun-test-100-then-data` hook's abort handler;
-/// always 0 in release. Read via `TestingAPIs.quicTestPeerStreamError`.
+/// h3 server last observed on a peer RESET_STREAM or STOP_SENDING. Set only
+/// by the debug-build `x-bun-test-100-then-data` hook; always 0 in release.
 #[allow(non_upper_case_globals)]
 pub static test_last_peer_stream_error: AtomicU64 = AtomicU64::new(0);
 

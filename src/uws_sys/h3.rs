@@ -187,11 +187,9 @@ impl Response {
     pub fn peer_error_code(&mut self) -> u64 {
         c::uws_h3_res_peer_error_code(self)
     }
-    /// Test-only: queue `data` as a DATA frame without ever sending the
-    /// final response HEADERS, and leave both halves of the stream open so
-    /// it can only close via the client's stream error. Exists so
-    /// `fetch-http3-adversarial.test.ts` can exercise the client's
-    /// DATA-before-final-HEADERS guard; unreachable from user code.
+    /// Test-only: queue `data` as a DATA frame with no final response HEADERS
+    /// (RFC 9114 §4.1) and leave the stream open so only the client's stream
+    /// error can close it. Exercised by `fetch-http3-adversarial.test.ts`.
     #[cfg(bun_debug)]
     pub fn test_data_after_informational(&mut self, data: &[u8]) {
         // SAFETY: self is a live FFI handle; data ptr/len valid for read

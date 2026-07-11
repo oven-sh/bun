@@ -201,10 +201,9 @@ impl ClientSession {
         }
     }
 
-    /// Fail `stream` for a malformed response. RFC 9114 §4.1.2 requires this
-    /// to be a stream error of type H3_MESSAGE_ERROR, not the clean close
-    /// `fail()` would put on the wire (a FIN reads as normal completion).
-    /// Mirrors `h2_client::ClientSession::rst_stream(PROTOCOL_ERROR)`.
+    /// Fail `stream` for a malformed response as a stream error of type
+    /// H3_MESSAGE_ERROR (RFC 9114 §4.1.2), not the clean FIN `fail()` would
+    /// emit. Mirrors `h2_client::ClientSession::rst_stream(PROTOCOL_ERROR)`.
     pub fn fail_malformed(&mut self, stream: *mut Stream) {
         // Must run before abort()/detach(): their close() sets lsquic's
         // U_WRITE_DONE, which neuters lsquic_stream_maybe_reset.

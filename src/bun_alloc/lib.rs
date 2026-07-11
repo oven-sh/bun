@@ -1685,8 +1685,8 @@ pub unsafe fn free_sensitive_cstr(p: *const core::ffi::c_char) {
     // size-agnostic).
     unsafe {
         let len = libc::strlen(p);
-        secure_zero(p as *mut u8, len);
-        crate::default_alloc::free(p as *mut core::ffi::c_void);
+        secure_zero(p.cast::<u8>().cast_mut(), len);
+        crate::default_alloc::free(p.cast::<core::ffi::c_void>().cast_mut());
     }
 }
 

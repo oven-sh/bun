@@ -5,11 +5,11 @@
 // strand the loser's copy), nor when extraction or patching fails partway.
 
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { rm } from "node:fs/promises";
 import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
-import { gzipSync } from "node:zlib";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 
 setDefaultTimeout(1000 * 60 * 5);
 

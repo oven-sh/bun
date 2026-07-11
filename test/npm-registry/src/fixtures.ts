@@ -118,6 +118,12 @@ function unscoped(name: string): string {
 function loadPackageDir(name: string, dir: string): PackageRecord {
   const record = createRecord(name);
   const tgzPrefix = `${unscoped(name)}-`;
+  // `_registry.json`'s `executable`: {"<version>": ["<path>", ...]}. A file's
+  // committed 0755 bit cannot be read here (`statSync().mode` has no execute
+  // bit on Windows), and only a package's own `bin` targets are inferred, so a
+  // bin *target* owned by another package has to say so.
+  const executable = readRegistryMeta(join(dir, REGISTRY_META)).executable ?? {};
+  const directoryVersions = new Set<string>();
 
   // `readdirSync` order is filesystem-defined, so the duplicate check
   // has to sit in front of every insertion or it would only catch one
@@ -136,7 +142,18 @@ function loadPackageDir(name: string, dir: string): PackageRecord {
     } else if (entry.isDirectory()) {
       const version = entry.name;
       if (!isFile(join(dir, version, "package.json"))) continue;
-      add(version, directoryVersion(name, version, join(dir, version)));
+      directoryVersions.add(version);
+      add(version, directoryVersion(name, version, join(dir, version), executable[version] ?? []));
+    }
+  }
+
+  // `executable` only reaches the packer through the directory branch, so a key
+  // naming a `.tgz`-backed (or absent) version would be silently ignored.
+  for (const version of Object.keys(executable)) {
+    if (!directoryVersions.has(version)) {
+      throw new Error(
+        `${dir}/${REGISTRY_META}: "executable" names version ${JSON.stringify(version)}, which is not a directory fixture`,
+      );
     }
   }
 
@@ -193,7 +210,7 @@ function prebuiltVersion(name: string, tgzPath: string): StoredVersion {
  * Windows, so using it would give the same fixture a different
  * `dist.integrity` per platform.
  */
-function directoryVersion(name: string, version: string, versionDir: string): StoredVersion {
+function directoryVersion(name: string, version: string, versionDir: string, executable: string[]): StoredVersion {
   const manifest = memo(async () => {
     const raw = JSON.parse(readFileSync(join(versionDir, "package.json"), "utf8")) as Manifest;
     // Catch a fixture whose directory name and package.json disagree before
@@ -219,7 +236,12 @@ function directoryVersion(name: string, version: string, versionDir: string): St
     manifest,
     tarball: tarballFromFiles(async () => {
       const files = readFileTree(versionDir);
-      return { files, mode: binModeMap(await manifest()) };
+      const mode = binModeMap(await manifest());
+      for (const path of executable) {
+        if (!(path in files)) throw new Error(`${versionDir}: _registry.json marks a missing file executable: ${path}`);
+        mode[path] = 0o755;
+      }
+      return { files, mode };
     }),
   };
 }
@@ -233,7 +255,7 @@ function directoryVersion(name: string, version: string, versionDir: string): St
  * committed bytes.
  */
 function readFileTree(root: string): FileTree {
-  const files: FileTree = {};
+  const files: FileTree = Object.create(null);
   const walk = (relative: string) => {
     for (const entry of readdirSync(join(root, relative), { withFileTypes: true })) {
       const path = relative === "" ? entry.name : `${relative}/${entry.name}`;
@@ -258,12 +280,22 @@ function readFileTree(root: string): FileTree {
  * and `time` keys map onto the record; every other key becomes a
  * top-level packument field.
  */
+interface RegistryMeta {
+  executable?: Record<string, string[]>;
+}
+
+function readRegistryMeta(path: string): RegistryMeta {
+  return isFile(path) ? (JSON.parse(readFileSync(path, "utf8")) as RegistryMeta) : {};
+}
+
 function applyRegistryMeta(record: PackageRecord, path: string): void {
   if (!isFile(path)) return;
   const meta = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
   for (const [key, value] of Object.entries(meta)) {
     if (key === "dist-tags") record.distTags = { ...(value as Record<string, string>) };
     else if (key === "time") record.time = { ...(value as Record<string, string>) };
+    else if (key === "executable")
+      continue; // consumed by loadPackageDir
     else record.extra[key] = value;
   }
 }

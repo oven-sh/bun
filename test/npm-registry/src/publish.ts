@@ -28,6 +28,7 @@ import {
   manifestFromValue,
   revString,
   tarballFromBytes,
+  touchRecord,
   type Manifest,
   type PackageRecord,
   type StoredVersion,
@@ -114,7 +115,7 @@ async function publishVersions(record: PackageRecord, body: PublishBody): Promis
   Object.assign(record.distTags, body["dist-tags"]);
   if (body.description !== undefined) record.extra.description = body.description;
   if (body.readme !== undefined) record.extra.readme = body.readme;
-  record.rev += 1;
+  touchRecord(record, { addedVersion: true });
   return ok(record, { success: true });
 }
 
@@ -139,7 +140,7 @@ async function updateMetadata(record: PackageRecord, body: PublishBody): Promise
     record.versions.set(version, { ...existing, manifest: manifestFromValue(updated) });
   }
   if (body["dist-tags"] !== undefined) Object.assign(record.distTags, body["dist-tags"]);
-  record.rev += 1;
+  touchRecord(record, { addedVersion: false });
   return ok(record);
 }
 
@@ -160,7 +161,7 @@ export function handleReplaceVersions(record: PackageRecord, body: PublishBody):
   for (const [tag, version] of Object.entries(record.distTags)) {
     if (!record.versions.has(version)) delete record.distTags[tag];
   }
-  record.rev += 1;
+  touchRecord(record, { addedVersion: false });
   return ok(record);
 }
 

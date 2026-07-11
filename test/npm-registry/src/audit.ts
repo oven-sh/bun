@@ -35,7 +35,10 @@ export class AdvisoryStore {
    */
   add(advisory: Omit<Advisory, "id" | "url"> & Partial<Pick<Advisory, "id" | "url">>): Advisory {
     const id = advisory.id ?? this.#nextId++;
-    const complete: Advisory = { url: `https://github.com/advisories/GHSA-${id}`, ...advisory, id };
+    // Coalesce after the spread, like `id`: an explicit `url: undefined` must
+    // fall back, not erase. `bun audit --ignore <GHSA>` matches on this URL.
+    const url = advisory.url ?? `https://github.com/advisories/GHSA-${id}`;
+    const complete: Advisory = { ...advisory, id, url };
     let list = this.#byPackage.get(complete.module_name);
     if (list === undefined) this.#byPackage.set(complete.module_name, (list = []));
     list.push(complete);

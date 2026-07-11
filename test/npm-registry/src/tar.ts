@@ -175,7 +175,11 @@ export function buildTarball(files: FileTree, options: { mode?: Record<string, n
   const blocks: Uint8Array[] = [];
   let unpackedSize = 0;
   for (const path of paths) {
-    if (path.length === 0 || path.startsWith("/") || path.split("/").includes("..")) {
+    // An empty segment covers the leading `/`, a trailing `/` (which libarchive
+    // reads back as a directory and drops, silently under-reporting fileCount),
+    // and `a//b`.
+    const segments = path.split("/");
+    if (path.length === 0 || segments.includes("") || segments.includes("..")) {
       throw new Error(`invalid tarball entry path: ${JSON.stringify(path)}`);
     }
     // The ustar header declares no name encoding, and libarchive (so
@@ -187,7 +191,8 @@ export function buildTarball(files: FileTree, options: { mode?: Record<string, n
       throw new Error(`non-ASCII tarball entry path is not supported: ${JSON.stringify(path)}`);
     }
     const bytes = toBytes(files[path]!);
-    const mode = modes[path] ?? 0o644;
+    // Own-property: a file named `toString` must not pick up Object.prototype's.
+    const mode = Object.hasOwn(modes, path) ? modes[path]! : 0o644;
     blocks.push(header(`package/${path}`, bytes.length, mode));
     blocks.push(bytes);
     const padding = (BLOCK - (bytes.length % BLOCK)) % BLOCK;
@@ -223,7 +228,8 @@ export function buildTarball(files: FileTree, options: { mode?: Record<string, n
  */
 export async function readTarball(tgz: Uint8Array): Promise<{ files: FileTree; stats: TarballStats }> {
   const entries = await new Bun.Archive(tgz).files();
-  const files: FileTree = {};
+  // Null prototype: an entry named `__proto__` must become a key, not a setter.
+  const files: FileTree = Object.create(null);
   let unpackedSize = 0;
   for (const [path, blob] of entries) {
     // npm strips exactly one leading path component; real tarballs use

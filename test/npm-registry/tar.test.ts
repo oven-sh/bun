@@ -133,6 +133,45 @@ describe("buildTarball", () => {
     expect(Buffer.from(tar.subarray(108, 124)).every(b => b === 0)).toBe(true);
   });
 
+  // libarchive reads `package/x/` back as a directory and drops it, so the
+  // entry would vanish while fileCount still counted it.
+  test.each(["x/", "/x", "a//b", "..", "a/../b"])("entry path %p is rejected", path => {
+    expect(() => buildTarball({ "package.json": "{}", [path]: "" })).toThrow(/invalid tarball entry path/);
+  });
+
+  test("an entry named __proto__ survives the round-trip", async () => {
+    const files: FileTree = Object.create(null);
+    files["package.json"] = "{}";
+    files["__proto__"] = "payload";
+    const { bytes, fileCount } = buildTarball(files);
+    expect(fileCount).toBe(2);
+    const { files: read } = await readTarball(bytes);
+    expect(Object.keys(read).sort()).toEqual(["__proto__", "package.json"]);
+    expect(Buffer.from(read["__proto__"]!).toString()).toBe("payload");
+  });
+
+  test("a file named toString does not inherit Object.prototype's mode", () => {
+    const files: FileTree = Object.create(null);
+    files["package.json"] = "{}";
+    files["toString"] = "x";
+    const tar = Bun.gunzipSync(buildTarball(files).bytes);
+    for (let off = 0; off + 512 <= tar.length && tar[off]; ) {
+      const name = Buffer.from(tar.subarray(off, off + 100))
+        .toString()
+        .replace(/\0.*/, "");
+      const size =
+        parseInt(
+          Buffer.from(tar.subarray(off + 124, off + 136))
+            .toString()
+            .replace(/[\0 ]/g, ""),
+          8,
+        ) || 0;
+      if (name === "package/toString")
+        expect(Buffer.from(tar.subarray(off + 100, off + 106)).toString()).toBe("000644");
+      off += 512 + Math.ceil(size / 512) * 512;
+    }
+  });
+
   test("round-trips through bun's own tar reader", async () => {
     const { bytes, fileCount, unpackedSize } = buildTarball(FILES, { mode: { "cli.js": 0o755 } });
     const { files, stats } = await readTarball(bytes);

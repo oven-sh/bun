@@ -76,7 +76,9 @@ const INSTALL_SCRIPT_NAMES = ["preinstall", "install", "postinstall"] as const;
 export function hasInstallScript(manifest: Manifest): boolean {
   const scripts = manifest.scripts;
   if (typeof scripts !== "object" || scripts === null) return false;
-  return INSTALL_SCRIPT_NAMES.some(name => (scripts as Record<string, unknown>)[name] !== undefined);
+  // Truthiness, not presence: `"install": ""` runs nothing, and `normalize.ts`'s
+  // gyp gate already reads these same fields that way.
+  return INSTALL_SCRIPT_NAMES.some(name => Boolean((scripts as Record<string, unknown>)[name]));
 }
 
 /**

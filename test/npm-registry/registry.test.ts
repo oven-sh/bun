@@ -55,6 +55,16 @@ describe("packument", () => {
     });
   });
 
+  test("hasInstallScript is truthiness, not presence: empty scripts run nothing", async () => {
+    await using registry = await new NpmRegistry().start();
+    registry.define("empty-scripts", { "1.0.0": { scripts: { preinstall: "", install: "", postinstall: "" } } });
+    registry.define("real-script", { "1.0.0": { scripts: { install: "node x" } } });
+    const corgi = async (name: string) =>
+      (await getJson<any>(`${registry.url}${name}`, { headers: { accept: CORGI } })).body.versions["1.0.0"];
+    expect((await corgi("empty-scripts")).hasInstallScript).toBeUndefined();
+    expect((await corgi("real-script")).hasInstallScript).toBe(true);
+  });
+
   test("the abbreviated document strips scripts and derives hasInstallScript", async () => {
     await using registry = await new NpmRegistry().start();
     registry.define("pkg", {
@@ -808,6 +818,74 @@ describe("fixtures", () => {
     expect(packument.description).toBe("d");
   });
 
+  test("_registry.json can mark a file executable that no `bin` points at", async () => {
+    // `binModeMap` only marks a package's own bin targets; the on-disk 0755 bit
+    // is unreadable on Windows. A bin target owned by another package needs this.
+    using fixtures = tempDir("npm-registry-fixture-exec", {
+      "tgt/1.0.0/package.json": JSON.stringify({ name: "tgt", version: "1.0.0" }),
+      "tgt/1.0.0/cmd": "#!/usr/bin/env node\n",
+      "tgt/_registry.json": JSON.stringify({ executable: { "1.0.0": ["cmd"] } }),
+    });
+    await using registry = await new NpmRegistry({ fixtures: String(fixtures) }).start();
+    const packument = (await registry.packument("tgt"))!;
+    const tgz = new Uint8Array(await (await fetch((packument as any).versions["1.0.0"].dist.tarball)).arrayBuffer());
+    const tar = Bun.gunzipSync(tgz);
+    const modes: Record<string, string> = {};
+    for (let off = 0; off + 512 <= tar.length && tar[off]; ) {
+      const name = Buffer.from(tar.subarray(off, off + 100))
+        .toString()
+        .replace(/\0.*/, "");
+      const size =
+        parseInt(
+          Buffer.from(tar.subarray(off + 124, off + 136))
+            .toString()
+            .replace(/[\0 ]/g, ""),
+          8,
+        ) || 0;
+      modes[name] = Buffer.from(tar.subarray(off + 100, off + 106)).toString();
+      off += 512 + Math.ceil(size / 512) * 512;
+    }
+    expect(modes).toEqual({ "package/cmd": "000755", "package/package.json": "000644" });
+    // `_registry.json`'s `executable` must not leak into the packument.
+    expect((packument as any).executable).toBeUndefined();
+  });
+
+  test("a version whose tarball bytes are not an archive still serves a packument", async () => {
+    await using registry = await new NpmRegistry().start();
+    registry.define("corrupt", { "1.0.0": { tarball: new TextEncoder().encode("not a tarball") } });
+    const { status, body } = await getJson<any>(`${registry.url}corrupt`);
+    expect({ status, integrity: typeof body.versions["1.0.0"].dist.integrity }).toEqual({
+      status: 200,
+      integrity: "string",
+    });
+  });
+
+  test("_registry.json rejects an executable version that is not a directory fixture", async () => {
+    using fixtures = tempDir("npm-registry-exec-tgz", {
+      "tgt/1.0.0/package.json": JSON.stringify({ name: "tgt", version: "1.0.0" }),
+      "tgt/_registry.json": JSON.stringify({ executable: { "9.9.9": ["cmd"] } }),
+    });
+    await using registry = await new NpmRegistry({ fixtures: String(fixtures) }).start();
+    expect(await getJson(`${registry.url}tgt`)).toMatchObject({
+      status: 500,
+      body: { error: expect.stringContaining("is not a directory fixture") },
+    });
+    expect(registry.takeHandlerErrors()).toHaveLength(1);
+  });
+
+  test("_registry.json rejects an executable path that does not exist", async () => {
+    using fixtures = tempDir("npm-registry-fixture-exec-missing", {
+      "tgt/1.0.0/package.json": JSON.stringify({ name: "tgt", version: "1.0.0" }),
+      "tgt/_registry.json": JSON.stringify({ executable: { "1.0.0": ["nope"] } }),
+    });
+    await using registry = await new NpmRegistry({ fixtures: String(fixtures) }).start();
+    expect(await getJson(`${registry.url}tgt`)).toMatchObject({
+      status: 500,
+      body: { error: expect.stringContaining("marks a missing file executable") },
+    });
+    expect(registry.takeHandlerErrors()).toHaveLength(1);
+  });
+
   test("a version directory may omit the package.json's semver build metadata", async () => {
     // semver §10: build metadata is not part of a version's identity, and
     // a registry keys the packument without it. `1.0.0+123` lives in `1.0.0/`.
@@ -869,10 +947,101 @@ describe("fixtures", () => {
   });
 });
 
+describe("conditional requests after a metadata write", () => {
+  test("deprecate advances last-modified, so If-Modified-Since does not 304 a changed document", async () => {
+    await using registry = await new NpmRegistry().start();
+    const token = registry.addUser({ name: "u", password: "p" });
+    registry.define("dep", { "1.0.0": {}, "2.0.0": {} });
+    const head = async () => {
+      const r = await fetch(`${registry.url}dep`);
+      return { lastModified: r.headers.get("last-modified")!, etag: r.headers.get("etag")! };
+    };
+    const before = await head();
+
+    const res = await fetch(`${registry.url}dep`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        _id: "dep",
+        name: "dep",
+        versions: {
+          "1.0.0": { name: "dep", version: "1.0.0", deprecated: "old" },
+          "2.0.0": { name: "dep", version: "2.0.0" },
+        },
+      }),
+    });
+    expect(res.status).toBe(201);
+
+    const after = await head();
+    expect({ lastModifiedMoved: after.lastModified !== before.lastModified, etagMoved: after.etag !== before.etag }) //
+      .toEqual({ lastModifiedMoved: true, etagMoved: true });
+
+    const stale = await fetch(`${registry.url}dep`, { headers: { "if-modified-since": before.lastModified } });
+    expect(stale.status).toBe(200);
+  });
+
+  test("last-modified never goes backwards when a publish follows a metadata write", async () => {
+    // A publish stamps a wall-clock version time, so it can land *before* the
+    // step a preceding deprecate added.
+    await using registry = await new NpmRegistry().start();
+    const token = registry.addUser({ name: "u", password: "p" });
+    registry.define("mono", { "1.0.0": {} });
+    const modified = async () => Date.parse((await fetch(`${registry.url}mono`)).headers.get("last-modified")!);
+    const put = (body: unknown) =>
+      fetch(`${registry.url}mono`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+
+    const first = await modified();
+    await put({
+      _id: "mono",
+      name: "mono",
+      versions: { "1.0.0": { name: "mono", version: "1.0.0", deprecated: "x" } },
+    });
+    const afterDeprecate = await modified();
+
+    const tgz = Buffer.from(buildTarball({ "package.json": '{"name":"mono","version":"2.0.0"}' }).bytes).toString(
+      "base64",
+    );
+    const res = await put({
+      _id: "mono",
+      name: "mono",
+      versions: { "2.0.0": { name: "mono", version: "2.0.0" } },
+      _attachments: { "mono-2.0.0.tgz": { content_type: "application/octet-stream", data: tgz, length: tgz.length } },
+    });
+    expect(res.status).toBe(201);
+    const afterPublish = await modified();
+
+    expect({ deprecateAdvanced: afterDeprecate > first, publishDidNotRewind: afterPublish >= afterDeprecate }) //
+      .toEqual({ deprecateAdvanced: true, publishDidNotRewind: true });
+  });
+
+  test("an unparseable explicit time.modified does not throw the write path", async () => {
+    using fixtures = tempDir("npm-registry-bad-time", {
+      "t/1.0.0/package.json": JSON.stringify({ name: "t", version: "1.0.0" }),
+      "t/_registry.json": JSON.stringify({ time: { modified: "whenever" } }),
+    });
+    await using registry = await new NpmRegistry({ fixtures: String(fixtures) }).start();
+    const token = registry.addUser({ name: "u", password: "p" });
+    const res = await fetch(`${registry.url}t`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        _id: "t",
+        name: "t",
+        versions: { "1.0.0": { name: "t", version: "1.0.0", deprecated: "x" } },
+      }),
+    });
+    expect(res.status).toBe(201);
+  });
+});
+
 describe("audit", () => {
   test("the bulk endpoint returns only advisories whose range matches a requested version", async () => {
     await using registry = await new NpmRegistry().start();
-    const { module_name: _, ...advisory } = registry.advisories.add({
+    registry.advisories.add({
       module_name: "lodash",
       vulnerable_versions: "<4.17.21",
       severity: "high",
@@ -886,10 +1055,32 @@ describe("audit", () => {
         body: JSON.stringify(body),
       });
 
+    // Literals, not `add()`'s return value: the generated `id` and `url` are
+    // the only things `add()` contributes, and `bun audit --ignore` reads the url.
     expect((await audit({ lodash: ["4.17.20"], express: ["4.0.0"] })).body).toEqual({
-      lodash: [JSON.parse(JSON.stringify(advisory))],
+      lodash: [
+        {
+          id: 1_000_000,
+          url: "https://github.com/advisories/GHSA-1000000",
+          vulnerable_versions: "<4.17.21",
+          severity: "high",
+          title: "Prototype Pollution",
+        },
+      ],
     });
     expect((await audit({ lodash: ["4.17.21"] })).body).toEqual({});
+  });
+
+  test("an explicit `url: undefined` falls back to the generated url, it does not erase it", async () => {
+    await using registry = await new NpmRegistry().start();
+    const advisory = registry.advisories.add({
+      module_name: "lodash",
+      vulnerable_versions: "<4.17.21",
+      severity: "high",
+      title: "Prototype Pollution",
+      url: undefined,
+    });
+    expect(advisory.url).toBe("https://github.com/advisories/GHSA-1000000");
   });
 
   test("a Content-Encoding: gzip body is decoded (what `bun audit` sends)", async () => {

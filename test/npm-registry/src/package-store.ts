@@ -111,7 +111,12 @@ export function manifestFromValue(manifest: Manifest): () => Promise<Manifest> {
   return () => resolved;
 }
 
-/** A tarball backed by bytes that already exist (a prebuilt `.tgz` fixture). */
+/**
+ * A tarball backed by bytes that already exist (a prebuilt `.tgz` fixture, or
+ * a `tarball: Uint8Array` spec). The bytes are never parsed: several specs
+ * hand over a deliberately malformed archive, and `dist` must still serialize.
+ * That is why such a version has no `fileCount`/`unpackedSize`.
+ */
 export function tarballFromBytes(read: () => Promise<Uint8Array>): () => Promise<ResolvedTarball> {
   return memo(async () => {
     const bytes = await read();
@@ -176,6 +181,18 @@ export function effectiveDistTags(record: PackageRecord): Record<string, Version
   return tags;
 }
 
+/** The newest version's publish time, ignoring any explicit `modified`. */
+function latestVersionTime(record: PackageRecord): number {
+  const ordered = sortedVersions(record);
+  let latest = EPOCH;
+  for (let i = 0; i < ordered.length; i++) {
+    const explicit = record.time[ordered[i]!];
+    const ms = explicit !== undefined ? Date.parse(explicit) : EPOCH + i * VERSION_TIME_STEP_MS;
+    if (ms > latest) latest = ms;
+  }
+  return latest;
+}
+
 /**
  * The effective `time` document. Versions without an explicit timestamp
  * are assigned `EPOCH + index minutes` in semver order.
@@ -183,14 +200,30 @@ export function effectiveDistTags(record: PackageRecord): Record<string, Version
 export function effectiveTime(record: PackageRecord): Record<string, string> {
   const ordered = sortedVersions(record);
   const time: Record<string, string> = {};
-  let latest = EPOCH;
   for (let i = 0; i < ordered.length; i++) {
     const explicit = record.time[ordered[i]!];
     const ms = explicit !== undefined ? Date.parse(explicit) : EPOCH + i * VERSION_TIME_STEP_MS;
     time[ordered[i]!] = new Date(ms).toISOString();
-    if (ms > latest) latest = ms;
   }
   time.created = record.time.created ?? new Date(EPOCH).toISOString();
-  time.modified = record.time.modified ?? new Date(latest).toISOString();
+  time.modified = record.time.modified ?? new Date(latestVersionTime(record)).toISOString();
   return time;
+}
+
+/**
+ * Records a write: bumps `_rev` and advances `time.modified`. A publish takes
+ * its newest version's time; a metadata-only write (deprecate, unpublish, a
+ * dist-tag edit) adds no version, so `modified` must step on its own or
+ * `If-Modified-Since` answers a stale 304 for a document that changed.
+ * Monotonic, and a pure function of the write sequence.
+ */
+export function touchRecord(record: PackageRecord, { addedVersion }: { addedVersion: boolean }): void {
+  record.rev += 1;
+  // Never below the previous value: publish stamps a wall-clock version time
+  // (`publish.ts`), so a publish landing within a step of an earlier metadata
+  // write would otherwise rewind `modified`. An unparseable explicit value
+  // parses to NaN and is ignored rather than throwing.
+  const previous = Date.parse(record.time.modified ?? "");
+  const base = Math.max(latestVersionTime(record), Number.isNaN(previous) ? -Infinity : previous);
+  record.time.modified = new Date(addedVersion ? base : base + VERSION_TIME_STEP_MS).toISOString();
 }

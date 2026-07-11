@@ -128,6 +128,100 @@ impl BracketMatches {
     }
 }
 
+/// If `content[pos..]` is an inline-link `(dest title)` suffix with a closing
+/// `)`, return the position after that `)`. Mirrors `try_match_bracket_link`
+/// so the bracket-pair builder and link lookahead agree on where a link ends.
+fn scan_inline_link_suffix(content: &[u8], pos: usize) -> Option<usize> {
+    if content.get(pos) != Some(&b'(') {
+        return None;
+    }
+    let mut p = pos + 1;
+    while p < content.len()
+        && (helpers::is_blank(content[p]) || content[p] == b'\n' || content[p] == b'\r')
+    {
+        p += 1;
+    }
+    if p < content.len() && content[p] == b'<' {
+        p += 1;
+        while p < content.len()
+            && content[p] != b'>'
+            && content[p] != b'\n'
+            && content[p] != b'\r'
+            && content[p] != b'<'
+        {
+            if content[p] == b'\\' && p + 1 < content.len() {
+                p += 2;
+            } else {
+                p += 1;
+            }
+        }
+        if p < content.len() && content[p] == b'>' {
+            p += 1;
+        } else {
+            return None;
+        }
+    } else {
+        let mut paren_depth: u32 = 0;
+        while p < content.len() && !helpers::is_whitespace(content[p]) {
+            if content[p] == b'(' {
+                paren_depth += 1;
+                if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
+                    return None;
+                }
+            } else if content[p] == b')' {
+                if paren_depth == 0 {
+                    break;
+                }
+                paren_depth -= 1;
+            }
+            if content[p] == b'\\' && p + 1 < content.len() {
+                p += 2;
+            } else {
+                p += 1;
+            }
+        }
+    }
+    while p < content.len()
+        && (helpers::is_blank(content[p]) || content[p] == b'\n' || content[p] == b'\r')
+    {
+        p += 1;
+    }
+    if p < content.len() && (content[p] == b'"' || content[p] == b'\'' || content[p] == b'(') {
+        let close_ch: u8 = if content[p] == b'(' { b')' } else { content[p] };
+        let title_open = p;
+        p += 1;
+        let mut title_valid = true;
+        while p < content.len() && content[p] != close_ch {
+            if content[p] == b'\\' && p + 1 < content.len() {
+                p += 2;
+                continue;
+            }
+            if close_ch == b')' && content[p] == b'(' {
+                title_valid = false;
+                break;
+            }
+            p += 1;
+        }
+        if title_valid {
+            if p < content.len() {
+                p += 1;
+            }
+        } else {
+            p = title_open;
+        }
+    }
+    while p < content.len()
+        && (helpers::is_blank(content[p]) || content[p] == b'\n' || content[p] == b'\r')
+    {
+        p += 1;
+    }
+    if p < content.len() && content[p] == b')' {
+        Some(p + 1)
+    } else {
+        None
+    }
+}
+
 impl Parser<'_> {
     /// Build the bracket-pair map for `content` in a single pass, using the
     /// same tokenization as the matching scan (code spans, HTML tags,
@@ -201,8 +295,38 @@ impl Parser<'_> {
                         let idx = top as usize;
                         top = storage[idx].1;
                         storage[idx].1 = pos as OFF;
+                        pos += 1;
+                        // The inline walk reads `(dest title)` after `]` as
+                        // raw bytes, so a backtick there must not open a code
+                        // span here or later `[` fall back to the O(n) scan
+                        // (quadratic on `("[".repeat(n)+"[x](`y)").repeat(m)`).
+                        // Brackets inside the suffix are still recorded so
+                        // they are not Unknown when the link is rejected.
+                        if let Some(after) = scan_inline_link_suffix(content, pos) {
+                            while pos < after {
+                                match content[pos] {
+                                    b'\\' if pos + 1 < after => pos += 2,
+                                    b'[' => {
+                                        let idx = storage.len() as OFF;
+                                        storage.push((pos as OFF, top));
+                                        top = idx;
+                                        pos += 1;
+                                    }
+                                    b']' => {
+                                        if top != BracketMatches::UNMATCHED {
+                                            let idx = top as usize;
+                                            top = storage[idx].1;
+                                            storage[idx].1 = pos as OFF;
+                                        }
+                                        pos += 1;
+                                    }
+                                    _ => pos += 1,
+                                }
+                            }
+                        }
+                    } else {
+                        pos += 1;
                     }
-                    pos += 1;
                 }
                 // Ordinary text: SIMD-jump to the next character that can
                 // affect bracket matching.

@@ -606,6 +606,50 @@ describe("pathological bracket inputs", () => {
       `);
   }, 90_000);
 
+  // The bracket-pair map used to tokenize a backtick inside an inline link's
+  // "(dest title)" suffix as a code-span opener; paired with a later backtick
+  // the phantom span swallowed every following "[", so each one fell back to
+  // the O(n) scan_bracket_close. A ~90 KB fuzzer input of
+  // "["-floods interleaved with "[foo](`x)" links hung. The map now skips the
+  // inline-link suffix the same way the link parser does.
+  test("bracket floods with a backtick in the inline-link suffix render in linear time", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const segment = (suffix) => fill(3000, "[") + suffix;
+        const cases = [
+          ["backtick in bare destination", fill(50, segment("[foo](\\\`x)"))],
+          ["backtick in angle destination", fill(50, segment("[foo](<\\\`x>)"))],
+          ["backtick in title", fill(50, segment("[foo](x \\"\\\`\\")"))],
+        ];
+        for (const [name, input] of cases) {
+          const out = Bun.markdown.html(input);
+          const links = out.match(/<a href=/g)?.length ?? 0;
+          if (links !== 50 || !out.includes("[[["))
+            throw new Error("unexpected output for " + name + ": " + links + " links, " + JSON.stringify(out.slice(0, 200)));
+          console.log("OK " + name);
+        }
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("backtick inside an inline link destination or title is a literal URL/title byte", () => {
+    expect(Markdown.html("[foo](`x)\n")).toBe('<p><a href="%60x">foo</a></p>\n');
+    expect(Markdown.html("[foo](<`x>)\n")).toBe('<p><a href="%60x">foo</a></p>\n');
+    expect(Markdown.html('[foo](x "`t")\n')).toBe('<p><a href="x" title="`t">foo</a></p>\n');
+    // The flood input: every segment's link renders, every prefix "[" is text.
+    const seg = "[[[[foo](`x)";
+    expect(Markdown.html(seg + seg + seg + seg)).toBe(
+      '<p>' + '[[[<a href="%60x">foo</a>'.repeat(4) + "</p>\n",
+    );
+    // Code-span precedence over the label itself is preserved (CommonMark
+    // example 345: the backtick in the label pairs with the one in the dest).
+    expect(Markdown.html("[not a `link](/foo`)\n")).toBe("<p>[not a <code>link](/foo</code>)</p>\n");
+    // A later backtick outside the link stays literal; the destination
+    // backtick is not its opener.
+    expect(Markdown.html("[a](`b) [c](`d)\n")).toBe('<p><a href="%60b">a</a> <a href="%60d">c</a></p>\n');
+    expect(Markdown.html("[a](`b)c`\n")).toBe('<p><a href="%60b">a</a>c`</p>\n');
+  });
+
   test("bracket floods render in linear time (ansi, wiki links enabled)", async () => {
     await expectRendersQuickly(`
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();

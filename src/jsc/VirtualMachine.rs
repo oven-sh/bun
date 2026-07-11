@@ -4807,7 +4807,8 @@ impl VirtualMachine {
         // OOMing large suites. Request a full collection on the GC thread to
         // reclaim it between files; this runs concurrently and does not stall
         // the event loop. Freed blocks are returned to the OS by the
-        // `mimalloc_cleanup` the per-file loop already runs before each swap.
+        // `mimalloc_cleanup` both per-file loops (the serial --isolate loop
+        // and the --parallel worker) run before each swap.
         self.global().vm().collect_full_async();
     }
 

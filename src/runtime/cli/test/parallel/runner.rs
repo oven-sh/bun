@@ -616,6 +616,9 @@ impl<'a> WorkerLoop<'a> {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
             crate::jsc_hooks::close_isolation_handles(vm);
+            // Mirrors the serial per-file loop: return blocks freed by the
+            // previous file's collection to the OS before the next swap.
+            Global::mimalloc_cleanup(false);
             vm.swap_global_for_test_isolation();
             self.reporter
                 .jest

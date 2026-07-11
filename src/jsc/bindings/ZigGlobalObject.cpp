@@ -710,7 +710,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // moduleLoader -> record -> environment -> bindings so the per-file module
     // graph is reclaimed even while the global shell lingers. Without this, the
     // graph accumulates linearly with the number of test files and OOMs large
-    // suites. Mirrors GlobalObject::reload() and Zig__GlobalObject__destructOnExit().
+    // suites. Mirrors GlobalObject::reload().
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
         oldGlobal->clearModuleRegistry();

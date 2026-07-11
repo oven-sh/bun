@@ -3,6 +3,7 @@ import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
+import * as v8 from "node:v8";
 import { join } from "path";
 
 // Terminal object types that were never entered into the structured clone object
@@ -976,5 +977,43 @@ describe("truncated Set/Map payloads are rejected without hanging", () => {
   test("valid Set and Map payloads still round-trip", () => {
     expect(deserialize(serialize(new Set([1, 0])))).toEqual(new Set([1, 0]));
     expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
+  });
+});
+
+// The wire reader must enforce the same validation as the public constructor for
+// Bun's host tags; otherwise crafted bytes can manufacture objects in states no
+// JS constructor can reach. The X509Certificate tag with a zero-length DER used
+// to produce a JSX509Certificate with m_x509 == nullptr, which every accessor
+// then misbehaves on (crypto errors, a keyless KeyObject from .publicKey, ...).
+describe("deserializing crafted host-tag records", () => {
+  // JSC wire header (version 14) + X509Certificate host tag (253) + u32 length.
+  const x509Record = (der: number[]) => Buffer.from([14, 0, 0, 0, 253, ...intLE(der.length), ...der]);
+  function intLE(n: number) {
+    const b = Buffer.alloc(4);
+    b.writeUInt32LE(n);
+    return [...b];
+  }
+
+  test.each([
+    ["bun:jsc deserialize", deserialize],
+    ["v8.deserialize", v8.deserialize],
+  ])("%s: an X509Certificate record with empty DER is rejected", (_, fn) => {
+    // The serializer refuses to emit this shape (size <= 0 -> DataCloneError),
+    // so this is hostile-only input and must fail the same way junk DER does.
+    expect(() => fn(x509Record([]))).toThrow("Unable to deserialize data.");
+  });
+
+  test.each([
+    ["bun:jsc deserialize", deserialize],
+    ["v8.deserialize", v8.deserialize],
+  ])("%s: an X509Certificate record with undecodable DER is rejected", (_, fn) => {
+    expect(() => fn(x509Record([0xde, 0xad, 0xbe, 0xef]))).toThrow("Unable to deserialize data.");
+  });
+
+  test("round-tripping an X509Certificate still works", () => {
+    const cert = new X509Certificate(tls.cert);
+    const clone = v8.deserialize(v8.serialize(cert));
+    expect(clone).toBeInstanceOf(X509Certificate);
+    expect(clone.fingerprint256).toBe(cert.fingerprint256);
   });
 });

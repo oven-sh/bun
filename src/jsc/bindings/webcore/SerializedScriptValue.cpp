@@ -4752,10 +4752,12 @@ private:
             return JSValue();
         }
 
+        // The serializer never writes an empty DER (size <= 0 -> DataCloneError),
+        // so an empty record is hostile-only input. Reject it like any other
+        // undecodable DER instead of producing a JSX509Certificate with no cert.
         if (buffer.size() == 0) {
-            auto* cert_obj = Bun::JSX509Certificate::create(m_lexicalGlobalObject->vm(), defaultGlobalObject(m_globalObject)->m_JSX509CertificateClassStructure.get(m_globalObject));
-            addTerminalToObjectPool(cert_obj);
-            return cert_obj;
+            fail();
+            return JSValue();
         }
         ncrypto::ClearErrorOnReturn clear_error_on_return;
         X509* ptr = nullptr;

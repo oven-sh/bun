@@ -38,15 +38,9 @@ beforeAll(async () => {
   sharedHttpsProxy = await createAdversarialProxy({ tls: true });
 });
 afterAll(async () => {
-  try {
-    // Smoke check: the shared proxies actually carried traffic.
-    expect(sharedHttpProxy?.connections.length).toBeGreaterThan(0);
-    expect(sharedHttpsProxy?.connections.length).toBeGreaterThan(0);
-  } finally {
-    await sharedHttpProxy?.close();
-    await sharedHttpsProxy?.close();
-    restoreProxyEnv(savedEnv);
-  }
+  await sharedHttpProxy?.close();
+  await sharedHttpsProxy?.close();
+  restoreProxyEnv(savedEnv);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

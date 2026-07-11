@@ -18,13 +18,9 @@ import { listeningServer, pgAuthenticationOk, pgCString, pgRaw, pgReadyForQuery 
 // connectionTimeout (seconds) bounds the connect-retry budget; keep it short
 // in tests that expect the failure to surface.
 
-// One mock server for the whole file. Each test sets `current` immediately
-// before connecting, and the server latches it per connection. A per-test
-// server here used to flake on Windows CI with ERR_POSTGRES_CONNECTION_REFUSED:
-// bun disables SYN retransmission for loopback connects
-// (packages/bun-usockets/src/bsd.c, SIO_TCP_INITIAL_RTO), so a
-// listen()+connect() churn after a port-heavy test in the same shard can lose
-// the single SYN. A single long-lived listener keeps the port stable.
+// One mock server for the file; each test sets `current` before connecting and
+// the accept handler latches it per connection. A per-test server flaked on
+// Windows CI with ERR_POSTGRES_CONNECTION_REFUSED (loopback SYN not retransmitted).
 let current!: { atStartup: Buffer[]; atQuery?: Buffer[] };
 const { port, server } = await listeningServer(socket => {
   const { atStartup, atQuery } = current;

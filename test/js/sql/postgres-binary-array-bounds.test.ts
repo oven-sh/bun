@@ -40,14 +40,9 @@ function binaryArrayHeader(opts: {
   return Buffer.concat([i32(opts.ndim), i32(opts.flags), i32(opts.elemtype), i32(opts.len), i32(opts.lbound)]);
 }
 
-// One mock server for the whole file. The DataRow payload is read from
-// `current` at the moment each connection is accepted; every test sets it
-// immediately before connecting. A per-test server here used to flake on
-// Windows CI with ERR_POSTGRES_CONNECTION_REFUSED: bun disables SYN
-// retransmission for loopback connects (packages/bun-usockets/src/bsd.c,
-// SIO_TCP_INITIAL_RTO), so a listen()+connect() churn after a port-heavy test
-// in the same shard can lose the single SYN. A single long-lived listener
-// keeps the port stable across all cases.
+// One mock server for the file; each test sets `current` before connecting and
+// the accept handler latches it per connection. A per-test server flaked on
+// Windows CI with ERR_POSTGRES_CONNECTION_REFUSED (loopback SYN not retransmitted).
 let current!: { col: Buffer; oid: number };
 const { port, server } = await listeningServer(socket => {
   const { col, oid } = current;

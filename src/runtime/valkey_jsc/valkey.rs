@@ -290,12 +290,6 @@ pub struct ValkeyClient {
     pub auto_flusher: AutoFlusher,
 
     pub vm: &'static VirtualMachine,
-
-    /// Back-pointer to the enclosing `JSValkeyClient`, stamped by
-    /// `JSValkeyClient::new` after the box address is known. `parent()` reads
-    /// this instead of offset-subtracting from `&self`, whose provenance is
-    /// narrowed to the `JsCell`'s interior and makes sibling-field writes UB.
-    pub(crate) owner: core::ptr::NonNull<JSValkeyClient>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -348,16 +342,6 @@ fn reader_pos(reader: &protocol::ValkeyReader<'_>) -> usize {
 }
 
 impl ValkeyClient {
-    /// Recover the enclosing `JSValkeyClient` from the stored back-pointer.
-    /// NOT derived from `&self`: see the `owner` field doc.
-    #[inline]
-    pub(crate) fn parent(&self) -> &JSValkeyClient {
-        // SAFETY: `owner` is stamped in `JSValkeyClient::new` with the box's
-        // original `*mut JSValkeyClient` (full provenance) and the box
-        // outlives every `&ValkeyClient`.
-        unsafe { self.owner.as_ref() }
-    }
-
     /// Clean up resources used by the Valkey client
     // Cannot be `Drop` — takes a JSGlobalObject param and has JS side effects.
     pub fn shutdown(&mut self, global_object_or_finalizing: Option<&JSGlobalObject>) {
@@ -427,8 +411,6 @@ impl ValkeyClient {
             return false;
         }
 
-        self.ref_();
-
         // Start draining the command queue
         let mut total_bytelength: usize = 0;
 
@@ -471,8 +453,6 @@ impl ValkeyClient {
 
         let have_more = self.queue.readable_length() > 0;
         self.auto_flusher.registered.set(have_more);
-
-        self.deref();
 
         // Return true if we should schedule another flush
         have_more
@@ -546,7 +526,12 @@ impl ValkeyClient {
         Ok(())
     }
 
-    fn reject_in_flight_commands(&mut self, message: &[u8], err: RedisError) -> JsTerminated<()> {
+    fn reject_in_flight_commands(
+        &mut self,
+        parent: &JSValkeyClient,
+        message: &[u8],
+        err: RedisError,
+    ) -> JsTerminated<()> {
         if self.in_flight.readable_length() == 0 {
             return Ok(());
         }
@@ -567,7 +552,7 @@ impl ValkeyClient {
             return Ok(());
         }
 
-        let global_this = self.global_object();
+        let global_this = parent.global_object;
         let jsvalue = valkey_error_to_js(&global_this, message, err);
         let mut entries = command::entry::Queue::init();
         Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
@@ -588,7 +573,12 @@ impl ValkeyClient {
     }
 
     /// Mark the connection as failed with error message
-    pub fn fail(&mut self, message: &[u8], err: RedisError) -> JsTerminated<()> {
+    pub fn fail(
+        &mut self,
+        parent: &JSValkeyClient,
+        message: &[u8],
+        err: RedisError,
+    ) -> JsTerminated<()> {
         debug!("failed: {}: {:?}", bstr::BStr::new(message), err);
         if self.flags.failed {
             return Ok(());
@@ -617,12 +607,13 @@ impl ValkeyClient {
             return Ok(());
         }
 
-        let global_this = self.global_object();
-        self.fail_with_js_value(&global_this, valkey_error_to_js(&global_this, message, err))
+        let global_this = parent.global_object;
+        self.fail_with_js_value(parent, &global_this, valkey_error_to_js(&global_this, message, err))
     }
 
     pub fn fail_with_js_value(
         &mut self,
+        parent: &JSValkeyClient,
         global_this: &JSGlobalObject,
         jsvalue: JSValue,
     ) -> JsTerminated<()> {
@@ -639,12 +630,12 @@ impl ValkeyClient {
 
         if !self.connection_ready() {
             self.flags.is_manually_closed = true;
-            self.close();
+            self.close(parent);
         }
         val
     }
 
-    pub fn close(&mut self) {
+    pub fn close(&mut self, parent: &JSValkeyClient) {
         let socket = core::mem::replace(
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
@@ -667,28 +658,28 @@ impl ValkeyClient {
         socket.close(uws::CloseCode::Normal);
         if is_semi_socket {
             self.status = Status::Disconnected;
-            let _ = self.on_close();
+            let _ = self.on_close(parent);
         }
     }
 
     /// Handle connection closed event
-    pub fn on_close(&mut self) -> JsTerminated<()> {
+    pub fn on_close(&mut self, parent: &JSValkeyClient) -> JsTerminated<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
 
         // If manually closing, don't attempt to reconnect
         if self.flags.is_manually_closed {
             debug!("skip reconnecting since the connection is manually closed");
-            self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
-            self.on_valkey_close()?;
+            self.fail(parent, b"Connection closed", RedisError::ConnectionClosed)?;
+            parent.on_valkey_close()?;
             return Ok(());
         }
 
         // If auto reconnect is disabled, just fail
         if !self.flags.enable_auto_reconnect {
             debug!("skip reconnecting since auto reconnect is disabled");
-            self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
-            self.on_valkey_close()?;
+            self.fail(parent, b"Connection closed", RedisError::ConnectionClosed)?;
+            parent.on_valkey_close()?;
             return Ok(());
         }
 
@@ -699,10 +690,11 @@ impl ValkeyClient {
         if delay_ms == 0 || self.retry_attempts > self.max_retries {
             debug!("Max retries reached or retry strategy returned 0, giving up reconnection");
             self.fail(
+                parent,
                 b"Max reconnection attempts reached",
                 RedisError::ConnectionClosed,
             )?;
-            self.on_valkey_close()?;
+            parent.on_valkey_close()?;
             return Ok(());
         }
 
@@ -715,10 +707,10 @@ impl ValkeyClient {
         self.flags.is_authenticated = false;
         self.flags.is_selecting_db_internal = false;
 
-        self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
+        self.reject_in_flight_commands(parent, b"Connection closed", RedisError::ConnectionClosed)?;
 
         // Signal reconnect timer should be started
-        self.on_valkey_reconnect();
+        parent.on_valkey_reconnect();
         Ok(())
     }
 
@@ -761,7 +753,7 @@ impl ValkeyClient {
     /// Process data received from socket
     ///
     /// Caller refs / derefs.
-    pub fn on_data(&mut self, data: &[u8]) -> JsTerminated<()> {
+    pub fn on_data(&mut self, parent: &JSValkeyClient, data: &[u8]) -> JsTerminated<()> {
         debug!(
             "Low-level onData called with {} bytes: {}",
             data.len(),
@@ -798,7 +790,7 @@ impl ValkeyClient {
                         return Ok(());
                     }
                     Err(err) => {
-                        self.fail(b"Failed to read data (buffer path)", err)?;
+                        self.fail(parent, b"Failed to read data (buffer path)", err)?;
                         return Ok(());
                     }
                 }
@@ -812,7 +804,7 @@ impl ValkeyClient {
                         // The scanner verified a complete reply is buffered, so
                         // a parse failure here (including `InvalidResponse`) is
                         // a protocol error, not a short read.
-                        self.fail(b"Failed to read data (buffer path)", err)?;
+                        self.fail(parent, b"Failed to read data (buffer path)", err)?;
                         return Ok(());
                     }
                 };
@@ -821,6 +813,7 @@ impl ValkeyClient {
                 let bytes_consumed = reader_pos(&reader) - before_read_pos;
                 if bytes_consumed == 0 && !remaining_buffer.is_empty() {
                     self.fail(
+                        parent,
                         b"Parser consumed 0 bytes unexpectedly (buffer path)",
                         RedisError::InvalidResponse,
                     )?;
@@ -832,7 +825,7 @@ impl ValkeyClient {
                 self.reply_scanner.reset();
 
                 let mut value_to_handle = value; // Use temp var for defer
-                self.handle_response(&mut value_to_handle)?;
+                self.handle_response(parent, &mut value_to_handle)?;
 
                 if self.status == Status::Disconnected || self.flags.failed {
                     return Ok(());
@@ -868,7 +861,7 @@ impl ValkeyClient {
                         return Ok(()); // Exit onData, next call will use the buffer path
                     } else {
                         // Any other error is fatal
-                        self.fail(b"Failed to read data (stack path)", err)?;
+                        self.fail(parent, b"Failed to read data (stack path)", err)?;
                         return Ok(());
                     }
                 }
@@ -880,6 +873,7 @@ impl ValkeyClient {
             if bytes_consumed == 0 {
                 // This case should ideally not happen if readValue succeeded and slice wasn't empty
                 self.fail(
+                    parent,
                     b"Parser consumed 0 bytes unexpectedly (stack path)",
                     RedisError::InvalidResponse,
                 )?;
@@ -891,7 +885,7 @@ impl ValkeyClient {
 
             // Handle the successfully parsed response
             let mut value_to_handle = value; // Use temp var for defer
-            self.handle_response(&mut value_to_handle)?;
+            self.handle_response(parent, &mut value_to_handle)?;
 
             // Check connection status after handling
             if self.status == Status::Disconnected || self.flags.failed {
@@ -912,11 +906,12 @@ impl ValkeyClient {
     /// Returns `handled` if we handled it, `fallthrough` if we did not.
     fn handle_subscribe_response(
         &mut self,
+        parent: &JSValkeyClient,
         value: &mut RESPValue,
         pair: Option<&mut command::PromisePair>,
     ) -> JsResult<SubscribeHandled> {
         // Resolve the promise with the potentially transformed value
-        let global_this = self.global_object();
+        let global_this = parent.global_object;
 
         debug!("Handling a subscribe response: {}", value);
         // SAFETY: `event_loop()` returns the live VM-owned `*mut EventLoop`; the guard holds the
@@ -932,21 +927,20 @@ impl ValkeyClient {
                 Ok(SubscribeHandled::Handled)
             }
             RESPValue::Push(push) => {
-                let p = self.parent();
-                let sub_count = p
+                let sub_count = parent
                     ._subscription_ctx
                     .get()
-                    .channels_subscribed_to_count(&global_this)?;
+                    .channels_subscribed_to_count(parent, &global_this)?;
 
                 if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
                     match msg_type {
                         protocol::SubscriptionPushMessage::Message => {
-                            self.on_valkey_message(&mut push.data);
+                            parent.on_valkey_message(&mut push.data);
                             Ok(SubscribeHandled::Handled)
                         }
                         protocol::SubscriptionPushMessage::Subscribe => {
-                            p.add_subscription();
-                            self.on_valkey_subscribe(value);
+                            parent.add_subscription();
+                            parent.on_valkey_subscribe(value);
 
                             // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
                             // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
@@ -959,8 +953,8 @@ impl ValkeyClient {
                             Ok(SubscribeHandled::Handled)
                         }
                         protocol::SubscriptionPushMessage::Unsubscribe => {
-                            self.on_valkey_unsubscribe()?;
-                            self.parent().remove_subscription();
+                            parent.on_valkey_unsubscribe()?;
+                            parent.remove_subscription();
 
                             // For UNSUBSCRIBE responses, only resolve the promise if we have one
                             // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
@@ -978,6 +972,7 @@ impl ValkeyClient {
                     // then this is an unexpected path.
                     bun_core::hint::cold();
                     self.fail(
+                        parent,
                         b"Push message is not a subscription message.",
                         RedisError::InvalidResponseType,
                     )?;
@@ -992,12 +987,16 @@ impl ValkeyClient {
         }
     }
 
-    fn handle_hello_response(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
+    fn handle_hello_response(
+        &mut self,
+        parent: &JSValkeyClient,
+        value: &mut RESPValue,
+    ) -> JsTerminated<()> {
         debug!("Processing HELLO response");
 
         match value {
             RESPValue::Error(err) => {
-                self.fail(err, RedisError::AuthenticationFailed)?;
+                self.fail(parent, err, RedisError::AuthenticationFailed)?;
                 Ok(())
             }
             RESPValue::SimpleString(str_) => {
@@ -1006,10 +1005,11 @@ impl ValkeyClient {
                     self.flags.is_authenticated = true;
                     self.flags.is_reconnecting = false;
                     self.retry_attempts = 0;
-                    self.on_valkey_connect(value)?;
+                    parent.on_valkey_connect(value)?;
                     return Ok(());
                 }
                 self.fail(
+                    parent,
                     b"Authentication failed (unexpected response)",
                     RedisError::AuthenticationFailed,
                 )?;
@@ -1029,6 +1029,7 @@ impl ValkeyClient {
                                     debug!("Server protocol version: {}", proto_version);
                                     if proto_version != 3 {
                                         self.fail(
+                                            parent,
                                             b"Server does not support RESP3",
                                             RedisError::UnsupportedProtocol,
                                         )?;
@@ -1046,11 +1047,12 @@ impl ValkeyClient {
                 self.flags.is_authenticated = true;
                 self.flags.is_reconnecting = false;
                 self.retry_attempts = 0;
-                self.on_valkey_connect(value)?;
+                parent.on_valkey_connect(value)?;
                 Ok(())
             }
             _ => {
                 self.fail(
+                    parent,
                     b"Authentication failed with unexpected response",
                     RedisError::AuthenticationFailed,
                 )?;
@@ -1060,10 +1062,14 @@ impl ValkeyClient {
     }
 
     /// Handle Valkey protocol response
-    fn handle_response(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
+    fn handle_response(
+        &mut self,
+        parent: &JSValkeyClient,
+        value: &mut RESPValue,
+    ) -> JsTerminated<()> {
         // Special handling for the initial HELLO response
         if !self.flags.is_authenticated {
-            self.handle_hello_response(value)?;
+            self.handle_hello_response(parent, value)?;
 
             // We've handled the HELLO response without consuming anything from the command queue
             return Ok(());
@@ -1075,13 +1081,14 @@ impl ValkeyClient {
 
             return match value {
                 RESPValue::Error(err_str) => {
-                    self.fail(err_str, RedisError::InvalidCommand)?;
+                    self.fail(parent, err_str, RedisError::InvalidCommand)?;
                     Ok(())
                 }
                 RESPValue::SimpleString(ok_str) => {
                     if ok_str.as_ref() != b"OK" {
                         // SELECT returned something other than "OK"
                         self.fail(
+                            parent,
                             b"SELECT command failed with non-OK response",
                             RedisError::InvalidResponse,
                         )?;
@@ -1098,6 +1105,7 @@ impl ValkeyClient {
                 _ => {
                     // Unexpected response type for SELECT
                     self.fail(
+                        parent,
                         b"Received non-SELECT response while in the SELECT state.",
                         RedisError::InvalidResponse,
                     )?;
@@ -1147,17 +1155,17 @@ impl ValkeyClient {
             .as_ref()
             .map(|p| p.meta.contains(command::Meta::SUBSCRIPTION_REQUEST))
             .unwrap_or(false);
-        if self.parent().is_subscriber() || request_is_subscribe {
+        if parent.is_subscriber() || request_is_subscribe {
             debug!("This client is a subscriber. Handling as subscriber...");
 
             match value {
                 RESPValue::Error(err) => {
-                    self.fail(err, RedisError::InvalidResponse)?;
+                    self.fail(parent, err, RedisError::InvalidResponse)?;
                     return Ok(());
                 }
                 RESPValue::Push(push) => {
                     if protocol::SubscriptionPushMessage::from_bytes(&push.kind).is_some() {
-                        if self.handle_subscribe_response(value, pair_maybe.as_mut())?
+                        if self.handle_subscribe_response(parent, value, pair_maybe.as_mut())?
                             == SubscribeHandled::Handled
                         {
                             return Ok(());
@@ -1165,6 +1173,7 @@ impl ValkeyClient {
                     } else {
                         bun_core::hint::cold();
                         self.fail(
+                            parent,
                             b"Unexpected push message kind without promise",
                             RedisError::InvalidResponseType,
                         )?;
@@ -1198,7 +1207,7 @@ impl ValkeyClient {
 
         // Resolve the promise with the potentially transformed value
         let promise_ptr = &mut pair.promise;
-        let global_this = self.global_object();
+        let global_this = parent.global_object;
 
         let _exit = self.vm.enter_event_loop_scope();
 
@@ -1215,7 +1224,7 @@ impl ValkeyClient {
     }
 
     /// Send authentication command to Valkey server
-    fn authenticate(&mut self) -> JsTerminated<()> {
+    fn authenticate(&mut self, parent: &JSValkeyClient) -> JsTerminated<()> {
         // First send HELLO command for RESP3 protocol
         debug!("Sending HELLO 3 command");
 
@@ -1255,7 +1264,7 @@ impl ValkeyClient {
         };
 
         if let Err(_err) = hello_write_result {
-            self.fail(b"Failed to write HELLO command", RedisError::OutOfMemory)?;
+            self.fail(parent, b"Failed to write HELLO command", RedisError::OutOfMemory)?;
             return Ok(());
         }
 
@@ -1269,7 +1278,7 @@ impl ValkeyClient {
                 meta: command::Meta::default(),
             };
             if let Err(_err) = select_cmd.write(self.writer()) {
-                self.fail(b"Failed to write SELECT command", RedisError::OutOfMemory)?;
+                self.fail(parent, b"Failed to write SELECT command", RedisError::OutOfMemory)?;
                 return Ok(());
             }
             self.flags.is_selecting_db_internal = true;
@@ -1278,7 +1287,7 @@ impl ValkeyClient {
     }
 
     /// Handle socket open event
-    pub fn on_open(&mut self, socket: AnySocket) -> JsTerminated<()> {
+    pub fn on_open(&mut self, parent: &JSValkeyClient, socket: AnySocket) -> JsTerminated<()> {
         self.socket = socket;
         self.write_buffer.clear_and_free();
         self.read_buffer.clear_and_free();
@@ -1295,14 +1304,14 @@ impl ValkeyClient {
         if matches!(self.socket, AnySocket::SocketTcp(_)) {
             // if is tcp, we need to start the connection process
             // if is tls, we need to wait for the handshake to complete
-            self.start()?;
+            self.start(parent)?;
         }
         Ok(())
     }
 
     /// Start the connection process
-    pub fn start(&mut self) -> JsTerminated<()> {
-        self.authenticate()?;
+    pub fn start(&mut self, parent: &JSValkeyClient) -> JsTerminated<()> {
+        self.authenticate(parent)?;
         let _ = self.flush_data();
         Ok(())
     }
@@ -1364,13 +1373,15 @@ impl ValkeyClient {
     }
 
     pub fn on_writable(&mut self) {
-        self.ref_();
+        // No ref_/deref pair here: send_next_command() only touches queues and
+        // the socket (no JS re-entry), and every caller already holds a
+        // keep-alive ref across this call.
         self.send_next_command();
-        self.deref();
     }
 
     fn enqueue(
         &mut self,
+        global_this: &JSGlobalObject,
         command: &Command,
         mut promise: command::Promise,
     ) -> Result<(), crate::Error> {
@@ -1413,8 +1424,7 @@ impl ValkeyClient {
         match self.status {
             Status::Connecting | Status::Connected => {
                 if command.write(self.writer()).is_err() {
-                    let global = self.global_object();
-                    let _ = promise.reject(&global, Ok(global.create_out_of_memory_error()));
+                    let _ = promise.reject(global_this, Ok(global_this.create_out_of_memory_error()));
                     return Ok(());
                 }
             }
@@ -1459,7 +1469,7 @@ impl ValkeyClient {
             // Handle disconnected state with offline queue
             match self.status {
                 Status::Connected => {
-                    self.enqueue(&checked_command, promise)?;
+                    self.enqueue(global_this, &checked_command, promise)?;
 
                     // Schedule auto-flushing to process this command if pipelining is enabled
                     if self.flags.enable_auto_pipelining
@@ -1475,7 +1485,7 @@ impl ValkeyClient {
                 Status::Connecting | Status::Disconnected => {
                     // Only queue if offline queue is enabled
                     if self.flags.enable_offline_queue {
-                        self.enqueue(&checked_command, promise)?;
+                        self.enqueue(global_this, &checked_command, promise)?;
                     } else {
                         let _ = promise.reject(
                             global_this,
@@ -1497,11 +1507,11 @@ impl ValkeyClient {
     }
 
     /// Close the Valkey connection
-    pub fn disconnect(&mut self) {
+    pub fn disconnect(&mut self, parent: &JSValkeyClient) {
         self.flags.is_manually_closed = true;
         self.unregister_auto_flusher();
         if self.status == Status::Connected || self.status == Status::Connecting {
-            self.close();
+            self.close(parent);
         }
     }
 
@@ -1519,51 +1529,6 @@ impl ValkeyClient {
         Ok(data.len())
     }
 
-    /// Increment reference count
-    pub fn ref_(&mut self) {
-        self.parent().ref_();
-    }
-
-    pub fn deref(&mut self) {
-        let parent = std::ptr::from_ref(self.parent()).cast_mut();
-        // SAFETY: only called in balanced `ref_()`/`deref()` pairs
-        // (`on_auto_flush`, `on_writable`), so the count stays > 0 and the
-        // outer `&mut self` protector is never invalidated by deallocation.
-        unsafe { JSValkeyClient::deref(parent) };
-    }
-
-    #[inline]
-    fn global_object(&mut self) -> GlobalRef {
-        self.parent().global_object
-    }
-
-    pub fn on_valkey_connect(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
-        self.parent().on_valkey_connect(value)
-    }
-
-    pub fn on_valkey_subscribe(&mut self, value: &mut RESPValue) {
-        self.parent().on_valkey_subscribe(value);
-    }
-
-    pub fn on_valkey_unsubscribe(&mut self) -> JsResult<()> {
-        self.parent().on_valkey_unsubscribe()
-    }
-
-    pub fn on_valkey_message(&mut self, value: &mut [RESPValue]) {
-        self.parent().on_valkey_message(value);
-    }
-
-    pub fn on_valkey_reconnect(&mut self) {
-        self.parent().on_valkey_reconnect();
-    }
-
-    pub fn on_valkey_close(&mut self) -> JsTerminated<()> {
-        self.parent().on_valkey_close()
-    }
-
-    pub fn on_valkey_timeout(&mut self) {
-        self.parent().on_valkey_timeout();
-    }
 }
 
 // Auto-pipelining

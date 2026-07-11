@@ -242,8 +242,8 @@ describe("RedisClient TLS hostname verification", () => {
   });
 
   test("subscribe() after connect() does not dead-store the refcount increment", async () => {
-    // SubscriptionCtx::parent() / ValkeyClient::parent() used to derive
-    // &JSValkeyClient by offset-subtracting from &self, but &self comes from
+    // ValkeyClient and SubscriptionCtx used to reach JSValkeyClient via
+    // impl_field_parent!'s offset-subtracted parent(), but &self comes from
     // JsCell::get() whose provenance covers only the child's bytes. Writing
     // to ref_count through that pointer is UB: under overflow-checks LLVM
     // dead-stored the increment in upsert_receive_handler and on_data's
@@ -262,7 +262,8 @@ describe("RedisClient TLS hostname verification", () => {
           buf = buf.subarray(consumed);
           const args = [...head.matchAll(/\$\d+\r\n([^\r]+)\r\n/g)].map(m => m[1]);
           if (args[0] === "HELLO") sock.write("%1\r\n+proto\r\n:3\r\n");
-          else if (args[0] === "SUBSCRIBE") for (const ch of args.slice(1)) sock.write(push("subscribe", ch, ++subs));
+          else if (args[0] === "SUBSCRIBE")
+            for (const ch of args.slice(1)) sock.write(push("subscribe", ch, ++subs));
           else if (args[0] === "UNSUBSCRIBE")
             for (const ch of args.slice(1)) sock.write(push("unsubscribe", ch, (subs = Math.max(0, subs - 1))));
           else sock.write("+OK\r\n");

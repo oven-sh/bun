@@ -88,11 +88,6 @@ pub struct MySQLConnection {
     ssl_mode: SSLMode,
     allow_public_key_retrieval: bool,
     flags: ConnectionFlags,
-    /// Back-pointer to the enclosing `JSMySQLConnection`, stamped after the
-    /// box address is known. `js_connection_ref()` reads this instead of
-    /// offset-subtracting from `&self`, whose provenance is narrowed to the
-    /// `JsCell`'s interior and makes sibling-field writes UB.
-    pub(crate) owner: core::ptr::NonNull<JSMySQLConnection>,
 }
 
 impl Default for MySQLConnection {
@@ -125,26 +120,11 @@ impl Default for MySQLConnection {
             ssl_mode: SSLMode::Disable,
             allow_public_key_retrieval: false,
             flags: ConnectionFlags::default(),
-            owner: core::ptr::NonNull::dangling(),
         }
     }
 }
 
 impl MySQLConnection {
-    /// Recover the enclosing `JSMySQLConnection` from the stored back-pointer.
-    /// NOT derived from `&self`: see the `owner` field doc.
-    #[inline]
-    pub fn js_connection_ref(&self) -> &JSMySQLConnection {
-        // SAFETY: `owner` is stamped in `JSMySQLConnection`'s constructor with
-        // the box's original `*mut JSMySQLConnection` (full provenance) and
-        // the box outlives every `&MySQLConnection`.
-        unsafe { self.owner.as_ref() }
-    }
-    #[inline]
-    pub fn get_js_connection(&mut self) -> *mut JSMySQLConnection {
-        self.owner.as_ptr()
-    }
-
     pub fn init(
         database: Box<[u8]>,
         username: Box<[u8]>,
@@ -179,14 +159,14 @@ impl MySQLConnection {
         }
     }
 
-    pub fn can_pipeline(&mut self) -> bool {
-        self.queue.can_pipeline(self.js_connection_ref())
+    pub fn can_pipeline(&mut self, parent: &JSMySQLConnection) -> bool {
+        self.queue.can_pipeline(parent)
     }
-    pub fn can_prepare_query(&mut self) -> bool {
-        self.queue.can_prepare_query(self.js_connection_ref())
+    pub fn can_prepare_query(&mut self, parent: &JSMySQLConnection) -> bool {
+        self.queue.can_prepare_query(parent)
     }
-    pub fn can_execute_query(&mut self) -> bool {
-        self.queue.can_execute_query(self.js_connection_ref())
+    pub fn can_execute_query(&mut self, parent: &JSMySQLConnection) -> bool {
+        self.queue.can_execute_query(parent)
     }
 
     #[inline]
@@ -231,14 +211,14 @@ impl MySQLConnection {
         self.queue.add(request);
     }
 
-    pub fn flush_queue(&mut self) -> Result<(), FlushQueueError> {
+    pub fn flush_queue(&mut self, parent: &JSMySQLConnection) -> Result<(), FlushQueueError> {
         self.flush_data();
         if !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) {
             if self.tls_status == TLSStatus::MessageSent {
-                self.upgrade_to_tls()?;
+                self.upgrade_to_tls(parent)?;
             } else {
                 // no backpressure yet so pipeline more if possible and flush again
-                self.advance();
+                self.advance(parent);
                 self.flush_data();
             }
         }
@@ -252,13 +232,12 @@ impl MySQLConnection {
     /// reaches the queue via `ParentRef`/`JsCell` shared borrows (all queue
     /// fields are interior-mutable), so no `&mut` to the queue bytes is ever
     /// materialised concurrently with the connection backref.
-    fn advance(&mut self) {
-        let js_connection = self.get_js_connection();
-        // `js_connection` is the `@fieldParentPtr` of `self` — non-null, live,
-        // full-allocation provenance. advance() only forms shared borrows of it
-        // (queue mutation goes through `Cell`/`JsCell`); the raw pointer is
-        // wrapped via the safe `ParentRef::from(NonNull)` inside.
-        MySQLRequestQueue::advance(js_connection);
+    fn advance(&mut self, parent: &JSMySQLConnection) {
+        // `parent` is the embedding `JSMySQLConnection` — non-null, live.
+        // advance() only forms shared borrows of it (queue mutation goes
+        // through `Cell`/`JsCell`); the raw pointer is wrapped via the safe
+        // `ParentRef::from(NonNull)` inside.
+        MySQLRequestQueue::advance(std::ptr::from_ref(parent).cast_mut());
     }
 
     fn flush_data(&mut self) {
@@ -333,7 +312,7 @@ impl MySQLConnection {
         // _options_buf dropped at scope exit (Box<[u8]> frees via Drop)
     }
 
-    pub fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
+    pub fn upgrade_to_tls(&mut self, parent: &JSMySQLConnection) -> Result<(), FlushQueueError> {
         // Only adopt if we're currently a plain TCP socket.
         let Socket::SocketTcp(tcp) = &self.socket else {
             return Ok(());
@@ -383,7 +362,7 @@ impl MySQLConnection {
             return Err(FlushQueueError::AuthenticationFailed);
         };
 
-        let js_connection = self.get_js_connection();
+        let js_connection = std::ptr::from_ref(parent).cast_mut();
         let new_socket = new_socket.as_ptr();
         // SAFETY: `new_socket` is a live us_socket_t freshly returned by
         // `adopt_tls`; ext storage was sized for
@@ -488,7 +467,11 @@ impl MySQLConnection {
         Ok(false)
     }
 
-    pub fn read_and_process_data(&mut self, data: &[u8]) -> Result<(), AnyMySQLError> {
+    pub fn read_and_process_data(
+        &mut self,
+        parent: &JSMySQLConnection,
+        data: &[u8],
+    ) -> Result<(), AnyMySQLError> {
         self.flags.insert(ConnectionFlags::IS_PROCESSING_DATA);
         // The flag clear is hand-inlined before every return below
         // (scopeguard would need &mut self.flags).
@@ -503,7 +486,7 @@ impl MySQLConnection {
             let consumed = core::cell::Cell::new(0usize);
             let offset = core::cell::Cell::new(0usize);
             let reader = StackReader::init(data, &consumed, &offset);
-            match self.process_packets(reader) {
+            match self.process_packets(parent, reader) {
                 Ok(()) => {}
                 Err(err) => {
                     debug!(
@@ -546,7 +529,7 @@ impl MySQLConnection {
             // borrows `&mut self` twice. Construct the reader first; it holds a
             // `*mut Self` so the second borrow doesn't conflict.
             let reader = self.buffered_reader();
-            match self.process_packets(reader) {
+            match self.process_packets(parent, reader) {
                 Ok(()) => {}
                 Err(err) => {
                     debug!("processPackets with buffer: {}", <&'static str>::from(err));
@@ -580,6 +563,7 @@ impl MySQLConnection {
 
     pub fn process_packets<C: ReaderContext>(
         &mut self,
+        parent: &JSMySQLConnection,
         reader: NewReader<C>,
     ) -> Result<(), AnyMySQLError> {
         loop {
@@ -611,7 +595,7 @@ impl MySQLConnection {
             // Process packet based on connection state
             match self.status {
                 ConnectionState::Handshaking => {
-                    self.handle_handshake(reader)?;
+                    self.handle_handshake(parent, reader)?;
                     // If the handshake negotiated TLS, the SSLRequest has been sent and
                     // everything after this packet must arrive over the encrypted channel.
                     // Any bytes already buffered behind the handshake packet are plaintext
@@ -625,9 +609,9 @@ impl MySQLConnection {
                     }
                 }
                 ConnectionState::Authenticating | ConnectionState::AuthenticationAwaitingPk => {
-                    self.handle_auth(reader, header_length)?
+                    self.handle_auth(parent, reader, header_length)?
                 }
-                ConnectionState::Connected => self.handle_command(reader, header_length)?,
+                ConnectionState::Connected => self.handle_command(parent, reader, header_length)?,
                 _ => {
                     debug!("Unexpected packet in state {}", self.status as u8);
                     return Err(AnyMySQLError::UnexpectedPacket);
@@ -638,6 +622,7 @@ impl MySQLConnection {
 
     pub fn handle_handshake<C: ReaderContext>(
         &mut self,
+        parent: &JSMySQLConnection,
         reader: NewReader<C>,
     ) -> Result<(), AnyMySQLError> {
         let mut handshake = HandshakeV10::default();
@@ -700,7 +685,7 @@ impl MySQLConnection {
         }
 
         // Update status
-        self.set_status(ConnectionState::Authenticating);
+        self.set_status(parent, ConnectionState::Authenticating);
 
         // https://dev.mysql.com/doc/dev/mysql-server/8.4.6/page_protocol_connection_phase_packets_protocol_ssl_request.html
         if self.capabilities.CLIENT_SSL {
@@ -717,7 +702,7 @@ impl MySQLConnection {
             self.tls_status = TLSStatus::MessageSent;
             self.flush_data();
             if !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) {
-                self.upgrade_to_tls()
+                self.upgrade_to_tls(parent)
                     .map_err(|_| AnyMySQLError::AuthenticationFailed)?;
             }
             return Ok(());
@@ -742,12 +727,13 @@ impl MySQLConnection {
 
     fn handle_handshake_decode_public_key<C: ReaderContext>(
         &mut self,
+        parent: &JSMySQLConnection,
         reader: NewReader<C>,
     ) -> Result<(), AnyMySQLError> {
         let mut response = Auth::caching_sha2_password::PublicKeyResponse::default();
         response.decode(reader)?;
         // revert back to authenticating since we received the public key
-        self.set_status(ConnectionState::Authenticating);
+        self.set_status(parent, ConnectionState::Authenticating);
 
         let encrypted_password = Auth::caching_sha2_password::EncryptedPassword {
             password: bun_ptr::RawSlice::new(&self.password),
@@ -760,7 +746,7 @@ impl MySQLConnection {
         Ok(())
     }
 
-    pub fn set_status(&mut self, status: ConnectionState) {
+    pub fn set_status(&mut self, parent: &JSMySQLConnection, status: ConnectionState) {
         if self.status == status {
             return;
         }
@@ -770,7 +756,7 @@ impl MySQLConnection {
         match status {
             ConnectionState::Connected => {
                 // `on_connection_estabilished` spelling is intentional (sic).
-                self.js_connection_ref().on_connection_estabilished();
+                parent.on_connection_estabilished();
             }
             _ => {}
         }
@@ -778,6 +764,7 @@ impl MySQLConnection {
 
     pub fn handle_auth<C: ReaderContext>(
         &mut self,
+        parent: &JSMySQLConnection,
         reader: NewReader<C>,
         header_length: u32, // u24 on the wire
     ) -> Result<(), AnyMySQLError> {
@@ -800,19 +787,19 @@ impl MySQLConnection {
                 };
                 ok.decode_internal(reader)?;
 
-                self.set_status(ConnectionState::Connected);
+                self.set_status(parent, ConnectionState::Connected);
 
                 self.status_flags = ok.status_flags;
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 self.queue.mark_as_ready_for_query();
-                self.advance();
+                self.advance(parent);
             }
 
             x if x == PacketType::ERROR.0 => {
                 let mut err = ErrorPacket::default();
                 err.decode_internal(reader)?;
 
-                self.js_connection_ref().on_error_packet(None, &err);
+                parent.on_error_packet(None, &err);
                 return Err(AnyMySQLError::AuthenticationFailed);
             }
 
@@ -824,7 +811,7 @@ impl MySQLConnection {
                             reader.skip(1);
 
                             if self.status == ConnectionState::AuthenticationAwaitingPk {
-                                return self.handle_handshake_decode_public_key(reader);
+                                return self.handle_handshake_decode_public_key(parent, reader);
                             }
 
                             let mut response = Auth::caching_sha2_password::Response::default();
@@ -851,7 +838,10 @@ impl MySQLConnection {
                                             );
                                         }
                                         // we are in plain TCP so we need to request the public key
-                                        self.set_status(ConnectionState::AuthenticationAwaitingPk);
+                                        self.set_status(
+                                            parent,
+                                            ConnectionState::AuthenticationAwaitingPk,
+                                        );
                                         bun_core::scoped_log!(
                                             MySQLConnection,
                                             "awaiting public key"
@@ -940,6 +930,7 @@ impl MySQLConnection {
 
     pub fn handle_command<C: ReaderContext>(
         &mut self,
+        parent: &JSMySQLConnection,
         reader: NewReader<C>,
         header_length: u32, // u24 on the wire
     ) -> Result<(), AnyMySQLError> {
@@ -958,7 +949,7 @@ impl MySQLConnection {
         debug!("handleCommand");
         if request.is_simple() {
             // Regular query response
-            return self.handle_result_set(reader, header_length);
+            return self.handle_result_set(parent, reader, header_length);
         }
 
         // Handle based on request type
@@ -978,11 +969,11 @@ impl MySQLConnection {
                 }
                 mysql_statement::Status::Parsing => {
                     // We're waiting for prepare response
-                    self.handle_prepared_statement(reader, header_length)?;
+                    self.handle_prepared_statement(parent, reader, header_length)?;
                 }
                 mysql_statement::Status::Prepared => {
                     // We're waiting for execute response
-                    self.handle_result_set(reader, header_length)?;
+                    self.handle_result_set(parent, reader, header_length)?;
                 }
                 mysql_statement::Status::Failed => {
                     // `Data` is not `Clone`, so deep-copy the
@@ -1002,14 +993,11 @@ impl MySQLConnection {
                     self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                     self.queue.mark_as_ready_for_query();
                     self.queue.mark_current_request_as_finished(request);
-                    // R-2: `on_error_packet` is `&self`; route through the
-                    // audited `js_connection_ref()` container_of accessor (one
-                    // centralised unsafe). `*self` sits inside the parent's
-                    // `JsCell`, so re-entrant `connection_mut()` does not alias
-                    // this outer shared borrow.
-                    self.js_connection_ref()
-                        .on_error_packet(Some(request), &error_response);
-                    let _ = self.flush_queue();
+                    // R-2: `on_error_packet` is `&self`. `*self` sits inside the
+                    // parent's `JsCell`, so re-entrant `connection_mut()` does
+                    // not alias this outer shared borrow.
+                    parent.on_error_packet(Some(request), &error_response);
+                    let _ = self.flush_queue(parent);
                 }
             }
         }
@@ -1121,7 +1109,11 @@ impl MySQLConnection {
         }
     }
 
-    fn check_if_prepared_statement_is_done(&mut self, statement: &mut MySQLStatement) {
+    fn check_if_prepared_statement_is_done(
+        &mut self,
+        parent: &JSMySQLConnection,
+        statement: &mut MySQLStatement,
+    ) {
         bun_core::scoped_log!(
             MySQLConnection,
             "checkIfPreparedStatementIsDone: {} {} {} {}",
@@ -1139,12 +1131,13 @@ impl MySQLConnection {
             self.queue.mark_as_ready_for_query();
             self.queue.mark_as_prepared();
             statement.reset();
-            self.advance();
+            self.advance(parent);
         }
     }
 
     pub fn handle_prepared_statement<C: ReaderContext>(
         &mut self,
+        parent: &JSMySQLConnection,
         mut reader: NewReader<C>,
         header_length: u32, // u24 on the wire
     ) -> Result<(), AnyMySQLError> {
@@ -1183,7 +1176,7 @@ impl MySQLConnection {
             {
                 let mut eof = EOFPacket::default();
                 eof.decode_internal(reader)?;
-                self.check_if_prepared_statement_is_done(statement);
+                self.check_if_prepared_statement_is_done(parent, statement);
                 return Ok(());
             }
             if (statement.params_received as usize) < statement.params.len() {
@@ -1203,7 +1196,7 @@ impl MySQLConnection {
             // completion is deferred to the EOF handler above to avoid marking the
             // statement as prepared before the trailing EOF is consumed.
             if self.capabilities.CLIENT_DEPRECATE_EOF {
-                self.check_if_prepared_statement_is_done(statement);
+                self.check_if_prepared_statement_is_done(parent, statement);
             }
             return Ok(());
         }
@@ -1241,7 +1234,7 @@ impl MySQLConnection {
                     statement.columns_received = 0;
                 }
 
-                self.check_if_prepared_statement_is_done(statement);
+                self.check_if_prepared_statement_is_done(parent, statement);
             }
 
             PacketType::ERROR => {
@@ -1271,16 +1264,11 @@ impl MySQLConnection {
                 self.queue.mark_as_ready_for_query();
                 self.queue.mark_current_request_as_finished(request);
 
-                // R-2: `on_error_packet` is `&self`; `js_connection_ref()` is
-                // the audited container_of accessor (one centralised unsafe).
-                // The `&JSMySQLConnection` it yields lives only for this call —
-                // identical footprint to the prior `(*ptr).on_error_packet()`
-                // temporary — and `*self` sits inside the parent's `JsCell`, so
-                // re-entrant `connection_mut()` does not alias the outer
-                // shared borrow.
-                self.js_connection_ref()
-                    .on_error_packet(Some(request), &err);
-                self.advance();
+                // R-2: `on_error_packet` is `&self`. `*self` sits inside the
+                // parent's `JsCell`, so re-entrant `connection_mut()` does not
+                // alias the outer shared borrow.
+                parent.on_error_packet(Some(request), &err);
+                self.advance(parent);
             }
 
             _ => {
@@ -1304,6 +1292,7 @@ impl MySQLConnection {
     // `on_query_result` call (which may itself call `get_statement()`).
     fn handle_result_set_ok(
         &mut self,
+        parent: &JSMySQLConnection,
         request: &JSMySQLQuery,
         status_flags: StatusFlags,
         last_insert_id: u64,
@@ -1327,13 +1316,10 @@ impl MySQLConnection {
         // Short-lived borrow via the audited accessor; dropped before the
         // re-entrant `on_query_result` call below.
         let result_count = request.get_statement().map_or(0, |s| s.result_count);
-        // R-2: `on_query_result` is `&self`; `js_connection_ref()` is the
-        // audited container_of accessor. The `&JSMySQLConnection` lives only for
-        // this call (same footprint as the prior `(*ptr).on_query_result()`
-        // temporary). `*self` sits inside the parent's `JsCell` (`UnsafeCell`),
-        // so re-entrant `connection_mut()` writes through SharedRW provenance
-        // independent of this outer shared borrow.
-        self.js_connection_ref().on_query_result(
+        // R-2: `on_query_result` is `&self`. `*self` sits inside the parent's
+        // `JsCell` (`UnsafeCell`), so re-entrant `connection_mut()` writes
+        // through SharedRW provenance independent of this outer shared borrow.
+        parent.on_query_result(
             request,
             &MySQLQueryResult {
                 result_count,
@@ -1352,11 +1338,12 @@ impl MySQLConnection {
         // by queries added during onQueryResult is actually sent.
         // This fixes a race condition where the auto flusher may not be
         // registered if the queue's current item is completed (not pending).
-        let _ = self.flush_queue();
+        let _ = self.flush_queue(parent);
     }
 
     fn handle_result_set<C: ReaderContext>(
         &mut self,
+        parent: &JSMySQLConnection,
         mut reader: NewReader<C>,
         header_length: u32, // u24 on the wire
     ) -> Result<(), AnyMySQLError> {
@@ -1397,13 +1384,11 @@ impl MySQLConnection {
                 self.queue.mark_as_ready_for_query();
                 self.queue.mark_current_request_as_finished(request);
 
-                // R-2: `on_error_packet` is `&self`; route through the audited
-                // `js_connection_ref()` container_of accessor. `*self` lives
-                // inside the parent's `JsCell`, so re-entrant `connection_mut()`
-                // does not alias this outer shared borrow.
-                self.js_connection_ref()
-                    .on_error_packet(Some(request), &err);
-                let _ = self.flush_queue();
+                // R-2: `on_error_packet` is `&self`. `*self` lives inside the
+                // parent's `JsCell`, so re-entrant `connection_mut()` does not
+                // alias this outer shared borrow.
+                parent.on_error_packet(Some(request), &err);
+                let _ = self.flush_queue(parent);
             }
 
             packet_type => {
@@ -1426,6 +1411,7 @@ impl MySQLConnection {
                         // NLL: caller's `statement` borrow ends here;
                         // `handle_result_set_ok` re-fetches via the accessor.
                         self.handle_result_set_ok(
+                            parent,
                             request,
                             ok.status_flags,
                             ok.last_insert_id,
@@ -1527,7 +1513,7 @@ impl MySQLConnection {
                             // Final EOF after all row data - terminates the result set
                             let mut eof = EOFPacket::default();
                             eof.decode_internal(reader)?;
-                            self.handle_result_set_ok(request, eof.status_flags, 0, 0);
+                            self.handle_result_set_ok(parent, request, eof.status_flags, 0, 0);
                             return Ok(());
                         }
 
@@ -1535,6 +1521,7 @@ impl MySQLConnection {
                         ok.decode_internal(reader)?;
 
                         self.handle_result_set_ok(
+                            parent,
                             request,
                             ok.status_flags,
                             ok.last_insert_id,
@@ -1543,14 +1530,10 @@ impl MySQLConnection {
                         return Ok(());
                     }
 
-                    // R-2: `on_result_row` is `&self`; route through the audited
-                    // `js_connection_ref()` container_of accessor. The
-                    // `&JSMySQLConnection` is held only for this call (identical
-                    // footprint to the prior `(*ptr).on_result_row()` temporary);
-                    // `*self` sits inside the parent's `JsCell`, so re-entrant
-                    // `connection_mut()` does not alias this shared borrow.
-                    self.js_connection_ref()
-                        .on_result_row(request, statement, reader)?;
+                    // R-2: `on_result_row` is `&self`. `*self` sits inside the
+                    // parent's `JsCell`, so re-entrant `connection_mut()` does
+                    // not alias this shared borrow.
+                    parent.on_result_row(request, statement, reader)?;
                 }
             }
         }

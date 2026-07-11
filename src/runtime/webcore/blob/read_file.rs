@@ -482,7 +482,7 @@ impl ReadFile {
         if !self.io_request.scheduled {
             if let Err(err) = io::IoRequestLoop::schedule(&mut self.io_request) {
                 self.close_after_io = false;
-                self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
                 self.system_error = Some(err.to_system_error().into());
                 return false;
             }

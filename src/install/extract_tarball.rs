@@ -618,39 +618,22 @@ impl ExtractTarball {
                                     | sys::Errno::PERM
                                     | sys::Errno::BUSY
                                     | sys::Errno::EXIST => {
-                                        // before we attempt to delete the destination, let's close the source dir.
                                         let _ = sys::close(dir_to_move);
 
-                                        // We tried to move the folder over
-                                        // but it didn't work!
-                                        // so instead of just simply deleting the folder
-                                        // we rename it back into the temp dir
-                                        // and then delete that temp dir
-                                        // The goal is to make it more difficult for an application to reach this folder
-                                        let mut tempdest_buf = PathBuffer::uninit();
-                                        tempdest_buf[0..tmpname.len()]
-                                            .copy_from_slice(tmpname.as_bytes());
-                                        tempdest_buf[tmpname.len()..][0..4]
-                                            .copy_from_slice(&[b't', b'm', b'p', 0]);
-                                        let tempdest =
-                                            ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
-                                        let mut folder_name_z_buf = PathBuffer::uninit();
-                                        folder_name_z_buf[0..folder_name.len()]
-                                            .copy_from_slice(folder_name);
-                                        folder_name_z_buf[folder_name.len()] = 0;
-                                        let folder_name_z =
-                                            ZStr::from_buf(&folder_name_z_buf, folder_name.len());
-                                        match sys::renameat(
+                                        // A concurrent install sharing the cache published
+                                        // this entry first. Keep it (it may already have
+                                        // readers) and drop our equivalent copy instead of
+                                        // renaming it out from under them.
+                                        if sys::directory_exists_at_w(
                                             Fd::from_std_dir(cache_dir),
-                                            folder_name_z,
-                                            Fd::from_std_dir(tmpdir),
-                                            tempdest,
-                                        ) {
-                                            bun_sys::Result::Err(_) => {}
-                                            bun_sys::Result::Ok(_) => {
-                                                let _ = tmpdir.delete_tree(tempdest.as_bytes());
-                                            }
+                                            path_to_use,
+                                        )
+                                        .unwrap_or(false)
+                                        {
+                                            let _ = tmpdir.delete_tree(tmpname.as_bytes());
+                                            break;
                                         }
+
                                         retries += 1;
                                         // 10ms, 20ms, 40ms, 80ms — long enough
                                         // for a concurrent close to land,

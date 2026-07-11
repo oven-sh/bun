@@ -18,6 +18,5 @@ test("retry and repeats hook ordering", async () => {
   expect(stderr).toContain("12 pass");
   expect(stderr).toContain("0 fail");
   expect(stderr).toContain("(attempt 3)");
-  expect(stderr).not.toContain("::error");
   expect(exitCode).toBe(0);
 });

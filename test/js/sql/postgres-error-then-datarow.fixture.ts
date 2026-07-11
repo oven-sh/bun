@@ -1,13 +1,9 @@
-// Fixture for postgres-error-then-datarow.test.ts. Run as a subprocess so
-// that a debug_assert SIGABRT (and the UAF it guards) is observable as a
-// non-zero exit code from the test.
+// Fixture for postgres-error-then-datarow.test.ts. Run as a subprocess so a
+// debug_assert SIGABRT is observable as a non-zero exit code from the test.
 //
 // Mock backend that answers the first simple Query with RowDescription +
-// ErrorResponse (rejecting the query) and only afterwards, in a later write,
-// sends DataRow + CommandComplete + ReadyForQuery for that same exchange.
-// After the ErrorResponse the query's JS wrapper is rejected and its GC
-// protection dropped while it is still the connection's current() request;
-// the late DataRow must be discarded, not routed to the released wrapper.
+// ErrorResponse and only afterwards, in a later write, sends the result
+// messages for that same exchange. Those late messages must be discarded.
 import { SQL } from "bun";
 import net from "node:net";
 import {
@@ -16,6 +12,7 @@ import {
   pgCommandComplete,
   pgDataRow,
   pgErrorResponse,
+  pgRaw,
   pgReadyForQuery,
   pgRowDescription,
 } from "./wire-frames";
@@ -36,7 +33,7 @@ const { port, server } = await listeningServer(socket => {
     if (data[0] !== 0x51 /* 'Q' simple Query */) return;
     queryCount++;
     if (queryCount === 1) {
-      // Reject the first query, hold back DataRow/CommandComplete/ReadyForQuery.
+      // Reject the first query, hold back the result messages.
       socket.write(Buffer.concat([rowDesc, pgErrorResponse({ S: "ERROR", C: "42000", M: "boom" })]));
       gotFirstQuery.resolve(socket);
     } else {
@@ -64,16 +61,21 @@ console.log("FIRST", firstErr?.code ?? String(firstErr));
 
 // Let the reject callback's queued cleanup drop the last JS reference to the
 // query so GC can collect the wrapper while the request is still current().
-await Bun.sleep(1);
+await new Promise<void>(resolve => setImmediate(resolve));
 Bun.gc(true);
 Bun.gc(true);
 
-// Trailing DataRow + CommandComplete + ReadyForQuery for the already-rejected
-// first query. A correct build discards them; a broken one routes the DataRow
-// to the freed query and either SIGABRTs (debug) or fails the whole connection
-// with ERR_POSTGRES_EXPECTED_REQUEST (release).
+// Late result messages for the already-rejected first query. All four handlers
+// that would otherwise dispatch to the request's JS wrapper are exercised:
+// DataRow, EmptyQueryResponse, CloseComplete, CommandComplete.
 const qsock = await gotFirstQuery.promise;
-const late = Buffer.concat([dataRow, pgCommandComplete("SELECT 1"), pgReadyForQuery()]);
+const late = Buffer.concat([
+  dataRow,
+  pgRaw("I", Buffer.alloc(0)),
+  pgRaw("3", Buffer.alloc(0)),
+  pgCommandComplete("SELECT 1"),
+  pgReadyForQuery(),
+]);
 await new Promise<void>((resolve, reject) => qsock.write(late, err => (err ? reject(err) : resolve())));
 
 // The connection must remain usable after the stale exchange closes.

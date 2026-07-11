@@ -230,9 +230,6 @@ pub mod text {
         executable_lines_that_havent_been_executed.set_intersection(&report.executable_lines);
 
         let mut iter = executable_lines_that_havent_been_executed.iterator::<true, true>();
-        let mut start_of_line_range: usize = 0;
-        let mut prev_line: usize = 0;
-        let mut is_first = true;
 
         // `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
         // prefix `write_all` + plain `write!` so the const-generic `ENABLE_COLORS` can
@@ -240,47 +237,44 @@ pub mod text {
         let red = pretty_fmt::<ENABLE_COLORS>("<red>");
         let comma = pretty_fmt::<ENABLE_COLORS>("<r><d>,<r>");
 
-        while let Some(next_line) = iter.next() {
-            if next_line == (prev_line + 1) {
-                prev_line = next_line;
-                continue;
-            } else if is_first && start_of_line_range == 0 && prev_line == 0 {
-                start_of_line_range = next_line;
-                prev_line = next_line;
-                continue;
-            }
-
-            if is_first {
-                is_first = false;
+        fn write_range(
+            writer: &mut impl bun_io::Write,
+            red: &[u8],
+            comma: &[u8],
+            is_first: &mut bool,
+            start: usize,
+            end: usize,
+        ) -> bun_io::Result<()> {
+            if *is_first {
+                *is_first = false;
             } else {
-                writer.write_all(&comma)?;
+                writer.write_all(comma)?;
             }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
+            writer.write_all(red)?;
+            if start == end {
+                write!(writer, "{}", start + 1)
             } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
+                write!(writer, "{}-{}", start + 1, end + 1)
             }
-
-            prev_line = next_line;
-            start_of_line_range = next_line;
         }
 
-        if prev_line != start_of_line_range {
-            if is_first {
-            } else {
-                writer.write_all(&comma)?;
-            }
+        // Coalesce consecutive 0-based line indices into `start-end` runs.
+        let mut pending: Option<(usize, usize)> = None;
+        let mut is_first = true;
 
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
-            } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
-            }
+        while let Some(next_line) = iter.next() {
+            pending = Some(match pending {
+                Some((start, end)) if next_line == end + 1 => (start, next_line),
+                Some((start, end)) => {
+                    write_range(writer, &red, &comma, &mut is_first, start, end)?;
+                    (next_line, next_line)
+                }
+                None => (next_line, next_line),
+            });
+        }
+
+        if let Some((start, end)) = pending {
+            write_range(writer, &red, &comma, &mut is_first, start, end)?;
         }
         Ok(())
     }

@@ -102,6 +102,35 @@ end_of_record
   );
 });
 
+test("text reporter prints sparse uncovered lines, including a trailing single line", () => {
+  const dir = tempDirWithFiles("cov", {
+    "mod.ts": `export function add(a: number, b: number): number {
+  // this is a comment line that is never executed
+
+  return a + b;
+}
+`,
+    "load-only.test.ts": `
+import { test, expect } from "bun:test";
+import * as mod from "./mod.ts";
+test("imports the module but never calls add", () => {
+  expect(typeof mod.add).toBe("function");
+});
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "./load-only.test.ts"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+  // Uncovered lines 1 and 4 are two single-line runs; the old run tracker
+  // dropped line 1 (index 0) and never flushed the trailing single line.
+  expect(result.stderr.toString("utf-8")).toMatch(/ mod\.ts\s+\|\s+0\.00\s+\|\s+0\.00\s+\| 1,4\n/);
+  expect(result.exitCode).toBe(0);
+});
+
 test("coverage excludes node_modules directory", () => {
   const dir = tempDirWithFiles("cov", {
     "node_modules/pi/index.js": `

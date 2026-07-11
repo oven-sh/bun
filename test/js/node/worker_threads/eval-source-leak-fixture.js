@@ -1,13 +1,15 @@
 // Create a worker with extremely large source code which completes instantly and the `eval` option
 // set to true. Ensure that the Blob created to hold the source code is not kept in memory after the
-// worker exits.
+// worker exits. The source must stay large: allocations this big are returned to the OS when freed,
+// so RSS growth means a real leak, while mid-sized ones sit in allocator-retained pages and do not.
 const { Worker } = require("node:worker_threads");
 
 const eachSizeMiB = 100;
 const iterations = 5;
 
 function test() {
-  const code = " ".repeat(eachSizeMiB * 1024 * 1024);
+  // Not " ".repeat(): String#repeat on this many bytes is very slow in debug JSC builds.
+  const code = Buffer.alloc(eachSizeMiB * 1024 * 1024, " ").toString();
   return new Promise((resolve, reject) => {
     const worker = new Worker(code, { eval: true });
     worker.on("exit", () => resolve());

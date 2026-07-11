@@ -181,13 +181,23 @@ export function effectiveDistTags(record: PackageRecord): Record<string, Version
   return tags;
 }
 
+/**
+ * The version's effective publish time: an explicit `record.time[v]` when
+ * parseable, otherwise the deterministic `EPOCH + index minutes` slot. An
+ * unparseable explicit value (`"whenever"`) falls back rather than yielding
+ * NaN, which would throw from `.toISOString()` on the read path.
+ */
+function versionTime(record: PackageRecord, version: string, index: number): number {
+  const parsed = Date.parse(record.time[version] ?? "");
+  return Number.isNaN(parsed) ? EPOCH + index * VERSION_TIME_STEP_MS : parsed;
+}
+
 /** The newest version's publish time, ignoring any explicit `modified`. */
 function latestVersionTime(record: PackageRecord): number {
   const ordered = sortedVersions(record);
   let latest = EPOCH;
   for (let i = 0; i < ordered.length; i++) {
-    const explicit = record.time[ordered[i]!];
-    const ms = explicit !== undefined ? Date.parse(explicit) : EPOCH + i * VERSION_TIME_STEP_MS;
+    const ms = versionTime(record, ordered[i]!, i);
     if (ms > latest) latest = ms;
   }
   return latest;
@@ -201,9 +211,7 @@ export function effectiveTime(record: PackageRecord): Record<string, string> {
   const ordered = sortedVersions(record);
   const time: Record<string, string> = {};
   for (let i = 0; i < ordered.length; i++) {
-    const explicit = record.time[ordered[i]!];
-    const ms = explicit !== undefined ? Date.parse(explicit) : EPOCH + i * VERSION_TIME_STEP_MS;
-    time[ordered[i]!] = new Date(ms).toISOString();
+    time[ordered[i]!] = new Date(versionTime(record, ordered[i]!, i)).toISOString();
   }
   time.created = record.time.created ?? new Date(EPOCH).toISOString();
   time.modified = record.time.modified ?? new Date(latestVersionTime(record)).toISOString();
@@ -211,19 +219,18 @@ export function effectiveTime(record: PackageRecord): Record<string, string> {
 }
 
 /**
- * Records a write: bumps `_rev` and advances `time.modified`. A publish takes
- * its newest version's time; a metadata-only write (deprecate, unpublish, a
- * dist-tag edit) adds no version, so `modified` must step on its own or
- * `If-Modified-Since` answers a stale 304 for a document that changed.
- * Monotonic, and a pure function of the write sequence.
+ * Records a write: bumps `_rev` and advances `time.modified`. Every write
+ * changes the body, so `modified` must step strictly past its previous value
+ * or `If-Modified-Since` answers a stale 304 for a changed document. `#write`
+ * primes `time.modified` from the pre-mutation record so the clamp sees the
+ * value the client observed, even on a record's first write (where an
+ * unpublish would otherwise derive it from the already-shrunk version set).
  */
-export function touchRecord(record: PackageRecord, { addedVersion }: { addedVersion: boolean }): void {
+export function touchRecord(record: PackageRecord): void {
   record.rev += 1;
-  // Never below the previous value: publish stamps a wall-clock version time
-  // (`publish.ts`), so a publish landing within a step of an earlier metadata
-  // write would otherwise rewind `modified`. An unparseable explicit value
-  // parses to NaN and is ignored rather than throwing.
+  // An unparseable explicit value parses to NaN and is ignored rather than
+  // throwing `RangeError: Invalid Date` out of the write path.
   const previous = Date.parse(record.time.modified ?? "");
   const base = Math.max(latestVersionTime(record), Number.isNaN(previous) ? -Infinity : previous);
-  record.time.modified = new Date(addedVersion ? base : base + VERSION_TIME_STEP_MS).toISOString();
+  record.time.modified = new Date(base + VERSION_TIME_STEP_MS).toISOString();
 }

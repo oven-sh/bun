@@ -1014,8 +1014,99 @@ describe("conditional requests after a metadata write", () => {
     expect(res.status).toBe(201);
     const afterPublish = await modified();
 
-    expect({ deprecateAdvanced: afterDeprecate > first, publishDidNotRewind: afterPublish >= afterDeprecate }) //
-      .toEqual({ deprecateAdvanced: true, publishDidNotRewind: true });
+    expect({ deprecateAdvanced: afterDeprecate > first, publishAdvanced: afterPublish > afterDeprecate }) //
+      .toEqual({ deprecateAdvanced: true, publishAdvanced: true });
+  });
+
+  test("a publish landing within a step of a prior metadata write still advances last-modified", async () => {
+    // All three writes happen within one VERSION_TIME_STEP, so the second
+    // publish's wall-clock version time is earlier than the deprecate's step.
+    // The clamp must step past the previous value, not merely hold it, or
+    // `If-Modified-Since` answers 304 for a body that gained a version.
+    await using registry = await new NpmRegistry().start();
+    const token = registry.addUser({ name: "u", password: "p" });
+    const lm = async () => (await fetch(`${registry.url}near`)).headers.get("last-modified")!;
+    const put = (body: unknown) =>
+      fetch(`${registry.url}near`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+    const tgz = (v: string) =>
+      Buffer.from(buildTarball({ "package.json": JSON.stringify({ name: "near", version: v }) }).bytes).toString(
+        "base64",
+      );
+
+    await put({
+      _id: "near",
+      name: "near",
+      versions: { "1.0.0": { name: "near", version: "1.0.0" } },
+      _attachments: { "near-1.0.0.tgz": { content_type: "application/octet-stream", data: tgz("1.0.0"), length: 1 } },
+    });
+    await put({
+      _id: "near",
+      name: "near",
+      versions: { "1.0.0": { name: "near", version: "1.0.0", deprecated: "x" } },
+    });
+    const afterDeprecate = await lm();
+    await put({
+      _id: "near",
+      name: "near",
+      versions: { "2.0.0": { name: "near", version: "2.0.0" } },
+      _attachments: { "near-2.0.0.tgz": { content_type: "application/octet-stream", data: tgz("2.0.0"), length: 1 } },
+    });
+    const afterPublish = await lm();
+
+    const stale = await fetch(`${registry.url}near`, { headers: { "if-modified-since": afterDeprecate } });
+    expect({ advanced: Date.parse(afterPublish) > Date.parse(afterDeprecate), staleStatus: stale.status }) //
+      .toEqual({ advanced: true, staleStatus: 200 });
+  });
+
+  test("the first unpublish on a defined record advances last-modified, not derives it from survivors", async () => {
+    // `record.time.modified` is unset on a define()'d record until the first
+    // write. The clamp must see the value the client observed (primed from the
+    // pre-mutation record), not recompute it from the already-shrunk set.
+    await using registry = await new NpmRegistry().start();
+    const token = registry.addUser({ name: "u", password: "p" });
+    registry.define("shrink", { "1.0.0": {}, "2.0.0": {}, "3.0.0": {} });
+    const lm = async () => (await fetch(`${registry.url}shrink`)).headers.get("last-modified")!;
+    const before = await lm();
+    const rev = ((await (await fetch(`${registry.url}shrink`)).json()) as { _rev: string })._rev;
+
+    const res = await fetch(`${registry.url}shrink/-rev/${rev}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        _id: "shrink",
+        name: "shrink",
+        _rev: rev,
+        versions: { "1.0.0": { name: "shrink", version: "1.0.0" } },
+      }),
+    });
+    expect(res.status).toBe(201);
+    const after = await lm();
+
+    const stale = await fetch(`${registry.url}shrink`, { headers: { "if-modified-since": before } });
+    expect({ advanced: Date.parse(after) > Date.parse(before), staleStatus: stale.status }) //
+      .toEqual({ advanced: true, staleStatus: 200 });
+  });
+
+  test("an unparseable explicit per-version time falls back to the deterministic slot", async () => {
+    // The sibling of `modified`: per-version keys reach `.toISOString()` on the
+    // read path, so `Date.parse("whenever") = NaN` would throw `RangeError:
+    // Invalid Date` and 500 every packument request.
+    await using registry = await new NpmRegistry().start();
+    registry.define("badver", { "1.0.0": {}, "2.0.0": {} }, { time: { "1.0.0": "whenever" } });
+    const { status, body } = await getJson<{ time: Record<string, string> }>(`${registry.url}badver`);
+    expect({ status, time: body.time }).toEqual({
+      status: 200,
+      time: {
+        "1.0.0": "1985-10-26T08:15:00.000Z",
+        "2.0.0": "1985-10-26T08:16:00.000Z",
+        "created": "1985-10-26T08:15:00.000Z",
+        "modified": "1985-10-26T08:16:00.000Z",
+      },
+    });
   });
 
   test("an unparseable explicit time.modified does not throw the write path", async () => {
@@ -1085,18 +1176,31 @@ describe("audit", () => {
 
   test("a Content-Encoding: gzip body is decoded (what `bun audit` sends)", async () => {
     await using registry = await new NpmRegistry().start();
-    const { module_name: _, ...advisory } = registry.advisories.add({
+    registry.advisories.add({
       module_name: "lodash",
       vulnerable_versions: "<4.17.21",
       severity: "high",
       title: "Prototype Pollution",
     });
-    const response = await getJson(`${registry.url}-/npm/v1/security/advisories/bulk`, {
+    const { status, body } = await getJson(`${registry.url}-/npm/v1/security/advisories/bulk`, {
       method: "POST",
       headers: { "content-type": "application/json", "content-encoding": "gzip" },
       body: Bun.gzipSync(Buffer.from(JSON.stringify({ lodash: ["4.17.20"] }))),
     });
-    expect(response).toMatchObject({ status: 200, body: { lodash: [JSON.parse(JSON.stringify(advisory))] } });
+    expect({ status, body }).toEqual({
+      status: 200,
+      body: {
+        lodash: [
+          {
+            id: 1_000_000,
+            url: "https://github.com/advisories/GHSA-1000000",
+            vulnerable_versions: "<4.17.21",
+            severity: "high",
+            title: "Prototype Pollution",
+          },
+        ],
+      },
+    });
   });
 });
 

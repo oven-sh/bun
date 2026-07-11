@@ -275,11 +275,6 @@ function readFileTree(root: string): FileTree {
   return files;
 }
 
-/**
- * Applies a package's `_registry.json`, when present. Its `dist-tags`
- * and `time` keys map onto the record; every other key becomes a
- * top-level packument field.
- */
 interface RegistryMeta {
   executable?: Record<string, string[]>;
 }
@@ -288,6 +283,11 @@ function readRegistryMeta(path: string): RegistryMeta {
   return isFile(path) ? (JSON.parse(readFileSync(path, "utf8")) as RegistryMeta) : {};
 }
 
+/**
+ * Applies a package's `_registry.json`, when present. `dist-tags` and
+ * `time` map onto the record, `executable` is consumed by `loadPackageDir`,
+ * and every other key becomes a top-level packument field.
+ */
 function applyRegistryMeta(record: PackageRecord, path: string): void {
   if (!isFile(path)) return;
   const meta = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;

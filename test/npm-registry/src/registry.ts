@@ -306,6 +306,10 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
   async #write(name: string, mutate: (record: PackageRecord) => Response | Promise<Response>): Promise<Response> {
     const existing = this.#resolve(name);
     const working = existing !== undefined ? cloneRecord(existing) : createRecord(name);
+    // Prime `modified` from the pre-mutation record so `touchRecord`'s clamp
+    // sees the value the client observed. An unpublish deletes versions before
+    // touching, so deriving it there would use the already-shrunk set.
+    working.time.modified ??= effectiveTime(working).modified;
     const response = await mutate(working);
     if (response.ok) {
       this.#removed.delete(name);

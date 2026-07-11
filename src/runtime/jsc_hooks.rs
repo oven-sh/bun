@@ -748,7 +748,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                             ),
                         );
                     }
-                    return Err(crate::Error::ModuleNotFound);
+                    return Err(bun_jsc::CrateError::ModuleNotFound);
                 }
             };
 

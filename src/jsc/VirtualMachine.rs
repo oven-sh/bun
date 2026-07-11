@@ -4386,7 +4386,7 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
         );
         if let Err(err_) = resolve_result {
-            let mut err = err_;
+            let err = err_;
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
             } else if is_user_require_resolve {
@@ -4399,8 +4399,7 @@ impl VirtualMachine {
                 .msgs
                 .iter()
                 .find_map(|m| {
-                    if let bun_ast::Metadata::Resolve(r) = &m.metadata {
-                        err = r.err.into();
+                    if let bun_ast::Metadata::Resolve(_) = &m.metadata {
                         Some(m.clone())
                     } else {
                         None

@@ -36,38 +36,6 @@ pub enum Error {
     ParseError,
     #[error("JSError")]
     JSError,
-    #[error("PackageManifestHTTP400")]
-    PackageManifestHTTP400,
-    #[error("PackageManifestHTTP401")]
-    PackageManifestHTTP401,
-    #[error("PackageManifestHTTP402")]
-    PackageManifestHTTP402,
-    #[error("PackageManifestHTTP403")]
-    PackageManifestHTTP403,
-    #[error("PackageManifestHTTP404")]
-    PackageManifestHTTP404,
-    #[error("PackageManifestHTTP4xx")]
-    PackageManifestHTTP4xx,
-    #[error("PackageManifestHTTP5xx")]
-    PackageManifestHTTP5xx,
-    #[error("DistTagNotFound")]
-    DistTagNotFound,
-    #[error("NoMatchingVersion")]
-    NoMatchingVersion,
-    #[error("TarballHTTP400")]
-    TarballHTTP400,
-    #[error("TarballHTTP401")]
-    TarballHTTP401,
-    #[error("TarballHTTP402")]
-    TarballHTTP402,
-    #[error("TarballHTTP403")]
-    TarballHTTP403,
-    #[error("TarballHTTP404")]
-    TarballHTTP404,
-    #[error("TarballHTTP4xx")]
-    TarballHTTP4xx,
-    #[error("TarballHTTP5xx")]
-    TarballHTTP5xx,
     #[error("TarballFailedToExtract")]
     TarballFailedToExtract,
     #[error("ServerEntryPointGenerate")]
@@ -142,22 +110,6 @@ impl Error {
             Self::TranspilerJobGenerationMismatch => "TranspilerJobGenerationMismatch",
             Self::ParseError => "ParseError",
             Self::JSError => "JSError",
-            Self::PackageManifestHTTP400 => "PackageManifestHTTP400",
-            Self::PackageManifestHTTP401 => "PackageManifestHTTP401",
-            Self::PackageManifestHTTP402 => "PackageManifestHTTP402",
-            Self::PackageManifestHTTP403 => "PackageManifestHTTP403",
-            Self::PackageManifestHTTP404 => "PackageManifestHTTP404",
-            Self::PackageManifestHTTP4xx => "PackageManifestHTTP4xx",
-            Self::PackageManifestHTTP5xx => "PackageManifestHTTP5xx",
-            Self::DistTagNotFound => "DistTagNotFound",
-            Self::NoMatchingVersion => "NoMatchingVersion",
-            Self::TarballHTTP400 => "TarballHTTP400",
-            Self::TarballHTTP401 => "TarballHTTP401",
-            Self::TarballHTTP402 => "TarballHTTP402",
-            Self::TarballHTTP403 => "TarballHTTP403",
-            Self::TarballHTTP404 => "TarballHTTP404",
-            Self::TarballHTTP4xx => "TarballHTTP4xx",
-            Self::TarballHTTP5xx => "TarballHTTP5xx",
             Self::TarballFailedToExtract => "TarballFailedToExtract",
             Self::ServerEntryPointGenerate => "ServerEntryPointGenerate",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",

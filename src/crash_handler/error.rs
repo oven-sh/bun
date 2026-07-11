@@ -4,28 +4,8 @@ pub enum Error {
     MissingDebugInfo,
     #[error("UnsupportedOperatingSystem")]
     UnsupportedOperatingSystem,
-    #[error("InvalidArgument")]
-    InvalidArgument,
-    #[error("Invalid Bunfig")]
-    InvalidBunfig,
-    #[error("InstallFailed")]
-    InstallFailed,
-    #[error("SyntaxError")]
-    SyntaxError,
-    #[error("CurrentWorkingDirectoryUnlinked")]
-    CurrentWorkingDirectoryUnlinked,
-    #[error("SystemFdQuotaExceeded")]
-    SystemFdQuotaExceeded,
-    #[error("ProcessFdQuotaExceeded")]
-    ProcessFdQuotaExceeded,
-    #[error("NotOpenForReading")]
-    NotOpenForReading,
     #[error("Unexpected")]
     Unexpected,
-    #[error("MissingPackageJSON")]
-    MissingPackageJSON,
-    #[error("DumpStackTrace")]
-    DumpStackTrace,
     #[error("InvalidDebugInfo")]
     InvalidDebugInfo,
     #[error("EndOfFile")]
@@ -53,17 +33,7 @@ impl Error {
         match self {
             Self::MissingDebugInfo => "MissingDebugInfo",
             Self::UnsupportedOperatingSystem => "UnsupportedOperatingSystem",
-            Self::InvalidArgument => "InvalidArgument",
-            Self::InvalidBunfig => "Invalid Bunfig",
-            Self::InstallFailed => "InstallFailed",
-            Self::SyntaxError => "SyntaxError",
-            Self::CurrentWorkingDirectoryUnlinked => "CurrentWorkingDirectoryUnlinked",
-            Self::SystemFdQuotaExceeded => "SystemFdQuotaExceeded",
-            Self::ProcessFdQuotaExceeded => "ProcessFdQuotaExceeded",
-            Self::NotOpenForReading => "NotOpenForReading",
             Self::Unexpected => "Unexpected",
-            Self::MissingPackageJSON => "MissingPackageJSON",
-            Self::DumpStackTrace => "DumpStackTrace",
             Self::InvalidDebugInfo => "InvalidDebugInfo",
             Self::EndOfFile => "EndOfFile",
             Self::Sys(e) => <&'static str>::from(e),

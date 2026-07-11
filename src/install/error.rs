@@ -192,14 +192,8 @@ pub enum Error {
     LockfileIsMissingResolutionData,
     #[error("MissingPackageName")]
     MissingPackageName,
-    #[error("EISNOTDIR")]
-    EISNOTDIR,
-    #[error("EACCESS")]
-    EACCESS,
     #[error("GlobError")]
     GlobError,
-    #[error("PermissionDenied")]
-    PermissionDenied,
     #[error("Invalid")]
     Invalid,
     #[error("Lockfile validation failed: list is impossibly long")]
@@ -381,10 +375,7 @@ impl Error {
             Self::CorruptLockfile => "CorruptLockfile",
             Self::LockfileIsMissingResolutionData => "Lockfile is missing resolution data",
             Self::MissingPackageName => "MissingPackageName",
-            Self::EISNOTDIR => "EISNOTDIR",
-            Self::EACCESS => "EACCESS",
             Self::GlobError => "GlobError",
-            Self::PermissionDenied => "PermissionDenied",
             Self::Invalid => "Invalid",
             Self::LockfileValidationFailedListIsImpossiblyLong => {
                 "Lockfile validation failed: list is impossibly long"

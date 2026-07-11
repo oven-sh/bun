@@ -4243,7 +4243,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     // hits `Fd::as_borrowed_fd`'s `raw != -1` assert on posix and aborts).
                     #[cfg(not(windows))]
                     if fd.0 < 0 {
-                        return Err(bun_core::err!("InvalidValue"));
+                        return Err(crate::Error::InvalidValue);
                     }
                     let mut path_or_fd = PathOrFileDescriptor::Fd(fd);
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
@@ -4259,7 +4259,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     // enforces: a NUL-embedded path cannot be handed to the
                     // syscall layer (`ZStr::as_cstr` would truncate / panic).
                     if strings::index_of_char(&path, 0).is_some() {
-                        return Err(bun_core::err!("InvalidValue"));
+                        return Err(crate::Error::InvalidValue);
                     }
                     // The owned `CowSlice`
                     // adopts the `Box<[u8]>` so the store frees it in

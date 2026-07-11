@@ -1306,6 +1306,24 @@ impl Drop for DispatchGuard<'_> {
     }
 }
 
+/// The `+1` a native frame holds on the parser while it runs code that can free it (an inbound
+/// dispatch, a write that re-enters JS). Live guards are counted in
+/// `H2FrameParser::native_keepalives` so `finalize` can release the ones whose frame will never
+/// return — see `release_refs_stranded_by_exit`.
+struct Keepalive<'a>(&'a H2FrameParser);
+
+impl Drop for Keepalive<'_> {
+    fn drop(&mut self) {
+        let parser = self.0;
+        debug_assert!(parser.native_keepalives.get() > 0);
+        // Decrement first: this `deref()` can be the last one and free `parser`.
+        parser
+            .native_keepalives
+            .set(parser.native_keepalives.get() - 1);
+        parser.deref();
+    }
+}
+
 /// A `&mut Stream` that only exists inside an armed dispatch scope (`enter_stream_dispatch`):
 /// while it is live, rewrite_read defers stream frees, so user JS that re-enters `read()`
 /// (option getters, header-value `toString`) cannot free the stream out from under the borrow.
@@ -1445,6 +1463,9 @@ pub struct H2FrameParser {
 
     has_nonnative_backpressure: Cell<bool>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
+    /// Number of live `Keepalive` guards: the `+1`s held by native frames currently on the stack.
+    /// Read only by `release_refs_stranded_by_exit()`.
+    native_keepalives: Cell<u32>,
 
     auto_flusher: JsCell<AutoFlusher>,
     padding_strategy: Cell<PaddingStrategy>,
@@ -1494,6 +1515,14 @@ impl H2FrameParser {
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
+    }
+
+    /// Hold a `+1` for the extent of a native frame that can re-enter JS (and therefore free the
+    /// parser). Counted, so `finalize` can release it if `process.exit()` strands the frame.
+    fn keepalive(&self) -> Keepalive<'_> {
+        self.ref_();
+        self.native_keepalives.set(self.native_keepalives.get() + 1);
+        Keepalive(self)
     }
 
     pub(crate) fn ref_(&self) {
@@ -3115,12 +3144,8 @@ impl H2FrameParser {
 
     pub(crate) fn flush(&self) -> usize {
         bun_output::scoped_log!(H2FrameParser, "flush");
-        // Keep `self` alive across the
-        // re-entrant JS calls below. ScopedRef stores a raw pointer so it does
-        // not borrow `self`.
-        // SAFETY: `self` is live; all mutation goes through `Cell`/`JsCell`
-        // (UnsafeCell-backed), so the `*mut` cast is signature-only.
-        let _keepalive = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        // Keep `self` alive across the re-entrant JS calls below.
+        let _keepalive = self.keepalive();
 
         let mut written = self.uncork();
         written += match self.native_socket.get() {
@@ -3174,7 +3199,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn _write(&self, bytes: &[u8]) -> bool {
-        self.ref_();
+        let _keepalive = self.keepalive();
         let result = match self.native_socket.get() {
             BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
                 self._generic_write(socket.get(), bytes)
@@ -3188,7 +3213,6 @@ impl H2FrameParser {
                     // we should not invoke JS when we have backpressure is cheaper to keep it queued here
                     let _ = self.write_buffer.with_mut(|wb| wb.write(bytes));
                     global.vm().deprecated_report_extra_memory(bytes.len());
-                    self.deref();
                     return false;
                 }
                 // fallback to onWrite non-native callback
@@ -3228,11 +3252,9 @@ impl H2FrameParser {
                         true
                     }
                 };
-                self.deref();
                 return r;
             }
         };
-        self.deref();
         result
     }
 
@@ -3314,9 +3336,8 @@ impl H2FrameParser {
     }
 
     pub(crate) fn on_auto_flush(&self) -> bool {
-        self.ref_();
+        let _keepalive = self.keepalive();
         let _ = self.flush();
-        self.deref();
         // we will unregister ourselves when the buffer is empty
         true
     }
@@ -7236,7 +7257,7 @@ impl H2FrameParser {
 
         let stream_id = stream.id;
         let mut enqueued = false;
-        self.ref_();
+        let _keepalive = self.keepalive();
 
         let can_close = close && !stream.wait_for_trailers;
         if payload.is_empty() {
@@ -7462,7 +7483,6 @@ impl H2FrameParser {
                 }
             }
         }
-        self.deref();
         (settled_state, callback_deferred)
     }
 
@@ -9466,10 +9486,9 @@ impl H2FrameParser {
 
     pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(H2FrameParser, "onNativeRead");
-        self.ref_();
+        let _keepalive = self.keepalive();
         // Engine-driven inbound: all reads flow through the rewritten connection engine.
         self.rewrite_read(data);
-        self.deref();
         Ok(())
     }
 
@@ -9605,6 +9624,7 @@ impl H2FrameParser {
 
         let init = H2FrameParser {
             ref_count: bun_ptr::RefCount::init(),
+            native_keepalives: Cell::new(0),
             handlers: JsCell::new(handlers),
             global_this: GlobalRef::from(global_object),
             strong_this: JsCell::new(JsRef::empty()),
@@ -9885,6 +9905,34 @@ impl H2FrameParser {
         self.hpack.set(None);
     }
 
+    /// `process.exit()` never unwinds: the VM is destructed from inside the `exit()` call, so
+    /// every `+1` taken by a frame that was still on the stack when JS called it — an inbound
+    /// dispatch (`on_native_read`), a write that re-entered JS (`_write`, `send_data`) — is never
+    /// released, and neither is the cork slot's ref nor the queued auto-flush task's. `deinit()`
+    /// therefore never runs and the parser leaks everything it owns (LeakSanitizer sees the
+    /// refcount's own debug map, the HPACK handle, the read/write buffers).
+    ///
+    /// Called from `finalize` only while the VM is shutting down: the event loop is dead, no JS
+    /// (and no stranded frame) can run again, so releasing those refs cannot make anything
+    /// observe a freed parser. The socket's `+1` (`attach_native_callback`) is deliberately left
+    /// alone — it has a live owner that releases it in `NewSocket::finalize`.
+    fn release_refs_stranded_by_exit(&self) {
+        // The cork slot holds a raw `*mut H2FrameParser` in a thread-local. `uncork()` would
+        // `_write()` the corked bytes, which re-enters JS on a non-native socket; the process is
+        // exiting, so drop them and just release the slot's ref.
+        if CORKED_H2.with(|c| c.get()) == Some(self.as_ctx_ptr()) {
+            CORKED_H2.with(|c| c.set(None));
+            CORK_OFFSET.with(|c| c.set(0));
+            self.deref();
+        }
+        // Removes the deferred task (its ctx is `self`) and releases the ref it holds.
+        self.unregister_auto_flush();
+        let stranded = self.native_keepalives.replace(0);
+        for _ in 0..stranded {
+            self.deref();
+        }
+    }
+
     fn deinit(&self) {
         bun_output::scoped_log!(H2FrameParser, "deinit");
 
@@ -9935,9 +9983,9 @@ impl H2FrameParser {
         // Note: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
         bun_ptr::finalize_js_box(self, |this| {
             this.strong_this.set(JsRef::empty());
-            // process.exit() never unwinds, so a stack-rooted ref can strand and deinit()
-            // never runs; free streams here. The map is emptied so deinit() won't double-free.
             if VirtualMachine::get().is_shutting_down() {
+                // Free the streams first: `free_resources` releases the refs their signals hold.
+                // The map is emptied so a later deinit() won't double-free.
                 let streams = this.streams.replace(BunHashMap::default());
                 for (_, item) in streams.iter() {
                     let stream = *item;
@@ -9948,6 +9996,9 @@ impl H2FrameParser {
                     }
                 }
                 drop(streams);
+                // Then the refs of frames/tasks that will never run again, so the trailing
+                // deref below can actually reach zero and run deinit().
+                this.release_refs_stranded_by_exit();
             }
         });
     }

@@ -312,6 +312,12 @@ afterAll(async () => {
 });
 
 describe("@types/bun integration test", () => {
+  test("packed bun-types includes CLAUDE.md", async () => {
+    const claude = Bun.file(join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "CLAUDE.md"));
+    expect(await claude.exists()).toBe(true);
+    expect((await claude.text()).length).toBeGreaterThan(0);
+  });
+
   describe("basic type checks", () => {
     typeTest("checks without lib.dom.d.ts", {
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,

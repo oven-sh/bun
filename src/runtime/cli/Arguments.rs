@@ -1106,11 +1106,14 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");
-        if args.flag(b"--expose-internals") {
+        if args.flag(b"--expose-internals") || cmd == CommandTag::TestCommand {
             // Same gate the env var `BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING`
             // sets (VirtualMachine::configure_from_env): allows resolving
             // `bun:internal-for-testing` / `internal/test/binding` in release
             // builds. Debug builds always allow them.
+            // Test command always enables this so tests that import from
+            // `bun:internal-for-testing` (syscall-fault, internals, etc.)
+            // work without requiring `--expose-internals` on every invocation.
             bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
                 .store(true, core::sync::atomic::Ordering::Relaxed);
         }

@@ -43,6 +43,7 @@ export const WEBKIT_VERSION = "c9ad5813fd23bd8b98b0738abc3d037ec716aa92";
  *   like the old cmake — avoids debug/release mixing.
  */
 
+import { existsSync, mkdirSync, symlinkSync, cpSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
@@ -74,7 +75,7 @@ function prebuiltSuffix(cfg: Config): string {
 }
 
 function prebuiltUrl(cfg: Config): string {
-  const os = cfg.windows ? "windows" : cfg.darwin ? "macos" : cfg.freebsd ? "freebsd" : "linux";
+  const os = cfg.windows ? "windows" : cfg.darwin ? "macos" : cfg.freebsd ? "freebsd" : cfg.ohos ? "ohos" : "linux";
   const arch = cfg.arm64 ? "arm64" : "amd64";
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
   const version = cfg.webkitVersion;
@@ -105,7 +106,9 @@ function prebuiltDestDir(cfg: Config): string {
           ? "-macos"
           : cfg.abi === "android"
             ? "-android"
-            : "";
+            : cfg.ohos
+              ? "-ohos"
+              : "";
   const archKey = cfg.arm64 ? "-arm64" : "";
   return resolve(cfg.cacheDir, `webkit-${version16}${osKey}${archKey}${prebuiltSuffix(cfg)}`);
 }
@@ -140,7 +143,7 @@ function prebuiltIcuLibs(cfg: Config): string[] {
     const d = cfg.debug ? "d" : "";
     return [`lib/sicudt${d}.lib`, `lib/sicuin${d}.lib`, `lib/sicuuc${d}.lib`];
   }
-  if (cfg.linux || cfg.freebsd) {
+  if (cfg.linux || cfg.freebsd || cfg.ohos) {
     return ["lib/libicudata.a", "lib/libicui18n.a", "lib/libicuuc.a"];
   }
   return []; // darwin: system ICU
@@ -193,6 +196,45 @@ export const webkit: Dependency = {
   versionMacro: "WEBKIT",
 
   source: cfg => {
+    // OHOS local build: fall through to the local cmake path below.
+    // OHOS prebuilt: use locally installed bun-webkit (formula) instead of
+    // downloading. The build environment pre-populates the cache from
+    // OHOS_WEBKIT_ROOT.
+    if (cfg.ohos && cfg.webkit === "prebuilt") {
+      const destDir = prebuiltDestDir(cfg);
+      const identity = `${cfg.webkitVersion}${prebuiltSuffix(cfg)}`;
+      const identityPath = join(destDir, ".identity");
+      const ohosRoot = process.env.OHOS_WEBKIT_ROOT;
+      // Check if cache was pre-populated by the formula; skip if identity matches.
+      if (!existsSync(identityPath) || readFileSync(identityPath, "utf-8").trim() !== identity) {
+        if (!ohosRoot) {
+          throw new Error(
+            "OHOS build requires OHOS_WEBKIT_ROOT env var pointing to bun-webkit installation.\n" +
+            "  Install with: brew install bun-webkit"
+          );
+        }
+        mkdirSync(destDir, { recursive: true });
+        mkdirSync(join(destDir, "lib"), { recursive: true });
+        mkdirSync(join(destDir, "include"), { recursive: true });
+        for (const lib of ["libJavaScriptCore.a", "libWTF.a", "libbmalloc.a"]) {
+          symlinkSync(join(ohosRoot, "lib", lib), join(destDir, "lib", lib));
+        }
+        const inc = join(ohosRoot, "include", "webkit");
+        symlinkSync(join(inc, "JavaScriptCore"), join(destDir, "include", "JavaScriptCore"));
+        symlinkSync(join(inc, "wtf"), join(destDir, "include", "wtf"));
+        symlinkSync(join(inc, "bmalloc"), join(destDir, "include", "bmalloc"));
+        const cmakeCfg = join(inc, "cmakeconfig.h");
+        if (existsSync(cmakeCfg)) cpSync(cmakeCfg, join(destDir, "include", "cmakeconfig.h"));
+        writeFileSync(identityPath, identity);
+      }
+      return {
+        kind: "prebuilt",
+        identity,
+        destDir,
+        url: ohosRoot ? `file://${ohosRoot}` : `file:///dev/null`, // Already set up; fetch checks identity first
+      };
+    }
+
     if (cfg.webkit === "prebuilt") {
       const src: Source = {
         kind: "prebuilt",
@@ -253,7 +295,7 @@ export const webkit: Dependency = {
     // -no-pie rides along in CMAKE_C_FLAGS so try_compile() probes link on
     // PIE-default distros — without it the driver still passes -pie and the
     // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
-    if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
+    if (cfg.unix && cfg.abi !== "android" && !cfg.ohos) optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
     if (cfg.lto) optFlags.push("-flto=thin");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
@@ -321,12 +363,30 @@ export const webkit: Dependency = {
             CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
           }
         : {}),
+      ...(cfg.ohos
+        ? {
+            CMAKE_SYSTEM_NAME: "Linux",
+            CMAKE_SYSTEM_PROCESSOR: "aarch64",
+            CMAKE_C_COMPILER: cfg.cc,
+            CMAKE_CXX_COMPILER: cfg.cxx,
+            CMAKE_TRY_COMPILE_TARGET_TYPE: "STATIC_LIBRARY",
+            CMAKE_FIND_ROOT_PATH: cfg.ohosSysroot,
+            CMAKE_PREFIX_PATH: cfg.ohosIcuDir,
+            ICU_ROOT: cfg.ohosIcuDir,
+            CMAKE_THREAD_LIBS_INIT: "-lpthread",
+            CMAKE_HAVE_THREADS_LIBRARY: "1",
+            CMAKE_DL_LIBS: "",
+            CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_LIBRARY: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
+          }
+        : {}),
       // Match bun's -fno-pic: WebKit's CMake defaults POSITION_INDEPENDENT_CODE
       // to ON for static-archive targets, which puts ~550 KB of vtables into
       // .data.rel.ro. We link -no-pie so this is dead weight in the RW
       // PT_LOAD. Android (PIE) overrides via the -fPIC in optFlags above
       // never being suppressed there.
-      ...(cfg.abi !== "android" ? { CMAKE_POSITION_INDEPENDENT_CODE: "OFF" } : {}),
+      ...(cfg.abi !== "android" && !cfg.ohos ? { CMAKE_POSITION_INDEPENDENT_CODE: "OFF" } : {}),
       PORT: "JSCOnly",
       ENABLE_STATIC_JSC: "ON",
       USE_THIN_ARCHIVES: "OFF",
@@ -384,6 +444,41 @@ export const webkit: Dependency = {
         cwd: srcDir,
         outputs: localIcuLibs(cfg),
       };
+    }
+
+    if (cfg.ohos) {
+      const { ohosSysroot, ohosCrossLibs, ohosIcuDir, cc, cxx } = cfg;
+      const targetFlag = `--target=aarch64-linux-ohos`;
+      const sysrootFlag = ohosSysroot ? `--sysroot=${ohosSysroot}` : "";
+      const icuInclude = ohosIcuDir ? `-I${ohosIcuDir}/include` : "";
+      if (ohosCrossLibs) {
+        args.CMAKE_CXX_FLAGS = [
+          optFlagStr, targetFlag, sysrootFlag, "-D__MUSL__",
+          "-mbranch-protection=none", "-mno-outline-atomics",
+          `-nostdinc++ -I${ohosCrossLibs}/libcxx/include/v1`,
+          `-I${ohosCrossLibs}/libcxxabi/include`,
+          icuInclude,
+          "-fno-c++-static-destructors",
+          "-std=gnu++23",
+        ].filter(Boolean).join(" ");
+        args.CMAKE_C_FLAGS = [
+          optFlagStr, targetFlag, sysrootFlag, "-D__MUSL__",
+          "-mbranch-protection=none", "-mno-outline-atomics",
+          icuInclude,
+        ].filter(Boolean).join(" ");
+        args.CMAKE_EXE_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;
+        args.CMAKE_SHARED_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;
+      }
+      if (ohosIcuDir) {
+        // hostBin is sibling of ohosIcuDir's parent: ohosIcuDir="<prefix>/target" → hostBin="<prefix>/host/bin"
+        const hostBin = resolve(ohosIcuDir, "..", "host", "bin");
+        for (const [key, exe] of [["ICU_GENDATA_EXECUTABLE", "genrb"], ["ICU_GENCCODE_EXECUTABLE", "genccode"], ["ICU_GENCMN_EXECUTABLE", "gencmn"], ["ICU_PKGDATA_EXECUTABLE", "pkgdata"]] as const) {
+          const exePath = resolve(hostBin, exe);
+          if (existsSync(exePath)) {
+            args[key] = exePath;
+          }
+        }
+      }
     }
 
     return spec;

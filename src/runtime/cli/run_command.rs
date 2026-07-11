@@ -59,6 +59,24 @@ fn runner_arena() -> &'static bun_alloc::Arena {
     crate::cli::cli_arena()
 }
 
+/// OHOS: set $PWD so bash verifies CWD via stat() instead of getcwd(),
+/// which can fail on hmdfs/tmpfs. If cwd is "/" or empty (the getcwd
+/// fallback), use $HOME instead.
+/// Remove when: OHOS fixes getcwd on hmdfs/tmpfs filesystems.
+#[cfg(target_env = "ohos")]
+pub(crate) fn ohos_set_pwd(
+    env: &mut DotEnv::Loader<'_>,
+    cwd: &[u8],
+) -> Result<(), bun_core::Error> {
+    let pwd = if cwd == b"/" || cwd.is_empty() {
+        bun_core::env_var::HOME::get().unwrap_or(cwd)
+    } else {
+        cwd
+    };
+    env.map.put(b"PWD", pwd)?;
+    Ok(())
+}
+
 // Passthrough-arg shell escaping. The escape tables + helpers are the lower-tier
 // `bun_shell_parser` crate's canonical copy — import them so future fixes to
 // the shell escaper cannot silently diverge.
@@ -267,6 +285,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use_system_shell: bool,
         shell_path: Option<&[u8]>,
     ) -> Result<(), bun_core::Error> {
+        // OHOS: set $PWD so bash verifies CWD via stat() instead of getcwd().
+        // See ohos_set_pwd() for details.
+        #[cfg(target_env = "ohos")]
+        ohos_set_pwd(env, cwd)?;
+
         let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
         let shell_bin = Self::find_shell(shell_search_path, cwd)
             .ok_or_else(|| bun_core::err!("MissingShell"))?;
@@ -619,8 +642,19 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
         let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
-        let root_dir_info: bun_resolver::DirInfoRef =
+        let root_dir_info: Option<bun_resolver::DirInfoRef> =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
+                Err(err)
+                    if err == bun_core::err!("EPERM")
+                        || err == bun_core::err!("EACCES")
+                        || err == bun_core::err!("PermissionDenied") =>
+                {
+                    // Permission-denied directories (e.g. FUSE mounts where
+                    // `getcwd` / `openat` is blocked by SELinux) are not fatal.
+                    // Skip package.json env metadata, same as the resolver
+                    // handling at resolver.rs:4454 (EPERM/EACCES → Ok(None)).
+                    None
+                }
                 Err(err) => {
                     if !log_errors {
                         return Err(bun_core::err!("CouldntReadCurrentDirectory"));
@@ -641,16 +675,26 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     return Err(err);
                 }
                 Ok(None) => {
-                    // SAFETY: see `Err` arm above.
-                    let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        Output::error_writer(),
-                    ));
-                    pretty_errorln!("error loading current directory");
-                    Output::flush();
-                    return Err(bun_core::err!("CouldntReadCurrentDirectory"));
+                    // Directory not found or unreadable — not fatal.
+                    // The resolver already silences EPERM/EACCES internally;
+                    // this catches the remaining cases (ENOENT, ENOTDIR, etc.)
+                    // that propagate as Ok(None) from dir_info_cached_miss.
+                    None
                 }
-                Ok(Some(info)) => info,
+                Ok(Some(info)) => {
+                    Some(info)
+                }
             };
+        // Fallback root DirInfo for callers that ignore the return value
+        // (filter_run.rs, pack_command.rs both discard it). Uses $HOME
+        // which is always readable; "/" may be blocked by SELinux (OHOS).
+        // Returns an error only when neither path is readable.
+        let home = std::env::var("HOME").unwrap_or_default();
+        let root_dir_info_fallback: bun_resolver::DirInfoRef = this_transpiler
+            .resolver
+            .read_dir_info_ignore_error(if home.is_empty() { b"/" } else { home.as_bytes() })
+            .or_else(|| this_transpiler.resolver.read_dir_info_ignore_error(b"/"))
+            .ok_or(bun_core::err!("InstallFailed"))?;
 
         this_transpiler.resolver.store_fd = false;
 
@@ -729,40 +773,42 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
-        if let Some(package_json) = root_dir_info.enclosing_package_json {
-            if !package_json.name.is_empty() {
-                if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
-                    env_loader
-                        .map
-                        .put(NpmArgs::PACKAGE_NAME, &package_json.name)
-                        .expect("unreachable");
+        if let Some(root_dir_info) = root_dir_info {
+            if let Some(package_json) = root_dir_info.enclosing_package_json {
+                if !package_json.name.is_empty() {
+                    if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
+                        env_loader
+                            .map
+                            .put(NpmArgs::PACKAGE_NAME, &package_json.name)
+                            .expect("unreachable");
+                    }
                 }
-            }
 
-            env_loader
-                .map
-                .put_default(b"npm_package_json", package_json.source.path.text)
-                .expect("unreachable");
+                env_loader
+                    .map
+                    .put_default(b"npm_package_json", package_json.source.path.text)
+                    .expect("unreachable");
 
-            if !package_json.version.is_empty() {
-                if env_loader.map.get(NpmArgs::PACKAGE_VERSION).is_none() {
-                    env_loader
-                        .map
-                        .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
-                        .expect("unreachable");
+                if !package_json.version.is_empty() {
+                    if env_loader.map.get(NpmArgs::PACKAGE_VERSION).is_none() {
+                        env_loader
+                            .map
+                            .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
+                            .expect("unreachable");
+                    }
                 }
-            }
 
-            if let Some(config) = package_json.config.as_deref() {
-                env_loader.map.ensure_unused_capacity(config.count())?;
-                for (k, v) in config.keys().iter().zip(config.values().iter()) {
-                    let key = strings::concat(&[b"npm_package_config_", &k[..]]);
-                    env_loader.map.put_assume_capacity(&key, *v);
+                if let Some(config) = package_json.config.as_deref() {
+                    env_loader.map.ensure_unused_capacity(config.count())?;
+                    for (k, v) in config.keys().iter().zip(config.values().iter()) {
+                        let key = strings::concat(&[b"npm_package_config_", &k[..]]);
+                        env_loader.map.put_assume_capacity(&key, *v);
+                    }
                 }
             }
         }
 
-        Ok(root_dir_info)
+        Ok(root_dir_info.unwrap_or(root_dir_info_fallback))
     }
 
     /// Best-effort default-loader lookup by file extension. Thin forwarder to
@@ -2140,6 +2186,11 @@ impl RunCommand {
         original_script_for_bun_run: Option<&[u8]>,
     ) -> Result<::core::convert::Infallible, bun_core::Error> {
         use crate::api::bun_process::{Status as SpawnStatus, sync};
+
+        // OHOS: set $PWD so bash verifies CWD via stat() instead of getcwd().
+        // See ohos_set_pwd() for details.
+        #[cfg(target_env = "ohos")]
+        ohos_set_pwd(env, cwd)?;
 
         let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(1 + passthrough.len());
         argv.push(executable.to_vec().into_boxed_slice());

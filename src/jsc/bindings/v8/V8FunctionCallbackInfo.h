@@ -20,8 +20,7 @@ template<typename T>
 class FunctionCallbackInfo {
 public:
     // Slot indices relative to `values`. These must match the private enum in
-    // V8's v8-function-callback.h (checked by static_asserts in
-    // V8FunctionCallbackInfo.cpp). kFrameConstantPoolIndex is folded into
+    // V8's v8-function-callback.h. kFrameConstantPoolIndex is folded into
     // kFrameFPIndex because Internals::kFrameCPSlotCount == 0 on every
     // architecture Bun supports (it is only 1 on PPC64).
     enum {
@@ -54,6 +53,10 @@ public:
     // out-of-bounds in both directions; the object provides a view of the
     // frame rather than owning any storage. Mutable for parity with V8 (GC
     // may rewrite slots through a const view).
+    //
+    // V8 14.x (Node 24.3.0) added `implicit_args_` before `values_` and
+    // `length_` after it. V8 15.x (Node 26.3.0+) removed both, going back
+    // to single-pointer layout.
     mutable TaggedPointer values[1];
 
     FunctionCallbackInfo() = delete;

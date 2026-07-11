@@ -7,6 +7,7 @@
   "src/collections/multi_array_list.rs": 8,
   "src/crash_handler/lib.rs": 1,
   "src/css_derive/lib.rs": 3,
+  "src/http/lib.rs": 4,
   "src/install/PackageInstaller.rs": 3,
   "src/install/isolated_install/FileCloner.rs": 3,
   "src/install/lockfile/Package.rs": 1,

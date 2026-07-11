@@ -364,9 +364,10 @@ impl PackageManager {
         // `defer top_level_dir.deinit()` — handled by Drop
 
         if root_package.scripts.has_any() {
-            let add_node_gyp_rebuild_script = root_package.scripts.install.is_empty()
-                && root_package.scripts.preinstall.is_empty()
-                && Syscall::exists(binding_dot_gyp_path.as_bytes());
+            let add_node_gyp_rebuild_script = Syscall::exists(binding_dot_gyp_path.as_bytes())
+                && (root_package.scripts.install.is_empty()
+                    && root_package.scripts.preinstall.is_empty()
+                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE.get().unwrap_or(false));
 
             self.root_lifecycle_scripts = root_package.scripts.create_list(
                 &self.lockfile,
@@ -477,6 +478,10 @@ impl PackageManager {
             }
         };
 
+        // Save cwd before spawning (list is moved into spawn_package_scripts).
+        #[cfg(target_env = "ohos")]
+        let cwd_copy: Vec<u8> = list.cwd.as_bytes().to_vec();
+
         RealLifecycleScriptSubprocess::spawn_package_scripts(
             self,
             list,
@@ -487,6 +492,12 @@ impl PackageManager {
             foreground,
             install_ctx,
         )?;
+
+        #[cfg(target_env = "ohos")]
+        if !cwd_copy.is_empty() {
+            crate::package_installer::ohos_sign_native_binaries(&cwd_copy);
+        }
+
         Ok(())
     }
 

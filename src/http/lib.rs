@@ -975,17 +975,35 @@ const CONNECTION_HEADER: picohttp::Header = picohttp::Header::new(b"Connection",
 const ACCEPT_HEADER: picohttp::Header = picohttp::Header::new(b"Accept", b"*/*");
 
 const ACCEPT_ENCODING_NO_COMPRESSION: &[u8] = b"identity";
+#[cfg_attr(target_env = "ohos", allow(dead_code))]
 const ACCEPT_ENCODING_COMPRESSION: &[u8] = b"gzip, deflate, br, zstd";
+#[cfg_attr(not(target_env = "ohos"), allow(dead_code))]
+const ACCEPT_ENCODING_COMPRESSION_NO_BROTLI: &[u8] = b"gzip, deflate, zstd";
+#[cfg_attr(target_env = "ohos", allow(dead_code))]
 const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_COMPRESSION);
+#[cfg_attr(not(target_env = "ohos"), allow(dead_code))]
+const ACCEPT_ENCODING_HEADER_COMPRESSION_NO_BROTLI: picohttp::Header =
+    picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_COMPRESSION_NO_BROTLI);
 const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_NO_COMPRESSION);
 
+#[cfg(not(target_env = "ohos"))]
 const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT
 {
     ACCEPT_ENCODING_HEADER_NO_COMPRESSION
 } else {
     ACCEPT_ENCODING_HEADER_COMPRESSION
+};
+
+// OHOS: Cloudflare CDN truncates Brotli responses >64KB from npmjs.org,
+// causing tarball integrity failures. Disable `br` to use gzip/zstd instead.
+#[cfg(target_env = "ohos")]
+const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT
+{
+    ACCEPT_ENCODING_HEADER_NO_COMPRESSION
+} else {
+    ACCEPT_ENCODING_HEADER_COMPRESSION_NO_BROTLI
 };
 
 fn get_user_agent_header() -> picohttp::Header {
@@ -5039,8 +5057,13 @@ impl<'a> HTTPClient<'a> {
                             self.state.encoding = Encoding::Deflate;
                             self.state.content_encoding_i = header_i as u8;
                         } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
-                            self.state.encoding = Encoding::Brotli;
-                            self.state.content_encoding_i = header_i as u8;
+                            // OHOS: Brotli decompression broken on musl (corrupted output).
+                            // Accept-Encoding already excludes br, but some servers
+                            // (test registry, CDN) may still return it. Skip decoding.
+                            if cfg!(not(target_env = "ohos")) {
+                                self.state.encoding = Encoding::Brotli;
+                                self.state.content_encoding_i = header_i as u8;
+                            }
                         } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
                             self.state.encoding = Encoding::Zstd;
                             self.state.content_encoding_i = header_i as u8;
@@ -5071,7 +5094,10 @@ impl<'a> HTTPClient<'a> {
                         }
                     } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
                         if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Brotli;
+                            // OHOS: Brotli decompression broken on musl.
+                            if cfg!(not(target_env = "ohos")) {
+                                self.state.transfer_encoding = Encoding::Brotli;
+                            }
                         }
                     } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
                         if !self.flags.disable_decompression {

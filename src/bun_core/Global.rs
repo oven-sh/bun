@@ -483,15 +483,19 @@ pub const package_json_version_with_revision: &str = if env::GIT_SHA.is_empty() 
 };
 
 // Node-style platform string. Distinct from Environment.os.nameString() on
-// Android: the kernel-level OS enum stays .linux (so syscall switches keep
-// working), but user-facing strings — npm user-agent, process.platform —
-// must be "android" so native-addon postinstalls don't fetch glibc binaries.
-pub const os_name: &str = if cfg!(target_os = "android") {
+// Android + OHOS: the kernel-level OS enum stays .linux (so syscall switches
+// keep working), but user-facing strings — npm user-agent, process.platform —
+// must match Node.js so native-addon optional deps resolve correctly.
+pub const os_name: &str = if cfg!(target_env = "ohos") {
+    "openharmony"
+} else if cfg!(target_os = "android") {
     "android"
 } else {
     env::OS.name_string()
 };
-pub const os_display: &str = if cfg!(target_os = "android") {
+pub const os_display: &str = if cfg!(target_env = "ohos") {
+    "OpenHarmony"
+} else if cfg!(target_os = "android") {
     "Android"
 } else {
     env::OS.display_string()

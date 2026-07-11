@@ -1,0 +1,353 @@
+#!/bin/bash
+#===============================================================================
+# build-bun-ohos.sh — 本地编译 Bun (OHOS aarch64) 脚本
+#
+# 用法:
+#   ./scripts/ohos/build-bun-ohos.sh              # 编译全部
+#   ./scripts/ohos/build-bun-ohos.sh sync-only    # 仅同步源码，不编译
+#   ./scripts/ohos/build-bun-ohos.sh ninja-only   # 仅运行 ninja（假设源码已同步）
+#
+# 说明:
+#   1. 从 DEV_SRC 同步源码到 CI_SRC（绕过 git push 网络限制）
+#   2. 在 CI 工作目录下运行 ninja 编译
+#   3. 编译产物（bun binary）复制到 SHARED_DIR
+#
+# 环境变量（可覆盖）:
+#   DEV_SRC, CI_SRC, BUILD_DIR, SHARED_DIR
+#===============================================================================
+
+set -euo pipefail
+
+# ─── 路径配置 ────────────────────────────────────────────────────────────────
+DEV_SRC="${DEV_SRC:-/home/user/sources/bun}"
+CI_SRC="${CI_SRC:-/home/user/actions-runner/_work/bun/bun}"
+BUILD_DIR="${BUILD_DIR:-${CI_SRC}/build/release-ohos}"
+SHARED_DIR="${SHARED_DIR:-/mnt/linux_share/ci-test/bun}"
+
+BUN="${BUN:-/home/user/.bun/bin/bun}"
+NINJA="${NINJA:-/usr/bin/ninja}"
+
+# OHOS 交叉编译工具链
+OHOS_SYSROOT="${OHOS_SYSROOT:-/home/user/setup-ohos-sdk/ohos/native/sysroot}"
+OHOS_CROSS_LIBS="${OHOS_CROSS_LIBS:-${CI_SRC}/build/ohos-cross-libs}"
+OHOS_ICU="${OHOS_ICU:-${CI_SRC}/build/ohos-icu}"
+
+# ─── 色彩输出 ────────────────────────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+info()  { echo -e "${CYAN}[INFO]${NC}  $*"; }
+ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
+err()   { echo -e "${RED}[ERROR]${NC} $*"; }
+
+# ─── 前置检查 ────────────────────────────────────────────────────────────────
+pre_check() {
+    local fail=0
+    for d in "$DEV_SRC" "$CI_SRC" "$BUILD_DIR" "$SHARED_DIR"; do
+        if [ ! -d "$d" ]; then
+            err "目录不存在: $d"
+            fail=1
+        fi
+    done
+    for cmd in "$BUN" "$NINJA" cp tar; do
+        if ! command -v "$cmd" &>/dev/null && [ ! -x "$cmd" ]; then
+            err "命令不可用: $cmd"
+            fail=1
+        fi
+    done
+    if [ ! -f "${BUILD_DIR}/configure.json" ]; then
+        warn "build 目录未配置（缺少 configure.json）"
+        warn "请先运行: cd $CI_SRC && $BUN scripts/build.ts --config-file=$BUILD_DIR/configure.json"
+    fi
+    return "$fail"
+}
+
+# ─── 检测 nightly 版本变更 ─────────────────────────────────────────────────
+check_nightly_version() {
+    local toolchain_file="$DEV_SRC/rust-toolchain.toml"
+    local version_file="$DEV_SRC/.rust-nightly-version"
+
+    if [ ! -f "$toolchain_file" ]; then
+        warn "rust-toolchain.toml not found, skipping nightly check"
+        return
+    fi
+
+    local current
+    current="${RUSTUP_TOOLCHAIN:-$(grep '^channel' "$toolchain_file" | sed 's/.*= *"//;s/"//')}"
+
+    info "当前 nightly: $current"
+
+    if [ -f "$version_file" ]; then
+        local previous
+        previous=$(cat "$version_file")
+        if [ "$current" != "$previous" ]; then
+            warn "nightly 版本变更: $previous → $current"
+            warn "清理 Rust 构建缓存..."
+            rm -rf "${BUILD_DIR}/rust-target"
+            ok "Rust 构建缓存已清理"
+        else
+            info "nightly 无变化 ($current)"
+        fi
+    else
+        info "首次检测，记录 nightly 版本: $current"
+    fi
+
+    echo "$current" > "${version_file}.tmp"
+}
+
+save_nightly_version() {
+    local version_file="$DEV_SRC/.rust-nightly-version"
+    if [ -f "${version_file}.tmp" ]; then
+        mv "${version_file}.tmp" "$version_file"
+        ok "nightly 版本已记录 ($(cat "$version_file"))"
+    fi
+}
+
+# ─── 同步源码 ────────────────────────────────────────────────────────────────
+sync_source() {
+    info "同步源码: ${DEV_SRC} → ${CI_SRC}"
+
+    # 使用 tar 流式同步目录，支持排除模式（rsync 不可用时替代方案）
+    local excludes=(
+        --exclude='.git'
+        --exclude='build'
+        --exclude='node_modules'
+        --exclude='vendor/WebKit'
+        --exclude='vendor/boringssl'
+        --exclude='target'
+        --exclude='.cargo'
+    )
+
+    # src/ 目录
+    (cd "$DEV_SRC" && tar cf - "${excludes[@]}" src/) | (cd "$CI_SRC" && tar xf -)
+
+    # 清理 CI_SRC 中已被上游删除的陈旧源文件（tar 只添加不删除）
+    (cd "$DEV_SRC" && find src/ -type f) | sort > /tmp/dev_files.txt
+    (cd "$CI_SRC" && find src/ -type f) | sort > /tmp/ci_files.txt
+    comm -13 /tmp/dev_files.txt /tmp/ci_files.txt | while IFS= read -r f; do
+        rm -f "$CI_SRC/$f"
+    done 2>/dev/null || true
+
+    # scripts/ 目录
+    (cd "$DEV_SRC" && tar cf - "${excludes[@]}" scripts/) | (cd "$CI_SRC" && tar xf -)
+
+    # packages/ 目录（bun-usockets、bun-uws 等，大小写敏感）
+    (cd "$DEV_SRC" && tar cf - "${excludes[@]}" packages/) | (cd "$CI_SRC" && tar xf -)
+
+    # 单个配置文件
+    cp "$DEV_SRC/Cargo.toml" "$CI_SRC/Cargo.toml" 2>/dev/null || true
+    cp "$DEV_SRC/Cargo.lock" "$CI_SRC/Cargo.lock" 2>/dev/null || true
+    cp "$DEV_SRC/package.json" "$CI_SRC/package.json" 2>/dev/null || true
+    cp "$DEV_SRC/configure.json" "$CI_SRC/configure.json" 2>/dev/null || true
+    cp "$DEV_SRC/bun.lock" "$CI_SRC/bun.lock" 2>/dev/null || true
+    cp "$DEV_SRC/scripts/ohos/build-bun-ohos.sh" "$CI_SRC/scripts/ohos/build-bun-ohos.sh" 2>/dev/null || true
+
+    ok "源码同步完成"
+}
+
+# ─── 同步 WebKit ──────────────────────────────────────────────────────────────
+sync_webkit() {
+    local webkit_commit
+    webkit_commit=$(grep "WEBKIT_VERSION" "$DEV_SRC/scripts/build/deps/webkit.ts" | grep -oP '"[a-f0-9]{40}"' | tr -d '"')
+    if [ -z "$webkit_commit" ]; then
+        warn "无法解析 WEBKIT_VERSION，跳过 WebKit 同步"
+        return
+    fi
+
+    local wk_dir="$CI_SRC/vendor/WebKit"
+    if [ ! -d "$wk_dir/.git" ]; then
+        warn "vendor/WebKit 不是 git 仓库，跳过同步"
+        return
+    fi
+
+    info "检查 WebKit: $webkit_commit"
+    local current
+    current=$(cd "$wk_dir" && git log --oneline -1 --format='%H' 2>/dev/null || true)
+    if [ "$current" = "$webkit_commit" ]; then
+        ok "WebKit 已是最新 ($(echo "$webkit_commit" | head -c 12))"
+        return
+    fi
+
+    info "同步 WebKit: ${current:-(none)} → ${webkit_commit:0:12}"
+    local fetch_ok=false
+    local wk_remote=""
+    # 尝试从 fork (origin=springmin/WebKit) 获取
+    if git fetch --depth=1 origin "$webkit_commit" 2>/dev/null; then
+        fetch_ok=true
+        wk_remote="origin"
+    # 回退：尝试从 upstream (oven-sh/WebKit) 获取
+    else
+        warn "origin 中未找到 ${webkit_commit:0:12}，尝试 upstream..."
+        git remote add upstream https://github.com/oven-sh/WebKit.git 2>/dev/null || true
+        if git fetch --depth=1 upstream "$webkit_commit" 2>/dev/null; then
+            fetch_ok=true
+            wk_remote="upstream"
+            # 自动同步到 springmin/WebKit fork，确保下次 CI 也能命中缓存
+            if git remote get-url origin &>/dev/null; then
+                info "推送到 springmin/WebKit fork..."
+                git push origin "$webkit_commit":refs/heads/ohos-aarch64 2>/dev/null || \
+                    warn "推送失败（可能无权限），下次 CI 会从 upstream 拉取"
+            fi
+        fi
+    fi
+
+    if [ "$fetch_ok" = false ]; then
+        err "WebKit commit ${webkit_commit:0:12} 在 origin 和 upstream 中均未找到"
+        err "请检查 WEBKIT_VERSION 是否正确，或手动更新 springmin/WebKit fork"
+        return 1
+    fi
+
+    echo "  [fetch] from $wk_remote: $webkit_commit"
+    # 丢弃本地修改（如之前手动覆盖的 JSType.h），确保 checkout 到目标版本
+    git stash --include-untracked 2>/dev/null || true
+    git checkout "$webkit_commit" 2>&1 | while IFS= read -r line; do
+        echo "  [checkout] $line"
+    done
+    ok "WebKit 同步完成 ($(echo "$webkit_commit" | head -c 12))"
+}
+
+# ─── 代码生成（codegen）───────────────────────────────────────────────────────
+run_codegen() {
+    info "运行 configure (含 codegen)..."
+    cd "$CI_SRC"
+    OHOS_CROSS_LIBS="$OHOS_CROSS_LIBS" \
+    OHOS_ICU_DIR="${OHOS_ICU}/target" \
+    "$BUN" scripts/build.ts \
+        --config-file="${BUILD_DIR}/configure.json" \
+        --build-dir="$BUILD_DIR" \
+        --os=ohos \
+        --arch=aarch64 \
+        --target=aarch64-linux-ohos \
+        --ohos-sysroot="$OHOS_SYSROOT" \
+        --webkit=local \
+        --configure-only 2>&1 || {
+        err "configure 失败"
+        return 1
+    }
+    local json_rs="${BUILD_DIR}/codegen/json_byte_class.rs"
+    if [ ! -f "$json_rs" ]; then
+        err "codegen 失败: $json_rs 未生成"
+        return 1
+    fi
+    ok "codegen 完成 ($(wc -l < "$json_rs") lines)"
+}
+
+# ─── 编译 ─────────────────────────────────────────────────────────────────────
+run_build() {
+    info "开始编译 (ninja -C ${BUILD_DIR} bun)"
+    echo "────────────────────────────────────────────────────────────────"
+
+    # 导出交叉编译环境变量
+    export CC="/home/user/.local/bin/clang"
+    export CXX="/home/user/.local/bin/clang++"
+    export AR="/opt/llvm-22.1.4/bin/llvm-ar"
+    export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_OHOS_LINKER="/home/user/.local/bin/clang++"
+    export CARGO_HOME="/home/user/.cargo"
+    export RUSTUP_HOME="/home/user/.rustup"
+    export RUSTUP_TOOLCHAIN="nightly-2026-06-06"
+
+    # ninja 编译
+    cd "$CI_SRC"
+    "$NINJA" -C "$BUILD_DIR" bun 2>&1 | while IFS= read -r line; do
+        echo -e "  ${line}"
+    done
+
+    local exit_code=${PIPESTATUS[0]}
+    if [ "$exit_code" -ne 0 ]; then
+        err "编译失败 (exit code: $exit_code)"
+        return "$exit_code"
+    fi
+    ok "编译成功"
+}
+
+# ─── 部署产物 ────────────────────────────────────────────────────────────────
+deploy_artifact() {
+    local binary="${BUILD_DIR}/bun"
+    if [ ! -f "$binary" ]; then
+        err "编译产物不存在: $binary"
+        return 1
+    fi
+
+    # 获取版本信息（从 DEV_SRC，因为 CI_SRC 的 .git 未被同步）
+    local version_info
+    version_info=$(cd "$DEV_SRC" && git log --oneline -1 --format="%h %s" 2>/dev/null || echo "unknown")
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S)
+
+    # 目标文件名
+    local dest_name="bun-ohos-${version_info%% *}-${timestamp}.elf"
+    local dest_path="${SHARED_DIR}/${dest_name}"
+
+    # 复制到共享目录
+    cp "$binary" "$dest_path"
+    chmod +x "$dest_path"
+
+    # 更新 symlink/默认 binary
+    cp "$binary" "${SHARED_DIR}/bun"
+
+    local size
+    size=$(stat -c%s "$binary" 2>/dev/null || stat -f%z "$binary" 2>/dev/null)
+    local size_mb
+    size_mb=$((size / 1048576))
+
+    ok "产物部署完成"
+    echo ""
+    echo "  文件:     ${dest_path}"
+    echo "  大小:     ${size_mb} MB"
+    echo "  版本:     ${version_info}"
+    echo "  默认:     ${SHARED_DIR}/bun"
+    echo ""
+}
+
+# ─── 打印帮助 ────────────────────────────────────────────────────────────────
+print_help() {
+    echo "用法: $0 [sync-only|ninja-only|deploy-only|help]"
+    echo ""
+    echo "  默认      同步源码 → 编译 → 部署产物"
+    echo "  sync-only 仅同步源码"
+    echo "  ninja-only 仅运行 ninja 编译（需先 sync）"
+    echo "  deploy-only 仅复制已有产物到共享目录"
+    echo "  help       显示此帮助"
+}
+
+# ─── 主流程 ──────────────────────────────────────────────────────────────────
+main() {
+    local mode="${1:-full}"
+
+    case "$mode" in
+        sync-only)
+            pre_check
+            sync_source
+            ;;
+        ninja-only)
+            pre_check
+            check_nightly_version
+            run_codegen
+            run_build
+            save_nightly_version
+            ;;
+        deploy-only)
+            deploy_artifact
+            ;;
+        help|--help|-h)
+            print_help
+            exit 0
+            ;;
+        full|"")
+            pre_check
+            sync_source
+            sync_webkit
+            check_nightly_version
+            run_codegen
+            run_build
+            save_nightly_version
+            deploy_artifact
+            ;;
+        *)
+            err "未知模式: $mode"
+            print_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

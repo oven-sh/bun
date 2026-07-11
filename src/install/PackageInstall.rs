@@ -1646,18 +1646,44 @@ impl<'a> PackageInstall<'a> {
                                 match err.get_errno() {
                                     sys::E::EEXIST => {
                                         let _ = sys::unlinkat(destination_dir, entry.path);
-                                        sys::linkat(
+                                        match sys::linkat(
                                             entry.dir,
                                             entry.basename,
                                             destination_dir.fd(),
                                             entry.path,
-                                        )?;
+                                        ) {
+                                            Ok(()) => {}
+                                            Err(retry_err)
+                                                if matches!(
+                                                    retry_err.get_errno(),
+                                                    sys::E::EPERM | sys::E::EACCES
+                                                ) =>
+                                            {
+                                                // OHOS: retry also blocked; copy instead
+                                                crate::copy_file_fallback(
+                                                    entry.dir,
+                                                    entry.basename,
+                                                    destination_dir.fd(),
+                                                    entry.path,
+                                                )?;
+                                            }
+                                            Err(retry_err) => return Err(retry_err.into()),
+                                        }
                                     }
                                     sys::E::EXDEV => {
                                         return Err(bun_core::err!("NotSameFileSystem"));
                                     }
                                     sys::E::ENXIO => {
                                         return Err(bun_core::err!("ENXIO"));
+                                    }
+                                    sys::E::EPERM | sys::E::EACCES => {
+                                        // OHOS SELinux blocks hard links; fall back to copy
+                                        crate::copy_file_fallback(
+                                            entry.dir,
+                                            entry.basename,
+                                            destination_dir.fd(),
+                                            entry.path,
+                                        )?;
                                     }
                                     _ => return Err(err.into()),
                                 }

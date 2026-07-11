@@ -1,6 +1,6 @@
 import { bunExe } from "harness";
 
-test.failing("double connect", () => {
+test("double connect", () => {
   const output = Bun.spawnSync({
     cmd: [bunExe(), import.meta.dirname + "/double-connect-repro.mjs", "minimal"],
   });

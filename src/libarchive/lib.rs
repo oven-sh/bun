@@ -169,8 +169,18 @@ pub mod lib {
             // SAFETY: self came from archive_read_new().
             unsafe { archive_read_close(self.as_mut_ptr()) }
         }
-        pub fn read_free(&self) -> Result {
-            // SAFETY: self came from archive_read_new(); not used after this.
+        /// Frees the handle via `archive_read_free`, which destroys the
+        /// archive (and its error string) even when it reports an error:
+        /// the handle is gone on every return path, so the returned
+        /// [`Result`] carries no retrievable detail.
+        ///
+        /// # Safety
+        /// `self` must be a live handle from [`Archive::read_new`] that no
+        /// other owner frees (in particular not a [`ReadArchive`], whose
+        /// `Drop` frees it again), and it must not be used in any way after
+        /// this call.
+        pub unsafe fn read_free(&self) -> Result {
+            // SAFETY: caller guarantees this is the handle's final use.
             unsafe { archive_read_free(self.as_mut_ptr()) }
         }
         pub fn read_support_format_tar(&self) -> Result {
@@ -367,8 +377,18 @@ pub mod lib {
             // SAFETY: FFI call with no preconditions.
             unsafe { archive_write_new() }
         }
-        pub fn write_free(&self) -> Result {
-            // SAFETY: self came from archive_write_new(); not used after this.
+        /// Frees the handle via `archive_write_free`, which destroys the
+        /// archive (and its error string) even when it reports an error:
+        /// the handle is gone on every return path, so the returned
+        /// [`Result`] carries no retrievable detail.
+        ///
+        /// # Safety
+        /// `self` must be a live handle from [`Archive::write_new`] that no
+        /// other owner frees (in particular not a [`WriteArchive`], whose
+        /// `Drop` frees it again), and it must not be used in any way after
+        /// this call.
+        pub unsafe fn write_free(&self) -> Result {
+            // SAFETY: caller guarantees this is the handle's final use.
             unsafe { archive_write_free(self.as_mut_ptr()) }
         }
         pub fn write_close(&self) -> Result {
@@ -466,8 +486,16 @@ pub mod lib {
             // SAFETY: `archive` is a live handle (opaque_ffi! `&self → *mut Self`).
             unsafe { archive_entry_new2(archive.as_mut_ptr()) }
         }
-        pub fn free(&self) {
-            // SAFETY: self came from Entry::new(); not used after this.
+        /// Frees the entry via `archive_entry_free`.
+        ///
+        /// # Safety
+        /// `self` must be an entry from [`Entry::new`] / [`Entry::new2`]
+        /// that no other owner frees (in particular not an [`OwnedEntry`],
+        /// whose `Drop` frees it again, and not an archive-owned entry from
+        /// `read_next_header`, which libarchive frees itself), and it must
+        /// not be used in any way after this call.
+        pub unsafe fn free(&self) {
+            // SAFETY: caller guarantees this is the entry's final use.
             unsafe { archive_entry_free(self.as_mut_ptr()) }
         }
         pub fn clear(&self) -> *mut Entry {
@@ -751,12 +779,13 @@ pub mod lib {
                 }
                 _ => {}
             }
-            match a.read_free() {
-                Result::Failed | Result::Fatal | Result::Warn => {
-                    return IteratorResult::init_err(self.archive, b"failed to free archive read");
-                }
-                _ => {}
-            }
+            // `archive_read_free` destroys the handle and its error string
+            // even when it reports an error, so a failure here has nothing
+            // to report and no handle left to hand to the caller; real
+            // errors surface through `read_close` above.
+            // SAFETY: `close` consumes `self` and nothing else frees
+            // `self.archive`, so this is the handle's final use.
+            let _ = unsafe { a.read_free() };
             IteratorResult::init_res(())
         }
     }
@@ -1060,7 +1089,8 @@ pub mod lib {
                 }
                 _ => {}
             }
-            match a.read_free() {
+            // `read_free` is `unsafe` on OHOS (matches upstream's internal pattern).
+            match unsafe { a.read_free() } {
                 Result::Failed | Result::Fatal | Result::Warn => {
                     return Err(IteratorError {
                         archive: self.archive,
@@ -1305,7 +1335,9 @@ impl BufferReadStream {
 impl Drop for BufferReadStream {
     fn drop(&mut self) {
         let _ = self.archive().read_close();
-        let _ = self.archive().read_free();
+        // SAFETY: `self.archive` came from `Archive::read_new()` in `init`,
+        // is owned solely by this stream, and this is its final use.
+        let _ = unsafe { self.archive().read_free() };
     }
 }
 

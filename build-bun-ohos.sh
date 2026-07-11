@@ -1,0 +1,1 @@
+scripts/ohos/build-bun-ohos.sh

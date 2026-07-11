@@ -2,7 +2,7 @@
 //! `bun_spawn::process` so the fd/action plumbing has no event-loop
 //! dependency. `Process`/`Poller`/`WaiterThread`/`sync` stay in `bun_spawn`.
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
 use core::ffi::CStr;
 use core::ffi::c_char;
 #[cfg(target_os = "macos")]
@@ -744,7 +744,7 @@ pub unsafe fn spawn_process_posix(
 
     // The label is only referenced from the Linux memfd fast-path below.
     #[cfg_attr(
-        not(any(target_os = "linux", target_os = "android")),
+        not(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos"))),
         allow(unused_labels)
     )]
     'stdio: for i in 0..3usize {
@@ -780,7 +780,10 @@ pub unsafe fn spawn_process_posix(
                 actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;
             }
             PosixStdio::Buffer => {
-                #[cfg(any(target_os = "linux", target_os = "android"))]
+                // OHOS: memfd writes not visible to fstat after child exits
+                // (verified 2026-06-11: dup2(memfd,1/2) → child writes → fstat size=0).
+                // Fall through to socketpair on OHOS.
+                #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
                 'use_memfd: {
                     if !options.stream && i > 0 && bun_sys::can_use_memfd() {
                         // use memfd if we can
@@ -973,6 +976,100 @@ pub unsafe fn spawn_process_posix(
     let argv0 = options.argv0.unwrap_or_else(|| unsafe { *argv });
     // SAFETY: argv0 is a valid NUL-terminated C string (caller contract).
     let argv0_cstr = unsafe { bun_core::ffi::cstr(argv0) };
+
+    // OHOS: kernel refuses to exec unsigned files. ELF binaries can be signed
+    // via binary-sign-tool, but shebang scripts cannot (tool rejects non-ELF).
+    // On OHOS the kernel's shebang expansion path either returns EPERM or
+    // hangs on unsigned scripts. Manually expand shebang here so exec targets
+    // the already-signed interpreter; the script path becomes an argv entry
+    // and is only opened/read (not exec'd) by the interpreter.
+    #[cfg(target_env = "ohos")]
+    let _ohos_shebang_keepalive: Option<(std::ffi::CString, Vec<std::ffi::CString>, Vec<*const c_char>)> = 'shim: {
+        use std::io::Read as _;
+        use std::os::unix::ffi::OsStrExt as _;
+        let path = std::ffi::OsStr::from_bytes(argv0_cstr.to_bytes());
+        let mut buf = [0u8; 128];
+        let n = match std::fs::File::open(path).and_then(|mut f| f.read(&mut buf)) {
+            Ok(n) if n >= 2 => n,
+            _ => break 'shim None,
+        };
+        if &buf[..2] != b"#!" {
+            break 'shim None;
+        }
+        let line_end = buf[..n].iter().position(|&b| b == b'\n').unwrap_or(n);
+        let line = &buf[2..line_end];
+        let mut i = 0usize;
+        while i < line.len() && matches!(line[i], b' ' | b'\t') {
+            i += 1;
+        }
+        let rest = &line[i..];
+        let (interp_b, arg_b): (&[u8], Option<&[u8]>) = match rest.iter().position(|&b| matches!(b, b' ' | b'\t')) {
+            Some(sp) => {
+                let interp = &rest[..sp];
+                let mut j = sp;
+                while j < rest.len() && matches!(rest[j], b' ' | b'\t') {
+                    j += 1;
+                }
+                let mut end = rest.len();
+                while end > j && matches!(rest[end - 1], b' ' | b'\t' | b'\r') {
+                    end -= 1;
+                }
+                let arg = &rest[j..end];
+                (interp, if arg.is_empty() { None } else { Some(arg) })
+            }
+            None => {
+                let mut end = rest.len();
+                while end > 0 && matches!(rest[end - 1], b' ' | b'\t' | b'\r') {
+                    end -= 1;
+                }
+                (&rest[..end], None)
+            }
+        };
+        if interp_b.is_empty() || interp_b[0] != b'/' {
+            break 'shim None;
+        }
+        let interp_cs = match std::ffi::CString::new(interp_b) {
+            Ok(c) => c,
+            Err(_) => break 'shim None,
+        };
+        let script_cs = match std::ffi::CString::new(argv0_cstr.to_bytes()) {
+            Ok(c) => c,
+            Err(_) => break 'shim None,
+        };
+        let arg_cs = match arg_b {
+            Some(a) => match std::ffi::CString::new(a) {
+                Ok(c) => Some(c),
+                Err(_) => break 'shim None,
+            },
+            None => None,
+        };
+        let mut owned: Vec<std::ffi::CString> = Vec::with_capacity(2);
+        let mut ptrs: Vec<*const c_char> = Vec::with_capacity(8);
+        ptrs.push(interp_cs.as_ptr());
+        if let Some(a) = arg_cs {
+            ptrs.push(a.as_ptr());
+            owned.push(a);
+        }
+        ptrs.push(script_cs.as_ptr());
+        owned.push(script_cs);
+        let mut k = 1usize;
+        loop {
+            let p = unsafe { *argv.add(k) };
+            if p.is_null() {
+                break;
+            }
+            ptrs.push(p);
+            k += 1;
+        }
+        ptrs.push(std::ptr::null());
+        Some((interp_cs, owned, ptrs))
+    };
+    #[cfg(target_env = "ohos")]
+    let (argv0_cstr, argv) = match _ohos_shebang_keepalive.as_ref() {
+        Some((interp, _owned, ptrs)) => (interp.as_c_str(), ptrs.as_ptr()),
+        None => (argv0_cstr, argv),
+    };
+
     let spawn_result = posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp);
 
     match spawn_result {

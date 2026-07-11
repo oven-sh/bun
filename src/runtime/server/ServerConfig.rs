@@ -1222,7 +1222,26 @@ impl ServerConfig {
                     )));
                 }
 
-                args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
+                #[cfg(target_env = "ohos")]
+                let unix_slice: Box<[u8]> = {
+                    use bun_core::env_var;
+                    let path = unix_str.slice();
+                    // OHOS: relative Unix socket paths fail with EPERM in CWD.
+                    // Prepend TMPDIR to make them absolute.
+                    if !path.is_empty() && path[0] != b'/' {
+                        let tmpdir = env_var::TMPDIR.get().unwrap_or(b"/data/local/tmp");
+                        let mut abs = tmpdir.to_vec();
+                        abs.push(b'/');
+                        abs.extend_from_slice(path);
+                        abs.into_boxed_slice()
+                    } else {
+                        Box::from(path)
+                    }
+                };
+                #[cfg(not(target_env = "ohos"))]
+                let unix_slice: Box<[u8]> = Box::from(unix_str.slice());
+
+                args.address = Address::Unix(bun_core::ZBox::from_bytes(&*unix_slice));
             }
         }
         if global.has_exception() {

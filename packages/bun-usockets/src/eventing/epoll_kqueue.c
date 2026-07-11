@@ -107,6 +107,10 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
 #include <signal.h>
 #include <errno.h>
 
+// OHOS seccomp blocks epoll_pwait2 (441) via SECCOMP_RET_TRAP → SIGSYS.
+// The SIGSYS handler installed by ohos_setup_sigsys_handler() (c-bindings.cpp)
+// intercepts the signal so the syscall returns ENOSYS instead of killing the
+// process, making the runtime probe below safe on all platforms.
 static int has_epoll_pwait2 = -1;
 
 #ifndef SYS_epoll_pwait2

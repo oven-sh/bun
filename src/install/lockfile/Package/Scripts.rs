@@ -373,13 +373,17 @@ impl Scripts {
         let mut builder = tmp.string_builder();
         self.fill_from_package_json(&mut builder, log, folder_path)?;
 
-        let add_node_gyp_rebuild_script = if self.install.is_empty() && self.preinstall.is_empty() {
-            // `defer save.restore()` — `save()` returns an RAII guard that
-            // restores the path length on Drop and derefs to the path.
+        let has_binding_gyp = {
             let mut save = folder_path.save();
             let _ = save.append(b"binding.gyp");
-
             bun_sys::exists(save.slice())
+        };
+
+        let add_node_gyp_rebuild_script = if has_binding_gyp && (
+            (self.install.is_empty() && self.preinstall.is_empty())
+            || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE.get().unwrap_or(false)
+        ) {
+            true
         } else {
             false
         };

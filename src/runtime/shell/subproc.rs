@@ -728,6 +728,14 @@ impl ShellSubprocess {
                         }
                     }
                     drop(spawn_options);
+                    // On OHOS (musl), posix_spawn may return ESPIPE for
+                    // non-existent commands where glibc returns ENOENT.
+                    #[cfg(target_env = "ohos")]
+                    if err.errno == libc::ESPIPE as u16 {
+                        let mut mapped = bun_sys::Error::new(libc::ENOENT, err.syscall);
+                        mapped.path = err.path.clone();
+                        return Err(ShellErr::Sys(mapped.to_shell_system_error()));
+                    }
                     return Err(ShellErr::Sys(err.to_shell_system_error()));
                 }
                 bun_sys::Result::Ok(result) => result,

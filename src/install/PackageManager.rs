@@ -1246,7 +1246,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
 
     #[cfg(windows)]
     const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
-    #[cfg(all(not(windows), not(target_os = "android")))]
+    #[cfg(all(not(windows), not(any(target_os = "android", target_env = "ohos"))))]
     const CONTENT: &str = concat!(
         "#!/bin/sh\n",
         "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
@@ -1255,7 +1255,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         "  \"$npm_config_node_gyp\" $@\n",
         "fi\n"
     );
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_env = "ohos"))]
     const CONTENT: &str = concat!(
         "#!/system/bin/sh\n",
         "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
@@ -1264,6 +1264,31 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         "  \"$npm_config_node_gyp\" $@\n",
         "fi\n"
     );
+
+    // ── OHOS: auto-configure C compiler + code-sign for node-gyp ──
+    // node-gyp needs a C/C++ compiler to build native .node addons. On OHOS
+    // there is no system gcc/g++, so we default to cc/c++ (brew shims from
+    // llvm@21 that wrap signed clang/clang++ with LLD --code-sign).
+    // NOTE: "clang"/"clang++" in PATH may resolve to ohos-sdk LLVM 15 (no
+    // C++20 source_location); "cc"/"c++" are llvm@21 shims with correct LLD.
+    // Users can override via CC/CXX/LDFLAGS env vars.
+    #[cfg(target_env = "ohos")]
+    {
+        if manager.env().get(b"CC").is_none() {
+            let _ = manager.env_mut().map.put(b"CC", b"cc");
+        }
+        if manager.env().get(b"CXX").is_none() {
+            let _ = manager.env_mut().map.put(b"CXX", b"c++");
+        }
+        let existing_ldflags = manager.env().get(b"LDFLAGS").unwrap_or(b"");
+        let mut ldflags: Vec<u8> = Vec::with_capacity(existing_ldflags.len() + 20);
+        if !existing_ldflags.is_empty() {
+            ldflags.extend_from_slice(existing_ldflags);
+            ldflags.push(b' ');
+        }
+        ldflags.extend_from_slice(b"-Wl,--code-sign");
+        let _ = manager.env_mut().map.put(b"LDFLAGS", &ldflags);
+    }
 
     if let Err(e) = node_gyp_file.write_all(CONTENT.as_bytes()) {
         bun_core::pretty_errorln!(

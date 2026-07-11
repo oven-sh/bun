@@ -747,13 +747,14 @@ pub mod store {
         fn drop(&mut self) {
             // `stored_name` is a `Box<[u8]>`, so its field `Drop` frees it;
             // only the custom-allocator buffer needs an explicit free here.
-            // Route through the existing accessor instead of re-deriving the
-            // slice from raw parts here: `allocated_slice` already encapsulates
-            // the `(ptr, cap)` → `&[u8]` invariant (and the `None` ⇒ `&[]`
-            // case), and `StdAllocator::free` is `raw_free` with byte alignment
-            // plus an empty-slice early-out — identical to the previous
-            // open-coded `raw_free(.., Alignment::of::<u8>(), 0)`.
-            self.allocator.free(self.allocated_slice());
+            if let Some(p) = self.ptr {
+                // SAFETY: `ptr[..cap]` is the live allocation owned by
+                // `self.allocator` (`init`/`from_raw_parts` contract), freed
+                // exactly once here — `drop` runs once and nothing reads
+                // through `self.ptr` afterwards. A dangling `cap == 0`
+                // pointer (`Bytes::init(Vec::new())`) is a no-op in `free`.
+                unsafe { self.allocator.free(p.as_ptr(), self.cap as usize) };
+            }
         }
     }
 

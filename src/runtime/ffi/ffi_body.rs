@@ -432,11 +432,11 @@ enum DeferredError {
 // Process-lifetime singletons — PORTING.md §Forbidden: use OnceLock, never
 // `static mut` + leak. `ZBox` is the sanctioned owned-ZStr type
 // (util.rs forbids `Box<ZStr>` because of DST dealloc-length mismatch).
-#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_env = "ohos"))]
 static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
 static CACHED_DEFAULT_SYSTEM_LIBRARY_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
-#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_env = "ohos"))]
 static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE: Once = Once::new();
 
 impl CompileC {
@@ -530,11 +530,12 @@ impl CompileC {
             }
             let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(bun_core::ZBox::from_bytes(trimmed));
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
         {
             // On Debian/Ubuntu, the lib and include paths are suffixed with {arch}-linux-gnu
             // e.g. x86_64-linux-gnu or aarch64-linux-gnu
             // On Alpine and RHEL-based distros, the paths are not suffixed
+            // On OHOS (musl), the suffix is aarch64-linux-ohos
 
             #[cfg(target_arch = "x86_64")]
             {
@@ -564,6 +565,11 @@ impl CompileC {
                         CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(bun_core::ZBox::from_vec_with_nul(
                             b"/usr/include/aarch64-linux-gnu".to_vec(),
                         ));
+                } else if dir_exists(b"/usr/include/aarch64-linux-ohos") {
+                    let _ =
+                        CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(bun_core::ZBox::from_vec_with_nul(
+                            b"/usr/include/aarch64-linux-ohos".to_vec(),
+                        ));
                 } else if dir_exists(b"/usr/include") {
                     let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
                         .set(bun_core::ZBox::from_vec_with_nul(b"/usr/include".to_vec()));
@@ -573,6 +579,10 @@ impl CompileC {
                     let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR.set(
                         bun_core::ZBox::from_vec_with_nul(b"/usr/lib/aarch64-linux-gnu".to_vec()),
                     );
+                } else if dir_exists(b"/usr/lib/aarch64-linux-ohos") {
+                    let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR.set(
+                        bun_core::ZBox::from_vec_with_nul(b"/usr/lib/aarch64-linux-ohos".to_vec()),
+                    );
                 } else if dir_exists(b"/usr/lib64") {
                     let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR
                         .set(bun_core::ZBox::from_vec_with_nul(b"/usr/lib64".to_vec()));
@@ -581,7 +591,7 @@ impl CompileC {
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_env = "ohos"))]
     fn get_system_include_dir() -> Option<&'static ZStr> {
         CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE.call_once(Self::get_system_root_dir_once);
         CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
@@ -590,7 +600,7 @@ impl CompileC {
             .filter(|d| !d.is_empty())
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
     fn get_system_library_dir() -> Option<&'static ZStr> {
         CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE.call_once(Self::get_system_root_dir_once);
         CACHED_DEFAULT_SYSTEM_LIBRARY_DIR
@@ -699,7 +709,34 @@ impl CompileC {
                 }
             }
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(target_env = "ohos")]
+        {
+            // OHOS: add sysroot include/lib paths from $OHOS_SDK env var.
+            let ohos_sdk_bytes: Option<Vec<u8>> = std::env::var_os("OHOS_SDK")
+                .map(|os| os.to_string_lossy().into_owned().into_bytes());
+            if let Some(ref sdk) = ohos_sdk_bytes {
+                // Helper: build path from components and add to TCC
+                macro_rules! add_ohos_path {
+                    ($is_lib:expr, $($seg:expr),+) => {{
+                        let mut p: Vec<u8> = Vec::new();
+                        p.extend_from_slice(sdk);
+                        $(p.push(b'/');
+                          p.extend_from_slice($seg);)+
+                        p.push(0);
+                        let z = bun_core::ZStr::from_slice_with_nul(&p);
+                        if $is_lib {
+                            let _ = state.add_library_path(z);
+                        } else {
+                            let _ = state.add_sys_include_path(z);
+                        }
+                    }};
+                }
+                add_ohos_path!(false, b"sysroot", b"usr", b"include");
+                add_ohos_path!(false, b"sysroot", b"usr", b"include", b"aarch64-linux-ohos");
+                add_ohos_path!(true,  b"sysroot", b"usr", b"lib", b"aarch64-linux-ohos");
+            }
+        }
+        #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
         {
             if let Some(include_dir) = Self::get_system_include_dir() {
                 if state.add_sys_include_path(include_dir).is_err() {

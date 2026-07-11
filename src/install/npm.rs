@@ -1169,11 +1169,29 @@ pub mod package_manifest {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if is_using_o_tmpfile {
                 // Attempt #1.
-                if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_err() {
+                let link_ok = bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath);
+                if link_ok.is_err() {
                     // Attempt #2: the file may already exist. Let's unlink and try again.
                     let _ = bun_sys::unlinkat(cache_dir, outpath);
-                    bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath)?;
-                    // There is no attempt #3. This is a cache, so it's not essential.
+                    let link_ok2 = bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath);
+                    if link_ok2.is_err() {
+                        // Attempt #3: linkat may be blocked (e.g. OHOS SELinux EPERM).
+                        // Write to tmp_path first, then rename atomically so quick_exit
+                        // cannot observe a 0-byte or partially-written .npm file
+                        // ("manifest is invalid" on reload).
+                        if let Ok(tmp_file) = File::openat(
+                            tmpdir,
+                            tmp_path,
+                            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                            0o664,
+                        ) {
+                            if tmp_file.write_all(&buffer).is_ok() {
+                                let _ = bun_sys::renameat(tmpdir, tmp_path, cache_dir, outpath);
+                            } else {
+                                let _ = bun_sys::unlinkat(tmpdir, tmp_path);
+                            }
+                        }
+                    }
                 }
                 return Ok(());
             }

@@ -68,6 +68,11 @@ export const cpuTargetFlags: Flag[] = [
     desc: "ARM64 Windows: clang-cl prefix required (/clang: passes to clang)",
   },
   {
+    flag: ["-march=armv8-a", "-mtune=cortex-a53"],
+    when: c => c.ohos && c.arm64,
+    desc: "OHOS aarch64: ARMv8.0 baseline (no crypto, no SVE, no dotprod, no LSE)",
+  },
+  {
     flag: "-march=nehalem",
     when: c => c.x64 && c.baseline,
     desc: "x64 baseline: Nehalem (2008) — no AVX, broadest compatibility",
@@ -208,6 +213,41 @@ export const globalFlags: Flag[] = [
     desc: "macOS cross: address-significance table for the linker's safe ICF",
   },
 
+  // ─── OHOS cross-compilation ───
+  {
+    flag: c => [`--target=aarch64-linux-ohos`, `--sysroot=${c.ohosSysroot!}`, `-D__MUSL__`, `-mbranch-protection=none`, `-mno-outline-atomics`],
+    when: c => c.ohos && c.arm64,
+    desc: "OHOS target triple + sysroot + musl libc (no PAC/BTI/outline-atomics for OHOS device compat)",
+  },
+  {
+    flag: "-Wno-macro-redefined",
+    when: c => c.ohos,
+    desc: "OHOS: suppress WebKit cmakeconfig vs PlatformHave.h HAVE_INT128_T conflict",
+  },
+  {
+    flag: c => [`-nostdinc++`, `-I${c.ohosCrossLibs}/libcxx/include/v1`, `-I${c.ohosCrossLibs}/libcxxabi/include`],
+    when: c => c.ohos && !!c.ohosCrossLibs,
+    lang: "cxx",
+    desc: "OHOS: use musl-compatible LLVM 22 libc++ headers",
+  },
+  {
+    flag: c => [`-I${c.ohosIcuDir!}/include`],
+    when: c => c.ohos && !!c.ohosIcuDir,
+    desc: "OHOS: use cross-compiled ICU headers (sysroot ICU is incomplete); no U_DISABLE_RENAMING to match ICU lib symbol versions",
+  },
+  {
+    flag: "-fno-c++-static-destructors",
+    when: c => c.ohos,
+    lang: "cxx",
+    desc: "OHOS: match libc++ build config",
+  },
+  // OHOS PIE (compile-time) — must be in globalFlags so compiler sees it; -pie stays in linkerFlags
+  {
+    flag: "-fPIE",
+    when: c => c.ohos,
+    desc: "OHOS PIE: position-independent executable (applied to C and C++ since OHOS requires PIE for all code)",
+  },
+
   // ─── CPU target ───
   ...cpuTargetFlags,
   {
@@ -293,9 +333,15 @@ export const globalFlags: Flag[] = [
   {
     // Nix LLVM doesn't support zstd — but we target standard distros.
     // Nix users can override via profile if needed.
+    // OHOS host LLVM 22.1.7 ships without zstd; emit uncompressed -g3.
     flag: ["-g3", "-gz=zstd"],
-    when: c => c.unix && c.debug,
+    when: c => c.unix && c.debug && !c.ohos,
     desc: "Full debug info, zstd-compressed",
+  },
+  {
+    flag: "-g3",
+    when: c => c.unix && c.debug && c.ohos,
+    desc: "Full debug info, uncompressed (OHOS host LLVM lacks zstd)",
   },
   {
     flag: "-g1",
@@ -597,6 +643,12 @@ export const bunOnlyFlags: Flag[] = [
     desc: "C++23 with GNU extensions (required to match WebKit's ABI on Linux/FreeBSD)",
   },
   {
+    flag: "-std=gnu++23",
+    when: c => c.ohos,
+    lang: "cxx",
+    desc: "C++23 with GNU extensions (match new WebKit prebuilt ABI for OHOS compat)",
+  },
+  {
     flag: "-std=c++23",
     when: c => c.darwin,
     lang: "cxx",
@@ -665,7 +717,7 @@ export const bunOnlyFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-fno-pie"],
-    when: c => c.unix && c.abi !== "android",
+    when: c => c.unix && c.abi !== "android" && !c.ohos,
     desc: "No position-independent code (we're a final executable)",
   },
   {
@@ -1133,6 +1185,66 @@ export const linkerFlags: Flag[] = [
     desc: "Persist the LTO-generated object so dsymutil can extract its DWARF into the dSYM",
   },
 
+  // ─── OHOS ───
+  {
+    flag: c => [`--target=aarch64-linux-ohos`, `--sysroot=${c.ohosSysroot!}`],
+    when: c => c.ohos,
+    desc: "OHOS target triple + sysroot at link time",
+  },
+  {
+    flag: "-Wl,--allow-multiple-definition",
+    when: c => c.ohos,
+    desc: "OHOS: allow iostream stub duplicate; mimalloc override disabled",
+  },
+  {
+    flag: c => [
+      `-L${c.ohosCrossLibs!}/libcxx/lib`,
+      `-L${c.ohosCrossLibs!}/libcxxabi/lib`,
+      `-L${c.ohosCrossLibs!}/libunwind/lib`,
+      c.ohosIcuDir ? `-L${c.ohosIcuDir}/lib` : "",
+      "-lc++",
+      "-lc++abi",
+      "-lunwind",
+      "-lc",
+    ].filter(f => f !== ""),
+    when: c => c.ohos,
+    desc: "OHOS: link LLVM 22 libc++ + libc++abi + libunwind + dynamic libc",
+  },
+  {
+    flag: [
+      "-Wl,--as-needed",
+      "-Wl,-z,stack-size=8192000",
+      "-Wl,-z,lazy",
+      "-Wl,-z,norelro",
+      "-Wl,-O2",
+      "-Wl,--sort-section=name",
+      "-Wl,--hash-style=both",
+      "-Wl,--build-id=sha1",
+    ],
+    when: c => c.ohos,
+    desc: "OHOS linker tuning: 8MB stack (debug compression skipped — host LLVM lacks zlib)",
+  },
+  {
+    flag: ["-pie", "-Wl,-dynamic-linker=/system/lib/ld-musl-aarch64.so.1"],
+    when: c => c.ohos,
+    desc: "OHOS PIE: dynamic linking (allows fork/clone through seccomp)",
+  },
+  {
+    flag: "-Wl,--noinhibit-exec",
+    when: c => c.ohos,
+    desc: "OHOS: LLD alignment warnings → ignore (SCTLR_EL1.A is 0 on aarch64)",
+  },
+  {
+    flag: c => [
+      "-Wl,-Bsymbolic-functions",
+      "-rdynamic",
+      `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
+      `-Wl,--version-script=${c.cwd}/src/linker.lds`,
+    ],
+    when: c => c.ohos,
+    desc: "OHOS: dynamic symbol list + version script (mirror linux block; exposes napi_/node_api_ for .node dlopen)",
+  },
+
   // ─── Linux ───
   {
     // Wrap glibc symbols whose default version on a modern build host is
@@ -1241,7 +1353,7 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-Wl,-no-pie"],
-    when: c => c.linux && c.abi !== "android",
+    when: c => c.linux && c.abi !== "android" && !c.ohos,
     desc: "No PIE (we don't need ASLR; simpler codegen)",
   },
   {
@@ -1306,27 +1418,6 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,-z,keep-text-section-prefix",
     when: c => c.linux && c.release && !!c.pgoUse && !c.asan && !c.valgrind,
     desc: "Keep .text.hot/.text.unlikely prefixes from the PGO profile (cluster hot startup .text)",
-  },
-  {
-    // Same goal as keep-text-section-prefix, without needing a PGO profile:
-    // <buildDir>/linker.order lists the functions bun actually executes while
-    // starting up, and lld sorts their input sections to the front of `.text`.
-    // Starting up only touches ~8.5 MB of pages, but they are scattered over a
-    // ~50 MB `.text` and the kernel faults in 64 KB around each one, so the
-    // binary ends up with ~27 MB resident for `bun -e 'console.log(1)'`.
-    // Packing them together cuts that by a third for a same-size binary.
-    //
-    // The file is a build artifact, never committed: configure seeds an empty one
-    // (a no-op for lld) so this flag is unconditional and both link passes share
-    // one build.ninja — a release build regenerates it from its own pass-1 binary
-    // and reruns ninja, which relinks and nothing else. Symbols lld cannot find
-    // are skipped, so a stale file only costs part of the win.
-    //
-    // A local `bun run build:release` therefore links unordered until you run
-    // `bun run orderfile` and build again.
-    flag: c => [`-Wl,--symbol-ordering-file=${orderFilePath(c)}`, "-Wl,--no-warn-symbol-ordering"],
-    when: c => usesOrderFile(c),
-    desc: "Sort startup-hot functions to the front of .text (cuts resident binary pages)",
   },
 
   // ─── Symbols / exports ───
@@ -1395,8 +1486,8 @@ export const linkerFlags: Flag[] = [
     // and only on agents where the LLVM versions diverge. The system lld path
     // (linux/freebsd llvm-* packages) keeps compressing.
     flag: "-Wl,--compress-debug-sections=zlib",
-    when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld,
-    desc: "Compress ELF debug sections (skipped with rust-lld — built without zlib)",
+    when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld && !c.ohos,
+    desc: "Compress ELF debug sections (skipped with rust-lld and OHOS host LLVM — both built without zlib)",
   },
   {
     flag: "-Wl,--gc-sections",
@@ -1415,17 +1506,7 @@ export const linkerFlags: Flag[] = [
   },
 ];
 
-/**
- * Whether this target links with an lld symbol ordering file. ELF only, and
- * only where the startup win is worth a relink: release linux builds.
- * Not under a sanitizer — the tracer mprotects `.text` out from under it, and
- * nobody measures startup RSS on an ASAN build anyway.
- *
- * gnu only: musl links statically, so LD_PRELOAD cannot load the tracer, and
- * android is cross-compiled, so the build host cannot run the binary to trace
- * it. Neither can produce an order file, so link them unordered rather than
- * attempt a trace that always fails and annotate every build about it.
- */
+/** Whether the GNU linker order file feature is active (Linux glibc release, no ASAN). */
 export function usesOrderFile(cfg: Pick<Config, "linux" | "abi" | "release" | "asan" | "valgrind">): boolean {
   return cfg.linux && cfg.abi === "gnu" && cfg.release && !cfg.asan && !cfg.valgrind;
 }
@@ -1444,11 +1525,8 @@ export function linkDepends(cfg: Config): string[] {
   if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
-  // linux: ELF dynamic-list + version script, plus the release symbol ordering
-  // file — listing it here is what makes regenerating it relink, and only relink.
-  const linux = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
-  if (usesOrderFile(cfg)) linux.push(orderFilePath(cfg));
-  return linux;
+  // linux: ELF dynamic-list + version script
+  return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -1305,13 +1305,9 @@ test("close(cb) interleaves with other close listeners in registration order", a
   expect(order2).toEqual(["B", "C"]);
 });
 
-// terminate() during the worker's node:worker_threads preload used to trip
-// EXCEPTION_ASSERT in JSValue::get / JSObject::getOwnPropertyDescriptor: the
-// lazy process.stdout/stderr/stdin PropertyCallbacks enter JS inside
-// getOwnPropertySlot, and tryClearException() won't clear a termination
-// exception, so getOwnPropertySlot returned true with it still pending.
-// The assertion is debug-build only; amplified from the upstream Node
-// test-worker-message-port-transfer-terminate.js (10 workers → 60).
+// Amplified test-worker-message-port-transfer-terminate.js: terminate() during the
+// worker_threads preload reifies lazy process.stdout/stdin inside getOwnPropertySlot,
+// which asserts (debug only) if the builder returns with a termination pending.
 test.skipIf(!isASAN && !isDebug)(
   "terminate() during worker bootstrap doesn't trip getOwnPropertySlot assert",
   async () => {

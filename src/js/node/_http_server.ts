@@ -2498,7 +2498,7 @@ function advanceResponsePipeline(server, socket) {
   if (
     !socketHandle ||
     socket.destroyed ||
-    !socketHandle.startPipelinedResponse(handle, !!queued?.isAncient, !requestShouldKeepAlive(res.req))
+    !socketHandle.startPipelinedResponse(handle, !!queued.isAncient, !requestShouldKeepAlive(res.req))
   ) {
     // The connection is already gone; the socket close path destroys queued
     // responses, but make sure this (already dequeued) one is not skipped.

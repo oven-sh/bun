@@ -35,7 +35,27 @@ const packageDefinition = protoLoader.loadSync(join(import.meta.dir, "fixtures/t
 
 type Server = { address: string; kill: () => Promise<void> };
 
-const cargoBin = Bun.which("cargo") as string;
+const cargoBin = Bun.which("cargo");
+// `Bun.which` finds the rustup shim whenever /opt/rust/bin (or ~/.cargo/bin) is
+// in PATH, but the shim still fails when the agent user has no default
+// toolchain (macOS CI runs the agent with PATH set and RUSTUP_HOME unset on
+// some boxes). Probe with the env and outside-the-repo cwd that `cargo run`
+// below will see so we skip instead of timing out for 150s.
+const cargoEnv = {
+  PATH: process.env.PATH,
+  CARGO_HOME: process.env.CARGO_HOME,
+  RUSTUP_HOME: process.env.RUSTUP_HOME,
+  RUSTUP_TOOLCHAIN: process.env.RUSTUP_TOOLCHAIN,
+};
+const cargoWorks =
+  !!cargoBin &&
+  Bun.spawnSync({
+    cmd: [cargoBin, "--version"],
+    env: cargoEnv,
+    cwd: tmpdir(),
+    stdout: "ignore",
+    stderr: "ignore",
+  }).exitCode === 0;
 
 // Stable per-machine cache so persistent CI agents don't re-download protoc and
 // re-compile the entire tonic/tokio dependency tree (~50s) on every run.
@@ -67,24 +87,24 @@ async function startServer(): Promise<Server> {
   const protocExec = join(protocPath, binPath);
   await chmod(protocExec, 0o755);
 
-  const server = Bun.spawn([cargoBin, "run", "--quiet", path.join(tmpDir, "server")], {
+  const server = Bun.spawn([cargoBin!, "run", "--quiet", path.join(tmpDir, "server")], {
     cwd: tmpDir,
     env: {
+      ...cargoEnv,
       PROTOC: protocExec,
-      PATH: process.env.PATH,
-      CARGO_HOME: process.env.CARGO_HOME,
-      RUSTUP_HOME: process.env.RUSTUP_HOME,
       // Keep cargo's target dir outside the throwaway tmpDir so registry deps
       // (tonic, tokio, prost, ...) compile once per machine instead of once per run.
       CARGO_TARGET_DIR: join(cacheDir, "target"),
     },
     stdout: "pipe",
     stdin: "ignore",
-    stderr: "inherit",
+    stderr: "pipe",
   });
 
   {
-    const { promise, reject, resolve } = Promise.withResolvers<Server>();
+    // Drain stderr immediately so a chatty compile can't fill the pipe buffer
+    // and wedge the child before it gets to print "Listening on".
+    const stderrPromise = server.stderr.text();
     const reader = server.stdout.getReader();
     const decoder = new TextDecoder();
     async function killServer() {
@@ -94,30 +114,29 @@ async function startServer(): Promise<Server> {
         rmSync(tmpDir, { recursive: true, force: true });
       } catch {}
     }
+    let text = "";
     while (true) {
       const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      const text = decoder.decode(value);
+      if (value) text += decoder.decode(value, { stream: true });
       if (text.includes("Listening on")) {
         const [_, address] = text.split("Listening on ");
-        resolve({
+        return {
           address: address?.trim(),
           kill: killServer,
-        });
-        break;
-      } else {
-        await killServer();
-        reject(new Error("Server not started"));
-        break;
+        };
       }
+      if (done) break;
     }
-    return await promise;
+    // stdout closed without a "Listening on" line: cargo/rustup failed or the
+    // build errored. Surface stderr so the failure is diagnosable instead of
+    // awaiting a never-settled promise until the hook times out.
+    const [stderr, exitCode] = await Promise.all([stderrPromise, server.exited]);
+    await killServer();
+    throw new Error(`tonic server exited (${exitCode}) before reporting an address:\n${stderr || text}`);
   }
 }
 
-describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
+describe.skipIf(!cargoWorks || !releases[release])("test tonic server", () => {
   let server: Server;
 
   beforeAll(async () => {
@@ -125,7 +144,7 @@ describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
   });
 
   afterAll(() => {
-    server.kill();
+    server?.kill();
   });
 
   test("flow control should work in both directions", async () => {

@@ -165,6 +165,13 @@ pub(crate) fn create_and_schedule_completion_task(
     Ok(completion)
 }
 
+/// OHOS: sign a compiled binary ELF in-place using the ohos_sign crate.
+#[cfg(target_env = "ohos")]
+fn ohos_sign_binary(path: &bun_core::ZStr) {
+    let path_str = core::str::from_utf8(path.as_bytes()).unwrap_or("");
+    let _ = ohos_sign::sign_selfsign_inplace_with_strip(std::path::Path::new(path_str));
+}
+
 /// `BundleV2.generateFromJavaScript` — schedule a build and return its Promise.
 pub fn generate_from_javascript(
     config: JSBundlerConfig,
@@ -446,8 +453,7 @@ impl JSBundleCompletionTask {
                     let mut nul_path = full_outfile_path.to_vec();
                     nul_path.push(0);
                     let zstr = ZStr::from_slice_with_nul(&nul_path);
-                    let path_str = core::str::from_utf8(zstr.as_bytes()).unwrap_or("");
-                    let _ = ohos_sign::sign_selfsign_inplace_with_strip(std::path::Path::new(path_str));
+                    ohos_sign_binary(zstr);
                     let _ = std::process::Command::new("chmod")
                         .arg("755")
                         .arg(outfile_str)

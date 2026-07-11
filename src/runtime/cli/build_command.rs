@@ -54,6 +54,14 @@ impl BuildCommand {
     /// (those moved the tables, not the bodies).
     #[cold]
     #[inline(never)]
+    /// OHOS: sign a compiled binary ELF in-place. Wraps ohos_sign crate
+    /// with a ZStr interface for callers that already have a NUL-terminated path.
+    #[cfg(target_env = "ohos")]
+    fn ohos_sign_binary(path: &bun_core::ZStr) {
+        let path_str = core::str::from_utf8(path.as_bytes()).unwrap_or("");
+        let _ = ohos_sign::sign_selfsign_inplace_with_strip(std::path::Path::new(path_str));
+    }
+
     pub(crate) fn exec(
         ctx: Context,
         fetcher: Option<&bundle_v2::DependenciesScanner>,
@@ -1006,8 +1014,7 @@ impl BuildCommand {
                         let mut nul_path = outfile_path.clone();
                         nul_path.push(0);
                         let zstr = ZStr::from_slice_with_nul(&nul_path);
-                        let path_str = core::str::from_utf8(zstr.as_bytes()).unwrap_or("");
-                        let _ = ohos_sign::sign_selfsign_inplace_with_strip(std::path::Path::new(path_str));
+                        Self::ohos_sign_binary(zstr);
                         let _ = std::process::Command::new("chmod")
                             .arg("755")
                             .arg(std::str::from_utf8(&outfile_path).unwrap_or(""))

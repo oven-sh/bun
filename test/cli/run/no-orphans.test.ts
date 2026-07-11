@@ -435,18 +435,24 @@ test.concurrent.skipIf(!isSupported || !hasPerl)(
 // Same daemon shape but the outer and the intermediate exit *immediately* —
 // no spinning on the pidfile (that spin is what made the proc_listallpids
 // scan() pass: it gave the wait loop's NOTE_FORK time to fire and observe
-// each link). With NOTE_TRACK xnu attaches to the intermediate inside fork1()
-// before it's schedulable, recursively, so the daemon is captured even if both
-// ancestors are gone before the wait loop drains a single event. Linux:
-// subreaper is also armed pre-spawn, and `killSubreaperAdoptees()` in the
-// disarm defer kills any ppid==bun adoptee that wasn't a pre-arm sibling
-// before subreaper drops, so the daemon can't escape in the disarm →
-// `onProcessExit` window.
+// each link). Linux: subreaper is armed pre-spawn, the daemon reparents to
+// us regardless of how fast the intermediates exit, and
+// `killSubreaperAdoptees()` in the disarm defer kills any ppid==bun adoptee
+// before subreaper drops — deterministic.
+//
+// macOS is excluded: NOTE_TRACK (which would have auto-attached inside
+// fork1()) is ENOTSUP since 10.5, and the NOTE_FORK + p_puniqueid scan it
+// was replaced with has a race NoOrphansTracker.cpp documents as not fully
+// closable from userspace — an intermediate that forks-and-exits before the
+// scan records its uniqueid leaves the daemon's p_puniqueid unlinkable. Under
+// the concurrent spawn load of this file that race fires often enough on
+// darwin CI to turn this into a flake; the pidfile-spin variant above keeps
+// the macOS scan-path coverage.
 //
 // `bun run` may finish before the daemon writes its pidfile. Poll for the
 // file from the *test*; if it never appears the daemon was reaped before it
 // could write — also a pass. Only fail if the file appears AND the pid lives.
-test.concurrent.skipIf(!isSupported || !hasPerl)(
+test.concurrent.skipIf(!isLinux || !hasPerl)(
   "bun run --no-orphans (perl): fast-exit intermediate (no pidfile spin) — daemon still reaped",
   async () => {
     using dir = tempDir("no-orphans-fast-daemon", {
@@ -457,6 +463,11 @@ test.concurrent.skipIf(!isSupported || !hasPerl)(
             `perl -MPOSIX -e '` +
             `if(fork){exit} ` + // outer exits immediately — bun run sees exit fast
             `setsid; exit if fork; ` + // intermediate exits immediately
+            // Close the inherited stderr so a daemon that outlives `bun run`
+            // (the regression this test guards against) can't hold the test's
+            // `stderr: "pipe"` write end open and wedge `stderr.text()` below
+            // — the failure should be `died === false`, not a timeout.
+            `close STDERR; ` +
             `open F,">","$ENV{OUT}/pid"; print F "$$ ".getpgrp(); close F; ` +
             `sleep 1 while 1'`,
         },

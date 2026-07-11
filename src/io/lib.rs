@@ -809,11 +809,7 @@ impl IoRequestLoop {
                 e.raw_os_error().unwrap_or(libc::EAGAIN),
                 sys::Tag::pthread_create,
             );
-            #[cfg(any(
-                target_os = "linux",
-                target_os = "android",
-                target_os = "freebsd"
-            ))]
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
             poll_fd.close();
             #[cfg(target_os = "macos")]
             {

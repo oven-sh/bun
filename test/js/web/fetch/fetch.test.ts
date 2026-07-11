@@ -442,6 +442,36 @@ describe("AbortSignal", () => {
       expect(Bun.peek(p)).toBe(reason);
       await p.catch(() => {});
     }
+    {
+      // Request-constructor errors (spec step 4) still win over the abort:
+      // GET with a body rejects with TypeError, not the abort reason.
+      const reason = new Error("should-not-see-this");
+      const p = fetch("http://127.0.0.1:1/", {
+        method: "GET",
+        body: "x",
+        signal: AbortSignal.abort(reason),
+      } as any);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBeInstanceOf(TypeError);
+      expect(Bun.peek(p)).not.toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // Request input body is consumed (step 4) before the abort (step 11).
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted-bodyused");
+      controller.abort(reason);
+      const req = new Request("http://127.0.0.1:1/", {
+        method: "POST",
+        body: "hello",
+        signal: controller.signal,
+      });
+      const p = fetch(req);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      expect(req.bodyUsed).toBe(true);
+      await p.catch(() => {});
+    }
   });
 });
 

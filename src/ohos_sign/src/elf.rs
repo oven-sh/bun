@@ -68,10 +68,23 @@ fn parse_header(elf: &[u8]) -> Result<(u64, u16, u16, u16), SignError> {
         return Err(SignError::NotElf64);
     }
     let e_shoff = read_u64(elf, E_SHOFF);
+    let e_shentsize = read_u16(elf, E_SHENTSIZE);
     let e_shnum = read_u16(elf, E_SHNUM);
     let e_shentsize = read_u16(elf, E_SHENTSIZE);
     let e_shstrndx = read_u16(elf, E_SHSTRNDX);
-    if e_shoff == 0 || e_shnum == 0 || e_shstrndx as u64 >= e_shnum as u64 {
+    // Every offset computed downstream assumes a 64-byte ELF64 section header
+    // entry (`e_shoff + i * 64`); reject anything else instead of silently
+    // misreading the section header table.
+    if e_shentsize != 64 || e_shoff == 0 || e_shnum == 0 || e_shstrndx as u64 >= e_shnum as u64 {
+        return Err(SignError::NoSectionHeaders);
+    }
+    // Reject a section header table that runs past the end of the buffer —
+    // downstream reads (find_section_by_name, strip) index into it assuming
+    // this holds and would otherwise panic on a truncated/malformed ELF.
+    let sht_end = (e_shoff as usize)
+        .checked_add(e_shnum as usize * 64)
+        .ok_or(SignError::NoSectionHeaders)?;
+    if sht_end > elf.len() {
         return Err(SignError::NoSectionHeaders);
     }
     Ok((e_shoff, e_shnum, e_shstrndx, e_shentsize))

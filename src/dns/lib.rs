@@ -298,6 +298,25 @@ impl Default for Backend {
     }
 }
 
+/// Query-side hostname charset check for `getaddrinfo`-style lookups.
+///
+/// glibc `getaddrinfo` refuses names containing ASCII bytes outside
+/// `[A-Za-z0-9._-]` with `EAI_NONAME` before any packet is built (the LDH
+/// rule plus `_`). c-ares validates against its record-name charset
+/// `[A-Za-z0-9-*._/]` instead (RFC 2317 `/` CNAMEs, wildcard `*`), so a raw
+/// `host/path` or `a*b` passed to `ares_getaddrinfo` becomes a real QNAME on
+/// the wire. Callers use this to match glibc's behavior and reject locally.
+///
+/// Non-ASCII bytes are accepted (IDN inputs flow through to the backend
+/// unchanged, matching glibc). Numeric IP literals are not covered: IPv4
+/// passes (only `[0-9.]`), IPv6 contains `:` and must be exempted by the
+/// caller.
+pub fn is_valid_lookup_name(name: &[u8]) -> bool {
+    name.iter().all(|&b| {
+        b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_') || !b.is_ascii()
+    })
+}
+
 pub type Address = bun_sys::net::Address;
 
 pub struct GetAddrInfoResult {

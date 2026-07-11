@@ -5196,7 +5196,15 @@ impl Resolver {
         // stack before null-terminating it. Reject anything that cannot fit so we never
         // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
         // is 1025, so this never rejects a name that could have resolved.
-        if name.len() >= MAX_PATH_BYTES || name.contains(&0) {
+        //
+        // The charset check matches glibc `getaddrinfo`: ASCII outside
+        // `[A-Za-z0-9._-]` is refused locally so `/`, `*`, etc. never become a
+        // wire QNAME or `Host` header. c-ares on its own accepts `/` and `*`
+        // (record-name charset). IPv6 literals contain `:` so are exempted.
+        if name.len() >= MAX_PATH_BYTES
+            || name.contains(&0)
+            || (!bun_dns::is_valid_lookup_name(name) && !strings::is_ip_address(name))
+        {
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
             error_to_deferred(

@@ -39,6 +39,5 @@ test("postgres: DataRow arriving after ErrorResponse is discarded, not routed to
     signalCode: null,
     stderr: expect.any(String),
   });
-}, // the fixture is a debug+ASan bun; the unpatched build spends ~10s in the
-// panic handler before SIGABRT so the fail-before output is captured
+}, // panic handler before SIGABRT so the fail-before output is captured // the fixture is a debug+ASan bun; the unpatched build spends ~10s in the
 30_000);

@@ -1,4 +1,9 @@
 import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
+
+// A debug build starts a worker VM about an order of magnitude more slowly, so
+// the tests that spawn a subprocess that then builds a chain of workers need
+// headroom past the 5s default to finish under `bun bd`.
+const subprocessTimeout = isDebug ? 60_000 : 20_000;
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -326,10 +331,14 @@ describe("execArgv option", async () => {
     expect(await proc.stdout.text()).toBe(expected);
   }
 
-  it("inherits the parent's execArgv when falsy or unspecified", async () => {
-    await run("null", '["--smol"]\n');
-    await run("0", '["--smol"]\n');
-  });
+  it(
+    "inherits the parent's execArgv when falsy or unspecified",
+    async () => {
+      await run("null", '["--smol"]\n');
+      await run("0", '["--smol"]\n');
+    },
+    subprocessTimeout,
+  );
   it("provides empty execArgv when passed an empty array", async () => {
     // empty array should result in empty execArgv, not inherited from parent thread
     await run("[]", "[]\n");
@@ -626,21 +635,25 @@ describe("environmentData", () => {
     expect(getEnvironmentData("does_not_exist")).toBeUndefined();
   });
 
-  test("is deeply inherited", async () => {
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "environmentdata-inherit-fixture.js"],
-      env: bunEnv,
-      cwd: __dirname,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    await proc.exited;
-    const errors = await proc.stderr.text();
-    if (errors.length > 0) throw new Error(errors);
-    expect(proc.exitCode).toBe(0);
-    const out = await proc.stdout.text();
-    expect(out).toBe("foo\n".repeat(5));
-  });
+  test(
+    "is deeply inherited",
+    async () => {
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "environmentdata-inherit-fixture.js"],
+        env: bunEnv,
+        cwd: __dirname,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      await proc.exited;
+      const errors = await proc.stderr.text();
+      if (errors.length > 0) throw new Error(errors);
+      expect(proc.exitCode).toBe(0);
+      const out = await proc.stdout.text();
+      expect(out).toBe("foo\n".repeat(5));
+    },
+    subprocessTimeout,
+  );
 
   test("can be used if parent thread had not imported worker_threads", async () => {
     const proc = Bun.spawn({
@@ -741,58 +754,70 @@ describe("getHeapSnapshot", () => {
     }
   });
 
-  test("queues while the worker is starting and rejects once it has exited", async () => {
-    const worker = new Worker("require('worker_threads').parentPort.once('message', () => {})", { eval: true });
-    // Called immediately after construction (m_state still Pending): node — and now
-    // bun — queues into m_pendingTasks and resolves once the worker is Running,
-    // instead of racing against dispatchOnline and spuriously rejecting.
-    const pendingCall = worker.getHeapSnapshot();
-    await once(worker, "online");
-    await expect(pendingCall).resolves.toBeDefined();
-    worker.postMessage("done");
-    await once(worker, "exit");
-    // After exit (m_state Closed) it rejects.
-    await expect(worker.getHeapSnapshot()).rejects.toMatchObject({
-      name: "Error",
-      code: "ERR_WORKER_NOT_RUNNING",
-      message: "Worker instance not running",
-    });
-  });
+  // getHeapSnapshot itself is a full V8-format heap dump, which on top of
+  // worker startup time puts it past 5s under a debug build.
+  const heapSnapshotTimeout = isDebug ? 60_000 : 20_000;
 
-  test("resolves to a Stream.Readable with JSON text in V8 format", async () => {
-    const worker = new Worker(
-      /* js */ `
+  test(
+    "queues while the worker is starting and rejects once it has exited",
+    async () => {
+      const worker = new Worker("require('worker_threads').parentPort.once('message', () => {})", { eval: true });
+      // Called immediately after construction (m_state still Pending): node — and now
+      // bun — queues into m_pendingTasks and resolves once the worker is Running,
+      // instead of racing against dispatchOnline and spuriously rejecting.
+      const pendingCall = worker.getHeapSnapshot();
+      await once(worker, "online");
+      await expect(pendingCall).resolves.toBeDefined();
+      worker.postMessage("done");
+      await once(worker, "exit");
+      // After exit (m_state Closed) it rejects.
+      await expect(worker.getHeapSnapshot()).rejects.toMatchObject({
+        name: "Error",
+        code: "ERR_WORKER_NOT_RUNNING",
+        message: "Worker instance not running",
+      });
+    },
+    heapSnapshotTimeout,
+  );
+
+  test(
+    "resolves to a Stream.Readable with JSON text in V8 format",
+    async () => {
+      const worker = new Worker(
+        /* js */ `
         import { parentPort } from "node:worker_threads";
         parentPort.on("message", () => process.exit(0));
       `,
-      { eval: true },
-    );
-    await once(worker, "online");
-    const stream = await worker.getHeapSnapshot();
-    expect(stream).toBeInstanceOf(Readable);
-    expect(stream.constructor.name).toBe("HeapSnapshotStream");
-    const json = await new Promise<string>(resolve => {
-      let json = "";
-      stream.on("data", chunk => {
-        json += chunk;
+        { eval: true },
+      );
+      await once(worker, "online");
+      const stream = await worker.getHeapSnapshot();
+      expect(stream).toBeInstanceOf(Readable);
+      expect(stream.constructor.name).toBe("HeapSnapshotStream");
+      const json = await new Promise<string>(resolve => {
+        let json = "";
+        stream.on("data", chunk => {
+          json += chunk;
+        });
+        stream.on("end", () => {
+          resolve(json);
+        });
       });
-      stream.on("end", () => {
-        resolve(json);
-      });
-    });
-    const object = JSON.parse(json);
-    expect(Object.keys(object).toSorted()).toEqual([
-      "edges",
-      "locations",
-      "nodes",
-      "samples",
-      "snapshot",
-      "strings",
-      "trace_function_infos",
-      "trace_tree",
-    ]);
-    worker.postMessage(0);
-  });
+      const object = JSON.parse(json);
+      expect(Object.keys(object).toSorted()).toEqual([
+        "edges",
+        "locations",
+        "nodes",
+        "samples",
+        "snapshot",
+        "strings",
+        "trace_function_infos",
+        "trace_tree",
+      ]);
+      worker.postMessage(0);
+    },
+    heapSnapshotTimeout,
+  );
 });
 
 test("failed Worker construction restores transferred FileHandles", async () => {
@@ -1470,28 +1495,36 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
 
   // main -> A (snapshot env) -> B (SHARE_ENV) is a tree disjoint from
   // main -> C (SHARE_ENV); values must not cross between them.
-  it("keeps disjoint SHARE_ENV chains isolated", async () => {
-    expect(await run("tree")).toEqual({
-      B_sees_FROM_A: "a",
-      B_sees_FROM_MAIN: "main",
-      A_sees_FROM_B: "b",
-      C_sees_FROM_B: null,
-      C_sees_FROM_MAIN: "main",
-      main_sees_FROM_B: null,
-      main_sees_FROM_C: "c",
-    });
-  });
+  it(
+    "keeps disjoint SHARE_ENV chains isolated",
+    async () => {
+      expect(await run("tree")).toEqual({
+        B_sees_FROM_A: "a",
+        B_sees_FROM_MAIN: "main",
+        A_sees_FROM_B: "b",
+        C_sees_FROM_B: null,
+        C_sees_FROM_MAIN: "main",
+        main_sees_FROM_B: null,
+        main_sees_FROM_C: "c",
+      });
+    },
+    subprocessTimeout,
+  );
 
   // Founding a store must not adopt another tree's value for a key the founding
   // thread already has.
-  it("does not clobber a worker's own env when it founds a store", async () => {
-    expect(await run("clobber")).toEqual({
-      A_SHARED_KEY_before: "from-A",
-      A_SHARED_KEY_after: "from-A",
-      B_sees_SHARED_KEY: "from-A",
-      main_SHARED_KEY: "from-main",
-    });
-  });
+  it(
+    "does not clobber a worker's own env when it founds a store",
+    async () => {
+      expect(await run("clobber")).toEqual({
+        A_SHARED_KEY_before: "from-A",
+        A_SHARED_KEY_after: "from-A",
+        B_sees_SHARED_KEY: "from-A",
+        main_SHARED_KEY: "from-main",
+      });
+    },
+    subprocessTimeout,
+  );
 
   // An accessor installed via defineProperty lands on the base object, but reads hit
   // the store first — so the store entry must go, or the getter is shadowed. (Node
@@ -1574,16 +1607,20 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
 
   // Two SHARE_ENV children of one thread alias a single store: writes, deletes and
   // enumeration cross between them, and a default-env grandchild snapshots it.
-  it("aliases one store across siblings, deletes and enumeration", async () => {
-    expect(await run("siblings")).toEqual({
-      s2_sees_S1_write: "s1",
-      s2_sees_TO_DELETE: null,
-      s2_keys_have_FROM_S1: true,
-      grandchild_sees_S1_write: "s1",
-      main_sees_FROM_S1: "s1",
-      main_sees_TO_DELETE: null,
-    });
-  });
+  it(
+    "aliases one store across siblings, deletes and enumeration",
+    async () => {
+      expect(await run("siblings")).toEqual({
+        s2_sees_S1_write: "s1",
+        s2_sees_TO_DELETE: null,
+        s2_keys_have_FROM_S1: true,
+        grandchild_sees_S1_write: "s1",
+        main_sees_FROM_S1: "s1",
+        main_sees_TO_DELETE: null,
+      });
+    },
+    subprocessTimeout,
+  );
 
   // Founding a tree replaces process.env; Bun.env is reified from the same object
   // at startup and must not be left observing the orphaned pre-swap env.

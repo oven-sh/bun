@@ -1045,7 +1045,9 @@ describe("conditional requests after a metadata write", () => {
         _id: "shift",
         name: "shift",
         versions: { "0.5.0": { name: "shift", version: "0.5.0" } },
-        _attachments: { "shift-0.5.0.tgz": { content_type: "application/octet-stream", data: tgz, length: tgz.length } },
+        _attachments: {
+          "shift-0.5.0.tgz": { content_type: "application/octet-stream", data: tgz, length: tgz.length },
+        },
       }),
     });
     const after = await readTime();

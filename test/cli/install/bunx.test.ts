@@ -501,10 +501,13 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
   expect(exited).toBe(0);
 });
 
+// Pinned to 20: its engines are "^20.19.0 || ^22.12.0 || >=24.0.0", so the node-24
+// requirement this test exercises holds no matter what Node.js version Bun reports.
+// @latest tracks Angular's engines upward and breaks whenever they outrun us.
 it.concurrent("should handle package that requires node 24", async () => {
   const { x_dir, env } = setup();
   const subprocess = spawn({
-    cmd: [bunExe(), "x", "--bun", "@angular/cli@latest", "--help"],
+    cmd: [bunExe(), "x", "--bun", "@angular/cli@20", "--help"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "inherit",

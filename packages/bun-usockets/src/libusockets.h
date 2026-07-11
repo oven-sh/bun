@@ -193,9 +193,6 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int), const char *host, unsigned short port, int flags, int *err, void *user);
 
-/* Adopt an existing bound UDP fd (cluster shared dgram handle). POSIX only.
- * `shared` throttles recvmmsg to 1 packet/syscall (cluster: fd is duped into
- * every worker); pass 0 for standalone fd-adopts to keep the batch. */
 struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int), LIBUS_SOCKET_DESCRIPTOR fd, int shared, int *err, void *user);
 
 LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s);
@@ -350,8 +347,6 @@ struct us_listen_socket_t *us_socket_group_listen_unix(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     const char *path, size_t pathlen, int options, int socket_ext_size, int *error)
     __attribute__((nonnull(1, 4, 8)));  /* ssl_ctx nullable */
-/* Adopt an already-bound fd (cluster shared handle): listen(2) + accept poll.
- * Works on every backend. */
 struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error)
@@ -618,8 +613,6 @@ LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) nonnull_fn_decl;
 
 /* Bun extras */
 struct us_socket_t *us_socket_pair(us_socket_group_r group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) nonnull_fn_decl;
-/* `options` takes the same LIBUS_SOCKET_* bits as us_socket_group_connect
- * (only LIBUS_SOCKET_ALLOW_HALF_OPEN applies to an already-connected fd). */
 struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc)
     __attribute__((nonnull(1)));  /* ssl_ctx nullable */
 struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length);

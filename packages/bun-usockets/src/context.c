@@ -398,15 +398,9 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
     return ls;
 }
 
-/* Adopt an already-bound fd (e.g. a node:cluster shared handle delivered over
- * SCM_RIGHTS) as a listen socket: make it non-blocking, listen(2), and
- * register the accept poll. On failure *error receives errno. */
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
-    /* Works on every backend (the libuv eventing polls raw SOCKETs via
-     * uv_poll_init_socket). listen(2) on a non-socket fd (e.g. listen({fd:0})
-     * on stdin) fails with ENOTSOCK/EINVAL below, matching node. */
     apple_no_sigpipe(fd);
     bsd_set_nonblocking(fd);
     if (listen(fd, backlog > 0 ? backlog : 512)) {
@@ -418,11 +412,6 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
     us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
     int poll_rc = us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE);
     if (poll_rc != 0) {
-        /* Registration failed (libuv backend: uv_poll_init_socket /
-         * uv_poll_start). Surface it instead of returning a listener that
-         * can never accept. poll_rc is a negative uv error on the libuv
-         * backend; pass it through so the caller's error at least carries a
-         * distinguishable errno. */
         us_poll_free(p, group->loop);
         *error = poll_rc < 0 ? -poll_rc : poll_rc;
         return 0;

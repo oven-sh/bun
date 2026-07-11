@@ -98,9 +98,6 @@ impl InternalMsgHolder {
 
         let event_loop = global.bun_vm().event_loop_mut();
 
-        // Child seq/ack bookkeeping lives in JS (child.ts send()/onmessage) now
-        // that all child cluster traffic routes through process.send; the child
-        // singleton's `callbacks` map is never written, so no ack-lookup here.
         event_loop.run_callback(
             cb,
             global,
@@ -809,15 +806,6 @@ impl SendHandle {
     pub fn complete(mut self, global: &JSGlobalObject) {
         if let Some(handle) = &self.handle {
             if handle.close_on_complete {
-                // The receiver owns the connection now; drop OUR descriptor
-                // only. `close()` (fast_shutdown) is a plain closesocket -
-                // with the receiver's duplicate alive that is a pure refcount
-                // drop. NOT terminate(): that arms SO_LINGER{1,0} on the
-                // *shared* socket object and aborts the transferred
-                // connection with RST on Windows.
-                // Deferred: TCPSocket.close synchronously dispatches on_close
-                // → net.ts handlers → user 'close' listeners, and every caller
-                // holds &mut SendQueue here (on_ack_nack, _on_write_complete).
                 let js = handle.js.value();
                 if js.is_object() {
                     let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
@@ -841,15 +829,12 @@ impl SendHandle {
                 }
             }
         }
-        // callbacks/handle drop here without call_next_tick.
     }
 }
 
 #[bun_jsc::host_fn]
 fn close_sent_handle(global: &JSGlobalObject, callframe: &crate::CallFrame) -> JsResult<JSValue> {
     let [js] = callframe.arguments_as_array::<1>();
-    // Runs from processTicksAndRejections's `try/catch → reportUncaughtException`,
-    // so straight `?` propagation is the correct sink now that this is deferred.
     if js.is_object() {
         if let Some(f) = js.get(global, "close")? {
             if f.is_callable() {
@@ -1193,22 +1178,14 @@ impl SendQueue {
             return Ok(());
         }
         this.close_event_sent = true;
-        // Complete sends whose ack can no longer arrive. This runs their
-        // callbacks and — for handle messages — closes the local copy of the
-        // sent socket, which would otherwise keep the event loop alive
-        // forever (node closes undeliverable handles on channel close too).
         let global = this.get_global_this();
         if let Some(item) = this.waiting_for_ack.take() {
-            // The write already went out; treat like an implicit ack (node
-            // fires this callback with null too).
             item.complete(&global);
         }
         for item in std::mem::take(&mut this.queue) {
             if item.data.cursor > 0 {
-                // Partially written: bytes left the process, treat as sent.
                 item.complete(&global);
             } else {
-                // Never written: drop without reporting success (node parity).
                 item.abort_unsent(&global);
             }
         }
@@ -1269,9 +1246,6 @@ impl SendQueue {
             // prepend (we have not started sending the next message yet because we are waiting for the ack/nack)
             self.queue.insert(0, message);
         } else {
-            // insert at index 1 (we are in the middle of sending a message to the other process).
-            // Only the sender-side ack retransmission implies queue[0] is an ack/nack; the
-            // receiver-side handle paths can be mid-write of any regular message here.
             debug_assert!(self.waiting_for_ack.is_none() || self.queue[0].is_ack_nack());
             self.queue.insert(1, message);
         }
@@ -1294,8 +1268,6 @@ impl SendQueue {
             if self.retry_count < MAX_HANDLE_RETRANSMISSIONS {
                 // retry sending the message
                 item.data.cursor = 0;
-                // Windows: WSAPROTOCOL_INFOW is single-use; re-export and
-                // overwrite the old hex in place (same length).
                 #[cfg(windows)]
                 {
                     let handle = item.handle.as_mut().unwrap();
@@ -1320,14 +1292,9 @@ impl SendQueue {
                 log!("IPC call continueSend() from onAckNack retry");
                 return self.continue_send(global, ContinueSendReason::NewMessageAppended);
             }
-            // Give-up: if cluster stashed a seq-level reply callback, reclaim
-            // it and synthesize `{accepted:false}` so RoundRobinHandle can
-            // redistribute and return the worker to rotation.
             if let Some(seq) = item.handle.as_ref().and_then(|h| h.cluster_seq) {
                 let entry = self.internal_msg_queue.callbacks.get(&seq).map(|s| s.get());
                 if let Some(Some(cb)) = entry {
-                    // Allocate the reply BEFORE dropping the Strong so `cb`
-                    // stays rooted across the JS-heap allocations.
                     let reply = JSValue::create_empty_object(global, 1);
                     reply.put(global, b"accepted", JSValue::FALSE);
                     let _ = JSValue::call_next_tick_1(cb, global, reply);
@@ -1356,12 +1323,6 @@ impl SendQueue {
         }
         // consume the message and continue sending
         let item = self.waiting_for_ack.take().unwrap();
-        // The retransmission budget is per handle message (node keeps it on
-        // the message object as `retransmissions`); handle messages are
-        // serialized through `waiting_for_ack`, so resetting on completion
-        // gives exactly per-message semantics. Without this, transient NACKs
-        // accumulate over the channel's lifetime and a later handle message
-        // would give up on its first NACK.
         self.retry_count = 0;
         item.complete(global); // call the callback & deinit
         log!("IPC call continueSend() from onAckNack success");
@@ -1443,10 +1404,6 @@ impl SendQueue {
         }
         debug_assert!(!self.write_in_progress);
         self.write_in_progress = true;
-        // SCM_RIGHTS rides with the FIRST byte of the message (libuv clears
-        // `req->send_handle` after the first successful write for the same
-        // reason): once any bytes went out, continuations must not re-attach
-        // the fd or every partial-write chunk dups it into the receiver again.
         let fd = if self.queue[0].data.cursor == 0 {
             self.queue[0].handle.as_ref().map(|h| h.fd)
         } else {
@@ -1491,9 +1448,6 @@ impl SendQueue {
             self.update_ref(&global_this);
             return;
         } else if n > 0 && n < i32::try_from(first.data.list.len()).expect("int cast") {
-            // the item was partially sent; update the cursor and wait for writable to send the rest.
-            // The handle (if any) already went out with the first chunk's ancillary data;
-            // continue_send only attaches it while cursor == 0.
             first.data.cursor += usize::try_from(n).expect("int cast");
             self.update_ref(&global_this);
             return;
@@ -1544,9 +1498,6 @@ impl SendQueue {
         log!("SendQueue#serializeAndSend");
         let indicate_backoff = self.waiting_for_ack.is_some() && !self.queue.is_empty();
         let mode = self.mode;
-        // Serialize into a local buffer BEFORE start_message so a serialize
-        // failure never leaves a stale queue entry (which would spuriously
-        // close the user's socket via close_on_complete on next drain).
         let mut payload = StreamBuffer::default();
         let payload_length = match serialize(mode, &mut payload, global, value, is_internal) {
             Ok(n) => n,
@@ -1622,9 +1573,6 @@ impl SendQueue {
         #[cfg(windows)]
         {
             let socket = *self.get_socket().unwrap();
-            // `fd` is intentionally unused on Windows: handles travel in-band
-            // as serialized WSAPROTOCOL_INFOW on the message payload (see
-            // WIN_SOCKET_INFO_KEY), not as out-of-band pipe data.
             let _ = fd;
             let pipe: *mut uv::Pipe = socket;
 
@@ -1996,12 +1944,10 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
     }
     let mut err: c_int = 0;
     // SAFETY: `info` is a live buffer of export_size() bytes holding the
-    // sender's WSAPROTOCOL_INFOW; the FFI reads it and creates a new SOCKET.
     let sock = unsafe {
         bun_uws::socket_transfer::bsd_socket_import(info.as_mut_ptr().cast::<c_void>(), &mut err)
     };
     if sock == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
-        // LIBUS_SOCKET_ERROR == (SOCKET)-1 on Windows.
         log!("importWindowsSocketPayload: WSASocketW failed: {}", err);
         return None;
     }
@@ -2015,9 +1961,6 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
 fn received_fd_to_js(fd: Fd) -> JSValue {
     #[cfg(windows)]
     {
-        // Prefer an int32-encoded number: the consuming paths (bindgen b.i32
-        // fields, to_int32 reads) all speak int32, and Windows guarantees
-        // kernel handles use only the lower 32 bits.
         let v = fd.native() as u64;
         if v <= i32::MAX as u64 {
             JSValue::js_number_from_int32(v as i32)
@@ -2100,9 +2043,6 @@ fn handle_ipc_message(
     if let Some(icmd) = internal_command {
         match icmd {
             IPCCommand::Handle(msg_data) => {
-                // Handle NODE_HANDLE message. POSIX: the fd arrived as
-                // SCM_RIGHTS ancillary data; Windows: it rides in-band as
-                // serialized protocol info on the message itself.
                 #[cfg(windows)]
                 let imported = import_windows_socket_payload(global_this, msg_data);
                 #[cfg(windows)]
@@ -2173,24 +2113,11 @@ fn handle_ipc_message(
             }
         }
     } else {
-        // Internal (cluster) messages can carry an SCM_RIGHTS fd (round-robin
-        // connection handoff, shared listen handles). The sender marks the
-        // message with `$hasHandle`; surface the received fd as `$fd` on the
-        // message object so cluster JS internals can adopt it without changing
-        // the dispatch chain's [message, handle] argument shape.
         if let DecodedIPCMessage::Internal(msg_data) = &message {
             let msg_data = *msg_data;
             if msg_data.is_object() {
                 match msg_data.get(global_this, "$hasHandle") {
                     Ok(Some(marker)) if marker.to_boolean() => {
-                        // The sender parks a handle-carrying message in
-                        // `waiting_for_ack` until the receiver confirms the fd
-                        // arrived (same protocol as NODE_HANDLE). Reply at the
-                        // native layer so the sender's queue unblocks; NACK
-                        // triggers retransmission when the fd was not paired.
-                        // POSIX: the fd arrived as SCM_RIGHTS ancillary data.
-                        // Windows: it rides in-band as serialized protocol
-                        // info on the message itself.
                         #[cfg(windows)]
                         let imported = import_windows_socket_payload(global_this, msg_data);
                         #[cfg(windows)]
@@ -2213,8 +2140,6 @@ fn handle_ipc_message(
                         send_queue
                             .continue_send(global_this, ContinueSendReason::NewMessageAppended);
                         if !ack {
-                            // Don't dispatch: the sender retransmits the
-                            // message together with the fd.
                             return;
                         }
                         #[cfg(windows)]

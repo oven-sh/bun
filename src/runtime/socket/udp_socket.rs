@@ -356,9 +356,6 @@ impl UDPSocketConfig {
         } else {
             None
         };
-        // Internal (dgram.ts cluster path only): the caller knows whether the
-        // fd is shared with other processes; not part of the public options
-        // shape, so read as a plain truthy without validation.
         let shared_fd = options
             .get_truthy(global_this, "$sharedFd")?
             .is_some_and(|v| v.to_boolean());
@@ -625,8 +622,6 @@ impl UDPSocket {
         };
         drop(hostname_z);
         if created.is_null() && err == 0 && config.fd.is_some() {
-            // create_from_fd surfaces the poll-registration errno now; the
-            // only remaining zero-err failure is allocation on the C side.
             err = libc::EINVAL;
         }
         this.socket.set(if created.is_null() {
@@ -1673,7 +1668,6 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return JSValue::js_number(-1.0);
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         JSValue::js_number(uws::udp::Socket::opaque_mut(socket).fd() as f64)
     }
 

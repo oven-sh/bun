@@ -290,8 +290,6 @@ export default {
   NodeEntryObserver,
 
   kHandle: Symbol("kHandle"),
-  // Links a cluster worker's faux/shared listen handle back to its net.Server
-  // (node's owner_symbol); shared between net.ts and internal/cluster/child.ts.
   kClusterOwner: Symbol("kClusterOwner"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kResistStopPropagation: Symbol("kResistStopPropagation"),

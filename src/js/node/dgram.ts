@@ -263,8 +263,6 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
     if (cluster === undefined) cluster = require("node:cluster");
     if (cluster.isWorker && !fdExclusive) {
-      // The fd number is only meaningful in the primary (node semantics): the
-      // primary opens it and ships the real handle back over the channel.
       cluster._getServer(
         this,
         { address: null, port: null, addressType: this.type, fd, flags: null },
@@ -280,9 +278,6 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
           }
           state.clusterHandle = handle;
           handle.adopted = true;
-          // Worker._disconnect() escalates through the owner so the adopted
-          // Bun socket actually closes (the wrapper alone only drops the
-          // primary-side refcount).
           handle[kClusterOwner] = this;
           bunBindSocket(this, state, { fd: handle.sharedFd, "$sharedFd": true });
         },
@@ -321,16 +316,12 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       return;
     }
 
-    // node: reusePort implies exclusive — the kernel balances; cluster's
-    // shared handle is skipped.
     if (state.reusePort) {
       exclusive = true;
     }
 
     if (cluster === undefined) cluster = require("node:cluster");
     if (cluster.isWorker && !exclusive) {
-      // UDP is never round-robin: the primary binds once (UV-style flags)
-      // and ships the fd to every worker that asks.
       let clusterFlags = 0;
       if (state.ipv6Only) clusterFlags |= 1;
       if (state.reuseAddr) clusterFlags |= 4;
@@ -380,9 +371,6 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
   return this;
 };
 
-// Create (or adopt, when `options.fd` is set) the native Bun UDP socket and
-// finish the bind: wire message/error handlers, flip state to BOUND, emit
-// 'listening'.
 function bunBindSocket(self, state, options) {
   const family = self.type === "udp4" ? "IPv4" : "IPv6";
   try {
@@ -390,14 +378,11 @@ function bunBindSocket(self, state, options) {
       ...options,
       socket: {
         data: (_socket, data, port, address) => {
-          // close() is synchronous in node: nothing is emitted after the
-          // handle is gone.
           if (!state.handle) return;
           self.emit("message", data, {
             port: port,
             address: address,
             size: data.length,
-            // TODO check if this is correct
             family,
           });
         },
@@ -408,7 +393,6 @@ function bunBindSocket(self, state, options) {
     }).$then(
       socket => {
         if (!state.handle) {
-          // Socket was closed while the native bind was pending.
           socket.close();
           return;
         }
@@ -435,8 +419,6 @@ function bunBindSocket(self, state, options) {
   }
 }
 
-// The bind failed, so the adopted fd never made it into a native socket:
-// reclaim ownership (close() skips the fd once `adopted` is set) and close it.
 function releaseClusterHandle(state) {
   const handle = state.clusterHandle;
   if (handle) {
@@ -794,10 +776,7 @@ Socket.prototype.close = function (callback) {
   state.receiving = false;
   state.handle.socket?.close();
   state.handle = null;
-  // Take post-close use back through the UNBOUND path; send()/bind() throw
-  // ERR_SOCKET_DGRAM_NOT_RUNNING via healthCheck() before re-binding.
   state.bindState = BIND_STATE_UNBOUND;
-  // Tell the primary to drop us from the shared-handle refcount.
   if (state.clusterHandle) {
     state.clusterHandle.close();
     state.clusterHandle = null;

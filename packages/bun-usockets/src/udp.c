@@ -150,8 +150,6 @@ LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s) {
     return us_poll_fd(&s->p);
 }
 
-/* Adopt an existing bound UDP fd (e.g. a node:cluster shared dgram handle
- * delivered over SCM_RIGHTS). POSIX only — returns NULL on Windows/libuv. */
 struct us_udp_socket_t *us_create_udp_socket_from_fd(
     struct us_loop_t *loop,
     void (*data_cb)(struct us_udp_socket_t *, void *, int),
@@ -178,7 +176,6 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
 
     struct us_udp_socket_t *udp = (struct us_udp_socket_t *)p;
 
-    /* Get and store the port once */
     struct bsd_addr_t tmp = {0};
     bsd_local_addr(fd, &tmp);
     udp->port = bsd_addr_get_port(&tmp);
@@ -195,9 +192,6 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
     udp->on_recv_error = recv_error_cb;
     udp->next = NULL;
 
-    /* Match us_socket_group_listen_fd: surface epoll_ctl/kqueue registration
-     * failure (EBADF/EPERM/ENOSPC) instead of returning a socket that never
-     * receives. Do NOT close the fd — the caller owns it. */
     if (us_poll_start_rc((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE) != 0) {
         int saved_errno = errno;
         us_poll_free(p, loop);

@@ -92,8 +92,6 @@ function traceServerRequestEnd() {
 }
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
-// Same shape as child.ts's send(): all child cluster traffic is
-// process.send-observable and shares one seq namespace.
 const kClusterSendOptions = { __proto__: null, "$internal": true };
 
 const kServerResponse = Symbol("ServerResponse");
@@ -254,9 +252,6 @@ function Server(options, callback): void {
   EventEmitter.$call(this);
   this.on("listening", setupConnectionsTracking);
 
-  // node's connectionListenerInternal tags every connection with the server
-  // before user listeners run; sockets injected via
-  // `server.emit("connection", socket)` rely on it.
   this.prependListener("connection", socket => {
     if (socket != null && typeof socket === "object") socket.server = this;
   });
@@ -515,11 +510,6 @@ Server.prototype.listen = function () {
 
     if (cluster === undefined) cluster = require("node:cluster");
 
-    // TODO: http.Server routes through Bun.serve directly (not net.Server), so
-    // it cannot yet adopt a shared fd or a round-robin connection fd from
-    // cluster._getServer. Until Bun.serve accepts {fd}, workers keep binding
-    // independently with reusePort. IPC handle passing itself now works — the
-    // remaining gap is Bun.serve fd adoption.
 
     // const serverQuery = {
     //   // address: address,
@@ -545,9 +535,6 @@ Server.prototype.listen = function () {
       cluster.worker.state = "listening";
       const address = server.address();
       const isObjectAddress = address !== null && typeof address === "object";
-      // node reports the pre-listen query, not the bound address: null/4 when
-      // no host was given (never the wildcard the socket bound to), and the
-      // path with port/addressType -1 for pipe servers.
       const boundHost = host && isObjectAddress ? address : null;
       const message = {
         cmd: "NODE_CLUSTER",

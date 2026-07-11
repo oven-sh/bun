@@ -564,9 +564,6 @@ impl SocketConfig {
                 hostname_or_unix: ZigStringSlice::empty(),
                 port: None,
                 fd: generated.fd.map(|v| {
-                    // JS-visible socket fds are raw SOCKET values on Windows
-                    // (see `to_js_without_making_lib_uv_owned`), plain fds on
-                    // POSIX.
                     #[cfg(windows)]
                     {
                         Fd::from_system(v as u32 as usize as *mut core::ffi::c_void)
@@ -592,9 +589,6 @@ impl SocketConfig {
         // On any `?` below, `result` drops and `Handlers::Drop` unprotects its
         // JSValues — no manual error-path cleanup needed.
 
-        // These options apply to every connection shape: an adopted fd
-        // (cluster round-robin handoff, IPC-passed net.Socket) and a unix
-        // path rely on allowHalfOpen exactly like a hostname connect.
         result.exclusive = generated.exclusive;
         result.allow_half_open = generated.allow_half_open;
         result.reuse_port = generated.reuse_port;

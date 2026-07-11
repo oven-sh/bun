@@ -58,7 +58,6 @@ pub(crate) fn uv_translate_sys_error(
         return Ok(JSValue::js_number_from_int32(-UV_E::INVAL));
     }
     let n = arg.to_int32();
-    // Already a negative uv-domain code (or zero): pass through.
     if n <= 0 {
         return Ok(JSValue::js_number_from_int32(n));
     }

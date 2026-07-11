@@ -1,14 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, nodeExe, tempDir } from "harness";
 
-// `subprocess.send(message, handle)` / `process.send(message, handle)`: the
-// handle's fd rides the IPC channel (SCM_RIGHTS + Node's NODE_HANDLE /
-// NODE_HANDLE_ACK handshake) and is reconstructed as a live net.Server /
-// net.Socket in the receiver. The envelope must use Node's wire format
-// (user payload under `msg`) so either end can be a real Node.js process.
-//
-// Windows is skipped: Bun's named-pipe IPC transfers SOCKETs via
-// WSADuplicateSocketW only between Bun processes today.
 
 const node = nodeExe();
 
@@ -35,7 +27,6 @@ server.listen(0, '127.0.0.1', () => {
   child.on('message', m => {
     if (typeof m === 'object' && m.error) return finish(false, m.error);
     if (m !== 'ready') return;
-    // Close the parent's copy so only the child's fd accepts.
     server.close();
     const client = connect(port, '127.0.0.1');
     client.setEncoding('utf8');
@@ -72,10 +63,6 @@ process.on('message', (m, server) => {
     });
   });
 
-  // Regression test for the NODE_HANDLE envelope key: node's wire format is
-  // { cmd: 'NODE_HANDLE', type, msg } (lib/internal/child_process.js). With a
-  // `message` key the handle still arrives but the node child sees an
-  // `undefined` message.
   test
     .skipIf(!node)
     .concurrent("bun parent -> node child: the user message survives the NODE_HANDLE envelope", async () => {
@@ -136,11 +123,6 @@ process.on('message', (m, server) => {
       });
     });
 
-  // A handle message can wait in the IPC queue behind the previous handle's
-  // pending NODE_HANDLE_ACK. Destroying the socket in that window must not
-  // invalidate the in-flight descriptor (the sender dups it), or sendmsg
-  // ships EBADF / a recycled fd. node gets this for free by detaching
-  // `_handle` on send.
   test.concurrent("destroying a socket right after send() does not lose the queued handle", async () => {
     using dir = tempDir("ipc-handle-destroy-race", {
       "parent.js": `
@@ -168,9 +150,6 @@ const accepted = [];
 server.on('connection', c => {
   accepted.push(c);
   if (accepted.length === 2) {
-    // Both handle messages are sent back-to-back: the second is queued
-    // behind the first's pending NODE_HANDLE_ACK, and its socket is
-    // destroyed while it waits.
     child.send({ i: 1 }, accepted[0]);
     child.send({ i: 2 }, accepted[1]);
     accepted[1].destroy();
@@ -218,8 +197,6 @@ process.on('message', (m, sock) => {
     });
   });
 
-  // The reverse direction exercises Bun's parseHandle reading `serialized.msg`
-  // from a real node parent's envelope.
   test
     .skipIf(!node)
     .concurrent("node parent -> bun child: the user message survives the NODE_HANDLE envelope", async () => {
@@ -280,8 +257,6 @@ process.on('message', (m, server) => {
       });
     });
 
-  // send(msg, socket, {keepOpen: true}): both parent and child hold a live
-  // dup of the connection. Node's test/parallel/test-child-process-send-keep-open.js.
   test.concurrent("net.Socket handle sent with {keepOpen: true} stays open in the sender", async () => {
     using dir = tempDir("ipc-handle-keepopen", {
       "parent.js": `
@@ -294,12 +269,10 @@ const server = net.createServer(socket => {
   socket.on('close', () => { closed = true; });
   child.send('socket', socket, { keepOpen: true }, err => {
     if (err) return finish(false, 'send:' + err.message);
-    // The parent's copy must still be usable after the ack.
     socket.write('parent', () => {});
   });
   child.on('message', m => {
     if (m !== 'child-wrote') return;
-    // Only end after the child has also written.
     setTimeout(() => {
       if (closed) return finish(false, 'parent socket closed by keepOpen send');
       socket.end();
@@ -346,8 +319,6 @@ process.on('message', (m, socket) => {
     });
   });
 
-  // parseHandle net.Socket must not leave connecting=true (fd-adopt fires
-  // onOpen synchronously; the connecting=true stamp used to overwrite it).
   test.concurrent("received net.Socket has connecting=false and remoteAddress synchronously", async () => {
     using dir = tempDir("ipc-handle-connecting", {
       "parent.js": `
@@ -382,8 +353,6 @@ process.on('message', (m, sock) => {
     expect(exitCode).toBe(0);
   });
 
-  // _on_after_ipc_closed: A's bytes went out (waiting_for_ack) → cbA(null);
-  // B was queued behind A with cursor==0 → abort_unsent, cbB never fires.
   test.concurrent(
     "channel close: written handle callback fires null; unsent queued handle callback never fires",
     async () => {
@@ -399,7 +368,6 @@ server.listen(0, '127.0.0.1', () => {
     const sockA = this;
     net.connect(server.address().port, '127.0.0.1', function () {
       const sockB = this;
-      // A goes out and lands in waiting_for_ack; B is queued behind it (cursor==0).
       child.send('A', sockA, err => { a = err; });
       child.send('B', sockB, () => { bCalled = true; });
       child.kill('SIGKILL');

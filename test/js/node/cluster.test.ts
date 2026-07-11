@@ -170,8 +170,6 @@ const net = require("node:net");
 const tls = require("node:tls");
 
 if (cluster.isPrimary) {
-  // The plain worker claims the handle key first, so the primary maps it to
-  // a RoundRobinHandle before the TLS worker (sharedOnly) asks for it.
   const netWorker = cluster.fork({ ROLE: "net" });
   cluster.once("listening", () => {
     const tlsWorker = cluster.fork({ ROLE: "tls" });
@@ -185,7 +183,6 @@ if (cluster.isPrimary) {
 } else if (process.env.ROLE === "net") {
   net.createServer(() => {}).listen(0);
 } else {
-  // Same key as the net worker: first listen(0) in each worker uses index 0.
   const server = tls.createServer({});
   server.on("error", err => process.send({ code: err.code, msg: err.message }));
   server.listen(0);
@@ -194,7 +191,6 @@ if (cluster.isPrimary) {
   });
   const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("tls listen error code: EINVAL");
-  // The Bun-invented failure carries the actual cause, not just a bare EINVAL.
   expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
 });
 
@@ -206,14 +202,10 @@ const net = require("node:net");
 const path = require("node:path");
 
 if (cluster.isPrimary) {
-  // The name must be computed once and shared via the fork env: a
-  // pid-derived name re-evaluated in the worker would point at a
-  // different (free) pipe and the listen below would succeed.
   const PIPE =
     process.platform === "win32"
       ? String.raw\`\\\\.\\pipe\\bun-cluster-pipe-err-\${process.pid}\`
       : path.join(__dirname, "test.sock");
-  // Hold the pipe in the primary so the worker's listen fails EADDRINUSE.
   const blocker = net.createServer(() => {});
   blocker.listen(PIPE, () => {
     const worker = cluster.fork({ BUN_CLUSTER_PIPE: PIPE });
@@ -257,8 +249,6 @@ if (cluster.isPrimary) {
     worker.disconnect();
   });
   cluster.on("exit", () => {
-    // removeHandlesForWorker (and SharedHandle.remove) runs before the
-    // primary emits 'exit', so the unlink must have happened by now.
     console.log("exists after exit:", fs.existsSync(SOCK));
     process.exit(0);
   });
@@ -286,8 +276,6 @@ const SOCK = path.join(__dirname, "perm.sock");
 if (cluster.isPrimary) {
   const worker = cluster.fork({ BUN_CLUSTER_SOCK: SOCK });
   cluster.on("listening", () => {
-    // node: the worker fchmods the shared pipe handle after listen, so the
-    // group/other read+write bits must be set by the time it is listening.
     const mode = fs.statSync(SOCK).mode;
     console.log("perm bits:", (mode & 0o066).toString(8));
     worker.kill();
@@ -313,8 +301,6 @@ const path = require("node:path");
 const SOCK = path.join(__dirname, "rr-perm.sock");
 
 if (cluster.isPrimary) {
-  // Default SCHED_RR: the primary owns the real pipe listener, so it must
-  // receive readableAll/writableAll through the worker's queryServer message.
   const worker = cluster.fork({ BUN_CLUSTER_SOCK: SOCK });
   cluster.on("listening", () => {
     const mode = fs.statSync(SOCK).mode;
@@ -349,7 +335,6 @@ if (cluster.isPrimary) {
     c.on("data", d => (buf += d));
     c.on("connect", () => {
       c.write("ping");
-      // Half-close: the worker's reply comes after our FIN.
       c.end();
     });
     c.on("end", () => {
@@ -363,8 +348,6 @@ if (cluster.isPrimary) {
     });
   });
 } else {
-  // The reply is written a tick after 'end': with allowHalfOpen the adopted
-  // fd must keep its writable half open instead of being closed on the FIN.
   net
     .createServer({ allowHalfOpen: true }, socket => {
       let buf = "";
@@ -399,8 +382,6 @@ if (cluster.isPrimary) {
     c.on("error", () => {});
   });
 } else {
-  // 1234 is far from the default highWaterMark, so a dropped option is
-  // visible. The RR path must propagate it like ServerHandlers.open().
   net
     .createServer({ highWaterMark: 1234 }, socket => {
       process.send({ hwm: socket.readableHighWaterMark });
@@ -425,8 +406,6 @@ cluster.schedulingPolicy = cluster.SCHED_NONE;
 if (cluster.isPrimary) {
   const worker = cluster.fork();
   cluster.on("listening", (w, address) => {
-    // node's createServerHandle binds "::" when no address is given, so an
-    // IPv6 client must be able to reach the shared-handle server.
     const c = net.connect({ host: "::1", port: address.port });
     c.on("connect", () => {
       console.log("ipv6 connect ok");
@@ -474,9 +453,6 @@ test("disconnect() on a cluster.Worker built around a plain object does not abor
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
 });
 
-// The worker binds one server per target, in order, and the primary collects the
-// 'listening' payloads off the ordered IPC channel in that same order.
-// https://nodejs.org/api/cluster.html#event-listening-1
 const listeningPayloadFixture = `
 const cluster = require("node:cluster");
 
@@ -519,7 +495,6 @@ if (cluster.isPrimary) {
       const server = createServer(() => {});
       await new Promise((resolve, reject) => {
         server.once("error", reject);
-        // A listen() with no host must reach the primary as address: null, addressType: 4.
         if (target.path) server.listen(target.path, resolve);
         else if (target.host === null) server.listen(0, resolve);
         else server.listen(0, target.host, resolve);
@@ -536,8 +511,6 @@ test.each(["net", "http"])("cluster 'listening' reports the address a %s server 
   const dir = tempDirWithFiles("cluster-listening", { "fixture.js": listeningPayloadFixture });
   const targets: ({ host: string | null } | { path: string })[] = [{ host: "127.0.0.1" }, { host: null }];
   if (isIPv6()) targets.push({ host: "::1" });
-  // node reports pipe servers as address: <path>, addressType: -1, port: -1.
-  // Kept posix-only, like the file's other pipe-server coverage.
   if (!isWindows) targets.push({ path: joinP(dir, `${moduleName}.sock`) });
 
   const { stdout } = bunRun(joinP(dir, "fixture.js"), { MODULE: moduleName, TARGETS: JSON.stringify(targets) });
@@ -554,7 +527,6 @@ test.each(["net", "http"])("cluster 'listening' reports the address a %s server 
           },
     ),
   );
-  // The reported port for a TCP listen(0) is the real bound port, never the requested 0.
   for (const [i, target] of targets.entries()) {
     if (!("path" in target)) expect(payloads[i].port).toBeWithin(1, 65536);
   }
@@ -579,8 +551,6 @@ if (cluster.isPrimary) {
 } else {
   net
     .createServer(socket => {
-      // Captured synchronously in the connection listener: node's onconnection
-      // delivers accepted sockets already open, not connecting.
       process.send({
         connecting: socket.connecting,
         readyState: socket.readyState,
@@ -619,8 +589,6 @@ if (cluster.isPrimary) {
   cluster.on("listening", (w, address) => {
     for (let i = 0; i < N; i++) {
       const c = net.connect(address.port, "127.0.0.1", () => {
-        // Write immediately on connect: with pauseOnConnect at the primary
-        // accept, byte 0 must reach the worker, not the primary's Duplex.
         c.write("MAGIC-" + i + "-" + "x".repeat(4096));
         c.end();
       });
@@ -647,8 +615,6 @@ if (cluster.isPrimary) {
 });
 
 test("TLS cluster worker under SCHED_RR listens on a shared handle and completes handshakes", () => {
-  // Two forked workers + a TLS handshake in a debug build is well over the
-  // default 5s test budget.
   const dir = tempDirWithFiles("bun-test", {
     "cert.pem": tlsCerts.cert,
     "key.pem": tlsCerts.key,
@@ -668,7 +634,6 @@ if (cluster.isPrimary) {
   cluster.on("listening", (w, address) => {
     ports.add(address.port);
     if (++listening !== 2) return;
-    // Both workers must share the primary-bound port under SCHED_RR TLS.
     console.log("distinct ports:", ports.size);
     const port = address.port;
     const c = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
@@ -715,7 +680,6 @@ const key = fs.readFileSync(path.join(__dirname, "key.pem"));
 const cert = fs.readFileSync(path.join(__dirname, "cert.pem"));
 
 if (cluster.isPrimary) {
-  // Reverse of the existing test: TLS worker claims first, plain worker second.
   const tlsWorker = cluster.fork({ ROLE: "tls" });
   cluster.once("listening", () => {
     const netWorker = cluster.fork({ ROLE: "net" });
@@ -756,7 +720,6 @@ if (cluster.isPrimary) {
     worker.disconnect();
   });
   cluster.on("exit", () => {
-    // stderr fd must still be a valid open fd in the primary.
     try {
       fs.fstatSync(2);
       console.log("stderr open: true");
@@ -775,16 +738,10 @@ if (cluster.isPrimary) {
 `,
   });
   const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
-  // ENOTSOCK when the primary's fd 2 is a pipe/tty; some paths surface EINVAL.
-  // The load-bearing invariant is that the primary's stderr survives remove().
   expect(stdout).toMatch(/worker error code: (ENOTSOCK|EINVAL|EBADF)/);
   expect(stdout).toContain("stderr open: true");
 });
 
-// Design regression: makeAcceptedHandle used to snapshot the fd number, so a
-// client RST while the handle was queued (uSockets closes it via EPOLLERR)
-// let the next accept recycle the fd — the worker got shipped an unrelated
-// descriptor. The live getter + close listener drop dead handles instead.
 test.skipIf(isWindows)(
   "round-robin: RST-while-queued handle is dropped, not shipped stale",
   async () => {
@@ -806,8 +763,6 @@ if (cluster.isPrimary) {
       clients.push(c);
     }
     function rst() {
-      // RST every queued client, wait for their close (so the primary's
-      // EPOLLERR path has run), then connect a real one that identifies itself.
       let closed = 0;
       for (const c of clients) { c.once("close", onClosed); c.resetAndDestroy(); }
       function onClosed() {
@@ -841,8 +796,6 @@ if (cluster.isPrimary) {
   30_000,
 );
 
-// The RR accept path must apply the same per-connection gates as the direct
-// path (ServerHandlers.open) — blockList, pauseOnConnect, and socket._server.
 test("round-robin worker honors server.blockList", async () => {
   using dir = tempDir("cluster-blocklist", {
     "main.ts": `
@@ -916,8 +869,6 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 }, 30_000);
 
-// listenInCluster resolves the hostname in the worker (async DNS) before
-// asking the primary; the lookupListeningId guard drops a stale callback.
 test("worker listen(0, 'localhost') resolves before querying the primary", async () => {
   using dir = tempDir("cluster-dns", {
     "main.ts": `
@@ -950,9 +901,6 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 }, 30_000);
 
-// A worker dying between newconn send and its ack must not strand the
-// connection: RoundRobinHandle.remove() reclaims from inFlight and hands it
-// to another worker (covers the us_socket_ipc_write_fd -1 → close path).
 test.skipIf(isWindows)(
   "worker death mid-handoff redistributes the connection to another worker",
   async () => {
@@ -971,8 +919,6 @@ if (cluster.isPrimary) {
     c.on("error", () => {});
   });
 } else if (process.env.ROLE === "die") {
-  // Exit from inside the internalMessage listener before onconnection acks,
-  // so the primary observes EPIPE / disconnect with the handle in flight.
   process.on("internalMessage", m => { if (m.act === "newconn") process.exit(0); });
   net.createServer(() => {}).listen(0, "127.0.0.1");
 } else {
@@ -994,8 +940,6 @@ if (cluster.isPrimary) {
   30_000,
 );
 
-// child.ts send() must clone (not mutate) the caller's message and stamp
-// cmd:'NODE_CLUSTER' — node's utils.js sendHelper shape.
 test("cluster child send() clones and stamps cmd:NODE_CLUSTER", async () => {
   using dir = tempDir("cluster-send-shape", {
     "main.ts": `
@@ -1009,12 +953,7 @@ if (cluster.isPrimary) {
   process.send = function (msg, ...rest) { seen.push(msg); return orig.call(this, msg, ...rest); };
   const server = require("node:net").createServer(() => {});
   server.listen(0, "127.0.0.1");
-  // child.ts's own 'listening' handler (which sends act:'listening') is
-  // registered inside _getServer, after any user callback; wait a tick.
   server.once("listening", () => setImmediate(() => {
-    // queryServer + listening should both have cmd:NODE_CLUSTER; the
-    // captured queryServer object's .act must not have been mutated to
-    // 'listening' (send() clones).
     const q = seen.find(m => m && m.act === "queryServer");
     const l = seen.find(m => m && m.act === "listening");
     process.send = orig;

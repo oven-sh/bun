@@ -63,7 +63,6 @@ impl Socket {
         user_data: *mut c_void,
     ) -> *mut Socket {
         // SAFETY: thin wrapper over us_create_udp_socket_from_fd; the caller
-        // guarantees `fd` is a bound UDP socket it owns.
         unsafe {
             us_create_udp_socket_from_fd(
                 loop_,

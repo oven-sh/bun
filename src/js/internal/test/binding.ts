@@ -10,8 +10,6 @@ const agent = require("internal/trace_events");
 
 let fs;
 
-// node's udp_wrap UDP handle, reduced to what test-cluster-dgram-bind-fd
-// needs: construct, bind a raw UDP socket, read `.fd`, close.
 class UDP {
   fd = -1;
 

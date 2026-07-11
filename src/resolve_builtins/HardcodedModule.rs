@@ -706,8 +706,6 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("bun:sqlite"),
     entry!("bun:wrap"),
     entry!("bun:internal-for-testing"),
-    //
-    // node `--expose-internals` module names used by vendored cluster tests.
     (
         b"internal/cluster/round_robin_handle",
         Alias {

@@ -350,10 +350,6 @@ struct us_udp_socket_t {
     uint16_t port;
     uint16_t closed : 1;
     uint16_t connected : 1;
-    /* Set for node:cluster shared handles (the fd is duped into every worker):
-     * receive one datagram per syscall so a close() from the data callback
-     * cannot discard batched packets. Standalone fd-adopts (dgram.bind({fd}),
-     * Bun.udpSocket({fd})) leave this 0 and keep the recvmmsg batch. */
     uint16_t shared_fd : 1;
     struct us_udp_socket_t *next;
 };

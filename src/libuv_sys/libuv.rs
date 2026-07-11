@@ -1175,9 +1175,6 @@ impl Pipe {
     #[inline]
     pub fn ipc_remote_pid(&self) -> DWORD {
         // SAFETY: `conn` is the active variant for a connected IPC pipe (init
-        // ipc=1 + open). Reading a possibly-inactive union arm is defined for
-        // `Copy` fields; on serv the value is meaningless but we return 0 for
-        // an unopened pipe anyway (libuv zero-inits the storage).
         unsafe { self.pipe.conn.ipc_remote_pid }
     }
     /// `uv_pipe_init` wrapper. Returns the raw `ReturnCode`; callers

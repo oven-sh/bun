@@ -3494,7 +3494,6 @@ fn get_hardcoded_module(
                     return None;
                 }
             }
-            // Both variants' names are the registry's canonical specifiers.
             let name: &'static str = hardcoded.into();
             Some(js_synthetic_module(name.as_bytes(), specifier))
         }

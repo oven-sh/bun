@@ -1162,7 +1162,6 @@ int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void 
     return 0;
 #else
     (void) fd; (void) target_pid; (void) info_out;
-    /* POSIX transfers fds with SCM_RIGHTS (us_socket_ipc_write_fd). */
     return ENOTSUP;
 #endif
 }
@@ -1196,19 +1195,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
     int gai = getaddrinfo(host, port_string, &hints, &result);
     if (gai != 0) {
 #ifdef _WIN32
-        /* On Windows getaddrinfo returns WSA error codes directly, which is
-         * the domain the caller's uv_translate_sys_error expects. */
         *error = gai;
 #else
-        /* POSIX getaddrinfo errors are EAI_* (a different domain from errno);
-         * there is no faithful errno for them, so report EINVAL. */
         *error = EINVAL;
 #endif
         return LIBUS_SOCKET_ERROR;
     }
 
     LIBUS_SOCKET_DESCRIPTOR fd = LIBUS_SOCKET_ERROR;
-    /* Prefer IPv6 (dual-stack) like bsd_create_listen_socket. */
     for (int family = AF_INET6; fd == LIBUS_SOCKET_ERROR && family >= AF_INET; family -= (AF_INET6 - AF_INET)) {
         for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
             if (a->ai_family != family) {
@@ -1216,12 +1210,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
             }
             fd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
             if (fd == LIBUS_SOCKET_ERROR) {
-                /* Keep the contract: *error always set when we return failure. */
                 *error = LIBUS_ERR;
                 continue;
             }
 #if defined(SO_REUSEADDR) && !defined(_WIN32)
-            /* See bsd_bind_listen_fd: on Windows SO_REUSEADDR steals ports. */
             int one = 1;
             setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 #endif

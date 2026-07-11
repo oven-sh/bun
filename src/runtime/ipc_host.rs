@@ -111,9 +111,6 @@ pub(crate) fn do_send(
     #[cfg(not(windows))]
     let _ = peer_pid;
 
-    // cluster child.ts routes its internal traffic through process.send (so a
-    // monkey-patched process.send observes it, matching node's sendHelper);
-    // this option carries the wire-level Internal tag through that hop.
     let mut is_internal = IsInternal::External;
     if handle.is_callable() {
         callback = handle;
@@ -180,11 +177,7 @@ pub(crate) fn do_send(
     }
 
     let mut zig_handle: Option<Handle> = None;
-    // Native socket whose reads must stop once the transfer is confirmed
-    // (the receiver owns the bytes from here; node detaches the handle).
     let mut pause_target = JSValue::UNDEFINED;
-    // POSIX dup(2) failure (EMFILE/ENFILE) — a Bun-created failure mode; must
-    // surface as a send error, not silently downgrade to a bare message.
     #[cfg_attr(windows, allow(unused_mut, unused_variables))]
     let mut dup_err: Option<bun_sys::Error> = None;
     if !handle.is_undefined_or_null() {
@@ -199,9 +192,6 @@ pub(crate) fn do_send(
                     // owned by uSockets; `get_socket` only reinterpret-casts to
                     // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
                     let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
-                    // POSIX: the Handle owns a dup so a server.close() while
-                    // this message waits behind an ack cannot invalidate the
-                    // fd sendmsg ships. Windows exports the SOCKET below.
                     #[cfg(not(windows))]
                     match Handle::init_dup(fd, handle, false) {
                         Ok(h) => zig_handle = Some(h),
@@ -216,17 +206,10 @@ pub(crate) fn do_send(
                 crate::socket::listener::ListenerType::None => {}
             }
         } else if let Some(socket) = crate::socket::TCPSocket::from_js(handle) {
-            // net.Socket: Ipc.ts serialize() unwrapped it to the native
-            // TCPSocket. The connected fd rides as SCM_RIGHTS; the JS handle
-            // object stays protected until the bytes are flushed.
             // SAFETY: from_js returned a non-null pointer; the JS wrapper
-            // holds it alive for the call.
             let fd = unsafe { (*socket).socket.get().fd() };
             if fd != bun_sys::Fd::INVALID {
                 log!("got tcp socket fd");
-                // node detaches the local socket and closes it once the
-                // receiver acks (unless keepOpen): otherwise the sender's
-                // copy keeps the event loop alive forever.
                 let keep_open = !options_.is_undefined_or_null()
                     && options_
                         .get(global_object, "keepOpen")?
@@ -234,11 +217,6 @@ pub(crate) fn do_send(
                 if !keep_open {
                     pause_target = handle;
                 }
-                // POSIX: the Handle owns a dup so a socket.destroy() while
-                // this message waits behind an ack/backpressure cannot
-                // invalidate (or recycle) the fd sendmsg ships. node gets the
-                // same effect by detaching `_handle`; Windows exports the
-                // SOCKET synchronously below instead.
                 #[cfg(not(windows))]
                 match Handle::init_dup(fd, handle, !keep_open) {
                     Ok(h) => zig_handle = Some(h),
@@ -261,8 +239,6 @@ pub(crate) fn do_send(
         return do_send_err(global_object, callback, e.to_js(global_object), from);
     }
 
-    // Windows: the fd cannot ride the pipe as ancillary data; serialize the
-    // socket for the peer process and attach it to the NODE_HANDLE message.
     #[cfg(windows)]
     if let Some(h) = &mut zig_handle {
         match attach_windows_socket_payload(global_object, message, h.fd, peer_pid) {
@@ -273,9 +249,6 @@ pub(crate) fn do_send(
             None => zig_handle = None,
         }
     }
-    // No transferable native socket (handle without a live fd, a named-pipe
-    // listener, or a failed Windows export): deliver the plain message
-    // instead of a NODE_HANDLE wrapper the receiver could never pair.
     if zig_handle.is_none() {
         message = original_message;
         pause_target = JSValue::UNDEFINED;
@@ -288,9 +261,6 @@ pub(crate) fn do_send(
         && !pause_target.is_undefined()
         && pause_target.is_object()
     {
-        // Only now — with the handle enqueued — stop reading on the sender's
-        // copy. A throw here must NOT surface as a send failure (the message
-        // is already committed): report as unhandled instead.
         match pause_target.get(global_object, "pause") {
             Ok(Some(f)) if f.is_callable() => {
                 if let Err(e) = f.call(global_object, pause_target, &[]) {
@@ -364,11 +334,6 @@ pub(crate) fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> 
     // `None`); the `&mut SendQueue` borrow is scoped to this call and does not
     // alias `vm` (the instance is heap-allocated, not embedded in `vm`).
     let ipc = vm.get_ipc_instance().map(|i| unsafe { &mut (*i).data });
-    // Windows: target WSADuplicateSocketW at the pipe's actual peer (computed
-    // by uv_pipe_open via GetNamedPipe{Client,Server}ProcessId), not the OS
-    // process-tree parent — a shim/wrapper between spawner and child, or a
-    // grandchild inheriting NODE_CHANNEL_FD, would make getppid() wrong. Fall
-    // back to getppid() only when the pipe hasn't cached a peer.
     #[cfg(windows)]
     let peer_pid = {
         let from_pipe = ipc.as_ref().map(|i| i.ipc_peer_pid()).unwrap_or(0);

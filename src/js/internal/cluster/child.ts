@@ -4,8 +4,6 @@ const path = require("node:path");
 const { kClusterOwner: owner_symbol } = require("internal/shared");
 
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessageChild", 2);
-// Closes a numeric cluster fd. On Windows these are raw SOCKETs that must go
-// through closesocket(), not the CRT fd table that fs.closeSync uses.
 const closeRawHandle = $newRustFunction("node_cluster_binding.rs", "clusterCloseHandle", 1);
 
 const FunctionPrototype = Function.prototype;
@@ -18,17 +16,10 @@ const indexes = new Map();
 const noop = FunctionPrototype;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
-// Carries the wire-level Internal tag through process.send (do_send in
-// ipc_host.rs); routing via process.send (instead of the sendHelperChild
-// binding) lets a monkey-patched process.send observe cluster traffic like
-// node's sendHelper does (test-net-server-close-before-ipc-response.js).
 const kInternalSendOptions = { __proto__: null, "$internal": true };
 let seq = 0;
 const callbacks = new Map();
 
-// Minimal stand-in for node's TCPWrap client handle: the primary hands off an
-// accepted connection as a raw fd over the IPC channel (surfaced as
-// `message.$fd`). net.ts adopts `.fd`; `.close()` covers the rejected path.
 function makeConnectionHandle(fd) {
   let closed = false;
   return {
@@ -78,8 +69,6 @@ cluster._setupWorker = function () {
   send({ act: "online" });
 
   function onmessage(message, handle) {
-    // ack-matching lives here (not in the Rust dispatcher) because send()
-    // routes through process.send and manages seq in this file.
     const ack = message.ack;
     if (ack !== undefined) {
       const callback = callbacks.$get(ack);
@@ -92,9 +81,6 @@ cluster._setupWorker = function () {
     if (message.act === "newconn" && handle == null && typeof message["$fd"] === "number" && message["$fd"] >= 0) {
       handle = makeConnectionHandle(message["$fd"]);
     }
-    // node emits cluster-internal messages on `process` before consuming them
-    // (test-cluster-worker-handle-close taps this). A throwing listener must
-    // not skip onconnection below; rethrow next tick as uncaughtException.
     try {
       process.emit("internalMessage", message, handle);
     } catch (e) {
@@ -144,8 +130,6 @@ cluster._getServer = function (obj, options, cb) {
     if (typeof obj._setServerData === "function") obj._setServerData(reply.data);
 
     if (handle == null && typeof reply["$fd"] === "number" && reply["$fd"] >= 0) {
-      // Shared listen socket: the primary bound it and sent the fd over the
-      // IPC channel (SCM_RIGHTS); the worker does the real listen on it.
       handle = makeSharedHandle(reply["$fd"]);
     }
 
@@ -183,9 +167,6 @@ function removeIndexesKey(indexesKey, index) {
   }
 }
 
-// Wraps a bound (not yet listening) fd received from the primary's
-// SharedHandle. net.ts spots `.sharedFd` and performs the real listen; once a
-// native socket adopts the fd (`adopted = true`), it owns the close.
 function makeSharedHandle(fd) {
   let closed = false;
   const handle = {
@@ -307,8 +288,6 @@ function onconnection(message, handle) {
   else handle.close();
 }
 
-// node's utils.js sendHelper: fresh object (never mutate the caller's) with
-// `cmd:'NODE_CLUSTER'` so a monkey-patched process.send sees node's body shape.
 function send(message, cb?) {
   if (!process.connected) return false;
   const wire = { __proto__: null, cmd: "NODE_CLUSTER", ...message, seq };
@@ -340,8 +319,6 @@ Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?)
       // it's primary initiated there's no need to send the
       // exitedAfterDisconnect message
       if (primaryInitiated) {
-        // The channel can already be gone (e.g. the primary exited right
-        // after requesting the disconnect); disconnecting twice throws.
         if (process.connected) process.disconnect();
       } else {
         send({ act: "exitedAfterDisconnect" }, () => {

@@ -4343,11 +4343,12 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // `new Blob(parts, {type})` so a crafted record cannot materialize a
     // `Blob.type` no JS could construct and feed it into HTTP headers.
     if !content_type.is_empty() && is_valid_blob_type(&content_type) {
-        blob.content_type
-            .set(match global_this.bun_vm().as_mut().mime_type(&content_type) {
+        blob.content_type.set(
+            match global_this.bun_vm().as_mut().mime_type(&content_type) {
                 Some(mime) => BlobContentType::from(mime),
                 None => BlobContentType::from_lowercased(&content_type),
-            });
+            },
+        );
         blob.content_type_was_set.set(content_type_was_set);
     }
 

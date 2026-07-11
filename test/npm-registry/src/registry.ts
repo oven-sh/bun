@@ -309,10 +309,14 @@ export class NpmRegistry implements AsyncDisposable, Disposable {
     // Prime from the pre-mutation record so the write path sees the values the
     // client observed: `touchRecord`'s clamp needs `modified` (an unpublish
     // deletes versions first, so deriving it there would use the shrunk set),
-    // and `publishVersions` only sets `created` for a truly fresh name.
+    // `publishVersions` only sets `created` for a truly fresh name, and a
+    // version's implicit time derives from its semver index, so publishing a
+    // lower version would otherwise shift every later one's.
     const observed = effectiveTime(working);
-    working.time.modified ??= observed.modified;
-    if (existing !== undefined) working.time.created ??= observed.created;
+    for (const key of Object.keys(observed)) {
+      if (key === "created" && existing === undefined) continue;
+      working.time[key] ??= observed[key];
+    }
     const response = await mutate(working);
     if (response.ok) {
       this.#removed.delete(name);

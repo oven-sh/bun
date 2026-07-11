@@ -39,7 +39,9 @@ function safeDecodeURIComponent(s: string): string {
 /**
  * A hook that may replace the response for a request. Returning
  * `undefined` (or a promise of it) lets the request fall through to the
- * next interceptor and then to normal routing.
+ * next interceptor and then to normal routing. Each interceptor receives
+ * its own clone of the request, so reading the body does not consume the
+ * stream the route handler (or the next interceptor) reads.
  */
 export type Interceptor = (
   request: Request,
@@ -99,7 +101,10 @@ export class RequestObserver {
 
   async runInterceptors(request: Request, observed: ObservedRequest): Promise<Response | undefined> {
     for (const interceptor of this.#interceptors) {
-      const response = await interceptor(request, observed);
+      // Each interceptor sees its own body stream, so reading it does not
+      // poison the route handler with a `Body already used` that
+      // `readJsonObject` would launder into a 400 "invalid JSON body".
+      const response = await interceptor(request.clone(), observed);
       if (response !== undefined) return response;
     }
     return undefined;

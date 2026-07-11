@@ -405,6 +405,33 @@ describe("observation", () => {
     uninstall();
     expect((await fetch(`${registry.url}pkg/-/pkg-1.0.0.tgz`)).status).toBe(200);
   });
+
+  test("an interceptor reading the body does not poison the route handler", async () => {
+    // Each interceptor receives a clone, so its read does not consume the
+    // stream the handler reads. Without cloning, `readJsonObject` catches
+    // `Body already used` and launders it into a 400 "invalid JSON body".
+    await using registry = await new NpmRegistry().start();
+    registry.advisories.add({ module_name: "x", vulnerable_versions: "*", severity: "low", title: "t" });
+    const seen: unknown[] = [];
+    registry.intercept(async req => {
+      if (req.method === "POST") seen.push(await req.json());
+      return undefined;
+    });
+    registry.intercept(async req => {
+      if (req.method === "POST") seen.push(await req.json());
+      return undefined;
+    });
+    const { status, body } = await getJson(`${registry.url}-/npm/v1/security/advisories/bulk`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ x: ["1.0.0"] }),
+    });
+    expect({ status, hasResult: "x" in (body as object), seen }).toEqual({
+      status: 200,
+      hasResult: true,
+      seen: [{ x: ["1.0.0"] }, { x: ["1.0.0"] }],
+    });
+  });
 });
 
 describe("auth", () => {
@@ -996,6 +1023,36 @@ describe("conditional requests after a metadata write", () => {
     });
     const time2 = ((await (await fetch(`${registry.url}fresh`)).json()) as { time: Record<string, string> }).time;
     expect(time2.created).toBe(time["1.0.0"]);
+  });
+
+  test("publishing a lower version does not shift existing versions' implicit publish times", async () => {
+    // A version without an explicit time derives it from its semver index,
+    // so inserting 0.5.0 would otherwise move 1.0.0 from EPOCH to EPOCH+1.
+    // `#write` primes every version's time from the pre-mutation record.
+    await using registry = await new NpmRegistry().start();
+    const token = registry.addUser({ name: "u", password: "p" });
+    registry.define("shift", { "1.0.0": {}, "2.0.0": {} });
+    const readTime = async () =>
+      ((await (await fetch(`${registry.url}shift`)).json()) as { time: Record<string, string> }).time;
+    const before = await readTime();
+    const tgz = Buffer.from(buildTarball({ "package.json": '{"name":"shift","version":"0.5.0"}' }).bytes).toString(
+      "base64",
+    );
+    await fetch(`${registry.url}shift`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        _id: "shift",
+        name: "shift",
+        versions: { "0.5.0": { name: "shift", version: "0.5.0" } },
+        _attachments: { "shift-0.5.0.tgz": { content_type: "application/octet-stream", data: tgz, length: tgz.length } },
+      }),
+    });
+    const after = await readTime();
+    expect({ "1.0.0": after["1.0.0"], "2.0.0": after["2.0.0"] }).toEqual({
+      "1.0.0": before["1.0.0"],
+      "2.0.0": before["2.0.0"],
+    });
   });
 
   test("publishing to a define()'d record keeps time.created at the value the client observed", async () => {

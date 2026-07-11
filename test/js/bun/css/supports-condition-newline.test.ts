@@ -18,9 +18,7 @@ test("`@supports` condition containing a literal newline prints without panickin
   expect(minifyTest(unknownMin, "")).toBe(unknownMin);
 
   // Selector variant: `selector(...)` body is a raw input slice.
-  expect(minifyTest("@supports selector(a\n b) {.x{color:red}}", "")).toBe(
-    "@supports selector(a\n b){.x{color:red}}",
-  );
+  expect(minifyTest("@supports selector(a\n b) {.x{color:red}}", "")).toBe("@supports selector(a\n b){.x{color:red}}");
 
   // Declaration variant via `@import ... supports(...)`: the value is a raw input slice.
   expect(minifyTest("@import url(x.css) supports(color: lab(0%\n 0 0));", "")).toBe(

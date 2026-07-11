@@ -2024,12 +2024,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             // Read errno/code directly instead of going through
             // `to_system_error()`, which allocates a WTFStringImpl message
             // that nothing here would deref (bun_core::String is Copy).
+            // Report the libuv-style errno (matches the sibling ETIMEDOUT /
+            // ENOBUFS helpers and Node.js on Windows, where UV_EPIPE != -32).
+            let errno = match err.get_errno() {
+                bun_sys::E::EPIPE => -UV_E::PIPE,
+                e => -(e as i32),
+            };
             let obj = JSValue::create_empty_object(global_this, 2);
-            obj.put(
-                global_this,
-                b"errno",
-                JSValue::js_number_from_int32((err.errno as i32).wrapping_neg()),
-            );
+            obj.put(global_this, b"errno", JSValue::js_number_from_int32(errno));
             let code = BunString::static_(err.name());
             obj.put(global_this, b"code", code.to_js(global_this)?);
             obj

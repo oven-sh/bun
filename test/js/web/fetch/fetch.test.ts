@@ -432,6 +432,16 @@ describe("AbortSignal", () => {
       expect(Bun.peek(p)).toBe(reason);
       await p.catch(() => {});
     }
+    {
+      // plain-object first argument (request_init_object branch)
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted-init");
+      controller.abort(reason);
+      const p = fetch({ url: "http://127.0.0.1:1/", signal: controller.signal } as any);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+    }
   });
 });
 

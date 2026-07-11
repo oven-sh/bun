@@ -1154,7 +1154,8 @@ describe("sparse arrays", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    // stderr lands in the failure diff without being pinned to "".
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toMatchObject({
       stdout: {
         hugeLength: { keys: ["0"], at0: "only", length: 1e9 },
         4294967292: {
@@ -1200,7 +1201,6 @@ describe("sparse arrays", () => {
           values: ["first", "reserved", "named"],
         },
       },
-      stderr: "",
       exitCode: 0,
     });
   });

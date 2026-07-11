@@ -373,15 +373,11 @@ impl SubscriptionCtx {
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut RedisClient` — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. `JsCell` is
-// `#[repr(transparent)]`, so `from_field_ptr!`/`owner!` recovery (dispatch.rs,
-// `ValkeyClient::parent`) sees identical offsets.
+// auto-derefs to `&T` so the impls below compile against either.
 //
-// `#[repr(C)]`: `client` MUST be
-// at offset 0. `ValkeyClient::parent()` recovers the outer pointer via
-// `from_field_ptr!`, but belt-and-suspenders against any path that assumes
-// `*mut JSValkeyClient` and `*mut ValkeyClient` alias (the socket ext slot did
-// — see `connect()` below).
+// `#[repr(C)]`: `client` at offset 0 — belt-and-suspenders against any path
+// that assumes `*mut JSValkeyClient` and `*mut ValkeyClient` alias (the
+// socket ext slot did; see `connect()`).
 #[repr(C)]
 pub struct JSValkeyClient {
     pub client: JsCell<valkey::ValkeyClient>,
@@ -467,8 +463,8 @@ impl JSValkeyClient {
     #[allow(clippy::mut_from_ref)]
     pub(super) fn client_mut(&self) -> &mut valkey::ValkeyClient {
         // SAFETY: R-2 single-JS-thread invariant (see `JsCell` docs). The
-        // `&mut` is fresh per call site; reentrancy through
-        // `ValkeyClient::parent()` forms a shared `&JSValkeyClient` only.
+        // `&mut` is fresh per call site; re-entrant callers receive
+        // `&JSValkeyClient` as an explicit `parent` parameter alongside it.
         unsafe { self.client.get_mut() }
     }
 
@@ -1510,9 +1506,9 @@ impl JSValkeyClient {
         self.ref_();
         // socket close can potentially call JS so we need to enqueue the deinit
         struct Holder {
-            // BACKREF — JSValkeyClient is intrusively ref-counted (RefCount + @fieldParentPtr
-            // recovery in SubscriptionCtx::parent). The `self.ref_()` above / `(*ctx).deref()`
-            // in run() keep it alive across the task hop.
+            // BACKREF — JSValkeyClient is intrusively ref-counted; the
+            // `self.ref_()` above / `(*ctx).deref()` in run() keep it alive
+            // across the task hop.
             ctx: *const JSValkeyClient,
             task: jsc::AnyTask::AnyTask,
         }

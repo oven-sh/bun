@@ -310,6 +310,12 @@ describe("HTTP server CONNECT", () => {
     proxyServer.on("connect", (req, socket, head) => {
       socket.on("data", chunk => {
         bufferReceived += chunk.toString();
+        // End only once the client's tunneled bytes have arrived so the
+        // assertion on bufferReceived is not racing the server's FIN.
+        if (bufferReceived.includes("Client data")) {
+          socket.write("Test data");
+          socket.end();
+        }
       });
 
       // Send response in small chunks
@@ -317,10 +323,6 @@ describe("HTTP server CONNECT", () => {
       setTimeout(() => socket.write("200 "), 10);
       setTimeout(() => socket.write("Connection "), 20);
       setTimeout(() => socket.write("established\r\n\r\n"), 30);
-      setTimeout(() => {
-        socket.write("Test data");
-        socket.end();
-      }, 40);
     });
 
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");
@@ -331,14 +333,19 @@ describe("HTTP server CONNECT", () => {
       client.write("CONNECT example.com:80 ");
       setTimeout(() => client.write("HTTP/1.1\r\n"), 5);
       setTimeout(() => client.write("Host: example.com\r\n\r\n"), 10);
-      setTimeout(() => client.write("Client data"), 35);
     });
 
     const { promise, resolve } = Promise.withResolvers<string>();
     const received: string[] = [];
+    let sentClientData = false;
 
     client.on("data", data => {
       received.push(data.toString());
+      // Send the client bytes once the tunnel is up, not at a fixed delay.
+      if (!sentClientData && received.join("").includes("Connection established\r\n\r\n")) {
+        sentClientData = true;
+        client.write("Client data");
+      }
     });
 
     client.on("end", () => {

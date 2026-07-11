@@ -54,12 +54,10 @@ impl BuildCommand {
     /// (those moved the tables, not the bodies).
     #[cold]
     #[inline(never)]
-    /// OHOS: sign a compiled binary ELF in-place. Wraps ohos_sign crate
-    /// with a ZStr interface for callers that already have a NUL-terminated path.
+    /// OHOS: sign a compiled binary ELF in-place using the ohos_sign crate.
     #[cfg(target_env = "ohos")]
-    fn ohos_sign_binary(path: &bun_core::ZStr) {
-        let path_str = core::str::from_utf8(path.as_bytes()).unwrap_or("");
-        let _ = ohos_sign::sign_selfsign_inplace_with_strip(std::path::Path::new(path_str));
+    fn ohos_sign_binary(path: &std::path::Path) {
+        let _ = ohos_sign::sign_selfsign_inplace_with_strip(path);
     }
 
     pub(crate) fn exec(
@@ -992,33 +990,33 @@ impl BuildCommand {
                     }
                 }
 
-                // OHOS: sign and chmod the compiled output.
-                // The standalone detection now uses /proc/self/exe, so signing
-                // no longer breaks embedded module graph resolution.
+                // OHOS: strip stale .codesign (bun payload shifts alignment) and re-sign
+                // in-process so the compiled binary can execute under the seccomp policy.
                 #[cfg(target_env = "ohos")]
                 {
-                    let outfile_path = if outfile.starts_with(b"/") {
-                        outfile.to_vec()
-                    } else if root_path.is_empty() || root_path == b"." {
-                        outfile.to_vec()
+                    use std::os::unix::ffi::OsStrExt;
+                    let outfile_basename: &[u8] = match outfile.iter().rposition(|&b| b == b'/') {
+                        Some(i) => &outfile[i + 1..],
+                        None => outfile,
+                    };
+                    let outfile_path = if root_path.is_empty() || root_path == b"." {
+                        outfile_basename.to_vec()
                     } else {
                         let mut full = root_path.to_vec();
                         if !full.ends_with(b"/") {
                             full.push(b'/');
                         }
-                        full.extend_from_slice(outfile);
+                        full.extend_from_slice(outfile_basename);
                         full
                     };
                     if !outfile_path.is_empty() {
-                        use bun_core::ZStr;
-                        let mut nul_path = outfile_path.clone();
-                        nul_path.push(0);
-                        let zstr = ZStr::from_slice_with_nul(&nul_path);
-                        Self::ohos_sign_binary(zstr);
+                        let outfile_os = std::ffi::OsStr::from_bytes(&outfile_path[..]);
+                        let _ = std::fs::File::open(outfile_os).and_then(|f| f.sync_all());
+                        Self::ohos_sign_binary(std::path::Path::new(outfile_os));
                         let _ = std::process::Command::new("chmod")
                             .arg("755")
-                            .arg(std::str::from_utf8(&outfile_path).unwrap_or(""))
-                            .status();
+                            .arg(outfile_os)
+                            .output();
                     }
                 }
 

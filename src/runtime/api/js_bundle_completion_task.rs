@@ -167,9 +167,8 @@ pub(crate) fn create_and_schedule_completion_task(
 
 /// OHOS: sign a compiled binary ELF in-place using the ohos_sign crate.
 #[cfg(target_env = "ohos")]
-fn ohos_sign_binary(path: &bun_core::ZStr) {
-    let path_str = core::str::from_utf8(path.as_bytes()).unwrap_or("");
-    let _ = ohos_sign::sign_selfsign_inplace_with_strip(std::path::Path::new(path_str));
+fn ohos_sign_binary(path: &std::path::Path) {
+    let _ = ohos_sign::sign_selfsign_inplace_with_strip(path);
 }
 
 /// `BundleV2.generateFromJavaScript` — schedule a build and return its Promise.
@@ -443,22 +442,18 @@ impl JSBundleCompletionTask {
             entry.dest_path.clone_from(&full_outfile_path);
             entry.is_executable = true;
 
-            // OHOS: sign and chmod the compiled output.
+            // OHOS: strip stale .codesign and re-sign in-process (JS API path).
+            // Mirrors the CLI codepath in src/runtime/cli/build_command.rs.
             #[cfg(target_env = "ohos")]
             {
-                let outfile_str =
-                    std::str::from_utf8(&full_outfile_path).unwrap_or("");
-                if !outfile_str.is_empty() {
-                    use bun_core::ZStr;
-                    let mut nul_path = full_outfile_path.to_vec();
-                    nul_path.push(0);
-                    let zstr = ZStr::from_slice_with_nul(&nul_path);
-                    ohos_sign_binary(zstr);
-                    let _ = std::process::Command::new("chmod")
-                        .arg("755")
-                        .arg(outfile_str)
-                        .status();
-                }
+                use std::os::unix::ffi::OsStrExt;
+                let outfile_os = std::ffi::OsStr::from_bytes(&full_outfile_path[..]);
+                let _ = std::fs::File::open(outfile_os).and_then(|f| f.sync_all());
+                ohos_sign_binary(std::path::Path::new(outfile_os));
+                let _ = std::process::Command::new("chmod")
+                    .arg("755")
+                    .arg(outfile_os)
+                    .output();
             }
         }
 

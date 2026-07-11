@@ -1,9 +1,4 @@
 import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
-
-// A debug build starts a worker VM about an order of magnitude more slowly, so
-// the tests that spawn a subprocess that then builds a chain of workers need
-// headroom past the 5s default to finish under `bun bd`.
-const subprocessTimeout = isDebug ? 60_000 : 20_000;
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -26,6 +21,11 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+
+// A debug build starts a worker VM about an order of magnitude more slowly, so
+// the tests that spawn a subprocess that then builds a chain of workers need
+// headroom past the 5s default to finish under `bun bd`.
+const subprocessTimeout = isDebug ? 60_000 : 20_000;
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {

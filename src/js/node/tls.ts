@@ -1942,7 +1942,7 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
   const normalized = parseCACertificates(snapshot);
   // A non-empty input that yields no certificates is an error in Node
   // (crypto_context.cc: "No valid certificates found in the provided array").
-  if (normalized.length === 0 && certs.length > 0) {
+  if (normalized.length === 0 && snapshot.length > 0) {
     throw $ERR_CRYPTO_OPERATION_FAILED("No valid certificates found in the provided array");
   }
   _defaultCACertificatesOverride = normalized;

@@ -127,7 +127,7 @@ static void sha256_block(sha256_ctx *c, const uint8_t *p) {
 static void sha256_update(sha256_ctx *c, const void *data, size_t len) {
   const uint8_t *p = (const uint8_t *)data;
   c->total_len += len;
-  if (c->buf_len > 0) {
+  if (c->buf_len > 0 && c->buf_len < 64) {
     size_t take = 64 - c->buf_len;
     if (take > len) take = len;
     memcpy(c->buf + c->buf_len, p, take);

@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -1303,6 +1303,40 @@ test("close(cb) interleaves with other close listeners in registration order", a
   p2.on("close", () => order2.push("C"));
   await new Promise(r => setImmediate(() => setImmediate(r)));
   expect(order2).toEqual(["B", "C"]);
+});
+
+// terminate() during the worker's node:worker_threads preload used to trip
+// EXCEPTION_ASSERT in JSValue::get / JSObject::getOwnPropertyDescriptor: the
+// lazy process.stdout/stderr/stdin PropertyCallbacks enter JS inside
+// getOwnPropertySlot, and tryClearException() won't clear a termination
+// exception, so getOwnPropertySlot returned true with it still pending.
+// The assertion is debug-build only; amplified from the upstream Node
+// test-worker-message-port-transfer-terminate.js (10 workers → 60).
+test.skipIf(!isASAN && !isDebug)("terminate() during worker bootstrap doesn't trip getOwnPropertySlot assert", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const N = 60;
+       let done = 0;
+       for (let i = 0; i < N; ++i) {
+         const w = new Worker("require('worker_threads').parentPort.on('message', () => {})", { eval: true });
+         setImmediate(() => {
+           w.terminate().then(() => { if (++done === N) console.log("ok"); });
+         });
+       }`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "ok",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 test("getHeapStatistics settles when terminated mid-request", async () => {

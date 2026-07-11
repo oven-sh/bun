@@ -63,7 +63,6 @@ $ npm install -g bun
 ```
 
 ```bash#Homebrew
-$ brew tap oven-sh/bun
 $ brew install bun
 ```
 

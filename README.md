@@ -60,7 +60,6 @@ powershell -c "irm bun.sh/install.ps1 | iex"
 npm install -g bun
 
 # with Homebrew
-brew tap oven-sh/bun
 brew install bun
 
 # with Docker

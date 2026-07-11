@@ -752,7 +752,16 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 } while (s);
             }
 
-            if(eof && s) {
+            /* is_paused: on_data just called us_socket_pause (net.Socket#pause,
+             * fetch() receive backpressure). kqueue's EV_EOF and epoll's
+             * EPOLLHUP can both arrive while bytes are still sitting in the
+             * socket buffer, and the recv loop above stopped honouring that
+             * pause without draining them. Dispatching end now would push(null)
+             * ahead of those bytes (or close the socket outright in the
+             * shut_down arm). The resume that follows re-adds READABLE; the
+             * EOF flag is level-triggered and recv() eventually returns 0 to
+             * set eof through the length==0 arm. */
+            if(eof && s && !s->flags.is_paused) {
                 if (UNLIKELY(us_socket_is_closed(s))) {
                     // Do not call on_end after the socket has been closed
                     return;

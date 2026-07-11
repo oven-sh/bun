@@ -1015,7 +1015,9 @@ describe("conditional requests after a metadata write", () => {
         _id: "prior",
         name: "prior",
         versions: { "2.0.0": { name: "prior", version: "2.0.0" } },
-        _attachments: { "prior-2.0.0.tgz": { content_type: "application/octet-stream", data: tgz, length: tgz.length } },
+        _attachments: {
+          "prior-2.0.0.tgz": { content_type: "application/octet-stream", data: tgz, length: tgz.length },
+        },
       }),
     });
     const after = await readTime();

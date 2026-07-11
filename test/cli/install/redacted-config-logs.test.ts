@@ -60,9 +60,31 @@ describe.concurrent("redact", async () => {
       npmrc: "//registry.npmjs.org/:_auth=1",
       expected: "*",
     },
+    {
+      // A quoted key is a string literal, not an identifier, so it took a different
+      // path through the highlighter and the value came out verbatim under color.
+      // The uppercase host is what makes a diagnostic print this line at all.
+      title: "quoted _authToken key",
+      npmrc: '"//REGISTRY.NPMJS.ORG/:_authToken"=npm_notarealtokenvalue',
+      expected: "*",
+      secret: "npm_notarealtokenvalue",
+    },
+    {
+      title: "quoted _auth key",
+      npmrc: '"//registry.npmjs.org/:_auth"=does-not-decode',
+      expected: "*",
+      secret: "does-not-decode",
+    },
+    {
+      // The most common .npmrc authoring mistake, and the value is always a live secret.
+      title: "plaintext _password",
+      npmrc: "//registry.npmjs.org/:username=alice\n//registry.npmjs.org/:_password=p@ssw0rd!",
+      expected: "*",
+      secret: "p@ssw0rd!",
+    },
   ];
 
-  for (const { title, bunfig, npmrc, expected } of tests) {
+  for (const { title, bunfig, npmrc, expected, secret } of tests) {
     test(title + (bunfig ? " (bunfig)" : " (npmrc)"), async () => {
       const testDir = tmpdirSync();
       await Promise.all([
@@ -83,6 +105,7 @@ describe.concurrent("redact", async () => {
 
       expect(exitCode1).toBe(+!!bunfig);
       expect(err1).toContain(expected || "*");
+      if (secret) expect(err1).not.toContain(secret);
 
       // once with color
       await using proc2 = Bun.spawn({
@@ -97,6 +120,7 @@ describe.concurrent("redact", async () => {
 
       expect(exitCode2).toBe(+!!bunfig);
       expect(err2).toContain(expected || "*");
+      if (secret) expect(err2).not.toContain(secret);
     });
   }
 });

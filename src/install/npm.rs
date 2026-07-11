@@ -443,6 +443,7 @@ pub mod registry {
             // of parsing. The final href is moved into `Scope.url: OwnedURL`
             // (owned `Box<[u8]>`).
             let registry_url: Box<[u8]> = core::mem::take(&mut registry.url);
+            let registry_auth: Box<[u8]> = core::mem::take(&mut registry.auth);
             let mut url = URL::parse(&registry_url);
             let mut auth: &[u8] = b"";
             let mut user: &mut [u8] = &mut [];
@@ -477,13 +478,17 @@ pub mod registry {
                         }
                     }
 
+                    // `.npmrc`'s `_auth`, forwarded verbatim: npm never decodes it, so an
+                    // opaque blob or a blank password is a credential, not an error. The
+                    // decoded halves below still populate `user` for `bun pm whoami`.
+                    if auth.is_empty() && !registry_auth.is_empty() {
+                        auth = &registry_auth;
+                    }
+
                     registry.username = env.get_auto(&registry.username).into();
                     registry.password = env.get_auto(&registry.password).into();
 
-                    if !registry.username.is_empty()
-                        && !registry.password.is_empty()
-                        && auth.is_empty()
-                    {
+                    if !registry.username.is_empty() && !registry.password.is_empty() {
                         let combo_len = registry.username.len() + registry.password.len() + 1;
                         let total =
                             combo_len + bun_core::base64::standard_encoder_calc_size(combo_len);
@@ -494,7 +499,14 @@ pub mod registry {
                         user_slice[registry.username.len() + 1..][..registry.password.len()]
                             .copy_from_slice(&registry.password);
                         user = user_slice;
-                        auth = bun_core::base64::standard_encode(output_buf, user);
+                        if auth.is_empty() {
+                            auth = bun_core::base64::standard_encode(output_buf, user);
+                        }
+                        break 'outer;
+                    }
+
+                    // An opaque `_auth` with no decodable halves: nothing else to build.
+                    if !auth.is_empty() {
                         break 'outer;
                     }
                 }

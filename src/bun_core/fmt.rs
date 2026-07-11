@@ -2013,6 +2013,15 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     break 'try_redact;
                                 }
 
+                                // An ini credential key may be quoted:
+                                // `"//host/:_authToken"=secret`. The identifier path
+                                // never sees it, so arm the value redaction here.
+                                if let Some(colon) = strings::last_index_of_char(inner, b':') {
+                                    if RedactedKeywords::has(&inner[colon as usize + 1..]) {
+                                        should_redact_value = true;
+                                    }
+                                }
+
                                 if inner.len() == 36 && strings::is_uuid(inner) {
                                     write!(writer, "{}\x1b[32m{}", Output::RESET, char_ as char)?;
                                     splat_byte_all(writer, b'*', 36)?;

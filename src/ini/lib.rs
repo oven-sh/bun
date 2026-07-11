@@ -166,6 +166,7 @@ impl ConfigItem {
                     bun_ast::AddErrorOptions {
                         source: Some(source),
                         loc: self.loc,
+                        redact_sensitive_information: true,
                         ..Default::default()
                     },
                 );
@@ -1326,9 +1327,11 @@ mod draft {
             Ok(()) => {}
             Err(AllocError) => bun_core::out_of_memory(),
         }
+        // The header names the file the error came from, so skip any warning ahead of it.
         let path: Box<[u8]> = log
             .msgs
-            .first()
+            .iter()
+            .find(|msg| msg.kind == bun_ast::Kind::Err)
             .and_then(|msg| msg.data.location.as_ref())
             .map_or_else(Box::default, |loc| Box::from(&*loc.file));
         report_log(&mut log, &path);
@@ -1595,31 +1598,37 @@ mod draft {
             }
         }
 
-        // npm compares keys literally, and `nerfDart` writes them lowercase and without a
-        // default port, so a hand-written key spelled otherwise silently applies to
-        // nothing. Warn only where spelling it npm's way would change what is selected.
-        let mut warned = vec![false; configs.len()];
-        for url_bytes in core::iter::once(None).chain(scope_urls.iter().map(Some)) {
-            let (host, pathname, default_port) = match url_bytes {
-                Some(bytes) => {
-                    let url = URL::parse(bytes);
-                    let (h, p) = registry_key_parts(&url);
-                    (h, p, default_port_for(url.protocol))
-                }
-                None => (
-                    default_host.clone(),
-                    default_pathname.clone(),
-                    default_default_port,
-                ),
-            };
+        // npm compares keys literally, and `nerfDart` writes them with a lowercase host and
+        // no default port, so a key spelled otherwise can silently supply nothing. Warn only
+        // where the line supplies nothing to ANY registry as written, but would if respelled.
+        let mut registries: Vec<(Box<[u8]>, Box<[u8]>, &[u8])> =
+            Vec::with_capacity(1 + scope_urls.len());
+        registries.push((
+            default_host.clone(),
+            default_pathname.clone(),
+            default_default_port,
+        ));
+        for url_bytes in scope_urls.iter() {
+            let url = URL::parse(url_bytes);
+            let (host, pathname) = registry_key_parts(&url);
+            registries.push((host, pathname, default_port_for(url.protocol)));
+        }
 
+        let mut applied = vec![false; configs.len()];
+        for (host, pathname, _) in registries.iter() {
+            for i in credential_items(configs, host, pathname) {
+                applied[i] = true;
+            }
+        }
+
+        let mut dead = vec![false; configs.len()];
+        for (host, pathname, default_port) in registries.iter() {
             let differs = |c: &ConfigItem| {
                 *normalize_conf_key(&c.registry_url, default_port) != *c.registry_url
             };
             if !configs.iter().any(differs) {
                 continue;
             }
-
             let mut normalized: Vec<ConfigItem> = Vec::with_capacity(configs.len());
             for conf_item in configs.iter() {
                 let Some(mut dup) = conf_item.dupe()? else {
@@ -1628,24 +1637,26 @@ mod draft {
                 dup.registry_url = normalize_conf_key(&conf_item.registry_url, default_port);
                 normalized.push(dup);
             }
-
-            let before = credential_items(configs, &host, &pathname);
-            let after = credential_items(&normalized, &host, &pathname);
-            for i in after {
-                if before.contains(&i) || warned[i] || !differs(&configs[i]) {
-                    continue;
+            for i in credential_items(&normalized, host, pathname) {
+                if !applied[i] && differs(&configs[i]) {
+                    dead[i] = true;
                 }
-                warned[i] = true;
-                log.add_warning_opts(
-                    b"this .npmrc line applies to no registry: keys are matched literally, so the host must be lowercase and must not spell out a default port",
-                    bun_ast::AddErrorOptions {
-                        source: Some(&sources[configs[i].source_idx as usize]),
-                        loc: configs[i].loc,
-                        redact_sensitive_information: true,
-                        ..Default::default()
-                    },
-                );
             }
+        }
+
+        for (i, conf_item) in configs.iter().enumerate() {
+            if !dead[i] {
+                continue;
+            }
+            log.add_warning_opts(
+                b"this .npmrc line supplies no credential to any registry: keys are matched literally, and npm writes them with a lowercase host and no default port",
+                bun_ast::AddErrorOptions {
+                    source: Some(&sources[conf_item.source_idx as usize]),
+                    loc: conf_item.loc,
+                    redact_sensitive_information: true,
+                    ..Default::default()
+                },
+            );
         }
 
         let default_items = credential_items(configs, &default_host, &default_pathname);
@@ -1657,6 +1668,7 @@ mod draft {
                 install.default_registry = Some(NpmRegistry {
                     password: Box::default(),
                     token: Box::default(),
+                    auth: Box::default(),
                     username: Box::default(),
                     url: Box::<[u8]>::from(
                         bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes(),
@@ -2171,6 +2183,9 @@ mod draft {
         if conf_item.value.is_empty() {
             return Ok(());
         }
+        // npm forwards `_auth` verbatim as `Basic <value>`; the decode below only
+        // recovers a username for `bun pm whoami`, and must not gate the credential.
+        v.auth = Box::<[u8]>::from(&*conf_item.value);
         let decode_len = bun_base64::decode_len(&conf_item.value);
         let mut decoded = vec![0u8; decode_len].into_boxed_slice();
         let result = bun_base64::decode(&mut decoded[..], &conf_item.value);
@@ -2187,29 +2202,14 @@ mod draft {
             return Ok(());
         }
         let username_password = &decoded[..result.count];
+        // An opaque blob is a credential to npm, not an error. `v.auth` already has it.
         let Some(colon_idx) = username_password.iter().position(|&b| b == b':') else {
-            log.add_error_opts(
-                b"invalid _auth value, expected base64 encoded \"<username>:<password>\"",
-                bun_ast::AddErrorOptions {
-                    source: Some(source),
-                    loc: conf_item.loc,
-                    redact_sensitive_information: true,
-                    ..Default::default()
-                },
-            );
             return Ok(());
         };
         let username = &username_password[..colon_idx];
+        // A blank password is a real registry pattern (token-as-username). `v.auth` is
+        // what gets sent; username/password only feed `bun pm whoami`.
         if colon_idx + 1 >= username_password.len() {
-            log.add_error_opts(
-                b"invalid _auth value, expected base64 encoded \"<username>:<password>\"",
-                bun_ast::AddErrorOptions {
-                    source: Some(source),
-                    loc: conf_item.loc,
-                    redact_sensitive_information: true,
-                    ..Default::default()
-                },
-            );
             return Ok(());
         }
         let password = &username_password[colon_idx + 1..];

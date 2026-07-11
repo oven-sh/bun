@@ -843,7 +843,7 @@ describe("a config key that differs from the registry only by host case", () => 
     const stderr = await stderrOf(
       `registry=https://Registry.Example.COM/api/\n//Registry.Example.COM/:_authToken=SECRETTOKEN\n`,
     );
-    expect(stderr).toContain("applies to no registry");
+    expect(stderr).toContain("supplies no credential to any registry");
     expect(stderr).not.toContain("SECRETTOKEN");
   });
 
@@ -851,23 +851,23 @@ describe("a config key that differs from the registry only by host case", () => 
     const stderr = await stderrOf(
       `registry=https://Registry.Example.COM/api/\n//registry.example.com/:_authToken=SECRETTOKEN\n`,
     );
-    expect(stderr).not.toContain("applies to no registry");
+    expect(stderr).not.toContain("supplies no credential to any registry");
   });
 
   it("says nothing about an uppercase key for an unrelated host", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//Other.Example.COM/:_authToken=X\n`);
-    expect(stderr).not.toContain("applies to no registry");
+    expect(stderr).not.toContain("supplies no credential to any registry");
   });
 
   it("warns about a key that spells out the default port", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//example.com:443/:_authToken=SECRETTOKEN\n`);
-    expect(stderr).toContain("applies to no registry");
+    expect(stderr).toContain("supplies no credential to any registry");
     expect(stderr).not.toContain("SECRETTOKEN");
   });
 
   it("says nothing about a non-default port spelled out", async () => {
     const stderr = await stderrOf(`registry=https://example.com:8443/api/\n//example.com:8443/:_authToken=S\n`);
-    expect(stderr).not.toContain("applies to no registry");
+    expect(stderr).not.toContain("supplies no credential to any registry");
   });
 
   // The warning promises that respelling the key changes something. These are the shapes
@@ -876,26 +876,53 @@ describe("a config key that differs from the registry only by host case", () => 
     const stderr = await stderrOf(
       `registry=https://example.com/api/\n//example.com/api/:_authToken=GOOD\n//Example.COM/:_authToken=BAD\n`,
     );
-    expect(stderr).not.toContain("applies to no registry");
+    expect(stderr).not.toContain("supplies no credential to any registry");
   });
 
   it("says nothing about an ancestor email, which never walks", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM/:email=me@x.com\n`);
-    expect(stderr).not.toContain("applies to no registry");
+    expect(stderr).not.toContain("supplies no credential to any registry");
   });
 
   it("says nothing about an ancestor's lone username, which never applies", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM/:username=bob\n`);
-    expect(stderr).not.toContain("applies to no registry");
+    expect(stderr).not.toContain("supplies no credential to any registry");
   });
 
   it("says nothing about an empty value", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM/:_authToken=\n`);
-    expect(stderr).not.toContain("applies to no registry");
+    expect(stderr).not.toContain("supplies no credential to any registry");
   });
 
   it("says nothing when the path case differs, since paths are case-sensitive", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//example.com/API/:_authToken=X\n`);
-    expect(stderr).not.toContain("applies to no registry");
+    expect(stderr).not.toContain("supplies no credential to any registry");
+  });
+
+  // A default port is a property of the scheme, so a key is only dead if it supplies
+  // nothing to EVERY registry. `:443` is not http's default port.
+  it("says nothing about a :443 key that is legitimate for an http registry", async () => {
+    const npmrc =
+      `registry=http://example.com:443/api/\n` +
+      `@s:registry=https://example.com/api/\n` +
+      `//example.com:443/api/:_authToken=SECRETTOKEN\n`;
+    expect(await stderrOf(npmrc)).not.toContain("supplies no credential to any registry");
+    expect(loadNpmrc(npmrc).default_registry_token).toBe("SECRETTOKEN");
+  });
+
+  // Respelling only matters when it would change which credential is chosen. `lookup`
+  // takes the last duplicate, so an uppercase twin is only live when it comes last.
+  it("says nothing about an uppercase twin that a lowercase key already outranks", async () => {
+    const stderr = await stderrOf(
+      `registry=https://example.com/\n//Example.COM/:_authToken=A\n//example.com/:_authToken=B\n`,
+    );
+    expect(stderr).not.toContain("supplies no credential to any registry");
+  });
+
+  it("warns about an uppercase twin that would outrank the lowercase key", async () => {
+    const stderr = await stderrOf(
+      `registry=https://example.com/\n//example.com/:_authToken=B\n//Example.COM/:_authToken=A\n`,
+    );
+    expect(stderr).toContain("supplies no credential to any registry");
   });
 });

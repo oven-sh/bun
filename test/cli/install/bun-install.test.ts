@@ -1148,6 +1148,41 @@ describe.concurrent("bun-install", () => {
       });
     });
 
+    // npm never decodes `_auth`; it forwards the value as `Basic <value>`. An opaque
+    // blob and a blank password are credentials, not errors.
+    describe("_auth is forwarded verbatim", () => {
+      const b64 = (s: string) => Buffer.from(s).toString("base64");
+
+      it("sends an opaque _auth blob that does not decode to user:pass", async () => {
+        const blob = b64("opaquetokenblob");
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${blob}`);
+        expect(auth).toBe(`Basic ${blob}`);
+      });
+
+      it("sends an _auth with a blank password", async () => {
+        const value = b64("tok:");
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${value}`);
+        expect(auth).toBe(`Basic ${value}`);
+      });
+
+      it("prefers an opaque _auth over username and _password at the same key", async () => {
+        const blob = b64("opaquetokenblob");
+        const auth = await probeAuthorization(
+          host =>
+            `//${host}${registryPath}:_auth=${blob}\n` +
+            `//${host}${registryPath}:username=x\n` +
+            `//${host}${registryPath}:_password=${b64("y")}`,
+        );
+        expect(auth).toBe(`Basic ${blob}`);
+      });
+
+      it("sends a decodable _auth verbatim rather than re-encoding it", async () => {
+        const value = b64("ab:cd");
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${value}`);
+        expect(auth).toBe(`Basic ${value}`);
+      });
+    });
+
     // A yarn-style credential inside the registry URL is stripped from the path before
     // the request goes out, whether or not `.npmrc` also supplies one. Otherwise the
     // secret ships in the request path, where proxies and logs can see it.

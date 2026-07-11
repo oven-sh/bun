@@ -1,16 +1,12 @@
-// dns.lookup must reject hostnames containing ASCII bytes outside
-// `[A-Za-z0-9._-]` locally (ENOTFOUND) so the raw string never becomes a wire
-// QNAME or Host header. glibc getaddrinfo enforces this; c-ares on its own
-// accepts `/` and `*` (record-name charset) so Bun has to guard the query side.
-//
-// Runs in a subprocess because dns.setServers is process-global. Linux-only:
-// dns.setServers rebinds the c-ares channel, and c-ares is the dns.lookup
-// backend only on Linux; on macOS/Windows the system getaddrinfo already
-// rejects these characters and the stub harness cannot intercept it.
+// dns.lookup must reject ASCII bytes outside `[A-Za-z0-9._-]` locally with
+// ENOTFOUND so `/` and `*` (which c-ares accepts as record-name chars) never
+// become a wire QNAME or Host header; glibc getaddrinfo already does this.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 import { join } from "node:path";
 
+// Subprocess (dns.setServers is process-global); Linux-only because c-ares is
+// the dns.lookup backend only there so the stub can intercept the query.
 test.skipIf(!isLinux)(
   "dns.lookup rejects '/' '*' and other non-LDH hostname chars without sending a packet",
   async () => {
@@ -23,6 +19,9 @@ test.skipIf(!isLinux)(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    // Surface stderr alongside exitCode if the fixture crashed; stderr is not
+    // itself required to be empty (debug builds may emit benign noise).
+    expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const out = JSON.parse(stdout.trim());
 
     // Every invalid hostname errored locally; none reached the stub resolver.
@@ -51,7 +50,5 @@ test.skipIf(!isLinux)(
     // the invalid names appear.
     const unique = [...new Set(out.qnames)];
     expect(unique).toEqual(["ok_name.invalid"]);
-
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   },
 );

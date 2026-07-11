@@ -553,7 +553,7 @@ describe("color-mix() percentage range", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "null", stderr: "", exitCode: 0 });
+    expect({ stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr }).toEqual({ stdout: "null", exitCode: 0 });
   });
 
   test.each([

@@ -754,6 +754,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             }
 
             if(eof && s) {
+                if (UNLIKELY(us_socket_is_closed(s))) {
+                    // Do not call on_end after the socket has been closed
+                    return;
+                }
                 if (s->flags.is_paused && !error) {
                     #ifdef LIBUS_USE_EPOLL
                     /* EPOLLHUP is level-triggered and unmaskable, so take the
@@ -768,10 +772,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     /* kqueue: us_socket_pause already removed EVFILT_READ and
                      * EVFILT_WRITE is one-shot, so skipping end here is enough.
                      * resume re-arms READABLE; recv()==0 sets eof once drained. */
-                    return;
-                }
-                if (UNLIKELY(us_socket_is_closed(s))) {
-                    // Do not call on_end after the socket has been closed
                     return;
                 }
                 if (us_socket_is_shut_down(s)) {

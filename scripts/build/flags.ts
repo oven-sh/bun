@@ -228,7 +228,7 @@ export const globalFlags: Flag[] = [
     flag: c => [`-nostdinc++`, `-I${c.ohosCrossLibs}/libcxx/include/v1`, `-I${c.ohosCrossLibs}/libcxxabi/include`],
     when: c => c.ohos && !!c.ohosCrossLibs,
     lang: "cxx",
-    desc: "OHOS: use musl-compatible LLVM 22 libc++ headers",
+    desc: "OHOS: use musl-compatible libc++ headers from the cross-compiled libc++",
   },
   {
     flag: c => [`-I${c.ohosIcuDir!}/include`],
@@ -333,15 +333,9 @@ export const globalFlags: Flag[] = [
   {
     // Nix LLVM doesn't support zstd — but we target standard distros.
     // Nix users can override via profile if needed.
-    // OHOS host LLVM 22.1.7 ships without zstd; emit uncompressed -g3.
     flag: ["-g3", "-gz=zstd"],
-    when: c => c.unix && c.debug && !c.ohos,
+    when: c => c.unix && c.debug,
     desc: "Full debug info, zstd-compressed",
-  },
-  {
-    flag: "-g3",
-    when: c => c.unix && c.debug && c.ohos,
-    desc: "Full debug info, uncompressed (OHOS host LLVM lacks zstd)",
   },
   {
     flag: "-g1",
@@ -1209,7 +1203,7 @@ export const linkerFlags: Flag[] = [
       "-lc",
     ].filter(f => f !== ""),
     when: c => c.ohos,
-    desc: "OHOS: link LLVM 22 libc++ + libc++abi + libunwind + dynamic libc",
+    desc: "OHOS: link the cross-compiled libc++ + libc++abi + libunwind + dynamic libc",
   },
   {
     flag: [

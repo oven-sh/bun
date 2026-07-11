@@ -8,8 +8,13 @@ const testReferenceUnrefInFinalizerExperimental = require("./build/Debug/test_re
 async function gcUntil(fn) {
   const MAX = 100;
   for (let i = 0; i < MAX; i++) {
+    // setImmediate, not setTimeout: on Windows release builds the combination
+    // of `await setTimeout` and `Bun.gc(true)` (which deletes every unlinked
+    // CodeBlock) occasionally pins a strongly napi-referenced object for the
+    // rest of the process (~2% of fresh runs), so the wrap-lifetime tests
+    // time out. setImmediate yields to the event loop without that retention.
     await new Promise(resolve => {
-      setTimeout(resolve, 1);
+      setImmediate(resolve);
     });
     if (typeof Bun == "object") {
       Bun.gc(true);

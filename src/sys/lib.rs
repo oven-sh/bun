@@ -6287,11 +6287,9 @@ pub fn ohos_sign_binary(path: &ZStr) {
     }
     let path_str = core::str::from_utf8(bytes).unwrap_or("");
     let p = std::path::Path::new(path_str);
-    if let Ok(elf_bytes) = std::fs::read(p) {
-        if !ohos_sign::has_codesign(&elf_bytes) {
-            let _ = ohos_sign::sign_selfsign_inplace(p);
-        }
-    }
+    // Use `with_strip` so compiled binaries that embed the bun runtime
+    // (which already has a .codesign) get re-signed correctly.
+    let _ = ohos_sign::sign_selfsign_inplace_with_strip(p);
 }
 
 /// OHOS: sign a binary by byte path (convenience wrapper).

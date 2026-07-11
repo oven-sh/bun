@@ -608,7 +608,11 @@ impl ValkeyClient {
         }
 
         let global_this = parent.global_object;
-        self.fail_with_js_value(parent, &global_this, valkey_error_to_js(&global_this, message, err))
+        self.fail_with_js_value(
+            parent,
+            &global_this,
+            valkey_error_to_js(&global_this, message, err),
+        )
     }
 
     pub fn fail_with_js_value(
@@ -1264,7 +1268,11 @@ impl ValkeyClient {
         };
 
         if let Err(_err) = hello_write_result {
-            self.fail(parent, b"Failed to write HELLO command", RedisError::OutOfMemory)?;
+            self.fail(
+                parent,
+                b"Failed to write HELLO command",
+                RedisError::OutOfMemory,
+            )?;
             return Ok(());
         }
 
@@ -1278,7 +1286,11 @@ impl ValkeyClient {
                 meta: command::Meta::default(),
             };
             if let Err(_err) = select_cmd.write(self.writer()) {
-                self.fail(parent, b"Failed to write SELECT command", RedisError::OutOfMemory)?;
+                self.fail(
+                    parent,
+                    b"Failed to write SELECT command",
+                    RedisError::OutOfMemory,
+                )?;
                 return Ok(());
             }
             self.flags.is_selecting_db_internal = true;
@@ -1424,7 +1436,8 @@ impl ValkeyClient {
         match self.status {
             Status::Connecting | Status::Connected => {
                 if command.write(self.writer()).is_err() {
-                    let _ = promise.reject(global_this, Ok(global_this.create_out_of_memory_error()));
+                    let _ =
+                        promise.reject(global_this, Ok(global_this.create_out_of_memory_error()));
                     return Ok(());
                 }
             }
@@ -1528,7 +1541,6 @@ impl ValkeyClient {
             .map_err(|_| RedisError::OutOfMemory)?;
         Ok(data.len())
     }
-
 }
 
 // Auto-pipelining

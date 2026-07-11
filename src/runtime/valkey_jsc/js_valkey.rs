@@ -339,7 +339,10 @@ impl SubscriptionCtx {
         // The user may request .close(), in which case we can dispose of the subscription object.
         // If that is the case, finalized will be true. Otherwise, we should treat the object as
         // disposable if there are no active subscriptions.
-        Ok(parent.client.get().flags.finalized || !self.has_subscriptions(parent, global_object)?)
+        Ok(
+            parent.client.get().flags.finalized
+                || !self.has_subscriptions(parent, global_object)?,
+        )
     }
 
     // Cannot be `Drop` — takes a `global_object` param. Exposed as explicit
@@ -2009,10 +2012,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client_mut().flags.is_manually_closed = true;
         let this_br = BackRef::new(this);
         let _close = scopeguard::guard(this_br, |p| p.client_mut().close(&p));
-        narrow_terminated(
-            this.client_mut()
-                .fail_with_js_value(this, &this.global_object, err_value),
-        )
+        narrow_terminated(this.client_mut().fail_with_js_value(
+            this,
+            &this.global_object,
+            err_value,
+        ))
     }
 
     // `pub const onHandshake = if (ssl) onHandshake_ else null;`

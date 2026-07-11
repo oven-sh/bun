@@ -1019,7 +1019,7 @@ impl StatWatcher {
             .map_err(Into::into)
     }
 
-    pub(crate) fn init(args: &Arguments) -> Result<*mut StatWatcher, bun_core::Error> {
+    pub(crate) fn init(args: &Arguments) -> Result<*mut StatWatcher, crate::Error> {
         log!("init");
 
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -1188,7 +1188,7 @@ impl Arguments {
         })
     }
 
-    pub fn create_stat_watcher(self) -> Result<JSValue, bun_core::Error> {
+    pub fn create_stat_watcher(self) -> Result<JSValue, crate::Error> {
         // BACKREF — `init` returns the live heap watcher (refcount==1);
         // `ParentRef` Deref gives safe field access for the `this_value` read.
         let obj = ParentRef::from(

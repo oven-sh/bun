@@ -1378,7 +1378,7 @@ pub struct WakeHandler {
     pub generation: u64,
     pub handler: Option<fn(*mut c_void, *mut c_void, u64)>,
     pub on_dependency_error:
-        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error)>,
+        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str)>,
 }
 
 impl WakeHandler {
@@ -1395,7 +1395,7 @@ impl WakeHandler {
     #[inline]
     pub fn get_on_dependency_error(
         &self,
-    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error) {
+    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str) {
         // Same invariant as `get_handler`: set together with `context` by the
         // sole installer; callers gate on `context.is_some()`.
         self.on_dependency_error.unwrap()

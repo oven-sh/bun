@@ -251,7 +251,7 @@ impl<'a> GlobalJS<'a> {
     }
 
     #[inline]
-    pub fn handle_error(self, err: bun_core::Error, suffix: &str) -> ShellErr {
+    pub fn handle_error(self, err: &crate::Error, suffix: &str) -> ShellErr {
         let mut v = Vec::new();
         write!(&mut v, "{} {}", err.name(), suffix).expect("infallible: in-memory write");
         ShellErr::Custom(v.into_boxed_slice())
@@ -352,7 +352,7 @@ impl<'a> GlobalMini<'a> {
     }
 
     #[inline]
-    pub fn handle_error(self, err: bun_core::Error, suffix: &str) -> ShellErr {
+    pub fn handle_error(self, err: &crate::Error, suffix: &str) -> ShellErr {
         let mut v = Vec::new();
         write!(&mut v, "{} {}", err.name(), suffix).expect("infallible: in-memory write");
         ShellErr::Custom(v.into_boxed_slice())
@@ -999,10 +999,7 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(true)
     }
 
-    pub fn append_utf8<const ALLOW_ESCAPE: bool>(
-        &mut self,
-        utf8: &[u8],
-    ) -> Result<bool, bun_core::Error> {
+    pub fn append_utf8<const ALLOW_ESCAPE: bool>(&mut self, utf8: &[u8]) -> crate::Result<bool> {
         let invalid = simdutf::validate::utf8(utf8);
         // Note: the name `invalid` is misleading — it holds the validity bool.
         if !invalid {
@@ -1157,13 +1154,13 @@ pub mod testing_apis {
                 let mut lexer =
                     LexerAscii::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
                 if let Err(err) = lexer.lex() {
-                    return Err(global.throw_error(bun_core::err!(from err), "failed to lex shell"));
+                    return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
                 }
                 break 'brk lexer.get_result();
             }
             let mut lexer = LexerUnicode::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
             if let Err(err) = lexer.lex() {
-                return Err(global.throw_error(bun_core::err!(from err), "failed to lex shell"));
+                return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
             }
             lexer.get_result()
         };

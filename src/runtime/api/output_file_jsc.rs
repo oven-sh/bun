@@ -74,7 +74,7 @@ impl SavedFile {
 /// `bun_bundler` crate (the base `bun_bundler` crate has no JSC dep).
 pub(crate) trait OutputFileJsc {
     fn to_js(&mut self, owned_pathname: Option<&[u8]>, global_object: &JSGlobalObject) -> JSValue;
-    fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, bun_core::Error>;
+    fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, crate::Error>;
 }
 
 impl OutputFileJsc for OutputFile {
@@ -198,7 +198,7 @@ impl OutputFileJsc for OutputFile {
         }
     }
 
-    fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, bun_core::Error> {
+    fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, crate::Error> {
         match &self.value {
             OutputFileValue::Move(_) | OutputFileValue::Pending(_) => {
                 panic!("Unexpected pending output file")

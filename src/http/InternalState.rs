@@ -1,7 +1,8 @@
 use core::ptr::NonNull;
 
+use crate::Error;
 use bun_core::MutableString;
-use bun_core::{Error, Output};
+use bun_core::Output;
 
 use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
 
@@ -318,8 +319,15 @@ impl<'a> InternalState<'a> {
                             &mut body_out_str.list,
                             bun_libdeflate::Encoding::Gzip,
                         );
-                        if result.status == bun_libdeflate::Status::Success {
+                        // libdeflate decodes a single gzip member; unconsumed
+                        // input means this is a multi-member stream (RFC 1952
+                        // §2.2). Let the zlib path handle it.
+                        if result.status == bun_libdeflate::Status::Success
+                            && result.read == buffer.len()
+                        {
                             still_needs_to_decompress = false;
+                        } else {
+                            body_out_str.list.clear();
                         }
 
                         break 'libdeflate;
@@ -340,7 +348,9 @@ impl<'a> InternalState<'a> {
                     },
                 );
 
-                if result.status == bun_libdeflate::Status::Success {
+                // libdeflate decodes a single member; unconsumed input means
+                // a multi-member gzip stream. Let the zlib path handle it.
+                if result.status == bun_libdeflate::Status::Success && result.read == buffer.len() {
                     body_out_str
                         .list
                         .reserve_exact(result.written.saturating_sub(body_out_str.list.len()));
@@ -371,7 +381,7 @@ impl<'a> InternalState<'a> {
                 self.decompressor
                     .decompress_chunk(self.encoding, buffer, body_out_str, is_done)
             {
-                if is_done || err != bun_core::err!("ShortRead") {
+                if is_done || err != crate::Error::ShortRead {
                     bun_core::pretty_errorln!(
                         "<r><red>Decompression error: {}<r>",
                         bstr::BStr::new(err.name()),

@@ -1,6 +1,7 @@
 use core::cell::Cell;
 use core::mem;
 
+use crate::error::ThrowSqlError;
 use crate::jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, VirtualMachineSqlExt as _,
 };
@@ -596,7 +597,7 @@ impl PostgresSQLQuery {
                 // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                 unsafe { Self::deref(this_ptr) };
                 if !global_object.has_exception() {
-                    return Err(global_object.throw_error(err, "failed to generate signature"));
+                    return Err(global_object.throw_sql_error(err, "failed to generate signature"));
                 }
                 return Err(JsError::Thrown);
             }
@@ -700,9 +701,8 @@ impl PostgresSQLQuery {
                     Err(err) => {
                         drop(signature);
                         release_query_ref();
-                        return Err(
-                            global_object.throw_error(err.into(), "failed to allocate statement")
-                        );
+                        return Err(global_object
+                            .throw_error(crate::Error::from(err), "failed to allocate statement"));
                     }
                 };
                 connection_entry_value = Some(entry_value_ptr);

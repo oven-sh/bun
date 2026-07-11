@@ -181,12 +181,16 @@ test("new TLSSocket(duplex, { isServer, requestCert, rejectUnauthorized }) reque
   });
   client.on("error", reject);
   const echoPromise = new Promise<string>(resolveEcho => client.on("data", data => resolveEcho(data.toString())));
-  const peerCert = await securePromise;
-  expect(peerCert.subject).toMatchObject({ CN: "server-bun" });
-  // The cert is untrusted and rejectUnauthorized is set, but a standalone
-  // server-side TLSSocket never auto-rejects: Node applies that policy only
-  // in tls.createServer's connection listener.
-  client.write("ping");
-  expect(await echoPromise).toBe("ping");
-  client.end();
+  try {
+    const peerCert = await securePromise;
+    expect(peerCert.subject).toMatchObject({ CN: "server-bun" });
+    // The cert is untrusted and rejectUnauthorized is set, but a standalone
+    // server-side TLSSocket never auto-rejects: Node applies that policy only
+    // in tls.createServer's connection listener.
+    client.write("ping");
+    expect(await echoPromise).toBe("ping");
+  } finally {
+    client.end();
+    server.destroy();
+  }
 });

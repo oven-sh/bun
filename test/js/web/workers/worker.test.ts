@@ -240,61 +240,22 @@ describe("web worker", () => {
     });
   });
 
-  test("worker with event listeners doesn't close event loop", done => {
-    const x = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages.js"],
-      env: bunEnv,
-      stdio: ["inherit", "pipe", "inherit"],
-    });
-
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
-
-    x.exited.then(async code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        done(new Error("exited with non-zero code"));
-      } else {
-        const text = await new Response(x.stdout).text();
-        if (!text.includes("done")) {
-          console.log({ text });
-          done(new Error("event loop killed early"));
-        } else {
-          done();
-        }
-      }
-    });
-  });
-
-  test("worker with event listeners doesn't close event loop 2", done => {
-    const x = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages2.js"],
-      env: bunEnv,
-      stdio: ["inherit", "pipe", "inherit"],
-    });
-
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
-
-    x.exited.then(async code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        done(new Error("exited with non-zero code"));
-      } else {
-        const text = await new Response(x.stdout).text();
-        if (!text.includes("done")) {
-          console.log({ text });
-          done(new Error("event loop killed early"));
-        } else {
-          done();
-        }
-      }
-    });
-  });
+  // A worker with a live message listener must keep the parent's event loop
+  // alive until "done"; if the loop dies early the child exits without
+  // printing it. Await the child's own exit rather than racing a wall-clock
+  // timer, which a debug/ASAN build loses.
+  test.each(["worker-fixture-many-messages.js", "worker-fixture-many-messages2.js"])(
+    "worker with event listeners doesn't close event loop (%s)",
+    async fixture => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), fixture],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "inherit"],
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({ stdout, exitCode }).toEqual({ stdout: "done\n", exitCode: 0 });
+    },
+  );
 
   test("worker with process.exit", done => {
     const worker = new Worker(new URL("worker-fixture-process-exit.js", import.meta.url), {

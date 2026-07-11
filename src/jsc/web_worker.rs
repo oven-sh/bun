@@ -179,6 +179,10 @@ pub struct WebWorker {
     /// observed concurrently by `terminate_all_and_wait` / parent-thread FFI;
     /// producing `&mut WebWorker` while another thread holds `&WebWorker` is UB).
     exit_called: AtomicBool,
+    /// `requested_terminate` is also set by worker-side paths (uncaught
+    /// exception, process.exit). `shutdown()` uses this to know the request
+    /// came from the parent's `terminate()` so it can report exit code 1.
+    terminate_from_parent: AtomicBool,
 }
 
 #[repr(u8)]
@@ -361,6 +365,7 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
             let w = bun_ptr::ParentRef::from(nn);
             // live_workers::MUTEX held; list links written only under it.
             it = w.live_next.get();
+            w.terminate_from_parent.store(true, Ordering::Release);
             if w.requested_terminate.swap(true, Ordering::Release) {
                 continue;
             }
@@ -571,6 +576,7 @@ impl WebWorker {
             arena: JsCell::new(None),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
+            terminate_from_parent: AtomicBool::new(false),
         }));
         // `worker` is non-null (just heap-allocated). Wrap once for the safe
         // shared reborrows below; the raw `worker` is still used for
@@ -691,6 +697,7 @@ impl WebWorker {
         // Only atomic / lock-guarded fields are touched cross-thread; never
         // `&mut WebWorker`.
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        this.terminate_from_parent.store(true, Ordering::Release);
         if this.set_requested_terminate() {
             return;
         }
@@ -1215,6 +1222,7 @@ impl WebWorker {
     /// closure — see the note at the bottom of this fn.
     fn shutdown(&self) {
         jsc::mark_binding();
+        let was_running = self.status.get() == Status::Running;
         self.set_status(Status::Terminated);
         bun_analytics::features::workers_terminated.fetch_add(1, Ordering::Relaxed);
         log!("[{}] shutdown", self.execution_context_id);
@@ -1247,6 +1255,15 @@ impl WebWorker {
             // clear it so process.on('exit') handlers can run. teardownJSCVM
             // re-sets it for the JSC VM teardown.
             vm.jsc_vm().clear_has_termination_request();
+            // Node's terminate() resolves to 1 when it interrupts a running
+            // worker. Not requested_terminate: a worker-side uncaught sets that
+            // too after the user's exit handler may rewrite process.exitCode.
+            if was_running
+                && self.terminate_from_parent.load(Ordering::Acquire)
+                && !self.exit_called.load(Ordering::Relaxed)
+            {
+                vm.exit_handler.exit_code = 1;
+            }
             vm.is_shutting_down = true;
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {

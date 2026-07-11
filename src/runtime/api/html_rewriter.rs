@@ -745,7 +745,7 @@ impl BufferOutputSink {
         // re-enters `SinkRef::handle_chunk` and forms a fresh
         // `&mut *sink`. Hoist the bufferer through a raw pointer so no `&mut`
         // derived from `*sink` is live across that callback.
-        let buffering_result: Result<(), bun_core::Error> = unsafe {
+        let buffering_result: crate::Result<()> = unsafe {
             let bufferer: *mut webcore::body::ValueBufferer =
                 (*sink).body_value_bufferer.as_mut().unwrap();
             (*bufferer).run(value, owned_readable_stream)
@@ -755,7 +755,7 @@ impl BufferOutputSink {
             // ref taken for the in-flight bufferer.
             unsafe { BufferOutputSink::deref(sink) };
             return Ok(match buffering_error {
-                e if e == bun_core::err!("StreamAlreadyUsed") => {
+                crate::Error::StreamAlreadyUsed => {
                     let err = system_error(
                         "ERR_STREAM_ALREADY_FINISHED",
                         "Stream already used, please create a new one",

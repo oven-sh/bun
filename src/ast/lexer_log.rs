@@ -17,7 +17,7 @@ use crate::{AddErrorOptions, Loc, Log, Range, Source, usize2loc};
 
 pub trait LexerLog<'s> {
     /// Per-lexer error variant returned from the `*_error` family
-    /// (`Error::SyntaxError` for js, `bun_core::err!("SyntaxError")` for
+    /// (`Error::SyntaxError` for js, `crate::Error::SyntaxError` for
     /// the JSON-subset lexer).
     type Err;
 

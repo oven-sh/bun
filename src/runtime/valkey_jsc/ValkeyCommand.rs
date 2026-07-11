@@ -56,7 +56,7 @@ impl<'a> Args<'a> {
 }
 
 impl<'a> Command<'a> {
-    pub fn write(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
+    pub fn write(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
         // Serialize as RESP array format directly
         write!(writer, "*{}\r\n", 1 + self.args.len())?;
         write!(writer, "${}\r\n", self.command.len())?;
@@ -97,7 +97,7 @@ impl<'a> Command<'a> {
         counter.count
     }
 
-    pub fn serialize(&self) -> Result<Box<[u8]>, bun_core::Error> {
+    pub fn serialize(&self) -> Result<Box<[u8]>, crate::Error> {
         let mut buf: Vec<u8> = Vec::with_capacity(self.byte_length());
         self.write(&mut buf)?;
         Ok(buf.into_boxed_slice())
@@ -119,7 +119,7 @@ pub mod entry {
 
 impl Entry {
     // Create an Offline by serializing the Valkey command directly
-    pub fn create(command: &Command<'_>, promise: Promise) -> Result<Entry, bun_core::Error> {
+    pub fn create(command: &Command<'_>, promise: Promise) -> Result<Entry, crate::Error> {
         Ok(Entry {
             serialized_data: command.serialize()?,
             // We should be calling .check against command here but due

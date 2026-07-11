@@ -2,7 +2,6 @@ use core::mem::size_of;
 
 use crate::jsc::{JSGlobalObject, JSValue};
 use bun_core::String as BunString;
-use bun_core::err;
 
 use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
 use bun_sql::postgres::postgres_protocol as protocol;
@@ -15,9 +14,6 @@ pub use crate::shared::sql_data_cell::SQLDataCell;
 pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value};
 use bun_sql::shared::column_identifier::ColumnIdentifier;
 
-// Errors here collapse into
-// `AnyPostgresError` (names not in that enum — e.g. `err!("BufferTooSmall")` —
-// fall back to `JSError` via the name-based `From<bun_core::Error>` impl).
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
 bun_core::declare_scope!(Postgres, visible);
@@ -42,16 +38,13 @@ fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
     })
 }
 
-fn unescape_postgres_string<'a>(
-    input: &[u8],
-    buffer: &'a mut [u8],
-) -> Result<&'a mut [u8], bun_core::Error> {
+fn unescape_postgres_string<'a>(input: &[u8], buffer: &'a mut [u8]) -> crate::Result<&'a mut [u8]> {
     let mut out_index: usize = 0;
     let mut i: usize = 0;
 
     while i < input.len() {
         if out_index >= buffer.len() {
-            return Err(err!("BufferTooSmall"));
+            return Err(crate::Error::BufferTooSmall);
         }
 
         if input[i] == b'\\' && i + 1 < input.len() {
@@ -73,15 +66,15 @@ fn unescape_postgres_string<'a>(
                 // PostgreSQL hex escapes (used for unicode too)
                 b'x' => {
                     if i + 2 >= input.len() {
-                        return Err(err!("InvalidEscapeSequence"));
+                        return Err(crate::Error::InvalidEscapeSequence);
                     }
                     let hex_value = bun_core::fmt::parse_int::<u8>(&input[i + 1..i + 3], 16)
-                        .map_err(|_| err!("InvalidEscapeSequence"))?;
+                        .map_err(|_| crate::Error::InvalidEscapeSequence)?;
                     buffer[out_index] = hex_value;
                     i += 2;
                 }
 
-                _ => return Err(err!("UnknownEscapeSequence")),
+                _ => return Err(crate::Error::UnknownEscapeSequence),
             }
         } else {
             buffer[out_index] = input[i];
@@ -989,10 +982,10 @@ impl<'a> PGNummericString<'a> {
 fn parse_binary_numeric<'a>(
     input: &[u8],
     result: &'a mut Vec<u8>,
-) -> Result<PGNummericString<'a>, bun_core::Error> {
+) -> crate::Result<PGNummericString<'a>> {
     // Reference: https://github.com/postgres/postgres/blob/50e6eb731d98ab6d0e625a0b87fb327b172bbebd/src/backend/utils/adt/numeric.c#L7612-L7740
     if input.len() < 8 {
-        return Err(err!("InvalidBuffer"));
+        return Err(crate::Error::InvalidBuffer);
     }
     // Manual cursor over &[u8].
     let mut cursor = input;
@@ -1000,7 +993,7 @@ fn parse_binary_numeric<'a>(
         ($ty:ty) => {{
             const N: usize = size_of::<$ty>();
             if cursor.len() < N {
-                return Err(err!("InvalidBuffer"));
+                return Err(crate::Error::InvalidBuffer);
             }
             let v = <$ty>::from_be_bytes(cursor[..N].try_into().expect("infallible: size matches"));
             cursor = &cursor[N..];
@@ -1028,7 +1021,7 @@ fn parse_binary_numeric<'a>(
         0xD000 => return Ok(PGNummericString::Static(b"Infinity")),
         0xF000 => return Ok(PGNummericString::Static(b"-Infinity")),
         0x4000 | 0x0000 => {}
-        _ => return Err(err!("InvalidSign")),
+        _ => return Err(crate::Error::InvalidSign),
     }
 
     if ndigits == 0 {

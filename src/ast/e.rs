@@ -1299,11 +1299,11 @@ pub enum SetError {
 }
 bun_core::impl_tag_error!(SetError);
 bun_core::oom_from_alloc!(SetError);
-impl From<SetError> for bun_core::Error {
+impl From<SetError> for crate::Error {
     fn from(e: SetError) -> Self {
         match e {
-            SetError::OutOfMemory => bun_core::err!(OutOfMemory),
-            SetError::Clobber => bun_core::err!(Clobber),
+            SetError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            SetError::Clobber => crate::Error::Clobber,
         }
     }
 }

@@ -155,7 +155,7 @@ impl TOML {
         log: &mut Log,
         bump: &'a Bump,
         redact_logs: bool,
-    ) -> Result<Expr, bun_core::Error> {
+    ) -> crate::Result<Expr> {
         let mut parser = Parser {
             scanner: Scanner {
                 src: source.contents.as_ref(),
@@ -172,9 +172,9 @@ impl TOML {
         };
         match parser.parse_root() {
             Ok(root) => Ok(root),
-            Err(PErr::Syntax) => Err(bun_core::err!("SyntaxError")),
-            Err(PErr::Oom) => Err(bun_core::err!("OutOfMemory")),
-            Err(PErr::StackOverflow) => Err(bun_core::err!("StackOverflow")),
+            Err(PErr::Syntax) => Err(crate::Error::SyntaxError),
+            Err(PErr::Oom) => Err(crate::Error::Alloc(bun_alloc::AllocError)),
+            Err(PErr::StackOverflow) => Err(crate::Error::StackOverflow),
         }
     }
 }

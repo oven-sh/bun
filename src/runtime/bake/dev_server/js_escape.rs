@@ -10,8 +10,8 @@ use bun_core::strings::{self, CodePoint};
 pub(crate) fn decode_js_escape_sequences<'a>(
     text: &[u8],
     buf: &mut ArenaVec<'a, u8>,
-) -> Result<(), bun_core::Error> {
-    let syntax_error = || bun_core::err!("SyntaxError");
+) -> Result<(), crate::Error> {
+    let syntax_error = || crate::Error::SyntaxError;
     let iterator = strings::CodepointIterator::init(text);
     let mut iter = strings::Cursor::default();
     while iterator.next(&mut iter) {

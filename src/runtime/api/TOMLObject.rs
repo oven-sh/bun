@@ -25,10 +25,10 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         |arena, log, source| {
             let root = match TOML::parse(source, log, arena, false) {
                 Ok(v) => v,
-                Err(e) if e == bun_core::err!("StackOverflow") => {
+                Err(bun_parsers::Error::StackOverflow) => {
                     return Err(global.throw_stack_overflow());
                 }
-                Err(e) if e == bun_core::err!("OutOfMemory") => {
+                Err(bun_parsers::Error::Alloc(_)) => {
                     return Err(JsError::OutOfMemory);
                 }
                 Err(_) => {

@@ -247,8 +247,6 @@ pub enum Error {
     OutOfMemory,
 }
 
-bun_core::named_error_set!(Error);
-
 bun_core::oom_from_alloc!(Error);
 
 /// Sharp's default: 0x3FFF * 0x3FFF ≈ 268 MP. A single RGBA8 frame at this

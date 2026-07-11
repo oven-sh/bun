@@ -457,10 +457,9 @@ test("transferring a port from inside peerClosed()'s flush preserves the remaini
   expect(seen).toEqual(["old:m1", "new:m2", "new:m3"]);
 });
 
-// The onmessage/onmessageerror setters ref the event loop through
-// MessagePort::jsRef(). That ref has to be released when the handler is
-// removed, otherwise the port pins the event loop (the process can never
-// exit) and the native port leaks once its wrapper is collected.
+// The onmessage setter's m_hasRef keepalive must track the handler: ref while
+// one is installed, release on removal (process can exit, native port doesn't
+// leak). onmessageerror never refs, and m_isRefd (.ref()/.unref()) is separate.
 describe("onmessage event-loop ref", () => {
   // ref/unref/hasRef exist at runtime but are not part of the DOM type.
   type NodeLikePort = MessagePort & { ref(): void; unref(): void; hasRef(): boolean };

@@ -6281,14 +6281,12 @@ fn is_signable_extension(bytes: &[u8]) -> bool {
 /// Idempotent: skips without I/O if the file already has a valid `.codesign` section.
 #[cfg(target_env = "ohos")]
 pub fn ohos_sign_binary(path: &ZStr) {
-    let bytes = path.as_bytes();
-    if !is_signable_extension(bytes) {
-        return;
-    }
-    let path_str = core::str::from_utf8(bytes).unwrap_or("");
+    let path_str = core::str::from_utf8(path.as_bytes()).unwrap_or("");
     let p = std::path::Path::new(path_str);
     // Use `with_strip` so compiled binaries that embed the bun runtime
     // (which already has a .codesign) get re-signed correctly.
+    // Note: no extension filter — this is called for `bun build --compile`
+    // output which has an arbitrary name (no .so/.node extension).
     let _ = ohos_sign::sign_selfsign_inplace_with_strip(p);
 }
 

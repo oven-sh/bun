@@ -1393,6 +1393,16 @@ impl VirtualMachine {
 
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         if self.is_handling_uncaught_exception {
+            if !self.is_main_thread() {
+                // node parity: a throw inside the uncaughtException handler in a
+                // worker exits the worker with code 1 (not the main-thread fatal
+                // code 7). Report it to the parent + arm termination via the
+                // normal path; process_exit() RETURNS on a worker, so the
+                // main-thread process_exit(7)+panic below would crash.
+                self.exit_handler.exit_code = 1;
+                (self.on_unhandled_rejection)(self, global_object, err);
+                return false;
+            }
             self.run_error_handler(err, None);
             // SAFETY: `global_object` is the live VM global; `process_exit` is
             // `bun_runtime::node::process::exit` (main-thread `noreturn`).
@@ -1408,8 +1418,10 @@ impl VirtualMachine {
         if !handled {
             // `beforeExit` has already been dispatched, so the run is winding
             // down and there is no loop turn left to defer to: print the error
-            // and exit, like node's fatal-exception path.
-            if self.exit_on_uncaught_exception {
+            // and exit, like node's fatal-exception path. Main thread only:
+            // process_exit() RETURNS on a worker, so the panic would fire; a
+            // worker falls through and exits 1 below (e.g. a beforeExit throw).
+            if self.exit_on_uncaught_exception && self.is_main_thread() {
                 self.run_error_handler(err, None);
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or
@@ -4472,6 +4484,11 @@ impl VirtualMachine {
         // mmap-backed (`MAPPED_CONTENTS_CACHE`) — `Source`'s `Drop` is a
         // no-op, so dropping the box just frees its own allocation.
         drop(core::mem::take(&mut self.module_loader));
+
+        // Same raw-dealloc story: `preload` is cloned into the VM at spin()
+        // time and `load_preloads` clears the boxes but keeps the Vec buffer,
+        // so reclaim it here or every Worker leaks it.
+        drop(core::mem::take(&mut self.preload));
 
         // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
         // `transpiler` is never auto-dropped after `deinit` clears its fields.

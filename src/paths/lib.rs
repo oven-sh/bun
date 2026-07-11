@@ -340,6 +340,8 @@ pub mod component_iterator;
 pub use component_iterator::{
     Component, ComponentIterator, MakePathStep, PathFormat, component_iterator, make_path_with,
 };
+pub mod classify;
+pub use classify::{RelPathFacts, classify_rel_t};
 // Crate-root re-exports for the path-mutation helpers so `#[cfg(windows)]`
 // install paths can call
 // `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.

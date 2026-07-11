@@ -1012,6 +1012,58 @@ it.skipIf(isWindows)(
   },
 );
 
+// EPOLLHUP is level-triggered and unmaskable: deferring eof while paused must
+// also take the fd out of the poll set or epoll_wait spins at 100% CPU.
+it.skipIf(isWindows)("does not busy-spin the event loop while a paused socket has EPOLLHUP latched", async () => {
+  const fixture = `
+    const net = require("net");
+    const { once } = require("events");
+    let resolveClosed;
+    const serverClosed = new Promise(r => (resolveClosed = r));
+    const server = net.createServer({ allowHalfOpen: true }, socket => {
+      socket.resume();
+      socket.on("end", () => { socket.write(Buffer.alloc(64 * 1024, 0x61), () => socket.end()); });
+      socket.on("close", resolveClosed);
+    }).listen(0, async () => {
+      const conn = net.connect({ port: server.address().port, allowHalfOpen: true });
+      await once(conn, "connect");
+      conn.end();
+      conn.pause();
+      await serverClosed;
+      // Both FINs exchanged and 64 KiB sits in the receive buffer: EPOLLHUP is
+      // now latched on conn's fd. Hold the pause for one second; a busy-spin
+      // would burn a full core here.
+      let received = 0;
+      conn.on("data", b => { received += b.length; });
+      conn.on("close", () => { server.close(); console.log("close", received); });
+      const before = process.cpuUsage();
+      setTimeout(() => {
+        const d = process.cpuUsage(before);
+        console.log("cpu", d.user + d.system);
+        conn.resume();
+      }, 1000);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = stdout.trim().split("\n").sort();
+  // The paused window is ~1s; a spin on the unmaskable EPOLLHUP ran the loop
+  // flat out and spent >1s of CPU there. 500ms leaves generous headroom over
+  // the debug+ASAN idle baseline (~60ms).
+  const cpuMicros = Number((lines.find(l => l.startsWith("cpu ")) ?? "cpu -1").slice(4));
+  expect({ lines, stderr: stderr.trim(), cpuIdle: cpuMicros >= 0 && cpuMicros < 500_000 }).toEqual({
+    lines: ["close 65536", `cpu ${cpuMicros}`],
+    stderr: "",
+    cpuIdle: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
 describe("paused socket whose peer sends RST", () => {
   // Regression: on Linux, epoll forwarded the raw EPOLLERR bit (8) as a libus
   // close code, which the JS error path read as errno 8 and surfaced as a

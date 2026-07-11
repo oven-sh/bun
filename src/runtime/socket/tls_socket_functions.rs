@@ -305,7 +305,7 @@ pub(super) fn set_servername(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    if this.is_server() {
+    if this.acts_as_tls_server() {
         return Err(global.throw(format_args!(
             "Cannot issue SNI from a TLS server-side socket"
         )));
@@ -458,7 +458,11 @@ pub(super) fn get_peer_certificate(
     };
 
     if abbreviated {
-        if this.is_server() {
+        // `acts_as_tls_server`, not `is_server`: a standalone upgrade
+        // (`new tls.TLSSocket(socket, { isServer: true })`) has Client-mode
+        // handlers but is the TLS server, and on the server side the peer's
+        // leaf only comes from SSL_get_peer_certificate, never the chain.
+        if this.acts_as_tls_server() {
             // SSL_get_peer_certificate returns a +1 reference; we must free it.
             // X509::to_js only borrows the pointer (X509View is non-owning).
             let cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -481,7 +485,7 @@ pub(super) fn get_peer_certificate(
     }
 
     let mut cert: *mut boringssl::X509 = core::ptr::null_mut();
-    if this.is_server() {
+    if this.acts_as_tls_server() {
         // SSL_get_peer_certificate returns a +1 reference; we must free it.
         cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
     }
@@ -1014,7 +1018,7 @@ pub(super) fn get_ephemeral_key_info(
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // only available for clients
-    if this.is_server() {
+    if this.acts_as_tls_server() {
         return Ok(JSValue::NULL);
     }
 
@@ -1293,15 +1297,6 @@ pub(super) fn set_verify_mode(
     let request_cert = request_cert_js.to_boolean();
     let reject_unauthorized = reject_unauthorized_js.to_boolean();
     let acts_as_server = this.acts_as_tls_server();
-    let mut verify_mode: c_int = boringssl::SSL_VERIFY_NONE;
-    if acts_as_server {
-        if request_cert {
-            verify_mode = boringssl::SSL_VERIFY_PEER;
-            if reject_unauthorized {
-                verify_mode |= boringssl::SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
-            }
-        }
-    }
     // Keep the enforcement flag in sync with the verify mode this call installs.
     this.update_flags(|f| {
         f.set(
@@ -1309,8 +1304,25 @@ pub(super) fn set_verify_mode(
             reject_unauthorized && (!acts_as_server || request_cert),
         );
     });
+    set_ssl_verify_mode(this, request_cert, reject_unauthorized);
+    Ok(JSValue::UNDEFINED)
+}
+
+/// Install the verify mode on this socket's own SSL, the way Node's
+/// `TLSWrap::SetVerifyMode` applies `requestCert`/`rejectUnauthorized` per
+/// socket. Does not touch `Flags::REJECT_UNAUTHORIZED`.
+pub(super) fn set_ssl_verify_mode(this: &This, request_cert: bool, reject_unauthorized: bool) {
+    let mut verify_mode: c_int = boringssl::SSL_VERIFY_NONE;
+    if this.acts_as_tls_server() {
+        if request_cert {
+            verify_mode = boringssl::SSL_VERIFY_PEER;
+            if reject_unauthorized {
+                verify_mode |= boringssl::SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
+            }
+        }
+    }
     let Some(ssl_ptr) = this.socket.get().ssl() else {
-        return Ok(JSValue::UNDEFINED);
+        return;
     };
     // we always allow and check the SSL certificate after the handshake or renegotiation
     ffi::SSL_set_verify(
@@ -1318,7 +1330,6 @@ pub(super) fn set_verify_mode(
         verify_mode,
         Some(always_allow_ssl_verify_callback),
     );
-    Ok(JSValue::UNDEFINED)
 }
 
 extern "C" fn always_allow_ssl_verify_callback(

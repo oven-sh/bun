@@ -6270,13 +6270,6 @@ pub mod RTLD {
     pub const LOCAL: i32 = 0;
 }
 
-/// Case-insensitive check for .so or .node extension.
-fn is_signable_extension(bytes: &[u8]) -> bool {
-    let len = bytes.len();
-    (len > 3 && bytes[len - 3..].eq_ignore_ascii_case(b".so"))
-        || (len > 5 && bytes[len - 5..].eq_ignore_ascii_case(b".node"))
-}
-
 /// OHOS: sign a binary by path using the in-process ohos_sign crate.
 /// Idempotent: skips without I/O if the file already has a valid `.codesign` section.
 #[cfg(target_env = "ohos")]
@@ -6322,17 +6315,12 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     #[cfg(target_env = "ohos")]
     {
         fn ensure_signed(path: &ZStr) {
-            let bytes = path.as_bytes();
-            if !is_signable_extension(bytes) {
+            let path_str = core::str::from_utf8(path.as_bytes()).unwrap_or("");
+            let p = std::path::Path::new(path_str);
+            if ohos_sign::has_codesign(&std::fs::read(p).unwrap_or_default()) {
                 return;
             }
-            let path_str = core::str::from_utf8(bytes).unwrap_or("");
-            let p = std::path::Path::new(path_str);
-            if let Ok(elf_bytes) = std::fs::read(p) {
-                if !ohos_sign::has_codesign(&elf_bytes) {
-                    let _ = ohos_sign::sign_selfsign_inplace(p);
-                }
-            }
+            let _ = ohos_sign::sign_selfsign_inplace(p);
         }
         ensure_signed(filename);
         // SAFETY: filename is NUL-terminated.

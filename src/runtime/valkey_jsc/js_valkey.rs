@@ -1465,14 +1465,6 @@ impl JSValkeyClient {
         Ok(())
     }
 
-    // Callback for when Valkey client times out
-    pub fn on_valkey_timeout(&self) {
-        let _ = self.client_fail(
-            b"Connection timeout",
-            protocol::RedisError::ConnectionClosed,
-        );
-    }
-
     pub fn client_fail(&self, message: &[u8], err: protocol::RedisError) -> JsTerminatedResult<()> {
         narrow_terminated(self.client_mut().fail(self, message, err))
     }

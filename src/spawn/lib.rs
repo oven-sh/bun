@@ -399,6 +399,11 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
         stdout: process::sync::SyncStdio::Buffer,
         stderr: process::sync::SyncStdio::Buffer,
         argv0: argv0_ptr,
+        // `run()` is a capture-output helper (sole caller: `repository::exec`),
+        // not the `bun run` script path. `bun install` calls it on the main
+        // thread (`find_commit`) while its threadpool has live `git clone`
+        // children, which the `--no-orphans` subreaper cleanup would SIGKILL.
+        no_orphans_reap: false,
         // `process::sync::spawn` → `spawn_process_windows`
         // reads `options.windows.loop_` to get the `uv_loop_t*`.
         // `WindowsOptions::default()` leaves `loop_` zeroed,

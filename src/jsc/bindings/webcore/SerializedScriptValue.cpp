@@ -4752,10 +4752,12 @@ private:
             return JSValue();
         }
 
+        // The serializer never writes a zero-length DER (i2d_X509 <= 0 is an encode
+        // failure), so an empty buffer is crafted bytes. Reject it: a JSX509Certificate
+        // without an X509* hands out a KeyObject over a null EVP_PKEY via .publicKey.
         if (buffer.size() == 0) {
-            auto* cert_obj = Bun::JSX509Certificate::create(m_lexicalGlobalObject->vm(), defaultGlobalObject(m_globalObject)->m_JSX509CertificateClassStructure.get(m_globalObject));
-            addTerminalToObjectPool(cert_obj);
-            return cert_obj;
+            fail();
+            return JSValue();
         }
         ncrypto::ClearErrorOnReturn clear_error_on_return;
         X509* ptr = nullptr;

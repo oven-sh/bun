@@ -730,6 +730,75 @@ for (const structuredCloneFn of [
   });
 }
 
+// X509Certificate wire record = [version u32][tag=253][derLen u32][der…]. The serializer
+// never emits derLen == 0; a crafted zero-length DER used to materialize a cert-less
+// instance whose .publicKey wrapped a null EVP_PKEY and SEGV'd the first use.
+describe("deserialize of crafted X509Certificate payloads", () => {
+  // Derive header + tag from a real serialized cert so version bumps don't break this.
+  // Literal shape as of version 14: Buffer.from([14, 0, 0, 0, 253, 0, 0, 0, 0]).
+  const emptyDer = (() => {
+    const real = Buffer.from(new Uint8Array(serialize(new X509Certificate(tls.cert))));
+    const tagAt = real.indexOf(253, 4);
+    if (tagAt < 4) throw new Error("could not locate X509 tag in serialized output");
+    // Sanity: bytes after the tag are the little-endian DER length.
+    expect(real.readUInt32LE(tagAt + 1)).toBe(real.length - tagAt - 5);
+    const out = Buffer.from(real.subarray(0, tagAt + 5));
+    out.writeUInt32LE(0, tagAt + 1);
+    return out;
+  })();
+
+  test("empty DER is rejected at deserialize and cannot yield a null-EVP_PKEY KeyObject", async () => {
+    // Runs in a subprocess because the pre-fix build SEGFAULTs on key.equals(key),
+    // which would take the test runner down with it.
+    const childScript = `
+      const { deserialize } = require("bun:jsc");
+      const v8 = require("node:v8");
+      const payload = Buffer.from(process.argv[1], "base64");
+      const out = [];
+      for (const [entry, de] of [["bun:jsc", deserialize], ["node:v8", b => v8.deserialize(Buffer.from(b))]]) {
+        try {
+          const cert = de(payload);
+          // Pre-fix: cert is an X509Certificate with m_x509 == null. .publicKey hands out a
+          // KeyObject over a null EVP_PKEY; key.equals(key) dereferences it and SEGFAULTs.
+          const key = cert.publicKey;
+          out.push({ entry, threw: false, keyType: key?.type, equals: key.equals(key) });
+        } catch (e) {
+          out.push({ entry, threw: true, name: e?.name, message: e?.message });
+        }
+      }
+      process.stdout.write(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", childScript, emptyDer.toString("base64")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const rejection = { threw: true, name: "TypeError", message: "Unable to deserialize data." };
+    expect({ stdout: stdout ? JSON.parse(stdout) : stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: [
+        { entry: "bun:jsc", ...rejection },
+        { entry: "node:v8", ...rejection },
+      ],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("a real X509Certificate still round-trips and its .publicKey is usable", () => {
+    const original = new X509Certificate(tls.cert);
+    const cloned = deserialize(serialize(original));
+    expect(cloned).toBeInstanceOf(X509Certificate);
+    expect(cloned.subject).toBe(original.subject);
+    const key = cloned.publicKey;
+    expect(key).toBeInstanceOf(KeyObject);
+    expect(key.type).toBe("public");
+    expect(key.equals(key)).toBe(true);
+    expect(key.equals(original.publicKey)).toBe(true);
+  });
+});
+
 describe("reference pool survives a process boundary", () => {
   // One cold subprocess hop covering the whole identity matrix, so every platform object
   // type (X509Certificate, KeyObjects, Blob, File, ...) is deserialized in a fresh VM.

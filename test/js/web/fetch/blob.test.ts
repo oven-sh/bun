@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
-import { resolveObjectURL } from "node:buffer";
 import type { BlobOptions } from "node:buffer";
+import { resolveObjectURL } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
 

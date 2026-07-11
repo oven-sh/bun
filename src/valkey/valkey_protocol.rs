@@ -37,8 +37,6 @@ pub enum RedisError {
 
 bun_core::impl_tag_error!(RedisError);
 
-bun_core::named_error_set!(RedisError);
-
 impl From<bun_core::Error> for RedisError {
     /// Reverse of the `RedisError → bun_core::Error` interning above so the
     /// `JSValkeyClient::send` → `valkey_error_to_js` path round-trips through

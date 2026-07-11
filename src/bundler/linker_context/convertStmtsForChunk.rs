@@ -48,7 +48,7 @@ pub fn convert_stmts_for_chunk(
     bump: &Bump,
     wrap: WrapKind,
     ast: &JSAst<'_>,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let _ = bump;
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;
     let should_strip_exports = c.options.mode != LinkerOptionsMode::Passthrough

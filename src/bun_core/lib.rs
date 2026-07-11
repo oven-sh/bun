@@ -16,6 +16,7 @@
 pub mod Global;
 pub mod atomic_cell;
 pub mod comptime_string_map;
+pub mod error;
 pub mod hint;
 pub mod result;
 pub mod thread_id;
@@ -647,8 +648,9 @@ pub use bun_alloc::{
 // can write `bun_core::assert_ffi_layout!(...)` without naming `bun_opaque`.
 pub use Global::*;
 pub use bun_opaque::{FfiLayout, assert_ffi_discr, assert_ffi_layout};
+pub use error::{Error, Error as CrateError, Result as CrateResult};
 pub use ffi::{Zeroable, boxed_zeroed, boxed_zeroed_unchecked};
-pub use result::*;
+pub use result::coreutils_error_map;
 pub use tty::Winsize;
 pub use util::*;
 
@@ -941,22 +943,6 @@ impl From<crate::Error> for JsError {
     }
 }
 
-impl From<JsError> for crate::Error {
-    /// Widen a `bun.JSError` value back into the `anyerror` newtype. Preserves
-    /// the exact tag name so call sites that round-trip through
-    /// `bun_core::Error` (e.g. the `bun_bundler::dispatch::DevServerVTable`
-    /// boundary) keep `error.OutOfMemory` distinguishable from `error.JSError`.
-    #[inline]
-    fn from(e: JsError) -> Self {
-        match e {
-            JsError::OutOfMemory => crate::err!("OutOfMemory"),
-            // `Terminated` (worker shutdown) has no distinct `error.` tag, so
-            // collapse into `JSError` like every other thrown JS exception.
-            JsError::Thrown | JsError::Terminated => crate::err!("JSError"),
-        }
-    }
-}
-
 /// Write `parts` consecutively
 /// into `dest` and return the written prefix as a mutable slice. Panics if
 /// `sum(parts.len()) > dest.len()`.
@@ -1122,37 +1108,6 @@ macro_rules! todo_panic {
     }};
 }
 
-// `err!(Name)` / `err!("Name")` — interned error-name literal.
-//
-// Expands to a per-site `AtomicU16` slot that interns the stringified name on
-// first hit, then hands back the cached `NonZeroU16` forever after. Two
-// `err!(Foo)` at different sites resolve to the *same* code (the table is
-// process-global), so `e == err!(Foo)` is a plain u16 compare — the property
-// h2 `error_code_for`, install retry loops, etc. were blocked on.
-//
-// Layout: `AtomicU16::new(0)` is 2 bytes of all-zeros (vs `OnceLock<Error>` at
-// 8+), so the ~1.3k call-site statics shrink and land in `.bss` for free. On
-// ELF targets they're additionally clustered into a dedicated `.bun_err`
-// section so the whole set occupies one page. The cold miss path is a single
-// non-generic `#[cold]` function (`intern_cached`) — no per-closure
-// `get_or_init` monomorphization, one `.text` body instead of thousands.
-#[macro_export]
-macro_rules! err {
-    ($name:ident) => { $crate::err!(@__cached ::core::stringify!($name)) };
-    ($name:literal) => { $crate::err!(@__cached $name) };
-    // `err!(from e)` — convert a strum::IntoStaticStr enum error to bun_core::Error.
-    (from $e:expr) => { $crate::Error::intern(<&'static str>::from(&$e)) };
-    (@__cached $name:expr) => {{
-        #[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".bun_err"))]
-        static __E: ::core::sync::atomic::AtomicU16 = ::core::sync::atomic::AtomicU16::new(0);
-        let __v = __E.load(::core::sync::atomic::Ordering::Relaxed);
-        if __v != 0 {
-            $crate::Error::from_raw(__v)
-        } else {
-            $crate::intern_cached(&__E, $name)
-        }
-    }};
-}
 // `mark_binding!` and `zstr!` are defined in Global.rs / util.rs respectively.
 
 pub use env as Environment;
@@ -1186,10 +1141,10 @@ pub mod time {
     }
     impl Timer {
         #[inline]
-        pub fn start() -> core::result::Result<Self, crate::Error> {
-            Ok(Self {
+        pub fn start() -> Self {
+            Self {
                 started: std::time::Instant::now(),
-            })
+            }
         }
         #[inline]
         pub fn read(&self) -> u64 {

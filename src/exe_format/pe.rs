@@ -48,8 +48,6 @@ pub enum Error {
     SizeOfImageMismatch,
 }
 
-bun_core::named_error_set!(Error);
-
 // Enums for strip modes and options
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum StripMode {
@@ -774,7 +772,7 @@ impl PEFile {
     }
 
     /// Write the modified PE file
-    pub fn write(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
+    pub fn write(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         writer.write_all(&self.data)?;
         Ok(())
     }

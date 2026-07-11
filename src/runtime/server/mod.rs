@@ -3622,11 +3622,11 @@ impl AnyServer {
         path: &[u8],
         route: AnyRoute,
         method: server_config::MethodOptional,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         any_server_dispatch_mut!(self, |s| s.config.append_static_route(path, route, method))
     }
 
-    pub fn reload_static_routes(&self) -> Result<bool, bun_core::Error> {
+    pub fn reload_static_routes(&self) -> Result<bool, crate::Error> {
         any_server_dispatch_mut!(self, |s| s.reload_static_routes())
     }
 

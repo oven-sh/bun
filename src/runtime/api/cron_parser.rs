@@ -43,8 +43,6 @@ pub(crate) enum CronError {
     TooFewFields,
 }
 
-bun_core::named_error_set!(CronError);
-
 impl CronExpression {
     pub(crate) fn error_message(e: CronError) -> &'static [u8] {
         match e {

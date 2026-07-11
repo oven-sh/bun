@@ -86,14 +86,14 @@ pub trait DependencyExt {
         package_manager: &mut PM,
         buf: &[u8],
         builder: &mut SB,
-    ) -> Result<Dependency, bun_core::Error>;
+    ) -> Result<Dependency, crate::Error>;
     fn clone_with_different_buffers<SB: StringBuilderLike, PM: NpmAliasRegistry>(
         &self,
         package_manager: &mut PM,
         name_buf: &[u8],
         version_buf: &[u8],
         builder: &mut SB,
-    ) -> Result<Dependency, bun_core::Error>;
+    ) -> Result<Dependency, crate::Error>;
     fn realname(&self) -> String;
     fn is_aliased(&self, buf: &[u8]) -> bool;
     fn eql(&self, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool;
@@ -207,7 +207,7 @@ impl DependencyExt for Dependency {
         package_manager: &mut PM,
         buf: &[u8],
         builder: &mut SB,
-    ) -> Result<Dependency, bun_core::Error> {
+    ) -> Result<Dependency, crate::Error> {
         self.clone_with_different_buffers(package_manager, buf, buf, builder)
     }
 
@@ -217,7 +217,7 @@ impl DependencyExt for Dependency {
         name_buf: &[u8],
         version_buf: &[u8],
         builder: &mut SB,
-    ) -> Result<Dependency, bun_core::Error> {
+    ) -> Result<Dependency, crate::Error> {
         // `append_string` may reallocate `string_bytes`, invalidating any
         // prior slice. Append first, then borrow the (now-stable) buffer.
         let new_literal = builder.append_string(self.version.literal.slice(version_buf));
@@ -609,7 +609,7 @@ pub trait VersionExt {
         &self,
         buf: &[u8],
         builder: &mut SB,
-    ) -> Result<Version, bun_core::Error>;
+    ) -> Result<Version, crate::Error>;
     fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn to_version(
@@ -633,7 +633,7 @@ impl VersionExt for Version {
         &self,
         buf: &[u8],
         builder: &mut SB,
-    ) -> Result<Version, bun_core::Error> {
+    ) -> Result<Version, crate::Error> {
         Ok(Version {
             tag: self.tag,
             literal: builder.append_string(self.literal.slice(buf)),
@@ -1147,7 +1147,7 @@ pub trait ValueExt {
         _tag: Tag,
         _buf: &[u8],
         _builder: &mut SB,
-    ) -> Result<Value, bun_core::Error>;
+    ) -> Result<Value, crate::Error>;
 }
 
 impl ValueExt for Value {
@@ -1156,7 +1156,7 @@ impl ValueExt for Value {
         tag: Tag,
         _buf: &[u8],
         _builder: &mut SB,
-    ) -> Result<Value, bun_core::Error> {
+    ) -> Result<Value, crate::Error> {
         Ok(match tag {
             Tag::Npm => {
                 // SAFETY: `tag == Npm` selects the `npm` union arm.

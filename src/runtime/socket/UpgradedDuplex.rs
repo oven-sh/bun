@@ -322,7 +322,7 @@ impl UpgradedDuplex {
         &mut self,
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.wrapper = Some(super::ssl_wrapper::init(
             ssl_options,
             is_client,
@@ -350,7 +350,7 @@ impl UpgradedDuplex {
         &mut self,
         ctx: *mut bun_boringssl_sys::SSL_CTX,
         is_client: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // errdefer SSL_CTX_free(ctx) — free the adopted ref on the error path only.
         let ctx_guard = scopeguard::guard(ctx, |ctx| {
             // SAFETY: ctx is a valid SSL_CTX* with one ref adopted by this fn.

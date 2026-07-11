@@ -30,7 +30,6 @@ pub enum MachoError {
     #[error("OutOfMemory")]
     OutOfMemory,
 }
-bun_core::named_error_set!(MachoError);
 bun_core::oom_from_alloc!(MachoError);
 
 pub struct MachoFile {
@@ -469,7 +468,7 @@ impl MachoFile {
         )
     }
 
-    pub fn build(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
+    pub fn build(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         writer.write_all(&self.data)?;
         Ok(())
     }
@@ -493,10 +492,7 @@ impl MachoFile {
         Ok(())
     }
 
-    // Returns `bun_core::Error` (the repo-wide union type) rather than a bespoke
-    // `MachoError | io::Error` enum: `From<MachoError>` routes through
-    // `Error::from_name`, so variant names survive into the caller's `e.name()`.
-    pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
+    pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         if self.header.cputype == macho::CPU_TYPE_ARM64
             && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
         {
@@ -659,8 +655,7 @@ impl MachoSigner {
         super_blob_header_size + blob_index_size + code_dir_length
     }
 
-    // `bun_core::Error` union return — see the note on `build_and_sign`.
-    pub(crate) fn sign(&mut self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
+    pub(crate) fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
 

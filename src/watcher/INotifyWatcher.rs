@@ -184,7 +184,7 @@ impl INotifyWatcher {
 
     // kept as in-place &mut self init (not `-> Result<Self, _>`) because
     // INotifyWatcher is embedded as `Watcher.platform` with field defaults already set.
-    pub(crate) fn init(&mut self, _root: &[u8]) -> Result<(), bun_core::Error> {
+    pub(crate) fn init(&mut self, _root: &[u8]) -> Result<(), crate::Error> {
         use bun_sys::linux::IN;
         debug_assert!(!self.loaded);
         self.loaded = true;
@@ -199,7 +199,7 @@ impl INotifyWatcher {
         if errno != bun_sys::E::SUCCESS {
             // Surface the errno name (e.g. EMFILE) instead of a generic
             // init-failed tag.
-            return Err(bun_core::errno_to_zig_err(errno as i32));
+            return Err(crate::Error::Sys(errno));
         }
         self.fd = Fd::from_native(raw);
         bun_core::scoped_log!(watcher, "{} init", self.fd);

@@ -40,7 +40,7 @@ mod JSPrinter {
         input: &[u8],
         writer: &mut (impl bun_io::Write + ?Sized),
         encoding: Encoding,
-    ) -> Result<(), bun_core::Error> {
+    ) -> bun_js_printer::Result<()> {
         match encoding {
             Encoding::Latin1 => {
                 bun_js_printer::write_json_string::<_, { Encoding::Latin1 }>(input, writer)
@@ -5940,7 +5940,7 @@ pub extern "C" fn Bun__ConsoleObject__time(
     PENDING_TIME_LOGS.with_borrow_mut(|map| {
         let result = map.get_or_put(id).expect("unreachable");
         if !result.found_existing || result.value_ptr.is_none() {
-            *result.value_ptr = Some(bun_core::time::Timer::start().expect("unreachable"));
+            *result.value_ptr = Some(bun_core::time::Timer::start());
         }
     });
 }

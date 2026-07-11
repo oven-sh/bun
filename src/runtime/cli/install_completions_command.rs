@@ -23,7 +23,7 @@ impl InstallCompletionsCommand {
     };
 
     #[cfg(not(windows))]
-    fn install_bunx_symlink_posix(cwd: &[u8]) -> Result<(), bun_core::Error> {
+    fn install_bunx_symlink_posix(cwd: &[u8]) -> Result<(), crate::Error> {
         let mut buf = PathBuffer::uninit();
 
         // don't install it if it's already there
@@ -103,7 +103,7 @@ impl InstallCompletionsCommand {
     }
 
     #[cfg(windows)]
-    fn install_bunx_symlink_windows(_cwd: &[u8]) -> Result<(), bun_core::Error> {
+    fn install_bunx_symlink_windows(_cwd: &[u8]) -> Result<(), crate::Error> {
         use bun_core::{WStr, w};
         use bun_sys::windows;
 
@@ -160,7 +160,7 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
-    fn install_bunx_symlink(cwd: &[u8]) -> Result<(), bun_core::Error> {
+    fn install_bunx_symlink(cwd: &[u8]) -> Result<(), crate::Error> {
         #[cfg(windows)]
         {
             Self::install_bunx_symlink_windows(cwd)
@@ -172,7 +172,7 @@ impl InstallCompletionsCommand {
     }
 
     #[cfg(windows)]
-    fn install_uninstaller_windows() -> Result<(), bun_core::Error> {
+    fn install_uninstaller_windows() -> Result<(), crate::Error> {
         use bun_core::w;
         use bun_sys::windows;
 
@@ -208,7 +208,7 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
-    pub fn exec() -> Result<(), bun_core::Error> {
+    pub fn exec() -> Result<(), crate::Error> {
         // Fail silently on auto-update.
         let fail_exit_code: u32 = if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
             1

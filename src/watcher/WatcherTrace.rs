@@ -49,13 +49,8 @@ pub fn write_events(
     // `defer buffered.flush() catch |err| { Output.err(...) }`
     let mut writer = scopeguard::guard(buffered, |mut w| {
         if let Err(err) = w.flush() {
-            // Map the `std::io::Error` to the interned errno-name code, so an
-            // errno name (e.g. `ENOSPC`) renders — debug-trace-only path.
-            output::err(
-                bun_core::Error::from(err),
-                "Failed to flush watcher trace file",
-                (),
-            );
+            let name = err.to_string();
+            output::err(name.as_str(), "Failed to flush watcher trace file", ());
         }
     });
 

@@ -39,7 +39,7 @@ pub unsafe fn rename_symbols_in_chunk(
     c: *mut LinkerContext,
     chunk: &mut Chunk,
     files_in_order: &[u32],
-) -> Result<ChunkRenamer, bun_core::Error> {
+) -> Result<ChunkRenamer, crate::Error> {
     let _trace = bun_core::perf::trace("Bundler.renameSymbolsInChunk");
 
     // Derive the `symbols` pointer from the raw `*mut LinkerContext` *before*

@@ -12,7 +12,7 @@ use bun_core::perf;
 pub fn find_all_imported_parts_in_js_order(
     this: &mut LinkerContext,
     chunks: &mut [Chunk],
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.findAllImportedPartsInJSOrder");
 
     let mut part_ranges_shared: Vec<PartRange> = Vec::new();
@@ -44,7 +44,7 @@ pub fn find_imported_parts_in_js_order(
     part_ranges_shared: &mut Vec<PartRange>,
     parts_prefix_shared: &mut Vec<PartRange>,
     chunk_index: u32,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let mut chunk_order_array: Vec<Order> =
         Vec::with_capacity(chunk.files_with_parts_in_chunk.count());
     {

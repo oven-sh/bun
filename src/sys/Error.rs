@@ -8,11 +8,6 @@ use bun_core::String as BunString;
 
 use crate::{E, Fd, SystemErrno, Tag, coreutils_error_map, libuv_error_map};
 
-// Local helper replacing the `errno_to_err` forward-ref.
-#[inline]
-fn errno_to_err(errno: Int) -> bun_core::Error {
-    bun_core::Error::from_errno(errno as i32)
-}
 /// `Fd::unwrap_valid` — Some(fd) if fd != invalid_fd. Port of `bun.FD.unwrapValid`.
 #[inline]
 fn fd_unwrap_valid(fd: Fd) -> Option<Fd> {
@@ -324,8 +319,8 @@ impl Error {
             .unwrap_or(b"UNKNOWN")
     }
 
-    pub fn to_zig_err(&self) -> bun_core::Error {
-        errno_to_err(self.errno)
+    pub fn to_zig_err(&self) -> SystemErrno {
+        self.resolve_system_errno().unwrap_or(SystemErrno::EIO)
     }
 
     /// 1. Convert libuv errno values into libc ones.

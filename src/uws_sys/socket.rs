@@ -905,9 +905,9 @@ mod sock_c {
 pub enum ConnectError {
     FailedToOpenSocket,
 }
-impl From<ConnectError> for bun_core::Error {
+impl From<ConnectError> for crate::Error {
     fn from(_: ConnectError) -> Self {
-        bun_core::err!("FailedToOpenSocket")
+        crate::Error::FailedToOpenSocket
     }
 }
 

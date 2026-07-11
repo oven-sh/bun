@@ -60,7 +60,7 @@ impl Chunk {
         source: &Source,
         mutable: &mut MutableString,
         include_sources_contents: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         print_source_map_contents_json::<ASCII_ONLY>(
             source,
             mutable,
@@ -76,7 +76,7 @@ impl Chunk {
         source: &Source,
         mutable: &mut MutableString,
         include_sources_contents: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let ism = InternalSourceMap {
             data: self.buffer.list.as_ptr(),
         };
@@ -96,7 +96,7 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
     mutable: &mut MutableString,
     include_sources_contents: bool,
     mappings: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let mut filename_buf = PathBuffer::uninit();
     let mut filename: &[u8] = source.path.text;
     let top_level_dir: &[u8] = FileSystem::instance().top_level_dir();
@@ -143,12 +143,12 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 /// Trait capturing the methods `SourceMapFormat<T>` forwards to its `ctx`.
 pub trait SourceMapFormatCtx: Sized {
     fn init(prepend_count: bool) -> Self;
-    fn append_line_separator(&mut self) -> Result<(), bun_core::Error>;
+    fn append_line_separator(&mut self) -> Result<(), crate::Error>;
     fn append(
         &mut self,
         current_state: SourceMapState,
         prev_state: SourceMapState,
-    ) -> Result<(), bun_core::Error>;
+    ) -> Result<(), crate::Error>;
     fn should_ignore(&self) -> bool;
     fn get_buffer(&mut self) -> &mut MutableString;
     fn take_buffer(&mut self) -> MutableString;
@@ -167,7 +167,7 @@ impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
     }
 
     #[inline(always)]
-    pub fn append_line_separator(&mut self) -> Result<(), bun_core::Error> {
+    pub fn append_line_separator(&mut self) -> Result<(), crate::Error> {
         self.ctx.append_line_separator()
     }
 
@@ -176,7 +176,7 @@ impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
         &mut self,
         current_state: SourceMapState,
         prev_state: SourceMapState,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.ctx.append(current_state, prev_state)
     }
 
@@ -244,7 +244,7 @@ impl SourceMapFormatCtx for VLQSourceMap {
     // 11.77% of `append` samples on the `push %rbp` prologue). Forcing it
     // leaves only the 64-mapping `flush_window` out-of-line.
     #[inline(always)]
-    fn append_line_separator(&mut self) -> Result<(), bun_core::Error> {
+    fn append_line_separator(&mut self) -> Result<(), crate::Error> {
         if let Some(b) = &mut self.internal {
             b.append_line_separator();
             return Ok(());
@@ -258,7 +258,7 @@ impl SourceMapFormatCtx for VLQSourceMap {
         &mut self,
         current_state: SourceMapState,
         prev_state: SourceMapState,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if let Some(b) = &mut self.internal {
             b.append_mapping(&current_state);
             self.count += 1;

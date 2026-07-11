@@ -1,4 +1,5 @@
-use bun_core::{Error, Output, Timespec, TimespecMockMode, err};
+use crate::CrateError as Error;
+use bun_core::{Output, Timespec, TimespecMockMode};
 use bun_core::{OwnedString, String as BunString};
 use bun_paths::{AutoAbsPath, PathBuffer, resolve_path};
 use bun_sys::{self as sys, E, Fd, FdDirExt};
@@ -76,13 +77,13 @@ pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> R
                 let retry_result =
                     sys::File::write_file(Fd::cwd(), path_buf.slice_z(), profile_slice.slice());
                 if retry_result.is_err() {
-                    return Err(err!(WriteFailed));
+                    return Err(crate::CrateError::WriteFailed);
                 }
             } else {
-                return Err(err!(WriteFailed));
+                return Err(crate::CrateError::WriteFailed);
             }
         } else {
-            return Err(err!(WriteFailed));
+            return Err(crate::CrateError::WriteFailed);
         }
     }
 
@@ -145,7 +146,7 @@ fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<
         "Heap.{}.{}.{}",
         epoch_microseconds, pid, extension
     )
-    .map_err(|_| err!(NoSpaceLeft))?;
+    .map_err(|_| crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC))?;
     let remaining = cursor.len();
     let written = total - remaining;
     Ok(&buf.as_slice()[..written])

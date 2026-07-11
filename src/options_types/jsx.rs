@@ -297,7 +297,7 @@ impl Pragma {
     pub fn member_list_to_components_if_different(
         original: MemberList,
         new: &[u8],
-    ) -> Result<MemberList, bun_core::Error> {
+    ) -> Result<MemberList, crate::Error> {
         let count = strings::count_char(new, b'.') + 1;
 
         let mut needs_alloc = false;
@@ -329,7 +329,7 @@ impl Pragma {
         Ok(MemberList::Owned(out.into_boxed_slice()))
     }
 
-    pub fn from_api(jsx: api::Jsx) -> Result<Pragma, bun_core::Error> {
+    pub fn from_api(jsx: api::Jsx) -> Result<Pragma, crate::Error> {
         let mut pragma = Pragma::default();
 
         if !jsx.fragment.is_empty() {

@@ -208,7 +208,7 @@ impl PatchTask {
         &mut self,
         manager: &mut PackageManager,
         log_level: LogLevel,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         bun_output::scoped_log!(
             InstallPatch,
             "runFromThreadMainThread {}",
@@ -257,7 +257,7 @@ impl PatchTask {
         &mut self,
         manager: &mut PackageManager,
         log_level: LogLevel,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // TODO only works for npm package
         // need to switch on version.tag and handle each case appropriately
         let Callback::CalcHash(calc_hash) = &mut self.callback else {

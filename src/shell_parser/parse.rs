@@ -42,14 +42,14 @@ pub enum ParseError {
     Lex,
 }
 
-impl From<ParseError> for bun_core::Error {
+impl From<ParseError> for crate::Error {
     fn from(e: ParseError) -> Self {
         match e {
-            ParseError::Unsupported => bun_core::err!("Unsupported"),
-            ParseError::Expected => bun_core::err!("Expected"),
-            ParseError::Unexpected => bun_core::err!("Unexpected"),
-            ParseError::Unknown => bun_core::err!("Unknown"),
-            ParseError::Lex => bun_core::err!("Lex"),
+            ParseError::Unsupported => crate::Error::Unsupported,
+            ParseError::Expected => crate::Error::Expected,
+            ParseError::Unexpected => crate::Error::Unexpected,
+            ParseError::Unknown => crate::Error::Unknown,
+            ParseError::Lex => crate::Error::Lex,
         }
     }
 }
@@ -961,7 +961,7 @@ pub struct ParserError<'bump> {
     pub msg: &'bump [u8],
 }
 
-type ParseResult<T> = Result<T, bun_core::Error>;
+type ParseResult<T> = crate::Result<T>;
 
 impl<'bump> Parser<'bump> {
     pub fn new(

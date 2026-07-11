@@ -309,6 +309,58 @@ it("deserialize rejects a typed array whose backing store is not an array buffer
   expect(exitCode).toBe(0);
 });
 
+it("deserialize rejects a RegExp record whose pattern does not parse", async () => {
+  // A serialized RegExp whose pattern bytes are rewritten to an unparseable
+  // expression must be rejected at deserialize time instead of producing a
+  // RegExp object that throws SyntaxError on every use.
+  const script = `
+    import { serialize, deserialize } from "bun:jsc";
+    import * as v8 from "node:v8";
+
+    function patch(buf) {
+      const bytes = buf instanceof Buffer ? buf : Buffer.from(buf);
+      const idx = bytes.indexOf("abc");
+      bytes.write("(((", idx, "latin1");
+      return buf;
+    }
+
+    for (const [name, ser, deser] of [
+      ["bun:jsc", serialize, deserialize],
+      ["node:v8", v8.serialize, v8.deserialize],
+    ]) {
+      let outcome;
+      try {
+        const value = deser(patch(ser(/abc/g)));
+        outcome = "accepted " + value.source + " " + value.flags;
+      } catch (error) {
+        outcome = error instanceof Error ? "rejected " + error.constructor.name : "threw non-error";
+      }
+      console.log(name, outcome);
+      // A valid RegExp still round-trips.
+      const roundTripped = deser(ser(/xyz/gi));
+      console.log(name, roundTripped instanceof RegExp, roundTripped.source, roundTripped.flags, roundTripped.test("AXYZB"));
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    [
+      "bun:jsc rejected TypeError",
+      "bun:jsc true xyz gi true",
+      "node:v8 rejected TypeError",
+      "node:v8 true xyz gi true",
+      "",
+    ].join("\n"),
+  );
+  expect(exitCode).toBe(0);
+});
+
 it("serialize rejects a CryptoKey created with extractable set to false", async () => {
   // bun:jsc serialize() (and node:v8 serialize(), which wraps it) hands the raw
   // structured-clone buffer to the caller, so a key imported with

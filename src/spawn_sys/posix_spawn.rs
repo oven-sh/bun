@@ -8,7 +8,7 @@ use core::ffi::{c_char, c_int};
 use core::ptr;
 use std::ffi::{CStr, CString};
 
-use bun_core::{Error, err};
+use crate::Error;
 #[cfg(unix)]
 use bun_sys as sys;
 use bun_sys::Fd;
@@ -52,7 +52,7 @@ use self::posix_compat::{fd_t, pid_t, to_posix_path};
 
 #[allow(non_camel_case_types)]
 mod posix_compat {
-    use bun_core::{Error, err};
+    use crate::Error;
     #[cfg(unix)]
     use core::ffi::c_int;
     use std::ffi::CString;
@@ -108,7 +108,7 @@ mod posix_compat {
 
     /// Copy a path into a NUL-terminated buffer.
     pub(super) fn to_posix_path(path: &[u8]) -> Result<CString, Error> {
-        CString::new(path).map_err(|_| err!("Unexpected"))
+        CString::new(path).map_err(|_| crate::Error::Unexpected)
     }
 }
 
@@ -204,7 +204,7 @@ pub mod bun_spawn {
         pub fn chdir(&mut self, path: &[u8]) -> Result<(), Error> {
             // previous buffer (if any) is dropped by assignment.
             // CString::new errors on interior NUL.
-            self.chdir_buf = Some(CString::new(path).map_err(|_| err!("Unexpected"))?);
+            self.chdir_buf = Some(CString::new(path).map_err(|_| crate::Error::Unexpected)?);
             Ok(())
         }
     }

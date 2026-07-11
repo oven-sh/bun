@@ -10,6 +10,8 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+thiserror.workspace = true
+bun_errno.workspace = true
 strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true

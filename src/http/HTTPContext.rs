@@ -2,6 +2,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
+use crate::Error;
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{
@@ -11,7 +12,7 @@ use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
-use bun_core::{self, Error, FeatureFlags};
+use bun_core::{self, FeatureFlags};
 use bun_uws as uws;
 
 bun_core::declare_scope!(HTTPContext, hidden);
@@ -431,7 +432,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 // Same liveness as above; exclusive access — the waiter was
                 // just removed from the only container that aliased it, and
                 // the HTTP thread is single-threaded here.
-                h2::PendingConnect::waiter_mut(waiter).fail_from_h2(bun_core::err!("Aborted"));
+                h2::PendingConnect::waiter_mut(waiter).fail_from_h2(crate::Error::Aborted);
                 return true;
             }
         }
@@ -1195,7 +1196,7 @@ impl<const SSL: bool> Handler<SSL> {
                     return;
                 }
                 // if handshake_success it self is false, this means that the connection was rejected
-                client.close_and_fail::<SSL>(bun_core::err!("ConnectionRefused"), socket);
+                client.close_and_fail::<SSL>(crate::Error::ConnectionRefused, socket);
                 return;
             }
         }
@@ -1225,7 +1226,7 @@ impl<const SSL: bool> Handler<SSL> {
             return client.on_close::<SSL>(socket);
         }
         if let Some(session) = tagged.session_mut() {
-            return session.on_close(bun_core::err!("ConnectionClosed"));
+            return session.on_close(crate::Error::ConnectionClosed);
         }
         // PooledSocket/DeadSocket: whoever retagged the ext should have
         // unregistered; sweep by pointer so a miss can't leave a stale
@@ -1313,7 +1314,7 @@ impl<const SSL: bool> Handler<SSL> {
         }
         if let Some(session) = tagged.session_mut() {
             HTTPContext::<SSL>::mark_socket_as_dead(socket);
-            session.on_close(bun_core::err!("Timeout"));
+            session.on_close(crate::Error::Timeout);
         }
 
         HTTPContext::<SSL>::terminate_socket(socket);
@@ -1378,7 +1379,7 @@ impl<const SSL: bool> Handler<SSL> {
             // undeliverable-bytes reasoning applies, and this matches the
             // pre-existing behaviour for this branch.
             socket.close(uws::CloseKind::Failure);
-            session.on_close(bun_core::err!("ConnectionClosed"));
+            session.on_close(crate::Error::ConnectionClosed);
             return;
         }
         socket.close(uws::CloseKind::Normal);

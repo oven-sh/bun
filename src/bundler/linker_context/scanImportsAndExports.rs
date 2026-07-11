@@ -47,7 +47,6 @@ impl From<ScanImportsAndExportsError> for crate::linker_context_mod::LinkError {
         }
     }
 }
-bun_core::named_error_set!(ScanImportsAndExportsError);
 
 /// Short-lived `&mut [T]` deref of a `split_raw()` column pointer at a single
 /// use site.

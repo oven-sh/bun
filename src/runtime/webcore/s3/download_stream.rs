@@ -2,7 +2,6 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use bun_core::Error;
 use bun_core::{MutableString, strings};
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
@@ -34,6 +33,9 @@ pub struct S3HttpDownloadStreamingTask {
     pub response_buffer: MutableString,
     pub mutex: Mutex,
     pub reported_response_buffer: MutableString,
+    /// The HTTP-level failure, if any. Guarded by `mutex`; the `request_error`
+    /// bit in `state` mirrors `request_error.is_some()`.
+    pub request_error: Option<bun_http::Error>,
     pub state: AtomicU64,
 
     pub concurrent_task: ConcurrentTask,
@@ -73,6 +75,7 @@ impl Default for S3HttpDownloadStreamingTask {
             response_buffer: MutableString::default(),
             mutex: Mutex::default(),
             reported_response_buffer: MutableString::default(),
+            request_error: None,
             state: AtomicU64::new(State::default().0),
             concurrent_task: ConcurrentTask::default(),
             async_http_id: 0,
@@ -112,9 +115,7 @@ impl S3HttpDownloadStreamingTask {
 
                     let mut code: &[u8] = b"UnknownError";
                     let mut message: &[u8] = b"an unexpected error has occurred";
-                    if state.request_error() != 0 {
-                        // SAFETY: request_error != 0 checked above; value originated from @intFromError.
-                        let req_err = Error::from_raw(state.request_error());
+                    if let Some(req_err) = self.request_error {
                         code = req_err.name().as_bytes();
                         _has_body_code = true;
                     } else {
@@ -233,11 +234,8 @@ impl S3HttpDownloadStreamingTask {
         {
             state.set_has_more(!is_done);
 
-            state.set_request_error(if let Some(err) = result.fail {
-                err.as_u16()
-            } else {
-                0
-            });
+            self.request_error = result.fail;
+            state.set_request_error(if result.fail.is_some() { 1 } else { 0 });
             if state.status_code() == 0 {
                 // `certificate_info` / `metadata` free their owned buffers via `Drop`
                 // when `HTTPClientResult` is dropped by the caller after this returns.

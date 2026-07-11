@@ -72,7 +72,7 @@ impl PmVersionCommand {
         pm: &mut PackageManager,
         positionals: &[&[u8]],
         original_cwd: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let package_json_dir = Self::find_package_dir(original_cwd)?;
 
         if positionals.len() <= 1 {

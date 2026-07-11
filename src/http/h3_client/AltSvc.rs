@@ -37,9 +37,9 @@ pub enum ParseError {
     #[error("Clear")]
     Clear,
 }
-impl From<ParseError> for bun_core::Error {
+impl From<ParseError> for crate::Error {
     fn from(_: ParseError) -> Self {
-        bun_core::err!("Clear")
+        crate::Error::Clear
     }
 }
 

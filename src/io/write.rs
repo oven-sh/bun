@@ -14,13 +14,13 @@
 //!     `core::fmt::Formatter`) into a byte-level [`Write`], so byte-producing
 //!     `print()`/`format()` impls can drive `Display`.
 //!
-//! Error type is `bun_core::Error` so `?` composes with the rest of the
+//! Error type is `crate::Error` so `?` composes with the rest of the
 //! codebase. [`Result`] is exported as `bun_io::Result` for downstream sigs.
 
 use core::fmt;
 
-/// `bun_io::Result<T>` — alias over `bun_core::Error` so byte-writer fallible
-/// paths compose with the rest of the codebase via `?`.
+/// `bun_io::Result<T>` — alias over `bun_core::Error` (the `Write` trait's
+/// error type) so byte-writer fallible paths compose with the trait via `?`.
 pub type Result<T = ()> = core::result::Result<T, bun_core::Error>;
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -145,9 +145,9 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         let end = self
             .pos
             .checked_add(out.len())
-            .ok_or_else(|| bun_core::err!("EndOfStream"))?;
+            .ok_or(bun_core::Error::EndOfStream)?;
         if end > buf.len() {
-            return Err(bun_core::err!("EndOfStream"));
+            return Err(bun_core::Error::EndOfStream);
         }
         out.copy_from_slice(&buf[self.pos..end]);
         self.pos = end;
@@ -180,9 +180,9 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         let end = self
             .pos
             .checked_add(n)
-            .ok_or_else(|| bun_core::err!("EndOfStream"))?;
+            .ok_or(bun_core::Error::EndOfStream)?;
         if end > buf.len() {
-            return Err(bun_core::err!("EndOfStream"));
+            return Err(bun_core::Error::EndOfStream);
         }
         // SAFETY: `buf[pos..end]` is exactly `size_of::<T>()` initialized
         // bytes from the safe slice borrow; caller contract guarantees `T` is
@@ -200,9 +200,9 @@ impl<B: AsMut<[u8]>> Write for FixedBufferStream<B> {
         let end = self
             .pos
             .checked_add(src.len())
-            .ok_or_else(|| bun_core::err!("NoSpaceLeft"))?;
+            .ok_or(bun_core::Error::NoSpaceLeft)?;
         if end > buf.len() {
-            return Err(bun_core::err!("NoSpaceLeft"));
+            return Err(bun_core::Error::NoSpaceLeft);
         }
         buf[self.pos..end].copy_from_slice(src);
         self.pos = end;
@@ -355,7 +355,7 @@ impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
                 }
             }),
         };
-        r.map_err(|_| bun_core::err!("FmtError"))
+        r.map_err(|_| bun_core::Error::FmtError)
     }
 
     #[inline]
@@ -363,7 +363,7 @@ impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
         // Skip the byte round-trip entirely when we already have a fmt sink.
         self.inner
             .write_fmt(args)
-            .map_err(|_| bun_core::err!("FmtError"))
+            .map_err(|_| bun_core::Error::FmtError)
     }
 }
 

@@ -503,7 +503,7 @@ impl<'a> Loader<'a> {
         &mut self,
         fs: &bun_paths::fs::FileSystem,
         override_node: &[u8],
-    ) -> Result<bool, bun_core::Error> {
+    ) -> crate::Result<bool> {
         let mut buf = PathBuffer::uninit();
 
         let node_path_to_use: Box<[u8]> = if !override_node.is_empty() {
@@ -650,7 +650,7 @@ impl<'a> Loader<'a> {
         env_files: &[&[u8]],
         suffix: DotEnvFileSuffix,
         skip_default_env: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // `suffix` is a runtime arg (avoids unstable adt_const_params; cold path).
         let start = bun_core::time::nano_timestamp();
 
@@ -682,7 +682,7 @@ impl<'a> Loader<'a> {
         &mut self,
         env_files: &[&[u8]],
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // iterate backwards, so the latest entry in the latest arg instance assumes the highest priority
         let mut i: usize = env_files.len();
         while i > 0 {
@@ -710,7 +710,7 @@ impl<'a> Loader<'a> {
         suffix: DotEnvFileSuffix,
         dir: &D,
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let dir_handle = bun_sys::Fd::cwd();
 
         // `bun_dotenv` sits below `bun_resolver` in the crate graph, so the
@@ -757,7 +757,7 @@ impl<'a> Loader<'a> {
         dir_handle: bun_sys::Fd,
         name: &'static [u8],
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if dir.has_comptime_query(name) {
             self.load_env_file::<false>(dir_handle, name, value_buffer)?;
             analytics::Features::dotenv_inc();
@@ -851,7 +851,7 @@ impl<'a> Loader<'a> {
         dir: bun_sys::Fd,
         base: &'static [u8],
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if self.default_file_slot(base).is_some() {
             return Ok(());
         }
@@ -916,7 +916,7 @@ impl<'a> Loader<'a> {
         &mut self,
         file_path: &[u8],
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if self.custom_files_loaded.contains(file_path) {
             return Ok(());
         }
@@ -974,7 +974,7 @@ enum ReadEnvFile {
     Bytes(Vec<u8>),
 }
 
-fn read_env_file_contents(file: &bun_sys::File) -> Result<ReadEnvFile, bun_core::Error> {
+fn read_env_file_contents(file: &bun_sys::File) -> crate::Result<ReadEnvFile> {
     match file.read_to_end() {
         Ok(buf) if buf.is_empty() => Ok(ReadEnvFile::Empty),
         Ok(buf) => Ok(ReadEnvFile::Bytes(buf)),

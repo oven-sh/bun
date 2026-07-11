@@ -259,7 +259,7 @@ impl GraphTraceState {
         self.client_bits.unmanaged.set_all(false);
     }
 
-    pub fn resize(&mut self, side: Side, new_size: usize) -> Result<(), bun_core::Error> {
+    pub fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
         let b = match side {
             Side::Client => &mut self.client_bits,
             Side::Server => &mut self.server_bits,
@@ -1133,11 +1133,11 @@ bun_bundler::link_impl_DevServerHandle! {
             // (stable heap address); the `'static` is a stand-in for the
             // DevServer-self lifetime — see the comment on `CurrentBundle.bv2`.
             super::dev_server_body::finalize_bundle(&mut *this, &mut *bv2.cast(), &mut *result)
-                .map_err(Into::into)
+                .map_err(|e| bun_bundler::Error::from(crate::Error::from(e)))
         },
         handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
             (*this)
-                .handle_parse_task_failure(err, graph, abs_path, &*log, &mut *bv2)
+                .handle_parse_task_failure(&err.into(), graph, abs_path, &*log, &mut *bv2)
                 .map_err(Into::into)
         },
         put_or_overwrite_asset(path, contents, content_hash) => {
@@ -1146,7 +1146,7 @@ bun_bundler::link_impl_DevServerHandle! {
             // bytes as an owned blob (ownership is transferred).
             let path = &*path.cast::<bun_resolver::fs::Path<'_>>();
             let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
-            (*this).put_or_overwrite_asset(path, blob, content_hash)
+            (*this).put_or_overwrite_asset(path, blob, content_hash).map_err(Into::into)
         },
         track_resolution_failure(import_source, specifier, renderer, loader) => {
             (*this)

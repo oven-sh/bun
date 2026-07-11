@@ -26,8 +26,6 @@ pub enum Error {
 }
 bun_core::impl_tag_error!(Error);
 
-bun_core::named_error_set!(Error);
-
 /// Options for generating CSRF tokens. Defaults are noted on
 /// each field; callers must specify all fields.
 pub struct GenerateOptions<'a> {

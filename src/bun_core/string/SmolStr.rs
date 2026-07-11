@@ -62,7 +62,7 @@ impl SmolStr {
 
     // ---- public API -------------------------------------------------------
 
-    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), crate::Error>
+    pub fn json_stringify<W>(&self, writer: &mut W) -> crate::CrateResult<()>
     where
         W: JsonWriter,
     {
@@ -242,7 +242,7 @@ impl Drop for SmolStr {
 
 /// Minimal byte-writer protocol used by `json_stringify`.
 pub trait JsonWriter {
-    fn write(&mut self, bytes: &[u8]) -> Result<(), crate::Error>;
+    fn write(&mut self, bytes: &[u8]) -> crate::CrateResult<()>;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,9 +261,11 @@ pub(crate) enum InlinedError {
     StringTooLong,
 }
 
-impl From<InlinedError> for crate::Error {
+impl From<InlinedError> for crate::CrateError {
     fn from(e: InlinedError) -> Self {
-        crate::err!(from e)
+        match e {
+            InlinedError::StringTooLong => crate::CrateError::StringTooLong,
+        }
     }
 }
 

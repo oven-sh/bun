@@ -577,7 +577,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         index: impl Into<bun_ast::Index>,
         content: ReceiveChunkContent,
         is_ssr_graph: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let index: bun_ast::Index = index.into();
         // SAFETY: see `owner()`.
         let dev = unsafe { self.owner() };
@@ -844,7 +844,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         ctx: &mut HotUpdateContext<'_>,
         mode: ProcessMode,
         bundle_graph_index: impl Into<bun_ast::Index>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let bundle_graph_index: bun_ast::Index = bundle_graph_index.into();
         let file_index: FileIndex<SIDE> = ctx
             .get_cached_index(SIDE, bundle_graph_index)
@@ -934,7 +934,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
         index: bun_ast::Index,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(index.is_valid());
         debug_assert!(!ctx.loaders[index.get() as usize].is_css());
 
@@ -972,7 +972,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
         bundler_index: bun_ast::Index,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(bundler_index.is_valid());
         debug_assert!(ctx.loaders[bundler_index.get() as usize].is_css());
 
@@ -1021,7 +1021,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         ir_source_index: bun_ast::Index,
         key: &[u8],
         mode: EdgeAttachmentMode,
-    ) -> Result<EdgeAttachmentResult, bun_core::Error> {
+    ) -> Result<EdgeAttachmentResult, crate::Error> {
         // Duplicated import records are marked unused by `ConvertESMExportsForHmr`.
         if ir_flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
             return Ok(EdgeAttachmentResult::Stop);
@@ -1123,7 +1123,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         gts: &mut GraphTraceState,
         goal: TraceDependencyGoal,
         from_file_index: FileIndex<SIDE>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if gts.bits(SIDE).is_set(file_index.get() as usize) {
             return Ok(());
         }
@@ -1225,7 +1225,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         file_index: FileIndex<SIDE>,
         gts: &mut GraphTraceState,
         goal: TraceImportGoal,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if gts.bits(SIDE).is_set(file_index.get() as usize) {
             return Ok(());
         }
@@ -1448,7 +1448,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         ctx: &mut HotUpdateContext<'_>,
         index: bun_ast::Index,
         abs_path: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(matches!(SIDE, Side::Server));
         let gop = self.bundled_files.get_or_put(abs_path)?;
         let file_index = FileIndex::<SIDE>::init(gop.index as u32);
@@ -1628,7 +1628,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         paths: &[Box<[u8]>],
         entry_points: &mut EntryPointList,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         for path in paths {
             let Some(index) = self.bundled_files.get_index(path) else {
                 continue;
@@ -1717,7 +1717,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub fn take_js_bundle_server(
         &mut self,
         opts: &TakeJSBundleOptionsServer,
-    ) -> Result<Vec<u8>, bun_core::Error> {
+    ) -> Result<Vec<u8>, crate::Error> {
         let mut chunk = Vec::new();
         self.take_js_bundle_to_list_server(&mut chunk, opts)?;
         Ok(chunk)
@@ -1728,7 +1728,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub fn take_js_bundle(
         &mut self,
         opts: &TakeJSBundleOptionsClient,
-    ) -> Result<Vec<u8>, bun_core::Error> {
+    ) -> Result<Vec<u8>, crate::Error> {
         let mut chunk = Vec::new();
         self.take_js_bundle_to_list(&mut chunk, opts)?;
         Ok(chunk)
@@ -1739,7 +1739,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         list: &mut Vec<u8>,
         options: &TakeJSBundleOptionsClient,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(matches!(SIDE, Side::Client));
         debug_assert!(self.current_chunk_len > 0);
         let kind = options.kind;
@@ -1870,7 +1870,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         list: &mut Vec<u8>,
         options: &TakeJSBundleOptionsServer,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(matches!(SIDE, Side::Server));
         debug_assert!(self.current_chunk_len > 0);
 
@@ -1919,7 +1919,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub(crate) fn take_source_map(
         &mut self,
         out: &mut source_map_store::Entry,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let paths = self.bundled_files.keys();
         match SIDE {
             Side::Client => {

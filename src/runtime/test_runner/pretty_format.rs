@@ -1627,7 +1627,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print Response",
                                 ));
                             }
@@ -1645,7 +1645,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print Request",
                                 ));
                             }
@@ -1665,7 +1665,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print BuildArtifact",
                                 ));
                             }
@@ -1683,7 +1683,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print Blob",
                                 ));
                             }

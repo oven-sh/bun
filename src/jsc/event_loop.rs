@@ -158,9 +158,9 @@ pub enum JsTerminated {
 /// Short alias for `Result<T, JsTerminated>`.
 pub type JsTerminatedResult<T> = Result<T, JsTerminated>;
 
-impl From<JsTerminated> for bun_core::Error {
+impl From<JsTerminated> for crate::CrateError {
     fn from(_: JsTerminated) -> Self {
-        bun_core::err!("JSTerminated")
+        crate::CrateError::JSTerminated
     }
 }
 
@@ -380,6 +380,13 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) {
+        // A prior callback's microtasks can tear the worker down
+        // (worker.terminate()), leaving the termination exception pending;
+        // entering JS then trips executeCallImpl's `assertNoException`. Same
+        // gate as `tick_with_count()`; guarding here covers all 50+ callers.
+        if global_object.has_exception() {
+            return;
+        }
         // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` carries LLVM
         // `noalias`, and `callback.call()` receives nothing derived from
@@ -412,6 +419,9 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JSValue {
+        if global_object.has_exception() {
+            return JSValue::ZERO;
+        }
         // R-2 noalias mitigation — see `run_callback` above.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.
@@ -752,7 +762,11 @@ impl EventLoop {
         // `self.tasks` (a field of the static-rooted `VirtualMachine` box that
         // is never `dealloc`'d) leaves the chain reachable to LSan — the same
         // visibility they had via `concurrent_tasks` before
-        // `drop_concurrent_cpp_tasks` drained it.
+        // `drop_concurrent_cpp_tasks` drained it. CppTasks must NOT be deleted
+        // here: this runs after JSC VM teardown on both worker and main paths,
+        // and a Worker dispatchExit task's `~Ref<Worker>` would walk freed
+        // WeakBlock storage via `~JSEventListener`. They are reclaimed before
+        // teardown by `release_queued_tasks_for_shutdown`'s CppTask arm.
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
             if task.tag == bun_event_loop::task_tag::ManagedTask {
@@ -1133,6 +1147,12 @@ impl EventLoop {
                     if !worker.has_requested_terminate()
                         && promise.status() == PromiseStatus::Pending
                     {
+                        // Unsettled top-level await: the loop has drained but the
+                        // entry module's evaluation promise is still pending. Stop
+                        // waiting so the worker can exit (node uses exit code 13).
+                        if !self.vm_ref().is_event_loop_alive() {
+                            break;
+                        }
                         self.auto_tick();
                     }
                 }

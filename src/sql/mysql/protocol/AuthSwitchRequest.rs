@@ -28,14 +28,14 @@ impl AuthSwitchRequest {
     pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         self.header = reader.int::<u8>()?;
         if self.header != 0xfe {
-            return Err(bun_core::err!("InvalidAuthSwitchRequest"));
+            return Err(crate::Error::InvalidAuthSwitchRequest);
         }
 
         let Some(remaining_len) = self.packet_size.checked_sub(1) else {
-            return Err(bun_core::err!("InvalidAuthSwitchRequest"));
+            return Err(crate::Error::InvalidAuthSwitchRequest);
         };
         let remaining = reader.read(remaining_len as usize)?;
         let remaining_slice = remaining.slice();
@@ -50,15 +50,12 @@ impl AuthSwitchRequest {
                 Data::Temporary(bun_ptr::RawSlice::new(&remaining_slice[zero + 1..]));
             return Ok(());
         }
-        Err(bun_core::err!("InvalidAuthSwitchRequest"))
+        Err(crate::Error::InvalidAuthSwitchRequest)
     }
 }
 
 impl AuthSwitchRequest {
-    pub fn decode<Context: ReaderContext>(
-        &mut self,
-        context: Context,
-    ) -> Result<(), bun_core::Error> {
+    pub fn decode<Context: ReaderContext>(&mut self, context: Context) -> crate::Result<()> {
         self.decode_internal(NewReader { wrapped: context })
     }
 }

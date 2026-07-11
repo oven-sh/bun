@@ -316,7 +316,7 @@ impl CatalogMap {
         pm: &mut PM,
         old_buf: &[u8],
         builder: &mut StringBuilder,
-    ) -> Result<CatalogMap, bun_core::Error> {
+    ) -> Result<CatalogMap, crate::Error> {
         let mut new_catalog = CatalogMap::default();
 
         new_catalog
@@ -381,8 +381,6 @@ pub enum FromPnpmLockfileError {
 }
 
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
-
-bun_core::named_error_set!(FromPnpmLockfileError);
 
 fn put_entries_from_pnpm_lockfile(
     catalog_map: &mut Map,

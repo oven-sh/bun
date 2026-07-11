@@ -15,10 +15,7 @@ impl ListenSocket {
         us_listen_socket_close(self)
     }
 
-    pub fn get_local_address<'a>(
-        &mut self,
-        buf: &'a mut [u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    pub fn get_local_address<'a>(&mut self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
         self.get_socket().local_address(buf)
     }
 

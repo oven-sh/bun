@@ -2,7 +2,7 @@
 // Hand-ported subset — the remaining analytics::* types are unused at runtime
 // and come back with the next peechy regen (see the `analytics` mod below).
 
-use bun_core::Error;
+use crate::Error;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Reader / Writer
@@ -13,13 +13,9 @@ use bun_core::Error;
 // per-type `decode`/`encode` impls call the primitive methods directly
 // (which is what the generated schema bodies already do).
 
-// peechy's two error cases (`EOF`, `InvalidValue`) are folded into
-// the crate-wide `bun_core::Error` so downstream `decode` signatures stay
-// `Result<_, bun_core::Error>` without an extra `From` hop.
-// (`Error::from_name` interns at runtime, so this is a fn, not a const.)
 #[inline]
 pub(crate) fn eof() -> Error {
-    bun_core::err!("EOF")
+    crate::Error::EOF
 }
 
 /// Primitive integers encodable in the peechy wire format (native-endian raw

@@ -399,7 +399,7 @@ impl PackageManager {
         optional: bool,
         foreground: bool,
         install_ctx: Option<InstallCtx<'_>>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let log_level = self.options.log_level;
         let mut any_scripts = false;
         for maybe_item in list.items.iter() {
@@ -643,7 +643,7 @@ pub fn spawn_package_lifecycle_scripts(
     optional: bool,
     foreground: bool,
     install_ctx: Option<InstallCtx<'_>>,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     this.spawn_package_lifecycle_scripts(ctx, list, optional, foreground, install_ctx)
 }
 

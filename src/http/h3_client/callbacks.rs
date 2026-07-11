@@ -10,7 +10,6 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bstr::BStr;
-use bun_core::err;
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
@@ -152,9 +151,9 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         session.retry_or_fail(
             stream,
             if session.handshake_done {
-                err!(ConnectionClosed)
+                crate::Error::ConnectionClosed
             } else {
-                err!(HTTP3HandshakeFailed)
+                crate::Error::HTTP3HandshakeFailed
             },
         );
     }
@@ -229,7 +228,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         if stream.status_code == 0
             && (is_malformed_response_field(name) || is_malformed_response_value(value))
         {
-            session.fail(stream, err!(HTTP3ProtocolError));
+            session.fail(stream, crate::Error::HTTP3ProtocolError);
             return;
         }
         stream
@@ -244,7 +243,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         if stream.status_code != 0 {
             return;
         }
-        session.fail(stream, err!(HTTP3ProtocolError));
+        session.fail(stream, crate::Error::HTTP3ProtocolError);
         return;
     }
     if status >= 100 && status < 200 {

@@ -1243,8 +1243,6 @@ pub enum SignError {
     NoSpaceLeft,
 }
 
-bun_core::named_error_set!(SignError);
-
 impl<'a> Default for SignOptions<'a> {
     fn default() -> Self {
         Self {

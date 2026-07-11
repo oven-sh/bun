@@ -22,12 +22,69 @@
 #include "JSStructuredSerializeOptions.h"
 
 #include "JSDOMConvertObject.h"
+#include "ErrorCode.h"
+#include "JSDOMExceptionHandling.h"
+#include "JSDOMException.h"
+#include "ZigGlobalObject.h"
 #include "JSDOMConvertSequences.h"
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/IteratorOperations.h>
 
 namespace WebCore {
 using namespace JSC;
+
+Vector<JSC::Strong<JSC::JSObject>> convertTransferList(JSGlobalObject& lexicalGlobalObject, JSValue transferValue, ASCIILiteral notIterableMessage, BadTransferElement badElement)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    Vector<JSC::Strong<JSC::JSObject>> result;
+
+    // Mirror Node's ReadIterable: shape failures (not-object, Symbol.iterator
+    // not callable, iterator/next/result malformed) throw ERR_INVALID_ARG_TYPE;
+    // user code that THROWS during iteration propagates unchanged.
+    auto notIterable = [&]() -> Vector<JSC::Strong<JSC::JSObject>> {
+        throwScope.throwException(&lexicalGlobalObject, createError(defaultGlobalObject(&lexicalGlobalObject), Bun::ErrorCode::ERR_INVALID_ARG_TYPE, notIterableMessage));
+        return {};
+    };
+    if (!transferValue.isObject())
+        return notIterable();
+    JSValue iteratorMethod = transferValue.get(&lexicalGlobalObject, vm.propertyNames->iteratorSymbol);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (!iteratorMethod.isCallable())
+        return notIterable();
+    JSValue iterator = JSC::call(&lexicalGlobalObject, iteratorMethod, transferValue, JSC::ArgList(), "transferList[Symbol.iterator]"_s);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (!iterator.isObject())
+        return notIterable();
+    JSValue next = iterator.get(&lexicalGlobalObject, vm.propertyNames->next);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (!next.isCallable())
+        return notIterable();
+    while (true) {
+        JSValue step = JSC::call(&lexicalGlobalObject, next, iterator, JSC::ArgList(), "transferList iterator next"_s);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!step.isObject())
+            return notIterable();
+        JSValue done = step.get(&lexicalGlobalObject, vm.propertyNames->done);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (done.toBoolean(&lexicalGlobalObject))
+            break;
+        JSValue element = step.get(&lexicalGlobalObject, vm.propertyNames->value);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        // The arg IS iterable, so a bad *element* is not a "must be an iterable" error.
+        // node: DataCloneError from port.postMessage(), TypeError from structuredClone().
+        if (!element.isObject()) {
+            if (badElement == BadTransferElement::ThrowDataCloneError)
+                propagateException(lexicalGlobalObject, throwScope, Exception { DataCloneError, "Found invalid value in transferList."_s });
+            else
+                throwTypeError(&lexicalGlobalObject, throwScope);
+            return {};
+        }
+        result.append(Strong<JSObject> { vm, asObject(element) });
+    }
+    return result;
+}
 
 template<> StructuredSerializeOptions convertDictionary<StructuredSerializeOptions>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
@@ -48,7 +105,7 @@ template<> StructuredSerializeOptions convertDictionary<StructuredSerializeOptio
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!transferValue.isUndefined()) {
-        result.transfer = convert<IDLSequence<IDLObject>>(lexicalGlobalObject, transferValue);
+        result.transfer = convertTransferList(lexicalGlobalObject, transferValue, "Optional options.transfer argument must be an iterable"_s, BadTransferElement::ThrowTypeError);
         RETURN_IF_EXCEPTION(throwScope, {});
     } else
         result.transfer = Converter<IDLSequence<IDLObject>>::ReturnType {};

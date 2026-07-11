@@ -4,7 +4,8 @@ use std::io::Write as _;
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::output as bun_output;
 use bun_core::printer as js_printer;
-use bun_core::{self, Error};
+use bun_core;
+use crate::Error;
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -128,7 +129,7 @@ impl<'a> Snapshots<'a> {
     ) -> Result<Option<&[u8]>, Error> {
         let buntest_strong = expect
             .bun_test()
-            .ok_or_else(|| bun_core::err!("SnapshotFailed"))?;
+            .ok_or(crate::Error::SnapshotFailed)?;
         let bun_test = buntest_strong.get();
         match self.get_snapshot_file(bun_test.file_id)? {
             bun_sys::Result::Ok(()) => {}
@@ -136,11 +137,11 @@ impl<'a> Snapshots<'a> {
                 // `bun_sys::Tag` is a newtype-struct with assoc consts (lowercase),
                 // not an enum — match arms require structural-eq; use if-chain instead.
                 return Err(if err.syscall == bun_sys::Tag::mkdir {
-                    bun_core::err!("FailedToMakeSnapshotDirectory")
+                    crate::Error::FailedToMakeSnapshotDirectory
                 } else if err.syscall == bun_sys::Tag::open {
-                    bun_core::err!("FailedToOpenSnapshotFile")
+                    crate::Error::FailedToOpenSnapshotFile
                 } else {
-                    bun_core::err!("SnapshotFailed")
+                    crate::Error::SnapshotFailed
                 });
             }
         }
@@ -170,7 +171,7 @@ impl<'a> Snapshots<'a> {
             if !self.update_snapshots {
                 // Store the snapshot name for error reporting
                 self.last_error_snapshot_name = Some(name_with_counter.into_boxed_slice());
-                return Err(bun_core::err!("SnapshotCreationNotAllowedInCI"));
+                return Err(crate::Error::SnapshotCreationNotAllowedInCI);
             }
         }
 
@@ -198,7 +199,7 @@ impl<'a> Snapshots<'a> {
                 }
             ),
         )
-        .map_err(|_| bun_core::err!("WriteError"))?;
+        .map_err(|_| crate::Error::WriteError)?;
 
         self.added += 1;
         self.values
@@ -268,7 +269,7 @@ impl<'a> Snapshots<'a> {
         let parse_result = parser.parse()?;
         let mut ast = match parse_result {
             bun_js_parser::Result::Ast(ast) => ast,
-            _ => return Err(bun_core::err!("ParseError")),
+            _ => return Err(crate::Error::ParseError),
         };
 
         if ast.exports_ref.is_empty() {
@@ -333,7 +334,7 @@ impl<'a> Snapshots<'a> {
         if let Some(file) = self._current_file.take() {
             file.file
                 .write_all(self.file_buf)
-                .map_err(|_| bun_core::err!("FailedToWriteSnapshotFile"))?;
+                .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
             let _ = file.file.close();
             self.file_buf.clear();
             self.file_buf.shrink_to_fit();

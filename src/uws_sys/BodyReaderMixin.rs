@@ -66,11 +66,7 @@ pub trait BodyReaderHandler: bun_core::IntrusiveField<BodyReaderMixin<Self>> + '
     /// SAFETY: `this` is the pointer previously passed to
     /// `BodyReaderMixin::read_body`; it is live and uniquely owned by the
     /// mixin until this call (no other `&mut` into the allocation is live).
-    unsafe fn on_body(
-        this: *mut Self,
-        body: &[u8],
-        resp: AnyResponse,
-    ) -> Result<(), bun_core::Error>;
+    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> crate::Result<()>;
 
     /// Called on error or request abort. Same provenance contract as `on_body`.
     ///
@@ -134,11 +130,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         let any = r.to_any();
         match Self::on_data(wrap, any, chunk, last) {
             Ok(()) => {}
-            // Dispatch OutOfMemory → onOOM, anything else → onInvalid, by error
-            // *kind* only — `bun_core::Error`'s derived `PartialEq` compares all
-            // fields (syscall/fd/path), and `err!("OutOfMemory")` is currently a
-            // TODO sentinel, so a full-struct compare would invert the branch.
-            Err(e) if e == bun_core::Error::OUT_OF_MEMORY => Self::on_oom(wrap, any),
+            Err(crate::Error::Alloc(_)) => Self::on_oom(wrap, any),
             Err(_) => Self::on_invalid(wrap, any),
         }
     }
@@ -153,12 +145,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         unsafe { Wrap::on_error(wrap) };
     }
 
-    fn on_data(
-        wrap: *mut Wrap,
-        resp: AnyResponse,
-        chunk: &[u8],
-        last: bool,
-    ) -> Result<(), bun_core::Error> {
+    fn on_data(wrap: *mut Wrap, resp: AnyResponse, chunk: &[u8], last: bool) -> crate::Result<()> {
         if last {
             // Free everything after. Take via the mixin field first — no
             // `&mut Wrap` is live yet, and the temporary `&mut Self` ends at
@@ -167,12 +154,12 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
             resp.clear_on_data();
             if !body.is_empty() {
                 if body.len().saturating_add(chunk.len()) > MAX_BODY_SIZE {
-                    return Err(bun_core::err!(RequestBodyTooLarge));
+                    return Err(crate::Error::RequestBodyTooLarge);
                 }
                 // Handle OOM gracefully here (error → 500); use try_reserve so
                 // allocation failure surfaces as an error instead of an abort.
                 if body.try_reserve(chunk.len()).is_err() {
-                    return Err(bun_core::err!(OutOfMemory));
+                    return Err(crate::Error::Alloc(bun_alloc::AllocError));
                 }
                 body.extend_from_slice(chunk);
                 // SAFETY: wrap is the original heap-allocated pointer; the &mut to
@@ -181,7 +168,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
                 unsafe { Wrap::on_body(wrap, body.as_slice(), resp)? };
             } else {
                 if chunk.len() > MAX_BODY_SIZE {
-                    return Err(bun_core::err!(RequestBodyTooLarge));
+                    return Err(crate::Error::RequestBodyTooLarge);
                 }
                 // SAFETY: wrap is the original heap-allocated pointer; the &mut to
                 // mixin.body has ended, so on_body receives sole ownership of the
@@ -193,13 +180,13 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         } else {
             let body = &mut Self::mixin_of(wrap).body;
             if body.len().saturating_add(chunk.len()) > MAX_BODY_SIZE {
-                return Err(bun_core::err!(RequestBodyTooLarge));
+                return Err(crate::Error::RequestBodyTooLarge);
             }
             // Propagate OOM here too
             // (error → 500); use try_reserve so allocation failure surfaces as an
             // error instead of an abort.
             if body.try_reserve(chunk.len()).is_err() {
-                return Err(bun_core::err!(OutOfMemory));
+                return Err(crate::Error::Alloc(bun_alloc::AllocError));
             }
             body.extend_from_slice(chunk);
             Ok(())

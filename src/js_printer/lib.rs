@@ -9,6 +9,9 @@
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
 
+pub mod error;
+pub use error::{Error, Result};
+
 use bun_collections::VecExt;
 
 use core::ptr::NonNull;
@@ -958,7 +961,7 @@ pub fn write_pre_quoted_string<
 >(
     text_in: &[u8],
     writer: &mut W,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: Write + ?Sized,
 {
@@ -977,7 +980,7 @@ pub fn write_pre_quoted_string_inner<W, const ENCODING: Encoding>(
     quote_char: u8,
     ascii_only: bool,
     json: bool,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: Write + ?Sized,
 {
@@ -1168,7 +1171,7 @@ pub fn quote_for_json(
     text: &[u8],
     bytes: &mut MutableString,
     ascii_only: bool,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     // `ascii_only` is threaded at runtime so
     // the heavy escaper isn't monomorphized per ascii_only/quote-char combo.
     //
@@ -1189,7 +1192,7 @@ pub fn quote_for_json(
 pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
     input: &[u8],
     writer: &mut W,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     writer.write_all(b"\"")?;
     write_pre_quoted_string_inner::<_, ENCODING>(input, writer, b'"', false, true)?;
     writer.write_all(b"\"")?;
@@ -1202,7 +1205,7 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 // ───────────────────────────────────────────────────────────────────────────
 pub struct SourceMapHandler<'a> {
     pub ctx: NonNull<()>,
-    pub callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> Result<(), bun_core::Error>,
+    pub callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> crate::Result<()>,
     _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
@@ -1214,7 +1217,7 @@ pub trait OnSourceMapChunk {
         &mut self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
-    ) -> Result<(), bun_core::Error>;
+    ) -> crate::Result<()>;
 }
 
 impl<'a> SourceMapHandler<'a> {
@@ -1222,7 +1225,7 @@ impl<'a> SourceMapHandler<'a> {
         &self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         (self.callback)(self.ctx.as_ptr(), chunk, source)
     }
 
@@ -1232,7 +1235,7 @@ impl<'a> SourceMapHandler<'a> {
             p: *mut (),
             chunk: SourceMap::Chunk,
             source: &bun_ast::Source,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             // SAFETY: `p` was constructed from `&'a mut T` in `for_` below; the `'a` lifetime
             // on `SourceMapHandler` ties the handler's lifetime to the borrow, so `p` is a
             // valid, exclusive `*mut T` for as long as the handler exists.
@@ -1471,7 +1474,7 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
 
 pub enum PrintResult {
     Result(PrintResultSuccess),
-    Err(bun_core::Error),
+    Err(crate::Error),
 }
 
 pub struct PrintResultSuccess {
@@ -1848,12 +1851,12 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+        pub fn write_all(&mut self, bytes: &[u8]) -> crate::Result<()> {
             self.print(bytes);
             Ok(())
         }
 
-        pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> Result<(), bun_core::Error> {
+        pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> crate::Result<()> {
             let bytes = [byte; 256];
             let mut remaining = n;
             while remaining > 0 {
@@ -1864,25 +1867,21 @@ pub mod __gated_printer {
             Ok(())
         }
 
-        pub fn write_bytes_n_times(
-            &mut self,
-            bytes: &[u8],
-            n: usize,
-        ) -> Result<(), bun_core::Error> {
+        pub fn write_bytes_n_times(&mut self, bytes: &[u8], n: usize) -> crate::Result<()> {
             for _ in 0..n {
                 self.write_all(bytes)?;
             }
             Ok(())
         }
 
-        fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
+        fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::Result<()> {
             // Rust can't pre-count `fmt::Arguments` without formatting,
             // so stream each formatted chunk straight into the writer's
             // reserved space instead — same zero-heap property without
             // formatting twice.
             struct FmtAdapter<'w, W: WriterTrait> {
                 writer: &'w mut W,
-                err: Option<bun_core::Error>,
+                err: Option<crate::Error>,
             }
             impl<W: WriterTrait> core::fmt::Write for FmtAdapter<'_, W> {
                 fn write_str(&mut self, s: &str) -> core::fmt::Result {
@@ -1900,7 +1899,7 @@ pub mod __gated_printer {
                 err: None,
             };
             if core::fmt::write(&mut adapter, args).is_err() {
-                return Err(adapter.err.unwrap_or_else(|| bun_core::err!("WriteFailed")));
+                return Err(adapter.err.unwrap_or(crate::Error::WriteFailed));
             }
             Ok(())
         }
@@ -3185,9 +3184,9 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn check_stack_overflow(&self) -> Result<(), bun_core::Error> {
+        pub fn check_stack_overflow(&self) -> crate::Result<()> {
             if self.stack_overflowed {
-                return Err(bun_core::err!("StackOverflow"));
+                return Err(crate::Error::StackOverflow);
             }
             Ok(())
         }
@@ -5286,7 +5285,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_stmt(&mut self, stmt: Stmt, tlmtlo: TopLevel) -> Result<(), bun_core::Error> {
+        pub fn print_stmt(&mut self, stmt: Stmt, tlmtlo: TopLevel) -> crate::Result<()> {
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return Ok(());
@@ -6882,7 +6881,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_identifier_utf16(&mut self, name: &[u16]) -> Result<(), bun_core::Error> {
+        pub fn print_identifier_utf16(&mut self, name: &[u16]) -> crate::Result<()> {
             let n = name.len();
             let mut i: usize = 0;
 
@@ -7290,20 +7289,20 @@ pub struct WriteResult {
 
 /// Backend operations a `Writer` context provides.
 pub trait WriterContext {
-    fn write_byte(&mut self, char: u8) -> Result<usize, bun_core::Error>;
-    fn write_all(&mut self, buf: &[u8]) -> Result<usize, bun_core::Error>;
+    fn write_byte(&mut self, char: u8) -> crate::Result<usize>;
+    fn write_all(&mut self, buf: &[u8]) -> crate::Result<usize>;
     fn get_last_byte(&self) -> u8;
     fn get_last_last_byte(&self) -> u8;
-    fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error>;
+    fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8>;
     fn advance_by(&mut self, count: u64);
     fn slice(&self) -> &[u8];
     fn get_mutable_buffer(&mut self) -> &mut MutableString;
     fn take_buffer(&mut self) -> MutableString;
     fn get_written(&self) -> &[u8];
-    fn flush(&mut self) -> Result<(), bun_core::Error> {
+    fn flush(&mut self) -> crate::Result<()> {
         Ok(())
     }
-    fn done(&mut self) -> Result<(), bun_core::Error> {
+    fn done(&mut self) -> crate::Result<()> {
         Ok(())
     }
 }
@@ -7315,12 +7314,12 @@ pub trait WriterTrait {
     fn prev_prev_char(&self) -> u8;
     fn print_byte(&mut self, b: u8);
     fn print_slice(&mut self, s: &[u8]);
-    fn reserve(&mut self, count: u64) -> Result<*mut u8, bun_core::Error>;
+    fn reserve(&mut self, count: u64) -> crate::Result<*mut u8>;
     fn advance(&mut self, count: u64);
     /// Reserve `bytes.len()`, memcpy `bytes` into the reserved region, then advance.
     /// Centralizes the open-coded `reserve + copy_nonoverlapping + advance` triplet
     #[inline]
-    fn write_reserved(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+    fn write_reserved(&mut self, bytes: &[u8]) -> crate::Result<()> {
         let ptr = self.reserve(bytes.len() as u64)?;
         // SAFETY: `reserve(n)` returns a writable region of >= n bytes owned by the
         // writer's internal buffer, which is disjoint from caller-provided `bytes`.
@@ -7329,8 +7328,8 @@ pub trait WriterTrait {
         Ok(())
     }
     fn slice(&self) -> &[u8];
-    fn get_error(&self) -> Result<(), bun_core::Error>;
-    fn done(&mut self) -> Result<(), bun_core::Error>;
+    fn get_error(&self) -> crate::Result<()>;
+    fn done(&mut self) -> crate::Result<()>;
     fn std_writer(&mut self) -> StdWriterAdapter<'_, Self>
     where
         Self: Sized,
@@ -7344,7 +7343,7 @@ pub trait WriterTrait {
 
 pub struct StdWriterAdapter<'a, W: ?Sized>(&'a mut W);
 impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
         self.0.print_slice(bytes);
         Ok(())
     }
@@ -7356,8 +7355,8 @@ pub struct Writer<C: WriterContext> {
     // Used by the printer
     pub prev_char: u8,
     pub prev_prev_char: u8,
-    pub err: Option<bun_core::Error>,
-    pub orig_err: Option<bun_core::Error>,
+    pub err: Option<crate::Error>,
+    pub orig_err: Option<crate::Error>,
 }
 
 impl<C: WriterContext> Writer<C> {
@@ -7387,7 +7386,7 @@ impl<C: WriterContext> Writer<C> {
         self.ctx.slice()
     }
 
-    pub fn get_error(&self) -> Result<(), bun_core::Error> {
+    pub fn get_error(&self) -> crate::Result<()> {
         if let Some(e) = self.orig_err {
             return Err(e);
         }
@@ -7406,7 +7405,7 @@ impl<C: WriterContext> Writer<C> {
         self.ctx.get_last_last_byte()
     }
 
-    pub fn reserve(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
+    pub fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
         self.ctx.reserve_next(count)
     }
 
@@ -7419,7 +7418,7 @@ impl<C: WriterContext> Writer<C> {
         self.written = self.written.wrapping_add(count as i32);
     }
 
-    pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, bun_core::Error> {
+    pub fn write_all(&mut self, bytes: &[u8]) -> crate::Result<usize> {
         let written = self.written.max(0);
         self.print_slice(bytes);
         debug_assert!(self.written >= 0);
@@ -7432,12 +7431,12 @@ impl<C: WriterContext> Writer<C> {
             Ok(n) => {
                 self.written = self.written.wrapping_add(n as i32);
                 if n == 0 {
-                    self.err = Some(bun_core::err!("WriteFailed"));
+                    self.err = Some(crate::Error::WriteFailed);
                 }
             }
             Err(err) => {
                 self.orig_err = Some(err);
-                self.err = Some(bun_core::err!("WriteFailed"));
+                self.err = Some(crate::Error::WriteFailed);
             }
         }
     }
@@ -7449,23 +7448,23 @@ impl<C: WriterContext> Writer<C> {
                 self.written = self.written.wrapping_add(n as i32);
                 if n < s.len() {
                     self.err = Some(if n == 0 {
-                        bun_core::err!("WriteFailed")
+                        crate::Error::WriteFailed
                     } else {
-                        bun_core::err!("PartialWrite")
+                        crate::Error::PartialWrite
                     });
                 }
             }
             Err(err) => {
                 self.orig_err = Some(err);
-                self.err = Some(bun_core::err!("WriteFailed"));
+                self.err = Some(crate::Error::WriteFailed);
             }
         }
     }
 
-    pub fn flush(&mut self) -> Result<(), bun_core::Error> {
+    pub fn flush(&mut self) -> crate::Result<()> {
         self.ctx.flush()
     }
-    pub fn done(&mut self) -> Result<(), bun_core::Error> {
+    pub fn done(&mut self) -> crate::Result<()> {
         self.ctx.done()
     }
 }
@@ -7492,7 +7491,7 @@ impl<C: WriterContext> WriterTrait for Writer<C> {
         self.print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
+    fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
         self.reserve(count)
     }
     #[inline]
@@ -7504,11 +7503,11 @@ impl<C: WriterContext> WriterTrait for Writer<C> {
         self.slice()
     }
     #[inline]
-    fn get_error(&self) -> Result<(), bun_core::Error> {
+    fn get_error(&self) -> crate::Result<()> {
         self.get_error()
     }
     #[inline]
-    fn done(&mut self) -> Result<(), bun_core::Error> {
+    fn done(&mut self) -> crate::Result<()> {
         self.done()
     }
     #[inline]
@@ -7540,7 +7539,7 @@ impl<W: WriterTrait> WriterTrait for &mut W {
         (**self).print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
+    fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
         (**self).reserve(count)
     }
     #[inline]
@@ -7552,11 +7551,11 @@ impl<W: WriterTrait> WriterTrait for &mut W {
         (**self).slice()
     }
     #[inline]
-    fn get_error(&self) -> Result<(), bun_core::Error> {
+    fn get_error(&self) -> crate::Result<()> {
         (**self).get_error()
     }
     #[inline]
-    fn done(&mut self) -> Result<(), bun_core::Error> {
+    fn done(&mut self) -> crate::Result<()> {
         (**self).done()
     }
     #[inline]
@@ -7574,11 +7573,10 @@ pub struct DirectWriter {
 }
 
 impl DirectWriter {
-    pub fn write(&mut self, buf: &[u8]) -> Result<usize, bun_core::Error> {
-        bun_sys::write(self.handle, buf)
-            .map_err(|e| bun_core::Error::from_errno(i32::from(e.errno)))
+    pub fn write(&mut self, buf: &[u8]) -> crate::Result<usize> {
+        bun_sys::write(self.handle, buf).map_err(|_| crate::Error::WriteFailed)
     }
-    pub fn write_all(&mut self, buf: &[u8]) -> Result<(), bun_core::Error> {
+    pub fn write_all(&mut self, buf: &[u8]) -> crate::Result<()> {
         let _ = self.write(buf)?;
         Ok(())
     }
@@ -7637,27 +7635,30 @@ impl BufferWriter {
         }
     }
 
-    pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
-        Write::write_fmt(&mut self.buffer.list, format_args!("{}", args))
+    pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> crate::Result<()> {
+        Ok(Write::write_fmt(
+            &mut self.buffer.list,
+            format_args!("{}", args),
+        )?)
     }
 
-    pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> Result<(), bun_core::Error> {
+    pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> crate::Result<()> {
         self.buffer.append_char_n_times(byte, n)?;
         Ok(())
     }
     // alias
-    pub fn splat_byte_all(&mut self, byte: u8, n: usize) -> Result<(), bun_core::Error> {
+    pub fn splat_byte_all(&mut self, byte: u8, n: usize) -> crate::Result<()> {
         self.write_byte_n_times(byte, n)
     }
 
     #[inline]
-    pub fn write_byte(&mut self, byte: u8) -> Result<usize, bun_core::Error> {
+    pub fn write_byte(&mut self, byte: u8) -> crate::Result<usize> {
         self.buffer.append_char(byte)?;
         Ok(1)
     }
 
     #[inline]
-    pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, bun_core::Error> {
+    pub fn write_all(&mut self, bytes: &[u8]) -> crate::Result<usize> {
         self.buffer.append(bytes)?;
         Ok(bytes.len())
     }
@@ -7683,7 +7684,7 @@ impl BufferWriter {
         if len >= 2 { list[len - 2] } else { 0 }
     }
 
-    pub fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
+    pub fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8> {
         let n = usize::try_from(count).expect("int cast");
         // SAFETY: caller treats as write-only; advance_by() commits via commit_spare.
         Ok(unsafe { bun_core::vec::reserve_spare_bytes(&mut self.buffer.list, n) }.as_mut_ptr())
@@ -7708,7 +7709,7 @@ impl BufferWriter {
         written
     }
 
-    pub fn done(&mut self) -> Result<(), bun_core::Error> {
+    pub fn done(&mut self) -> crate::Result<()> {
         if self.append_newline {
             self.append_newline = false;
             self.buffer.append_char(b'\n')?;
@@ -7728,18 +7729,18 @@ impl BufferWriter {
         Ok(())
     }
 
-    pub fn flush(&mut self) -> Result<(), bun_core::Error> {
+    pub fn flush(&mut self) -> crate::Result<()> {
         Ok(())
     }
 }
 
 impl WriterContext for BufferWriter {
     #[inline]
-    fn write_byte(&mut self, c: u8) -> Result<usize, bun_core::Error> {
+    fn write_byte(&mut self, c: u8) -> crate::Result<usize> {
         self.write_byte(c)
     }
     #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> Result<usize, bun_core::Error> {
+    fn write_all(&mut self, buf: &[u8]) -> crate::Result<usize> {
         self.write_all(buf)
     }
     #[inline]
@@ -7751,7 +7752,7 @@ impl WriterContext for BufferWriter {
         self.get_last_last_byte()
     }
     #[inline]
-    fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
+    fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8> {
         self.reserve_next(count)
     }
     #[inline]
@@ -7775,11 +7776,11 @@ impl WriterContext for BufferWriter {
         self.get_written()
     }
     #[inline]
-    fn flush(&mut self) -> Result<(), bun_core::Error> {
+    fn flush(&mut self) -> crate::Result<()> {
         self.flush()
     }
     #[inline]
-    fn done(&mut self) -> Result<(), bun_core::Error> {
+    fn done(&mut self) -> crate::Result<()> {
         self.done()
     }
 }
@@ -7910,7 +7911,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source,
     opts: Options<'a>,
-) -> Result<usize, bun_core::Error> {
+) -> crate::Result<usize> {
     let _restore =
         bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
 
@@ -8096,7 +8097,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             .as_mut()
             .unwrap()
             .finalize()
-            .map_err(|()| bun_core::Error::OUT_OF_MEMORY)?;
+            .map_err(|()| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
 
     let mut source_maps_chunk: Option<SourceMap::Chunk> = if GENERATE_SOURCE_MAP {
@@ -8123,7 +8124,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 .as_ref()
                 .unwrap()
                 .as_deserialized()
-                .serialize(&mut srlz_res)?;
+                .serialize(&mut srlz_res)
+                .map_err(|_| crate::Error::WriteFailed)?;
         }
         // SAFETY: caller guarantees the cache outlives the print call.
         unsafe { &mut *cache.as_ptr() }.put(
@@ -8152,7 +8154,7 @@ pub fn print_json<W: WriterTrait>(
     expr: js_ast::Expr,
     source: &bun_ast::Source,
     opts: PrintJsonOptions<'_>,
-) -> Result<usize, bun_core::Error> {
+) -> crate::Result<usize> {
     // NewPrinter(ascii_only=false, Writer, rewrite_esm_to_cjs=false, is_bun_platform=false, is_json=true, generate_source_map=false)
     type PrinterType<'a, W> = Printer<'a, W, false, false, false, true, false>;
     let writer = _writer;
@@ -8371,7 +8373,7 @@ pub fn print_common_js<
     symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source,
     opts: Options<'a>,
-) -> Result<usize, bun_core::Error> {
+) -> crate::Result<usize> {
     let _restore =
         bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
 

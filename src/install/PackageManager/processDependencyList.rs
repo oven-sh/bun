@@ -51,7 +51,7 @@ impl<'a> ResolverContext for GitResolver<'a> {
         &mut self,
         builder: &mut StringBuilder<'_>,
         _json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error> {
+    ) -> Result<ResolutionType<u64>, crate::Error> {
         // `git` and `github` share the `Repository` payload in the value union,
         // so writing through `.github` is correct for both tags.
         // SAFETY: caller guarantees `tag` is `.git` or `.github` (see
@@ -106,7 +106,7 @@ impl<'a> ResolverContext for TarballResolver<'a> {
         &mut self,
         builder: &mut StringBuilder<'_>,
         _json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error> {
+    ) -> Result<ResolutionType<u64>, crate::Error> {
         Ok(ResolutionType::<u64>::init(match self.resolution.tag {
             ResolutionTag::LocalTarball => {
                 TaggedValue::LocalTarball(builder.append::<SemverString>(self.url))
@@ -351,7 +351,7 @@ impl PackageManager {
         item: &TaskCallbackContext,
         any_root: Option<&Cell<bool>>,
         install_peer: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         match *item {
             TaskCallbackContext::Dependency(dependency_id) => {
                 // Clone the dependency row out of the buffer before
@@ -400,7 +400,7 @@ impl PackageManager {
         Ok(())
     }
 
-    pub fn process_peer_dependency_list(&mut self) -> Result<(), bun_core::Error> {
+    pub fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
         while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
             // Clone the dependency row out of the buffer before re-borrowing
             // `self` for enqueue.
@@ -427,7 +427,7 @@ impl PackageManager {
         ctx: C,
         on_resolve: Option<impl FnOnce(C)>,
         install_peer: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if !dep_list.is_empty() {
             let dependency_list = dep_list;
             let any_root = Cell::new(false);
@@ -472,12 +472,12 @@ pub fn process_dependency_list_item(
     item: &TaskCallbackContext,
     any_root: Option<&Cell<bool>>,
     install_peer: bool,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     this.process_dependency_list_item(item, any_root, install_peer)
 }
 
 #[inline]
-pub fn process_peer_dependency_list(this: &mut PackageManager) -> Result<(), bun_core::Error> {
+pub fn process_peer_dependency_list(this: &mut PackageManager) -> Result<(), crate::Error> {
     this.process_peer_dependency_list()
 }
 
@@ -488,6 +488,6 @@ pub fn process_dependency_list<C>(
     ctx: C,
     on_resolve: Option<impl FnOnce(C)>,
     install_peer: bool,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     this.process_dependency_list(dep_list, ctx, on_resolve, install_peer)
 }

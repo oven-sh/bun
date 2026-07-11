@@ -164,8 +164,6 @@ impl From<CreateMatcherError> for FromExprError {
     }
 }
 
-bun_core::named_error_set!(FromExprError);
-
 impl PnpmMatcher {
     // `bun_ast::ExprData` exposes the real value-shaped enum
     // (`EString`/`EArray` via `StoreRef<E::*>`). The arena-taking
@@ -343,8 +341,6 @@ pub enum CreateMatcherError {
 bun_core::impl_tag_error!(CreateMatcherError);
 
 bun_core::oom_from_alloc!(CreateMatcherError);
-
-bun_core::named_error_set!(CreateMatcherError);
 
 pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatcherError> {
     buf.clear();

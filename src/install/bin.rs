@@ -1,9 +1,9 @@
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use crate::Error;
 use bun_alloc::AllocError;
 use bun_collections::{StringHashMap, VecExt};
-use bun_core::Error;
 use bun_core::ZStr;
 #[cfg(windows)]
 use bun_core::w;
@@ -941,8 +941,8 @@ impl<'a> Linker<'a> {
             let target = match sys::File::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0) {
                 Ok(f) => f,
                 Err(err) => {
-                    let err: bun_core::Error = err.into();
-                    if err != bun_core::err!("EISDIR") {
+                    let err: crate::Error = err.into();
+                    if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
                         // ignore directories, creating a shim for one won't do anything
                         self.err = Some(err);
                     }
@@ -1153,8 +1153,8 @@ impl<'a> Linker<'a> {
             ) {
                 Ok(f) => break 'bunx_file f,
                 Err(err) => {
-                    let err: bun_core::Error = err.into();
-                    if err != bun_core::err!("ENOENT") || global {
+                    let err: crate::Error = err.into();
+                    if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) || global {
                         self.err = Some(err);
                         return;
                     }
@@ -1211,7 +1211,7 @@ impl<'a> Linker<'a> {
                 match WinShimShebang::parse(chunk, rel_target_w) {
                     Ok(s) => break 'shebang s,
                     Err(_) => {
-                        self.err = Some(bun_core::err!("InvalidBinCount"));
+                        self.err = Some(crate::Error::InvalidBinCount);
                         return;
                     }
                 }
@@ -1227,13 +1227,13 @@ impl<'a> Linker<'a> {
 
         let len = shim.encoded_length();
         if len > shim_buf.len() {
-            self.err = Some(bun_core::err!("InvalidBinContent"));
+            self.err = Some(crate::Error::InvalidBinContent);
             return;
         }
 
         let metadata = &mut shim_buf[0..len];
         if shim.encode_into(metadata).is_err() {
-            self.err = Some(bun_core::err!("InvalidBinContent"));
+            self.err = Some(crate::Error::InvalidBinContent);
             return;
         }
 
@@ -1252,8 +1252,8 @@ impl<'a> Linker<'a> {
             abs_exe_file,
             crate::windows_shim::embedded_executable_data(),
         ) {
-            let err: bun_core::Error = err.into();
-            if err == bun_core::err!("EBUSY") {
+            let err: crate::Error = err.into();
+            if err == crate::Error::Sys(bun_errno::SystemErrno::EBUSY) {
                 // exe is most likely running. bunx file has already been updated, ignore error
                 return;
             }
@@ -1278,7 +1278,7 @@ impl<'a> Linker<'a> {
         match sys::symlink_running_executable(rel_target, abs_dest) {
             sys::Result::Err(err) => {
                 if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
-                    self.err = Some(err.to_zig_err());
+                    self.err = Some(err.into());
                     Self::chmod_on_ok(self.err, abs_target);
                     return;
                 }
@@ -1286,7 +1286,7 @@ impl<'a> Linker<'a> {
                 // ENOENT means `.bin` hasn't been created yet. Should only happen if this isn't global
                 if err.get_errno() == sys::Errno::ENOENT {
                     if global {
-                        self.err = Some(err.to_zig_err());
+                        self.err = Some(err.into());
                         Self::chmod_on_ok(self.err, abs_target);
                         return;
                     }
@@ -1301,7 +1301,7 @@ impl<'a> Linker<'a> {
                     match sys::symlink_running_executable(rel_target, abs_dest) {
                         sys::Result::Err(real_error) => {
                             // It was just created, no need to delete destination and symlink again
-                            self.err = Some(real_error.to_zig_err());
+                            self.err = Some(real_error.into());
                             Self::chmod_on_ok(self.err, abs_target);
                             return;
                         }
@@ -1324,7 +1324,7 @@ impl<'a> Linker<'a> {
         // delete and try again
         let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
-            self.err = Some(err.to_zig_err());
+            self.err = Some(err.into());
         }
         Self::chmod_on_ok(self.err, abs_target);
     }
@@ -1611,7 +1611,7 @@ impl<'a> Linker<'a> {
                     if unscoped_package_name.len()
                         >= self.abs_dest_buf.len().saturating_sub(dest_off)
                     {
-                        self.err = Some(bun_core::err!("NameTooLong"));
+                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         return;
                     }
                     self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
@@ -1643,7 +1643,7 @@ impl<'a> Linker<'a> {
                     let target_needs_resolved_containment_check =
                         bin_target_needs_resolved_containment_check(target);
                     if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
-                        self.err = Some(bun_core::err!("NameTooLong"));
+                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         return;
                     }
 
@@ -1699,7 +1699,8 @@ impl<'a> Linker<'a> {
                         if normalized_bin_dest.len()
                             >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                         {
-                            self.err = Some(bun_core::err!("NameTooLong"));
+                            self.err =
+                                Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                             return;
                         }
 
@@ -1760,7 +1761,7 @@ impl<'a> Linker<'a> {
                                 // avoid erroring when the directory does not exist
                                 return;
                             }
-                            self.err = Some(err.to_zig_err());
+                            self.err = Some(err.into());
                             return;
                         }
                     };
@@ -1792,7 +1793,9 @@ impl<'a> Linker<'a> {
                                 if entry_name.len()
                                     >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                                 {
-                                    self.err = Some(bun_core::err!("NameTooLong"));
+                                    self.err = Some(crate::Error::Sys(
+                                        bun_errno::SystemErrno::ENAMETOOLONG,
+                                    ));
                                     return;
                                 }
                                 dest_off = abs_dest_dir_end;
@@ -1835,7 +1838,7 @@ impl<'a> Linker<'a> {
                     if unscoped_package_name.len()
                         >= self.abs_dest_buf.len().saturating_sub(dest_off)
                     {
-                        self.err = Some(bun_core::err!("NameTooLong"));
+                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         return;
                     }
                     self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
@@ -1855,7 +1858,7 @@ impl<'a> Linker<'a> {
                         return;
                     }
                     if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
-                        self.err = Some(bun_core::err!("NameTooLong"));
+                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         return;
                     }
 
@@ -1884,7 +1887,8 @@ impl<'a> Linker<'a> {
                         if normalized_bin_dest.len()
                             >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                         {
-                            self.err = Some(bun_core::err!("NameTooLong"));
+                            self.err =
+                                Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                             return;
                         }
 
@@ -1914,7 +1918,7 @@ impl<'a> Linker<'a> {
                     let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                         Ok(d) => d,
                         Err(err) => {
-                            self.err = Some(err.to_zig_err());
+                            self.err = Some(err.into());
                             return;
                         }
                     };
@@ -1932,7 +1936,9 @@ impl<'a> Linker<'a> {
                                 if entry_name.len()
                                     >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                                 {
-                                    self.err = Some(bun_core::err!("NameTooLong"));
+                                    self.err = Some(crate::Error::Sys(
+                                        bun_errno::SystemErrno::ENAMETOOLONG,
+                                    ));
                                     return;
                                 }
                                 dest_off = abs_dest_dir_end;

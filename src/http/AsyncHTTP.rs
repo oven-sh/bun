@@ -59,7 +59,7 @@ pub struct AsyncHTTP<'a> {
     pub client: HTTPClient<'a>,
     pub waiting_deffered: bool,
     pub finalized: bool,
-    pub err: Option<bun_core::Error>,
+    pub err: Option<crate::Error>,
     pub async_http_id: u32,
 
     pub state: AtomicState,
@@ -672,7 +672,7 @@ fn send_sync_callback(
 }
 
 impl<'a> AsyncHTTP<'a> {
-    pub fn send_sync(&mut self) -> Result<picohttp::Response<'static>, bun_core::Error> {
+    pub fn send_sync(&mut self) -> crate::Result<picohttp::Response<'static>> {
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);

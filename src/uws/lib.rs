@@ -358,7 +358,6 @@ pub mod ssl_wrapper {
         OutOfMemory,
         InvalidOptions,
     }
-    bun_core::named_error_set!(InitError);
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum WriteDataError {
@@ -366,7 +365,6 @@ pub mod ssl_wrapper {
         WantRead,
         WantWrite,
     }
-    bun_core::named_error_set!(WriteDataError);
 
     // SAFETY: SSLWrapper is an inline field of the owning socket; handler vtable
     // re-entry may write `flags`/`ssl` but never frees the wrapper (only

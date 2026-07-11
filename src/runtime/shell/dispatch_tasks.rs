@@ -152,7 +152,7 @@ impl ShellCondExprStatTask {
 /// Error result of a glob-expansion task.
 pub enum ShellGlobErr {
     Syscall(bun_sys::Error),
-    Unknown(bun_core::Error),
+    Unknown(crate::Error),
 }
 
 /// Glob-expansion task run off the JS thread during word expansion.
@@ -218,7 +218,7 @@ impl ShellGlobTask {
     fn walk_impl(
         walker: &mut bun_glob::BunGlobWalkerZ,
         result: &mut Vec<Vec<u8>>,
-    ) -> Result<bun_sys::Result<()>, bun_core::Error> {
+    ) -> Result<bun_sys::Result<()>, crate::Error> {
         let mut iter = bun_glob::walk::Iterator::new(walker);
         if let Err(e) = iter.init()? {
             return Ok(Err(e));

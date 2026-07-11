@@ -11,7 +11,7 @@
 //!     Rust `bcrypt` crate has no PHC codec). `silently_truncate_password` is
 //!     asserted `true` (Bun's only caller never sets `false`).
 
-use bun_core::Error;
+use crate::Error;
 
 /// PHC / modular-crypt strings are 7-bit ASCII by spec; the third-party
 /// `argon2`/`bcrypt` crates take `&str`, so view-cast after the cheap
@@ -19,7 +19,7 @@ use bun_core::Error;
 #[inline]
 fn phc_ascii_str(s: &[u8]) -> Result<&str, Error> {
     if !s.is_ascii() {
-        return Err(bun_core::err!("InvalidEncoding"));
+        return Err(crate::Error::InvalidEncoding);
     }
     // SAFETY: every byte < 0x80 ⇒ valid UTF-8.
     Ok(unsafe { core::str::from_utf8_unchecked(s) })
@@ -34,7 +34,7 @@ pub enum Encoding {
     Crypt,
 }
 
-/// callers compare against `bun_core::err!("PasswordVerificationFailed")` etc.
+/// callers compare against `crate::Error::PasswordVerificationFailed` etc.
 pub type PwhashError = Error;
 
 pub mod argon2 {
@@ -110,7 +110,7 @@ pub mod argon2 {
             // Keep these tags recognisable so PasswordObject's
             // `errorName(err)` formatting stays stable.
             E::DecodingFail | E::IncorrectType | E::IncorrectVersion => {
-                bun_core::err!("InvalidEncoding")
+                crate::Error::InvalidEncoding
             }
             E::OutputTooShort
             | E::OutputTooLong
@@ -127,7 +127,7 @@ pub mod argon2 {
             | E::MemoryTooLittle
             | E::MemoryTooMuch
             | E::LanesTooFew
-            | E::LanesTooMany => bun_core::err!("WeakParameters"),
+            | E::LanesTooMany => crate::Error::WeakParameters,
         }
     }
 
@@ -139,11 +139,11 @@ pub mod argon2 {
         out: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
         if options.encoding != Encoding::Phc {
-            return Err(bun_core::err!("InvalidEncoding"));
+            return Err(crate::Error::InvalidEncoding);
         }
 
         let mut salt = [0u8; DEFAULT_SALT_LEN];
-        getrandom::fill(&mut salt).map_err(|_| bun_core::err!("Unexpected"))?;
+        getrandom::fill(&mut salt).map_err(|_| crate::Error::Unexpected)?;
 
         let config = vendor::Config {
             ad: &[],
@@ -165,7 +165,7 @@ pub mod argon2 {
 
         // Error `NoSpaceLeft` if the encoded hash overflows the caller buffer.
         if bytes.len() > out.len() {
-            return Err(bun_core::err!("NoSpaceLeft"));
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
         }
         out[..bytes.len()].copy_from_slice(bytes);
         Ok(&out[..bytes.len()])
@@ -203,7 +203,7 @@ pub mod argon2 {
             if let Some(v) = rest.strip_prefix("v=") {
                 let end = v.find('$').unwrap_or(v.len());
                 if &v[..end] != "19" {
-                    return Err(bun_core::err!("InvalidEncoding"));
+                    return Err(crate::Error::InvalidEncoding);
                 }
                 std::borrow::Cow::Borrowed(encoded)
             } else {
@@ -241,7 +241,7 @@ pub mod argon2 {
                         _ => continue,
                     };
                     if value > limit {
-                        return Err(bun_core::err!("WeakParameters"));
+                        return Err(crate::Error::WeakParameters);
                     }
                 }
             }
@@ -251,7 +251,7 @@ pub mod argon2 {
             Ok(true) => Ok(()),
             // `rust-argon2` constant-time compares and returns `Ok(false)` on
             // mismatch; surface this as `PasswordVerificationFailed`.
-            Ok(false) => Err(bun_core::err!("PasswordVerificationFailed")),
+            Ok(false) => Err(crate::Error::PasswordVerificationFailed),
             Err(e) => Err(map_err(&e)),
         }
     }
@@ -291,11 +291,11 @@ pub mod bcrypt {
     fn map_err(e: &vendor::BcryptError) -> Error {
         use vendor::BcryptError as E;
         match e {
-            E::CostNotAllowed(_) => bun_core::err!("WeakParameters"),
-            E::Rand(_) => bun_core::err!("Unexpected"),
+            E::CostNotAllowed(_) => crate::Error::WeakParameters,
+            E::Rand(_) => crate::Error::Unexpected,
             // InvalidHash / InvalidCost / InvalidPrefix / InvalidSaltLen /
             // InvalidBase64 — all map to `InvalidEncoding`.
-            _ => bun_core::err!("InvalidEncoding"),
+            _ => crate::Error::InvalidEncoding,
         }
     }
 
@@ -307,14 +307,14 @@ pub mod bcrypt {
         out: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
         if out.len() < HASH_LENGTH {
-            return Err(bun_core::err!("NoSpaceLeft"));
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
         }
         // Bun only ever requests `.crypt`. A `.phc` request would need the
         // `$bcrypt$…` PHC serializer, which the Rust `bcrypt` crate does not
         // implement; surface that as an encoding error rather than silently
         // returning the wrong format.
         if options.encoding != Encoding::Crypt {
-            return Err(bun_core::err!("InvalidEncoding"));
+            return Err(crate::Error::InvalidEncoding);
         }
 
         let cost = u32::from(options.params.rounds_log);
@@ -380,7 +380,7 @@ pub mod bcrypt {
             // The crate compares only the 23-byte raw digest (constant-time)
             // and ignores the version prefix — any `$2a/b/x/y$` hash with
             // matching salt+digest passes.
-            Ok(false) => Err(bun_core::err!("PasswordVerificationFailed")),
+            Ok(false) => Err(crate::Error::PasswordVerificationFailed),
             Err(e) => Err(map_err(&e)),
         }
     }
@@ -390,13 +390,13 @@ pub mod bcrypt {
     /// The Rust `bcrypt` crate has no PHC codec, so parse the string here,
     /// recompute via the raw block cipher, and compare the 23-byte digests.
     fn verify_phc(encoded: &str, password: &[u8]) -> Result<(), Error> {
-        let invalid = || bun_core::err!("InvalidEncoding");
+        let invalid = || crate::Error::InvalidEncoding;
 
         // alg_id
         let rest = encoded.strip_prefix('$').ok_or_else(invalid)?;
         let (alg_id, rest) = rest.split_once('$').ok_or_else(invalid)?;
         if alg_id != "bcrypt" {
-            return Err(bun_core::err!("PasswordVerificationFailed"));
+            return Err(crate::Error::PasswordVerificationFailed);
         }
 
         // r=N (rounds must fit in 6 bits; checked below)
@@ -439,7 +439,7 @@ pub mod bcrypt {
         // out-of-range tail here rather than panic. (Values <4 or ≥32 never
         // appear in hashes Bun produced.)
         if !(4..=31).contains(&rounds_log) {
-            return Err(bun_core::err!("WeakParameters"));
+            return Err(crate::Error::WeakParameters);
         }
 
         // Replicate the crate's `_hash_password`: null-terminate then clamp
@@ -455,7 +455,7 @@ pub mod bcrypt {
         if bun_boringssl_sys::constant_time_eq(&computed[..DK_LENGTH], &expected) {
             Ok(())
         } else {
-            Err(bun_core::err!("PasswordVerificationFailed"))
+            Err(crate::Error::PasswordVerificationFailed)
         }
     }
 }

@@ -41,14 +41,17 @@ impl Default for WindowsWatcher {
     }
 }
 
-#[derive(Debug, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, thiserror::Error)]
 pub enum Error {
+    #[error("IocpFailed")]
     IocpFailed,
+    #[error("ReadDirectoryChangesFailed")]
     ReadDirectoryChangesFailed,
+    #[error("CreateFileFailed")]
     CreateFileFailed,
+    #[error("InvalidPath")]
     InvalidPath,
 }
-bun_core::named_error_set!(Error);
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
@@ -217,7 +220,7 @@ impl EventIterator {
 impl WindowsWatcher {
     // `self` is the pre-allocated `platform` slot inside crate::Watcher
     // (64KB+ buffers; avoid moving).
-    pub(crate) fn init(&mut self, root: &[u8]) -> Result<(), bun_core::Error> {
+    pub(crate) fn init(&mut self, root: &[u8]) -> Result<(), crate::Error> {
         use bun_paths::string_paths as paths;
         let mut pathbuf = WPathBuffer::uninit();
         let wpath = paths::to_nt_path(&mut pathbuf, root);
@@ -265,7 +268,7 @@ impl WindowsWatcher {
         });
 
         self.iocp = w::CreateIoCompletionPort(*handle_guard, ptr::null_mut(), 0, 1)
-            .map_err(|_| bun_core::Error::from(Error::IocpFailed))?;
+            .map_err(|_| crate::Error::from(Error::IocpFailed))?;
         let iocp_guard = scopeguard::guard(self.iocp, |h| unsafe {
             // SAFETY: iocp handle was successfully created above.
             let _ = w::CloseHandle(h);

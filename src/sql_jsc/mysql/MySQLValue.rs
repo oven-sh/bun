@@ -448,7 +448,7 @@ pub struct DateTime {
 }
 
 impl DateTime {
-    pub fn from_data(data: &Data) -> Result<DateTime, bun_core::Error> {
+    pub fn from_data(data: &Data) -> Result<DateTime, crate::Error> {
         Ok(Self::from_binary(data.slice()))
     }
 
@@ -747,7 +747,7 @@ impl Time {
         }
     }
 
-    pub fn from_data(data: &Data) -> Result<Time, bun_core::Error> {
+    pub fn from_data(data: &Data) -> Result<Time, crate::Error> {
         Ok(Self::from_binary(data.slice()))
     }
 

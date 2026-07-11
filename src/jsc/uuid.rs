@@ -10,7 +10,6 @@ pub enum UuidError {
     #[error("InvalidUUID")]
     InvalidUUID,
 }
-bun_core::named_error_set!(UuidError);
 
 #[derive(Clone, Copy)]
 pub struct UUID {

@@ -133,7 +133,7 @@ pub use crate::PrintErr;
 
 #[cold]
 #[inline(never)]
-pub fn oom(_e: bun_core::Error) -> ! {
+pub fn oom(_e: crate::Error) -> ! {
     bun_core::out_of_memory();
 }
 

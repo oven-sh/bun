@@ -1,4 +1,8 @@
 #![warn(unused_must_use)]
+
+pub mod error;
+pub use error::{Error, Result};
+
 // This is a Next.js-compatible file-system router.
 // It uses the filesystem to infer entry points.
 // Despite being Next.js-compatible, it's not tied to Next.js.
@@ -41,7 +45,7 @@ mod api {
     pub(crate) use bun_options_types::schema::api::{LoadedRouteConfig, RouteConfig};
 }
 
-type CoreError = bun_core::Error;
+type CoreError = crate::Error;
 
 use bun_core::HashedString;
 use bun_ptr::Interned;
@@ -1996,12 +2000,12 @@ mod tests {
     }
 
     impl MockRequestContextType {
-        fn handle_request(&mut self) -> Result<(), bun_core::Error> {
+        fn handle_request(&mut self) -> crate::Result<()> {
             self.handle_request_called = true;
             Ok(())
         }
 
-        fn handle_redirect(&mut self, _: &[u8]) -> Result<(), bun_core::Error> {
+        fn handle_redirect(&mut self, _: &[u8]) -> crate::Result<()> {
             self.redirect_called = true;
             Ok(())
         }
@@ -2013,7 +2017,7 @@ mod tests {
             _: &mut MockRequestContextType,
             _: &mut MockServer,
             _: &mut route_param::List<'_>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             Ok(())
         }
     }
@@ -2037,12 +2041,12 @@ mod tests {
         watchloop_handle: Option<Fd>,
     }
     impl MockWatcher {
-        pub fn start(&mut self) -> Result<(), bun_core::Error> {
+        pub fn start(&mut self) -> crate::Result<()> {
             Ok(())
         }
     }
 
-    fn make_test(cwd_path: &[u8], data: &[(&str, &str)]) -> Result<(), bun_core::Error> {
+    fn make_test(cwd_path: &[u8], data: &[(&str, &str)]) -> crate::Result<()> {
         Output::init_test();
         debug_assert!(cwd_path.len() > 1 && cwd_path != b"/" && !cwd_path.ends_with(b"bun"));
         let bun_tests_dir = bun_sys::Dir::cwd()
@@ -2093,7 +2097,7 @@ mod tests {
         pub fn make_routes(
             test_name: &'static str,
             data: &[(&str, &str)],
-        ) -> Result<Routes, bun_core::Error> {
+        ) -> crate::Result<Routes> {
             Output::init_test();
             make_test(test_name.as_bytes(), data)?;
             bun_ast::initialize_store();
@@ -2106,7 +2110,7 @@ mod tests {
             let pages_parts: [&[u8]; 2] = [top_level_dir, b"pages"];
             let pages_dir = bun_resolver::fs::FileSystem::instance()
                 .abs_alloc(&pages_parts)
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
 
             // const router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
             // SAFETY: process-static singleton just initialized above.
@@ -2152,7 +2156,7 @@ mod tests {
             let root_dir = resolver
                 .0
                 .read_dir_info(pages_dir)?
-                .ok_or_else(|| bun_core::err!("FileNotFound"))?;
+                .ok_or_else(|| crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
 
             // return RouteLoader.loadAll(..., opts.routes, &logger, Resolver, &resolver, root_dir);
             // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
@@ -2170,7 +2174,7 @@ mod tests {
         pub fn make(
             test_name: &'static str,
             data: &[(&str, &str)],
-        ) -> Result<Router<'static>, bun_core::Error> {
+        ) -> crate::Result<Router<'static>> {
             make_test(test_name.as_bytes(), data)?;
             bun_ast::initialize_store();
             // const fs = try FileSystem.initWithForce(null, true);
@@ -2180,7 +2184,7 @@ mod tests {
             let pages_parts: [&[u8]; 2] = [top_level_dir, b"pages"];
             let pages_dir = bun_resolver::fs::FileSystem::instance()
                 .abs_alloc(&pages_parts)
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
 
             // var router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
             // SAFETY: process-static singleton just initialized above.
@@ -2217,7 +2221,7 @@ mod tests {
             let root_dir = resolver
                 .0
                 .read_dir_info(pages_dir)?
-                .ok_or_else(|| bun_core::err!("FileNotFound"))?;
+                .ok_or_else(|| crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
 
             // try router.loadRoutes(&logger, root_dir, Resolver, &resolver, top_level_dir);
             // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).

@@ -168,7 +168,7 @@ impl Watcher {
     pub fn init<T: WatcherContext>(
         ctx: *mut T,
         top_level_dir: &'static [u8],
-    ) -> Result<Box<Watcher>, bun_core::Error> {
+    ) -> Result<Box<Watcher>, crate::Error> {
         fn on_file_update_wrapped<T: WatcherContext>(
             ctx_opaque: *mut (),
             events: &mut [WatchEvent],
@@ -219,7 +219,7 @@ impl Watcher {
         WatcherTrace::write_events(&self.watchlist, events, changed_files);
     }
 
-    pub fn start(&mut self) -> Result<(), bun_core::Error> {
+    pub fn start(&mut self) -> Result<(), crate::Error> {
         debug_assert!(!self.watchloop_handle.load());
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
@@ -279,7 +279,7 @@ impl Watcher {
     /// forbids deallocating through a pointer while a reference to the same
     /// allocation is protected — which is why this takes `*mut Self`, not
     /// `&mut self`).
-    unsafe fn thread_main(this: *mut Self) -> Result<(), bun_core::Error> {
+    unsafe fn thread_main(this: *mut Self) -> Result<(), crate::Error> {
         // Scope all `&mut *this` access so the borrow ends *before* we
         // reclaim the Box. Deallocating while a `&mut self` argument is still
         // protected is UB under Stacked Borrows / Tree Borrows.

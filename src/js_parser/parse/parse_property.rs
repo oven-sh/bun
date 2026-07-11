@@ -1,7 +1,7 @@
 #![warn(unused_must_use)]
 
 use bun_collections::VecExt;
-use bun_core::{self, err};
+use bun_core;
 
 use crate::lexer as js_lexer;
 use crate::p::P;
@@ -30,7 +30,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_computed: bool,
         key: &mut Expr,
         key_range: bun_ast::Range,
-    ) -> Result<Option<G::Property>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<G::Property>> {
         let p = self;
         if p.lexer.token == T::TOpenParen && kind != PropertyKind::Get && kind != PropertyKind::Set
         {
@@ -245,10 +245,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind_: PropertyKind,
         opts: &mut PropertyOpts,
         errors_: Option<&mut DeferredErrors>,
-    ) -> Result<Option<G::Property>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<G::Property>> {
         let p = self;
         if !p.stack_check.is_safe_to_recurse() {
-            return Err(err!("StackOverflow"));
+            return Err(crate::Error::StackOverflow);
         }
         let mut kind = kind_;
         let mut errors = errors_;
@@ -324,7 +324,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TAsterisk => {
                     if kind != PropertyKind::Normal || opts.is_generator {
                         p.lexer.unexpected()?;
-                        return Err(err!("SyntaxError"));
+                        return Err(crate::Error::SyntaxError);
                     }
 
                     p.lexer.next()?;
@@ -537,7 +537,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             name_range,
                             format_args!("Unexpected {}", bun_core::fmt::quote(name)),
                         );
-                        return Err(err!("SyntaxError"));
+                        return Err(crate::Error::SyntaxError);
                     }
 
                     key = p.new_expr(E::EString::init(name), name_range.loc);
@@ -752,7 +752,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     key_range,
                     b"auto-accessor properties cannot have a method body",
                 );
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
 
             // Parse a method expression

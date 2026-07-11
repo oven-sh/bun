@@ -194,7 +194,7 @@ impl WebSocketProxyTunnel {
         this: *mut Self,
         ssl_options: &SslConfig,
         initial_data: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Allow handshake to complete so we can access peer certificate for manual
         // hostname verification in onHandshake(). The actual reject_unauthorized
         // check uses self.reject_unauthorized field.
@@ -221,7 +221,7 @@ impl WebSocketProxyTunnel {
                 on_keylog: None,
             },
         )
-        .map_err(|_| bun_core::err!("InvalidOptions"))?;
+        .map_err(|_| crate::Error::InvalidOptions)?;
 
         // Snapshot the `*mut SSL` *before* moving `wrapper` into `*this` and before
         // forming any `&mut SslWrapper`, so callbacks can read it from a tunnel
@@ -571,16 +571,16 @@ impl WebSocketProxyTunnel {
     /// `this` must point to a live tunnel. `write_data()` fires `write_encrypted(ctx)`
     /// which forms `&mut *ctx`; this function therefore accesses `wrapper` via raw
     /// projection and never holds a `&mut Self` across the call.
-    pub(crate) unsafe fn write(this: *mut Self, data: &[u8]) -> Result<usize, bun_core::Error> {
+    pub(crate) unsafe fn write(this: *mut Self, data: &[u8]) -> crate::Result<usize> {
         // SAFETY: caller contract — `this` is live; projection covers only `wrapper`.
         let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
         // SAFETY: deref of field projection; `this` is live.
         if let Some(w) = unsafe { (*wrapper_ptr).as_mut() } {
             return w
                 .write_data(data)
-                .map_err(|_| bun_core::err!("ConnectionClosed"));
+                .map_err(|_| crate::Error::ConnectionClosed);
         }
-        Err(bun_core::err!("ConnectionClosed"))
+        Err(crate::Error::ConnectionClosed)
     }
 
     /// Gracefully shutdown the TLS connection

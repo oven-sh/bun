@@ -3,8 +3,9 @@ require('../common');
 const assert = require('assert');
 
 const dummyPort = new MessageChannel().port1;
+
 {
-  for (const [args, expected] of [
+  for (const [ args, expected ] of [
     [
       ['message'],
       {
@@ -59,32 +60,32 @@ const dummyPort = new MessageChannel().port1;
 {
   assert.throws(() => {
     new MessageEvent('message', { source: 1 });
-  }, e => (
-    e.name == 'TypeError' &&
-      e.message.includes('eventInitDict.source') && e.message.match(/(an instance of|of type) MessagePort/) && e.message.includes('1')
-  ));
+  }, {
+    name: 'TypeError',
+    message: /MessageEvent constructor: Expected eventInitDict\.source \("1"\) to be an instance of MessagePort\./,
+  });
   assert.throws(() => {
     new MessageEvent('message', { source: {} });
-  }, e => (
-    e.name == 'TypeError' &&
-      e.message.includes('eventInitDict.source') && e.message.match(/(an instance of|of type) MessagePort/) && (e.message.includes('{}') || e.message.includes('an instance of Object'))
-  ));
+  }, {
+    name: 'TypeError',
+    message: /MessageEvent constructor: Expected eventInitDict\.source \("\{\}"\) to be an instance of MessagePort\./,
+  });
   assert.throws(() => {
     new MessageEvent('message', { ports: 0 });
   }, {
-    message: /MessageEvent constructor: eventInitDict\.ports( \(0\))? is not iterable\./,
+    message: /MessageEvent constructor: eventInitDict\.ports \(0\) is not iterable\./,
   });
   assert.throws(() => {
     new MessageEvent('message', { ports: [ null ] });
   }, {
     name: 'TypeError',
-    message: /MessageEvent constructor: Expected (every item of )?eventInitDict\.ports(\[0\])? (\("null"\) )?to be an instance of MessagePort\./,
+    message: /MessageEvent constructor: Expected eventInitDict\.ports\[0\] \("null"\) to be an instance of MessagePort\./,
   });
   assert.throws(() => {
     new MessageEvent('message', { ports: [ {} ] });
   }, {
     name: 'TypeError',
-    message: /MessageEvent constructor: Expected (every item of )?eventInitDict\.ports(\[0\])? (\("\{\}"\) )?to be an instance of MessagePort\./,
+    message: /MessageEvent constructor: Expected eventInitDict\.ports\[0\] \("\{\}"\) to be an instance of MessagePort\./,
   });
 }
 

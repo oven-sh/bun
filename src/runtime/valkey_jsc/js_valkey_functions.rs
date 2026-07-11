@@ -78,17 +78,16 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
 
 /// Shim around `protocol::valkey_error_to_js` that:
 /// 1. accepts whatever error type `JSValkeyClient::send` currently returns
-///    (presently `bun_core::Error`) and
+///    (presently `crate::Error`) and
 ///    converts it to `RedisError` so the user-visible error code matches the
 ///    real failure variant, and
 /// 2. wraps the resulting `JSValue` in `Ok` for use in `JsResult<JSValue>`
 ///    host functions.
 #[inline]
-fn send_err_to_js<E>(global: &JSGlobalObject, message: &str, err: E) -> JsResult<JSValue>
-where
-    E: Into<bun_valkey::valkey_protocol::RedisError>,
-{
-    Ok(protocol::valkey_error_to_js(global, message, err.into()))
+fn send_err_to_js(global: &JSGlobalObject, message: &str, err: &crate::Error) -> JsResult<JSValue> {
+    use bun_valkey::valkey_protocol::RedisError;
+    let redis_err = err.name().parse().unwrap_or(RedisError::ConnectionClosed);
+    Ok(protocol::valkey_error_to_js(global, message, redis_err))
 }
 
 /// `JSValkeyClient::send` returns a `*mut JSPromise`; route through the
@@ -128,7 +127,7 @@ fn send_cmd(
         },
     ) {
         Ok(p) => Ok(promise_to_js(p)),
-        Err(err) => send_err_to_js(global, err_msg, err),
+        Err(err) => send_err_to_js(global, err_msg, &err),
     }
 }
 
@@ -474,7 +473,7 @@ impl JSValkeyClient {
         let promise = match this.send(global, frame.this(), &cmd) {
             Ok(p) => p,
             Err(err) => {
-                return send_err_to_js(global, "Failed to send command", err);
+                return send_err_to_js(global, "Failed to send command", &err);
             }
         };
         Ok(promise_to_js(promise))
@@ -1716,7 +1715,7 @@ impl JSValkeyClient {
                 this._subscription_ctx
                     .get()
                     .clear_all_receive_handlers(global)?;
-                return send_err_to_js(global, "Failed to send SUBSCRIBE command", err);
+                return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
             }
         };
 

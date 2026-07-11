@@ -10,6 +10,7 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+bun_alloc.workspace = true
 bun_opaque.workspace = true
 thiserror.workspace = true
 strum.workspace = true

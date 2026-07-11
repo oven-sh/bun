@@ -82,7 +82,7 @@ pub(crate) fn dump_source_string_failiable(
     vm: NonNull<VirtualMachine>,
     specifier: &[u8],
     written: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> crate::CrateResult<()> {
     if !cfg!(debug_assertions) {
         return Ok(());
     }
@@ -128,7 +128,7 @@ pub(crate) fn dump_source_string_failiable(
         if let Err(e) = File::write_file(parent.fd, base_z, written) {
             bun_core::debug_warn!(
                 "Failed to dump source string: writeFile {}",
-                bun_core::Error::from(e).name()
+                crate::CrateError::from(e).name()
             );
             return Ok(());
         }
@@ -173,7 +173,7 @@ pub(crate) fn dump_source_string_failiable(
                 json(&source_file),
                 mappings.format_vlqs(),
             )
-            .map_err(|_| bun_core::err!("WriteError"))?;
+            .map_err(|_| crate::CrateError::WriteError)?;
             file.write_all(out.as_bytes())?;
         }
     } else {
@@ -411,7 +411,7 @@ pub struct TranspilerJob {
     pub poll_ref: KeepAlive,
     pub generation_number: u32,
     pub log: bun_ast::Log,
-    pub parse_error: Option<bun_core::Error>,
+    pub parse_error: Option<crate::CrateError>,
     /// RAII-owned: holds +1 on `source_code`/`source_url`/`specifier`/
     /// `bytecode_origin_path` until `run_from_js_thread` `take()`s and
     /// `into_ffi()`s to C++. Dropped (via `HiveArray::put` → `drop_in_place`)
@@ -645,7 +645,7 @@ impl TranspilerJob {
                 .load(Ordering::Relaxed)
         };
         if self.generation_number != store_generation {
-            self.parse_error = Some(bun_core::err!("TranspilerJobGenerationMismatch"));
+            self.parse_error = Some(crate::CrateError::TranspilerJobGenerationMismatch);
             return;
         }
 
@@ -934,7 +934,7 @@ impl TranspilerJob {
                 }
             }
 
-            self.parse_error = Some(bun_core::err!("ParseError"));
+            self.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
 
@@ -1164,7 +1164,7 @@ impl TranspilerJob {
             if let Some(mi) = module_info {
                 mi.destroy();
             }
-            self.parse_error = Some(err);
+            self.parse_error = Some(err.into());
             return;
         }
 

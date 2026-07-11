@@ -54,14 +54,12 @@ bun_core::impl_tag_error!(Error);
 /// (`bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError`) resolve.
 pub type AnyMySQLError = Error;
 
-bun_core::named_error_set!(Error);
-
-// Reverse of the above: `bun_core::Error` is just an interned name; recover the
+// Reverse of the above: `crate::Error` is just an interned name; recover the
 // matching variant by name (or `UnknownError` as a catch-all). Needed because
-// helpers like `decode_binary_value` were widened to `bun_core::Error` while
+// helpers like `decode_binary_value` were widened to `crate::Error` while
 // callers (e.g. `ResultSet::Row::decode_binary`) still propagate `AnyMySQLError`.
-impl From<bun_core::Error> for Error {
-    fn from(e: bun_core::Error) -> Self {
+impl From<crate::Error> for Error {
+    fn from(e: crate::Error) -> Self {
         e.name().parse().unwrap_or(Error::UnknownError)
     }
 }

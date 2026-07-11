@@ -1448,7 +1448,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ) {
             Ok(n) => n,
             Err(err) => {
-                return Err(global_this.throw_error(err.into(), "Failed to decode file url"));
+                return Err(
+                    global_this.throw_error(bun_url::Error::from(err), "Failed to decode file url")
+                );
             }
         };
         let url_path_decoded = &path_buf2[0..decoded_len as usize];
@@ -1505,8 +1507,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         ) {
                             Ok(p) => p,
                             Err(err) => {
-                                return Err(global_this
-                                    .throw_error(err.into(), "Failed to resolve file url"));
+                                return Err(
+                                    global_this.throw_error(err, "Failed to resolve file url")
+                                );
                             }
                         };
                     }
@@ -1524,9 +1527,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
                     Ok(len) => &cwd_buf[..len],
                     Err(err) => {
-                        return Err(
-                            global_this.throw_error(err.into(), "Failed to resolve file url")
-                        );
+                        return Err(global_this.throw_error(err, "Failed to resolve file url"));
                     }
                 };
                 #[cfg(not(windows))]
@@ -1547,9 +1548,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     ) {
                         Ok(p) => p,
                         Err(err) => {
-                            return Err(
-                                global_this.throw_error(err.into(), "Failed to resolve file url")
-                            );
+                            return Err(global_this.throw_error(err, "Failed to resolve file url"));
                         }
                     };
                 }
@@ -1619,6 +1618,30 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 err,
             ),
         );
+    }
+
+    // Fetch spec step 11: reject synchronously for a pre-aborted signal. Runs
+    // after body/header extraction so Request-constructor errors (GET+body,
+    // already-used body) win and `request.bodyUsed` is set, matching Node.
+    if let Some(sig) = signal.0 {
+        let sig = bun_ptr::BackRef::from(sig);
+        if sig.aborted() {
+            // `abort_reason()` is the stored `m_reason` (same object as
+            // `signal.reason`), not a reconstructed DOMException.
+            let reason = sig.abort_reason();
+            if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
+                if let Some(stream) = stream_ref.get(global_this) {
+                    stream.cancel_with_reason(global_this, reason);
+                }
+            }
+            body.detach();
+            return Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global_this,
+                    reason,
+                ),
+            );
+        }
     }
 
     if headers.is_none() && body.has_body() && body.has_content_type_from_user() {

@@ -1,3 +1,4 @@
+use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
 use crate::parser::{ExportClauseResult, ImportClause, is_eval_or_arguments};
@@ -6,7 +7,6 @@ use bun_ast::LexerLog as _;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::op::Level;
 use bun_ast::{ClauseItem, E, Expr, LocRef};
-use bun_core::Error;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Note: The caller has already parsed the "import" keyword
@@ -454,7 +454,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     bstr::BStr::new(p.source.text_for_range(r))
                 ),
             )?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         Ok(ExportClauseResult {

@@ -1687,7 +1687,7 @@ impl WindowsNamedPipeListeningContext {
         backlog: i32,
         ssl_config: Option<&SSLConfig>,
         listener: *mut Listener,
-    ) -> Result<*mut WindowsNamedPipeListeningContext, bun_core::Error> {
+    ) -> crate::Result<*mut WindowsNamedPipeListeningContext> {
         // Heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
@@ -1721,13 +1721,13 @@ impl WindowsNamedPipeListeningContext {
             // Create SSL context using uSockets to match behavior of node.js
             match ctx_opts.create_ssl_context(&mut err) {
                 Some(ctx) => this_ref.ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
-                None => return Err(bun_core::err!("InvalidOptions")),
+                None => return Err(crate::Error::InvalidOptions),
             }
         }
 
         let init_result = this_ref.uv_pipe.init(this_ref.vm.uv_loop().cast(), false);
         if init_result.is_err() {
-            return Err(bun_core::err!("FailedToInitPipe"));
+            return Err(crate::Error::FailedToInitPipe);
         }
         cleanup.1 = true;
 
@@ -1753,7 +1753,7 @@ impl WindowsNamedPipeListeningContext {
             )
         };
         if listen_rc.is_err() {
-            return Err(bun_core::err!("FailedToBindPipe"));
+            return Err(crate::Error::FailedToBindPipe);
         }
         //TODO: add readableAll and writableAll support if someone needs it
         // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {

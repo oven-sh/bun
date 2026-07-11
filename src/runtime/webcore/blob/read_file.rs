@@ -6,6 +6,7 @@ use core::sync::atomic::AtomicU8;
 #[cfg(not(windows))]
 use core::sync::atomic::Ordering;
 
+use crate::Error;
 use crate::webcore::Lifetime;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
@@ -14,8 +15,8 @@ use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Sto
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
+use bun_core;
 use bun_core::String as BunString;
-use bun_core::{self, Error};
 use bun_io::{self as io, FileAction};
 #[cfg(windows)]
 // `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
@@ -213,7 +214,7 @@ impl FileOpener for ReadFile {
     fn set_opened_fd(&mut self, fd: Fd) {
         self.opened_fd = fd;
     }
-    fn set_errno(&mut self, e: bun_core::Error) {
+    fn set_errno(&mut self, e: crate::Error) {
         self.errno = Some(e);
     }
     fn set_system_error(&mut self, e: jsc::SystemError) {
@@ -426,7 +427,7 @@ impl ReadFile {
 
     pub fn on_io_error(&mut self, err: &bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
-        self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         self.system_error = Some(err.to_system_error().into());
         self.task = WorkPoolTask {
             node: Default::default(),
@@ -543,7 +544,7 @@ impl ReadFile {
                             return true;
                         }
                         _ => {
-                            self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+                            self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
                             self.system_error = Some(err.to_system_error().into());
                             if self.system_error.as_ref().unwrap().path.is_empty() {
                                 self.system_error.as_mut().unwrap().path =
@@ -672,7 +673,7 @@ impl ReadFile {
         let stat: Stat = match bun_sys::fstat(fd) {
             Ok(result) => result,
             Err(err) => {
-                self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
                 self.system_error = Some(err.to_system_error().into());
                 return;
             }
@@ -686,7 +687,7 @@ impl ReadFile {
         }
 
         if bun_sys::S::ISDIR(stat.st_mode as _) {
-            self.errno = Some(bun_core::err!("EISDIR"));
+            self.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             self.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR"),
                 path: if self.file_store.pathlike.is_path() {
@@ -749,7 +750,7 @@ impl ReadFile {
             let want = (self.size as usize).saturating_add(16);
             let mut v = Vec::<u8>::new();
             if v.try_reserve_exact(want).is_err() {
-                self.errno = Some(bun_core::err!("OutOfMemory"));
+                self.errno = Some(crate::Error::Alloc(bun_alloc::AllocError));
                 self.system_error = Some(
                     bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::read)
                         .to_system_error()
@@ -950,7 +951,7 @@ impl<'a> FileOpener for ReadFileUV<'a> {
     fn set_opened_fd(&mut self, fd: Fd) {
         self.opened_fd = fd;
     }
-    fn set_errno(&mut self, e: bun_core::Error) {
+    fn set_errno(&mut self, e: crate::Error) {
         self.errno = Some(e);
     }
     fn set_system_error(&mut self, e: jsc::SystemError) {
@@ -1175,7 +1176,7 @@ impl<'a> ReadFileUV<'a> {
             )
         };
         if let Some(errno) = rc.err_enum_e() {
-            self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
+            self.errno = Some(bun_errno::from_errno(errno as i32).into());
             self.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
                     .to_system_error()
@@ -1196,7 +1197,7 @@ impl<'a> ReadFileUV<'a> {
         // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
         // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
         if let Some(errno) = this.req.result.err_enum_e() {
-            this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
+            this.errno = Some(bun_errno::from_errno(errno as i32).into());
             this.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
                     .to_system_error()
@@ -1217,7 +1218,7 @@ impl<'a> ReadFileUV<'a> {
         }
 
         if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {
-            this.errno = Some(bun_core::err!("EISDIR"));
+            this.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             this.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR"),
                 path: if this.file_store.pathlike.is_path() {
@@ -1267,7 +1268,7 @@ impl<'a> ReadFileUV<'a> {
         }
         // Out of memory we can't read more than 4GB at a time (ULONG) on Windows
         if this.size as usize > bun_sys::windows::ULONG::MAX as usize {
-            this.errno = Some(bun_core::errno_to_zig_err(bun_sys::E::NOMEM as i32));
+            this.errno = Some(bun_errno::from_errno(bun_sys::E::NOMEM as i32).into());
             this.system_error = Some(
                 bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
                     .to_system_error()
@@ -1280,7 +1281,7 @@ impl<'a> ReadFileUV<'a> {
         let want =
             ((this.size as usize).saturating_add(16)).min(bun_sys::windows::ULONG::MAX as usize);
         if this.buffer.try_reserve_exact(want).is_err() {
-            this.errno = Some(bun_core::err!("OutOfMemory"));
+            this.errno = Some(crate::Error::Alloc(bun_alloc::AllocError));
             this.system_error = Some(
                 bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
                     .to_system_error()
@@ -1324,7 +1325,7 @@ impl<'a> ReadFileUV<'a> {
                 // theres at least 4096 bytes of free space. there has already
                 // been an initial allocation done for us
                 if self.buffer.try_reserve(4096).is_err() {
-                    self.errno = Some(bun_core::err!("OutOfMemory"));
+                    self.errno = Some(crate::Error::Alloc(bun_alloc::AllocError));
                     self.system_error = Some(
                         bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
                             .to_system_error()
@@ -1364,7 +1365,7 @@ impl<'a> ReadFileUV<'a> {
             };
             self.req.data = core::ptr::from_mut(self).cast::<c_void>();
             if let Some(errno) = res.err_enum_e() {
-                self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
+                self.errno = Some(bun_errno::from_errno(errno as i32).into());
                 self.system_error = Some(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::read)
                         .to_system_error()
@@ -1391,7 +1392,7 @@ impl<'a> ReadFileUV<'a> {
         let result = this.req.result;
 
         if let Some(errno) = result.err_enum_e() {
-            this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
+            this.errno = Some(bun_errno::from_errno(errno as i32).into());
             this.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::read)
                     .to_system_error()

@@ -27,7 +27,11 @@ pub mod watcher_trace;
 #[path = "Watcher.rs"]
 pub mod watcher_impl;
 
+pub mod error;
+
 // ─── public re-exports ────────────────────────────────────────────────────
+
+pub use error::{Error, Result};
 
 pub use WatchItemKind as Kind;
 pub use watcher_impl::{

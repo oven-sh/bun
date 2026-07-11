@@ -1,12 +1,13 @@
 use bun_collections::VecExt;
 use std::io::Write as _;
 
+use crate::Error;
 use crate::cli::ci_info as ci;
 use bun_alloc::AllocError;
 use bun_ast::{E, Expr, G};
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
-use bun_core::{Environment, Error, Global, Output, err};
+use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dotenv;
 use bun_http as http;
@@ -336,7 +337,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             let json = match json_mod::parse_package_json_utf8(&source, log, &bump) {
                 Ok(j) => j,
                 Err(e) => {
-                    if e == err!(OutOfMemory) {
+                    if e == bun_parsers::Error::Alloc(bun_alloc::AllocError) {
                         return Err(FromTarballError::OutOfMemory);
                     }
                     return Err(FromTarballError::InvalidPackageJSON);
@@ -478,7 +479,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             LoadResult::Err(cause) => 'err: {
                 match cause.step {
                     LoadStep::OpenFile => {
-                        if cause.value == err!("ENOENT") {
+                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             break 'err None;
                         }
                         Output::err_generic("failed to open lockfile: {}", (cause.value.name(),));
@@ -546,7 +547,7 @@ impl PublishCommand {
                 Ok(v) => v,
                 Err(err) => {
                     if !cli.silent {
-                        if err == bun_core::err!("MissingPackageJSON") {
+                        if err == bun_install::Error::MissingPackageJSON {
                             Output::err_generic("missing package.json, nothing to publish", ());
                         }
                         Output::err_generic("failed to initialize bun install: {}", (err.name(),));
@@ -712,7 +713,7 @@ impl PublishCommand {
             script_env
                 .map
                 .put(b"npm_command", b"publish")
-                .map_err(|_| err!(OutOfMemory))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
 
             // Note: reshaped for borrowck — `command_ctx: &mut ContextData`
             // is held by `context`; `run_package_script_foreground` needs
@@ -732,7 +733,7 @@ impl PublishCommand {
                     // SAFETY: see above.
                     unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
                 ) {
-                    if e == err!("MissingShell") {
+                    if matches!(e, crate::Error::MissingShell) {
                         Output::err_generic(
                             "failed to find shell executable to run publish script",
                             (),
@@ -756,7 +757,7 @@ impl PublishCommand {
                     // SAFETY: see above.
                     unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
                 ) {
-                    if e == err!("MissingShell") {
+                    if matches!(e, crate::Error::MissingShell) {
                         Output::err_generic(
                             "failed to find shell executable to run postpublish script",
                             (),
@@ -976,7 +977,7 @@ impl PublishCommand {
         let res = match req.send_sync() {
             Ok(r) => r,
             Err(e) => {
-                if e == err!(OutOfMemory) {
+                if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
                     return Err(PublishError::OutOfMemory);
                 }
                 Output::err(e, "failed to publish package", ());
@@ -1073,7 +1074,7 @@ impl PublishCommand {
                 let otp_res = match otp_req.send_sync() {
                     Ok(r) => r,
                     Err(e) => {
-                        if e == err!(OutOfMemory) {
+                        if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
                             return Err(PublishError::OutOfMemory);
                         }
                         Output::err(e, "failed to publish package", ());
@@ -1153,7 +1154,7 @@ impl PublishCommand {
         let res_json = match json_mod::parse_utf8(&res_source, manager_log, &bump) {
             Ok(j) => Some(j),
             Err(e) => {
-                if e == err!(OutOfMemory) {
+                if e == bun_parsers::Error::Alloc(bun_alloc::AllocError) {
                     return Err(GetOTPError::OutOfMemory);
                 }
                 // https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/npm-registry-fetch/lib/check-response.js#L65
@@ -1292,7 +1293,7 @@ impl PublishCommand {
                     let res = match req.send_sync() {
                         Ok(r) => r,
                         Err(e) => {
-                            if e == err!(OutOfMemory) {
+                            if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
                                 return Err(GetOTPError::OutOfMemory);
                             }
                             Output::err(e, "failed to send OTP request", ());
@@ -1337,7 +1338,7 @@ impl PublishCommand {
                             ) {
                                 Ok(j) => j,
                                 Err(e) => {
-                                    if e == err!(OutOfMemory) {
+                                    if e == bun_parsers::Error::Alloc(bun_alloc::AllocError) {
                                         return Err(GetOTPError::OutOfMemory);
                                     }
                                     Output::err("WebLogin", "failed to parse response json", ());
@@ -1389,7 +1390,7 @@ impl PublishCommand {
         ) {
             Ok(v) => Ok(v.into()),
             Err(e) => {
-                if e == err!(OutOfMemory) {
+                if matches!(e, crate::Error::Alloc(_)) {
                     return Err(GetOTPError::OutOfMemory);
                 }
                 Output::err(e, "failed to read OTP input", ());
@@ -1568,7 +1569,7 @@ impl PublishCommand {
         ) {
             Ok(w) => w,
             Err(e) => {
-                if e == err!(OutOfMemory) {
+                if e == bun_js_printer::Error::Alloc(bun_alloc::AllocError) {
                     return Err(AllocError);
                 }
                 Output::err_generic("failed to print normalized package.json: {}", (e.name(),));

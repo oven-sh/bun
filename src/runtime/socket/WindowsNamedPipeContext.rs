@@ -411,7 +411,7 @@ impl WindowsNamedPipeContext {
         ssl_config: Option<SSLConfig>,
         owned_ctx: Option<*mut boringssl::SSL_CTX>,
         socket: SocketType,
-    ) -> Result<*mut WindowsNamedPipe, bun_core::Error> {
+    ) -> Result<*mut WindowsNamedPipe, crate::Error> {
         // TODO: reuse the same context for multiple connections when possibles
 
         let this = WindowsNamedPipeContext::create(global_this, socket);
@@ -434,7 +434,7 @@ impl WindowsNamedPipeContext {
         ssl_config: Option<SSLConfig>,
         owned_ctx: Option<*mut boringssl::SSL_CTX>,
         socket: SocketType,
-    ) -> Result<*mut WindowsNamedPipe, bun_core::Error> {
+    ) -> Result<*mut WindowsNamedPipe, crate::Error> {
         // TODO: reuse the same context for multiple connections when possibles
 
         let this = WindowsNamedPipeContext::create(global_this, socket);

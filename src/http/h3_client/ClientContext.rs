@@ -175,7 +175,7 @@ impl ClientContext {
                     port,
                 );
                 self.unregister(session_mut(session));
-                PendingConnect::fail_session(session, bun_core::err!(ConnectionRefused));
+                PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
                 return false;
             }
         }

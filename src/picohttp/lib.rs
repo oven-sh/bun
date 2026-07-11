@@ -285,7 +285,6 @@ pub enum ParseRequestError {
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseRequestError);
-bun_core::named_error_set!(ParseRequestError);
 
 pub struct Request<'a> {
     pub method: &'a [u8],
@@ -515,14 +514,13 @@ impl fmt::Display for StatusCodeFormatter {
 // Response
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParseResponseError {
     #[strum(serialize = "Malformed_HTTP_Response")]
     MalformedHttpResponse,
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseResponseError);
-bun_core::named_error_set!(ParseResponseError);
 
 #[derive(Clone, Copy)]
 pub struct Response<'a> {
@@ -698,7 +696,6 @@ pub enum ParseHeadersError {
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseHeadersError);
-bun_core::named_error_set!(ParseHeadersError);
 
 pub struct Headers<'a> {
     pub headers: &'a [Header],

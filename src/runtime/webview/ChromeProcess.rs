@@ -401,9 +401,9 @@ fn spawn(
     extra_argv: &[*const c_char],
     stdout_inherit: bool,
     stderr_inherit: bool,
-) -> Result<Fd, bun_core::Error> {
+) -> crate::Result<Fd> {
     {
-        let chrome = find_chrome(explicit_path).ok_or_else(|| bun_core::err!("ChromeNotFound"))?;
+        let chrome = find_chrome(explicit_path).ok_or(crate::Error::ChromeNotFound)?;
         scoped_log!(
             Chrome,
             "using chrome: {}",
@@ -571,7 +571,7 @@ fn spawn(
                     drop(bun_core::heap::take(self_ptr));
                 }
                 fds[0].close();
-                return Err(bun_core::err!("WatchFailed"));
+                return Err(crate::Error::WatchFailed);
             }
         }
         INSTANCE.store(self_ptr, core::sync::atomic::Ordering::Relaxed);

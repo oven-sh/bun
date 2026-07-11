@@ -38,12 +38,6 @@ impl core::fmt::Display for InvalidDate {
 }
 impl core::error::Error for InvalidDate {}
 
-impl From<InvalidDate> for crate::Error {
-    fn from(_: InvalidDate) -> Self {
-        crate::Error::from_name("InvalidDate")
-    }
-}
-
 /// `bun.jsc.wtf.parseES5Date` shape — `Err` on empty input or non-finite result.
 /// `2000-01-01T00:00:00.000Z` → `Ok(946684800000.0)`.
 pub fn parse_es5_date(buf: &[u8]) -> Result<f64, InvalidDate> {

@@ -64,6 +64,9 @@ use core::fmt;
 // Module declarations — explicit #[path] attrs for PascalCase files.
 // ──────────────────────────────────────────────────────────────────────────
 
+pub mod error;
+pub use error::{Error, Result};
+
 pub mod npm;
 #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
@@ -491,8 +494,6 @@ impl RunCommand {
             "/private/tmp"
         } else if cfg!(target_os = "android") {
             "/data/local/tmp"
-        } else if cfg!(target_env = "ohos") {
-            "/data/storage/el2/base/tmp"
         } else {
             "/tmp"
         };
@@ -580,7 +581,7 @@ impl RunCommand {
     pub fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // If we are already running as "node", the path should exist
         if PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -592,27 +593,56 @@ impl RunCommand {
 
             let argv0: &ZStr = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
 
-            // if we are already an absolute path, use that
-            // if the user started the application via a shebang, it's likely that the path is absolute already
-            let argv0_z: &ZStr = if argv0.as_bytes().first() == Some(&b'/') {
-                *optional_bun_path = argv0.as_bytes();
-                argv0
-            } else if optional_bun_path.is_empty() {
-                // otherwise, ask the OS for the absolute path
-                let self_path = bun_core::self_exe_path()?;
-                if !self_path.as_bytes().is_empty() {
-                    *optional_bun_path = self_path.as_bytes();
-                    self_path
-                } else {
-                    argv0
-                }
-            } else {
-                // When argv[0] is
-                // not absolute and the caller pre-supplied a path, that path is the
-                // symlink target (NOT argv[0]).
+            // PREFER `self_exe_path()` OVER `argv[0]`: on a nested `--bun`, the
+            // OUTER bun prepends `BUN_NODE_DIR` to `PATH` and the INNER bun is
+            // execve'd with `argv[0] = <BUN_NODE_DIR>/bun` — exactly the shim
+            // we're about to (re)write. Using that as the symlink target
+            // produces `<BUN_NODE_DIR>/bun -> <BUN_NODE_DIR>/bun` (self-loop),
+            // and the next `/usr/bin/env node` bails with ELOOP "Too many
+            // levels of symbolic links" (#30711). `self_exe_path()` readlinks
+            // `/proc/self/exe` (Linux) / canonicalizes `_NSGetExecutablePath`
+            // (macOS), so it always resolves to the REAL bun regardless of
+            // how the process was invoked. It's memoized via `Once`, so the
+            // cost is paid once per process.
+            let argv0_z: &ZStr = if !optional_bun_path.is_empty() {
+                // When the caller pre-supplied a path, that path is the symlink
+                // target.
                 // SAFETY: callers pass a slice borrowed from a `ZStr` (argv[0] /
                 // self_exe_path / static literal), so `ptr[len] == 0` holds.
                 unsafe { ZStr::from_raw(optional_bun_path.as_ptr(), optional_bun_path.len()) }
+            } else {
+                // Ask the OS for the real absolute path first. Fall back to an
+                // absolute `argv[0]` only if that fails — never trust a bare
+                // `argv[0]` as the target here, because on nested `--bun` the
+                // inner process's `argv[0]` IS `<BUN_NODE_DIR>/bun`.
+                match bun_core::self_exe_path() {
+                    Ok(self_path) if !self_path.as_bytes().is_empty() => {
+                        *optional_bun_path = self_path.as_bytes();
+                        self_path
+                    }
+                    result => {
+                        let argv0_bytes = argv0.as_bytes();
+                        if argv0_bytes.starts_with(Self::BUN_NODE_DIR.as_bytes()) {
+                            // `self_exe_path()` failed and `argv[0]` is the shim
+                            // under `BUN_NODE_DIR` (nested `--bun`). Using it as
+                            // the target would recreate the #30711 self-loop; the
+                            // OUTER bun already planted working shims and PATH, so
+                            // leave them untouched.
+                            return Ok(());
+                        }
+                        if argv0_bytes.first() == Some(&b'/') {
+                            *optional_bun_path = argv0_bytes;
+                            argv0
+                        } else {
+                            // No usable target — propagate the OS error when we
+                            // have one, otherwise leave PATH unmodified.
+                            return match result {
+                                Err(e) => Err(e.into()),
+                                Ok(_) => Ok(()),
+                            };
+                        }
+                    }
+                }
             };
 
             #[cfg(bun_debug)]
@@ -643,22 +673,13 @@ impl RunCommand {
             // already exists, refuse to use it unless it's a directory we own
             // with no group/other write bits.
             match bun_sys::mkdir(DIR_Z, 0o700) {
-                Ok(()) => {
-                    // OHOS tmpfs forces setgid + group-write on new
-                    // directories; chmod back to 0700 so the EEXIST
-                    // permission check below passes on re-entry.
-                    #[cfg(target_env = "ohos")]
-                    {
-                        let _ = bun_sys::chmod(DIR_Z, 0o700);
-                    }
-                }
+                Ok(()) => {}
                 Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(DIR_Z) {
                     Ok(st)
                         if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
                             == bun_sys::FileKind::Directory
                             && st.st_uid == bun_sys::c::getuid()
-                            && ((st.st_mode as bun_sys::Mode) & 0o022 == 0
-                                || cfg!(target_env = "ohos")) => {}
+                            && (st.st_mode as bun_sys::Mode) & 0o022 == 0 => {}
                     _ => return Ok(()),
                 },
                 Err(_) => return Ok(()),
@@ -853,7 +874,7 @@ impl RunCommand {
         env: Option<*mut bun_dotenv::Loader<'static>>,
         _log_errors: bool,
         store_root_fd: bool,
-    ) -> Result<*mut (), bun_core::Error> {
+    ) -> Result<*mut (), crate::Error> {
         use bun_core::Global;
 
         let args = ctx.args.clone();
@@ -1160,7 +1181,7 @@ pub enum TaskCallbackContext {
 // 2.
 
 #[derive(strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum PackageManifestError {
+pub enum PackageManifestError {
     PackageManifestHTTP400,
     PackageManifestHTTP401,
     PackageManifestHTTP402,
@@ -1171,39 +1192,3 @@ pub(crate) enum PackageManifestError {
 }
 
 bun_core::impl_tag_error!(PackageManifestError);
-
-bun_core::named_error_set!(PackageManifestError);
-
-/// Fallback for when `linkat` / `symlinkat` is blocked by SELinux (OHOS) or
-/// similar security policy. Opens the source file, creates the destination
-/// (retrying with unlink on EACCES/EPERM), copies the content, and preserves
-/// the source file's permissions.
-///
-/// Shared by `Hardlinker`, `PackageInstall::install_with_hardlink`,
-/// `PackageInstall::install_with_symlink`, and `TarballStream::apply_symlink`.
-#[cfg(not(windows))]
-pub(crate) fn copy_file_fallback(
-    src_dir: bun_sys::Fd,
-    src_name: &bun_core::ZStr,
-    dest_dir: bun_sys::Fd,
-    dest_path_z: &bun_core::ZStr,
-) -> bun_sys::Result<()> {
-    use bun_sys::{self as sys};
-    let inf = sys::File::openat(src_dir, src_name, sys::O::RDONLY, 0)?;
-    let dest_path: &[u8] = dest_path_z;
-    let outf = match sys::File::create(dest_dir, dest_path, true) {
-        Ok(f) => f,
-        Err(ref e)
-            if e.get_errno() == sys::E::EACCES || e.get_errno() == sys::E::EPERM =>
-        {
-            let _ = sys::unlinkat(dest_dir, dest_path_z);
-            sys::File::create(dest_dir, dest_path, true)?
-        }
-        Err(e) => return Err(e),
-    };
-    sys::copy_file::copy_file(inf.handle(), outf.handle())?;
-    if let Ok(stat) = sys::fstat(inf.handle()) {
-        let _ = sys::fchmod(outf.handle(), stat.st_mode);
-    }
-    Ok(())
-}

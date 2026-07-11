@@ -202,7 +202,7 @@ pub(crate) struct WalkTask<'a> {
 
 pub(crate) enum WalkTaskErr {
     Syscall(syscall::Error),
-    Unknown(bun_core::Error),
+    Unknown(crate::Error),
 }
 
 impl WalkTaskErr {
@@ -243,7 +243,7 @@ impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
         let result = match self.walker.walk() {
             Ok(r) => r,
             Err(err) => {
-                self.err = Some(WalkTaskErr::Unknown(err));
+                self.err = Some(WalkTaskErr::Unknown(err.into()));
                 drop(guard);
                 return;
             }
@@ -323,7 +323,9 @@ impl Glob {
                 error_on_broken_symlinks,
                 only_files,
                 None,
-            )? {
+            )
+            .map_err(crate::Error::from)?
+            {
                 bun_sys::Result::Err(err) => {
                     return Err(global_this.throw_value(err.to_js(global_this)));
                 }
@@ -340,7 +342,9 @@ impl Glob {
             error_on_broken_symlinks,
             only_files,
             None,
-        )? {
+        )
+        .map_err(crate::Error::from)?
+        {
             bun_sys::Result::Err(err) => {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
@@ -466,7 +470,7 @@ impl Glob {
             };
         // Box<GlobWalker> drops at scope exit.
 
-        match glob_walker.walk()? {
+        match glob_walker.walk().map_err(crate::Error::from)? {
             bun_sys::Result::Err(err) => {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }

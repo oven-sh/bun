@@ -1,4 +1,5 @@
 #![warn(unused_must_use)]
+use crate::Error;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag};
@@ -7,7 +8,6 @@ use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
 use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
-use bun_core::{self, Error, err};
 
 // Re-export so the parser-side type alias used in this file matches the
 // canonical definition in `TypeScript.rs`.
@@ -57,7 +57,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Nested destructuring patterns in skipped type positions recurse through
         // this function; bound it like `parse_binding` does.
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(err!("StackOverflow"));
+            return Err(crate::Error::StackOverflow);
         }
         match self.lexer.token {
             T::TIdentifier | T::TThis => {
@@ -143,7 +143,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 // try p.lexer.unexpected();
-                return Err(err!("Backtrack"));
+                return Err(crate::Error::Backtrack);
             }
         }
         Ok(())
@@ -239,7 +239,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // function, so bound it the same way `parse_expr_common` bounds expression
         // recursion instead of overflowing the stack.
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(err!("StackOverflow"));
+            return Err(crate::Error::StackOverflow);
         }
 
         loop {
@@ -1099,7 +1099,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => {
                     if !found_key {
                         self.lexer.unexpected()?;
-                        return Err(err!("SyntaxError"));
+                        return Err(crate::Error::SyntaxError);
                     }
                 }
             }
@@ -1111,7 +1111,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => {
                     if !self.lexer.has_newline_before {
                         self.lexer.unexpected()?;
-                        return Err(err!("SyntaxError"));
+                        return Err(crate::Error::SyntaxError);
                     }
                 }
             }
@@ -1465,7 +1465,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let result =
             self.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
         if self.lexer.token != T::TOpenParen {
-            return Err(err!("Backtrack"));
+            return Err(crate::Error::Backtrack);
         }
 
         Ok(result)
@@ -1485,7 +1485,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !flags.contains(SkipTypeOptions::DisallowConditionalTypes)
             && self.lexer.token == T::TQuestion
         {
-            return Err(err!("Backtrack"));
+            return Err(crate::Error::Backtrack);
         }
 
         Ok(true)
@@ -1494,7 +1494,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn skip_type_script_arrow_args_with_backtracking(&mut self) -> Result<bool, Error> {
         self.skip_typescript_fn_args()?;
         if self.lexer.expect(T::TEqualsGreaterThan).is_err() {
-            return Err(err!("Backtrack"));
+            return Err(crate::Error::Backtrack);
         }
 
         Ok(true)
@@ -1504,7 +1504,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.skip_type_script_type_arguments::<false>()? {
             // Check the token after this and backtrack if it's the wrong one
             if !self.can_follow_type_arguments_in_expression() {
-                return Err(err!("Backtrack"));
+                return Err(crate::Error::Backtrack);
             }
         }
 
@@ -1517,7 +1517,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.skip_typescript_return_type()?;
         // Check the token after this and backtrack if it's the wrong one
         if self.lexer.token != T::TEqualsGreaterThan {
-            return Err(err!("Backtrack"));
+            return Err(crate::Error::Backtrack);
         }
         Ok(())
     }

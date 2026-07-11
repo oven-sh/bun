@@ -223,7 +223,7 @@ impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
         &mut self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
-    ) -> Result<(), bun_core::Error> {
+    ) -> bun_js_printer::Result<()> {
         self.put_mappings(source, chunk.buffer)
     }
 }
@@ -260,7 +260,7 @@ impl SavedSourceMap {
         &mut self,
         source: &bun_ast::Source,
         mut mappings: MutableString,
-    ) -> Result<(), bun_core::Error> {
+    ) -> bun_js_printer::Result<()> {
         // --hot can re-read a file mid-rewrite (truncate + write) and transpile
         // a comment-only prefix into a 0-mapping map. Overwriting a real map
         // with that would make any still-unreported error from the previous
@@ -306,7 +306,7 @@ impl SavedSourceMap {
         }
     }
 
-    pub fn put_value(&mut self, path: &[u8], value: Value) -> Result<(), bun_core::Error> {
+    pub fn put_value(&mut self, path: &[u8], value: Value) -> bun_js_printer::Result<()> {
         use bun_collections::zig_hash_map::MapEntry as Entry;
 
         self.lock();

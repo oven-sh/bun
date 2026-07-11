@@ -1501,9 +1501,13 @@ impl WindowsBufferedReader {
         // ALWAYS complete the read first (cleans up fs_t, updates state)
         file.complete(was_canceled);
 
-        // If detached, file should be closing itself now
         if parent_ptr.is_null() {
-            debug_assert!(file.state == crate::source::FileState::Closing); // complete should have started close
+            if file.state != crate::source::FileState::Closing {
+                // detach_borrowed_fd path: no close scheduled, so reclaim here.
+                // SAFETY: sole &mut to the into_raw'd Box; no fs callback left.
+                drop(unsafe { bun_core::heap::take(core::ptr::from_mut(file)) });
+            }
+            // else: detach() set close_after_operation; on_close_complete frees.
             return;
         }
 
@@ -1753,7 +1757,6 @@ impl WindowsBufferedReader {
         if let Some(source) = self.source.take() {
             match source {
                 Source::SyncFile(file) | Source::File(file) => {
-                    // Detach - file will close itself after operation completes.
                     // Hand the Box off to libuv: detach() leaves either an
                     // in-flight uv_fs_read (on_file_read) or a scheduled
                     // uv_fs_close (on_close_complete) pending; the callback
@@ -1761,8 +1764,17 @@ impl WindowsBufferedReader {
                     // Box here would free the uv_fs_t out from under libuv.
                     let raw = bun_core::heap::into_raw(file);
                     // SAFETY: raw is a live heap File*; the pending fs callback
-                    // is the sole reclaimer (heap::take in on_close_complete).
-                    unsafe { (*raw).detach() };
+                    // is the sole reclaimer (heap::take in on_close_complete /
+                    // on_file_read's detached path) when one is left pending.
+                    unsafe {
+                        if self.flags.contains(WindowsFlags::CLOSE_HANDLE) {
+                            (*raw).detach();
+                        } else if !(*raw).detach_borrowed_fd() {
+                            // Idle and the fd is parent-owned: nothing pending,
+                            // nothing to close. Reclaim and drop the Box.
+                            drop(bun_core::heap::take(raw));
+                        }
+                    }
                 }
                 #[cfg(windows)]
                 Source::Pipe(pipe) => {

@@ -658,12 +658,12 @@ pub enum ParserError {
 
 bun_core::oom_from_alloc!(ParserError);
 
-impl From<ParserError> for bun_core::Error {
+impl From<ParserError> for crate::Error {
     fn from(e: ParserError) -> Self {
         match e {
-            ParserError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            ParserError::UnexpectedToken => bun_core::err!("UnexpectedToken"),
-            ParserError::TooManyBraces => bun_core::err!("TooManyBraces"),
+            ParserError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ParserError::UnexpectedToken => crate::Error::UnexpectedToken,
+            ParserError::TooManyBraces => crate::Error::TooManyBraces,
         }
     }
 }

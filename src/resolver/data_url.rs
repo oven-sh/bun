@@ -11,8 +11,6 @@ pub enum EncodeError {
     OutOfMemory,
 }
 
-bun_core::named_error_set!(EncodeError);
-
 impl EncodeError {
     /// Returns the error name string.
     pub fn name(self) -> &'static str {
@@ -26,8 +24,6 @@ pub enum ParseDataURLError {
     #[error("InvalidDataURL")]
     InvalidDataURL,
 }
-
-bun_core::named_error_set!(ParseDataURLError);
 
 impl ParseDataURLError {
     /// Returns the error name string.
@@ -46,8 +42,6 @@ pub enum DecodeDataError {
     #[error("Base64DecodeError")]
     Base64DecodeError,
 }
-
-bun_core::named_error_set!(DecodeDataError);
 
 impl DecodeDataError {
     /// Returns the error name string.

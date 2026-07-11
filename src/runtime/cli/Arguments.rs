@@ -36,9 +36,8 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
 }
 
-pub(crate) fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Error> {
-    let option_loader =
-        bun_ast::Loader::from_string(input).ok_or_else(|| bun_core::err!("InvalidLoader"))?;
+pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
+    let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
     Ok(option_loader.to_api())
 }
 
@@ -47,7 +46,7 @@ pub(crate) fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Err
 ///
 /// Built on `bun_paths::resolve_path` + `bun_sys::File::read_from`, which is
 /// the cross-platform path the rest of the runtime uses.
-pub fn read_file(cwd: &[u8], filename: &[u8]) -> Result<Vec<u8>, bun_core::Error> {
+pub fn read_file(cwd: &[u8], filename: &[u8]) -> crate::Result<Vec<u8>> {
     let mut buf = PathBuffer::uninit();
     let outpath = resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut *buf, &[filename]);
     let len = outpath.len();
@@ -60,7 +59,7 @@ pub fn read_file(cwd: &[u8], filename: &[u8]) -> Result<Vec<u8>, bun_core::Error
     }
 }
 
-pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> Result<api::JsxRuntime, bun_core::Error> {
+pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
     if s == b"automatic" {
         Ok(api::JsxRuntime::Automatic)
     } else if s == b"fallback" || s == b"classic" {
@@ -68,7 +67,7 @@ pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> Result<api::JsxRuntime, bun_core:
     } else if s == b"solid" {
         Ok(api::JsxRuntime::Solid)
     } else {
-        Err(bun_core::err!("InvalidJSXRuntime"))
+        Err(crate::Error::InvalidJSXRuntime)
     }
 }
 
@@ -723,7 +722,7 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
 /// param table, and the per-`cmd` blocks below are guarded by
 /// `if matches!(cmd, …)`.
-pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions, bun_core::Error> {
+pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
 

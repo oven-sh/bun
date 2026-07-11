@@ -3,9 +3,10 @@ use core::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use crate::Error;
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{self as bun, Error, Global, Output, UnwrapOrOom, err};
+use bun_core::{self as bun, Global, Output, UnwrapOrOom};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::BufferedReader;
@@ -819,13 +820,13 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
         Box::from(
             RunCommand::find_shell(path_env, cwd)
-                .ok_or_else(|| err!("MissingShell"))?
+                .ok_or(crate::Error::MissingShell)?
                 .as_bytes_with_nul(),
         )
     } else {
         Box::from(
             bun::self_exe_path()
-                .map_err(|_| err!("MissingShell"))?
+                .map_err(|_| crate::Error::MissingShell)?
                 .as_bytes_with_nul(),
         )
     };

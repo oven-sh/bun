@@ -48,6 +48,9 @@ pub mod process;
 #[path = "static_pipe_writer.rs"]
 pub mod static_pipe_writer;
 
+pub mod error;
+pub use error::{Error, Result};
+
 // ──────────────────────────────────────────────────────────────────────────
 // Public surface — re-exports under the names mid-tier callers already use.
 // ──────────────────────────────────────────────────────────────────────────
@@ -273,7 +276,7 @@ pub struct RunResult {
 /// is NUL-terminated, the array is NULL-terminated, and env entries are
 /// flattened to `KEY=VALUE\0`.
 #[cfg_attr(windows, allow(unreachable_code, unused_variables, unused_mut))]
-pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Error> {
+pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
     // Windows: `process::sync::spawn`
     // below is libuv-based on Windows and reads `options.windows.loop_` to get
     // the `uv_loop_t*`, but the only caller (`repository::exec`) runs on a
@@ -300,7 +303,9 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         }
 
         let mut iter = opts.argv.iter();
-        let argv0 = iter.next().ok_or(bun_core::err!("FileNotFound"))?;
+        let argv0 = iter
+            .next()
+            .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
         // `Command::new` does PATH/PATHEXT lookup on Windows.
         let mut cmd = std::process::Command::new(to_os(argv0));
         for arg in iter {
@@ -313,9 +318,11 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         cmd.stdin(std::process::Stdio::null());
 
         let out = cmd.output().map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => bun_core::err!("FileNotFound"),
-            std::io::ErrorKind::PermissionDenied => bun_core::err!("AccessDenied"),
-            _ => bun_core::err!("Unexpected"),
+            std::io::ErrorKind::NotFound => crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+            std::io::ErrorKind::PermissionDenied => {
+                crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+            }
+            _ => crate::Error::Unexpected,
         })?;
 
         let term = match out.status.code() {
@@ -411,7 +418,7 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         ..Default::default()
     };
 
-    // Outer `Result<_, bun_core::Error>` for hard errors,
+    // Outer `Result<_, crate::Error>` for hard errors,
     // inner `Maybe` for the syscall error.
     let result = process::sync::spawn(&sync_opts)??;
 

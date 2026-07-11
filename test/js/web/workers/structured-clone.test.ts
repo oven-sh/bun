@@ -920,3 +920,61 @@ describe("options.transfer iterator error propagation", () => {
     );
   });
 });
+
+describe("truncated Set/Map payloads are rejected without hanging", () => {
+  // Wire header + tag bytes derived from a real serialize() so a CurrentVersion
+  // bump doesn't invalidate the crafted payloads.
+  const setBytes = Array.from(new Uint8Array(serialize(new Set([1, 0]))));
+  const mapBytes = Array.from(new Uint8Array(serialize(new Map([[1, 1]]))));
+  // valid payloads end in NonSetPropertiesTag/NonMapPropertiesTag + 4x 0xFF
+  const setBody = setBytes.slice(0, -5);
+  const mapBody = mapBytes.slice(0, -5);
+
+  const cases: [string, number[]][] = [
+    ["Set truncated after one element", setBody.slice(0, -1)],
+    ["Set truncated after two elements", setBody],
+    ["Set truncated before any element", setBody.slice(0, -2)],
+    ["Map truncated after key/value pair", mapBody],
+    ["Map truncated after key only", mapBody.slice(0, -1)],
+    ["Map truncated before any entry", mapBody.slice(0, -2)],
+  ];
+
+  describe.each([
+    ["bun:jsc", `import {deserialize} from "bun:jsc"`],
+    ["node:v8", `import {deserialize} from "node:v8"`],
+  ])("%s deserialize", (_api, importLine) => {
+    test.concurrent.each(cases)("%s", async (_name, bytes) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `${importLine};
+           try {
+             deserialize(new Uint8Array(${JSON.stringify(bytes)}));
+             console.log("RETURNED");
+           } catch (e) {
+             console.log("THREW:" + e.message);
+           }`,
+        ],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 4_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+        stdout: "THREW:Unable to deserialize data.",
+        stderr: "",
+        signalCode: null,
+        exitCode: 0,
+      });
+    });
+  });
+
+  test("valid Set and Map payloads still round-trip", () => {
+    expect(deserialize(serialize(new Set([1, 0])))).toEqual(new Set([1, 0]));
+    expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
+  });
+});

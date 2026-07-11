@@ -433,21 +433,13 @@ test.concurrent.skipIf(!isSupported || !hasPerl)(
 );
 
 // Same daemon shape but the outer and the intermediate exit *immediately* —
-// no spinning on the pidfile (that spin is what made the proc_listallpids
-// scan() pass: it gave the wait loop's NOTE_FORK time to fire and observe
-// each link). Linux: subreaper is armed pre-spawn, the daemon reparents to
-// us regardless of how fast the intermediates exit, and
-// `killSubreaperAdoptees()` in the disarm defer kills any ppid==bun adoptee
-// before subreaper drops — deterministic.
-//
-// macOS is excluded: NOTE_TRACK (which would have auto-attached inside
-// fork1()) is ENOTSUP since 10.5, and the NOTE_FORK + p_puniqueid scan it
-// was replaced with has a race NoOrphansTracker.cpp documents as not fully
-// closable from userspace — an intermediate that forks-and-exits before the
-// scan records its uniqueid leaves the daemon's p_puniqueid unlinkable. Under
-// the concurrent spawn load of this file that race fires often enough on
-// darwin CI to turn this into a flake; the pidfile-spin variant above keeps
-// the macOS scan-path coverage.
+// no spinning on the pidfile. Linux-only: subreaper is armed pre-spawn so the
+// daemon reparents to us regardless of intermediate timing and
+// `killSubreaperAdoptees()` catches it deterministically. macOS is excluded:
+// NOTE_TRACK is ENOTSUP since 10.5 and the NOTE_FORK + p_puniqueid scan that
+// replaces it has a fast-exit race NoOrphansTracker.cpp documents as not
+// closable from userspace; the pidfile-spin variant above keeps the macOS
+// scan-path coverage.
 //
 // `bun run` may finish before the daemon writes its pidfile. Poll for the
 // file from the *test*; if it never appears the daemon was reaped before it

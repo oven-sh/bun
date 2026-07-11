@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, isASAN, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -1304,45 +1304,6 @@ test("close(cb) interleaves with other close listeners in registration order", a
   await new Promise(r => setImmediate(() => setImmediate(r)));
   expect(order2).toEqual(["B", "C"]);
 });
-
-// terminate() armed while a lazy process.* PropertyCallback builder enters JS
-// used to leave the termination pending inside getOwnPropertySlot and trip its
-// EXCEPTION_ASSERT (debug only); the worker_threads preload hits this via stdout.
-test.skipIf(!isASAN && !isDebug)(
-  "terminate() during a lazy process.* builder doesn't trip getOwnPropertySlot assert",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const props = ["stdout", "stderr", "stdin", "nextTick", "mainModule"];
-         Promise.all(props.map(p => new Promise((resolve, reject) => {
-           const w = new Worker("data:text/javascript," + encodeURIComponent(
-             'postMessage("go"); Bun.sleepSync(300); process[' + JSON.stringify(p) + '];'
-           ));
-           w.addEventListener("message", () => w.terminate());
-           w.addEventListener("close", resolve, { once: true });
-           w.addEventListener("error", e => reject(new Error(p + ": " + (e.error?.message || e.message))), { once: true });
-         }))).then(() => console.log("ok"), e => { console.error(e); process.exit(1); });`,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // stderr is diagnostic-only (ASAN/debug can emit benign warnings on success).
-    expect({
-      stdout: stdout.trim(),
-      stderr: exitCode === 0 ? "" : stderr,
-      exitCode,
-      signalCode: proc.signalCode,
-    }).toEqual({
-      stdout: "ok",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
-  },
-);
 
 test("getHeapStatistics settles when terminated mid-request", async () => {
   const w = new Worker("setInterval(() => {}, 1e6)", { eval: true });

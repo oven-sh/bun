@@ -308,6 +308,12 @@ fn strip_typescript_types(
     // both modes). The slice points into the source text (`code_utf8`).
     let hashbang_store = parse_result.ast.hashbang;
     let hashbang: &[u8] = hashbang_store.slice();
+    // A top-level `"use strict"` is extracted from the statement list at
+    // parse time and recorded on the AST; re-emit it (Node preserves it).
+    let directive: &[u8] = match parse_result.ast.directive {
+        Some(d) => d.slice(),
+        None => b"",
+    };
     let mut printer = JSPrinter::BufferPrinter::init(JSPrinter::BufferWriter::init());
     let mut map_vlq = bun_core::MutableString::init_empty();
     if !was_empty {
@@ -336,9 +342,18 @@ fn strip_typescript_types(
     let printed: &[u8] = printer.ctx.written();
 
     let source_url_utf8 = source_url.to_utf8();
-    let mut out: Vec<u8> = Vec::with_capacity(hashbang.len() + 1 + printed.len() + 64);
+    let mut out: Vec<u8> =
+        Vec::with_capacity(hashbang.len() + directive.len() + 8 + printed.len() + 64);
     if !hashbang.is_empty() {
         out.extend_from_slice(hashbang);
+        if !directive.is_empty() || !printed.is_empty() {
+            out.push(b'\n');
+        }
+    }
+    if !directive.is_empty() {
+        out.push(b'"');
+        out.extend_from_slice(directive);
+        out.extend_from_slice(b"\";");
         if !printed.is_empty() {
             out.push(b'\n');
         }
@@ -357,10 +372,15 @@ fn strip_typescript_types(
             ));
         }
         bun_core::handle_oom(json.append(b"],\"names\":[],\"mappings\":"));
-        let mut mappings: Vec<u8> = Vec::with_capacity(map_vlq.list.len() + 1);
-        if !hashbang.is_empty() && !map_vlq.list.is_empty() {
-            // The prepended hashbang occupies generated line 0.
-            mappings.push(b';');
+        let mut mappings: Vec<u8> = Vec::with_capacity(map_vlq.list.len() + 2);
+        if !map_vlq.list.is_empty() {
+            // Each prepended line (hashbang, directive) shifts the mappings.
+            if !hashbang.is_empty() {
+                mappings.push(b';');
+            }
+            if !directive.is_empty() {
+                mappings.push(b';');
+            }
         }
         mappings.extend_from_slice(map_vlq.list.as_slice());
         bun_core::handle_oom(bun_core::quote_for_json(&mappings, &mut json, true));

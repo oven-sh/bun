@@ -74,6 +74,31 @@ test("preserves a leading hashbang", () => {
   expect(withUrl).toBe("#!/usr/bin/env node\nconst x = 1;\n\n\n//# sourceURL=cli.ts");
 });
 
+test('preserves a top-level "use strict" directive', () => {
+  const src = '"use strict"; let x: number = 1;';
+  expect(stripTypeScriptTypes(src)).toBe('"use strict";\nlet x = 1;\n');
+  expect(stripTypeScriptTypes(src, { mode: "transform" })).toBe('"use strict";\nlet x = 1;\n');
+  expect(stripTypeScriptTypes('"use strict";')).toBe('"use strict";');
+  // directive after a hashbang, and the strictness is observable
+  expect(stripTypeScriptTypes('#!/usr/bin/env node\n"use strict"; let x: number = 1;')).toBe(
+    '#!/usr/bin/env node\n"use strict";\nlet x = 1;\n',
+  );
+  const out = stripTypeScriptTypes('"use strict"; function f() { return this; }');
+  expect(new Function(`${out}; return f();`)()).toBeUndefined();
+});
+
+test("source map accounts for the directive line", () => {
+  const out = stripTypeScriptTypes('"use strict";\nlet x: number = 1;', {
+    mode: "transform",
+    sourceMap: true,
+  });
+  expect(out).toStartWith('"use strict";\nlet x = 1;\n');
+  const base64 = out.split("base64,")[1];
+  const map = JSON.parse(Buffer.from(base64, "base64").toString());
+  // leading ';' skips the directive line; then let/x/1 map to source line 1
+  expect(map.mappings).toBe(";AACA,IAAI,IAAY");
+});
+
 test("source map accounts for the hashbang line", () => {
   const out = stripTypeScriptTypes("#!/usr/bin/env node\nconst x: number = 1;", {
     mode: "transform",

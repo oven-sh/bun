@@ -119,7 +119,6 @@ public:
         ProcUniqIdentifierInfo r;
         if (ProcUniqIdentifierInfo::read(root, r)) {
             m_seen.add(r.p_uniqueid);
-            m_rootUniqueid = r.p_uniqueid;
             m_tracked.append({ root, r.p_uniqueid });
         }
     }
@@ -242,12 +241,14 @@ public:
         // Sentinel-fd sweep: every descendant that still holds the inherited
         // tracker fd, regardless of whether its p_puniqueid chain was ever
         // observable (a fast-exit intermediate can die before scan() reads it;
-        // proc_pidinfo(PROC_PIDUNIQIDENTIFIERINFO) rejects zombies). The fd is
-        // inherited at fork time by the kernel, so this predicate is
-        // independent of scan() timing. Guard against matching a stale holder
-        // of a recycled path by requiring uniqueid > m_rootUniqueid (spawned
-        // strictly after the script — uniqueids are per-boot monotone).
-        if (m_trackerPath[0] != '\0' && m_rootUniqueid != 0) {
+        // proc_pidinfo(PROC_PIDUNIQIDENTIFIERINFO) rejects zombies, so the root
+        // itself can be a zombie by the time `begin()` runs and leave m_seen
+        // empty). The fd is inherited at fork time by the kernel, so this
+        // predicate is independent of scan() timing. mkstemp's O_EXCL guarantees
+        // the path is fresh, so the only holders are us and the script's tree —
+        // no extra identity check needed, and none can gate on state `begin()`
+        // might have failed to record.
+        if (m_trackerPath[0] != '\0') {
             const pid_t self = getpid();
             // Holders of a per-spawn mkstemp file are us + the script's tree,
             // so a fixed buffer is plenty; `proc_listpidspath` walks the full
@@ -260,10 +261,6 @@ public:
                 for (int i = 0; i < n; ++i) {
                     pid_t p = holders[i];
                     if (p <= 1 || p == self) continue;
-                    ProcUniqIdentifierInfo u;
-                    if (!ProcUniqIdentifierInfo::read(p, u)) continue;
-                    if (u.p_uniqueid <= m_rootUniqueid) continue;
-                    if (m_seen.contains(u.p_uniqueid)) continue; // SIGKILLed above
                     kill(p, SIGKILL);
                 }
             }
@@ -291,7 +288,6 @@ private:
             unlink(m_trackerPath);
             m_trackerPath[0] = '\0';
         }
-        m_rootUniqueid = 0;
     }
 
     // Record `pid` if its spawning-parent uniqueid is in `m_seen` and we
@@ -347,7 +343,6 @@ private:
     // Inherited-fd sentinel for the fast-exit-intermediate backstop sweep.
     int m_trackerFd = -1;
     char m_trackerPath[PATH_MAX] = { 0 };
-    uint64_t m_rootUniqueid = 0;
 };
 
 } // namespace Bun

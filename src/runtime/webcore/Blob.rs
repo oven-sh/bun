@@ -4247,6 +4247,13 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
             match pathlike_tag {
                 PathOrFileDescriptorSerializeTag::Fd => {
                     let fd: Fd = reader.read_struct()?;
+                    // Wire bytes are untrusted: enforce the same range as `FdJsc::from_js_validated`
+                    // so a crafted record cannot materialize an fd no JS could construct (fd == -1
+                    // hits `Fd::as_borrowed_fd`'s `raw != -1` assert on posix and aborts).
+                    #[cfg(not(windows))]
+                    if fd.0 < 0 {
+                        return Err(bun_core::err!("InvalidValue"));
+                    }
                     let mut path_or_fd = PathOrFileDescriptor::Fd(fd);
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut path_or_fd,
@@ -4257,6 +4264,12 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 PathOrFileDescriptorSerializeTag::Path => {
                     let path_len = reader.read_int_le::<u32>()?;
                     let path = read_slice(reader, path_len as usize)?;
+                    // Same constraint the JS entry (`Valid::path_null_bytes`)
+                    // enforces: a NUL-embedded path cannot be handed to the
+                    // syscall layer (`ZStr::as_cstr` would truncate / panic).
+                    if strings::index_of_char(&path, 0).is_some() {
+                        return Err(bun_core::err!("InvalidValue"));
+                    }
                     // The owned `CowSlice`
                     // adopts the `Box<[u8]>` so the store frees it in
                     // `PathLike::drop`; borrowing here would drop `path` at scope
@@ -5690,10 +5703,13 @@ pub fn jsdom_file_construct_(
                 }
             }
 
-            if let Some(last_modified) = options.get_truthy(global_this, "lastModified")? {
+            // WebIDL dictionary member: only `undefined` / not-present falls
+            // through to the Date.now() default. Any present value (including
+            // `null`) goes through ToNumber, with NaN normalized to 0.
+            if let Some(last_modified) = options.get(global_this, "lastModified")? {
                 set_last_modified = true;
-                blob.last_modified
-                    .set(last_modified.to_number(global_this)?);
+                let n = last_modified.to_number(global_this)?;
+                blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
             }
         }
     }
@@ -5776,9 +5792,9 @@ pub fn construct_bun_file(
                     }
                 }
             }
-            if let Some(last_modified) = opts.get_truthy(global_object, "lastModified")? {
-                blob.last_modified
-                    .set(last_modified.to_number(global_object)?);
+            if let Some(last_modified) = opts.get(global_object, "lastModified")? {
+                let n = last_modified.to_number(global_object)?;
+                blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
             }
         }
     }

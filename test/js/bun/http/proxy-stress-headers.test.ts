@@ -6,13 +6,9 @@
  * Also: Content-Range (206), long URLs, and the decompress:false path
  * that surfaces the raw encoded body.
  *
- * Concurrency note: 76 tests share one {http, https} proxy pair created in
- * beforeAll. The proxy is a pure forwarder, so one long-lived pair serves
- * every test that does not inspect `proxy.connections`. A fresh proxy per
- * test churned ~150 `listen(0)` ports under `test.concurrent`'s rolling
- * window and CI saw a single ConnectionRefused (https-origin) or wrong
- * Content-Type (http-origin) roughly once per ~100 runs; pinning the proxy
- * ports for the file's lifetime removes the port-reuse surface.
+ * Concurrency note: 76 tests share one {http, https} proxy pair from beforeAll
+ * to avoid ephemeral-port reuse under test.concurrent's rolling listen(0)
+ * churn. Tests that inspect proxy.connections create a dedicated proxy.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";

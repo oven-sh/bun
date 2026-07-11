@@ -155,9 +155,11 @@ extern "C" ssize_t posix_spawn_bun(
     // On Linux, use vfork() for performance, with a fallback to fork()
     // if vfork fails (e.g. blocked by seccomp on platforms like OHOS).
     // On other Unix platforms (macOS, FreeBSD), use fork() directly.
+#if OS(LINUX) && !defined(__OHOS__)
     volatile int child_errno = 0;
     bool use_fork_fallback = false;
     int saved_dumpable = -1;
+#endif
 
     pid_t child;
 #if OS(LINUX) && !defined(__OHOS__)

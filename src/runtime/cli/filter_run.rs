@@ -108,7 +108,7 @@ impl<'a> ProcessHandle<'a> {
             // OHOS: set $PWD so bash verifies CWD via stat() instead of getcwd().
             // See ohos_set_pwd() for details.
             #[cfg(target_env = "ohos")]
-            crate::cli::run_command::ohos_set_pwd(env, &handle.options.cwd)?;
+            crate::cli::run_command::ohos_set_pwd(env, &handle.options.cwd);
             // Restores PATH unconditionally at block exit (success OR error).
             // Keep the guard armed for the whole block so `?` early-returns also
             // restore.
@@ -164,9 +164,9 @@ impl<'a> ProcessHandle<'a> {
             // Required on OHOS (blocking pipe strategy causes infinite loop)
             // and safe on other Unix platforms.
             let pipe_setup =
-                |reader: &mut BufferedReader, fd: sys::Fd| -> Result<(), bun_core::Error> {
+                |reader: &mut BufferedReader, fd: sys::Fd| {
                     let _ = sys::set_nonblocking(fd);
-                    reader.start(fd, true)?;
+                    let _ = reader.start(fd, true);
                     reader.flags.insert(
                         PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE,
                     );
@@ -174,13 +174,12 @@ impl<'a> ProcessHandle<'a> {
                         poll.set_flag(FilePollFlag::Socket);
                         poll.set_flag(FilePollFlag::Nonblocking);
                     }
-                    Ok(())
                 };
             if let Some(fd) = stdout_fd {
-                pipe_setup(&mut handle.stdout, fd)?;
+                pipe_setup(&mut handle.stdout, fd);
             }
             if let Some(fd) = stderr_fd {
-                pipe_setup(&mut handle.stderr, fd)?;
+                pipe_setup(&mut handle.stderr, fd);
             }
         }
         #[cfg(not(unix))]

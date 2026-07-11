@@ -59,6 +59,22 @@ fn runner_arena() -> &'static bun_alloc::Arena {
     crate::cli::cli_arena()
 }
 
+/// OHOS: set \$PWD so bash verifies CWD via stat() instead of getcwd(),
+/// which can fail on hmdfs/tmpfs. If cwd is "/" or empty (the getcwd
+/// fallback), use \$HOME instead.
+#[cfg(target_env = "ohos")]
+pub(crate) fn ohos_set_pwd(
+    env: &mut DotEnv::Loader<'_>,
+    cwd: &[u8],
+) {
+    let pwd = if cwd == b"/" || cwd.is_empty() {
+        bun_core::env_var::HOME::get().unwrap_or(cwd)
+    } else {
+        cwd
+    };
+    let _ = env.map.put(b"PWD", pwd);
+}
+
 // Passthrough-arg shell escaping. The escape tables + helpers are the lower-tier
 // `bun_shell_parser` crate's canonical copy — import them so future fixes to
 // the shell escaper cannot silently diverge.

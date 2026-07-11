@@ -165,10 +165,23 @@ pub(crate) fn create_and_schedule_completion_task(
     Ok(completion)
 }
 
-/// OHOS: sign a compiled binary ELF in-place using the ohos_sign crate.
+/// OHOS: sign a compiled binary ELF using the ohos_sign crate.
+/// Signs to `<path>.signed` then renames over the original, so a crash
+/// during signing never corrupts the output binary.
 #[cfg(target_env = "ohos")]
 fn ohos_sign_binary(path: &std::path::Path) {
-    let _ = ohos_sign::sign_selfsign_inplace_with_strip(path);
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+    let signed = match ohos_sign::sign_selfsign_with_strip(&bytes) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+    let signed_path = path.with_extension("signed");
+    if std::fs::write(&signed_path, &signed).is_ok() {
+        let _ = std::fs::rename(&signed_path, path);
+    }
 }
 
 /// `BundleV2.generateFromJavaScript` — schedule a build and return its Promise.

@@ -679,7 +679,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     // HTTP/1.1 pipelining: this request arrived while an earlier response on
     // the connection is still in flight. It is queued on the server socket
     // (and in JS) instead of becoming the connection's current response.
-    const bool isPipelinedDispatch = httpResponseData->isNodeHttpPipelinedDispatch;
+    const bool isPipelinedDispatch = (httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_NODE_PIPELINED_DISPATCH) != 0;
     auto* currentSocketDataPtr = reinterpret_cast<JSC::JSCell*>(httpResponseData->socketData);
 
     if (currentSocketDataPtr) {
@@ -949,7 +949,7 @@ static bool NodeHTTPServer__writeHead(
     // chunked framing and closes the connection for those).
     if (statusMessageLength >= 3 && (memcmp(statusMessage, "204", 3) == 0 || memcmp(statusMessage, "304", 3) == 0)
         && (statusMessageLength == 3 || statusMessage[3] == ' ')) {
-        response->getHttpResponseData()->noBodyStatus = true;
+        response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
     }
 
     if (headersObject) {
@@ -984,9 +984,9 @@ static bool NodeHTTPServer__writeHead(
                 // (HEAD - suppress all body framing like 204/304).
                 if (name.length() == 1 && name[0] == 0) {
                     if (value == "2"_s) {
-                        httpResponseData->noBodyStatus = true;
+                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
                     } else {
-                        httpResponseData->closeDelimited = true;
+                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_CLOSE_DELIMITED;
                     }
                     continue;
                 }

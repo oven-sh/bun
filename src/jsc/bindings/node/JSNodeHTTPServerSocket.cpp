@@ -95,7 +95,7 @@ static void upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody)
         /* The Upgrade request carries a body: keep parsing it as HTTP and only
          * switch into tunnel mode once the message completes (Node 26 delivers
          * the body through the request before raw data starts flowing). */
-        httpResponseData->nodeHttpTunnelAfterBody = true;
+        httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY;
     } else {
         httpResponseData->isConnectRequest = true;
     }
@@ -222,9 +222,9 @@ void JSNodeHTTPServerSocket::setResponseTrailers(WTF::StringView trailers)
     /* internalEnd() decides the response framing from this base-struct mirror
      * so the shared path never touches the node-only string. */
     if (is_ssl) {
-        ((uWS::HttpResponseData<true>*)us_socket_ext(socket))->hasNodeHttpResponseTrailers = !dest.empty();
+        ((uWS::HttpResponseData<true>*)us_socket_ext(socket))->setFlag(uWS::HttpResponseData<true>::HTTP_NODE_HAS_RESPONSE_TRAILERS, !dest.empty());
     } else {
-        ((uWS::HttpResponseData<false>*)us_socket_ext(socket))->hasNodeHttpResponseTrailers = !dest.empty();
+        ((uWS::HttpResponseData<false>*)us_socket_ext(socket))->setFlag(uWS::HttpResponseData<false>::HTTP_NODE_HAS_RESPONSE_TRAILERS, !dest.empty());
     }
 }
 
@@ -386,26 +386,28 @@ static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
     // response now owns the per-response state the request handler normally
     // resets per parsed request.
     httpResponseData->offset = 0;
-    httpResponseData->state = uWS::HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+    // Clears the finished response's framing bits and keeps the connection-scoped
+    // ones (notably HTTP_NODE_READS_PAUSED, read again below).
+    httpResponseData->resetResponseState();
     if (connectionClose) {
         httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
     }
-    httpResponseData->fromAncientRequest = isAncient;
-    httpResponseData->noBodyStatus = false;
-    httpResponseData->closeDelimited = false;
+    if (isAncient) {
+        httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST;
+    }
     httpResponseData->nodeHttpResponseTrailers.clear();
-    httpResponseData->hasNodeHttpResponseTrailers = false;
 
     if (httpResponseData->nodeHttpQueuedPipelinedCount > 0) {
         httpResponseData->nodeHttpQueuedPipelinedCount--;
     }
-    if (!hasMoreQueued && httpResponseData->nodeHttpQueuedPipelinedCount == 0 && httpResponseData->nodeHttpReadsPaused) {
+    if (!hasMoreQueued && httpResponseData->nodeHttpQueuedPipelinedCount == 0
+        && (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED)) {
         // The pipeline backlog drained. Resume reading new requests only once
         // the socket has no outgoing backpressure left (Node's flood
         // prevention keeps the socket paused while responses back up);
         // otherwise HttpContext::onWritable resumes after the drain.
         if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
-            httpResponseData->nodeHttpReadsPaused = false;
+            httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
             reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resume();
         }
     }
@@ -443,9 +445,9 @@ void JSNodeHTTPServerSocket::stopHTTPParsing()
         return;
     }
     if (is_ssl) {
-        reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket))->nodeHttpParsingStopped = true;
+        reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket))->state |= uWS::HttpResponseData<true>::HTTP_NODE_PARSING_STOPPED;
     } else {
-        reinterpret_cast<uWS::HttpResponseData<false>*>(us_socket_ext(socket))->nodeHttpParsingStopped = true;
+        reinterpret_cast<uWS::HttpResponseData<false>*>(us_socket_ext(socket))->state |= uWS::HttpResponseData<false>::HTTP_NODE_PARSING_STOPPED;
     }
 }
 

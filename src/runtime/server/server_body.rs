@@ -2180,9 +2180,9 @@ where
         // server cannot become one through reload(). listen() already sized every
         // future connection's socket ext block for this server's kind
         // (HttpResponseData vs the bigger NodeHttpResponseData) and set_routes
-        // would flip the context's usingNodeHttpCompat flag under those
-        // already-sized allocations, so the node request path would construct and
-        // index past them.
+        // would swap the context onto the node:http handler instantiation under
+        // those already-sized allocations, so the node request path would
+        // construct and index past them.
         if self.config.on_node_http_request.is_some()
             && self.config.on_node_http_request.as_ref().map(Strong::get)
                 != new_config.on_node_http_request.as_ref().map(Strong::get)

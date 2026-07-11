@@ -6181,30 +6181,37 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     if (!hasDate) {
       out += `Date: ${new Date().toUTCString()}\r\n`;
     }
-    // A close-delimited response with no Connection pair means the user removed
-    // it (Node's _removedConnection): write none rather than inventing
-    // keep-alive on a connection that ends with the body.
     // renderNativeHeaders reports its Connection decision through the
     // auto-header bits (AUTO_HEADER_* in _http_server.ts / kAutoHeader* in
     // NodeHTTP.cpp); honor an explicit close (res.shouldKeepAlive = false,
     // the graceful-shutdown pattern) over the parser-derived flag.
+    // A close-delimited response still advertises the close it performs: only
+    // the keep-alive line is suppressed, since the connection ends with the
+    // body. When the user removed the Connection header (_removedConnection),
+    // renderNativeHeaders sets neither bit, so nothing is written here.
     const autoBits = head?.autoHeaderBits ?? 0;
-    if (!hasConnection && !closeDelimited) {
+    if (!hasConnection) {
       if ((autoBits & 4) !== 0) {
         out += "Connection: close\r\n";
-      } else if (shouldKeepAlive) {
-        out += "Connection: keep-alive\r\n";
-        // A user-sent Keep-Alive header (already written by the loop above)
-        // suppresses the auto line, like the native writeAutoHeaders. The
-        // bit-carried timeout wins when present; otherwise fall back to this
-        // handle's configured timeout, preserving pre-bits behavior.
-        if (!hasKeepAlive) {
-          const kaSecs =
-            (autoBits & 8) !== 0 ? head.keepAliveTimeoutSecs : Math.floor((keepAliveTimeout || 5000) / 1000);
-          out += `Keep-Alive: timeout=${kaSecs}\r\n`;
+      } else if (!closeDelimited) {
+        // No close bit and no Connection pair on a close-delimited response means
+        // the user removed the header (Node's _removedConnection) — write none
+        // rather than inventing keep-alive on a connection that ends with the
+        // body. Every other response still advertises its connection state.
+        if (shouldKeepAlive) {
+          out += "Connection: keep-alive\r\n";
+          // A user-sent Keep-Alive header (already written by the loop above)
+          // suppresses the auto line, like the native writeAutoHeaders. The
+          // bit-carried timeout wins when present; otherwise fall back to this
+          // handle's configured timeout, preserving pre-bits behavior.
+          if (!hasKeepAlive) {
+            const kaSecs =
+              (autoBits & 8) !== 0 ? head.keepAliveTimeoutSecs : Math.floor((keepAliveTimeout || 5000) / 1000);
+            out += `Keep-Alive: timeout=${kaSecs}\r\n`;
+          }
+        } else {
+          out += "Connection: close\r\n";
         }
-      } else {
-        out += "Connection: close\r\n";
       }
     }
     out += "\r\n";

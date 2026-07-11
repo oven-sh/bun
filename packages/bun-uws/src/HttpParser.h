@@ -456,7 +456,7 @@ struct HttpResponseData;
          * request message. */
         bool hasBufferedPartialRequestHeaders() const {
             for (char c : fallback) {
-                if (c != '\r' && c != '\n') {
+                if (!isNewline((unsigned char) c)) {
                     return true;
                 }
             }
@@ -516,7 +516,7 @@ struct HttpResponseData;
                     p = tryConsumeFieldValue(p);
                     if (p[0] == '\t') { p++; continue; }
                     /* Same lenient-header-value acceptance as getHeaders. */
-                    if (useInsecureHTTPParser && *(unsigned char *)p != '\0' && *(unsigned char *)p != '\r' && *(unsigned char *)p != '\n') { p++; continue; }
+                    if (useInsecureHTTPParser && *(unsigned char *)p != '\0' && !isNewline(*(unsigned char *)p)) { p++; continue; }
                     break;
                 }
                 if (p + 1 >= end || p[0] != '\r' || p[1] != '\n') {
@@ -693,6 +693,12 @@ struct HttpResponseData;
         /* RFC 9110 Section 5.5: optional whitespace (OWS) is SP or HTAB */
         static inline bool isHTTPHeaderValueWhitespace(unsigned char c) {
             return c == ' ' || c == '\t';
+        }
+
+        /* A line terminator byte. Line endings are CRLF, but llhttp tolerates a
+         * bare CR or LF in the places that call this, so they are tested together. */
+        static inline bool isNewline(const unsigned char c) {
+            return c == '\r' || c == '\n';
         }
 
         static inline int isHTTPorHTTPSPrefixForProxies(char *data, char *end) {
@@ -1076,12 +1082,14 @@ struct HttpResponseData;
              * idle keep-alive connection must not be treated as a bad request.
              * llhttp's s_start state loops on '\r' and '\n' independently, so a
              * leading bare LF (or bare CR) is also tolerated. */
-            if (data[0] == '\r' || data[0] == '\n') [[unlikely]] {
-                while (length && (data[0] == '\r' || data[0] == '\n')) {
+            if (isNewline((unsigned char) data[0])) [[unlikely]] {
+                /* The enclosing loop only runs while length is non-zero, so the
+                 * first byte is known to be one; re-test only after advancing. */
+                do {
                     data += 1;
                     length -= 1;
                     consumedTotal += 1;
-                }
+                } while (length && isNewline((unsigned char) data[0]));
                 if (length == 0) {
                     break;
                 }

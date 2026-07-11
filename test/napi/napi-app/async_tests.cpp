@@ -226,6 +226,11 @@ napi_value release_tsfn_from_other_thread(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_threadsafe_function tsfn = g_late_release_tsfn.exchange(nullptr);
   NODE_API_ASSERT(env, tsfn != nullptr);
+  // A call after env teardown must return napi_closing (Node's Push() contract)
+  // rather than napi_queue_full or touching the freed event loop.
+  napi_status call_status =
+      napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_nonblocking);
+  NODE_API_ASSERT(env, call_status == napi_closing);
   napi_status status = napi_release_threadsafe_function(tsfn, napi_tsfn_release);
   NODE_API_ASSERT(env, status == napi_ok);
   napi_value result;

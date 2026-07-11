@@ -3039,6 +3039,19 @@ extern "C" void napi_internal_cleanup_env_cpp(napi_env env)
     env->cleanup();
 }
 
+// No-preamble entry points for the per-TSF cleanup hook: NAPI_PREAMBLE early-returns
+// on a pending VM exception, which would silently skip registration (leaving the
+// UAF this hook guards against) or skip removal (leaving a dangling hook).
+extern "C" void napi_internal_add_env_cleanup_hook(napi_env env, void (*function)(void*), void* data)
+{
+    env->addCleanupHook(function, data);
+}
+
+extern "C" void napi_internal_remove_env_cleanup_hook(napi_env env, void (*function)(void*), void* data)
+{
+    env->removeCleanupHook(function, data);
+}
+
 extern "C" void napi_internal_remove_finalizer(napi_env env, napi_finalize callback, void* hint, void* data)
 {
     env->removeFinalizer(callback, hint, data);

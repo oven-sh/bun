@@ -2225,6 +2225,16 @@ unsafe extern "C" {
     ) -> napi_status;
 
     fn napi_internal_cleanup_env_cpp(env: napi_env);
+    fn napi_internal_add_env_cleanup_hook(
+        env: napi_env,
+        function: extern "C" fn(*mut c_void),
+        data: *mut c_void,
+    );
+    fn napi_internal_remove_env_cleanup_hook(
+        env: napi_env,
+        function: extern "C" fn(*mut c_void),
+        data: *mut c_void,
+    );
     fn napi_internal_check_gc(env: napi_env);
 }
 
@@ -2618,12 +2628,15 @@ impl ThreadSafeFunction {
 
     pub fn enqueue(&mut self, ctx: *mut c_void, block: bool) -> napi_status {
         let _g = self.lock.lock_guard();
+        // Node's Push() gates the wait on `state == kOpen`: once env teardown has
+        // set closing, a full bounded queue must fall through to the napi_closing
+        // return below instead of reporting queue_full or re-parking forever.
         if block {
             while self.queue.is_blocked() && !self.is_closing() {
                 self.blocking_condvar.wait(&self.lock);
             }
         } else {
-            if self.queue.is_blocked() {
+            if self.queue.is_blocked() && !self.is_closing() {
                 // don't set the error on the env as this is run from another thread
                 return NapiStatus::queue_full as napi_status;
             }
@@ -2669,12 +2682,14 @@ impl ThreadSafeFunction {
         // SAFETY: caller contract — `this` is a live heap allocation; we consume it here.
         let self_ = unsafe { &mut *this };
         // Drop the env-cleanup hook registered at creation so that a later env
-        // teardown does not call `env_cleanup` on freed storage.
+        // teardown does not call `env_cleanup` on freed storage. The internal
+        // no-preamble entry point is used so a pending VM exception cannot
+        // silently skip removal and leave a dangling hook.
         // SAFETY: env is refcounted (alive while `self_.env` holds it).
         unsafe {
-            napi_remove_env_cleanup_hook(
+            napi_internal_remove_env_cleanup_hook(
                 self_.env.as_ptr(),
-                Some(ThreadSafeFunction::env_cleanup),
+                ThreadSafeFunction::env_cleanup,
                 this.cast::<c_void>(),
             )
         };
@@ -2739,6 +2754,11 @@ impl ThreadSafeFunction {
                 .closing
                 .store(ClosingState::Closing as u8, Ordering::SeqCst);
             self_.aborted.store(true, Ordering::SeqCst);
+            // Zero the public count so is_blocked() goes false; together with the
+            // `&& !is_closing()` guard on enqueue()'s wait loop this guarantees a
+            // producer parked on a full bounded queue wakes into the napi_closing
+            // return instead of re-sleeping.
+            self_.queue.count.store(0, Ordering::SeqCst);
             if self_.queue.max_queue_size > 0 {
                 self_.blocking_condvar.broadcast();
             }
@@ -2758,6 +2778,16 @@ impl ThreadSafeFunction {
             TsfnCallback::Js(_) => None,
         };
         self_.poll_ref.disable();
+        // Drain queued items so the addon can free per-call data (Node calls
+        // `call_js_cb(null, null, ctx, data)` for each). No new items can be
+        // enqueued once `closing` is set under the lock. Runs before the user
+        // finalizer (Node v24+ `Finalize`: `EmptyQueue` then `CallFinalizer`,
+        // nodejs/node#61956) so `ctx` is still valid for each drained item.
+        if let Some(call_js_cb) = call_js_cb {
+            while let Some(item) = self_.queue.data.read_item() {
+                call_js_cb(core::ptr::null_mut(), napi_value(0), self_.ctx, item);
+            }
+        }
         // Call the user finalizer now (the normal finalize path goes through
         // `event_loop.enqueue_task`, which we can no longer touch).
         if let Some(fun) = self_.finalizer_fun.take() {
@@ -2766,14 +2796,6 @@ impl ThreadSafeFunction {
             let env_ref = unsafe { &*env_ptr };
             let _hs = NapiHandleScope::open_scoped(env_ref);
             fun(env_ptr, self_.finalizer_data, self_.ctx);
-        }
-        // Drain queued items so the addon can free per-call data (Node calls
-        // `call_js_cb(null, null, ctx, data)` for each). No new items can be
-        // enqueued once `closing` is set under the lock.
-        if let Some(call_js_cb) = call_js_cb {
-            while let Some(item) = self_.queue.data.read_item() {
-                call_js_cb(core::ptr::null_mut(), napi_value(0), self_.ctx, item);
-            }
         }
     }
 
@@ -2891,12 +2913,13 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
     // Node registers an env-cleanup hook per TSF so that teardown (worker
     // termination / process exit) marks it closing before the loop is freed;
     // without this a native thread's later `napi_release_threadsafe_function`
-    // would wake a dealloc'd event loop.
+    // would wake a dealloc'd event loop. The internal no-preamble entry point
+    // is used so a pending VM exception cannot silently skip registration.
     // SAFETY: `env_` is the non-null napi_env we validated via get_env! above.
     unsafe {
-        napi_add_env_cleanup_hook(
+        napi_internal_add_env_cleanup_hook(
             env_,
-            Some(ThreadSafeFunction::env_cleanup),
+            ThreadSafeFunction::env_cleanup,
             function.cast::<c_void>(),
         )
     };

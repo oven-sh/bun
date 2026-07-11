@@ -199,9 +199,9 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     UNUSED_PARAM(vm);
     auto& impl = thisObject.wrapped();
-    // The self-ref + event-loop ref must track the handler: ref while one is
-    // installed, unref when an existing one is removed. A null assignment that
-    // removes nothing leaves an explicit ref() from JS undisturbed.
+    // m_hasRef must track the handler: ref while one is installed, release when an
+    // existing one is removed. A null assignment that removes nothing leaves an
+    // explicit ref() from JS (which also sets m_hasRef) undisturbed.
     bool hadEventHandler = !!impl.attributeEventListener(eventNames().messageEvent, worldForDOMObject(thisObject));
     setEventHandlerAttribute<JSEventListener>(impl, eventNames().messageEvent, value, thisObject);
     vm.writeBarrier(&thisObject, value);
@@ -210,7 +210,7 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     if (value.isObject())
         impl.jsRef(&lexicalGlobalObject);
     else if (hadEventHandler)
-        impl.jsUnref(&lexicalGlobalObject);
+        impl.jsUnrefHandler(&lexicalGlobalObject);
 
     return true;
 }

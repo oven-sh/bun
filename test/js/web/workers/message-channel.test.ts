@@ -517,6 +517,18 @@ describe("onmessage event-loop ref", () => {
     port2.close();
   });
 
+  // Removing the handler must only release the m_hasRef keepalive, not
+  // m_isRefd, so a listener added afterwards still refs the loop like Node.
+  test("removing the handler leaves a later addEventListener able to ref", () => {
+    const { port1, port2 } = makeChannel();
+    port2.onmessage = () => {};
+    port2.onmessage = null;
+    port2.addEventListener("message", () => {});
+    expect(port2.hasRef()).toBe(true);
+    port1.close();
+    port2.close();
+  });
+
   test.concurrent(
     "process exits after the handler is removed",
     async () => {
@@ -526,6 +538,9 @@ describe("onmessage event-loop ref", () => {
           "-e",
           `
             const { port1, port2 } = new MessageChannel();
+            // Hold the peer so its collection (which closes the pipe side and
+            // releases this port via peerClosed()) does not mask the leak.
+            globalThis.__keep = port1;
             port2.onmessage = () => {};
             port2.onmessage = null;
             // Unref'd: can only fire if something else still refs the event loop.
@@ -557,6 +572,7 @@ describe("onmessage event-loop ref", () => {
           "-e",
           `
             const { port1, port2 } = new MessageChannel();
+            globalThis.__keep = port1;
             port2.onmessageerror = () => {};
             setTimeout(() => { console.log("STILL-REFERENCED"); process.exit(1); }, 3_000).unref();
             console.log("END");
@@ -638,6 +654,8 @@ describe("onmessage event-loop ref", () => {
           "-e",
           `
             const { port1, port2 } = new MessageChannel();
+            // Hold the peer so its collection does not mask the leak.
+            globalThis.__keep = port1;
             port2.onmessage = e => {
               console.log("GOT:" + e.data);
               port2.onmessage = null;

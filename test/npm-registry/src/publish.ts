@@ -108,10 +108,13 @@ async function publishVersions(record: PackageRecord, body: PublishBody): Promis
 
   if (staged.length === 0) return npmError(400, "no versions to publish");
 
+  const now = new Date().toISOString();
   for (const { version, stored } of staged) {
     record.versions.set(version, stored);
-    record.time[version] = new Date().toISOString();
+    record.time[version] = now;
   }
+  // registry.npmjs.org sets `created` at first publish and never moves it.
+  record.time.created ??= now;
   Object.assign(record.distTags, body["dist-tags"]);
   if (body.description !== undefined) record.extra.description = body.description;
   if (body.readme !== undefined) record.extra.readme = body.readme;

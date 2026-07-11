@@ -948,6 +948,54 @@ describe("fixtures", () => {
 });
 
 describe("conditional requests after a metadata write", () => {
+  test("a fresh publish's Last-Modified is its version's time, and time.created is set", async () => {
+    // A publish whose wall-clock version time advances on its own takes that
+    // time, not the monotonicity floor, so `Last-Modified` is not pushed into
+    // the future (RFC 9110 8.8.2.1). `time.created` is set at first publish.
+    await using registry = await new NpmRegistry().start();
+    const token = registry.addUser({ name: "u", password: "p" });
+    const tgz = Buffer.from(buildTarball({ "package.json": '{"name":"fresh","version":"1.0.0"}' }).bytes).toString(
+      "base64",
+    );
+    const res = await fetch(`${registry.url}fresh`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        _id: "fresh",
+        name: "fresh",
+        versions: { "1.0.0": { name: "fresh", version: "1.0.0" } },
+        _attachments: { "fresh-1.0.0.tgz": { content_type: "application/octet-stream", data: tgz, length: tgz.length } },
+      }),
+    });
+    expect(res.status).toBe(201);
+
+    const time = ((await (await fetch(`${registry.url}fresh`)).json()) as { time: Record<string, string> }).time;
+    // `modified` is the version's wall-clock time, not `version + step`; a
+    // second publish does not move `created`.
+    expect({ created: time.created, modified: time.modified }).toEqual({
+      created: time["1.0.0"],
+      modified: time["1.0.0"],
+    });
+
+    const tgz2 = Buffer.from(buildTarball({ "package.json": '{"name":"fresh","version":"2.0.0"}' }).bytes).toString(
+      "base64",
+    );
+    await fetch(`${registry.url}fresh`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        _id: "fresh",
+        name: "fresh",
+        versions: { "2.0.0": { name: "fresh", version: "2.0.0" } },
+        _attachments: {
+          "fresh-2.0.0.tgz": { content_type: "application/octet-stream", data: tgz2, length: tgz2.length },
+        },
+      }),
+    });
+    const time2 = ((await (await fetch(`${registry.url}fresh`)).json()) as { time: Record<string, string> }).time;
+    expect(time2.created).toBe(time["1.0.0"]);
+  });
+
   test("deprecate advances last-modified, so If-Modified-Since does not 304 a changed document", async () => {
     await using registry = await new NpmRegistry().start();
     const token = registry.addUser({ name: "u", password: "p" });

@@ -229,8 +229,12 @@ export function effectiveTime(record: PackageRecord): Record<string, string> {
 export function touchRecord(record: PackageRecord): void {
   record.rev += 1;
   // An unparseable explicit value parses to NaN and is ignored rather than
-  // throwing `RangeError: Invalid Date` out of the write path.
+  // throwing `RangeError: Invalid Date` out of the write path. The step is one
+  // second (HTTP-date resolution): enough to move the `Last-Modified` header,
+  // and a publish whose wall-clock version time already advanced past the
+  // floor takes that time, not the floor, so `Last-Modified` is not pushed
+  // into the future (RFC 9110 8.8.2.1).
   const previous = Date.parse(record.time.modified ?? "");
-  const base = Math.max(latestVersionTime(record), Number.isNaN(previous) ? -Infinity : previous);
-  record.time.modified = new Date(base + VERSION_TIME_STEP_MS).toISOString();
+  const floor = (Number.isNaN(previous) ? -Infinity : previous) + 1000;
+  record.time.modified = new Date(Math.max(latestVersionTime(record), floor)).toISOString();
 }

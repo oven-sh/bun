@@ -267,9 +267,7 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
 export const LLVM_VERSION = "21.1.8";
 const LLVM_MAJOR = "21";
 const LLVM_MINOR = "1";
-// OHOS needs LLVM 22+ (musl-compatible libc++). The range is
-// deliberately wide (>21 <23) so both LLVM 21 and LLVM 22 work.
-const LLVM_VERSION_RANGE = ">=21.1.0 <23.0.0";
+const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;
 
 /**
  * Known LLVM install locations per platform. Call ONCE from
@@ -314,11 +312,6 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
     paths.push(`/usr/lib/llvm${LLVM_MAJOR}/bin`);
   }
 
-  if (os === "ohos") {
-    // OHOS uses LLVM 22 for musl-compatible libc++
-    paths.push("/opt/llvm-22.1.4/bin");
-  }
-
   return paths;
 }
 
@@ -340,7 +333,7 @@ function llvmInstallHint(os: OS): string {
   if (os === "linux")
     return `Install with: apt install clang-${LLVM_MAJOR} lld-${LLVM_MAJOR}  (or equivalent for your distro)`;
   if (os === "ohos")
-    return `Install LLVM 22+ and provide --ohos-sysroot and --ohos-sdk-root`;
+    return `Install LLVM ${LLVM_VERSION} and provide --ohos-sysroot and --ohos-sdk-root`;
   if (os === "windows") return `Install LLVM ${LLVM_VERSION} from https://github.com/llvm/llvm-project/releases`;
   return "";
 }

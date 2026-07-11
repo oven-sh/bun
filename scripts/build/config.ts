@@ -184,9 +184,6 @@ export interface Config {
 
   // ─── Toolchain (resolved absolute paths) ───
   cc: string;
-  /** Host-native C compiler for build-time codegen (no --target/--sysroot).
-   *  Same as cc for native builds; bare clang/cc for cross-compiles like OHOS. */
-  hostCc: string;
   cxx: string;
   /**
    * Compiler for build-time host tools (dep_host_cc codegen helpers).
@@ -1202,7 +1199,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cacheDir,
     vendorDir,
     cc: toolchain.cc,
-    hostCc: ohos ? findHostCc() : toolchain.cc,
     cxx: toolchain.cxx,
     hostCc: toolchain.hostCc ?? toolchain.cc,
     hostCxx: toolchain.hostCxx ?? toolchain.cxx,
@@ -1478,17 +1474,6 @@ export function bunExeName(cfg: Config): string {
   if (cfg.assertions) return "bun-assertions";
   // Plain release: called bun-profile (the stripped one is `bun`).
   return "bun-profile";
-}
-
-function findHostCc(): string {
-  // OHOS cross-compilation requires the system GCC (not LLVM clang) because
-  // GCC supplies crtbegin.o/crtend.o and compatible crt startup files/link
-  // behavior that the OHOS toolchain expects. This may fail on systems where
-  // /usr/bin/gcc is symlinked to clang (e.g., some container images).
-  for (const name of ["/usr/bin/gcc", "/usr/bin/cc", "/bin/gcc", "/bin/cc"]) {
-    if (existsSync(name)) return name;
-  }
-  return "cc"; // fallback
 }
 
 function findOhosSdkRoot(): string | undefined {

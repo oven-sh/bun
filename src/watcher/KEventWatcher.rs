@@ -19,10 +19,10 @@ pub struct KEventWatcher {
 const CHANGELIST_COUNT: usize = 128;
 
 impl KEventWatcher {
-    pub fn init(&mut self, _: &[u8]) -> Result<(), bun_core::Error> {
+    pub fn init(&mut self, _: &[u8]) -> crate::Result<()> {
         let fd = bun_sys::kqueue()?;
         if fd.native() == 0 {
-            return Err(bun_core::err!("KQueueError"));
+            return Err(crate::Error::KQueueError);
         }
         self.fd = Some(fd);
         Ok(())

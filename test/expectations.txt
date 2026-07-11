@@ -18,7 +18,6 @@
 # A stale entry is invisible: the file simply never runs and nobody finds out.
 
 # Tests that are broken
-test/cli/install/bunx.test.ts [ FAIL ] # should handle package that requires node 24: @angular/cli@latest needs a newer Node.js than Bun reports (24.3.0), unskip after the Node.js version bump
 [ WINDOWS-AARCH64 ] test/js/node/test/parallel/test-repl-close.js [ FAIL ] # EPIPE on stdin.write to closed child process
 
 # The whole file's beforeAll builds a napi addon with node-gyp, and the Windows

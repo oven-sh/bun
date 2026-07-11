@@ -1448,7 +1448,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ) {
             Ok(n) => n,
             Err(err) => {
-                return Err(global_this.throw_error(err.into(), "Failed to decode file url"));
+                return Err(
+                    global_this.throw_error(bun_url::Error::from(err), "Failed to decode file url")
+                );
             }
         };
         let url_path_decoded = &path_buf2[0..decoded_len as usize];
@@ -1505,8 +1507,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         ) {
                             Ok(p) => p,
                             Err(err) => {
-                                return Err(global_this
-                                    .throw_error(err.into(), "Failed to resolve file url"));
+                                return Err(
+                                    global_this.throw_error(err, "Failed to resolve file url")
+                                );
                             }
                         };
                     }
@@ -1524,9 +1527,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
                     Ok(len) => &cwd_buf[..len],
                     Err(err) => {
-                        return Err(
-                            global_this.throw_error(err.into(), "Failed to resolve file url")
-                        );
+                        return Err(global_this.throw_error(err, "Failed to resolve file url"));
                     }
                 };
                 #[cfg(not(windows))]
@@ -1547,9 +1548,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     ) {
                         Ok(p) => p,
                         Err(err) => {
-                            return Err(
-                                global_this.throw_error(err.into(), "Failed to resolve file url")
-                            );
+                            return Err(global_this.throw_error(err, "Failed to resolve file url"));
                         }
                     };
                 }

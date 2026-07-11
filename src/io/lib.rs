@@ -786,6 +786,19 @@ impl IoRequestLoop {
             }
         }
 
+        // End the `&mut IoRequestLoop` borrow before spawning so the IO thread's
+        // `&LOOP` never coexists with it; capture cleanup state into locals.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let poll_fd = loop_.epoll_fd;
+        #[cfg(target_os = "freebsd")]
+        let poll_fd = loop_.kqueue_fd;
+        #[cfg(target_os = "macos")]
+        let (machport, machport_buf_p) = (
+            loop_.waker.machport,
+            core::ptr::addr_of_mut!(loop_.waker.machport_buf),
+        );
+        let _ = loop_;
+
         // smaller thread, since it's not doing much.
         if let Err(e) = std::thread::Builder::new()
             .stack_size(1024 * 1024 * 2)
@@ -796,15 +809,18 @@ impl IoRequestLoop {
                 e.raw_os_error().unwrap_or(libc::EAGAIN),
                 sys::Tag::pthread_create,
             );
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            loop_.epoll_fd.close();
-            #[cfg(target_os = "freebsd")]
-            loop_.kqueue_fd.close();
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "android",
+                target_os = "freebsd"
+            ))]
+            poll_fd.close();
             #[cfg(target_os = "macos")]
             {
-                crate::waker::io_darwin_close_machport(loop_.waker.machport);
+                crate::waker::io_darwin_close_machport(machport);
+                // SAFETY: spawn failed, so no IO thread exists to alias `LOOP`.
                 // A retry re-writes LOOP without dropping the prior value.
-                loop_.waker.machport_buf = Box::default();
+                unsafe { *machport_buf_p = Box::default() };
             }
             waker_fd.close();
             return Err(err);

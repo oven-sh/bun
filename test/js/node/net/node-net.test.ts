@@ -970,9 +970,6 @@ describe("Socket fd adoption", () => {
   });
 });
 
-// kqueue sets EV_EOF on a readable tick while bytes are still buffered (the
-// macOS test-net-write-slow.js flake); epoll only sets EPOLLHUP once both
-// sides FIN, which this fixture forces so Linux sees the same ordering.
 it.skipIf(isWindows)(
   "delivers every buffered byte before 'end' when the data handler pauses and both sides have FIN'd",
   async () => {
@@ -988,14 +985,14 @@ it.skipIf(isWindows)(
       });
     }).listen(0, () => {
       const conn = net.connect({ port: server.address().port, allowHalfOpen: true });
-      // Client FIN first so the server FIN drives EPOLLHUP on Linux.
+      // Client FIN first so the server FIN drives EPOLLHUP on Linux;
+      // kqueue would set EV_EOF from the server FIN alone.
       conn.on("connect", () => conn.end());
       conn.on("data", buf => {
         received += buf.length;
         conn.pause();
-        // The delay is the point: the loop re-polls with the peer's FIN
-        // already processed, so the readable tick carries the EOF flag while
-        // bytes remain in the kernel buffer.
+        // Re-poll with the peer's FIN already processed so the readable tick
+        // carries the EOF flag while bytes remain in the kernel buffer.
         setTimeout(() => conn.resume(), 5);
       });
       conn.on("error", err => { console.log("error", err.code || err.message); });
@@ -1010,10 +1007,7 @@ it.skipIf(isWindows)(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Before the fix: on Linux the shut_down branch closed the socket and
-    // truncated the stream, on macOS on_end pushed(null) and the next resume
-    // errored with ERR_STREAM_PUSH_AFTER_EOF.
-    expect({ stdout, stderr }).toEqual({ stdout: `end ${SIZE}\nclose ${SIZE}\n`, stderr: "" });
+    expect({ stdout, stderr: stderr.trim() }).toEqual({ stdout: `end ${SIZE}\nclose ${SIZE}\n`, stderr: "" });
     expect(exitCode).toBe(0);
   },
 );

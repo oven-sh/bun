@@ -9362,6 +9362,13 @@ pub fn renameat_concurrently_without_fallback(
     to: &ZStr,
     opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
+    let delete_source = || {
+        if from_dir_fd.is_valid() {
+            let _ = Dir::borrow(&from_dir_fd).delete_tree(from.as_bytes());
+        } else {
+            let _ = delete_tree_absolute(from.as_bytes());
+        }
+    };
     'attempt: {
         {
             // Happy path: the folder doesn't exist in the cache dir, so we can
@@ -9390,11 +9397,7 @@ pub fn renameat_concurrently_without_fallback(
             {
                 // Another process won the race; its tree is equivalent to
                 // ours and may already have readers, so drop our copy.
-                if from_dir_fd.is_valid() {
-                    let _ = Dir::borrow(&from_dir_fd).delete_tree(from.as_bytes());
-                } else {
-                    let _ = delete_tree_absolute(from.as_bytes());
-                }
+                delete_source();
                 break 'attempt;
             }
 
@@ -9426,6 +9429,20 @@ pub fn renameat_concurrently_without_fallback(
         }
 
         //  sad path: let's try to delete the folder and then rename it
+        if opts.keep_existing_destination {
+            // The errno didn't tell us whether the destination exists (e.g.
+            // EOPNOTSUPP when the filesystem lacks RENAME_NOREPLACE); check
+            // before deleting a tree another process may be reading.
+            let destination_exists = if to_dir_fd.is_valid() {
+                exists_at(to_dir_fd, to)
+            } else {
+                exists_z(to)
+            };
+            if destination_exists {
+                delete_source();
+                break 'attempt;
+            }
+        }
         if to_dir_fd.is_valid() {
             let _ = Dir::borrow(&to_dir_fd).delete_tree(to.as_bytes());
         } else {

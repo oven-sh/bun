@@ -28,11 +28,9 @@ async function load() {
   return true;
 }
 
-// crossbario/autobahn-testsuite only publishes linux/amd64; on an arm64 daemon
-// without qemu binfmt the container dies with `exec format error`. The x64
-// lanes still exercise every case, so skip rather than depend on emulation.
-// The env overrides short-circuit the docker checks so an external server
-// (BUN_AUTOBAHN_URL / BUN_TEST_SERVICE_autobahn) still forces the suite.
+// crossbario/autobahn-testsuite is linux/amd64-only; arm64 daemons without qemu
+// binfmt hit `exec format error`, so skip there (x64 lanes still cover every
+// case). BUN_AUTOBAHN_URL / BUN_TEST_SERVICE_autobahn bypass the docker checks.
 const hasAutobahnOverride = !!(process.env.BUN_AUTOBAHN_URL || process.env.BUN_TEST_SERVICE_autobahn);
 describe.skipIf(!hasAutobahnOverride && (!isDockerEnabled() || dockerDaemonArch() === "arm64"))("autobahn", () => {
   let wsOptions: any;

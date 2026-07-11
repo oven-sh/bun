@@ -998,6 +998,33 @@ describe("conditional requests after a metadata write", () => {
     expect(time2.created).toBe(time["1.0.0"]);
   });
 
+  test("publishing to a define()'d record keeps time.created at the value the client observed", async () => {
+    await using registry = await new NpmRegistry().start();
+    const token = registry.addUser({ name: "u", password: "p" });
+    registry.define("prior", { "1.0.0": {} });
+    const readTime = async () =>
+      ((await (await fetch(`${registry.url}prior`)).json()) as { time: Record<string, string> }).time;
+    const before = await readTime();
+    const tgz = Buffer.from(buildTarball({ "package.json": '{"name":"prior","version":"2.0.0"}' }).bytes).toString(
+      "base64",
+    );
+    await fetch(`${registry.url}prior`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        _id: "prior",
+        name: "prior",
+        versions: { "2.0.0": { name: "prior", version: "2.0.0" } },
+        _attachments: { "prior-2.0.0.tgz": { content_type: "application/octet-stream", data: tgz, length: tgz.length } },
+      }),
+    });
+    const after = await readTime();
+    expect({ createdBefore: before.created, createdAfter: after.created }).toEqual({
+      createdBefore: "1985-10-26T08:15:00.000Z",
+      createdAfter: "1985-10-26T08:15:00.000Z",
+    });
+  });
+
   test("deprecate advances last-modified, so If-Modified-Since does not 304 a changed document", async () => {
     await using registry = await new NpmRegistry().start();
     const token = registry.addUser({ name: "u", password: "p" });

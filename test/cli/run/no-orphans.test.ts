@@ -1004,10 +1004,6 @@ test.concurrent.skipIf(!isLinux)(
       `    echo "log $grp" >> "$FAKE_GIT_MARKER"\n` +
       `    echo abcdef0123456789abcdef0123456789abcdef01\n` +
       `    ;;\n` +
-      `  *"--bare"*)\n` +
-      `    echo "clone-bare $grp" >> "$FAKE_GIT_MARKER"\n` +
-      `    mkdir -p "$last"\n` +
-      `    ;;\n` +
       `  *"--no-checkout"*)\n` +
       `    echo "clone-no-checkout $grp" >> "$FAKE_GIT_MARKER"\n` +
       `    mkdir -p "$last"\n` +
@@ -1016,6 +1012,10 @@ test.concurrent.skipIf(!isLinux)(
       `  *) ;;\n` +
       `esac\n`;
 
+    // `git+file://` matches neither `try_https` nor `try_ssh`, so the
+    // threadpool GitClone task never runs `git clone --bare` (Repository::
+    // download). `find_commit`'s `git log` on the main thread is the first git
+    // invocation, followed by the threadpool checkout step.
     using dir = tempDir("no-orphans-install-git", {
       "bin/git": fakeGit,
       "package.json": JSON.stringify({

@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "SerializedScriptValue.h"
+#include "BunClientData.h"
 #include "BunString.h"
 // #include "BlobRegistry.h"
 // #include "ByteArrayPixelBuffer.h"
@@ -91,6 +92,7 @@
 #include <JavaScriptCore/JSWebAssemblyModule.h>
 #include <JavaScriptCore/NumberObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ObjectPrototype.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/RegExpObject.h>
@@ -1152,6 +1154,10 @@ private:
             return false;
         if (m_forTransfer != SerializationForCrossProcessTransfer::No)
             return false;
+        // Fast path: the marker is stored DontEnum, so an object with zero
+        // non-enumerable properties cannot carry it.
+        if (!object->structure()->hasNonEnumerableProperties())
+            return false;
         return !!object->getDirect(vm, WebCore::builtinNames(vm).isUncloneablePrivateName());
     }
 
@@ -1769,45 +1775,61 @@ private:
                 auto errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(scope, false);
 
-                String message;
-                PropertyDescriptor messageDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, messageDescriptor) && messageDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    message = messageDescriptor.value().toWTFString(m_lexicalGlobalObject);
+                // .message/.line/.column/.sourceURL: HTML spec + Node/WebKit read
+                // OWN data descriptors only (an inherited or accessor .message is
+                // NOT serialized). .stack: Node reads via [[Get]] to materialize
+                // V8's lazy accessor. Any getter/coercion/prepareStackTrace throw
+                // propagates out of postMessage/structuredClone (Node parity).
+                String message, sourceURL, stack;
+                unsigned line = 0, column = 0;
+                {
+                    // .message is ToString'd rather than gated on isString (node clones
+                    // `e.message = 42` as "42"). Reading it before .line also keeps a
+                    // Symbol message from reaching ErrorInstance's lazy materialization.
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value()) {
+                        message = d.value().toWTFString(m_lexicalGlobalObject);
+                        RETURN_IF_EXCEPTION(scope, false);
+                    }
                 }
+                // Trigger ErrorInstance's lazy materialization up front so a throwing
+                // prepareStackTrace propagates here instead of tripping the exception
+                // assertion inside JSObject::getOwnPropertyDescriptor.
+                errorInstance->materializeErrorInfoIfNeeded(vm);
                 RETURN_IF_EXCEPTION(scope, false);
-
-                unsigned line = 0;
-                PropertyDescriptor lineDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, lineDescriptor) && lineDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    line = lineDescriptor.value().toNumber(m_lexicalGlobalObject);
+                {
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value().isNumber())
+                        line = d.value().toNumber(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
-                RETURN_IF_EXCEPTION(scope, false);
-
-                unsigned column = 0;
-                PropertyDescriptor columnDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, columnDescriptor) && columnDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    column = columnDescriptor.value().toNumber(m_lexicalGlobalObject);
+                {
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value().isNumber())
+                        column = d.value().toNumber(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
-                RETURN_IF_EXCEPTION(scope, false);
-
-                String sourceURL;
-                PropertyDescriptor sourceURLDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, sourceURLDescriptor) && sourceURLDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    sourceURL = sourceURLDescriptor.value().toWTFString(m_lexicalGlobalObject);
+                {
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value().isString())
+                        sourceURL = d.value().toWTFString(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
-                RETURN_IF_EXCEPTION(scope, false);
-
-                String stack;
-                PropertyDescriptor stackDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->stack, stackDescriptor) && stackDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    stack = stackDescriptor.value().toWTFString(m_lexicalGlobalObject);
+                {
+                    JSValue v = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->stack);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (v.isString())
+                        stack = v.toWTFString(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
-                RETURN_IF_EXCEPTION(scope, false);
 
                 write(ErrorInstanceTag);
                 write(errorNameToSerializableErrorType(errorTypeString));
@@ -1825,8 +1847,10 @@ private:
                     write(index->value);
                     return true;
                 }
-                // MessagePort object could not be found in transferred message ports
-                code = SerializationReturnCode::ValidationError;
+                // MessagePort present in the message but not listed in the
+                // transfer list: node throws a DataCloneError with this message.
+                WebCore::propagateException(*m_lexicalGlobalObject, scope, Exception { DataCloneError, "Object that needs transfer was found in message but not listed in transferList"_s });
+                code = SerializationReturnCode::ExistingExceptionError;
                 return true;
             }
             if (auto* arrayBuffer = toPossiblySharedArrayBuffer(vm, obj)) {
@@ -2830,7 +2854,9 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // a DataCloneError.
             // NapiPrototype is allowed because napi_create_object should behave
             // like a plain object from JS's perspective (matches Node.js).
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info())
+            // ObjectPrototype is allowed because %Object.prototype% is an immutable
+            // prototype exotic object that the spec carves out of this rejection.
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info())
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);
@@ -4186,6 +4212,8 @@ private:
         CryptoAlgorithmIdentifier algorithm;
         if (!read(algorithm))
             return false;
+        if (!CryptoKeyRSA::isValidRSAAlgorithm(algorithm))
+            return false;
 
         int32_t isRestrictedToHash;
         CryptoAlgorithmIdentifier hash = CryptoAlgorithmIdentifier::SHA_1;
@@ -4306,6 +4334,16 @@ private:
         CryptoKeyOKP::NamedCurve namedCurve;
         if (!read(namedCurve))
             return false;
+        switch (namedCurve) {
+        case CryptoKeyOKP::NamedCurve::Ed25519:
+            if (algorithm != CryptoAlgorithmIdentifier::Ed25519)
+                return false;
+            break;
+        case CryptoKeyOKP::NamedCurve::X25519:
+            if (algorithm != CryptoAlgorithmIdentifier::X25519)
+                return false;
+            break;
+        }
         Vector<uint8_t> keyData;
         if (!read(keyData))
             return false;
@@ -4318,6 +4356,8 @@ private:
     {
         CryptoAlgorithmIdentifier algorithm;
         if (!read(algorithm))
+            return false;
+        if (!CryptoKeyRaw::isValidRawAlgorithm(algorithm))
             return false;
         Vector<uint8_t> keyData;
         if (!read(keyData))
@@ -5357,7 +5397,7 @@ private:
 #if ENABLE(WEB_CRYPTO)
         case CryptoKeyTag: {
             Vector<uint8_t> serializedKey;
-            if (!read(serializedKey)) {
+            if (!read(serializedKey) || serializedKey.isEmpty()) {
                 fail();
                 return JSValue();
             }
@@ -5516,6 +5556,8 @@ DeserializationResult CloneDeserializer::deserialize()
         switch (state) {
         arrayStartState:
         case ArrayStartState: {
+            if (outputObjectStack.size() > maximumFilterRecursion)
+                return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             uint32_t length;
             if (!read(length)) {
                 goto error;
@@ -6383,6 +6425,9 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
     HashSet<JSC::JSObject*> uniqueTransferables;
     for (auto& transferable : transferList) {
+        // markAsUntransferable marker: a DontEnum JSC private name (see markAsUncloneable).
+        if (transferable->getDirect(vm, builtinNames(vm).isUntransferablePrivateName()))
+            return Exception { DataCloneError, "Cannot transfer object marked as untransferable"_s };
         if (!uniqueTransferables.add(transferable.get()).isNewEntry) {
             if (toPossiblySharedArrayBuffer(vm, transferable.get())) {
                 return Exception { DataCloneError, "Transfer list contains duplicate ArrayBuffer"_s };
@@ -6405,7 +6450,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             continue;
         }
         if (auto port = JSMessagePort::toWrapped(vm, transferable.get())) {
-            if (port->isDetached())
+            if (port->isDetached() || port->isClosing())
                 return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
             messagePorts.append(WTF::move(port));
             continue;

@@ -387,6 +387,80 @@ describe("Server", () => {
     expect(subscriptions).toContain("topic3");
   });
 
+  it.concurrent("publish() then unsubscribe() from last topic in same tick delivers queued messages", async () => {
+    const aDone = Promise.withResolvers<string[]>();
+    const bDone = Promise.withResolvers<string[]>();
+    const ready = { a: Promise.withResolvers<void>(), b: Promise.withResolvers<void>() };
+    const publishResults: number[] = [];
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        const id = new URL(req.url).searchParams.get("id")!;
+        if (server.upgrade(req, { data: { id } })) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.subscribe("room");
+          ws.send("ready");
+        },
+        message(ws, msg) {
+          if (msg !== "go") return;
+          for (let i = 0; i < 5; i++) {
+            publishResults.push(server.publish("room", "msg" + i));
+          }
+          // Unsubscribing from the only topic used to free the uWS Subscriber
+          // without draining its queued publish() messages, dropping them.
+          ws.unsubscribe("room");
+          // Sentinel: once this arrives, anything queued for this socket
+          // has either been delivered ahead of it or dropped.
+          ws.send("done");
+        },
+      },
+    });
+
+    const collect = (id: "a" | "b", done: PromiseWithResolvers<string[]>, isDone: (data: string) => boolean) => {
+      const received: string[] = [];
+      const ws = new WebSocket(`ws://localhost:${server.port}/?id=${id}`);
+      ws.onmessage = e => {
+        const data = e.data as string;
+        if (data === "ready") return ready[id].resolve();
+        received.push(data);
+        if (isDone(data)) done.resolve([...received]);
+      };
+      const fail = (e: unknown) => {
+        ready[id].reject(e);
+        done.reject(e);
+      };
+      ws.onerror = fail;
+      ws.onclose = () => fail(new Error("closed before done"));
+      return ws;
+    };
+
+    // A never unsubscribes and never receives "done"; resolve once the full batch arrives.
+    const a = collect("a", aDone, data => data === "msg4");
+    // B must wait for the sentinel so we capture everything delivered before it.
+    const b = collect("b", bDone, data => data === "done");
+    try {
+      await Promise.all([ready.a.promise, ready.b.promise]);
+      b.send("go");
+
+      const [aReceived, bReceived] = await Promise.all([aDone.promise, bDone.promise]);
+      // publish() reported the message as queued for every call
+      expect(publishResults).toEqual([4, 4, 4, 4, 4]);
+      // A never unsubscribed; it must receive the full batch.
+      expect(aReceived).toEqual(["msg0", "msg1", "msg2", "msg3", "msg4"]);
+      // B unsubscribed in the same tick; it must still receive the batch
+      // that publish() had already accepted before the unsubscribe.
+      expect(bReceived).toEqual(["msg0", "msg1", "msg2", "msg3", "msg4", "done"]);
+    } finally {
+      a.onclose = b.onclose = null;
+      a.close();
+      b.close();
+    }
+  });
+
   describe("websocket", () => {
     test("open", done => ({
       open(ws) {
@@ -862,6 +936,74 @@ describe("ServerWebSocket", () => {
           done();
         },
       }));
+    }
+  });
+  // With the default publishToSelf: false, a ws.publish() from a socket that has never
+  // subscribed to anything must still deliver to other subscribers.
+  describe("publish() from a socket not subscribed to anything", () => {
+    const big = Buffer.alloc(20 * 1024, "x").toString();
+    const cases = [
+      ["publish", "publish", "small-text"],
+      ["publishText", "publishText", "small-text"],
+      ["publishBinary", "publishBinary", Buffer.from("small-binary")],
+      ["publish (>= cork buffer)", "publish", big],
+    ] as const;
+    for (const [label, method, payload] of cases) {
+      it.concurrent(label, async () => {
+        const subscribed = Promise.withResolvers<void>();
+        const received = Promise.withResolvers<string | ArrayBuffer>();
+        const published = Promise.withResolvers<number>();
+        let nextId = 0;
+        using server = serve({
+          port: 0,
+          fetch(req, server) {
+            if (server.upgrade(req, { data: { id: nextId++ } })) return;
+            return new Response();
+          },
+          websocket: {
+            open(ws) {
+              if (ws.data.id === 0) {
+                ws.subscribe("chat");
+                subscribed.resolve();
+              } else {
+                expect(ws.isSubscribed("chat")).toBe(false);
+                // @ts-expect-error dynamic method dispatch
+                published.resolve(ws[method]("chat", payload));
+              }
+            },
+            message() {},
+          },
+        });
+        const url = `ws://${server.hostname}:${server.port}/`;
+        // A socket that errors or closes before the server's open() handler ran would
+        // otherwise leave one of the awaited slots pending until the test timeout.
+        const fail = (who: string) => (ev: Event) => {
+          const err = new Error(`${who} websocket ${ev.type}`);
+          subscribed.reject(err);
+          published.reject(err);
+          received.reject(err);
+        };
+        const sub = new WebSocket(url);
+        sub.binaryType = "arraybuffer";
+        sub.onmessage = e => received.resolve(e.data);
+        sub.onerror = sub.onclose = fail("subscriber");
+        await subscribed.promise;
+        expect(server.subscriberCount("chat")).toBe(1);
+        const pub = new WebSocket(url);
+        pub.onmessage = e => received.reject(new Error("publisher must not receive: " + e.data));
+        pub.onerror = pub.onclose = fail("publisher");
+
+        const ret = await published.promise;
+        expect(ret).toBe(Buffer.byteLength(payload));
+        const got = await received.promise;
+        if (typeof payload === "string") {
+          expect(got).toBe(payload);
+        } else {
+          expect(Buffer.from(got as ArrayBuffer)).toEqual(Buffer.from(payload));
+        }
+        sub.close();
+        pub.close();
+      });
     }
   });
   describe("ping()", () => {

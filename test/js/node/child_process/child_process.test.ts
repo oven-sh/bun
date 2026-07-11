@@ -2,7 +2,7 @@ import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
-import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
+import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { promisify } from "node:util";
 import path from "path";
@@ -224,6 +224,36 @@ describe("spawn()", () => {
     expect(child2.stderr).toBe(null);
   });
 
+  describe("stdin for non-pipe stdio[0] stays null after exit", () => {
+    it.each([
+      ["ignore", ["ignore", "ignore", "ignore"]],
+      ["inherit", ["inherit", "ignore", "ignore"]],
+      ["fd 0", [0, "ignore", "ignore"]],
+    ] as const)("spawn stdio[0]=%s", async (_, stdio) => {
+      const child = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: stdio as any });
+      await once(child, "close");
+      expect(child.stdin).toBe(null);
+      expect(child.stdout).toBe(null);
+      expect(child.stderr).toBe(null);
+    });
+
+    it("fork() default stdio", async () => {
+      const dir = tmpdirSync();
+      const kid = path.join(dir, "kid.cjs");
+      fs.writeFileSync(kid, "process.exit(0)");
+      const child = fork(kid, [], { execPath: bunExe(), env: bunEnv });
+      await once(child, "close");
+      expect(child.stdin).toBe(null);
+    });
+
+    it("stdio[0]='pipe' still yields a destroyed Writable after exit", async () => {
+      const child = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: ["pipe", "ignore", "ignore"] });
+      await once(child, "close");
+      expect(child.stdin).not.toBe(null);
+      expect(child.stdin!.destroyed).toBe(true);
+    });
+  });
+
   it("should allow us to set cwd", async () => {
     const tmpdir = tmpdirSync();
     const result: string = await new Promise(resolve => {
@@ -434,6 +464,20 @@ describe("spawnSync()", () => {
     const detachedPgid = childPgid(true);
     expect(detachedPgid).toMatch(/^\d+$/);
     expect(detachedPgid).not.toBe(parentPgid);
+  });
+
+  it.skipIf(isWindows)("drains piped stdio to EOF after the direct child exits", () => {
+    // Node.js documents spawnSync as not returning until the child process has
+    // fully closed, i.e. every pipe has been read to EOF even when a grandchild
+    // that inherited the pipe is still writing after the direct child exited.
+    const cmd = ["-c", `printf A; printf C >&2; ( sleep 0.3; printf B; printf D >&2 ) & exit 0`];
+    const { stdout, stderr, status, signal } = spawnSync("/bin/sh", cmd, { stdio: ["ignore", "pipe", "pipe"] });
+    expect({ stdout: String(stdout), stderr: String(stderr), status, signal }).toEqual({
+      stdout: "AB",
+      stderr: "CD",
+      status: 0,
+      signal: null,
+    });
   });
 });
 
@@ -727,4 +771,104 @@ done
   child.on("close", () => resolve(out));
   const asyncOut = await promise;
   expect(asyncOut.trim().split("\n")).toEqual(expected);
+});
+
+describe("uid/gid options", () => {
+  const isRoot = process.getuid?.() === 0;
+  // 65534 is "nobody" on every Linux distro and on macOS.
+  const NOBODY = 65534;
+
+  it.skipIf(isWindows || !isRoot)("spawnSync applies uid/gid and drops supplementary groups", () => {
+    const both = spawnSync("id", [], { uid: NOBODY, gid: NOBODY, encoding: "utf8" });
+    expect(both.error).toBeUndefined();
+    expect(both.stdout).toContain(`uid=${NOBODY}`);
+    expect(both.stdout).toContain(`gid=${NOBODY}`);
+
+    // libuv (and Node) call setgroups(0, NULL) before setgid/setuid, so the
+    // child must not retain root's supplementary group 0.
+    const groups = spawnSync("id", ["-G"], { uid: NOBODY, gid: NOBODY, encoding: "utf8" });
+    expect(groups.error).toBeUndefined();
+    expect(groups.stdout.trim()).toBe(`${NOBODY}`);
+
+    const gidOnly = spawnSync("id", [], { gid: NOBODY, encoding: "utf8" });
+    expect(gidOnly.error).toBeUndefined();
+    expect(gidOnly.stdout).toContain("uid=0");
+    expect(gidOnly.stdout).toContain(`gid=${NOBODY}`);
+  });
+
+  it.skipIf(isWindows || !isRoot)("spawn applies uid/gid (async)", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<{ out: string; code: number | null }>();
+    const child = spawn("id", ["-u"], { uid: NOBODY, gid: NOBODY });
+    let out = "";
+    child.stdout.on("data", d => (out += d));
+    child.on("error", reject);
+    child.on("close", code => resolve({ out, code }));
+    const { out: stdout, code } = await promise;
+    expect(stdout.trim()).toBe(`${NOBODY}`);
+    expect(code).toBe(0);
+  });
+
+  it.skipIf(isWindows || isRoot)("spawn with a uid the process cannot set throws EPERM synchronously", () => {
+    // Node defers only EACCES/EAGAIN/EMFILE/ENFILE/ENOENT to the 'error'
+    // event; EPERM is thrown synchronously from spawn().
+    let thrown: any;
+    try {
+      spawn("id", [], { uid: 0 });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown?.code).toBe("EPERM");
+    expect(thrown?.errno).toBe(-1);
+    expect(thrown?.syscall).toBe("spawn");
+
+    const r = spawnSync("id", [], { uid: 0, encoding: "utf8" });
+    expect(r.error?.code).toBe("EPERM");
+    expect(r.error?.errno).toBe(-1);
+    expect(r.error?.syscall).toBe("spawnSync id");
+    expect(r.stdout == null).toBe(true);
+  });
+
+  it.skipIf(isWindows || !isRoot)("spawn reports EPERM after dropping privileges", async () => {
+    const fixture = `const cp = require("node:child_process");
+let thrown = null;
+try { cp.spawn("id", [], { uid: 0 }); } catch (e) { thrown = e; }
+const r = cp.spawnSync("id", [], { uid: 0 });
+console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, threwErrno: thrown?.errno, threwSyscall: thrown?.syscall, syncCode: r.error?.code, gotStdout: r.stdout != null }));`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      // The de-privileged child re-spawns from its cwd, so the cwd must be
+      // traversable by uid 65534 (the harness tmpdir is mode 0700, root-owned).
+      cwd: "/",
+      uid: NOBODY,
+      gid: NOBODY,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+      result: {
+        uid: NOBODY,
+        threwCode: "EPERM",
+        threwErrno: -1,
+        threwSyscall: "spawn",
+        syncCode: "EPERM",
+        gotStdout: false,
+      },
+      exitCode: 0,
+    });
+  });
+
+  it.if(isWindows)("spawn with uid/gid fails with ENOTSUP on Windows", () => {
+    let thrown: any;
+    try {
+      spawn("cmd.exe", ["/c", "exit 0"], { uid: 0 });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown?.code).toBe("ENOTSUP");
+
+    const r = spawnSync("cmd.exe", ["/c", "exit 0"], { gid: 0 });
+    expect(r.error?.code).toBe("ENOTSUP");
+  });
 });

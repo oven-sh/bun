@@ -279,6 +279,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_WORKER_INIT_FAILED", Error],
   ["ERR_WORKER_NOT_RUNNING", Error],
   ["ERR_WORKER_UNSUPPORTED_OPERATION", TypeError],
+  ["ERR_WORKER_PATH", TypeError],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["MODULE_NOT_FOUND", Error],
   ["ERR_INTERNAL_ASSERTION", Error],
@@ -327,6 +328,10 @@ const errors: ErrorCodeMapping = [
   ["ERR_SECRETS_INTERACTION_NOT_ALLOWED", Error],
   ["ERR_SECRETS_AUTH_FAILED", Error],
   ["ERR_SECRETS_INTERACTION_REQUIRED", Error],
+  ["ERR_WORKER_MESSAGING_ERRORED", Error],
+  ["ERR_WORKER_MESSAGING_FAILED", Error],
+  ["ERR_WORKER_MESSAGING_SAME_THREAD", Error],
+  ["ERR_WORKER_MESSAGING_TIMEOUT", Error],
   ["ERR_POSTGRES_CONNECTION_FAILED", Error, "PostgresError"],
   ["ERR_MYSQL_CONNECTION_FAILED", Error, "MySQLError"],
   ["ERR_POSTGRES_CONNECTION_REFUSED", Error, "PostgresError"],
@@ -340,5 +345,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY", Error],
   ["ERR_DIR_CONCURRENT_OPERATION", Error],
   ["ERR_INVALID_BUFFER_SIZE", RangeError],
+  ["ERR_TRACE_EVENTS_CATEGORY_REQUIRED", TypeError],
+  ["ERR_TRACE_EVENTS_UNAVAILABLE", Error],
 ];
 export default errors;

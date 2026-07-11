@@ -1216,16 +1216,18 @@ describe("Response", () => {
   });
   describe("Response.redirect", () => {
     it("works", () => {
+      // Location is the serialization of the parsed url, so an empty path
+      // gains a trailing "/". https://fetch.spec.whatwg.org/#dom-response-redirect
       const inputs = [
-        "http://example.com",
-        "http://example.com/",
-        "http://example.com/hello",
-        "http://example.com/hello/",
-        "http://example.com/hello/world",
-        "http://example.com/hello/world/",
+        ["http://example.com", "http://example.com/"],
+        ["http://example.com/", "http://example.com/"],
+        ["http://example.com/hello", "http://example.com/hello"],
+        ["http://example.com/hello/", "http://example.com/hello/"],
+        ["http://example.com/hello/world", "http://example.com/hello/world"],
+        ["http://example.com/hello/world/", "http://example.com/hello/world/"],
       ];
-      for (let input of inputs) {
-        expect(Response.redirect(input).headers.get("Location")).toBe(input);
+      for (const [input, expected] of inputs) {
+        expect(Response.redirect(input).headers.get("Location")).toBe(expected);
       }
     });
 
@@ -1239,7 +1241,7 @@ describe("Response", () => {
         status: 307,
       });
       expect(response.headers.get("x-hello")).toBe("world");
-      expect(response.headers.get("Location")).toBe("https://example.com");
+      expect(response.headers.get("Location")).toBe("https://example.com/");
       expect(response.status).toBe(307);
       expect(response.type).toBe("default");
       expect(response.ok).toBe(false);
@@ -2550,6 +2552,49 @@ it("rejects a response with an unparseable Content-Length instead of treating it
   expect(await ok.text()).toBe("hello");
 });
 
+it("combines duplicate response headers per the Fetch spec", async () => {
+  // WHATWG Fetch requires repeated header fields to be combined with ", " when
+  // read via Headers.get(), except Set-Cookie which is stored as separate
+  // values exposed by getSetCookie(). Previously Bun overwrote duplicate
+  // non-common header names with the last value, dropping earlier values.
+  await using server = net.createServer(socket => {
+    socket.once("data", () => {
+      socket.end(
+        "HTTP/1.1 200 OK\r\n" +
+          "Content-Length: 2\r\n" +
+          "X-Dup: first\r\n" +
+          "X-Dup: second\r\n" +
+          "X-Dup: third\r\n" +
+          "X-Once: only\r\n" +
+          "X-Gap: a\r\n" +
+          "X-Gap:\r\n" +
+          "X-Gap: c\r\n" +
+          "X-Empty:\r\n" +
+          "Accept: text/html\r\n" +
+          "Accept: application/json\r\n" +
+          "Set-Cookie: a=1\r\n" +
+          "Set-Cookie: b=2\r\n" +
+          "Connection: close\r\n" +
+          "\r\n" +
+          "ok",
+      );
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const res = await fetch(`http://127.0.0.1:${port}/`);
+  expect(await res.text()).toBe("ok");
+  expect(res.headers.get("x-dup")).toBe("first, second, third");
+  expect(res.headers.get("x-once")).toBe("only");
+  // the combine step has no empty-value exception, and a lone empty header is
+  // still visible — undici returns "a, , c" and "" here, not "a, c" and null
+  expect(res.headers.get("x-gap")).toBe("a, , c");
+  expect(res.headers.get("x-empty")).toBe("");
+  expect(res.headers.get("accept")).toBe("text/html, application/json");
+  expect(res.headers.getSetCookie()).toEqual(["a=1", "b=2"]);
+});
+
 it("drops a custom Host header when following a cross-origin redirect", async () => {
   // A per-request Host override must not survive a change of origin: the
   // follow-up request's Host header (and the TLS SNI / certificate identity
@@ -2838,3 +2883,59 @@ it("does not reuse a keep-alive connection whose response carried more bytes tha
     server.close();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/16682
+it("an explicit numeric `timeout` extends the socket idle deadline past the default", async () => {
+  // The child runs with a 1s idle default (BUN_CONFIG_HTTP_IDLE_TIMEOUT=1) and
+  // talks to an in-process server whose handler holds every request idle for
+  // 10s (longer than the worst-case firing window of the 1s idle timer, which
+  // is swept on uSockets' 4s tick) before responding.
+  //
+  //   - `timeout: 60_000` must override the 1s idle default and resolve.
+  //   - `timeout: 0` must keep meaning "no timeout" and resolve.
+  //   - no `timeout` at all must still hit the 1s idle default (control that
+  //     proves the env override and the stall are both real).
+  const script = /* js */ `
+    const HOLD_MS = 10_000;
+    using server = Bun.serve({
+      port: 0,
+      // Disable Bun.serve's own request idle timeout; only the client-side
+      // idle timer under test may abort anything here.
+      idleTimeout: 0,
+      async fetch(req) {
+        const arrived = Date.now();
+        // Hold the connection idle (no bytes in either direction) until the
+        // hold window has really elapsed on the server's clock.
+        while (Date.now() - arrived < HOLD_MS) {
+          await Bun.sleep(HOLD_MS - (Date.now() - arrived));
+        }
+        return new Response("hello");
+      },
+    });
+    const get = init => fetch(server.url, init).then(r => r.text(), e => "ERR:" + (e?.code ?? e?.name ?? e));
+    const [withTimeout, withZero, withInfinity, withDefault] = await Promise.all([
+      get({ timeout: 60_000 }),
+      get({ timeout: 0 }),
+      get({ timeout: Infinity }),
+      get(undefined),
+    ]);
+    console.log(JSON.stringify({ withTimeout, withZero, withInfinity, withDefault }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout.trim().split("\n").pop()!) as Record<string, string>;
+  expect({ withTimeout: out.withTimeout, withZero: out.withZero, withInfinity: out.withInfinity }).toEqual({
+    withTimeout: "hello",
+    withZero: "hello",
+    withInfinity: "hello",
+  });
+  // Control: without an explicit `timeout`, the 1s idle default still aborts
+  // the stalled request.
+  expect(out.withDefault).toStartWith("ERR:");
+  expect(exitCode).toBe(0);
+}, 60_000);

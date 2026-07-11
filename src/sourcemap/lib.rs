@@ -6,9 +6,6 @@
 //! Sibling modules: `Chunk.rs`, `InternalSourceMap.rs`, `LineOffsetTable.rs`,
 //! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`.
 
-// ── crate aliases ─────────────────────────────────────────────────────────
-use bun_collections::VecExt;
-
 // ── sibling modules ───────────────────────────────────────────────────────
 #[path = "Chunk.rs"]
 pub mod chunk;
@@ -512,7 +509,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     };
 
                     // Parse the JSON source map
-                    match parse_json(&arena, json_slice, result) {
+                    match parse_json(json_slice, result) {
                         Ok(parsed) => {
                             break 'parsed (SourceMapLoadHint::IsExternalMap, parsed);
                         }
@@ -537,7 +534,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                         let Some(data) = provider.get_external_data(source_filename) else {
                             break 'fallback_to_normal;
                         };
-                        match parse_json(&arena, data, result) {
+                        match parse_json(data, result) {
                             Ok(parsed) => {
                                 break 'parsed (SourceMapLoadHint::IsExternalMap, parsed);
                             }
@@ -582,7 +579,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     Err(_) => break 'try_external,
                 };
 
-                match parse_json(&arena, &data, result) {
+                match parse_json(&data, result) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsExternalMap, parsed),
                     Err(err) => {
                         // Print warning even if this came from non-visible code like
@@ -730,36 +727,31 @@ pub mod SerializedSourceMap {
         /// Only decompress source code once! Once a file is decompressed,
         /// it is stored here. Decompression failure is recorded as an empty
         /// `Vec`, which `source_file_contents` treats as "no contents".
-        pub decompressed_files: Box<[Option<Vec<u8>>]>,
+        pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
     }
 
     impl Loaded {
-        pub(crate) fn source_file_contents(&mut self, index: usize) -> Option<&[u8]> {
-            // Populate first if
-            // empty, then take a single borrow at the end (borrowck-friendly).
-            if self.decompressed_files[index].is_none() {
+        pub(crate) fn source_file_contents(&self, index: usize) -> Option<&[u8]> {
+            let decompressed = self.decompressed_files[index].get_or_init(|| {
                 let sp = self.map.compressed_source_file_at(index);
                 let compressed_file = sp.slice(self.map.bytes);
                 let size = bun_zstd::get_decompressed_size(compressed_file);
 
                 let mut bytes = vec![0u8; size];
-                self.decompressed_files[index] =
-                    Some(match bun_zstd::decompress(&mut bytes, compressed_file) {
-                        bun_zstd::Result::Err(err) => {
-                            bun_core::warn!(
-                                "Source map decompression error: {}",
-                                ::bstr::BStr::new(err.as_bytes()),
-                            );
-                            Vec::new()
-                        }
-                        bun_zstd::Result::Success(n) => {
-                            bytes.truncate(n);
-                            bytes
-                        }
-                    });
-            }
-
-            let decompressed = self.decompressed_files[index].as_deref().unwrap();
+                match bun_zstd::decompress(&mut bytes, compressed_file) {
+                    bun_zstd::Result::Err(err) => {
+                        bun_core::warn!(
+                            "Source map decompression error: {}",
+                            ::bstr::BStr::new(err.as_bytes()),
+                        );
+                        Vec::new()
+                    }
+                    bun_zstd::Result::Success(n) => {
+                        bytes.truncate(n);
+                        bytes
+                    }
+                }
+            });
             if decompressed.is_empty() {
                 None
             } else {
@@ -837,8 +829,11 @@ impl SourceMapPieces {
                 current += 1;
             }
 
+            // A single mapping can cross multiple shift boundaries when two
+            // placeholder substitutions have no mapping between them, so
+            // advance to the latest applicable shift before re-encoding.
             let mut did_cross_boundary = false;
-            if shifts.len() > 1 && LineColumnOffset::comes_before(shifts[1].before, generated) {
+            while shifts.len() > 1 && LineColumnOffset::comes_before(shifts[1].before, generated) {
                 shifts = &shifts[1..];
                 did_cross_boundary = true;
             }
@@ -925,20 +920,14 @@ pub fn parse_url(
         return Err(bun_core::err!("UnsupportedFormat"));
     };
 
-    parse_json(arena, json_bytes, hint)
+    parse_json(json_bytes, hint)
 }
 
 /// Parses a JSON source-map
 ///
 /// `source` must be in UTF-8 and can be freed after this call.
 /// The mappings are owned by the global allocator.
-/// Temporary allocations are made to the `arena` allocator, which
-/// should be an arena allocator (caller is assumed to call `reset`).
-pub fn parse_json(
-    arena: &bun_alloc::Arena,
-    source: &[u8],
-    hint: ParseUrlResultHint,
-) -> Result<ParseUrl, bun_core::Error> {
+pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> Result<ParseUrl, bun_core::Error> {
     use crate::mapping::SourceMap as SourceMapLog;
     use bun_ast::StoreResetGuard as DataStoreScope;
     use std::sync::Arc;
@@ -952,10 +941,11 @@ pub fn parse_json(
     // and on every exit path.
     let _store_scope = DataStoreScope::new();
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
-    let json = match bun_parsers::json::parse::<false>(&json_src, &mut log, arena) {
-        Ok(j) => j,
+    let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log) {
+        Ok(p) => p,
         Err(_) => return Err(bun_core::err!("InvalidJSON")),
     };
+    let json = parsed.root;
 
     if let Some(version) = json.get(b"version") {
         match version.data.as_e_number() {
@@ -968,31 +958,31 @@ pub fn parse_json(
         return Err(bun_core::err!("UnsupportedVersion"));
     };
 
-    if !mappings_str.data.is_e_string() {
+    let Some(mappings_vlq) = mappings_str.as_utf8_string_literal() else {
         return Err(bun_core::err!("InvalidSourceMap"));
-    }
+    };
 
     let sources_content = match json
         .get(b"sourcesContent")
         .ok_or_else(|| bun_core::err!("InvalidSourceMap"))?
         .data
-        .as_e_array()
     {
-        Some(arr) => arr,
-        None => return Err(bun_core::err!("InvalidSourceMap")),
+        bun_ast::ExprData::EArrayJSON(arr) => arr,
+        _ => return Err(bun_core::err!("InvalidSourceMap")),
     };
+    let sources_content = sources_content.get();
 
     let sources_paths = match json
         .get(b"sources")
         .ok_or_else(|| bun_core::err!("InvalidSourceMap"))?
         .data
-        .as_e_array()
     {
-        Some(arr) => arr,
-        None => return Err(bun_core::err!("InvalidSourceMap")),
+        bun_ast::ExprData::EArrayJSON(arr) => arr,
+        _ => return Err(bun_core::err!("InvalidSourceMap")),
     };
+    let sources_paths = sources_paths.get();
 
-    if sources_content.items.len_u32() != sources_paths.items.len_u32() {
+    if sources_content.items().len() != sources_paths.items().len() {
         return Err(bun_core::err!("InvalidSourceMap"));
     }
 
@@ -1000,12 +990,11 @@ pub fn parse_json(
 
     // `Vec<Box<[u8]>>` drops automatically on error.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
-        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items.len_u32() as usize);
-        for item in sources_paths.items.slice() {
-            let Some(s) = item.data.as_e_string() else {
+        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items().len());
+        for item in sources_paths.items() {
+            let Some(s) = item.as_str() else {
                 return Err(bun_core::err!("InvalidSourceMap"));
             };
-            let s = s.string(arena)?;
             v.push(Box::<[u8]>::from(s));
         }
         Some(v)
@@ -1015,7 +1004,7 @@ pub fn parse_json(
 
     let map: Option<Arc<ParsedSourceMap>> = if !source_only {
         let mut map_data = match mapping::parse(
-            mappings_str.data.as_e_string().unwrap().slice(arena),
+            mappings_vlq,
             None,
             i32::MAX,
             i32::MAX as usize,
@@ -1041,17 +1030,16 @@ pub fn parse_json(
         {
             if matches!(map_data.mappings.r#impl, mapping::ListValue::WithNames(_)) {
                 if let Some(names) = json.get(b"names") {
-                    if let Some(arr) = names.data.as_e_array() {
+                    if let bun_ast::ExprData::EArrayJSON(arr) = names.data {
+                        let arr = arr.get();
                         let mut names_list: Vec<bun_semver::String> =
-                            Vec::with_capacity(arr.items.len_u32() as usize);
+                            Vec::with_capacity(arr.items().len());
                         let mut names_buffer: Vec<u8> = Vec::new();
 
-                        for item in arr.items.slice() {
-                            let Some(estr) = item.data.as_e_string() else {
+                        for item in arr.items() {
+                            let Some(str) = item.as_str() else {
                                 return Err(bun_core::err!("InvalidSourceMap"));
                             };
-
-                            let str = estr.string(arena)?;
 
                             names_list.push(bun_semver::String::init_append_if_needed(
                                 &mut names_buffer,
@@ -1096,15 +1084,13 @@ pub fn parse_json(
     let content_slice: Option<Box<[u8]>> = match source_index {
         Some(idx)
             if !matches!(hint, ParseUrlResultHint::MappingsOnly)
-                && (idx as usize) < sources_content.items.len_u32() as usize =>
+                && (idx as usize) < sources_content.items().len() =>
         'content: {
-            let item = &sources_content.items.slice()[idx as usize];
-            let Some(estr) = item.data.as_e_string() else {
+            let item = &sources_content.items()[idx as usize];
+            let Some(str) = item.as_str() else {
                 break 'content None;
             };
 
-            // bun.handleOom(...) → panic on OOM, do not propagate
-            let str = estr.string(arena).expect("OOM");
             if str.is_empty() {
                 break 'content None;
             }

@@ -66,6 +66,10 @@ describe("Bun.file in serve routes", () => {
           "Last-Modified": "Wed, 21 Oct 2015 07:28:00 GMT",
         },
       }),
+      "/hello-blob.txt": Bun.file(join(tempDir, "hello.txt")),
+      "/with-etag.txt": new Response(Bun.file(join(tempDir, "hello.txt")), {
+        headers: { "ETag": '"custom-etag"' },
+      }),
       "/partial.txt": new Response(Bun.file(join(tempDir, "partial.txt"))),
       "/partial-slice.txt": new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 10)),
       "/fd-not-supported.txt": (() => {
@@ -392,6 +396,77 @@ describe("Bun.file in serve routes", () => {
 
       // Should not return 304 for POST
       expect(res2.status).not.toBe(304);
+    });
+
+    describe.each(["/hello.txt", "/hello-blob.txt"])("If-None-Match on %s", path => {
+      describe.each(["GET", "HEAD"])("%s", method => {
+        it("returns 304 for If-None-Match: *", async () => {
+          // RFC 9110 §13.1.2: `*` matches any current representation.
+          const res = await fetch(new URL(path, server.url), {
+            method,
+            headers: { "If-None-Match": "*" },
+          });
+          expect(res.status).toBe(304);
+          expect(await res.text()).toBe("");
+        });
+
+        it("ignores If-Modified-Since when If-None-Match is present and does not match", async () => {
+          // RFC 9110 §13.2.2 step 4: If-Modified-Since is only evaluated when
+          // If-None-Match is NOT present. A non-matching If-None-Match means
+          // the condition is true: serve the representation (200), even though
+          // If-Modified-Since alone would have produced 304.
+          const lastModified = (await fetch(new URL(path, server.url))).headers.get("Last-Modified");
+          expect(lastModified).not.toBeEmpty();
+
+          const res = await fetch(new URL(path, server.url), {
+            method,
+            headers: {
+              "If-None-Match": '"does-not-match"',
+              "If-Modified-Since": lastModified!,
+            },
+          });
+          expect(res.status).toBe(200);
+          if (method === "GET") expect(await res.text()).toBe("Hello, World!");
+        });
+
+        it("still 304s for If-None-Match: * when If-Modified-Since is also present", async () => {
+          const res = await fetch(new URL(path, server.url), {
+            method,
+            headers: {
+              "If-None-Match": "*",
+              "If-Modified-Since": "Tue, 01 Jan 1980 00:00:00 GMT",
+            },
+          });
+          expect(res.status).toBe(304);
+          expect(await res.text()).toBe("");
+        });
+      });
+    });
+
+    it("does not apply If-None-Match to POST requests on file routes", async () => {
+      const res = await fetch(new URL(`/hello-blob.txt`, server.url), {
+        method: "POST",
+        headers: { "If-None-Match": "*" },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("Hello, World!");
+    });
+
+    it("returns 304 when If-None-Match matches a user-set ETag on a file route", async () => {
+      const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+        headers: { "If-None-Match": '"custom-etag"' },
+      });
+      expect(res.status).toBe(304);
+      expect(res.headers.get("ETag")).toBe('"custom-etag"');
+      expect(await res.text()).toBe("");
+    });
+
+    it("returns 200 when If-None-Match does not match a user-set ETag on a file route", async () => {
+      const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+        headers: { "If-None-Match": '"other"' },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("Hello, World!");
     });
 
     it.todo("handles ETag", async () => {
@@ -801,7 +876,9 @@ const server = Bun.serve({
 // server drains the FIFO, so \`pumped\` tracks how far the server has read.
 // The chain is intentionally never awaited to completion: a correctly
 // backpressured server stops draining the pipe once the client stops reading.
-const CHUNK = Buffer.alloc(4 * 1024, 120);
+// 8 KiB stays under the 16 KiB macOS FIFO capacity while halving the number of
+// threadpool round-trips needed to fill the kernel socket buffers.
+const CHUNK = Buffer.alloc(8 * 1024, 120);
 let pumped = 0;
 let stopPumping = false;
 function pump(err, n) {
@@ -848,13 +925,16 @@ console.log(pumped > prefill ? "streaming" : "stuck at " + pumped + " (prefill "
 // must eventually report backpressure and the reader must park; the pump then
 // stops making progress. The extra readable events delivered between the first
 // backpressured write and the stall are what used to over-release the
-// in-flight-read reference. Bounded poll so a broken build fails instead of
-// hanging.
+// in-flight-read reference. "Stalled" means the pump advanced by less than one
+// CHUNK across 5 consecutive samples, i.e. body writes are already returning
+// backpressure; waiting for byte-for-byte stability would mean waiting for the
+// kernel socket buffers to fill completely. Bounded poll so a broken build
+// fails instead of hanging.
 let last = -1;
 let stable = 0;
 for (let i = 0; i < 500 && stable < 5; i++) {
   await Bun.sleep(10);
-  if (pumped === last) {
+  if (last >= 0 && pumped - last < CHUNK.length) {
     stable++;
   } else {
     stable = 0;

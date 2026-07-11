@@ -44,14 +44,14 @@ impl StringBuilder {
     }
 
     pub fn count16(&mut self, slice: &[u16]) {
-        self.cap += crate::string::strings::element_length_utf16_into_utf8(slice);
+        self.cap += crate::strings::element_length_utf16_into_utf8(slice);
     }
 
     pub fn count16_z(&mut self, slice: &[u16]) {
         // Callers pass &[u16] (WStr has no len method on its DST slice yet).
         // element_length_utf16_into_utf8 charges 3 bytes (U+FFFD) per unpaired
         // surrogate, which is exactly what append16's fallback writes.
-        self.cap += crate::string::strings::element_length_utf16_into_utf8(slice) + 1;
+        self.cap += crate::strings::element_length_utf16_into_utf8(slice) + 1;
     }
 
     pub fn append16(&mut self, slice: &[u16]) -> Option<&mut ZStr> {
@@ -80,7 +80,7 @@ impl StringBuilder {
             // bytes into the builder's reserved buffer (count16_z uses the same
             // replacement-aware length, so the reservation is exact) and drop
             // the temporary Vec normally. No `mem::forget`.
-            let out = crate::string::strings::to_utf8_alloc(slice);
+            let out = crate::strings::to_utf8_alloc(slice);
             let len = out.len();
             let avail = self.cap - self.len;
             if len + 1 > avail {

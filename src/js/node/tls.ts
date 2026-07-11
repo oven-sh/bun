@@ -803,7 +803,8 @@ function TLSSocket(socket?, options?) {
     // requestCert: undefined to the native layer and the client is never
     // asked for a certificate. An omitted rejectUnauthorized stays falsy on
     // this path (Node only defaults it to true in tls.Server).
-    if (options.requestCert) this._requestCert = options.requestCert;
+    const requestCert = options.requestCert;
+    if (requestCert) this._requestCert = requestCert;
     this._rejectUnauthorized = options.rejectUnauthorized;
   }
 

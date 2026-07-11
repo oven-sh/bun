@@ -4505,12 +4505,17 @@ pub fn js_upgrade_duplex_to_tls(
         default_data.ensure_still_alive();
     }
 
-    let reject_unauthorized = upgrade_reject_policy(
-        handlers.vm,
-        socket_config,
-        is_server,
-        owned_ctx.as_ref().map(|c| c.as_ptr()),
-    );
+    // Server-side duplex upgrades only come from node:tls (a standalone
+    // `new tls.TLSSocket(duplex, { isServer })`, which Node never auto-rejects)
+    // and node:http2, whose socketHandshake enforces rejectUnauthorized in JS.
+    // Native enforcement stays off for them, like the deferred fd path.
+    let reject_unauthorized = !is_server
+        && upgrade_reject_policy(
+            handlers.vm,
+            socket_config,
+            is_server,
+            owned_ctx.as_ref().map(|c| c.as_ptr()),
+        );
     // Client duplex upgrades come from net.ts, whose JS layer owns
     // server-identity policy; http2's server upgrade also lands here, where
     // the deferral is meaningless.

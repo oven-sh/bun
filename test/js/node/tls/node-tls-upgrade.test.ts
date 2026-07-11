@@ -3,6 +3,7 @@ import { once } from "events";
 import { tls as certs } from "harness";
 import net from "net";
 import tls from "tls";
+import { Duplex } from "node:stream";
 
 test("should be able to upgrade a paused socket and also have backpressure on it #15438", async () => {
   // enought to trigger backpressure
@@ -132,4 +133,60 @@ test("new TLSSocket({ isServer }) without requestCert does not request a client 
     client.end();
     rawServer.close();
   }
+});
+
+test("new TLSSocket(duplex, { isServer, requestCert, rejectUnauthorized }) requests a certificate and does not auto-reject", async () => {
+  // Generic-Duplex variant of the standalone server wrap (no native fd), so it
+  // exercises the upgradeDuplexToTLS path instead of the fd-backed upgrade.
+  const a: Duplex = new Duplex({
+    read() {},
+    write(chunk, _enc, cb) {
+      b.push(chunk);
+      cb();
+    },
+    final(cb) {
+      b.push(null);
+      cb();
+    },
+  });
+  const b: Duplex = new Duplex({
+    read() {},
+    write(chunk, _enc, cb) {
+      a.push(chunk);
+      cb();
+    },
+    final(cb) {
+      a.push(null);
+      cb();
+    },
+  });
+
+  const { promise: securePromise, resolve: resolveSecure, reject } = Promise.withResolvers<tls.PeerCertificate>();
+  const server = new tls.TLSSocket(a, {
+    isServer: true,
+    key: certs.key,
+    cert: certs.cert,
+    requestCert: true,
+    rejectUnauthorized: true,
+  });
+  server.on("secure", () => resolveSecure(server.getPeerCertificate()));
+  server.on("data", data => server.write(data));
+  server.on("error", reject);
+
+  const client = tls.connect({
+    socket: b,
+    key: certs.key,
+    cert: certs.cert,
+    rejectUnauthorized: false,
+  });
+  client.on("error", reject);
+  const echoPromise = new Promise<string>(resolveEcho => client.on("data", data => resolveEcho(data.toString())));
+  const peerCert = await securePromise;
+  expect(peerCert.subject).toMatchObject({ CN: "server-bun" });
+  // The cert is untrusted and rejectUnauthorized is set, but a standalone
+  // server-side TLSSocket never auto-rejects: Node applies that policy only
+  // in tls.createServer's connection listener.
+  client.write("ping");
+  expect(await echoPromise).toBe("ping");
+  client.end();
 });

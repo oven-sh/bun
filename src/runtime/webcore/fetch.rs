@@ -1593,19 +1593,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ));
     }
 
-    if !url.protocol.is_empty() {
-        if !(url.is_http() || url.is_https() || url.is_s3()) {
-            let err = global_this.to_type_error(
-                jsc::ErrorCode::INVALID_ARG_VALUE,
-                format_args!("protocol must be http:, https: or s3:"),
-            );
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_this,
-                    err,
-                ),
-            );
-        }
+    if !(url.is_http() || url.is_https() || url.is_s3()) {
+        let err = global_this.to_type_error(
+            jsc::ErrorCode::INVALID_ARG_VALUE,
+            format_args!("protocol must be http:, https: or s3:"),
+        );
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
     }
 
     if !ALLOW_GET_BODY && !method.has_request_body() && body.has_body() && !upgraded_connection {

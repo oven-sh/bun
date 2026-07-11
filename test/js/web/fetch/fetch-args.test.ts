@@ -16,6 +16,51 @@ afterAll(() => {
   server!.stop(true);
 });
 
+describe("non-HTTP(S) URL scheme rejection", () => {
+  // WHATWG URL parses `localhost:3000/x` as scheme "localhost:" with an empty
+  // host. fetch() must reject these without any network activity rather than
+  // treating the scheme name as a hostname.
+  test.each(["about:blank", "javascript:alert(1)", "chrome:flags", "foo:bar"])(
+    "fetch(%j) rejects with TypeError",
+    async input => {
+      const prevCount = requestCount;
+      const err = await fetch(input).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(TypeError);
+      expect(requestCount).toBe(prevCount);
+    },
+  );
+
+  test("fetch('localhost:<port>/path') does not reach the network", async () => {
+    const prevCount = requestCount;
+    const input = `localhost:${server!.port}/api/x?q=1`;
+    expect(new URL(input).host).toBe("");
+    const err = await fetch(input).then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(TypeError);
+    expect(requestCount).toBe(prevCount);
+  });
+
+  test("fetch(new Request('about:blank')) rejects with TypeError", async () => {
+    const err = await fetch(new Request("about:blank")).then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(TypeError);
+  });
+
+  test("http:// and data: still work", async () => {
+    const res = await fetch(server!.url);
+    expect(res.status).toBe(200);
+    const dataRes = await fetch("data:text/plain,hello");
+    expect(await dataRes.text()).toBe("hello");
+  });
+});
+
 test("fetch(request subclass with headers)", async () => {
   class MyRequest extends Request {
     constructor(input: RequestInfo, init?: RequestInit) {

@@ -12,11 +12,34 @@
 // the connection path. It must surface as ERR_POSTGRES_INVALID_MESSAGE_LENGTH
 // on that connection rather than being trusted.
 import { SQL } from "bun";
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { listeningServer, pgAuthenticationOk, pgCString, pgRaw, pgReadyForQuery } from "./wire-frames";
 
 // connectionTimeout (seconds) bounds the connect-retry budget; keep it short
 // in tests that expect the failure to surface.
+
+// One mock server for the whole file. Each test sets `current` immediately
+// before connecting, and the server latches it per connection. A per-test
+// server here used to flake on Windows CI with ERR_POSTGRES_CONNECTION_REFUSED:
+// bun disables SYN retransmission for loopback connects
+// (packages/bun-usockets/src/bsd.c, SIO_TCP_INITIAL_RTO), so a
+// listen()+connect() churn after a port-heavy test in the same shard can lose
+// the single SYN. A single long-lived listener keeps the port stable.
+let current!: { atStartup: Buffer[]; atQuery?: Buffer[] };
+const { port, server } = await listeningServer(socket => {
+  const { atStartup, atQuery } = current;
+  let startup = true;
+  socket.on("data", data => {
+    if (startup) {
+      startup = false;
+      socket.write(Buffer.concat([pgAuthenticationOk(), ...atStartup]));
+      return;
+    }
+    if (atQuery && data[0] === 0x51 /* 'Q' */) socket.write(Buffer.concat(atQuery));
+  });
+  socket.on("error", () => {});
+});
+afterAll(() => new Promise<void>(r => server.close(() => r())));
 
 /**
  * Reply to the startup packet with AuthenticationOk followed by `frames`, so
@@ -24,10 +47,7 @@ import { listeningServer, pgAuthenticationOk, pgCString, pgRaw, pgReadyForQuery 
  * connect()'s rejection.
  */
 async function connectError(frames: Buffer[]): Promise<any> {
-  const { port, server } = await listeningServer(socket => {
-    socket.once("data", () => socket.write(Buffer.concat([pgAuthenticationOk(), ...frames])));
-    socket.on("error", () => {});
-  });
+  current = { atStartup: frames };
   const db = new SQL({ url: `postgres://postgres@127.0.0.1:${port}/postgres`, max: 1, connectionTimeout: 1 });
   try {
     await db.connect();
@@ -36,7 +56,6 @@ async function connectError(frames: Buffer[]): Promise<any> {
     return err;
   } finally {
     await db.close({ timeout: 0 });
-    await new Promise<void>(r => server.close(() => r()));
   }
 }
 
@@ -46,19 +65,7 @@ async function connectError(frames: Buffer[]): Promise<any> {
  * rejection.
  */
 async function queryError(frames: Buffer[]): Promise<any> {
-  const { port, server } = await listeningServer(socket => {
-    let startup = true;
-    socket.on("data", data => {
-      if (startup) {
-        startup = false;
-        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
-        return;
-      }
-      if (data[0] !== 0x51 /* 'Q' */) return;
-      socket.write(Buffer.concat(frames));
-    });
-    socket.on("error", () => {});
-  });
+  current = { atStartup: [pgReadyForQuery()], atQuery: frames };
   const db = new SQL({ url: `postgres://postgres@127.0.0.1:${port}/postgres`, max: 1, connectionTimeout: 1 });
   try {
     await db`select x`.simple();
@@ -67,7 +74,6 @@ async function queryError(frames: Buffer[]): Promise<any> {
     return err;
   } finally {
     await db.close({ timeout: 0 });
-    await new Promise<void>(r => server.close(() => r()));
   }
 }
 
@@ -111,17 +117,11 @@ test("postgres: CommandComplete declaring length 3 fails the in-flight query", a
 // Boundary: a length of exactly 4 (an empty NoticeResponse) is the smallest
 // valid value and must still be accepted.
 test("postgres: an empty NoticeResponse (length exactly 4) is accepted", async () => {
-  const { port, server } = await listeningServer(socket => {
-    socket.once("data", () =>
-      socket.write(Buffer.concat([pgAuthenticationOk(), pgRaw("N", Buffer.alloc(0)), pgReadyForQuery()])),
-    );
-    socket.on("error", () => {});
-  });
+  current = { atStartup: [pgRaw("N", Buffer.alloc(0)), pgReadyForQuery()] };
   const db = new SQL({ url: `postgres://postgres@127.0.0.1:${port}/postgres`, max: 1 });
   try {
     await expect(db.connect()).resolves.toBeDefined();
   } finally {
     await db.close({ timeout: 0 });
-    await new Promise<void>(r => server.close(() => r()));
   }
 });

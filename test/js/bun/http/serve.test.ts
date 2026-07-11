@@ -14,6 +14,7 @@ import {
   tls,
   tmpdirSync,
 } from "harness";
+import { connect } from "net";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
@@ -3512,4 +3513,31 @@ it("survives aborted uploads while responding with a tee()d request-body branch"
     exitCode: 0,
     signalCode: null,
   });
+});
+
+// The node:http compat parser tolerates empty lines (and a bare CR/LF) before the
+// request-line like llhttp's s_start state. That leniency must stay behind the
+// node-http flag: Bun.serve still rejects a request that does not begin with the
+// request-line.
+it.each([
+  ["CRLF", "\r\n"],
+  ["bare LF", "\n"],
+  ["bare CR", "\r"],
+])("Bun.serve rejects a leading %s before the request-line", async (_label, prefix) => {
+  using server = serve({ port: 0, fetch: () => new Response("ok") });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const socket = connect(server.port, "127.0.0.1", () => {
+    socket.write(`${prefix}GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+  });
+  let received = "";
+  socket.on("data", chunk => {
+    received += chunk;
+  });
+  socket.on("error", reject);
+  socket.on("close", () => resolve(received));
+  const statusLine = (await promise).split("\r\n")[0];
+  socket.destroy();
+
+  expect(statusLine).toBe("HTTP/1.1 400 Bad Request");
 });

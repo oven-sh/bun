@@ -315,6 +315,14 @@ describe("File prototype chain", () => {
     expect(Object.getPrototypeOf(req)).toBe(Blob.prototype);
     expect(req instanceof File).toBe(false);
     expect(await req.text()).toBe("Hello");
+
+    // Array body-init (Bun-specific extension) routes through the MOVE=true
+    // struct-literal in from_js_without_defer_gc.
+    const arr = await new Response([file]).blob();
+    expect(arr[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.getPrototypeOf(arr)).toBe(Blob.prototype);
+    expect(arr instanceof File).toBe(false);
+    expect(await arr.text()).toBe("Hello");
   });
 
   test("new Blob([file]) and resolveObjectURL(createObjectURL(file)) return plain Blobs", async () => {

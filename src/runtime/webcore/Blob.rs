@@ -3390,7 +3390,7 @@ impl BlobExt for Blob {
                                         blob.content_type_was_set.get(),
                                     ),
                                     charset: Cell::new(blob.charset.get()),
-                                    is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    is_jsdom_file: Cell::new(false),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),

@@ -1125,6 +1125,24 @@ describe("sparse arrays", () => {
         reservedHigh: nameInPayload(4294967294),
       };
 
+      // StructuredSerializeInternal walks [[OwnPropertyKeys]]: every array index ascending, then
+      // string keys. Indices 4294967293/4294967294 go out as named properties, but their getters
+      // still fire before any string key's. Only observable through accessors on the input.
+      {
+        const input = [];
+        const order = [];
+        const read = (name, value) => ({ get: () => (order.push(name), value), enumerable: true, configurable: true });
+        Object.defineProperty(input, 0, read("i0", "first"));
+        Object.defineProperty(input, 4294967293, read("iReserved", "reserved"));
+        Object.defineProperty(input, "tag", read("tag", "named"));
+        const cloned = structuredClone(input);
+        results.readOrder = {
+          order,
+          keys: Object.keys(cloned),
+          values: [cloned[0], cloned[4294967293], cloned.tag],
+        };
+      }
+
       console.log(JSON.stringify(results));
     `;
 
@@ -1176,6 +1194,11 @@ describe("sparse arrays", () => {
           innerLength: 4294967295,
         },
         wireFormat: { control: false, reservedLow: true, reservedHigh: true },
+        readOrder: {
+          order: ["i0", "iReserved", "tag"],
+          keys: ["0", "4294967293", "tag"],
+          values: ["first", "reserved", "named"],
+        },
       },
       stderr: "",
       exitCode: 0,

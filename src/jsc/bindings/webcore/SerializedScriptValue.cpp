@@ -2798,10 +2798,10 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 arrayEndStack.removeLast();
 
                 propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
-                array->getOwnNonIndexPropertyNames(m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
-                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
                 for (unsigned i = cursor; i < keys.size(); ++i)
                     propertyStack.last().add(keys[i]);
+                array->getOwnNonIndexPropertyNames(m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
+                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
                 if (propertyStack.last().size()) {
                     write(NonIndexPropertiesTag);
                     indexStack.append(0);

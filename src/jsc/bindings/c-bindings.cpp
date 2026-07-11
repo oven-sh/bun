@@ -497,15 +497,10 @@ extern "C" void Bun__onExit();
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
-// Startup snapshot of each stdio fd's F_GETFL flags + identity. O_NONBLOCK is
-// per open file *description* (shared with parent shell / pipeline siblings);
+// Startup snapshot of each stdio fd's F_GETFL (-1 = not captured). O_NONBLOCK
+// is per open file *description* (shared with parent shell/pipeline siblings);
 // leaving it set breaks later blocking writers. See Node.js ResetStdio().
-static struct {
-    int flags;
-    dev_t dev;
-    ino_t ino;
-    bool valid;
-} stdio_flags_to_restore[3] = {};
+static int stdio_flags_to_restore[3] = { -1, -1, -1 };
 // Whether Bun itself has modified the termios of each stdio fd during this
 // process's lifetime (e.g. via process.stdin.setRawMode). Used to decide
 // whether the exit-time termios restore should fire when Bun is acting as a
@@ -539,16 +534,9 @@ extern "C" void bun_restore_stdio()
     // the state the user expects back.
     const bool pipeline_producer = bun_stdio_tty[1] == 0;
 
-    // Restore the O_NONBLOCK bit to its startup value. Skip fds that now refer
-    // to a different file than at startup. fcntl/fstat are async-signal-safe.
+    // Restore the O_NONBLOCK bit to its startup value. fcntl is async-signal-safe.
     for (int32_t fd = 0; fd < 3; fd++) {
-        if (!stdio_flags_to_restore[fd].valid)
-            continue;
-
-        struct stat st;
-        if (fstat(fd, &st) != 0)
-            continue;
-        if (st.st_dev != stdio_flags_to_restore[fd].dev || st.st_ino != stdio_flags_to_restore[fd].ino)
+        if (stdio_flags_to_restore[fd] == -1)
             continue;
 
         int cur;
@@ -558,7 +546,7 @@ extern "C" void bun_restore_stdio()
         if (cur == -1)
             continue;
 
-        const int want_nonblock = stdio_flags_to_restore[fd].flags & O_NONBLOCK;
+        const int want_nonblock = stdio_flags_to_restore[fd] & O_NONBLOCK;
         if ((cur & O_NONBLOCK) == want_nonblock)
             continue;
 
@@ -685,21 +673,11 @@ extern "C" void bun_initialize_process()
             }
         }
 
-        // Snapshot F_GETFL and file identity so bun_restore_stdio() can undo
-        // O_NONBLOCK we (or user code) set on the shared open file description.
-        struct stat st;
-        if (fstat(fd, &st) == 0) {
-            int flags;
-            do
-                flags = fcntl(fd, F_GETFL);
-            while (flags == -1 && errno == EINTR);
-            if (flags != -1) {
-                stdio_flags_to_restore[fd].flags = flags;
-                stdio_flags_to_restore[fd].dev = st.st_dev;
-                stdio_flags_to_restore[fd].ino = st.st_ino;
-                stdio_flags_to_restore[fd].valid = true;
-            }
-        }
+        // Snapshot F_GETFL so bun_restore_stdio() can undo O_NONBLOCK we (or
+        // user code) set on the shared open file description.
+        do
+            stdio_flags_to_restore[fd] = fcntl(fd, F_GETFL);
+        while (stdio_flags_to_restore[fd] == -1 && errno == EINTR);
     }
 
     ASSERT(devNullFd_ == -1 || devNullFd_ > 2);
@@ -707,7 +685,7 @@ extern "C" void bun_initialize_process()
         close(devNullFd_);
     }
 
-    const bool anyFlagsSnapshotted = stdio_flags_to_restore[0].valid || stdio_flags_to_restore[1].valid || stdio_flags_to_restore[2].valid;
+    const bool anyFlagsSnapshotted = stdio_flags_to_restore[0] != -1 || stdio_flags_to_restore[1] != -1 || stdio_flags_to_restore[2] != -1;
 
     // Restore stdio state on signal death. The O_NONBLOCK restore matters even
     // with no TTY (fully-piped / headless), so install whenever either kind of

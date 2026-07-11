@@ -964,7 +964,9 @@ describe("conditional requests after a metadata write", () => {
         _id: "fresh",
         name: "fresh",
         versions: { "1.0.0": { name: "fresh", version: "1.0.0" } },
-        _attachments: { "fresh-1.0.0.tgz": { content_type: "application/octet-stream", data: tgz, length: tgz.length } },
+        _attachments: {
+          "fresh-1.0.0.tgz": { content_type: "application/octet-stream", data: tgz, length: tgz.length },
+        },
       }),
     });
     expect(res.status).toBe(201);

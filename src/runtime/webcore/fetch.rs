@@ -1203,6 +1203,20 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
+    // Fetch spec step 11: if the signal is already aborted, return an
+    // already-rejected promise on the JS thread instead of queueing to the
+    // HTTP thread and discovering the abort on the round-trip.
+    if let Some(sig) = signal.0 {
+        if let Some(reason) = bun_ptr::BackRef::from(sig).reason_if_aborted(global_this) {
+            return Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global_this,
+                    reason.to_js(global_this),
+                ),
+            );
+        }
+    }
+
     // We do this 2nd to last instead of last so that if it's a FormData
     // object, we can still insert the boundary.
     //

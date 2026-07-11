@@ -36,11 +36,9 @@ const packageDefinition = protoLoader.loadSync(join(import.meta.dir, "fixtures/t
 type Server = { address: string; kill: () => Promise<void> };
 
 const cargoBin = Bun.which("cargo");
-// `Bun.which` finds the rustup shim whenever /opt/rust/bin (or ~/.cargo/bin) is
-// in PATH, but the shim still fails when the agent user has no default
-// toolchain (macOS CI runs the agent with PATH set and RUSTUP_HOME unset on
-// some boxes). Probe with the env and outside-the-repo cwd that `cargo run`
-// below will see so we skip instead of timing out for 150s.
+// `Bun.which` can find a rustup shim that has no usable default toolchain.
+// Probe with the env and outside-the-repo cwd `cargo run` will see below so
+// this suite skips instead of timing out for 150s on such agents.
 const cargoEnv = {
   PATH: process.env.PATH,
   CARGO_HOME: process.env.CARGO_HOME,
@@ -114,14 +112,16 @@ async function startServer(): Promise<Server> {
         rmSync(tmpDir, { recursive: true, force: true });
       } catch {}
     }
+    const marker = "Listening on ";
     let text = "";
     while (true) {
       const { done, value } = await reader.read();
       if (value) text += decoder.decode(value, { stream: true });
-      if (text.includes("Listening on")) {
-        const [_, address] = text.split("Listening on ");
+      const markerIndex = text.indexOf(marker);
+      const lineEnd = markerIndex < 0 ? -1 : text.indexOf("\n", markerIndex + marker.length);
+      if (lineEnd >= 0) {
         return {
-          address: address?.trim(),
+          address: text.slice(markerIndex + marker.length, lineEnd).trim(),
           kill: killServer,
         };
       }
@@ -143,8 +143,8 @@ describe.skipIf(!cargoWorks || !releases[release])("test tonic server", () => {
     server = await startServer();
   });
 
-  afterAll(() => {
-    server?.kill();
+  afterAll(async () => {
+    await server?.kill();
   });
 
   test("flow control should work in both directions", async () => {

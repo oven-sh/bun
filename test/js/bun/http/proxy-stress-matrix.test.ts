@@ -43,6 +43,14 @@ afterAll(async () => {
   restoreProxyEnv(savedEnv);
 });
 
+// Find this test's entry in the shared proxy log: the origin port is unique
+// while its `await using` scope holds it, so the single record in
+// `connections.slice(before)` whose target is that exact port is ours.
+function ownConnections(proxy: AdversarialProxy, before: number, originPort: number) {
+  const p = `:${originPort}`;
+  return proxy.connections.slice(before).filter(c => c.target.endsWith(p) || c.target.includes(p + "/"));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Response-side matrix: every way the origin can frame/encode a body, through
 // every proxy/origin TLS combination.
@@ -75,6 +83,7 @@ describe("response matrix", () => {
         encoding,
       });
       const proxy = sharedProxy(proxyTls);
+      const before = proxy.connections.length;
 
       const res = await fetch(origin.url, {
         proxy: proxy.url,
@@ -88,8 +97,16 @@ describe("response matrix", () => {
         head: payload.slice(0, 8),
         tail: payload.slice(-8),
       });
-      // CONNECT vs absolute-form selection is asserted per-connection in the
-      // "redirect through proxy" block below, which uses a dedicated proxy.
+
+      // The request actually went through the proxy, with the right envelope.
+      const mine = ownConnections(proxy, before, origin.port);
+      expect(mine.length).toBe(1);
+      if (originTls) {
+        expect(mine[0].method).toBe("CONNECT");
+      } else {
+        expect(mine[0].method).toBe("GET");
+        expect(mine[0].target).toStartWith("http://");
+      }
     });
   }
 });

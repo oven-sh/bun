@@ -6270,30 +6270,6 @@ pub mod RTLD {
     pub const LOCAL: i32 = 0;
 }
 
-/// OHOS: sign a binary by path using the in-process ohos_sign crate.
-/// Idempotent: skips without I/O if the file already has a valid `.codesign` section.
-#[cfg(target_env = "ohos")]
-pub fn ohos_sign_binary(path: &ZStr) {
-    let path_str = core::str::from_utf8(path.as_bytes()).unwrap_or("");
-    let p = std::path::Path::new(path_str);
-    // Use `with_strip` so compiled binaries that embed the bun runtime
-    // (which already has a .codesign) get re-signed correctly.
-    // Note: no extension filter — this is called for `bun build --compile`
-    // output which has an arbitrary name (no .so/.node extension).
-    let _ = ohos_sign::sign_selfsign_inplace_with_strip(p);
-}
-
-/// OHOS: sign a binary by byte path (convenience wrapper).
-///
-/// # Safety
-/// `path` must be NUL-terminated (last byte must be `\0`). All current callers
-/// pass `path.as_bytes_with_nul()` which satisfies this precondition.
-#[cfg(target_env = "ohos")]
-pub fn ohos_sign_binary_bytes(path: &[u8]) {
-    // SAFETY: caller guarantees NUL-termination (see doc comment above).
-    let zstr = unsafe { ZStr::from_raw(path.as_ptr(), path.len()) };
-    ohos_sign_binary(zstr);
-}
 
 /// C-compatible entry point for `dlopen` — called from C++ as `Bun__dlopen`.
 /// OHOS: if dlopen fails with EPERM (unsigned .node/.so), sign and retry.

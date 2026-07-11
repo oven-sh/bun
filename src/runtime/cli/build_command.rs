@@ -1006,7 +1006,8 @@ impl BuildCommand {
                         let mut nul_path = outfile_path.clone();
                         nul_path.push(0);
                         let zstr = ZStr::from_slice_with_nul(&nul_path);
-                        bun_sys::ohos_sign_binary(zstr);
+                        let path_str = core::str::from_utf8(zstr.as_bytes()).unwrap_or("");
+                        let _ = ohos_sign::sign_selfsign_inplace_with_strip(std::path::Path::new(path_str));
                         let _ = std::process::Command::new("chmod")
                             .arg("755")
                             .arg(std::str::from_utf8(&outfile_path).unwrap_or(""))

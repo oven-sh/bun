@@ -1427,9 +1427,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if string_literal_text == b"ssr" {
                                 path.import_tag = bun_ast::ImportRecordTag::BakeResolveToSsrGraph;
                             } else {
-                                let r = p.lexer.range();
                                 p.lexer.add_range_error(
-                                    r,
+                                    value_range,
                                     format_args!("'bunBakeGraph' can only be set to 'ssr'"),
                                 )?;
                             }

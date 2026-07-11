@@ -484,6 +484,7 @@ pub(crate) unsafe fn __bun_resolver_init_package_manager(
     )
     .map_err(|e| match e {
         crate::Error::Sys(errno) => errno,
+        crate::Error::Resolver(bun_resolver::Error::Sys(errno)) => errno,
         other => {
             log_ref.add_zig_error_with_note(
                 other.name(),

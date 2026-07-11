@@ -1,14 +1,6 @@
-// Postgres ErrorResponse/NoticeResponse field strings are allocated via
-// bun_core::String::clone_utf8 (refcount 1) and stored in FieldMessage enum
-// variants. bun_core::String is Copy with no Drop, so without an explicit
-// Drop impl on FieldMessage the +1 ref is never released and every server
-// error or NOTICE leaks its severity/code/message/detail/... strings for the
-// life of the process.
-//
-// Uses a minimal mock Postgres server (no Docker). For each simple query the
-// server replies with a NoticeResponse and an ErrorResponse that each carry a
-// large message field; the client loops, catches the errors, forces GC, and
-// checks RSS did not retain the field-string bytes.
+// FieldMessage held +1 WTFStringImpl refs (clone_utf8) in a Copy bun_core::String
+// with no Drop, leaking every Postgres ErrorResponse/NoticeResponse field string.
+// Mock server sends large-field Notice+Error per query; RSS growth must stay bounded.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
@@ -103,17 +95,25 @@ test("Postgres: ErrorResponse/NoticeResponse field strings are not leaked", asyn
         connectionTimeout: 5,
       });
 
-      // Warm up: first query allocates connection buffers, JIT, etc.
-      try { await sql\`select 1\`.simple(); } catch {}
+      // Warm up (allocates connection buffers, JIT) and capture the error shape
+      // so the RSS check can't pass vacuously if the decoder stops rejecting.
+      let warmupErrno, warmupCode;
+      try { await sql\`select 1\`.simple(); } catch (e) {
+        warmupErrno = e?.errno;
+        warmupCode = e?.code;
+      }
 
       // 6 fields x 256 KiB x 300 iterations ~= 450 MiB of WTFStringImpl payload.
       const ITERATIONS = 300;
+      let errorCount = 0;
 
       Bun.gc(true);
       const rssBefore = process.memoryUsage.rss();
 
       for (let i = 0; i < ITERATIONS; i++) {
-        try { await sql\`select 1\`.simple(); } catch {}
+        try { await sql\`select 1\`.simple(); } catch (e) {
+          if (e?.errno === "42P01") errorCount++;
+        }
         if ((i & 15) === 15) Bun.gc(true);
       }
 
@@ -127,7 +127,7 @@ test("Postgres: ErrorResponse/NoticeResponse field strings are not leaked", asyn
 
       const rssAfter = process.memoryUsage.rss();
       const deltaMiB = (rssAfter - rssBefore) / 1024 / 1024;
-      console.log(JSON.stringify({ rssBefore, rssAfter, deltaMiB }));
+      console.log(JSON.stringify({ warmupErrno, warmupCode, errorCount, ITERATIONS, rssBefore, rssAfter, deltaMiB }));
     `,
   });
 
@@ -142,17 +142,21 @@ test("Postgres: ErrorResponse/NoticeResponse field strings are not leaked", asyn
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  let deltaMiB: number;
+  let result: { warmupErrno: unknown; warmupCode: unknown; errorCount: number; ITERATIONS: number; deltaMiB: number };
   try {
-    ({ deltaMiB } = JSON.parse(stdout.trim()));
+    result = JSON.parse(stdout.trim());
   } catch {
     throw new Error(`fixture did not emit JSON\nexitCode: ${exitCode}\nstdout: ${stdout}\nstderr: ${stderr}`);
   }
-  // Without the fix every FieldMessage string is retained, so RSS grows by
-  // roughly the full ~450 MiB of payload. With the fix the strings are
-  // released when each ErrorResponse/NoticeResponse drops and growth stays
-  // bounded by connection buffers plus allocator slack. ASAN quarantine
-  // retains freed allocations so the threshold is wider there.
-  expect(deltaMiB).toBeLessThan(isASAN ? 250 : 60);
+  // Every query must have rejected with the server-sent 42P01 ErrorResponse;
+  // otherwise the RSS check below is meaningless.
+  expect({ errno: result.warmupErrno, code: result.warmupCode, errorCount: result.errorCount }).toEqual({
+    errno: "42P01",
+    code: "ERR_POSTGRES_SERVER_ERROR",
+    errorCount: result.ITERATIONS,
+  });
+  // Without the fix RSS grows by ~450 MiB of retained field strings. ASAN
+  // quarantine holds freed allocations so the threshold is wider there.
+  expect(result.deltaMiB).toBeLessThan(isASAN ? 250 : 60);
   expect(exitCode).toBe(0);
 }, 120_000);

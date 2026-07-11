@@ -151,9 +151,25 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(unix)]
         {
-            if let Some(stdout) = stdout_fd {
-                let _ = sys::set_nonblocking(stdout);
-                handle.stdout.start(stdout, true)?;
+            // Mark the BufferedReader as nonblocking + socket so it uses
+            // the same read strategy as Bun.spawn (SubprocessPipeReader).
+            // Required on OHOS (blocking pipe strategy causes infinite loop)
+            // and safe on other Unix platforms.
+            let pipe_setup =
+                |reader: &mut BufferedReader, fd: sys::Fd| -> crate::Result<()> {
+                    let _ = sys::set_nonblocking(fd);
+                    reader.start(fd, true)?;
+                    reader.flags.insert(
+                        PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE,
+                    );
+                    if let Some(poll) = reader.handle.get_poll() {
+                        poll.set_flag(FilePollFlag::Socket);
+                        poll.set_flag(FilePollFlag::Nonblocking);
+                    }
+                    Ok(())
+                };
+            if let Some(fd) = stdout_fd {
+                pipe_setup(&mut handle.stdout, fd)?;
             }
             if let Some(stderr) = stderr_fd {
                 let _ = sys::set_nonblocking(stderr);

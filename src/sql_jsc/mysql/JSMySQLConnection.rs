@@ -553,7 +553,13 @@ impl JSMySQLConnection {
         // the freshly-boxed allocation as a lifetime-erased `&Self` (R-2: every
         // field is interior-mutable, so shared access suffices for the writes
         // below); we hold the only reference.
-        let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
+        let owner = core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null");
+        // SAFETY: freshly allocated, uniquely owned, no other borrows exist.
+        unsafe {
+            (*(&raw mut (*ptr).connection).cast::<my_sql_connection::MySQLConnection>()).owner =
+                owner;
+        }
+        let this = ParentRef::from(owner);
 
         {
             let hostname = args.hostname_str.to_utf8();

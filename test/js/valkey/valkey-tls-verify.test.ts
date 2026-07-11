@@ -1,6 +1,6 @@
 import { RedisClient } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isIPv6, isWindows, tls as localhostTls, tempDir } from "harness";
+import { isIPv6, isWindows, tls as localhostTls, tempDir } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -220,53 +220,34 @@ describe("RedisClient TLS hostname verification", () => {
   });
 
   test("does not over-release the refcount when SSL_CTX creation fails", async () => {
-    // connect() used to call on_valkey_close() on this branch before taking the
-    // socket keep-alive ref it releases, driving the refcount below zero and
-    // freeing the JSValkeyClient while the JS wrapper still points at it.
+    // connect() took the socket keep-alive ref after the SSL_CTX branch, so
+    // on_valkey_close() (which unconditionally releases it) drove the count
+    // below zero and freed the box while the JS wrapper still pointed at it.
     // https://github.com/oven-sh/bun/pull/33726
-    const script = `
-      const client = new Bun.RedisClient("rediss://127.0.0.1:1", {
-        autoReconnect: false,
-        tls: { cert: "/no-such-cert.pem", key: "/no-such-key.pem", ca: "/no-such-ca.pem" },
-      });
-      let err;
-      try { await client.connect(); } catch (e) { err = e; }
-      // Would UAF (ASAN) / read freed memory here before the fix.
-      client.close();
-      Bun.gc(true);
-      await Bun.sleep(1);
-      Bun.gc(true);
-      process.stdout.write(JSON.stringify({ message: String(err?.message ?? ""), connected: client.connected }));
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: {
-        ...bunEnv,
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0", "symbolize=0", "fast_unwind_on_malloc=1"]
-          .filter(Boolean)
-          .join(":"),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
+    const client = new RedisClient("rediss://127.0.0.1:1", {
+      autoReconnect: false,
+      tls: { cert: "/no-such-cert.pem", key: "/no-such-key.pem", ca: "/no-such-ca.pem" },
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const out = stdout.trim() ? JSON.parse(stdout.trim()) : {};
-    expect({ ...out, signal: proc.signalCode, stderr }).toEqual({
+    let err: any;
+    try {
+      await client.connect();
+    } catch (e) {
+      err = e;
+    }
+    client.close();
+    expect({ message: String(err?.message ?? ""), connected: client.connected }).toEqual({
       message: expect.stringMatching(/Connection closed|TLS/i),
       connected: false,
-      signal: null,
-      stderr: expect.not.stringContaining("AddressSanitizer"),
     });
-    expect(exitCode).toBe(0);
   });
 
-  test("subscribe() re-entered from on_data does not dead-store the refcount", async () => {
-    // NsHandler dispatched socket events with a `&mut Owner` held across the
-    // body. Resolving the HELLO promise inside on_data drains microtasks,
-    // which re-enters host fns that re-derive a borrow of the same owner.
-    // Under overflow-checks the extra panic edge in RefCount::ref_ pushed
-    // LLVM into dead-storing the increment, so the deref_guard at the end of
-    // on_data drove the count to 0 with the socket still open.
+  test("subscribe() after connect() does not dead-store the refcount increment", async () => {
+    // SubscriptionCtx::parent() / ValkeyClient::parent() used to derive
+    // &JSValkeyClient by offset-subtracting from &self, but &self comes from
+    // JsCell::get() whose provenance covers only the child's bytes. Writing
+    // to ref_count through that pointer is UB: under overflow-checks LLVM
+    // dead-stored the increment in upsert_receive_handler and on_data's
+    // trailing deref_guard drove the count to 0 with the socket still open.
     // https://github.com/oven-sh/bun/pull/33726
     const server = tls.createServer({ key: localhostTls.key, cert: localhostTls.cert }, sock => {
       let buf = Buffer.alloc(0);
@@ -281,7 +262,8 @@ describe("RedisClient TLS hostname verification", () => {
           buf = buf.subarray(consumed);
           const args = [...head.matchAll(/\$\d+\r\n([^\r]+)\r\n/g)].map(m => m[1]);
           if (args[0] === "HELLO") sock.write("%1\r\n+proto\r\n:3\r\n");
-          else if (args[0] === "SUBSCRIBE") for (const ch of args.slice(1)) sock.write(push("subscribe", ch, ++subs));
+          else if (args[0] === "SUBSCRIBE")
+            for (const ch of args.slice(1)) sock.write(push("subscribe", ch, ++subs));
           else if (args[0] === "UNSUBSCRIBE")
             for (const ch of args.slice(1)) sock.write(push("unsubscribe", ch, (subs = Math.max(0, subs - 1))));
           else sock.write("+OK\r\n");

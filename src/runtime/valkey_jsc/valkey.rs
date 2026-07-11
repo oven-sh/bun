@@ -290,6 +290,12 @@ pub struct ValkeyClient {
     pub auto_flusher: AutoFlusher,
 
     pub vm: &'static VirtualMachine,
+
+    /// Back-pointer to the enclosing `JSValkeyClient`, stamped by
+    /// `JSValkeyClient::new` after the box address is known. `parent()` reads
+    /// this instead of offset-subtracting from `&self`, whose provenance is
+    /// narrowed to the `JsCell`'s interior and makes sibling-field writes UB.
+    pub(crate) owner: core::ptr::NonNull<JSValkeyClient>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -341,13 +347,17 @@ fn reader_pos(reader: &protocol::ValkeyReader<'_>) -> usize {
     reader.pos()
 }
 
-// SAFETY: `ValkeyClient` lives at `JSValkeyClient.client` (intrusive embed via
-// `container_of`). `JsCell<ValkeyClient>` is `#[repr(transparent)]`, so the
-// field offset is unchanged. R-2: shared `&` only — every `JSValkeyClient`
-// method this reaches is `&self`.
-bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent; }
-
 impl ValkeyClient {
+    /// Recover the enclosing `JSValkeyClient` from the stored back-pointer.
+    /// NOT derived from `&self`: see the `owner` field doc.
+    #[inline]
+    pub(crate) fn parent(&self) -> &JSValkeyClient {
+        // SAFETY: `owner` is stamped in `JSValkeyClient::new` with the box's
+        // original `*mut JSValkeyClient` (full provenance) and the box
+        // outlives every `&ValkeyClient`.
+        unsafe { self.owner.as_ref() }
+    }
+
     /// Clean up resources used by the Valkey client
     // Cannot be `Drop` — takes a JSGlobalObject param and has JS side effects.
     pub fn shutdown(&mut self, global_object_or_finalizing: Option<&JSGlobalObject>) {

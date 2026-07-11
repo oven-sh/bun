@@ -297,10 +297,7 @@ impl<T: RefCounted> RefCount<T> {
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
-        // wrapping: keep codegen identical under overflow-checks (the panic
-        // branch here perturbs inlining enough to miscompile under noalias
-        // UB in re-entrant callers); `debug.assert_valid()` catches misuse.
-        count.raw_count.set(count.raw_count.get().wrapping_add(1));
+        count.raw_count.set(count.raw_count.get() + 1);
     }
 
     /// # Safety
@@ -327,14 +324,13 @@ impl<T: RefCounted> RefCount<T> {
             "0x{:x} deref {} -> {}:",
             self_ as usize,
             count.raw_count.get(),
-            count.raw_count.get().wrapping_sub(1),
+            count.raw_count.get() - 1,
         );
         if DEBUG_STACK_TRACE {
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
-        // wrapping: see `ref_` above.
-        count.raw_count.set(count.raw_count.get().wrapping_sub(1));
+        count.raw_count.set(count.raw_count.get() - 1);
         if count.raw_count.get() == 0 {
             #[cfg(debug_assertions)]
             {
@@ -695,8 +691,7 @@ pub unsafe trait CellRefCounted: Sized {
     #[inline]
     fn ref_(&self) {
         let rc = self.ref_count();
-        // wrapping: see `RefCount::ref_` above.
-        rc.set(rc.get().wrapping_add(1));
+        rc.set(rc.get() + 1);
     }
 
     /// Decrement the intrusive refcount; runs [`destroy`](Self::destroy) when
@@ -716,8 +711,7 @@ pub unsafe trait CellRefCounted: Sized {
         // only via `ref_count_raw` (no `&Self` formed), so this is sound even
         // when a `&mut` on a sibling field is live in a parent frame.
         let rc = unsafe { Self::ref_count_raw(this) };
-        // wrapping: see `RefCount::ref_` above.
-        let n = rc.get().wrapping_sub(1);
+        let n = rc.get() - 1;
         rc.set(n);
         if n == 0 {
             // SAFETY: refcount reached zero; no other holders.

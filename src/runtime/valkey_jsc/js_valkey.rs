@@ -80,11 +80,24 @@ type Socket = uws::AnySocket;
 // SubscriptionCtx
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
 pub struct SubscriptionCtx {
     pub is_subscriber: bool,
     pub original_enable_offline_queue: bool,
     pub original_enable_auto_pipelining: bool,
+    /// Back-pointer to the enclosing `JSValkeyClient` (see
+    /// `ValkeyClient::owner` for the provenance rationale).
+    owner: core::ptr::NonNull<JSValkeyClient>,
+}
+
+impl Default for SubscriptionCtx {
+    fn default() -> Self {
+        Self {
+            is_subscriber: false,
+            original_enable_offline_queue: false,
+            original_enable_auto_pipelining: false,
+            owner: core::ptr::NonNull::dangling(),
+        }
+    }
 }
 
 /// The generate-classes.ts output emits a
@@ -92,11 +105,15 @@ pub struct SubscriptionCtx {
 /// free-fns plus `to_js`/`from_js`. Re-exported here as `Js`.
 pub use crate::generated_classes::js_RedisClient as Js;
 
-// SAFETY: `SubscriptionCtx` lives at `JSValkeyClient._subscription_ctx`
-// (intrusive backref). `JsCell<SubscriptionCtx>` is `#[repr(transparent)]`.
-bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
-
 impl SubscriptionCtx {
+    #[inline]
+    pub(crate) fn parent(&self) -> &JSValkeyClient {
+        // SAFETY: `owner` is stamped in `JSValkeyClient::new` with the box's
+        // original `*mut JSValkeyClient` (full provenance) and the box
+        // outlives every `&SubscriptionCtx`.
+        unsafe { self.owner.as_ref() }
+    }
+
     pub fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
         let callback_map = JSMap::create(&valkey_parent.global_object);
         let parent_this = valkey_parent
@@ -119,6 +136,7 @@ impl SubscriptionCtx {
                 .flags
                 .enable_auto_pipelining,
             is_subscriber: false,
+            owner: valkey_parent.client.get().owner,
         })
     }
 
@@ -431,7 +449,17 @@ impl JSValkeyClient {
     #[inline]
     pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
         // bun.TrivialNew(@This()) → heap::alloc(Box::new(init))
-        bun_core::heap::into_raw(Box::new(init))
+        let this = bun_core::heap::into_raw(Box::new(init));
+        // Stamp the embedded back-pointers now that the box address is fixed.
+        // `this` carries the allocation's full provenance (from `Box::into_raw`),
+        // so `parent()` on either child can reach every `JSValkeyClient` field.
+        let owner = core::ptr::NonNull::new(this).expect("heap::into_raw is non-null");
+        // SAFETY: freshly allocated, uniquely owned, no other borrows exist.
+        unsafe {
+            (*(&raw mut (*this).client).cast::<valkey::ValkeyClient>()).owner = owner;
+            (*(&raw mut (*this)._subscription_ctx).cast::<SubscriptionCtx>()).owner = owner;
+        }
+        this
     }
 
     /// Convenience accessor for the per-thread JS VM stored on `client`.
@@ -723,6 +751,7 @@ impl JSValkeyClient {
                 reply_scanner: Default::default(),
                 retry_attempts: 0,
                 auto_flusher: Default::default(),
+                owner: core::ptr::NonNull::dangling(),
             }),
             global_object,
             this_value: JsCell::new(JsRef::empty()),
@@ -847,6 +876,7 @@ impl JSValkeyClient {
                 reply_scanner: Default::default(),
                 retry_attempts: 0,
                 auto_flusher: Default::default(),
+                owner: core::ptr::NonNull::dangling(),
             }),
             global_object,
             this_value: JsCell::new(JsRef::empty()),
@@ -1098,26 +1128,19 @@ impl JSValkeyClient {
 
     /// Safely remove a timer with proper reference counting and event loop keepalive
     fn remove_timer(&self, timer: &JsCell<Timer::EventLoopTimer>) {
-        if self.detach_timer(timer) {
+        if timer.get().state == Timer::State::ACTIVE {
+            // Remove the timer from the event loop
+            let vm = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
+            // SAFETY: `vm` is the live per-thread VM; `timer` is currently
+            // linked into the heap (state == ACTIVE checked above).
+            unsafe { VirtualMachine::timer_remove(vm, timer.as_ptr()) };
+
             // self.add_timer() adds a reference to 'self' when the timer is
             // alive which is balanced here.
             // SAFETY: balanced with add_timer's ref_(); count stays > 0 so
             // `&self` remains valid past this call.
             unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
         }
-    }
-
-    /// Unlink `timer` from the VM heap if ACTIVE without releasing the
-    /// matching keep-alive ref. Returns whether the timer was unlinked.
-    fn detach_timer(&self, timer: &JsCell<Timer::EventLoopTimer>) -> bool {
-        if timer.get().state != Timer::State::ACTIVE {
-            return false;
-        }
-        let vm = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
-        // SAFETY: `vm` is the live per-thread VM; `timer` is currently
-        // linked into the heap (state == ACTIVE checked above).
-        unsafe { VirtualMachine::timer_remove(vm, timer.as_ptr()) };
-        true
     }
 
     fn reset_connection_timeout(&self) {
@@ -1594,6 +1617,17 @@ impl JSValkeyClient {
             }
         };
 
+        // Take the socket keep-alive ref now so `on_valkey_close()` (which
+        // unconditionally releases it) is balanced on every exit path below,
+        // including the SSL_CTX-creation failure branch.
+        self.ref_();
+        let self_ptr = self.as_ctx_ptr();
+        let errdefer_deref = scopeguard::guard(self_ptr, |p| {
+            // SAFETY: balances the `ref_()` just taken; `*p` is live until this
+            // guard releases that ref on early return.
+            unsafe { JSValkeyClient::deref(p) }
+        });
+
         // Populate `_secure` first, then handle the failure branch outside the
         // borrow of `self.client.tls`.
         let tls_ctx_failed = if let valkey::TLS::Custom(ref custom) = self.client.get().tls {
@@ -1621,10 +1655,8 @@ impl JSValkeyClient {
                 b"Failed to create TLS context",
                 protocol::RedisError::ConnectionClosed,
             )?;
-            // `on_valkey_close()` unconditionally releases the socket keep-alive
-            // ref taken below at `self.ref_()`, which we never reach on this
-            // branch. Balance it here so the count isn't driven below zero.
-            self.ref_();
+            // `on_valkey_close()` consumes the keep-alive ref; hand it over.
+            scopeguard::ScopeGuard::into_inner(errdefer_deref);
             self.client_mut().on_valkey_close()?;
             self.client_mut().status = valkey::Status::Disconnected;
             return Ok(());
@@ -1638,15 +1670,6 @@ impl JSValkeyClient {
             valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
         };
 
-        self.ref_();
-        // Balance the ref above if connect() throws — the caller (e.g. send())
-        // only knows to clean up its own state, not the keep-alive ref.
-        let self_ptr = self.as_ctx_ptr();
-        let errdefer_deref = scopeguard::guard(self_ptr, |p| {
-            // SAFETY: balances the `ref_()` just taken; `*p` is live until this
-            // guard releases that ref on early return.
-            unsafe { JSValkeyClient::deref(p) }
-        });
         self.client_mut().status = valkey::Status::Connecting;
         self.update_poll_ref();
         let errdefer_status = scopeguard::guard(self_ptr, |p| {
@@ -1751,11 +1774,7 @@ impl JSValkeyClient {
             }
             this_ref.client_mut().shutdown(None);
             this_ref.poll_ref.with_mut(|r| r.disable());
-            // ref_count is already 0 here; `stop_timers()` → `remove_timer()`
-            // would deref a zero-count object. Unlink without deref so the VM
-            // doesn't fire into freed memory.
-            this_ref.detach_timer(&this_ref.timer);
-            this_ref.detach_timer(&this_ref.reconnect_timer);
+            this_ref.stop_timers();
             this_ref.ref_count.assert_no_refs();
         }
 

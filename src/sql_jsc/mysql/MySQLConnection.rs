@@ -88,6 +88,11 @@ pub struct MySQLConnection {
     ssl_mode: SSLMode,
     allow_public_key_retrieval: bool,
     flags: ConnectionFlags,
+    /// Back-pointer to the enclosing `JSMySQLConnection`, stamped after the
+    /// box address is known. `js_connection_ref()` reads this instead of
+    /// offset-subtracting from `&self`, whose provenance is narrowed to the
+    /// `JsCell`'s interior and makes sibling-field writes UB.
+    pub(crate) owner: core::ptr::NonNull<JSMySQLConnection>,
 }
 
 impl Default for MySQLConnection {
@@ -120,15 +125,26 @@ impl Default for MySQLConnection {
             ssl_mode: SSLMode::Disable,
             allow_public_key_retrieval: false,
             flags: ConnectionFlags::default(),
+            owner: core::ptr::NonNull::dangling(),
         }
     }
 }
 
-// SAFETY: `MySQLConnection` is the `connection` field embedded inside
-// `JSMySQLConnection`; never constructed standalone.
-bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn js_connection_ref; fn get_js_connection; }
-
 impl MySQLConnection {
+    /// Recover the enclosing `JSMySQLConnection` from the stored back-pointer.
+    /// NOT derived from `&self`: see the `owner` field doc.
+    #[inline]
+    pub fn js_connection_ref(&self) -> &JSMySQLConnection {
+        // SAFETY: `owner` is stamped in `JSMySQLConnection`'s constructor with
+        // the box's original `*mut JSMySQLConnection` (full provenance) and
+        // the box outlives every `&MySQLConnection`.
+        unsafe { self.owner.as_ref() }
+    }
+    #[inline]
+    pub fn get_js_connection(&mut self) -> *mut JSMySQLConnection {
+        self.owner.as_ptr()
+    }
+
     pub fn init(
         database: Box<[u8]>,
         username: Box<[u8]>,

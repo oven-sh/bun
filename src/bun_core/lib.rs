@@ -767,6 +767,13 @@ macro_rules! from_field_ptr {
 /// `$Parent.$field` for its entire lifetime. If `$Child` can exist
 /// standalone, the generated accessors are unsound; keep a hand-rolled
 /// `pub unsafe fn` instead.
+///
+/// **Do not combine with `JsCell<$Child>` / `UnsafeCell<$Child>`.** The
+/// generated `parent()` derives `*const $Parent` from `&self`, which carries
+/// provenance only for `$Child`'s bytes when `&self` came from
+/// `UnsafeCell::get()`. Accessing sibling fields of `$Parent` through it is
+/// UB and LLVM dead-stores the writes (#33726). Store a back-pointer with
+/// full provenance in `$Child` instead.
 #[macro_export]
 macro_rules! impl_field_parent {
     // ref + raw-mut pair

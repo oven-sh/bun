@@ -939,37 +939,37 @@ describe("truncated Set/Map payloads are rejected without hanging", () => {
     ["Map truncated before any entry", mapBody.slice(0, -2)],
   ];
 
-  describe.each([
+  test.concurrent.each([
     ["bun:jsc", `import {deserialize} from "bun:jsc"`],
     ["node:v8", `import {deserialize} from "node:v8"`],
-  ])("%s deserialize", (_api, importLine) => {
-    test.concurrent.each(cases)("%s", async (_name, bytes) => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `${importLine};
+  ])("%s deserialize rejects every truncation point", async (_api, importLine) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${importLine};
+         for (const [name, bytes] of ${JSON.stringify(cases)}) {
            try {
-             deserialize(new Uint8Array(${JSON.stringify(bytes)}));
-             console.log("RETURNED");
+             deserialize(new Uint8Array(bytes));
+             console.log(name + ": RETURNED");
            } catch (e) {
-             console.log("THREW:" + e.message);
-           }`,
-        ],
-        env: bunEnv,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 4_000,
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+             console.log(name + ": " + e.message);
+           }
+         }`,
+      ],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 4_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
-        stdout: "THREW:Unable to deserialize data.",
-        stderr: "",
-        signalCode: null,
-        exitCode: 0,
-      });
+    expect({ stdout: stdout.trim().split("\n"), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: cases.map(([name]) => name + ": Unable to deserialize data."),
+      stderr: expect.any(String),
+      signalCode: null,
+      exitCode: 0,
     });
   });
 

@@ -1496,7 +1496,6 @@ mod draft {
         None
     }
 
-
     /// Indices into `configs` of the lines that apply to this registry, in file order
     /// so the last write wins.
     fn credential_items(configs: &[ConfigItem], host: &[u8], pathname: &[u8]) -> Vec<usize> {
@@ -1614,14 +1613,18 @@ mod draft {
                 ),
             };
 
-            let differs = |c: &ConfigItem| *normalize_conf_key(&c.registry_url, default_port) != *c.registry_url;
+            let differs = |c: &ConfigItem| {
+                *normalize_conf_key(&c.registry_url, default_port) != *c.registry_url
+            };
             if !configs.iter().any(differs) {
                 continue;
             }
 
             let mut normalized: Vec<ConfigItem> = Vec::with_capacity(configs.len());
             for conf_item in configs.iter() {
-                let Some(mut dup) = conf_item.dupe()? else { continue };
+                let Some(mut dup) = conf_item.dupe()? else {
+                    continue;
+                };
                 dup.registry_url = normalize_conf_key(&conf_item.registry_url, default_port);
                 normalized.push(dup);
             }

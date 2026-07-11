@@ -4,89 +4,38 @@
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { listeningServer, pgAuthenticationOk, pgErrorResponse, pgNoticeResponse, pgReadyForQuery } from "./wire-frames";
 
 test("Postgres: ErrorResponse/NoticeResponse field strings are not leaked", async () => {
+  // ~256 KiB per field. 6 fields x 256 KiB x 300 iterations ~= 450 MiB of WTFStringImpl payload.
+  const BIG = Buffer.alloc(256 * 1024, 0x61).toString("latin1");
+  // NoticeResponse is decoded and immediately dropped; ErrorResponse is
+  // converted to a JS error then dropped. Both paths leak without the fix.
+  const queryReply = Buffer.concat([
+    pgNoticeResponse({ S: "NOTICE", C: "00000", M: BIG, D: BIG, H: BIG }),
+    pgErrorResponse({ S: "ERROR", C: "42P01", M: BIG, D: BIG, H: BIG }),
+    pgReadyForQuery(),
+  ]);
+
+  const { port, server } = await listeningServer(socket => {
+    let startup = true;
+    socket.on("data", data => {
+      if (startup) {
+        startup = false;
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+        return;
+      }
+      if (data[0] === 0x51 /* 'Q' */) socket.write(queryReply);
+    });
+    socket.on("error", () => {});
+  });
+
+  // Only the SQL client runs in the subprocess so its RSS reflects only the
+  // leak under test; the mock server lives in this process.
   using dir = tempDir("postgres-error-response-leak", {
     "fixture.js": /* js */ `
-      const net = require("net");
       const { SQL } = require("bun");
-
-      function pkt(type, body) {
-        const header = Buffer.alloc(5);
-        header.write(type, 0);
-        header.writeInt32BE(body.length + 4, 1);
-        return Buffer.concat([header, body]);
-      }
-      function i32(n) { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; }
-      function cstr(s) { return Buffer.concat([Buffer.from(s), Buffer.from([0])]); }
-
-      const authenticationOk = pkt("R", i32(0));
-      const readyForQuery = pkt("Z", Buffer.from("I"));
-
-      // ~256 KiB per message field. Unique per connection is not required: the
-      // leak is a missed deref of a freshly-allocated WTFStringImpl, not a
-      // dedup/intern miss.
-      const BIG = Buffer.alloc(256 * 1024, 0x61).toString("latin1");
-
-      // ErrorResponse/NoticeResponse body: repeated (field-type byte, cstring)
-      // terminated by a zero byte. Use several large fields so the leaked bytes
-      // per iteration are unambiguous.
-      const errorBody = Buffer.concat([
-        Buffer.from("S"), cstr("ERROR"),
-        Buffer.from("C"), cstr("42P01"),
-        Buffer.from("M"), cstr(BIG),
-        Buffer.from("D"), cstr(BIG),
-        Buffer.from("H"), cstr(BIG),
-        Buffer.from([0]),
-      ]);
-      const noticeBody = Buffer.concat([
-        Buffer.from("S"), cstr("NOTICE"),
-        Buffer.from("C"), cstr("00000"),
-        Buffer.from("M"), cstr(BIG),
-        Buffer.from("D"), cstr(BIG),
-        Buffer.from("H"), cstr(BIG),
-        Buffer.from([0]),
-      ]);
-      // NoticeResponse is decoded and immediately dropped; ErrorResponse is
-      // converted to a JS error then dropped. Both paths leak without the fix.
-      const queryReply = Buffer.concat([
-        pkt("N", noticeBody),
-        pkt("E", errorBody),
-        readyForQuery,
-      ]);
-
-      const server = net.createServer(socket => {
-        let buffered = Buffer.alloc(0);
-        let startup = true;
-        socket.on("data", chunk => {
-          buffered = Buffer.concat([buffered, chunk]);
-          while (true) {
-            if (startup) {
-              // Startup message: no type byte, just int32 length + body.
-              if (buffered.length < 4) return;
-              const len = buffered.readInt32BE(0);
-              if (buffered.length < len) return;
-              buffered = buffered.subarray(len);
-              startup = false;
-              socket.write(Buffer.concat([authenticationOk, readyForQuery]));
-              continue;
-            }
-            // Regular message: 1-byte type + int32 length (length counts itself).
-            if (buffered.length < 5) return;
-            const type = buffered[0];
-            const len = buffered.readInt32BE(1);
-            if (buffered.length < 1 + len) return;
-            buffered = buffered.subarray(1 + len);
-            if (type === 0x51 /* 'Q' */) socket.write(queryReply);
-            // 'X' (Terminate) and everything else: ignore.
-          }
-        });
-        socket.on("error", () => {});
-      });
-
-      server.listen(0, "127.0.0.1");
-      await new Promise(r => server.on("listening", r));
-      const { port } = server.address();
+      const port = Number(process.argv[2]);
 
       const sql = new SQL({
         url: \`postgres://u@127.0.0.1:\${port}/db\`,
@@ -95,15 +44,14 @@ test("Postgres: ErrorResponse/NoticeResponse field strings are not leaked", asyn
         connectionTimeout: 5,
       });
 
-      // Warm up (allocates connection buffers, JIT) and capture the error shape
-      // so the RSS check can't pass vacuously if the decoder stops rejecting.
+      // Warm up (connection buffers, JIT) and capture the error shape so the
+      // RSS check can't pass vacuously if the decoder stops rejecting.
       let warmupErrno, warmupCode;
       try { await sql\`select 1\`.simple(); } catch (e) {
         warmupErrno = e?.errno;
         warmupCode = e?.code;
       }
 
-      // 6 fields x 256 KiB x 300 iterations ~= 450 MiB of WTFStringImpl payload.
       const ITERATIONS = 300;
       let errorCount = 0;
 
@@ -118,7 +66,6 @@ test("Postgres: ErrorResponse/NoticeResponse field strings are not leaked", asyn
       }
 
       await sql.close({ timeout: 0 }).catch(() => {});
-      server.close();
 
       for (let i = 0; i < 8; i++) {
         await new Promise(r => setImmediate(r));
@@ -131,16 +78,20 @@ test("Postgres: ErrorResponse/NoticeResponse field strings are not leaked", asyn
     `,
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 120_000,
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  let stdout: string, stderr: string, exitCode: number;
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js", String(port)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 120_000,
+    });
+    [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  } finally {
+    server.close();
+  }
 
   let result: { warmupErrno: unknown; warmupCode: unknown; errorCount: number; ITERATIONS: number; deltaMiB: number };
   try {

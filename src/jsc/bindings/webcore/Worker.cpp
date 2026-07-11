@@ -532,7 +532,21 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
 bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(workerGlobalObject);
+    // A concurrent terminate() can arm the TerminationException at any
+    // safepoint; ErrorInstance::getOwnPropertySlot (reached from the Error
+    // clone path inside SerializedScriptValue::create) does not check after
+    // materializeErrorInfoIfNeeded, so entering it mid-termination trips
+    // getOwnPropertyDescriptor's post-call assert. Bail to the string
+    // fallback before doing any JS-entering work once termination is armed.
+    if (vm.hasTerminationRequest()) [[unlikely]]
+        return false;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // The caller's dispatchEvent(error) on globalThis (WebWorker__dispatchError)
+    // runs user JS and can leave a pending exception.
+    if (scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException())
+            return false;
+    }
 
     // Structured clone of an Error only carries name/message/stack and JSC's
     // own line/column/sourceURL. Node preserves the own enumerable properties
@@ -558,6 +572,10 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
             return false;
         }
         JSObject* props = JSC::constructEmptyObject(workerGlobalObject);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return false;
+        }
         for (const auto& key : keys) {
             // Carried by the Error clone itself; reattaching them would
             // only duplicate work.
@@ -582,13 +600,18 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
             }
         }
         JSObject* protoProps = JSC::constructEmptyObject(workerGlobalObject);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return false;
+        }
         JSObject* level = errorObject->getPrototypeDirect().getObject();
         auto* objectProto = workerGlobalObject->objectPrototype();
         while (level && level != objectProto) {
             JSC::PropertyNameArrayBuilder protoKeys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
             level->methodTable()->getOwnPropertyNames(level, workerGlobalObject, protoKeys, JSC::DontEnumPropertiesMode::Include);
             if (scope.exception()) [[unlikely]] {
-                (void)scope.tryClearException();
+                if (!scope.tryClearException())
+                    return false;
                 break;
             }
             for (const auto& key : protoKeys) {
@@ -615,7 +638,8 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
                 if (level->methodTable()->getOwnPropertySlot(level, workerGlobalObject, key, slot))
                     dontEnum = slot.attributes() & static_cast<unsigned>(JSC::PropertyAttribute::DontEnum);
                 if (scope.exception()) [[unlikely]] {
-                    (void)scope.tryClearException();
+                    if (!scope.tryClearException())
+                        return false;
                     continue;
                 }
                 (dontEnum ? protoProps : props)->putDirect(vm, key, v);
@@ -646,10 +670,14 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
         (void)scope.tryClearException();
         return false;
     }
+    if (vm.hasTerminationRequest()) [[unlikely]]
+        return false;
 
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, pair, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
-    if (scope.exception()) [[unlikely]]
-        (void)scope.tryClearException();
+    if (scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException())
+            return false;
+    }
     if (!serialized && !ownProps.isUndefined()) {
         // A non-cloneable own property (WeakMap, Promise, nested function)
         // sank the pair; retry without the extras so the error itself is
@@ -659,18 +687,25 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
         // line/column/sourceURL own properties stripped.
         JSValue emptyProps = JSC::constructEmptyObject(workerGlobalObject);
         if (scope.exception()) [[unlikely]] {
-            (void)scope.tryClearException();
+            if (!scope.tryClearException())
+                return false;
             emptyProps = jsUndefined();
         }
         pair->putDirectIndex(workerGlobalObject, 1, emptyProps);
-        if (scope.exception()) [[unlikely]]
-            (void)scope.tryClearException();
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException())
+                return false;
+        }
         pair->putDirectIndex(workerGlobalObject, 2, jsUndefined());
-        if (scope.exception()) [[unlikely]]
-            (void)scope.tryClearException();
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException())
+                return false;
+        }
         serialized = SerializedScriptValue::create(*workerGlobalObject, pair, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
-        if (scope.exception()) [[unlikely]]
-            (void)scope.tryClearException();
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException())
+                return false;
+        }
     }
     if (!serialized)
         return false;

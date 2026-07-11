@@ -579,7 +579,7 @@ impl BlobExt for Blob {
                 payer = s3.request_payer;
             }
             // SAFETY: `path` borrows the store held by `t.blob` (a fresh +1 ref);
-            // it stays valid until `S3ReadBytesTask::done` deinits the blob in the callback.
+            // it stays valid until `S3ReadBytesTask::on_download` deinits the blob.
             let path = unsafe { &*path };
             let t_ptr = bun_core::heap::into_raw(t);
             if self.offset.get() > 0 || self.size.get() != MAX_SIZE {

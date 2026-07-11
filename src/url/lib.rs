@@ -1,10 +1,13 @@
 // This is close to WHATWG URL, but we don't want the validation errors
 #![warn(unused_must_use)]
+pub mod error;
+pub use error::{Error, Result};
+
 use core::cell::RefCell;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
-use bun_core::{String as BunString, Tag as BunStringTag, immutable as strings};
+use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_paths::resolve_path::{self, platform};
 use bun_wyhash::hash as wyhash;
 
@@ -356,10 +359,10 @@ impl<'a> URL<'a> {
 
     // Ownership: returns an `OwnedURL` that owns the buffer; callers borrow
     // via `.url()` and Drop frees it.
-    pub fn from_string(input: &BunString) -> Result<OwnedURL, bun_core::Error> {
+    pub fn from_string(input: &BunString) -> crate::Result<OwnedURL> {
         let href = whatwg::href_from_string(input);
         if href.tag() == BunStringTag::Dead {
-            return Err(bun_core::err!("InvalidURL"));
+            return Err(crate::Error::InvalidURL);
         }
         // `to_owned_slice` is infallible so explicit
         // ordering suffices (no error path between alloc and deref).
@@ -368,7 +371,7 @@ impl<'a> URL<'a> {
         Ok(OwnedURL { href: owned })
     }
 
-    pub fn from_utf8(input: &[u8]) -> Result<OwnedURL, bun_core::Error> {
+    pub fn from_utf8(input: &[u8]) -> crate::Result<OwnedURL> {
         Self::from_string(&BunString::borrow_utf8(input))
     }
 
@@ -559,7 +562,7 @@ impl<'a> URL<'a> {
         dirname: &[u8],
         basename: &[u8],
         extname: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let mut out = Self::join_buf_uninit();
         let normalized_path = Self::join_normalize(&mut out, prefix, dirname, basename, extname);
 
@@ -576,7 +579,7 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
         absolute_path: &[u8],
-    ) -> Result<Box<[u8]>, bun_core::Error> {
+    ) -> crate::Result<Box<[u8]>> {
         let has_uplevels = strings::index_of(dirname, b"../").is_some();
 
         if has_uplevels {
@@ -1062,14 +1065,10 @@ impl QueryStringMap {
 
             let name_hash: u64 = wyhash(name_slice);
 
-            value.length = match PercentEncoding::decode(
-                &mut buf,
-                result.raw_value(scanner.pathname.pathname),
-            ) {
-                Ok(n) => n,
-                Err(_) => continue,
-            };
+            let value_slice = result.raw_value(scanner.pathname.pathname);
+            value.length = u32::try_from(value_slice.len()).unwrap();
             value.offset = buf_writer_pos;
+            buf.extend_from_slice(value_slice);
             buf_writer_pos += value.length;
 
             list.push(Param {
@@ -1378,11 +1377,11 @@ impl From<bun_core::Error> for DecodeError {
         DecodeError::Write(e)
     }
 }
-impl From<DecodeError> for bun_core::Error {
+impl From<DecodeError> for crate::Error {
     fn from(e: DecodeError) -> Self {
         match e {
-            DecodeError::DecodingError => bun_core::err!("DecodingError"),
-            DecodeError::Write(inner) => inner,
+            DecodeError::DecodingError => crate::Error::DecodingError,
+            DecodeError::Write(inner) => crate::Error::Core(inner),
         }
     }
 }
@@ -1610,7 +1609,7 @@ impl<'a> PathnameScanner<'a> {
             name_needs_decoding: false,
             // TODO: fix this technical debt
             value: string_pointer_from_strings(self.pathname, param.value),
-            value_needs_decoding: strings::index_of_char(param.value, b'%').is_some(),
+            value_needs_decoding: false,
         })
     }
 }

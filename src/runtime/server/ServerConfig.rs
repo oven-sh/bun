@@ -208,7 +208,7 @@ impl Drop for StaticRouteEntry {
 }
 
 impl ServerConfig {
-    fn normalize_static_routes_list(&mut self) -> Result<(), bun_core::Error> {
+    fn normalize_static_routes_list(&mut self) -> Result<(), crate::Error> {
         fn hash(route: &StaticRouteEntry) -> u64 {
             let mut hasher = Wyhash::init(0);
             match &route.method {
@@ -254,7 +254,7 @@ impl ServerConfig {
         Ok(())
     }
 
-    pub fn clone_for_reloading_static_routes(&mut self) -> Result<ServerConfig, bun_core::Error> {
+    pub fn clone_for_reloading_static_routes(&mut self) -> Result<ServerConfig, crate::Error> {
         // The sole caller is
         // `self.config = self.config.clone_for_reloading_static_routes()?;`.
         // Move every owning field into `that` and leave the Copy scalars in
@@ -302,7 +302,7 @@ impl ServerConfig {
         path: &[u8],
         route: AnyRoute,
         method: MethodOptional,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.static_routes.push(StaticRouteEntry {
             path: Box::<[u8]>::from(path),
             route,
@@ -746,7 +746,7 @@ impl ServerConfig {
 
                 for port_env in PORT_ENV {
                     if let Some(port) = env.get(port_env) {
-                        if let Ok(_port) = bun_core::immutable::parse_int::<u16>(port, 10) {
+                        if let Ok(_port) = bun_core::strings::parse_int::<u16>(port, 10) {
                             break 'brk _port;
                         }
                     }

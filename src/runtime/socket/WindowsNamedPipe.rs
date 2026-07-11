@@ -998,7 +998,7 @@ impl WindowsNamedPipe {
         &mut self,
         ssl_options: &SSLConfig,
         is_client: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.flags.set_is_ssl(true);
         if self.start(is_client) {
             self.wrapper = Some(ssl_wrapper::init(

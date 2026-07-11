@@ -144,6 +144,16 @@ export const setSyntheticAllocationLimitForTesting: (limit: number) => number = 
   1,
 );
 
+// Shrink the markdown parser's block-metadata cap (in bytes) so its
+// `TooManyBlocks` error is reachable without 4 GiB of input. The cap can only
+// be lowered, never raised past the real limit. Returns the previous value so
+// a test can restore it.
+export const setMaxMarkdownBlockBytesForTesting: (limit: number) => number = $newRustFunction(
+  "MarkdownObject.rs",
+  "setMaxMarkdownBlockBytesForTesting",
+  1,
+);
+
 export const npm_manifest_test_helpers = $rust("npm.rs", "PackageManifest.bindings.generate") as {
   /**
    * Returns the parsed manifest file. Currently only returns an array of available versions.
@@ -266,8 +276,20 @@ export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
   3,
 );
 
-/** Only the syscalls instrumented in bsd.c; arming anything else is rejected. */
-export type SocketFaultSyscall = "recv" | "send" | "writev" | "sendmsg" | "recvmsg" | "connect" | "accept";
+/**
+ * The syscalls instrumented in bsd.c, plus "ssl_loop_buffer" — not a syscall,
+ * but the per-loop TLS plaintext buffer allocation, whose failure path is
+ * unreachable on an overcommitting kernel. Arming anything else is rejected.
+ */
+export type SocketFaultSyscall =
+  | "recv"
+  | "send"
+  | "writev"
+  | "sendmsg"
+  | "recvmsg"
+  | "connect"
+  | "accept"
+  | "ssl_loop_buffer";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;
@@ -294,7 +316,7 @@ export type SocketFaultRule = {
   after?: number;
   /** fire this many times then disarm; -1 = forever. Default 1. */
   repeat?: number;
-  /** match only this fd; -1 (default) = any */
+  /** match only this fd; -1 (default) = any. Rejected for "ssl_loop_buffer", which has no fd. */
   fd?: number;
 };
 

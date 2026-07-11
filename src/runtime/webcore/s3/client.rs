@@ -8,8 +8,6 @@ use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc};
 
-use bun_core::strings;
-
 // Re-exports (thin aliases)
 pub use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 pub use crate::webcore::s3::multipart::{self, MultiPartUpload};
@@ -760,7 +758,7 @@ pub fn upload_stream(
         credentials.deref();
         return Ok(bun_jsc::JSPromise::rejected_promise(
             global_this,
-            strings::String::static_("ReadableStream is already disturbed")
+            bun_core::String::static_("ReadableStream is already disturbed")
                 .to_error_instance(global_this),
         )
         .to_js());
@@ -771,7 +769,7 @@ pub fn upload_stream(
             credentials.deref();
             return Ok(bun_jsc::JSPromise::rejected_promise(
                 global_this,
-                strings::String::static_("ReadableStream is invalid")
+                bun_core::String::static_("ReadableStream is invalid")
                     .to_error_instance(global_this),
             )
             .to_js());
@@ -1024,6 +1022,7 @@ pub(crate) fn download_stream(
             poll_ref: bun_io::KeepAlive::init(),
             response_buffer: MutableString::default(),
             mutex: Default::default(),
+            request_error: None,
             reported_response_buffer: MutableString::default(),
             // `State::default()` sets
             // `has_more = true` (bit 48). Passing 0 here would start the task with

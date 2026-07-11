@@ -2,7 +2,6 @@ use bstr::BStr;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast as js_ast;
 use bun_collections::StringArrayHashMap;
-use bun_collections::VecExt;
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
 use bun_paths as path;
@@ -76,11 +75,51 @@ impl WorkspaceMap {
 // Drop: all fields are owned (Box<[u8]> keys, Entry { Box<[u8]>, Option<Box<[u8]>> })
 // — Rust drops them automatically; no explicit `deinit` body needed.
 
+#[derive(Clone, Copy)]
+pub(crate) enum NamesArray<'a> {
+    Mutable(&'a js_ast::E::Array),
+    Immutable(&'a js_ast::E::ArrayJSON, bun_ast::Loc),
+}
+
+impl<'a> NamesArray<'a> {
+    pub(crate) fn from_expr(expr: &'a js_ast::Expr, value_loc: bun_ast::Loc) -> Option<Self> {
+        match &expr.data {
+            js_ast::ExprData::EArray(arr) => Some(NamesArray::Mutable(arr.get())),
+            js_ast::ExprData::EArrayJSON(arr) => Some(NamesArray::Immutable(arr.get(), value_loc)),
+            _ => None,
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            NamesArray::Mutable(arr) => arr.items.len(),
+            NamesArray::Immutable(arr, _) => arr.items().len(),
+        }
+    }
+
+    fn item_str<'s>(&'s self, i: usize, scratch: &'s Arena) -> Option<&'s [u8]> {
+        match self {
+            NamesArray::Mutable(arr) => arr.slice()[i].as_string(scratch),
+            NamesArray::Immutable(arr, _) => arr.items()[i].as_str(),
+        }
+    }
+
+    fn item_loc(&self, source: &bun_ast::Source, i: usize) -> bun_ast::Loc {
+        match self {
+            NamesArray::Mutable(arr) => arr.slice()[i].loc,
+            NamesArray::Immutable(_, array_loc) => {
+                crate::bun_json::array_item_loc(&source.contents, *array_loc, i)
+                    .unwrap_or(*array_loc)
+            }
+        }
+    }
+}
+
 fn process_workspace_name(
     json_cache: &mut WorkspacePackageJSONCache,
     abs_package_json_path: &ZStr,
     log: &mut bun_ast::Log,
-) -> Result<Entry, bun_core::Error> {
+) -> crate::Result<Entry> {
     let workspace_json = json_cache
         .get_with_path(
             log,
@@ -100,10 +139,10 @@ fn process_workspace_name(
     let name_expr = workspace_json
         .root
         .get(b"name")
-        .ok_or_else(|| bun_core::err!("MissingPackageName"))?;
+        .ok_or(crate::Error::MissingPackageName)?;
     let name = name_expr
         .as_string_cloned(&scratch)?
-        .ok_or_else(|| bun_core::err!("MissingPackageName"))?;
+        .ok_or(crate::Error::MissingPackageName)?;
 
     let entry = Entry {
         name: Box::<[u8]>::from(name),
@@ -132,13 +171,14 @@ impl WorkspaceMap {
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
         log: &mut bun_ast::Log,
-        arr: &js_ast::E::Array,
+        arr: NamesArray<'_>,
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
         mut string_builder: Option<&mut StringBuilder<'_>>,
-    ) -> Result<u32, bun_core::Error> {
+    ) -> crate::Result<u32> {
         let workspace_names = self;
-        if arr.items.len_u32() == 0 {
+        let item_count = arr.len();
+        if item_count == 0 {
             return Ok(0);
         }
 
@@ -149,32 +189,29 @@ impl WorkspaceMap {
         // Boxed to avoid a large stack frame.
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
 
-        // Scratch arena for `as_string_z`.
         let scratch = Arena::new();
 
-        for item in arr.slice() {
-            // TODO: when does this get deallocated?
-            let Some(input_path) = item.as_string_z(&scratch)? else {
-                let _ = log.add_error_fmt(
+        for i in 0..item_count {
+            let Some(input_path) = arr.item_str(i, &scratch) else {
+                let _ = bun_ast::add_error_pretty!(
+                    log,
                     Some(source),
-                    item.loc,
-                    format_args!(
-                        "Workspaces expects an array of strings, like:\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
-                    ),
+                    arr.item_loc(source, i),
+                    "Workspaces expects an array of strings, like:\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
                 );
-                return Err(bun_core::err!("InvalidPackageJSON"));
+                return Err(crate::Error::InvalidPackageJSON);
             };
 
-            if input_path.len() == 0
-                || (input_path.len() == 1 && input_path.as_bytes()[0] == b'.')
-                || input_path.as_bytes() == b"./"
-                || input_path.as_bytes() == b".\\"
+            if input_path.is_empty()
+                || input_path == b"."
+                || input_path == b"./"
+                || input_path == b".\\"
             {
                 continue;
             }
 
-            if glob::detect_glob_syntax(input_path.as_bytes()) {
-                workspace_globs.push(Box::<[u8]>::from(input_path.as_bytes()));
+            if glob::detect_glob_syntax(input_path) {
+                workspace_globs.push(Box::<[u8]>::from(input_path));
                 continue;
             }
 
@@ -182,7 +219,7 @@ impl WorkspaceMap {
                 resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
                     source.path.name().dir,
                     filepath_buf,
-                    &[input_path.as_bytes(), b"package.json"],
+                    &[input_path, b"package.json"],
                 );
 
             // skip root package.json
@@ -198,28 +235,22 @@ impl WorkspaceMap {
                 match process_workspace_name(json_cache, abs_package_json_path, log) {
                     Ok(e) => e,
                     Err(err) => {
-                        if err == bun_core::err!("EISNOTDIR")
-                            || err == bun_core::err!("EISDIR")
-                            || err == bun_core::err!("EACCESS")
-                            || err == bun_core::err!("EPERM")
-                            || err == bun_core::err!("ENOENT")
-                            || err == bun_core::err!("FileNotFound")
+                        if err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
+                            || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)
+                            || err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                         {
                             let _ = log.add_error_fmt(
                                 Some(source),
-                                item.loc,
-                                format_args!(
-                                    "Workspace not found \"{}\"",
-                                    BStr::new(input_path.as_bytes())
-                                ),
+                                arr.item_loc(source, i),
+                                format_args!("Workspace not found \"{}\"", BStr::new(input_path)),
                             );
-                        } else if err == bun_core::err!("MissingPackageName") {
+                        } else if err == crate::Error::MissingPackageName {
                             let _ = log.add_error_fmt(
                                 Some(source),
                                 loc,
                                 format_args!(
                                     "Missing \"name\" from package.json in {}",
-                                    BStr::new(input_path.as_bytes())
+                                    BStr::new(input_path)
                                 ),
                             );
                         } else {
@@ -227,11 +258,11 @@ impl WorkspaceMap {
                             let cwd_len = bun_sys::getcwd(&mut cwd_buf).expect("unreachable");
                             let _ = log.add_error_fmt(
                             Some(source),
-                            item.loc,
+                            arr.item_loc(source, i),
                             format_args!(
                                 "{} reading package.json for workspace package \"{}\" from \"{}\"",
                                 err.name(),
-                                BStr::new(input_path.as_bytes()),
+                                BStr::new(input_path),
                                 BStr::new(&cwd_buf[..cwd_len]),
                             ),
                         );
@@ -324,16 +355,15 @@ impl WorkspaceMap {
                 )? {
                     Ok(w) => w,
                     Err(e) => {
-                        let _ = log.add_error_fmt(
+                        let _ = bun_ast::add_error_pretty!(
+                            log,
                             Some(source),
                             loc,
-                            format_args!(
-                                "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                                BStr::new(user_pattern),
-                                <&'static str>::from(e.get_errno()),
-                            ),
+                            "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
+                            BStr::new(user_pattern),
+                            <&'static str>::from(e.get_errno()),
                         );
-                        return Err(bun_core::err!("GlobError"));
+                        return Err(crate::Error::GlobError);
                     }
                 };
                 // walker dropped at end of loop iter; GlobWalker is heap-backed with no
@@ -341,16 +371,15 @@ impl WorkspaceMap {
 
                 let mut iter = glob::walk::Iterator::new(&mut walker);
                 if let Err(e) = iter.init()? {
-                    let _ = log.add_error_fmt(
+                    let _ = bun_ast::add_error_pretty!(
+                        log,
                         Some(source),
                         loc,
-                        format_args!(
-                            "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                            BStr::new(user_pattern),
-                            <&'static str>::from(e.get_errno()),
-                        ),
+                        "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
+                        BStr::new(user_pattern),
+                        <&'static str>::from(e.get_errno()),
                     );
-                    return Err(bun_core::err!("GlobError"));
+                    return Err(crate::Error::GlobError);
                 }
 
                 'next_match: loop {
@@ -358,16 +387,15 @@ impl WorkspaceMap {
                         Ok(Some(r)) => r,
                         Ok(None) => break,
                         Err(e) => {
-                            let _ = log.add_error_fmt(
+                            let _ = bun_ast::add_error_pretty!(
+                                log,
                                 Some(source),
                                 loc,
-                                format_args!(
-                                    "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                                    BStr::new(user_pattern),
-                                    <&'static str>::from(e.get_errno()),
-                                ),
+                                "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
+                                BStr::new(user_pattern),
+                                <&'static str>::from(e.get_errno()),
                             );
-                            return Err(bun_core::err!("GlobError"));
+                            return Err(crate::Error::GlobError);
                         }
                     };
                     let matched_path: &[u8] = &matched_path_owned;
@@ -430,11 +458,9 @@ impl WorkspaceMap {
                         Ok(e) => e,
                         Err(err) => {
                             let entry_base: &[u8] = path::basename(matched_path);
-                            if err == bun_core::err!("FileNotFound")
-                                || err == bun_core::err!("PermissionDenied")
-                            {
+                            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 continue;
-                            } else if err == bun_core::err!("MissingPackageName") {
+                            } else if err == crate::Error::MissingPackageName {
                                 let _ = log.add_error_fmt(
                                     Some(source),
                                     bun_ast::Loc::EMPTY,
@@ -514,7 +540,7 @@ impl WorkspaceMap {
         }
 
         if orig_msgs_len != log.msgs.len() {
-            return Err(bun_core::err!("InstallFailed"));
+            return Err(crate::Error::InstallFailed);
         }
 
         // Sort the names for determinism

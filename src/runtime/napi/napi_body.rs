@@ -53,32 +53,6 @@ impl Taskable for NapiFinalizerTask {
 
 bun_output::declare_scope!(napi, visible);
 
-#[allow(deprecated)] // bun_jsc gates the c_api module as deprecated; no replacement path yet.
-const TODO_EXCEPTION: jsc::c_api::ExceptionRef = ptr::null_mut();
-
-// Local extern declarations for JavaScriptCore C API symbols not yet surfaced
-// through the active `jsc::c_api` module (the full `javascript_core_c_api.rs`
-// is still gated). Signatures mirror `<JavaScriptCore/JSObjectRef.h>` /
-// `<JavaScriptCore/JSTypedArray.h>`.
-#[allow(deprecated)] // jsc::c_api::{JSObjectRef,JSValueRef,ExceptionRef} — bun_jsc gates the c_api module as deprecated; no replacement path yet.
-unsafe extern "C" {
-    fn JSObjectGetPrototype(
-        ctx: *mut JSGlobalObject,
-        object: jsc::c_api::JSObjectRef,
-    ) -> jsc::c_api::JSValueRef;
-    fn JSObjectGetTypedArrayBuffer(
-        ctx: *mut JSGlobalObject,
-        object: jsc::c_api::JSObjectRef,
-        exception: jsc::c_api::ExceptionRef,
-    ) -> jsc::c_api::JSObjectRef;
-    fn JSObjectMakeDate(
-        ctx: *mut JSGlobalObject,
-        argument_count: usize,
-        arguments: *const jsc::c_api::JSValueRef,
-        exception: jsc::c_api::ExceptionRef,
-    ) -> jsc::c_api::JSObjectRef;
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // NapiEnv
 // ──────────────────────────────────────────────────────────────────────────
@@ -221,9 +195,9 @@ pub enum EscapeError {
     EscapeCalledTwice,
 }
 
-impl From<EscapeError> for bun_core::Error {
+impl From<EscapeError> for crate::Error {
     fn from(_: EscapeError) -> Self {
-        bun_core::err!("EscapeCalledTwice")
+        crate::Error::EscapeCalledTwice
     }
 }
 
@@ -904,11 +878,7 @@ pub(super) extern "C" fn napi_get_prototype(
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     }
 
-    result.set(
-        env,
-        // SAFETY: `object` was verified `.is_object()` above; FFI reads its prototype slot.
-        JSValue::c(unsafe { JSObjectGetPrototype(env.to_js().as_ptr(), object.as_object_ref()) }),
-    );
+    result.set(env, object.get_prototype(env.to_js()));
     env.ok()
 }
 
@@ -1422,7 +1392,7 @@ pub(super) extern "C" fn napi_get_typedarray_info(
     maybe_length: *mut usize,
     maybe_data: *mut *mut u8,
     maybe_arraybuffer: *mut napi_value,
-    maybe_byte_offset: *mut usize, // note: this is always 0
+    maybe_byte_offset: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_typedarray_info");
     let env = get_env!(env_);
@@ -1453,22 +1423,13 @@ pub(super) extern "C" fn napi_get_typedarray_info(
 
     // SAFETY: `maybe_arraybuffer` is null or a valid exclusive out-param per N-API contract.
     if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
-        arraybuffer.set(
-            env,
-            // SAFETY: `typedarray` is a live typed-array object (kept by `_keep`); FFI reads its backing buffer.
-            JSValue::c(unsafe {
-                JSObjectGetTypedArrayBuffer(
-                    env.to_js().as_ptr(),
-                    typedarray.as_object_ref(),
-                    ptr::null_mut(),
-                )
-            }),
-        );
+        arraybuffer.set(env, typedarray.get_array_buffer_view_buffer(env.to_js()));
     }
 
-    // `jsc::ArrayBuffer` used to have an `offset` field, but it was always 0 because `ptr`
-    // already had the offset applied. See <https://github.com/oven-sh/bun/issues/561>.
-    write_out(maybe_byte_offset, 0);
+    // SAFETY: `maybe_byte_offset` is null or a valid exclusive out-param per N-API contract.
+    if let Some(byte_offset) = unsafe { maybe_byte_offset.as_mut() } {
+        *byte_offset = typedarray.get_array_buffer_view_byte_offset();
+    }
     env.ok()
 }
 
@@ -1504,7 +1465,7 @@ pub(super) extern "C" fn napi_get_dataview_info(
     maybe_bytelength: *mut usize,
     maybe_data: *mut *mut u8,
     maybe_arraybuffer: *mut napi_value,
-    maybe_byte_offset: *mut usize, // note: this is always 0
+    maybe_byte_offset: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_dataview_info");
     let env = get_env!(env_);
@@ -1517,21 +1478,12 @@ pub(super) extern "C" fn napi_get_dataview_info(
     write_out(maybe_data, array_buffer.ptr);
     // SAFETY: `maybe_arraybuffer` is null or a valid exclusive out-param per N-API contract.
     if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
-        arraybuffer.set(
-            env,
-            // SAFETY: `dataview` is a live DataView object (held in handle scope); FFI reads its backing buffer.
-            JSValue::c(unsafe {
-                JSObjectGetTypedArrayBuffer(
-                    env.to_js().as_ptr(),
-                    dataview.as_object_ref(),
-                    ptr::null_mut(),
-                )
-            }),
-        );
+        arraybuffer.set(env, dataview.get_array_buffer_view_buffer(env.to_js()));
     }
-    // `jsc::ArrayBuffer` used to have an `offset` field, but it was always 0 because `ptr`
-    // already had the offset applied. See <https://github.com/oven-sh/bun/issues/561>.
-    write_out(maybe_byte_offset, 0);
+    // SAFETY: `maybe_byte_offset` is null or a valid exclusive out-param per N-API contract.
+    if let Some(byte_offset) = unsafe { maybe_byte_offset.as_mut() } {
+        *byte_offset = dataview.get_array_buffer_view_byte_offset();
+    }
 
     env.ok()
 }
@@ -1644,15 +1596,9 @@ pub(super) extern "C" fn napi_create_date(
     bun_output::scoped_log!(napi, "napi_create_date");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
-    // The addon controls every bit of `time`. Purify before boxing: the Date
-    // constructor receives this JSValue before any timeClip runs.
-    let mut args = [JSValue::js_number(JSValue::purify_nan(time)).as_object_ref()];
     result.set(
         env,
-        // SAFETY: `args` is a stack array of one valid JSValueRef; FFI constructs a Date.
-        JSValue::c(unsafe {
-            JSObjectMakeDate(env.to_js().as_ptr(), 1, args.as_mut_ptr(), TODO_EXCEPTION)
-        }),
+        JSValue::from_date_number(env.to_js(), JSValue::purify_nan(time)),
     );
     env.ok()
 }

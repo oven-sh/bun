@@ -2816,12 +2816,8 @@ test("no assertion failures 3", () => {
       const trace = require("trace_events").createTracing({ categories: ["fo"] });
       const actualDepth0 = util.inspect({ trace }, { depth: 0 });
       assert.strictEqual(actualDepth0, "{ trace: [Tracing] }");
-      //! bun's tracing_events implementation is buggy/incomplete (?)
-      //const actualDepth1 = util.inspect({ trace }, { depth: 1 });
-      //assert.strictEqual(
-      //  actualDepth1,
-      //  "{ trace: Tracing { enabled: false, categories: 'fo' } }"
-      //);
+      const actualDepth1 = util.inspect({ trace }, { depth: 1 });
+      assert.strictEqual(actualDepth1, "{ trace: Tracing { enabled: false, categories: 'fo' } }");
     } catch (err) {
       if (err.code !== "ERR_TRACE_EVENTS_UNAVAILABLE") throw err;
     }

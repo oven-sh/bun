@@ -409,6 +409,55 @@ describe("udpSocket()", () => {
     }
   });
 
+  // The on_data callback receives a recvmmsg batch and iterates it. If the
+  // user's data handler closes the socket, the remaining packets in that
+  // batch must not be dispatched — matches libuv's per-datagram handle
+  // recheck (node:dgram relies on this for close() semantics).
+  test("close() from inside the data handler stops the rest of the recvmmsg batch", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const trace = [];
+        const server = await Bun.udpSocket({
+          port: 0,
+          hostname: "127.0.0.1",
+          socket: {
+            data(socket, buf) {
+              trace.push("data:" + socket.closed);
+              if (trace.length === 1) socket.close();
+            },
+          },
+        });
+        const client = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1" });
+        const payload = [];
+        for (let i = 0; i < 32; i++) payload.push("x", server.port, "127.0.0.1");
+        // One sendmmsg syscall: on loopback the whole burst lands in the
+        // kernel recv queue before the event loop polls, so recvmmsg yields a
+        // multi-packet batch and on_data iterates more than once.
+        client.sendMany(payload);
+        // Let the event loop drain any additional recvmmsg rounds.
+        for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r));
+        client.close();
+        console.log(JSON.stringify(trace));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderr = rawStderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(stderr).toBe("");
+    // Exactly one data event, observed while the socket was still open.
+    expect(stdout.trim()).toBe('["data:false"]');
+    expect(exitCode).toBe(0);
+  });
+
   // sendMany() iterates the input array and may run user JS (array index
   // getters, port `valueOf()`, address `toString()`). That user JS can
   // connect or disconnect the socket; sendMany must snapshot the connection
@@ -440,5 +489,78 @@ describe("udpSocket()", () => {
         30_000,
       );
     }
+  });
+
+  // binaryType accepts every typed-array constructor name, not just the three
+  // listed in the error message. Before the JSC C-API path was removed,
+  // "float16array" fell through to kJSTypedArrayTypeNone and segfaulted
+  // dereferencing the null result; spawn a subprocess so that crash is caught
+  // as a non-zero exit instead of taking the runner down.
+  describe.each([
+    ["int8array", "Int8Array", 8],
+    ["int16array", "Int16Array", 4],
+    ["uint16array", "Uint16Array", 4],
+    ["int32array", "Int32Array", 2],
+    ["uint32array", "Uint32Array", 2],
+    ["float16array", "Float16Array", 4],
+    ["float32array", "Float32Array", 2],
+    ["float64array", "Float64Array", 1],
+  ] as const)("binaryType delivers a typed array of the requested kind", (binaryType, ctorName, expectedLen) => {
+    test(
+      binaryType,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              const { promise, resolve, reject } = Promise.withResolvers();
+              const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+              const server = await Bun.udpSocket({
+                binaryType: ${JSON.stringify(binaryType)},
+                socket: {
+                  data(socket, data) {
+                    resolve({
+                      ctor: data?.constructor?.name ?? String(data),
+                      byteLength: data?.byteLength,
+                      length: data?.length,
+                      bytes: data == null ? null : [...new Uint8Array(data.buffer, data.byteOffset, data.byteLength)],
+                    });
+                  },
+                  error(socket, err) { reject(err); },
+                },
+              });
+              const client = await Bun.udpSocket({});
+              const retry = setInterval(() => client.send(payload, server.port, "127.0.0.1"), 20);
+              client.send(payload, server.port, "127.0.0.1");
+              const result = await promise;
+              clearInterval(retry);
+              server.close();
+              client.close();
+              console.log(JSON.stringify(result));
+            `,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const stderr = rawStderr
+          .split("\n")
+          .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+          .join("\n");
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: JSON.stringify({
+            ctor: ctorName,
+            byteLength: 8,
+            length: expectedLen,
+            bytes: [1, 2, 3, 4, 5, 6, 7, 8],
+          }),
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      30_000,
+    );
   });
 });

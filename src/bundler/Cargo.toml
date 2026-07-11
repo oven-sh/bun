@@ -26,6 +26,7 @@ bumpalo.workspace = true
 typed-arena.workspace = true
 bun_base64.workspace = true
 bun_alloc.workspace = true
+bun_errno.workspace = true
 bun_analytics.workspace = true
 bun_resolver.workspace = true
 # `bun_resolve_builtins` only depends on `bun_options_types` + `bun_string`
@@ -49,7 +50,7 @@ bun_js_parser.workspace = true
 bun_js_printer.workspace = true
 bun_ast.workspace = true
 bun_ptr.workspace = true
-bun_lolhtml_sys.workspace = true
+lol_html.workspace = true
 bun_md.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true

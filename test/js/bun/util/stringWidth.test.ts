@@ -185,6 +185,37 @@ describe("stringWidth extended", () => {
       expect(Bun.stringWidth("a\u200Eb\u200Fc")).toBe(3);
     });
 
+    test("bidi embeddings and overrides (U+202A-U+202E)", () => {
+      expect(Bun.stringWidth("\u202A")).toBe(0); // Left-to-right embedding
+      expect(Bun.stringWidth("\u202B")).toBe(0); // Right-to-left embedding
+      expect(Bun.stringWidth("\u202C")).toBe(0); // Pop directional formatting
+      expect(Bun.stringWidth("\u202D")).toBe(0); // Left-to-right override
+      expect(Bun.stringWidth("\u202E")).toBe(0); // Right-to-left override
+      expect(Bun.stringWidth("\u202Eabc\u202C")).toBe(3);
+    });
+
+    test("bidi isolates and the rest of U+2065-U+206F", () => {
+      expect(Bun.stringWidth("\u2066")).toBe(0); // Left-to-right isolate
+      expect(Bun.stringWidth("\u2067")).toBe(0); // Right-to-left isolate
+      expect(Bun.stringWidth("\u2068")).toBe(0); // First strong isolate
+      expect(Bun.stringWidth("\u2069")).toBe(0); // Pop directional isolate
+      expect(Bun.stringWidth("\u2066abc\u2069")).toBe(3);
+      for (let cp = 0x2065; cp <= 0x206f; cp++) {
+        expect(Bun.stringWidth(String.fromCodePoint(cp))).toBe(0);
+      }
+    });
+
+    test("Arabic letter mark (U+061C)", () => {
+      expect(Bun.stringWidth("\u061C")).toBe(0);
+      expect(Bun.stringWidth("\u061Cab")).toBe(2);
+    });
+
+    test("Mongolian variation selectors and vowel separator (U+180B-U+180F)", () => {
+      for (let cp = 0x180b; cp <= 0x180f; cp++) {
+        expect(Bun.stringWidth(String.fromCodePoint(cp))).toBe(0);
+      }
+    });
+
     test("BOM / ZWNBSP (U+FEFF)", () => {
       expect(Bun.stringWidth("\uFEFF")).toBe(0);
       expect(Bun.stringWidth("\uFEFFhello")).toBe(5);

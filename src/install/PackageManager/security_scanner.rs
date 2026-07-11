@@ -1,5 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::ByteVecExt;
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -10,12 +10,13 @@ use bstr::BStr;
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
 // on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
+use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::bun_json::{Expr, ExprData};
 use crate::package_manager_real::Command::Context as CommandContext;
 use bun_collections::ArrayHashMap;
 use bun_core::strings;
-use bun_core::{self, Error, Output, err};
+use bun_core::{self, Output};
 use bun_event_loop::{AnyEventLoop, EventLoopHandle};
 use bun_install::{
     DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
@@ -107,7 +108,7 @@ pub(crate) fn do_partial_install_of_security_scanner(
     }
 
     if security_scanner_pkg_id == invalid_package_id {
-        return Err(err!("InvalidPackageID"));
+        return Err(crate::Error::InvalidPackageID);
     }
 
     let packages_to_install: Option<&[PackageID]> = Some(&[security_scanner_pkg_id]);
@@ -146,11 +147,11 @@ pub(crate) fn do_partial_install_of_security_scanner(
     }
 
     if summary.fail > 0 {
-        return Err(err!("PartialInstallFailed"));
+        return Err(crate::Error::PartialInstallFailed);
     }
 
     if summary.success == 0 && summary.skipped == 0 {
-        return Err(err!("NoPackagesInstalled"));
+        return Err(crate::Error::NoPackagesInstalled);
     }
 
     Ok(())
@@ -216,7 +217,7 @@ impl<'a> ScannerFinder<'a> {
                 let dep = &self.manager.lockfile.buffers.dependencies[dep_id as usize];
 
                 if dep.name.slice(string_buf) == self.scanner_name {
-                    return Err(err!("SecurityScannerInWorkspace"));
+                    return Err(crate::Error::SecurityScannerInWorkspace);
                 }
             }
         }
@@ -274,7 +275,7 @@ pub(crate) fn perform_security_scan_after_resolution(
             )?;
             match retry_result {
                 ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
-                ScanAttemptResult::NeedsInstall(_) => Err(err!("SecurityScannerRetryFailed")),
+                ScanAttemptResult::NeedsInstall(_) => Err(crate::Error::SecurityScannerRetryFailed),
                 ScanAttemptResult::Error(e) => Err(e),
             }
         }
@@ -316,7 +317,7 @@ pub fn perform_security_scan_for_all(
             )?;
             match retry_result {
                 ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
-                ScanAttemptResult::NeedsInstall(_) => Err(err!("SecurityScannerRetryFailed")),
+                ScanAttemptResult::NeedsInstall(_) => Err(crate::Error::SecurityScannerRetryFailed),
                 ScanAttemptResult::Error(e) => Err(e),
             }
         }
@@ -1025,7 +1026,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         // fd 3 output pipe: bun.sys.pipe() + .pipe (inherit_fd) on both platforms.
         let ipc_output_fds = match bun_sys::pipe() {
-            Err(_) => return Err(err!("IPCPipeFailed")),
+            Err(_) => return Err(crate::Error::IPCPipeFailed),
             Ok(fds) => fds,
         };
 
@@ -1134,12 +1135,11 @@ impl<'a> SecurityScanSubprocess<'a> {
         let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
         // Use the translating overlay (`ReturnCodeExt::err_enum_e`) — the inherent
         // `ReturnCode::err_enum()` returns the raw |uv_code| (e.g. 4071 for
-        // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`, which would
-        // make `errno_to_zig_err` index the wrong table.
+        // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`.
         if let Some(e) = pipe_rc.err_enum_e() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
-            return Err(bun_core::errno_to_zig_err(e as i32));
+            return Err(bun_errno::from_errno(e as i32).into());
         }
         // Track ownership with optionals: None means the fd has been transferred
         // or closed, so the errdefer skips it. Prevents double-close on error paths
@@ -1341,7 +1341,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                     "Failed to start security scanner JSON pipe writer: {}",
                     (e,),
                 );
-                return Err(err!("JSONPipeWriterFailed"));
+                return Err(crate::Error::JSONPipeWriterFailed);
             }
             Ok(()) => {}
         }
@@ -1351,7 +1351,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // ptr per the single-provenance note. `watch_or_reap` may re-enter
         // `on_process_exit` synchronously (already-exited child).
         match unsafe { (*process).watch_or_reap() } {
-            Err(_) => return Err(err!("ProcessWatchFailed")),
+            Err(_) => return Err(crate::Error::ProcessWatchFailed),
             Ok(_) => {}
         }
 
@@ -1521,7 +1521,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 "Security scanner terminated without an exit status. This is a bug in Bun.",
                 (),
             );
-            return Err(err!("SecurityScannerProcessFailedWithoutExitStatus"));
+            return Err(crate::Error::SecurityScannerProcessFailedWithoutExitStatus);
         }
 
         let status = self.exit_status.clone().unwrap();
@@ -1547,50 +1547,50 @@ impl<'a> SecurityScanSubprocess<'a> {
                     );
                 }
             }
-            return Err(err!("NoSecurityScanData"));
+            return Err(crate::Error::NoSecurityScanData);
         }
 
         let json_source =
             bun_ast::Source::init_path_string("ipc-message.json", self.ipc_data.as_slice());
 
         let mut temp_log = bun_ast::Log::init();
-        let bump = bun_alloc::Arena::new();
 
-        let json_expr = match crate::bun_json::parse_utf8(&json_source, &mut temp_log, &bump) {
+        let parsed = match crate::bun_json::ParsedJson::parse_json(&json_source, &mut temp_log) {
             Ok(e) => e,
             Err(e) => {
                 Output::err_generic("Security scanner sent invalid JSON: {}", (e.name(),));
                 if self.ipc_data.len() < 1000 {
                     Output::err_generic("Response: {}", (BStr::new(&self.ipc_data),));
                 }
-                return Err(err!("InvalidIPCMessage"));
+                return Err(crate::Error::InvalidIPCMessage);
             }
         };
+        let json_expr = parsed.root;
 
-        if !matches!(json_expr.data, ExprData::EObject(_)) {
+        if !matches!(json_expr.data, ExprData::EObjectJSON(_)) {
             Output::err_generic("Security scanner IPC message must be a JSON object", ());
-            return Err(err!("InvalidIPCFormat"));
+            return Err(crate::Error::InvalidIPCFormat);
         }
 
         let Some(type_expr) = json_expr.get(b"type") else {
             Output::err_generic("Security scanner IPC message missing 'type' field", ());
-            return Err(err!("MissingIPCType"));
+            return Err(crate::Error::MissingIPCType);
         };
 
-        let Some(type_str) = type_expr.as_string(&bump) else {
+        let Some(type_str) = type_expr.as_utf8_string_literal() else {
             Output::err_generic("Security scanner IPC 'type' must be a string", ());
-            return Err(err!("InvalidIPCType"));
+            return Err(crate::Error::InvalidIPCType);
         };
 
         if type_str == b"error" {
             let Some(code_expr) = json_expr.get(b"code") else {
                 Output::err_generic("Security scanner error missing 'code' field", ());
-                return Err(err!("MissingErrorCode"));
+                return Err(crate::Error::MissingErrorCode);
             };
 
-            let Some(code_str) = code_expr.as_string(&bump) else {
+            let Some(code_str) = code_expr.as_utf8_string_literal() else {
                 Output::err_generic("Security scanner error 'code' must be a string", ());
-                return Err(err!("InvalidErrorCode"));
+                return Err(crate::Error::InvalidErrorCode);
             };
 
             #[derive(PartialEq, Eq)]
@@ -1611,7 +1611,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                     "Unknown security scanner error code: {}",
                     (BStr::new(code_str),),
                 );
-                return Err(err!("UnknownErrorCode"));
+                return Err(crate::Error::UnknownErrorCode);
             };
 
             match error_code {
@@ -1629,14 +1629,14 @@ impl<'a> SecurityScanSubprocess<'a> {
                                 "Security scanner '{}' could not be found after installation attempt.\n  <d>If this is a local file, please check that the file exists and the path is correct.<r>",
                                 (BStr::new(security_scanner),),
                             );
-                            return Err(err!("SecurityScannerNotFound"));
+                            return Err(crate::Error::SecurityScannerNotFound);
                         } else {
                             // For local files, the error is expected - they can't be installed
                             Output::err_generic(
                                 "Security scanner '{}' is configured in bunfig.toml but the file could not be found.\n  <d>Please check that the file exists and the path is correct.<r>",
                                 (BStr::new(security_scanner),),
                             );
-                            return Err(err!("SecurityScannerNotFound"));
+                            return Err(crate::Error::SecurityScannerNotFound);
                         }
                     }
 
@@ -1658,30 +1658,30 @@ impl<'a> SecurityScanSubprocess<'a> {
                                 (BStr::new(security_scanner),),
                             );
                         }
-                        return Err(err!("SecurityScannerNotInDependencies"));
+                        return Err(crate::Error::SecurityScannerNotInDependencies);
                     }
                 }
                 ErrorCode::InvalidVersion => {
                     if let Some(msg) = json_expr.get(b"message") {
-                        if let Some(msg_str) = msg.as_string(&bump) {
+                        if let Some(msg_str) = msg.as_utf8_string_literal() {
                             Output::err_generic(
                                 "Security scanner error: {}",
                                 (BStr::new(msg_str),),
                             );
                         }
                     }
-                    return Err(err!("InvalidScannerVersion"));
+                    return Err(crate::Error::InvalidScannerVersion);
                 }
                 ErrorCode::ScanFailed => {
                     if let Some(msg) = json_expr.get(b"message") {
-                        if let Some(msg_str) = msg.as_string(&bump) {
+                        if let Some(msg_str) = msg.as_utf8_string_literal() {
                             Output::err_generic(
                                 "Security scanner failed: {}",
                                 (BStr::new(msg_str),),
                             );
                         }
                     }
-                    return Err(err!("ScannerFailed"));
+                    return Err(crate::Error::ScannerFailed);
                 }
             }
         } else if type_str != b"result" {
@@ -1689,7 +1689,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 "Unknown security scanner message type: {}",
                 (BStr::new(type_str),),
             );
-            return Err(err!("UnknownMessageType"));
+            return Err(crate::Error::UnknownMessageType);
         }
 
         // if we got here then we got a result message so we can continue like normal
@@ -1755,22 +1755,18 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let Some(advisories_expr) = json_expr.get(b"advisories") else {
             Output::err_generic("Security scanner result missing 'advisories' field", ());
-            return Err(err!("MissingAdvisoriesField"));
+            return Err(crate::Error::MissingAdvisoriesField);
         };
 
-        let advisories = parse_security_advisories_from_expr(
-            self.manager,
-            advisories_expr,
-            &bump,
-            package_paths,
-        )?;
+        let advisories =
+            parse_security_advisories_from_expr(self.manager, advisories_expr, package_paths)?;
 
         if !status.is_ok() {
             match &status {
                 Status::Exited(Exited { code, .. }) => {
                     if *code != 0 {
                         Output::err_generic("Security scanner failed with exit code: {}", (*code,));
-                        return Err(err!("SecurityScannerFailed"));
+                        return Err(crate::Error::SecurityScannerFailed);
                     }
                 }
                 Status::Signaled(signal) => {
@@ -1778,11 +1774,11 @@ impl<'a> SecurityScanSubprocess<'a> {
                         "Security scanner was terminated by signal: {}",
                         (signal_name(*signal),),
                     );
-                    return Err(err!("SecurityScannerTerminated"));
+                    return Err(crate::Error::SecurityScannerTerminated);
                 }
                 _ => {
                     Output::err_generic("Security scanner failed", ());
-                    return Err(err!("SecurityScannerFailed"));
+                    return Err(crate::Error::SecurityScannerFailed);
                 }
             }
         }
@@ -1807,29 +1803,37 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 }
 
+fn json_type_name(data: &ExprData) -> &'static str {
+    match data {
+        ExprData::EObjectJSON(_) => bun_ast::expr::Tag::EObject.into(),
+        ExprData::EArrayJSON(_) => bun_ast::expr::Tag::EArray.into(),
+        other => other.tag().into(),
+    }
+}
+
 fn parse_security_advisories_from_expr(
     manager: &PackageManager,
     advisories_expr: Expr,
-    bump: &bun_alloc::Arena,
     package_paths: &mut ArrayHashMap<PackageID, PackagePath>,
 ) -> Result<Box<[SecurityAdvisory]>, Error> {
     let mut advisories_list: Vec<SecurityAdvisory> = Vec::new();
 
-    let ExprData::EArray(array) = &advisories_expr.data else {
+    let ExprData::EArrayJSON(array) = &advisories_expr.data else {
         Output::err_generic(
             "Security scanner 'advisories' field must be an array, got: {}",
-            (<&str>::from(advisories_expr.data.tag()),),
+            (json_type_name(&advisories_expr.data),),
         );
-        return Err(err!("InvalidAdvisoriesFormat"));
+        return Err(crate::Error::InvalidAdvisoriesFormat);
     };
 
-    for (i, item) in array.items.slice().iter().enumerate() {
-        if !matches!(item.data, ExprData::EObject(_)) {
+    for (i, item_value) in array.get().items().iter().enumerate() {
+        let item = Expr::from_json_value(item_value, advisories_expr.loc);
+        if !matches!(item.data, ExprData::EObjectJSON(_)) {
             Output::err_generic(
                 "Security advisory at index {} must be an object, got: {}",
-                (i, <&str>::from(item.data.tag())),
+                (i, json_type_name(&item.data)),
             );
-            return Err(err!("InvalidAdvisoryFormat"));
+            return Err(crate::Error::InvalidAdvisoryFormat);
         }
 
         let Some(name_expr) = item.get(b"package") else {
@@ -1837,29 +1841,27 @@ fn parse_security_advisories_from_expr(
                 "Security advisory at index {} missing required 'package' field",
                 (i,),
             );
-            return Err(err!("MissingPackageField"));
+            return Err(crate::Error::MissingPackageField);
         };
-        let Some(name_str_temp) = name_expr.as_string(bump) else {
+        let Some(name_str_temp) = name_expr.as_utf8_string_literal() else {
             Output::err_generic(
                 "Security advisory at index {} 'package' field must be a string",
                 (i,),
             );
-            return Err(err!("InvalidPackageField"));
+            return Err(crate::Error::InvalidPackageField);
         };
         if name_str_temp.is_empty() {
             Output::err_generic(
                 "Security advisory at index {} 'package' field cannot be empty",
                 (i,),
             );
-            return Err(err!("EmptyPackageField"));
+            return Err(crate::Error::EmptyPackageField);
         }
-        // Duplicate the string since asString returns temporary memory
         let name_str: Box<[u8]> = Box::from(name_str_temp);
 
         let desc_str: Option<Box<[u8]>> = if let Some(desc_expr) = item.get(b"description") {
             'blk: {
-                if let Some(str) = desc_expr.as_string(bump) {
-                    // Duplicate the string since asString returns temporary memory
+                if let Some(str) = desc_expr.as_utf8_string_literal() {
                     break 'blk Some(Box::from(str));
                 }
                 if matches!(desc_expr.data, ExprData::ENull(_)) {
@@ -1869,7 +1871,7 @@ fn parse_security_advisories_from_expr(
                     "Security advisory at index {} 'description' field must be a string or null",
                     (i,),
                 );
-                return Err(err!("InvalidDescriptionField"));
+                return Err(crate::Error::InvalidDescriptionField);
             }
         } else {
             None
@@ -1877,8 +1879,7 @@ fn parse_security_advisories_from_expr(
 
         let url_str: Option<Box<[u8]>> = if let Some(url_expr) = item.get(b"url") {
             'blk: {
-                if let Some(str) = url_expr.as_string(bump) {
-                    // Duplicate the string since asString returns temporary memory
+                if let Some(str) = url_expr.as_utf8_string_literal() {
                     break 'blk Some(Box::from(str));
                 }
                 if matches!(url_expr.data, ExprData::ENull(_)) {
@@ -1888,7 +1889,7 @@ fn parse_security_advisories_from_expr(
                     "Security advisory at index {} 'url' field must be a string or null",
                     (i,),
                 );
-                return Err(err!("InvalidUrlField"));
+                return Err(crate::Error::InvalidUrlField);
             }
         } else {
             None
@@ -1899,14 +1900,14 @@ fn parse_security_advisories_from_expr(
                 "Security advisory at index {} missing required 'level' field",
                 (i,),
             );
-            return Err(err!("MissingLevelField"));
+            return Err(crate::Error::MissingLevelField);
         };
-        let Some(level_str) = level_expr.as_string(bump) else {
+        let Some(level_str) = level_expr.as_utf8_string_literal() else {
             Output::err_generic(
                 "Security advisory at index {} 'level' field must be a string",
                 (i,),
             );
-            return Err(err!("InvalidLevelField"));
+            return Err(crate::Error::InvalidLevelField);
         };
         let level = if level_str == b"fatal" {
             SecurityAdvisoryLevel::Fatal
@@ -1917,7 +1918,7 @@ fn parse_security_advisories_from_expr(
                 "Security advisory at index {} 'level' field must be 'fatal' or 'warn', got: '{}'",
                 (i, BStr::new(level_str)),
             );
-            return Err(err!("InvalidLevelValue"));
+            return Err(crate::Error::InvalidLevelValue);
         };
 
         // Look up the package path for this advisory

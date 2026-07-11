@@ -2191,8 +2191,17 @@ where
         // config omits the handler, so subsequent `on_web_socket_upgrade` /
         // `set_routes` stop routing through the node:http path. `take()` yields
         // `None` when the new config omitted it; assignment drops the old Strong.
-        if self.config.on_node_http_request.as_ref().map(Strong::get)
-            != new_config.on_node_http_request.as_ref().map(Strong::get)
+        //
+        // Never the other direction: a server that was not created as a node:http
+        // server cannot become one through reload(). listen() already sized every
+        // future connection's socket ext block for this server's kind
+        // (HttpResponseData vs the bigger NodeHttpResponseData) and set_routes
+        // would flip the context's usingNodeHttpCompat flag under those
+        // already-sized allocations, so the node request path would construct and
+        // index past them.
+        if self.config.on_node_http_request.is_some()
+            && self.config.on_node_http_request.as_ref().map(Strong::get)
+                != new_config.on_node_http_request.as_ref().map(Strong::get)
         {
             self.config.on_node_http_request = new_config.on_node_http_request.take();
         }
@@ -2438,14 +2447,7 @@ where
             // sentinel and calls `clone_into(.., preserve_url=false)`.
             unsafe { (*request_).clone(ctx)? }
         } else {
-            // SAFETY: FFI call into JSC C API; `ctx` is a live JSGlobalObject and
-            // `first_arg.as_ref()` produces a valid `JSValueRef`.
-            let js_type =
-                unsafe { jsc::c_api::JSValueGetType(ctx.as_ptr(), first_arg.as_ref()) } as usize;
-            let fetch_error = Fetch::FETCH_TYPE_ERROR_STRINGS
-                .get(js_type)
-                .copied()
-                .unwrap_or(Fetch::FETCH_TYPE_ERROR_STRINGS[0]);
+            let fetch_error = Fetch::fetch_type_error_string(first_arg);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err),

@@ -142,7 +142,7 @@ public:
         /* if write was called and there was previously no Content-Length header set.
          * node:http compat: pending response trailers (addTrailers) also force chunked
          * framing, since trailer fields can only be sent on a chunked body. */
-        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED || !httpResponseData->nodeHttpResponseTrailers.empty()) && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
+        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED || httpResponseData->hasNodeHttpResponseTrailers) && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
@@ -163,11 +163,24 @@ public:
 
             /* Terminating 0 chunk; node:http response trailers (RFC 9112 7.1.2) sit
              * between it and the final CRLF. */
-            if (!httpResponseData->nodeHttpResponseTrailers.empty()) [[unlikely]] {
-                Super::write("0\r\n", 3);
-                Super::write(httpResponseData->nodeHttpResponseTrailers.data(), (int) httpResponseData->nodeHttpResponseTrailers.length());
-                Super::write("\r\n", 2);
-                httpResponseData->nodeHttpResponseTrailers.clear();
+            if (httpResponseData->hasNodeHttpResponseTrailers) [[unlikely]] {
+                /* Only a node:http compat connection can set the flag, so the
+                 * downcast to the bigger IsNodeHttp=true block is safe.
+                 * (HttpResponse<SSL> is not templated on IsNodeHttp - it is the
+                 * type the C API casts to from a runtime `int ssl` - so this
+                 * one shared read stays a runtime bit test.) */
+                auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
+                /* Emit the terminating chunk, the trailer section and the final CRLF as
+                 * ONE write: when the response is not corked (cork slots are contended
+                 * under high connection counts), separate writes become separate tiny
+                 * TCP segments on the tail of every response. The buffer is about to be
+                 * cleared anyway, so build the frame in place. */
+                std::string &trailers = nodeHttpResponseData->nodeHttpResponseTrailers;
+                trailers.insert(0, "0\r\n", 3);
+                trailers.append("\r\n", 2);
+                Super::write(trailers.data(), (int) trailers.length());
+                trailers.clear();
+                httpResponseData->hasNodeHttpResponseTrailers = false;
             } else {
                 Super::write("0\r\n\r\n", 5);
             }
@@ -360,8 +373,14 @@ public:
         auto* socketData = responseData->socketData;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
 
-        /* Destroy HttpResponseData */
-        responseData->~HttpResponseData();
+        /* Destroy HttpResponseData (the IsNodeHttp=true type on node:http
+         * compat contexts; upgrade() is not on a templated handler path, so it
+         * selects at runtime like socketExtSize()). */
+        if (httpContextData->flags.usingNodeHttpCompat) {
+            ((HttpResponseData<SSL, true> *) responseData)->~HttpResponseData();
+        } else {
+            responseData->~HttpResponseData();
+        }
 
         /* Before we adopt and potentially change socket, check which cork slot
          * we occupy so we can transfer it to the new WebSocket. */
@@ -369,6 +388,12 @@ public:
         int corkedSlot = loopData->findCorkSlot(this);
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
+        /* The old ext size is only used as an upper bound to keep the block in
+         * place (and as the copy length when it cannot be). The base size is
+         * always correct here: a node:http compat socket's block is bigger, so
+         * under-stating it is an in-bounds under-copy of an already-destructed
+         * ext, while over-stating it for a Bun.serve socket would read out of
+         * bounds. */
         us_socket_t *usSocket = us_socket_adopt((us_socket_t *) this, webSocketContext->getSocketGroup(),
             WebSocketContext<SSL, true, UserData>::socketKind(),
             sizeof(HttpResponseData<SSL>), sizeof(WebSocketData) + sizeof(UserData));

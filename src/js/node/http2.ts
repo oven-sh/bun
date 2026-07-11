@@ -414,6 +414,7 @@ const kRequestHeaders = Symbol("requestHeaders");
 // set so a second sendTrailers() in the same tick reports ERR_HTTP2_TRAILERS_ALREADY_SENT, not
 // ERR_HTTP2_INVALID_STREAM.
 const kSendingTrailers = Symbol("sendingTrailers");
+const kSettingsAckGraceTimer = Symbol("settingsAckGraceTimer");
 // node: a socket can be bound to at most one Http2Session (ERR_HTTP2_SOCKET_BOUND).
 const kBoundSession = Symbol("boundSession");
 const kInspect = Symbol.for("nodejs.util.inspect.custom");
@@ -2205,7 +2206,17 @@ function pushToStream(stream, data) {
     return;
   }
 
-  stream.push(data);
+  // Node's onStreamRead (lib/internal/stream_base_commons.js): push() returning false
+  // is the readable side's backpressure signal, and the reader must readStop()
+  // synchronously - a consumer's read()/_read() from this very push must be the LAST
+  // word on the window, not overwritten by a deferred stop. Without this half,
+  // _read()'s readStart makes pause() unenforceable: one reopen lets the peer flood
+  // past the buffer's high-water mark instead of stalling on the receive window.
+  // setStreamReading(id, false) only records the paused bit natively, so calling it
+  // from inside the dispatch that delivered `data` cannot re-enter the engine.
+  if (!stream.push(data) && data !== null) {
+    streamOnPause.$call(stream);
+  }
 }
 
 enum StreamState {
@@ -2315,6 +2326,23 @@ function setupRequestEndAndSignal(req: Http2Stream, options: any, signal: AbortS
 function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: number, stream: Http2Stream) {
   if (stream.destroyed) return;
   if (rstCode && !stream.rstCode) stream.rstCode = rstCode;
+  // A clean session teardown can reach here while a stream's already-received request data is
+  // still being drained by its consumer: the native side is done with the stream (state 7,
+  // which is what allowed the session to start destroying), but the JS side is not. Destroying
+  // now discards that data and emits 'close' without 'end' (a piped request body never
+  // finishes). Node's session waits for the JS stream, so finish delivering and destroy on
+  // 'end'. Only for natively-closed streams: a still-open one must keep node's contract that
+  // session.destroy() destroys it synchronously (and the engine error sweep follows for it).
+  if (
+    error === undefined &&
+    (stream[bunHTTP2StreamStatus] & StreamState.NativeClosed) !== 0 &&
+    stream.readable &&
+    stream.readableFlowing !== null
+  ) {
+    stream.push(null);
+    stream.once("end", destroySelfOnEnd);
+    return;
+  }
   // Only surface the session error on streams that are listening for it (the
   // same guard emitStreamErrorNT applies): a still-open stream with no 'error'
   // listener would otherwise turn session.destroy(code) into an uncaught
@@ -2805,7 +2833,21 @@ class Http2Stream extends Duplex {
   }
 
   _read(_size) {
-    // we always use the internal stream queue now
+    // Node's Http2Stream._read (lib/internal/http2/core.js): every read re-opens the
+    // stream's receive window (readStart). A pull-mode read() after pause() never
+    // emits 'resume', so this is the only path that reopens the window for it. This
+    // is only correct together with pushToStream's readStop-on-full-buffer above:
+    // Node's Readable calls _read even while paused (maybeReadMore), so an unbounded
+    // reopen here would otherwise defeat pause() entirely.
+    if (this.destroyed) {
+      this.push(null);
+      return;
+    }
+    if (!this.pending) {
+      streamOnResume.$call(this);
+    } else {
+      this.once("ready", streamOnResume);
+    }
   }
 
   end(chunk, encoding, callback) {
@@ -3116,10 +3158,54 @@ function afterOpen(options, headers, err, fd) {
   fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
 }
 
+// Node's Http2Stream[kMaybeDestroy] server branch (lib/internal/http2/core.js): once the
+// response has finished, a server stream with no pending trailers whose request body was
+// never consumed (no read()/'data'/pipe - readableDidRead + readableFlowing) is closed
+// with RST_STREAM NO_ERROR. Without it a rejected upload deadlocks: the request body
+// stalls once the receive window fills (nothing reads, so backpressure never reopens it)
+// and the stream never reaches the fully-closed state, so the peer is never released.
+// setImmediate matches node (it lets push streams reach the peer before the close).
+//
+// Unlike node, the native layer can dispatch the request's END_STREAM and body to JS
+// after the response's 'finish' (node learns endOfStream with the headers), so at
+// 'finish' an untouched readable does not prove the peer is stuck and an empty one does
+// not prove it is not. Two timing-independent triggers cover both orderings:
+//  - 'finish' with unread request bytes already buffered (the peer was mid-upload), and
+//  - unread request bytes reaching JS after the response already finished
+//    (ServerHttp2Session's streamData). A request with no body can produce neither.
+function maybeCloseUnreadServerStream(stream: ServerHttp2Stream) {
+  if (stream.destroyed || stream.closed) return;
+  if (!stream.writableFinished || !stream.headersSent) return;
+  // A file response (respondWithFile/FD) ends the user-facing writable while the file is
+  // still being written natively, so writableFinished does not mean the response is done;
+  // node never installs its auto-close hook for that path (it nulls _final), match it.
+  if (stream[kFileResponseFinal] !== undefined) return;
+  // Node holds the auto-close while trailers are pending: its HAS_TRAILERS flag is set by
+  // respond({waitForTrailers}) and only cleared once sendTrailers() has submitted them.
+  if (stream[kSendingTrailers]) return;
+  if ((stream[bunHTTP2StreamStatus] & StreamState.WantTrailer) !== 0 && stream.sentTrailers === undefined) return;
+  if (!stream.readableDidRead && stream.readableFlowing === null) {
+    setImmediate(callStreamClose, stream);
+  }
+}
+function serverStreamOnFinish(this: ServerHttp2Stream) {
+  if (this.readableLength > 0) maybeCloseUnreadServerStream(this);
+}
+function callStreamClose(stream: ServerHttp2Stream) {
+  if (!stream.destroyed && !stream.closed) stream.close();
+}
 class ServerHttp2Stream extends Http2Stream {
   headersSent = false;
   constructor(streamId, session, headers) {
     super(streamId, session, headers);
+  }
+  // Node registers its 'finish' -> kMaybeDestroy hook inside shutdownWritable (its
+  // _final): a file response (respondWithFile/FD) nulls out _final and ends the
+  // user-facing writable while the file is still being written natively, so it must
+  // never install the hook - the early 'finish' would RST and truncate the transfer.
+  _final(callback) {
+    this.once("finish", serverStreamOnFinish);
+    super._final(callback);
   }
   // Node sends the implicit response headers (:status 200) when the stream is written to before
   // respond() was called; without this the DATA frames would go out with no preceding HEADERS.
@@ -3335,6 +3421,9 @@ class ServerHttp2Stream extends Http2Stream {
     if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
+    // The caller owns this fd; clear any stale flag left by a prior respondWithFile()
+    // on the same stream so doSendFileFD will not close it (node semantics).
+    this[kOwnsFd] = false;
     if (options.statCheck === undefined) {
       // node's processRespondWithFD runs synchronously when no statCheck is given: the
       // user-facing writable side is already closed by the time respondWithFD() returns, so a
@@ -3588,6 +3677,21 @@ function emitConnectNT(self, socket) {
 
 function destroyWithInvalidSessionNT(stream) {
   if (!stream.destroyed) stream.destroy($ERR_HTTP2_INVALID_SESSION());
+}
+// A gracefully closed, idle session whose settings() ACK has not arrived yet gets a short,
+// bounded grace instead of an immediate destroy. Node never needs this: it coalesces the
+// SETTINGS frame into the same write as the request, so its ACK always beats the response
+// the caller is closing from. Bun flushes the request first, so the ACK can still be one
+// round-trip away when close() runs - destroying then silently drops the user's settings
+// callback and its 'localSettings' event. An ACK is mandatory (RFC 9113 6.5.3) and its
+// dispatch completes the destroy at once; a peer that never sends one only delays the
+// teardown by the grace, never past it.
+function scheduleSettingsAckGraceNT(session) {
+  if (session[kSettingsAckGraceTimer] !== undefined) return;
+  const timer = setTimeout(destroyIfNotDestroyedNT, 250, session);
+  // Never keeps the event loop alive: if nothing else does, the process is exiting anyway.
+  timer.unref?.();
+  session[kSettingsAckGraceTimer] = timer;
 }
 function destroyIfNotDestroyedNT(target) {
   if (!target.destroyed) target.destroy();
@@ -3995,6 +4099,9 @@ class ServerHttp2Session extends Http2Session {
     streamData(self: ServerHttp2Session, stream: ServerHttp2Stream, data: Buffer) {
       if (!self || typeof stream !== "object" || !data) return;
       pushToStream(stream, data);
+      // Request data arriving unread after the response finished: the peer is uploading
+      // into a receive window nothing will reopen (see maybeCloseUnreadServerStream).
+      maybeCloseUnreadServerStream(stream);
     },
     streamHeaders(
       self: ServerHttp2Session,
@@ -4055,8 +4162,10 @@ class ServerHttp2Session extends Http2Session {
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
       const queued = self.#pendingSettingsCallbacks.shift();
-      self.emit("localSettings", settings);
+      // Node's settingsCallback (lib/internal/http2/core.js) invokes the settings()
+      // callback first and emits 'localSettings' after it.
       if (queued != null) queued[0](null, settings, Date.now() - queued[1]);
+      self.emit("localSettings", settings);
     },
     remoteSettings(self: ServerHttp2Session, settings: Settings) {
       if (!self) return;
@@ -4470,6 +4579,12 @@ class ServerHttp2Session extends Http2Session {
     }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
+    // The frame is queued on the native session; flush it now (as close() does for its
+    // GOAWAY) instead of waiting for the next unrelated write. Node schedules a session
+    // write for every settings() call, so its SETTINGS goes out with the current batch -
+    // a late frame here means the ACK trails the peer's response and a session closed at
+    // that response's end never resolves the settings callback.
+    this.#parser?.flush?.();
     // Queue the callback so this call's own ACK invokes it (after 'localSettings');
     // the null seed absorbs the initial-preface ACK that has no user callback.
     this.#pendingSettingsCallbacks.push(typeof callback === "function" ? [callback, Date.now()] : null);
@@ -4820,7 +4935,12 @@ class ClientHttp2Session extends Http2Session {
             stream.destroy();
           }
           if (self.#connections === 0 && self.#closed) {
-            self.destroy();
+            // Deferred like close()'s own destroy: this runs inside a native dispatch
+            // batch, and frames the engine already received but has not dispatched yet
+            // must still reach JS. An outstanding settings() ACK gets a bounded grace
+            // (see scheduleSettingsAckGraceNT); its arrival completes the destroy.
+            if (self.#pendingSettingsAckCount > 0) scheduleSettingsAckGraceNT(self);
+            else setImmediate(destroyIfNotDestroyedNT, self);
           }
         } else if (state === 5) {
           // 5 = local closed aka write is closed
@@ -4903,9 +5023,19 @@ class ClientHttp2Session extends Http2Session {
       self.#localSettings = settings;
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
+      // This ACK may be the only thing a gracefully closed, idle session was waiting for.
+      if (self.#pendingSettingsAckCount === 0 && self[kSettingsAckGraceTimer] !== undefined) {
+        clearTimeout(self[kSettingsAckGraceTimer]);
+        self[kSettingsAckGraceTimer] = undefined;
+      }
+      if (self.#closed && self.#connections === 0 && self.#pendingSettingsAckCount === 0 && !self.destroyed) {
+        setImmediate(destroyIfNotDestroyedNT, self);
+      }
       const queued = self.#pendingSettingsCallbacks.shift();
-      self.emit("localSettings", settings);
+      // Node's settingsCallback (lib/internal/http2/core.js) invokes the settings()
+      // callback first and emits 'localSettings' after it.
       if (queued != null) queued[0](null, settings, Date.now() - queued[1]);
+      self.emit("localSettings", settings);
     },
     remoteSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;
@@ -5246,6 +5376,12 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
+    // The frame is queued on the native session; flush it now (as close() does for its
+    // GOAWAY) instead of waiting for the next unrelated write. Node schedules a session
+    // write for every settings() call, so its SETTINGS goes out with the current batch -
+    // a late frame here means the ACK trails the peer's response and a session closed at
+    // that response's end never resolves the settings callback.
+    this.#parser?.flush?.();
     // Queue the callback so this call's own ACK invokes it (after 'localSettings');
     // the null seed absorbs the initial-preface ACK that has no user callback.
     this.#pendingSettingsCallbacks.push(typeof callback === "function" ? [callback, Date.now()] : null);
@@ -5397,11 +5533,18 @@ class ClientHttp2Session extends Http2Session {
     this.#parser?.flush?.();
     // Requests queued while the socket is still connecting count as in-flight too: they are
     // rejected with ERR_HTTP2_GOAWAY_SESSION from #onConnect (node's requestOnConnect), not
-    // canceled by an early destroy. Node's kMaybeDestroy waits on handle.hasPendingData()
-    // (nghttp2_session_want_write()/want_read()), which does NOT track outstanding SETTINGS
-    // ACKs — close() must not depend on the peer sending one.
+    // canceled by an early destroy.
+    //
+    // A settings() whose ACK has not arrived also keeps the graceful close from destroying
+    // the session yet: node always observes that ACK before it gets here because it batches
+    // the SETTINGS frame into the same write as the request (so the ACK beats the response),
+    // and the vendored tests close() from the response's 'end' relying on it. The wait is
+    // bounded: an ACK is mandatory (RFC 9113 6.5.3) and arrives one round-trip later; the
+    // localSettings dispatch finishes the deferred destroy, and a dead socket still tears
+    // the session down. destroy() remains immediate.
     if (this.#connections === 0 && (this.#pendingRequests === null || this.#pendingRequests.length === 0)) {
-      setImmediate(destroyIfNotDestroyedNT, this);
+      if (this.#pendingSettingsAckCount > 0) scheduleSettingsAckGraceNT(this);
+      else setImmediate(destroyIfNotDestroyedNT, this);
     }
   }
 
@@ -5991,6 +6134,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     let hasTransferEncoding = false;
     let hasDate = false;
     let hasConnection = false;
+    let hasKeepAlive = false;
     const headers = head?.headers;
     if (headers) {
       // ServerResponse drives this handle with renderNativeHeaders(): a flat
@@ -6019,6 +6163,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
           case "connection":
             hasConnection = true;
             break;
+          case "keep-alive":
+            hasKeepAlive = true;
+            break;
         }
         out += `${name}: ${value}\r\n`;
       }
@@ -6037,9 +6184,25 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     // A close-delimited response with no Connection pair means the user removed
     // it (Node's _removedConnection): write none rather than inventing
     // keep-alive on a connection that ends with the body.
+    // renderNativeHeaders reports its Connection decision through the
+    // auto-header bits (AUTO_HEADER_* in _http_server.ts / kAutoHeader* in
+    // NodeHTTP.cpp); honor an explicit close (res.shouldKeepAlive = false,
+    // the graceful-shutdown pattern) over the parser-derived flag.
+    const autoBits = head?.autoHeaderBits ?? 0;
     if (!hasConnection && !closeDelimited) {
-      if (shouldKeepAlive) {
-        out += `Connection: keep-alive\r\nKeep-Alive: timeout=${Math.floor((keepAliveTimeout || 5000) / 1000)}\r\n`;
+      if ((autoBits & 4) !== 0) {
+        out += "Connection: close\r\n";
+      } else if (shouldKeepAlive) {
+        out += "Connection: keep-alive\r\n";
+        // A user-sent Keep-Alive header (already written by the loop above)
+        // suppresses the auto line, like the native writeAutoHeaders. The
+        // bit-carried timeout wins when present; otherwise fall back to this
+        // handle's configured timeout, preserving pre-bits behavior.
+        if (!hasKeepAlive) {
+          const kaSecs =
+            (autoBits & 8) !== 0 ? head.keepAliveTimeoutSecs : Math.floor((keepAliveTimeout || 5000) / 1000);
+          out += `Keep-Alive: timeout=${kaSecs}\r\n`;
+        }
       } else {
         out += "Connection: close\r\n";
       }
@@ -6079,7 +6242,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     cork(callback) {
       return callback();
     },
-    writeHead(statusCode, statusMessage, headers) {
+    writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs) {
       // The native NodeHTTPResponse handle validates the status line it writes; this
       // JS stand-in serializes it by hand, so it must enforce the same invariants
       // (response splitting via res.statusMessage / a non-numeric res.statusCode).
@@ -6091,10 +6254,25 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (typeof statusMessage === "string" && checkInvalidHeaderChar(statusMessage)) {
         throw $ERR_INVALID_CHAR("statusMessage");
       }
-      head = { statusCode, statusMessage, headers };
+      head = { statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs };
     },
     flushHeaders() {
       writeHeadToSocket(null);
+    },
+    writeHeadAndEnd(
+      statusCode,
+      statusMessage,
+      headers,
+      chunk,
+      encoding,
+      strictContentLength,
+      autoHeaderBits,
+      keepAliveTimeoutSecs,
+    ) {
+      // The native NodeHTTPResponse batches writeHead + end into one call;
+      // this fallback composes the same two steps.
+      this.writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs);
+      return this.end(chunk, encoding, undefined, strictContentLength);
     },
     write(chunk, encoding, _callback, _strictContentLength) {
       const buf = toBuffer(chunk, encoding);

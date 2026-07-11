@@ -129,6 +129,8 @@ export const enum NodeHTTPBodyReadState {
 export const enum NodeHTTPResponseFlags {
   socket_closed = 1 << 0,
   request_has_completed = 1 << 1,
+  ended = 1 << 2,
+  upgraded = 1 << 3,
 
   closed_or_completed = socket_closed | request_has_completed,
 }
@@ -200,8 +202,13 @@ function emitEOFIncomingMessageOuter(self) {
   // parserOnMessageComplete. Native moved the section onto THIS request's
   // handle at its body fin, so pipelined requests can neither inherit nor
   // overwrite another request's trailers.
-  if (self[kHandle] !== undefined) {
-    let rawTrailers = self[kHandle].takeRequestTrailers();
+  // Trailers can only follow a chunked request body: a no-body request has
+  // none, so skip the native call (and the socket/server option walk) for the
+  // common GET/HEAD case.
+  if (self[kHandle] !== undefined && !self[noBodySymbol]) {
+    // The lenient (insecureHTTPParser) value bytes must match what the parser
+    // accepted on the wire, or a CTL byte in a trailer value would vanish here.
+    let rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
     if (rawTrailers !== undefined) {
       // Apply server.maxHeadersCount to trailers like Node's parserOnHeaders
       // does (the same maxHeaderPairs limit covers both). The parser hard-caps

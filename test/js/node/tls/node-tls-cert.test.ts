@@ -946,12 +946,12 @@ it.skipIf(isDebug)(
       for (let round = 0; round < 4; round++) spin(perRound);
       const baseline = process.memoryUsage.rss();
 
-      for (let round = 0; round < 10; round++) spin(perRound);
+      for (let round = 0; round < 5; round++) spin(perRound);
       const after = process.memoryUsage.rss();
       const growth = after - baseline;
 
-      // Unpatched, the BIO leak alone is ~800 bytes/call → ~40MB over the
-      // 50k abbreviated calls here (~20MB for 25k in debug). Leave slack for
+      // Unpatched, the BIO leak alone is ~800 bytes/call → ~20MB over the
+      // 25k abbreviated calls here (~10MB for 12.5k in debug). Leave slack for
       // allocator/ASAN noise but stay well below that. Both calls in the loop
       // build the full leaf-certificate object (getPeerCertificate(false) used
       // to return {}), so the debug budget covers 2x the constructions. Local

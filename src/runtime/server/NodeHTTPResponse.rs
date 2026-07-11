@@ -57,6 +57,12 @@ pub struct NodeHTTPResponse {
     /// body finishes (still inside the parser), because a pipelined request's
     /// parse would otherwise overwrite it before this request's JS reads it.
     pub request_trailers: JsCell<Vec<u8>>,
+    /// node:http: this request's header section captured at dispatch as
+    /// [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
+    /// req.headers materialize lazily (takeRawHeaders) instead of paying
+    /// 2N JSStrings + a JSArray on every request. One-shot: emptied on first
+    /// access.
+    pub raw_request_headers: JsCell<Vec<u8>>,
     pub bytes_written: Cell<usize>,
 
     pub upgrade_context: JsCell<UpgradeCTX>,
@@ -192,26 +198,44 @@ unsafe extern "C" {
         global_object: &JSGlobalObject,
         data: *const u8,
         length: usize,
+        use_insecure_http_parser: bool,
+    ) -> JSValue;
+    // Scope-free exception read: satisfies the exception-check verifier
+    // after a callee ThrowScope destructor simulated a throw for this
+    // (scope-less native) caller. A single traps check in release builds.
+    safe fn Bun__NodeHTTP__acknowledgeThrowScope(global_object: &JSGlobalObject);
+    // Builds req.rawHeaders' flat [name, value, ...] JSArray from the header
+    // bytes captured at dispatch ([u32 nameLen][u32 valueLen][name][value]...).
+    safe fn Bun__NodeHTTP__buildRawHeadersArray(
+        global_object: &JSGlobalObject,
+        data: *const u8,
+        length: usize,
     ) -> JSValue;
 
     // `&JSGlobalObject` encodes non-null/aligned; `status_message` is the
     // ptr/len of a Rust `&[u8]` and `response` is a live `uws::Response<SSL>*`
     // from the matched `AnyResponse` arm. Module-private with one call site.
+    // Returns false when the C++ header writer left a JS exception pending
+    // (checked inside its own ThrowScope).
     safe fn NodeHTTPServer__writeHead_http(
         global_object: &JSGlobalObject,
         status_message: *const u8,
         status_message_length: usize,
         headers_object_value: JSValue,
+        auto_header_bits: u32,
+        keep_alive_timeout_secs: u32,
         response: *mut c_void,
-    );
+    ) -> bool;
 
     safe fn NodeHTTPServer__writeHead_https(
         global_object: &JSGlobalObject,
         status_message: *const u8,
         status_message_length: usize,
         headers_object_value: JSValue,
+        auto_header_bits: u32,
+        keep_alive_timeout_secs: u32,
         response: *mut c_void,
-    );
+    ) -> bool;
 }
 
 /// `VirtualMachine::get()` returns `*mut`; deref once for callers that need `&mut`.
@@ -388,7 +412,7 @@ impl NodeHTTPResponse {
         let length = Bun__NodeHTTP__takeRequestTrailerBytes(
             any_response_is_ssl(&raw),
             raw.socket().cast(),
-            &mut ptr,
+            &raw mut ptr,
         );
         if length == 0 {
             return;
@@ -772,7 +796,35 @@ impl NodeHTTPResponse {
         // same information; missing / `null` slots are padded to `undefined`
         // inline below exactly as the `Arguments<3>` form did.
         let arguments = callframe.arguments();
+        let auto_header_bits = arguments
+            .get(3)
+            .copied()
+            .filter(|v| v.is_number())
+            .map_or(0, |v| v.to_int32() as u32);
+        let keep_alive_timeout_secs = arguments
+            .get(4)
+            .copied()
+            .filter(|v| v.is_number())
+            .map_or(0, |v| v.to_int32() as u32);
+        self.write_head_impl(
+            global_object,
+            arguments,
+            auto_header_bits,
+            keep_alive_timeout_secs,
+        )
+    }
 
+    /// Shared body of `writeHead` (also the write-head phase of
+    /// `writeHeadAndEnd`): args are (statusCode, statusMessage, headersArray),
+    /// plus the auto-header bits + keep-alive timeout the C++ side renders
+    /// natively (kAutoHeader* in NodeHTTP.cpp).
+    fn write_head_impl(
+        &self,
+        global_object: &JSGlobalObject,
+        arguments: &[JSValue],
+        auto_header_bits: u32,
+        keep_alive_timeout_secs: u32,
+    ) -> JsResult<JSValue> {
         if self.is_requested_completed_or_ended() {
             return err_throw(
                 global_object,
@@ -860,16 +912,19 @@ impl NodeHTTPResponse {
             }
         }
 
+        let wrote_head_ok;
         'do_it: {
             if status_message_bytes.is_empty() {
                 if let Some(status_message) =
                     HTTPStatusText::get(u16::try_from(status_code).expect("int cast"))
                 {
-                    write_head_internal(
+                    wrote_head_ok = write_head_internal(
                         &raw_response,
                         global_object,
                         status_message,
                         headers_object_value,
+                        auto_header_bits,
+                        keep_alive_timeout_secs,
                     );
                     break 'do_it;
                 }
@@ -893,11 +948,13 @@ impl NodeHTTPResponse {
                 stack_buf[..code.len()].copy_from_slice(code);
                 stack_buf[code.len()] = b' ';
                 stack_buf[code.len() + 1..n].copy_from_slice(message);
-                write_head_internal(
+                wrote_head_ok = write_head_internal(
                     &raw_response,
                     global_object,
                     &stack_buf[..n],
                     headers_object_value,
+                    auto_header_bits,
+                    keep_alive_timeout_secs,
                 );
             } else {
                 // Heap fallback for absurdly long status messages (> 252 bytes).
@@ -905,11 +962,111 @@ impl NodeHTTPResponse {
                 heap.extend_from_slice(code);
                 heap.push(b' ');
                 heap.extend_from_slice(message);
-                write_head_internal(&raw_response, global_object, &heap, headers_object_value);
+                wrote_head_ok = write_head_internal(
+                    &raw_response,
+                    global_object,
+                    &heap,
+                    headers_object_value,
+                    auto_header_bits,
+                    keep_alive_timeout_secs,
+                );
             }
         }
 
+        // The writeHead ThrowScope's destructor simulates a throw so its
+        // caller must check; acknowledge it scope-free (we are that caller
+        // when running inside writeHeadAndEnd), then propagate the result
+        // that traveled through the return value - otherwise the end phase
+        // would run with an exception pending.
+        Bun__NodeHTTP__acknowledgeThrowScope(global_object);
+        if !wrote_head_ok {
+            return Err(jsc::JsError::Thrown);
+        }
+
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// `handle.writeHeadAndEnd(status, statusMessage, headersArray, chunk,
+    /// encoding, strictContentLength)` — the writeHead + end pair under one
+    /// native cork and one JS->native crossing, replacing
+    /// `handle.cork(() => { handle.writeHead(...); handle.end(...) })` (three
+    /// crossings and a per-request closure) on the node:http response path.
+    pub(crate) fn write_head_and_end(
+        &self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
+
+        // Same gate as cork(): the old flow threw ERR_STREAM_ALREADY_FINISHED
+        // from cork() before either phase ran.
+        let flags = self.flags.get();
+        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
+            || flags.contains(Flags::SOCKET_CLOSED)
+            || flags.contains(Flags::UPGRADED)
+        {
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_STREAM_ALREADY_FINISHED,
+                "Stream is already ended",
+            );
+        }
+
+        let head_len = arguments.len().min(3);
+        let auto_header_bits = arguments
+            .get(6)
+            .copied()
+            .filter(|v| v.is_number())
+            .map_or(0, |v| v.to_int32() as u32);
+        let keep_alive_timeout_secs = arguments
+            .get(7)
+            .copied()
+            .filter(|v| v.is_number())
+            .map_or(0, |v| v.to_int32() as u32);
+        // write_or_end::<true> reads (chunk, encoding, _, strictContentLength).
+        let end_args = [
+            arguments.get(3).copied().unwrap_or(JSValue::UNDEFINED),
+            arguments.get(4).copied().unwrap_or(JSValue::UNDEFINED),
+            JSValue::UNDEFINED,
+            arguments.get(5).copied().unwrap_or(JSValue::UNDEFINED),
+        ];
+        let this_value = callframe.this();
+
+        // BACKREF: same keep-alive pattern as cork() — either phase can reach
+        // JS (string coercions, drain callbacks), which could drop the last
+        // reference to this response mid-call.
+        let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
+        this.ref_();
+
+        let raw_response = this.raw_response.get();
+        let mut result: JsResult<JSValue> = Ok(JSValue::UNDEFINED);
+        {
+            let run = || -> JsResult<JSValue> {
+                this.write_head_impl(
+                    global_object,
+                    &arguments[..head_len],
+                    auto_header_bits,
+                    keep_alive_timeout_secs,
+                )?;
+                this.resume_socket();
+                this.write_or_end::<true>(global_object, &end_args, this_value)
+            };
+            if let Some(raw_response) = raw_response {
+                raw_response.corked(|| {
+                    // Capture `this` so a `self`-derived pointer reaches the
+                    // FFI closure-data slot (see cork()'s R-2 note).
+                    let _escape = this;
+                    result = run();
+                });
+            } else {
+                result = run();
+            }
+        }
+
+        // Explicit `.get()` so the inherent refcount `NodeHTTPResponse::deref`
+        // is selected, matching cork() (see its note).
+        this.get().deref();
+        result
     }
 }
 
@@ -918,7 +1075,9 @@ fn write_head_internal(
     global_object: &JSGlobalObject,
     status_message: &[u8],
     headers: JSValue,
-) {
+    auto_header_bits: u32,
+    keep_alive_timeout_secs: u32,
+) -> bool {
     scoped_log!(
         NodeHTTPResponse,
         "writeHeadInternal({})",
@@ -930,6 +1089,8 @@ fn write_head_internal(
             status_message.as_ptr(),
             status_message.len(),
             headers,
+            auto_header_bits,
+            keep_alive_timeout_secs,
             (*tcp).cast::<c_void>(),
         ),
         uws::AnyResponse::SSL(ssl) => NodeHTTPServer__writeHead_https(
@@ -937,6 +1098,8 @@ fn write_head_internal(
             status_message.as_ptr(),
             status_message.len(),
             headers,
+            auto_header_bits,
+            keep_alive_timeout_secs,
             (*ssl).cast::<c_void>(),
         ),
         uws::AnyResponse::H3(_) => {
@@ -1969,18 +2132,42 @@ impl NodeHTTPResponse {
         self.write_or_end::<true>(global_object, arguments, callframe.this())
     }
 
+    /// `handle.takeRawHeaders()` — this request's captured header section
+    /// materialized into the rawHeaders flat [name, value, ...] array, or
+    /// undefined when there were no headers (or they were already taken).
+    /// Consumes the captured bytes.
+    pub(crate) fn take_raw_headers(
+        &self,
+        global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JSValue {
+        let section = self.raw_request_headers.replace(Vec::new());
+        if section.is_empty() {
+            return JSValue::UNDEFINED;
+        }
+        Bun__NodeHTTP__buildRawHeadersArray(global_object, section.as_ptr(), section.len())
+    }
+
     /// `handle.takeRequestTrailers()` — this request's captured trailer section
     /// parsed into a flat [name, value, ...] array, or undefined. Consumes it.
     pub(crate) fn take_request_trailers(
         &self,
         global_object: &JSGlobalObject,
-        _callframe: &CallFrame,
+        callframe: &CallFrame,
     ) -> JSValue {
         let section = self.request_trailers.replace(Vec::new());
         if section.is_empty() {
             return JSValue::UNDEFINED;
         }
-        Bun__NodeHTTP__parseRequestTrailers(global_object, section.as_ptr(), section.len())
+        // Lenient (insecureHTTPParser) servers accept CTL bytes in trailer values on
+        // the wire; parse them with the same leniency so they surface on req.trailers.
+        let use_insecure_http_parser = callframe.argument(0).to_boolean();
+        Bun__NodeHTTP__parseRequestTrailers(
+            global_object,
+            section.as_ptr(),
+            section.len(),
+            use_insecure_http_parser,
+        )
     }
 
     pub(crate) fn get_bytes_written(
@@ -2184,6 +2371,26 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
 }
 
 /// # Safety
+/// `response` is the pointer written to `node_response_ptr` by
+/// `NodeHTTPResponse__createForJS` earlier in the same dispatch and is live;
+/// `data`/`length` describe a caller-owned buffer valid for the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
+    response: *mut NodeHTTPResponse,
+    data: *const u8,
+    length: usize,
+) {
+    // SAFETY: see the function-level contract above.
+    let response = unsafe { &*response };
+    // SAFETY: `data`/`length` describe a caller-owned buffer valid for the
+    // call (function-level contract above).
+    let bytes = unsafe { core::slice::from_raw_parts(data, length) };
+    response
+        .raw_request_headers
+        .with_mut(|v| v.append_slice(bytes));
+}
+
+/// # Safety
 /// `has_body`, `request`, `response_ptr`, `upgrade_ctx`, and `node_response_ptr`
 /// are provided by C++ NodeHTTPServer and must be valid for the duration of the
 /// call; `has_body` and `node_response_ptr` must be writable.
@@ -2253,6 +2460,7 @@ pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
         promise: JsCell::new(StrongOptional::empty()),
         buffered_request_body_data_during_pause: JsCell::new(Vec::new()),
         request_trailers: JsCell::new(Vec::new()),
+        raw_request_headers: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         auto_flusher: JsCell::new(AutoFlusher::default()),
     }));

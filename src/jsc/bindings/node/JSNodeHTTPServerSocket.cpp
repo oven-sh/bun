@@ -123,7 +123,9 @@ void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody)
 template<bool SSL>
 static std::string* requestTrailersFor(us_socket_t* socket)
 {
-    auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);
+    /* A JSNodeHTTPServerSocket only exists for node:http compat connections,
+     * whose ext block is the derived NodeHttpResponseData (HttpContext::onOpen). */
+    auto* httpResponseData = (uWS::NodeHttpResponseData<SSL>*)us_socket_ext(socket);
     return &httpResponseData->nodeHttpRequestTrailers;
 }
 
@@ -150,7 +152,7 @@ extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_
 
 /* Parse a raw trailer section into a flat [name, value, ...] JSArray, or
  * jsUndefined() when it contains no fields. */
-extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobalObject* globalObject, const char* data, size_t length)
+extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobalObject* globalObject, const char* data, size_t length, bool useInsecureHTTPParser)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -161,7 +163,7 @@ extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobal
     /* Parse with the same field-line primitives the request-header parser uses
      * (uWS::HttpParser::consumeFieldName / tryConsumeFieldValue / OWS-trim). */
     std::pair<std::string_view, std::string_view> fields[uWS::HttpParser::MAX_TRAILER_FIELDS];
-    unsigned count = uWS::HttpParser::parseTrailerFields(section, fields);
+    unsigned count = uWS::HttpParser::parseTrailerFields(section, fields, useInsecureHTTPParser);
     if (count == 0) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -193,7 +195,8 @@ extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobal
 template<bool SSL>
 static std::string& responseTrailersFor(us_socket_t* socket)
 {
-    auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);
+    /* node:http compat connections always carry the derived ext block. */
+    auto* httpResponseData = (uWS::NodeHttpResponseData<SSL>*)us_socket_ext(socket);
     return httpResponseData->nodeHttpResponseTrailers;
 }
 
@@ -215,6 +218,13 @@ void JSNodeHTTPServerSocket::setResponseTrailers(WTF::StringView trailers)
         auto span = trailers.span16();
         for (size_t i = 0; i < span.size(); i++)
             dest[i] = static_cast<char>(span[i]);
+    }
+    /* internalEnd() decides the response framing from this base-struct mirror
+     * so the shared path never touches the node-only string. */
+    if (is_ssl) {
+        ((uWS::HttpResponseData<true>*)us_socket_ext(socket))->hasNodeHttpResponseTrailers = !dest.empty();
+    } else {
+        ((uWS::HttpResponseData<false>*)us_socket_ext(socket))->hasNodeHttpResponseTrailers = !dest.empty();
     }
 }
 
@@ -251,7 +261,8 @@ bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains()
 template<bool SSL>
 static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs, uint64_t requestTimeoutMs)
 {
-    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
+    /* node:http compat connections always carry the derived ext block. */
+    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
     if (httpResponseData->isConnectRequest) {
         // CONNECT/Upgrade tunnels are detached from the HTTP request machinery,
         // like Node freeing the parser for upgraded connections.
@@ -368,7 +379,8 @@ void JSNodeHTTPServerSocket::appendPipelinedResponse(JSC::VM& vm, WebCore::JSNod
 template<bool SSL>
 static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool connectionClose, bool hasMoreQueued)
 {
-    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
+    /* node:http compat connections always carry the derived ext block. */
+    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
 
     // The previous response on this connection has finished; this queued
     // response now owns the per-response state the request handler normally
@@ -382,6 +394,7 @@ static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
     httpResponseData->noBodyStatus = false;
     httpResponseData->closeDelimited = false;
     httpResponseData->nodeHttpResponseTrailers.clear();
+    httpResponseData->hasNodeHttpResponseTrailers = false;
 
     if (httpResponseData->nodeHttpQueuedPipelinedCount > 0) {
         httpResponseData->nodeHttpQueuedPipelinedCount--;

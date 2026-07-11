@@ -1,16 +1,25 @@
-# Documentation: http://trac.webkit.org/wiki/TestExpectations
 # Format: [modifier] test-name [[ expectations ]] [# comment]
+#
+# READ THIS BEFORE ADDING AN ENTRY.
+#
+# An entry does ONE thing: it removes the file from the run on every platform
+# the modifier matches. The runner parses the expectation kind (FAIL / SKIP /
+# CRASH / FLAKY / LEAK / TIMEOUT) but never reads it — see getRelevantTests in
+# scripts/runner.node.mjs. They are all the same thing, and there is no
+# "run it and expect failure" mode.
+#
+# So: quarantining ONE broken case here silently deletes the whole file's
+# coverage. If a single test is broken, skip THAT test in the file
+# (test.skip / test.skipIf(isASAN) / test.todo, with a comment naming the
+# failure) and do not add an entry here. Reserve this file for a file that
+# cannot be run at all — it hangs, crashes the runner, or trips LeakSanitizer.
+#
+# Entries match by SUBSTRING, so a path prefix quarantines an entire family.
+# A stale entry is invisible: the file simply never runs and nobody finds out.
 
 # Tests that are broken
-test/cli/create/create-jsx.test.ts [ FAIL ] # false > react spa (no tailwind) > build
 test/cli/install/bunx.test.ts [ FAIL ] # should handle package that requires node 24: @angular/cli@latest needs a newer Node.js than Bun reports (24.3.0), unskip after the Node.js version bump
 [ WINDOWS-AARCH64 ] test/js/node/test/parallel/test-repl-close.js [ FAIL ] # EPIPE on stdin.write to closed child process
-test/bundler/native-plugin.test.ts [ FAIL ] # prints name when plugin crashes
-test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > segfault should report
-
-# Exposed by the bun -e/--eval fix that stopped swallowing uncaught exceptions (see PR #31826):
-# the spawned child needs process.binding('inspector'), which is not implemented
-test/js/node/test/parallel/test-inspector-enabled.js [ FAIL ]
 
 # Verbatim node v26.3.0 test asserting a FinalizationRegistry callback fires
 # within ONE globalThis.gc() + ONE setImmediate after the connect callback's
@@ -45,12 +54,6 @@ test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs interna
 
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
-
-# Tests skipped due to different log/line outputs
-[ ASAN ] test/js/bun/util/reportError.test.ts [ SKIP ] # log line mismatch
-[ ASAN ] test/js/node/child_process/child_process.test.ts [ SKIP ] # Unexpected identifier "WARNING"
-[ ASAN ] test/js/bun/shell/bunshell.test.ts [ SKIP ] # bunshell > quiet > basic
-[ ASAN ] test/bundler/cli.test.ts [ SKIP ] # debug logs
 
 # Tests failed due to ASAN: attempting free on address which was not malloc()-ed
 [ ASAN ] test/js/node/worker_threads/worker_threads.test.ts [ CRASH ] # After: threadId module and worker property is consistent
@@ -204,8 +207,6 @@ test/js/node/test/parallel/test-http2-util-asserts.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-util-headers-list.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-util-nghttp2error.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-util-update-options-buffer.js [ FAIL ] # not yet passing
-test/js/node/test/sequential/test-http2-timeout-large-write-file.js [ FAIL ] # not yet passing
-test/js/node/test/sequential/test-http2-timeout-large-write.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-autoselect-protocol.js [ SKIP ] # hangs; skip until the underlying feature lands
 test/js/node/test/parallel/test-http2-client-connection-tunnelling.js [ SKIP ] # hangs; skip until the underlying feature lands
 test/js/node/test/parallel/test-http2-client-jsstream-destroy.js [ SKIP ] # hangs; skip until the underlying feature lands
@@ -214,9 +215,6 @@ test/js/node/test/parallel/test-http2-max-invalid-frames.js [ SKIP ] # hangs; sk
 test/js/node/test/parallel/test-http2-pack-end-stream-flag.js [ SKIP ] # hangs; skip until the underlying feature lands
 test/js/node/test/parallel/test-http2-ping-unsolicited-ack.js [ SKIP ] # hangs; skip until the underlying feature lands
 test/js/node/test/parallel/test-http2-session-cleanup-on-nghttp2-goaway.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/sequential/test-http2-max-session-memory.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/sequential/test-http2-ping-flood.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/sequential/test-http2-settings-flood.js [ SKIP ] # hangs; skip until the underlying feature lands
 
 # AddressSanitizer findings under investigation on the HTTP/2 inbound path
 [ ASAN ] test/js/node/test/parallel/test-diagnostics-channel-http2-client-stream-close-error.js [ SKIP ] # ASan report under investigation

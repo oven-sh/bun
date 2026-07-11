@@ -74,16 +74,13 @@ test("imports the module but never calls add", () => {
 });
 `,
   });
-  const result = Bun.spawnSync(
-    [bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "./load-only.test.ts"],
-    {
-      cwd: dir,
-      env: {
-        ...bunEnv,
-      },
-      stdio: ["inherit", "inherit", "inherit"],
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "./load-only.test.ts"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
     },
-  );
+    stdio: ["inherit", "inherit", "inherit"],
+  });
   expect(result.exitCode).toBe(0);
   expect(result.signalCode).toBeUndefined();
 

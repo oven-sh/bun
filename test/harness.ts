@@ -1058,6 +1058,24 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 }
+
+let cachedDockerDaemonArch: string | undefined;
+// Go-style arch of the Docker *daemon* (e.g. "amd64", "arm64"), not this
+// process. Darwin CI runners talk to a remote Linux sidecar daemon via
+// DOCKER_HOST, so `process.arch` says nothing about which images can run.
+export function dockerDaemonArch(): string {
+  if (cachedDockerDaemonArch !== undefined) return cachedDockerDaemonArch;
+  const dockerCLI = dockerExe();
+  if (!dockerCLI) return (cachedDockerDaemonArch = "");
+  try {
+    const out = execSync(`"${dockerCLI}" version --format "{{.Server.Arch}}"`, {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return (cachedDockerDaemonArch = out.toString().trim());
+  } catch {
+    return (cachedDockerDaemonArch = "");
+  }
+}
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
   let deadline = Date.now() + Math.max(1, timeout);
   let error: unknown;

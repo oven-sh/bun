@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isDockerEnabled } from "harness";
+import { dockerDaemonArch, isDockerEnabled } from "harness";
 import * as dockerCompose from "../../../docker/index.ts";
 
 let url: string = "";
@@ -28,7 +28,10 @@ async function load() {
   return true;
 }
 
-describe.skipIf(!isDockerEnabled())("autobahn", () => {
+// crossbario/autobahn-testsuite only publishes linux/amd64; on an arm64 daemon
+// without qemu binfmt the container dies with `exec format error`. The x64
+// lanes still exercise every case, so skip rather than depend on emulation.
+describe.skipIf(!isDockerEnabled() || dockerDaemonArch() === "arm64")("autobahn", () => {
   let wsOptions: any;
 
   beforeAll(async () => {

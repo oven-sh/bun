@@ -150,10 +150,16 @@ test("Postgres: ErrorResponse/NoticeResponse field strings are not leaked", asyn
   }
   // Every query must have rejected with the server-sent 42P01 ErrorResponse;
   // otherwise the RSS check below is meaningless.
-  expect({ errno: result.warmupErrno, code: result.warmupCode, errorCount: result.errorCount }).toEqual({
+  expect({
+    errno: result.warmupErrno,
+    code: result.warmupCode,
+    ITERATIONS: result.ITERATIONS,
+    errorCount: result.errorCount,
+  }).toEqual({
     errno: "42P01",
     code: "ERR_POSTGRES_SERVER_ERROR",
-    errorCount: result.ITERATIONS,
+    ITERATIONS: 300,
+    errorCount: 300,
   });
   // Without the fix RSS grows by ~450 MiB of retained field strings. ASAN
   // quarantine holds freed allocations so the threshold is wider there.

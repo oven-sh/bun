@@ -432,6 +432,15 @@ const kReceivedGoaway = Symbol("receivedGoaway");
 const kGoawayCode = Symbol("goawayCode");
 const kReleaseUnannouncedStream = Symbol("releaseUnannouncedStream");
 const kGoawaySent = Symbol("goawaySent");
+
+// Node's socketOnError: once a GOAWAY has been received the peer is fully
+// within its rights to drop the connection, so an ECONNRESET behind it is
+// teardown, not an error - the session is destroyed without one. Whether the
+// RST is actually observed is timing- and platform-dependent (routine on
+// Windows loopback), so this must not depend on 'error' listener count.
+function isEconnresetAfterGoaway(session, error: Error): boolean {
+  return (error as NodeJS.ErrnoException)?.code === "ECONNRESET" && session[kGoawayCode] !== undefined;
+}
 const kMaxStreams = 2 ** 32 - 1;
 const kMaxUint32 = 4294967295;
 const kMaxInt = 4294967295;
@@ -4269,6 +4278,10 @@ class ServerHttp2Session extends Http2Session {
     this.destroy();
   }
   #onError(error: Error) {
+    if (isEconnresetAfterGoaway(this, error)) {
+      this.destroy();
+      return;
+    }
     if (this.listenerCount("error") === 0 && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
       // An unobserved transport teardown (the peer dropped a connection
       // nobody is listening to anymore): destroy quietly - the destroy still
@@ -5225,6 +5238,10 @@ class ClientHttp2Session extends Http2Session {
   #onError(error: Error) {
     this[bunHTTP2Socket] = null;
     if (this.#closed) {
+      this.destroy();
+      return;
+    }
+    if (isEconnresetAfterGoaway(this, error)) {
       this.destroy();
       return;
     }

@@ -2271,10 +2271,11 @@ mod spawn_process_body {
             pub use_execve_on_macos: bool,
             pub argv0: Option<*const c_char>,
 
-            /// Opt out of the `--no-orphans` subreaper/`wait4(-1)`/adoptee-kill
-            /// path in `spawn_posix` even on the watchdog-arming thread. Set by
-            /// callers that run alongside other managed subprocesses (notably
-            /// `bun install`'s `repository::exec` via `bun_spawn::run`).
+            /// When `true` (default), participate in the `--no-orphans`
+            /// subreaper/`wait4(-1)`/adoptee-kill path in `spawn_posix` on the
+            /// watchdog-arming thread. Set to `false` by callers that run
+            /// alongside other managed subprocesses (notably `bun install`'s
+            /// `repository::exec` via `bun_spawn::run`).
             pub no_orphans_reap: bool,
 
             #[cfg(windows)]

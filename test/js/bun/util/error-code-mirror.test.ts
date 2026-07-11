@@ -33,7 +33,7 @@ test("Rust-thrown error codes round-trip through Bun__createErrorWithCode", asyn
     t(() => new TextDecoder("nope"));
     t(() => Bun.randomUUIDv5());
     t(() => Bun.randomUUIDv5("n", "bad-namespace"));
-    t(() => Bun.S3Client.presign("f.txt", {}));
+    t(() => Bun.S3Client.presign("f", { accessKeyId: "a", secretAccessKey: "b", bucket: "c", method: "PATCH" }));
     t(() => new (require("net").SocketAddress)({ port: 99999 }));
     t(() => Bun.randomUUIDv7("bogus"));
     await ta(() => new Response("x").formData());
@@ -41,7 +41,7 @@ test("Rust-thrown error codes round-trip through Bun__createErrorWithCode", asyn
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
-    env: { ...bunEnv, AWS_ACCESS_KEY_ID: undefined, AWS_SECRET_ACCESS_KEY: undefined },
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -54,7 +54,7 @@ test("Rust-thrown error codes round-trip through Bun__createErrorWithCode", asyn
       "ERR_ENCODING_NOT_SUPPORTED:RangeError", // index 57
       "ERR_INVALID_ARG_TYPE:TypeError", // index 119
       "ERR_INVALID_ARG_VALUE:TypeError", // index 120
-      "ERR_S3_MISSING_CREDENTIALS:Error", // index 214
+      "ERR_S3_INVALID_METHOD:Error", // index 210
       "ERR_SOCKET_BAD_PORT:RangeError", // index 221
       "ERR_UNKNOWN_ENCODING:TypeError", // index 261
       "ERR_FORMDATA_PARSE_ERROR:TypeError", // index 61

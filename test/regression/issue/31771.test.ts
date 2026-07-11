@@ -77,10 +77,15 @@ async function peakRssMb(dir: string, n: number): Promise<number> {
     if (m) peakKb = Math.max(peakKb, parseInt(m[1], 10));
   } catch {}
 
-  expect(stderr).toContain(`${n} pass`);
-  expect(stderr).toContain("0 fail");
-  expect(peakKb).toBeGreaterThan(0);
-  expect(exitCode).toBe(0);
+  // Combined assertion so a failed/killed child surfaces its stderr tail,
+  // exit code, and signal together in one diff.
+  const summaryOk = stderr.includes(`${n} pass`) && stderr.includes("0 fail");
+  expect({
+    summary: summaryOk ? "ok" : stderr.slice(-2000),
+    exitCode,
+    signalCode: proc.signalCode,
+    sawPeakRss: peakKb > 0,
+  }).toEqual({ summary: "ok", exitCode: 0, signalCode: null, sawPeakRss: true });
   return peakKb / 1024;
 }
 

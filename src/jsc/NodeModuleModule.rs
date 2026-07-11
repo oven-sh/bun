@@ -278,6 +278,13 @@ fn strip_typescript_types(
     // Bun's module loader: suppress the Bun-runtime `var {require}=import.meta;`
     // hoist the printer emits for ESM trees with an unbound `require`.
     parse_result.ast.uses_require_ref = false;
+    // Same class: the parser injects `var __dirname = ...; var __filename =
+    // ...` declarations for unbound uses; Node leaves them as bare references.
+    for part in parse_result.ast.parts.as_mut_slice() {
+        if part.tag == bun_ast::PartTag::DirnameFilename {
+            part.stmts = Default::default();
+        }
+    }
 
     // amaro rejects the `module` keyword in both modes.
     if parse_result.ast.uses_ts_module_keyword {

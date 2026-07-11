@@ -62,6 +62,14 @@ test("does not inject the Bun require shim for ESM code calling require()", () =
   expect(stripTypeScriptTypes(src, { mode: "transform" })).toBe('export const x = require("y");\n');
 });
 
+test("does not inject __dirname/__filename declarations", () => {
+  // Node leaves unbound __dirname/__filename as bare references, so a CJS
+  // wrapper can supply the real values.
+  const src = "const f: string = __filename;\nconst d: string = __dirname;";
+  expect(stripTypeScriptTypes(src)).toBe("const f = __filename;\nconst d = __dirname;\n");
+  expect(stripTypeScriptTypes(src, { mode: "transform" })).toBe("const f = __filename;\nconst d = __dirname;\n");
+});
+
 test("does not inline process.env", () => {
   expect(stripTypeScriptTypes("console.log(process.env.NODE_ENV);")).toBe("console.log(process.env.NODE_ENV);\n");
 });

@@ -42,6 +42,7 @@ import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
+const { kArmHandshakeTimeout, kVerifyError } = require("internal/net/symbols");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -147,7 +148,6 @@ const kclosed = Symbol("closed");
 const kended = Symbol("ended");
 const kReaderInterest = Symbol("kReaderInterest");
 const kpendingSession = Symbol("pendingSession");
-const kVerifyError = Symbol.for("::buntlsverifyerror::");
 const kSNIError = Symbol("kSNIError");
 const kALPNError = Symbol("kALPNError");
 const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
@@ -4049,7 +4049,7 @@ function _setSimultaneousAccepts() {
 
 // The tls.Server STARTTLS wrap (a socket handed in via emit("connection"))
 // arms the same timeout as a native accept.
-Server.prototype[Symbol.for("::buntlsarmhandshaketimeout::")] = function (socket) {
+Server.prototype[kArmHandshakeTimeout] = function (socket) {
   armHandshakeTimeout(this, socket);
 };
 

@@ -16,12 +16,13 @@ const {
 } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
-const karmHandshakeTimeout = Symbol.for("::buntlsarmhandshaketimeout::");
+const { kArmHandshakeTimeout, kVerifyError } = require("internal/net/symbols");
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
 const getSystemCACertificates = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
 const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
+const parseCACertificates = $newCppFunction("NodeTLS.cpp", "parseCACertificates", 1);
 
 const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
 const setTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "setDefaultCiphers", 1);
@@ -338,8 +339,6 @@ function validateSecureContextOptions(options) {
 
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
-const SymbolSplit = Symbol.split;
-const RegExpPrototypeSymbolSplit = RegExp.prototype[SymbolSplit];
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
 
@@ -966,7 +965,6 @@ $toClass(TLSSocket, "TLSSocket", NetSocket);
 // not the same shape as Node's TLSWrap, so only the surface tests rely on is
 // provided. The shim is allocated once per socket so callers can hold a stable
 // reference (Node creates the TLSWrap in _init, before any handle exists).
-const kVerifyError = Symbol.for("::buntlsverifyerror::");
 const kSSLShim = Symbol("kSSLShim");
 Object.defineProperty(TLSSocket.prototype, "ssl", {
   configurable: true,
@@ -1663,7 +1661,7 @@ function Server(options, secureConnectionListener): void {
     // Node's connection listener arms the server's handshakeTimeout on every
     // wrap, including sockets handed in via emit("connection"):
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L961-L962
-    this[karmHandshakeTimeout](wrapped);
+    this[kArmHandshakeTimeout](wrapped);
   });
 }
 $toClass(Server, "Server", NetServer);
@@ -1902,13 +1900,6 @@ function maybeWarnAboutExtraCACerts() {
 let _defaultCACertificatesOverride: Array<string> | undefined;
 
 type CACertInput = string | NodeJS.ArrayBufferView;
-interface X509CertificateLike {
-  readonly fingerprint256: string;
-  toString(): string;
-}
-type X509CertificateCtor = new (cert: CACertInput) => X509CertificateLike;
-let _X509CertificateClass: X509CertificateCtor | undefined;
-
 // tls.setDefaultCACertificates(certs)
 // https://github.com/nodejs/node/blob/v25.2.1/lib/tls.js#L202
 // Node validates `certs` as an Array (its ERR_INVALID_ARG_TYPE renders the
@@ -1930,55 +1921,25 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  _X509CertificateClass ??= require("node:crypto").X509Certificate as X509CertificateCtor;
-  // Parse each cert and de-duplicate by fingerprint so getCACertificates()
-  // returns a normalized, unique PEM set (matching Node, whose native store
-  // collapses duplicates). Build into a temp array and only commit on success,
-  // so an invalid element leaves the previous default untouched.
-  const seen = new Set<string>();
-  const normalized: Array<string> = [];
+  // Read each element exactly once into a dense array, the way Node snapshots
+  // the input with FromV8Array: `certs` may be a Proxy or hold accessors, and
+  // re-reading an element could hand the parser a different value than the one
+  // that was type-checked.
+  const snapshot: Array<CACertInput> = [];
   for (let i = 0; i < certs.length; i++) {
     const cert = certs[i];
     if (typeof cert !== "string" && !isArrayBufferView(cert)) {
       throw $ERR_INVALID_ARG_TYPE(`certs[${i}]`, "string or an instance of ArrayBufferView", cert);
     }
-    // An element may be a concatenated PEM bundle; Node adds every certificate
-    // it contains, so split on certificate boundaries before parsing (a single
-    // X509Certificate parse only consumes the first block).
-    const text =
-      typeof cert === "string" ? cert : Buffer.from(cert.buffer, cert.byteOffset, cert.byteLength).toString("latin1");
-    // Elements with no PEM certificate block are skipped, like Node's
-    // ArrayOfStringsToX509s (PEM_read_bio_X509 simply finds nothing in them).
-    if (!StringPrototypeIncludes.$call(text, "-----BEGIN")) continue;
-    // Keep only the blocks that actually start a PEM certificate: bundle
-    // files routinely begin with comment headers (curl's cacert.pem,
-    // RHEL's ca-bundle.crt) that the lookahead split leaves as a leading
-    // non-PEM element.
-    const blocks = ArrayPrototypeFilter.$call(
-      RegExpPrototypeSymbolSplit.$call(/(?=-----BEGIN [A-Z0-9 ]*CERTIFICATE-----)/, text),
-      block => StringPrototypeIncludes.$call(block, "CERTIFICATE-----"),
-    );
-    for (const block of blocks) {
-      let x509;
-      try {
-        x509 = new _X509CertificateClass(block as CACertInput);
-      } catch (parseError: any) {
-        // A PEM block whose contents do not decode fails the whole call. Node
-        // built against BoringSSL reports PEM_read_bio_X509's failure with
-        // this code (asserted by the openssl_is_boringssl branch of
-        // test-tls-set-default-ca-certificates-recovery.js); keep the real
-        // BoringSSL error message from the parse.
-        const err = new Error(parseError?.message || "Failed to parse certificate") as Error & { code: string };
-        err.code = "ERR_OSSL_PEM_ASN.1_ENCODING_ROUTINES";
-        throw err;
-      }
-      const fingerprint = x509.fingerprint256;
-      if (!seen.has(fingerprint)) {
-        seen.add(fingerprint);
-        normalized.push(x509.toString());
-      }
-    }
+    snapshot.push(cert);
   }
+  // Mirrors Node's ArrayOfStringsToX509s: an element may be a concatenated PEM
+  // bundle and every certificate in it is added, an element with no
+  // certificate is skipped, and a block that starts but does not decode fails
+  // the whole call. Duplicates collapse, as they do in Node's X509Set. Throws
+  // before the override is replaced, so a bad element leaves the previous
+  // default untouched.
+  const normalized = parseCACertificates(snapshot);
   // A non-empty input that yields no certificates is an error in Node
   // (crypto_context.cc: "No valid certificates found in the provided array").
   if (normalized.length === 0 && certs.length > 0) {

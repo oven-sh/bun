@@ -406,18 +406,6 @@ function emitEventNT(self: any, event: string, ...args: any[]) {
     self.emit(event, ...args);
   }
 }
-function emitErrorNT(self: any, error: any, destroy: boolean) {
-  if (destroy) {
-    if (self.listenerCount("error") > 0) {
-      self.destroy(error);
-    } else {
-      self.destroy();
-    }
-  } else if (self.listenerCount("error") > 0) {
-    self.emit("error", error);
-  }
-}
-
 function emitOutofStreamErrorNT(self: any) {
   self.destroy($ERR_HTTP2_OUT_OF_STREAMS());
 }
@@ -5215,9 +5203,15 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(emitEventNT, req, "ready");
       return req;
     } catch (e: any) {
+      // node reports a request() that fails its own header validation purely as the synchronous
+      // throw, with no session 'error' event. The stream id reserved above never reached the peer,
+      // so hand back the connection slot its streamStart callback took.
       if (connectionsCounted) {
         this.#connections--;
-        process.nextTick(emitErrorNT, this, e, this.#connections === 0 && this.#closed);
+        // Giving the slot back can be what finishes a close() that was waiting on it.
+        if (this.#connections === 0 && this.#closed) {
+          this.destroy();
+        }
       }
       throw e;
     }

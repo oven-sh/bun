@@ -19,6 +19,7 @@ use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::NativeCallbacks;
 use crate::webcore::AutoFlusher;
 use bstr::BStr;
+use bun_collections::smallvec::SmallVec;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
 use bun_core::MutableString;
 use bun_core::String as BunString;
@@ -621,6 +622,73 @@ fn is_valid_request_pseudo_header(name: &[u8]) -> bool {
 #[inline]
 fn is_valid_header_value(value: &[u8]) -> bool {
     !value.iter().any(|&c| matches!(c, 0 | b'\n' | b'\r'))
+}
+
+/// A header block held back from the HPACK encoder until every field in it has been validated.
+///
+/// One encoder, and so one dynamic table, serves every block on a session, and the peer's decoder
+/// mirrors it entry for entry: a field encoded into a block that then throws stays in a table the
+/// peer never saw, and every later block decodes against the wrong entries. The inline capacity
+/// keeps an ordinary request or response block off the heap.
+#[derive(Default)]
+struct PendingHeaderBlock {
+    /// Each field's name bytes followed by its value bytes.
+    bytes: SmallVec<[u8; 512]>,
+    fields: SmallVec<[PendingHeaderField; 16]>,
+}
+
+#[derive(Clone, Copy)]
+struct PendingHeaderField {
+    name_start: usize,
+    name_len: usize,
+    value_len: usize,
+    never_index: bool,
+}
+
+impl PendingHeaderBlock {
+    fn push(&mut self, name: &[u8], value: &[u8], never_index: bool) {
+        let name_start = self.bytes.len();
+        self.bytes.extend_from_slice(name);
+        self.bytes.extend_from_slice(value);
+        self.fields.push(PendingHeaderField {
+            name_start,
+            name_len: name.len(),
+            value_len: value.len(),
+            never_index,
+        });
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8], bool)> {
+        self.fields.iter().map(move |field| {
+            let value_start = field.name_start + field.name_len;
+            (
+                &self.bytes[field.name_start..value_start],
+                &self.bytes[value_start..value_start + field.value_len],
+                field.never_index,
+            )
+        })
+    }
+
+    /// Whether any field is too large for lshpack to encode. Its scratch buffer holds one
+    /// name/value pair, so a larger field fails the encode and would strand every field before it
+    /// in the dynamic table.
+    fn has_oversized_field(&self) -> bool {
+        self.fields
+            .iter()
+            .any(|field| field.name_len + field.value_len > lshpack::HPACK::LSHPACK_MAX_HEADER_SIZE)
+    }
+
+    /// Upper bound on this block's HPACK-encoded size, the same one nghttp2 measures
+    /// `maxSendHeaderBlockLength` against (`nghttp2_hd_deflate_bound`): two 6-byte table-size
+    /// updates, then per field a 6-byte length prefix for its name and another for its value,
+    /// plus the literal bytes, taking every field as a new-name literal without indexing.
+    fn encoded_size_bound(&self) -> usize {
+        12 + self
+            .fields
+            .iter()
+            .map(|field| 6 * 2 + field.name_len + field.value_len)
+            .sum::<usize>()
+    }
 }
 
 #[inline]
@@ -7343,8 +7411,8 @@ impl H2FrameParser {
         )?;
 
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
+        let mut pending = PendingHeaderBlock::default();
 
-        // Encode trailer headers using HPACK
         while let Some(header_name) = iter.next()? {
             if header_name.length() == 0 {
                 continue;
@@ -7386,11 +7454,7 @@ impl H2FrameParser {
                 }
             };
 
-            // closure for encode error handling
-            let mut handle_encode = |this: &Self,
-                                     value: &[u8],
-                                     never_index: bool|
-             -> JsResult<Option<JSValue>> {
+            let mut stash_header = |value: &[u8], never_index: bool| -> JsResult<()> {
                 if !is_valid_header_value(value) {
                     let exception = global_object.to_type_error(
                         bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
@@ -7398,47 +7462,8 @@ impl H2FrameParser {
                     );
                     return Err(global_object.throw_value(exception));
                 }
-                bun_output::scoped_log!(
-                    H2FrameParser,
-                    "encode header {} {}",
-                    BStr::new(validated_name),
-                    BStr::new(value)
-                );
-                match this.encode_header_into_list(
-                    &mut encoded_headers,
-                    validated_name,
-                    value,
-                    never_index,
-                ) {
-                    Ok(_) => Ok(None),
-                    Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
-                        Err(global_object.throw(format_args!("Failed to allocate header buffer")))
-                    }
-                    Err(_) => {
-                        let identifier = stream.get_identifier();
-                        identifier.ensure_still_alive();
-                        this.dispatch_with_2_extra(
-                            JSH2FrameParser::Gc::onFrameError,
-                            identifier,
-                            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
-                            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
-                        );
-                        // The trailer block cannot be encoded into a legal frame: reset the
-                        // stream so the peer sees RST_STREAM(FRAME_SIZE_ERROR), then shut the
-                        // session down gracefully — the encoder state is no longer trustworthy
-                        // (node/nghttp2 treat this as fatal and close with a NO_ERROR GOAWAY).
-                        let triggering_id = stream.id;
-                        this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
-                        this.send_go_away(
-                            triggering_id,
-                            ErrorCode::NO_ERROR,
-                            b"",
-                            this.last_stream_id.get(),
-                            true,
-                        );
-                        Ok(Some(JSValue::UNDEFINED))
-                    }
-                }
+                pending.push(validated_name, value, never_index);
+                Ok(())
             };
 
             if js_value.js_type().is_array() {
@@ -7499,9 +7524,7 @@ impl H2FrameParser {
                     let value_slice = value_str.to_slice(global_object);
                     let value = value_slice.slice();
 
-                    if let Some(ret) = handle_encode(this, value, never_index)? {
-                        return Ok(ret);
-                    }
+                    stash_header(value, never_index)?;
                 }
             } else {
                 if let Some(idx) = single_value_headers_index_of(validated_name) {
@@ -7545,17 +7568,59 @@ impl H2FrameParser {
 
                 let value_slice = value_str.to_slice(global_object);
                 let value = value_slice.slice();
+
+                stash_header(value, never_index)?;
+            }
+        }
+
+        // A field lshpack cannot encode makes the whole trailer block unsendable. Catch it before
+        // the encoder is advanced for the fields ahead of it; an encode failure past that point is
+        // an lshpack fault rather than bad input, and leaves the dynamic table unusable.
+        let mut unencodable = pending.has_oversized_field();
+        if !unencodable {
+            for (name, value, never_index) in pending.iter() {
                 bun_output::scoped_log!(
                     H2FrameParser,
                     "encode header {} {}",
                     BStr::new(name),
                     BStr::new(value)
                 );
-
-                if let Some(ret) = handle_encode(this, value, never_index)? {
-                    return Ok(ret);
+                match this.encode_header_into_list(&mut encoded_headers, name, value, never_index) {
+                    Ok(_) => {}
+                    Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
+                        return Err(
+                            global_object.throw(format_args!("Failed to allocate header buffer"))
+                        );
+                    }
+                    Err(_) => {
+                        unencodable = true;
+                        break;
+                    }
                 }
             }
+        }
+        if unencodable {
+            let identifier = stream.get_identifier();
+            identifier.ensure_still_alive();
+            this.dispatch_with_2_extra(
+                JSH2FrameParser::Gc::onFrameError,
+                identifier,
+                JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+                JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+            );
+            // Reset the stream so the peer sees RST_STREAM(FRAME_SIZE_ERROR), then shut the session
+            // down gracefully: node/nghttp2 measure a block this large against their own 64KB limit
+            // and treat overrunning it as fatal, closing with a NO_ERROR GOAWAY.
+            let triggering_id = stream.id;
+            this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
+            this.send_go_away(
+                triggering_id,
+                ErrorCode::NO_ERROR,
+                b"",
+                this.last_stream_id.get(),
+                true,
+            );
+            return Ok(JSValue::UNDEFINED);
         }
         let encoded_data = encoded_headers.as_slice();
         let encoded_size = encoded_data.len();
@@ -7823,6 +7888,7 @@ impl H2FrameParser {
 
         let mut name_buffer = [0u8; 4096];
         let mut encoded_headers: Vec<u8> = Vec::new();
+        let mut pending = PendingHeaderBlock::default();
 
         // A PUSH_PROMISE carries a REQUEST, so request pseudo-headers are valid even on the server.
         // Pseudo-headers must be encoded first, so iterate twice.
@@ -7904,20 +7970,35 @@ impl H2FrameParser {
                 };
                 let value_slice = value_str.to_slice(global_object);
                 let value = value_slice.slice();
-                if this
-                    .encode_header_into_list(
-                        &mut encoded_headers,
-                        validated_name,
-                        value,
-                        never_index,
-                    )
-                    .is_err()
-                {
-                    return Err(
-                        global_object.throw(format_args!("Failed to encode push promise headers"))
-                    );
-                }
+
+                pending.push(validated_name, value, never_index);
             }
+        }
+
+        // A field lshpack cannot encode: reject before the encoder is advanced for the fields
+        // ahead of it.
+        if pending.has_oversized_field() {
+            return Err(global_object.throw(format_args!("Failed to encode push promise headers")));
+        }
+        // Nothing below rejects this block, so the encoder is only ever advanced for one that
+        // reaches the wire. An encode failure here is an lshpack fault rather than bad input: the
+        // dynamic table can no longer be trusted, so the session goes down (as send_trailers does).
+        for (name, value, never_index) in pending.iter() {
+            let Err(err) =
+                this.encode_header_into_list(&mut encoded_headers, name, value, never_index)
+            else {
+                continue;
+            };
+            if !matches!(err, crate::Error::Alloc(_)) {
+                this.send_go_away(
+                    parent_id,
+                    ErrorCode::NO_ERROR,
+                    b"",
+                    this.last_stream_id.get(),
+                    true,
+                );
+            }
+            return Err(global_object.throw(format_args!("Failed to encode push promise headers")));
         }
 
         let max_frame =
@@ -8223,6 +8304,7 @@ impl H2FrameParser {
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
+        let mut pending = PendingHeaderBlock::default();
 
         // Raw (flat [name, value, ...] array) headers form: encode each pair in
         // its given order, pseudo-headers first (same two-pass split as the
@@ -8334,42 +8416,8 @@ impl H2FrameParser {
                             )
                             .throw());
                     }
-                    bun_output::scoped_log!(
-                        H2FrameParser,
-                        "encode header {} {}",
-                        BStr::new(validated_name),
-                        BStr::new(value)
-                    );
 
-                    if let Err(err) = this.encode_header_into_list(
-                        &mut encoded_headers,
-                        validated_name,
-                        value,
-                        never_index,
-                    ) {
-                        if matches!(err, crate::Error::Alloc(_)) {
-                            return Err(global_object
-                                .throw(format_args!("Failed to allocate header buffer")));
-                        }
-                        let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                            return Ok(JSValue::js_number(-1.0));
-                        };
-                        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                        let stream = unsafe { &mut *stream };
-                        stream.state = StreamState::CLOSED;
-                        if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                            && stream_ctx_arg.is_object()
-                        {
-                            stream.set_context(stream_ctx_arg, global_object);
-                        }
-                        stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                        this.dispatch_with_extra(
-                            JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
-                        );
-                        return Ok(JSValue::js_number(stream_id as f64));
-                    }
+                    pending.push(validated_name, value, never_index);
                 }
             }
         }
@@ -8521,42 +8569,8 @@ impl H2FrameParser {
                                 )
                                 .throw());
                         }
-                        bun_output::scoped_log!(
-                            H2FrameParser,
-                            "encode header {} {}",
-                            BStr::new(validated_name),
-                            BStr::new(value)
-                        );
 
-                        if let Err(err) = this.encode_header_into_list(
-                            &mut encoded_headers,
-                            validated_name,
-                            value,
-                            never_index,
-                        ) {
-                            if matches!(err, crate::Error::Alloc(_)) {
-                                return Err(global_object
-                                    .throw(format_args!("Failed to allocate header buffer")));
-                            }
-                            let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                                return Ok(JSValue::js_number(-1.0));
-                            };
-                            // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                            let stream = unsafe { &mut *stream };
-                            if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                                && stream_ctx_arg.is_object()
-                            {
-                                stream.set_context(stream_ctx_arg, global_object);
-                            }
-                            stream.state = StreamState::CLOSED;
-                            stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                            this.dispatch_with_extra(
-                                JSH2FrameParser::Gc::onStreamError,
-                                stream.get_identifier(),
-                                JSValue::js_number(stream.rst_code as f64),
-                            );
-                            return Ok(JSValue::UNDEFINED);
-                        }
+                        pending.push(validated_name, value, never_index);
                     }
                 } else if !js_value.is_empty_or_undefined_or_null() {
                     bun_output::scoped_log!(H2FrameParser, "single header {}", BStr::new(name));
@@ -8611,46 +8625,11 @@ impl H2FrameParser {
                             )
                             .throw());
                     }
-                    bun_output::scoped_log!(
-                        H2FrameParser,
-                        "encode header {} {}",
-                        BStr::new(validated_name),
-                        BStr::new(value)
-                    );
 
-                    if let Err(err) = this.encode_header_into_list(
-                        &mut encoded_headers,
-                        validated_name,
-                        value,
-                        never_index,
-                    ) {
-                        if matches!(err, crate::Error::Alloc(_)) {
-                            return Err(global_object
-                                .throw(format_args!("Failed to allocate header buffer")));
-                        }
-                        let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                            return Ok(JSValue::js_number(-1.0));
-                        };
-                        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                        let stream = unsafe { &mut *stream };
-                        stream.state = StreamState::CLOSED;
-                        if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                            && stream_ctx_arg.is_object()
-                        {
-                            stream.set_context(stream_ctx_arg, global_object);
-                        }
-                        stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                        this.dispatch_with_extra(
-                            JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
-                        );
-                        return Ok(JSValue::js_number(stream_id as f64));
-                    }
+                    pending.push(validated_name, value, never_index);
                 }
             }
         }
-        let encoded_size = encoded_headers.len();
 
         let Some(stream_ptr) = this.handle_received_stream_id(stream_id) else {
             return Ok(JSValue::js_number(-1.0));
@@ -8852,17 +8831,25 @@ impl H2FrameParser {
             }
             return Ok(JSValue::js_number(stream_id as f64));
         }
-        let mut length: usize = encoded_size;
-        if has_priority {
-            length += 5;
-            flags |= HeadersFrameFlags::PRIORITY as u8;
+
+        // A field lshpack cannot encode: reject the stream before the encoder is advanced for the
+        // fields ahead of it.
+        if pending.has_oversized_field() {
+            stream.state = StreamState::CLOSED;
+            stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
+            this.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamError,
+                stream.get_identifier(),
+                JSValue::js_number(stream.rst_code as f64),
+            );
+            return Ok(JSValue::js_number(stream_id as f64));
         }
 
-        bun_output::scoped_log!(H2FrameParser, "request encoded_size {}", encoded_size);
-
-        // Check if headers block exceeds maxSendHeaderBlockLength
+        // maxSendHeaderBlockLength is measured against an upper bound on the encoded size rather
+        // than the encoded block itself, as nghttp2 does, because an encoder advanced for a block
+        // that is then refused can never be wound back.
         if this.max_send_header_block_length.get() != 0
-            && encoded_size > this.max_send_header_block_length.get() as usize
+            && pending.encoded_size_bound() > this.max_send_header_block_length.get() as usize
         {
             stream.state = StreamState::CLOSED;
             stream.rst_code = ErrorCode::REFUSED_STREAM.0;
@@ -8881,6 +8868,50 @@ impl H2FrameParser {
             );
             return Ok(JSValue::js_number(stream_id as f64));
         }
+
+        // Nothing below rejects this request, so the encoder is only ever advanced for a block that
+        // reaches the wire. An encode failure here is an lshpack fault rather than bad input: the
+        // dynamic table can no longer be trusted, so the session goes down (as send_trailers does).
+        for (name, value, never_index) in pending.iter() {
+            bun_output::scoped_log!(
+                H2FrameParser,
+                "encode header {} {}",
+                BStr::new(name),
+                BStr::new(value)
+            );
+            let Err(err) =
+                this.encode_header_into_list(&mut encoded_headers, name, value, never_index)
+            else {
+                continue;
+            };
+            if matches!(err, crate::Error::Alloc(_)) {
+                return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
+            }
+            stream.state = StreamState::CLOSED;
+            stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
+            this.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamError,
+                stream.get_identifier(),
+                JSValue::js_number(stream.rst_code as f64),
+            );
+            this.send_go_away(
+                stream_id,
+                ErrorCode::NO_ERROR,
+                b"",
+                this.last_stream_id.get(),
+                true,
+            );
+            return Ok(JSValue::js_number(stream_id as f64));
+        }
+        let encoded_size = encoded_headers.len();
+
+        let mut length: usize = encoded_size;
+        if has_priority {
+            length += 5;
+            flags |= HeadersFrameFlags::PRIORITY as u8;
+        }
+
+        bun_output::scoped_log!(H2FrameParser, "request encoded_size {}", encoded_size);
 
         let actual_max_frame_size = this
             .remote_settings

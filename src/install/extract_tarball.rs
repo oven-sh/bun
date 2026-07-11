@@ -259,6 +259,11 @@ impl ExtractTarball {
         let mut resolved: &'static [u8] = b"";
         let tmpname =
             FileSystem::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
+        // Delete the temp dir if extraction fails before it's renamed into the
+        // cache; defused on success.
+        let tmpdir_cleanup = scopeguard::guard((), |()| {
+            let _ = Dir::borrow(&self.temp_dir).delete_tree(tmpname.as_bytes());
+        });
         {
             let extract_destination = match bun_sys::make_path::make_open_path(
                 tmpdir,
@@ -450,7 +455,11 @@ impl ExtractTarball {
             }
         }
 
-        self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+        let result = self.move_to_cache_directory(log, tmpname, name, basename, resolved);
+        if result.is_ok() {
+            scopeguard::ScopeGuard::into_inner(tmpdir_cleanup);
+        }
+        result
     }
 
     /// Rename the freshly-extracted temp directory into the cache, read
@@ -664,9 +673,9 @@ impl ExtractTarball {
                 //
                 // By:
                 // 1. Rename from temporary directory to cache directory and fail if it already exists
-                // 2a. If the rename fails, swap the cache directory with the temporary directory version
-                // 2b. Delete the temporary directory version ONLY if we're not using a provided temporary directory
-                // 3. If rename still fails, fallback to racily deleting the cache directory version and then renaming the temporary directory version again.
+                // 2. If the rename fails because the destination exists, a concurrent install
+                //    published an equivalent copy first: keep it and delete the temporary
+                //    directory version (`keep_existing_destination`).
                 //
 
                 if create_subdir {
@@ -682,6 +691,7 @@ impl ExtractTarball {
                     folder_name,
                     sys::RenameatConcurrentlyOptions {
                         move_fallback: true,
+                        keep_existing_destination: true,
                     },
                 ) {
                     log.add_error_fmt(

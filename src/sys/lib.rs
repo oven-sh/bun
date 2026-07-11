@@ -9835,9 +9835,10 @@ mod owned_handle_tests {
             exists_at(to_dir, ZStr::from_static(b"sub/winner\0")),
             "existing destination was replaced"
         );
-        // ...and the source was cleaned up rather than left (or swapped) behind.
+        // ...and the source was cleaned up rather than left (or swapped)
+        // behind. Windows `exists_at` is file-only, so check the directory.
         assert!(
-            !exists_at(root, ZStr::from_static(b"from/sub\0")),
+            !directory_exists_at(root, ZStr::from_static(b"from/sub\0")).unwrap_or(false),
             "source left behind"
         );
 

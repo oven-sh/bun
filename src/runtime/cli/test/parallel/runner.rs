@@ -575,6 +575,9 @@ impl<'a> WorkerLoop<'a> {
             }
             if vm.test_isolation_enabled {
                 crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
+                // Mirrors the serial per-file loop: return blocks freed by the
+                // previous file's collection to the OS before the next swap.
+                Global::mimalloc_cleanup(false);
                 vm.swap_global_for_test_isolation();
                 self.reporter
                     .jest

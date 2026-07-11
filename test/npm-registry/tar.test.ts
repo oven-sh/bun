@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { buildTarball, computeIntegrity, readPackageJson, readTarball } from "npm-registry";
+import { binModeMap } from "./src/define";
 import { npmPacklistSort } from "./src/tar";
 import type { FileTree } from "./src/types";
 
@@ -135,8 +136,35 @@ describe("buildTarball", () => {
 
   // libarchive reads `package/x/` back as a directory and drops it, so the
   // entry would vanish while fileCount still counted it.
-  test.each(["x/", "/x", "a//b", "..", "a/../b"])("entry path %p is rejected", path => {
+  test.each(["x/", "/x", "a//b", "..", "a/../b", ".", "./x", "a/./b"])("entry path %p is rejected", path => {
     expect(() => buildTarball({ "package.json": "{}", [path]: "" })).toThrow(/invalid tarball entry path/);
+  });
+
+  // `binModeMap` keys its map by bin target, so a plain object would swallow a
+  // target named `__proto__` and ship it non-executable.
+  test("a bin target named __proto__ is still marked executable", () => {
+    const modes = binModeMap({ name: "p", bin: { p: "__proto__" } });
+    expect(Object.hasOwn(modes, "__proto__")).toBe(true);
+    const files: FileTree = Object.create(null);
+    files["package.json"] = "{}";
+    files["__proto__"] = "#!/usr/bin/env node\n";
+    const tar = Bun.gunzipSync(buildTarball(files, { mode: modes }).bytes);
+    const seen: Record<string, string> = Object.create(null);
+    for (let off = 0; off + 512 <= tar.length && tar[off]; ) {
+      const name = Buffer.from(tar.subarray(off, off + 100))
+        .toString()
+        .replace(/\0.*/, "");
+      const size =
+        parseInt(
+          Buffer.from(tar.subarray(off + 124, off + 136))
+            .toString()
+            .replace(/[\0 ]/g, ""),
+          8,
+        ) || 0;
+      seen[name] = Buffer.from(tar.subarray(off + 100, off + 106)).toString();
+      off += 512 + Math.ceil(size / 512) * 512;
+    }
+    expect({ ...seen }).toEqual({ "package/__proto__": "000755", "package/package.json": "000644" });
   });
 
   test("an entry named __proto__ survives the round-trip", async () => {

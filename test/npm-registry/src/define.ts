@@ -126,7 +126,8 @@ const REGISTRY_ONLY_KEYS: readonly string[] = ["tarball", "dist"] satisfies read
  * {@link VersionSpec} can still override per entry.
  */
 export function binModeMap(manifest: Manifest): Record<string, number> {
-  const modes: Record<string, number> = {};
+  // Null prototype: a bin target named `__proto__` must become a key.
+  const modes: Record<string, number> = Object.create(null);
   const mark = (p: string) => (modes[p.replace(/^\.\//, "")] = 0o755);
   const bin = manifest.bin;
   if (typeof bin === "string") mark(bin);
@@ -168,7 +169,7 @@ function storedVersion(name: string, version: Version, spec: VersionSpec): Store
   } else {
     const { files: extraFiles, mode: explicit } = splitSpecTree(extra ?? {});
     const files = { "package.json": `${JSON.stringify(raw, null, 2)}\n`, ...extraFiles };
-    const mode = { ...binModeMap(manifest), ...explicit };
+    const mode = Object.assign(Object.create(null), binModeMap(manifest), explicit);
     tarball = tarballFromFiles(async () => ({ files, mode }));
   }
 

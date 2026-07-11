@@ -175,11 +175,11 @@ export function buildTarball(files: FileTree, options: { mode?: Record<string, n
   const blocks: Uint8Array[] = [];
   let unpackedSize = 0;
   for (const path of paths) {
-    // An empty segment covers the leading `/`, a trailing `/` (which libarchive
-    // reads back as a directory and drops, silently under-reporting fileCount),
-    // and `a//b`.
+    // `""` covers a leading `/`, a trailing `/` (libarchive reads it back as a
+    // directory and drops it) and `a//b`. `.` would ship `package/./x`, which
+    // `npm pack` normalizes away and which defeats the duplicate-path checks.
     const segments = path.split("/");
-    if (path.length === 0 || segments.includes("") || segments.includes("..")) {
+    if (path.length === 0 || segments.includes("") || segments.includes(".") || segments.includes("..")) {
       throw new Error(`invalid tarball entry path: ${JSON.stringify(path)}`);
     }
     // The ustar header declares no name encoding, and libarchive (so

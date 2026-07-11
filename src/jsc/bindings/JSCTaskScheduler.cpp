@@ -5,7 +5,6 @@
 
 using Ticket = JSC::DeferredWorkTimer::Ticket;
 using Task = JSC::DeferredWorkTimer::Task;
-using TicketData = JSC::DeferredWorkTimer::TicketData;
 
 namespace Bun {
 using namespace JSC;
@@ -15,13 +14,13 @@ extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta)
 
 class JSCDeferredWorkTask {
 public:
-    JSCDeferredWorkTask(Ref<TicketData> ticket, Task&& task)
+    JSCDeferredWorkTask(Ref<Ticket> ticket, Task&& task)
         : ticket(WTF::move(ticket))
         , task(WTF::move(task))
     {
     }
 
-    Ref<TicketData> ticket;
+    Ref<Ticket> ticket;
     Task task;
     ~JSCDeferredWorkTask()
     {
@@ -32,12 +31,7 @@ public:
     WTF_MAKE_TZONE_ALLOCATED(JSCDeferredWorkTask);
 };
 
-static JSC::VM& getVM(Ticket& ticket)
-{
-    return ticket->scriptExecutionOwner()->vm();
-}
-
-void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
+void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
 {
     auto& scheduler = clientData->deferredWorkTimer;
     Locker<Lock> holder { scheduler.m_lock };
@@ -48,13 +42,13 @@ void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref
         scheduler.m_pendingTicketsOther.add(WTF::move(ticket));
     }
 }
-void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ticket ticket, Task&& task)
+void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ticket* ticket, Task&& task)
 {
     auto* job = new JSCDeferredWorkTask(*ticket, WTF::move(task));
     Bun__queueJSCDeferredWorkTaskConcurrently(clientData->bunVM, job);
 }
 
-void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, Ticket ticket)
+void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, Ticket* ticket)
 {
     auto* bunVM = clientData->bunVM;
     auto& scheduler = clientData->deferredWorkTimer;
@@ -87,7 +81,7 @@ static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDef
     holder.unlockEarly();
 
     if (pendingTicket && !pendingTicket->isCancelled()) {
-        job->task(job->ticket.ptr());
+        job->task(job->ticket.get());
     }
 
     delete job;

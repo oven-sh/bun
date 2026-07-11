@@ -1305,25 +1305,25 @@ test("close(cb) interleaves with other close listeners in registration order", a
   expect(order2).toEqual(["B", "C"]);
 });
 
-// Amplified test-worker-message-port-transfer-terminate.js: terminate() during the
-// worker_threads preload reifies lazy process.stdout/stdin inside getOwnPropertySlot,
-// which asserts (debug only) if the builder returns with a termination pending.
+// terminate() armed while a lazy process.* PropertyCallback builder enters JS
+// used to leave the termination pending inside getOwnPropertySlot and trip its
+// EXCEPTION_ASSERT (debug only); the worker_threads preload hits this via stdout.
 test.skipIf(!isASAN && !isDebug)(
-  "terminate() during worker bootstrap doesn't trip getOwnPropertySlot assert",
+  "terminate() during a lazy process.* builder doesn't trip getOwnPropertySlot assert",
   async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `const { Worker } = require("worker_threads");
-       const N = 60;
-       let done = 0;
-       for (let i = 0; i < N; ++i) {
-         const w = new Worker("require('worker_threads').parentPort.on('message', () => {})", { eval: true });
-         setImmediate(() => {
-           w.terminate().then(() => { if (++done === N) console.log("ok"); });
-         });
-       }`,
+        `const props = ["stdout", "stderr", "stdin", "nextTick", "mainModule"];
+         Promise.all(props.map(p => new Promise((resolve, reject) => {
+           const w = new Worker("data:text/javascript," + encodeURIComponent(
+             'postMessage("go"); Bun.sleepSync(300); process[' + JSON.stringify(p) + '];'
+           ));
+           w.addEventListener("message", () => w.terminate());
+           w.addEventListener("close", resolve, { once: true });
+           w.addEventListener("error", e => reject(new Error(p + ": " + (e.error?.message || e.message))), { once: true });
+         }))).then(() => console.log("ok"), e => { console.error(e); process.exit(1); });`,
       ],
       env: bunEnv,
       stderr: "pipe",

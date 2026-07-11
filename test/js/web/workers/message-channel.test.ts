@@ -529,14 +529,12 @@ describe("onmessage event-loop ref", () => {
     port2.close();
   });
 
-  test.concurrent(
-    "process exits after the handler is removed",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
+  test.concurrent("process exits after the handler is removed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
             const { port1, port2 } = new MessageChannel();
             // Hold the peer so its collection (which closes the pipe side and
             // releases this port via peerClosed()) does not mask the leak.
@@ -547,63 +545,55 @@ describe("onmessage event-loop ref", () => {
             setTimeout(() => { console.log("STILL-REFERENCED"); process.exit(1); }, 3_000).unref();
             console.log("END");
           `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-        stdout: "END",
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-      });
-    },
-    30_000,
-  );
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "END",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 
-  test.concurrent(
-    "process exits with only a messageerror handler",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
+  test.concurrent("process exits with only a messageerror handler", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
             const { port1, port2 } = new MessageChannel();
             globalThis.__keep = port1;
             port2.onmessageerror = () => {};
             setTimeout(() => { console.log("STILL-REFERENCED"); process.exit(1); }, 3_000).unref();
             console.log("END");
           `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-        stdout: "END",
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-      });
-    },
-    30_000,
-  );
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "END",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 
   // Same contract for a transferred (entangled) port: once the worker clears
   // the handler on the port it received, nothing references its event loop,
   // so the worker exits and then the parent does too.
-  test.concurrent(
-    "clearing the handler on a transferred port lets the worker exit",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
+  test.concurrent("clearing the handler on a transferred port lets the worker exit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
             const workerBody = \`
               self.onmessage = e => {
                 const port = e.data;
@@ -625,34 +615,30 @@ describe("onmessage event-loop ref", () => {
             w.addEventListener("close", () => console.log("worker closed"));
             setTimeout(() => { console.log("STILL-REFERENCED"); process.exit(1); }, 5_000).unref();
           `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // The port message and the worker-close notification come from two
-      // event sources, so don't assume their relative order.
-      expect({ lines: stdout.trim().split("\n").sort(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-        lines: ["echo:hi", "worker closed"],
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-      });
-    },
-    30_000,
-  );
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The port message and the worker-close notification come from two
+    // event sources, so don't assume their relative order.
+    expect({ lines: stdout.trim().split("\n").sort(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      lines: ["echo:hi", "worker closed"],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 
   // The handler's ref must keep the process alive until a queued message is
   // delivered, and clearing the handler from inside it must let it exit.
-  test.concurrent(
-    "pending message is delivered, then clearing the handler lets the process exit",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
+  test.concurrent("pending message is delivered, then clearing the handler lets the process exit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
             const { port1, port2 } = new MessageChannel();
             // Hold the peer so its collection does not mask the leak.
             globalThis.__keep = port1;
@@ -664,19 +650,17 @@ describe("onmessage event-loop ref", () => {
             setTimeout(() => { console.log("STILL-REFERENCED"); process.exit(1); }, 3_000).unref();
             console.log("END");
           `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-        stdout: "END\nGOT:ping",
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-      });
-    },
-    30_000,
-  );
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "END\nGOT:ping",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });

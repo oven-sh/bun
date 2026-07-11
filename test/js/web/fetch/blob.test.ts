@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { resolveObjectURL } from "node:buffer";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
@@ -328,7 +329,6 @@ describe("File prototype chain", () => {
     expect(wrappedClone instanceof File).toBe(false);
     expect(await wrappedClone.text()).toBe("Hello");
 
-    const { resolveObjectURL } = require("node:buffer");
     const url = URL.createObjectURL(file);
     const resolved = resolveObjectURL(url);
     URL.revokeObjectURL(url);

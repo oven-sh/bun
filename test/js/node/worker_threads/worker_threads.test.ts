@@ -1312,12 +1312,14 @@ test("close(cb) interleaves with other close listeners in registration order", a
 // exception, so getOwnPropertySlot returned true with it still pending.
 // The assertion is debug-build only; amplified from the upstream Node
 // test-worker-message-port-transfer-terminate.js (10 workers → 60).
-test.skipIf(!isASAN && !isDebug)("terminate() during worker bootstrap doesn't trip getOwnPropertySlot assert", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const { Worker } = require("worker_threads");
+test.skipIf(!isASAN && !isDebug)(
+  "terminate() during worker bootstrap doesn't trip getOwnPropertySlot assert",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
        const N = 60;
        let done = 0;
        for (let i = 0; i < N; ++i) {
@@ -1326,18 +1328,19 @@ test.skipIf(!isASAN && !isDebug)("terminate() during worker bootstrap doesn't tr
            w.terminate().then(() => { if (++done === N) console.log("ok"); });
          });
        }`,
-    ],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-    stdout: "ok",
-    stderr: "",
-    exitCode: 0,
-    signalCode: null,
-  });
-});
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
 
 test("getHeapStatistics settles when terminated mid-request", async () => {
   const w = new Worker("setInterval(() => {}, 1e6)", { eval: true });

@@ -23,7 +23,6 @@ test.skipIf(!isLinux)(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr.trim()).toBe("");
     const out = JSON.parse(stdout.trim());
 
     // Every invalid hostname errored locally; none reached the stub resolver.
@@ -53,6 +52,6 @@ test.skipIf(!isLinux)(
     const unique = [...new Set(out.qnames)];
     expect(unique).toEqual(["ok_name.invalid"]);
 
-    expect(exitCode).toBe(0);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   },
 );

@@ -9,7 +9,7 @@
 // failure. Against the released Bun, the Temporal assertion is the one that
 // fails.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 async function run(src: string) {

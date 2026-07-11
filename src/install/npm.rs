@@ -361,7 +361,9 @@ pub mod registry {
                 b"_password" => &mut out.password,
                 _ => unreachable!(),
             };
-            if !out.terminal {
+            // An empty marker supplies no credential; it must not end the scan or shadow
+            // a credential from `.npmrc`. The pathname is stripped either way.
+            if !out.terminal && !value.is_empty() {
                 *field = Some(value);
                 out.terminal = matches!(name, b"_authToken" | b"_auth");
             }
@@ -391,10 +393,12 @@ pub mod registry {
                     };
 
                     if let Some(field) = field {
-                        *field = Some(value);
-                        out.terminal = true;
                         out.needs_normalize = true;
                         pathname = &pathname[..last_slash + 1];
+                        if !value.is_empty() {
+                            *field = Some(value);
+                            out.terminal = true;
+                        }
                     }
                 }
             }
@@ -460,7 +464,9 @@ pub mod registry {
 
             if registry.token.is_empty() {
                 'outer: {
-                    if registry.password.is_empty() {
+                    // An `.npmrc` `_auth` supersedes URL-embedded credentials outright,
+                    // so `user` can only ever come from the value that produced `auth`.
+                    if registry.password.is_empty() && registry_auth.is_empty() {
                         if let Some(token) = embedded.token {
                             registry.token = token.into();
                         }

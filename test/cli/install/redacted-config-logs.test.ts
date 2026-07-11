@@ -41,24 +41,28 @@ describe.concurrent("redact", async () => {
       expected: "*",
     },
     {
+      // npm forwards these verbatim, so there is no diagnostic to redact: the
+      // assertion is that neither an error nor the value reaches stderr.
       title: "invalid _auth",
       npmrc: "//registry.npmjs.org/:_auth = does-not-decode",
-      expected: "****************",
+      expected: "",
+      secret: "does-not-decode",
     },
     {
       title: "unexpected _auth",
       npmrc: "//registry.npmjs.org/:_auth=:secret",
-      expected: "*******",
+      expected: "",
+      secret: ":secret",
     },
     {
       title: "_auth zero length",
       npmrc: "//registry.npmjs.org/:_auth=",
-      expected: "received an empty string",
+      expected: "supplies no credentials",
     },
     {
       title: "_auth one length",
       npmrc: "//registry.npmjs.org/:_auth=1",
-      expected: "*",
+      expected: "",
     },
     {
       // A quoted key is a string literal, not an identifier, so it took a different
@@ -71,7 +75,7 @@ describe.concurrent("redact", async () => {
     },
     {
       title: "quoted _auth key",
-      npmrc: '"//registry.npmjs.org/:_auth"=does-not-decode',
+      npmrc: 'registry=https://Registry.Example.COM/api/\n"//Registry.Example.COM/:_auth"=does-not-decode',
       expected: "*",
       secret: "does-not-decode",
     },
@@ -104,7 +108,7 @@ describe.concurrent("redact", async () => {
       const [out1, err1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
 
       expect(exitCode1).toBe(+!!bunfig);
-      expect(err1).toContain(expected || "*");
+      if (expected) expect(err1).toContain(expected);
       if (secret) expect(err1).not.toContain(secret);
 
       // once with color
@@ -119,7 +123,7 @@ describe.concurrent("redact", async () => {
       const [out2, err2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
 
       expect(exitCode2).toBe(+!!bunfig);
-      expect(err2).toContain(expected || "*");
+      if (expected) expect(err2).toContain(expected);
       if (secret) expect(err2).not.toContain(secret);
     });
   }

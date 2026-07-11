@@ -442,7 +442,7 @@ ${Object.keys(opts)
       dotEnv: { SECRET_AUTH: "" },
     },
     (stdout: string, stderr: string) => {
-      expect(stderr).toContain("received an empty string");
+      expect(stderr).toContain("supplies no credentials");
     },
   );
 
@@ -463,7 +463,7 @@ ${Object.keys(opts)
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("received an empty string");
+    expect(stderr).toContain("supplies no credentials");
     expect(exitCode).toBe(0);
   });
 
@@ -484,7 +484,7 @@ ${Object.keys(opts)
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("received an empty string");
+    expect(stderr).not.toContain("supplies no credentials");
     expect(exitCode).toBe(0);
   });
 
@@ -667,7 +667,7 @@ registry=https://:TOK@somehost.com/
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("received an empty string");
+    expect(stderr).not.toContain("supplies no credentials");
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
   });
 
@@ -688,7 +688,7 @@ registry=https://:TOK@somehost.com/
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("received an empty string");
+    expect(stderr).toContain("supplies no credentials");
     expect(exitCode).toBe(0);
   });
 });
@@ -918,6 +918,32 @@ describe("a config key that differs from the registry only by host case", () => 
     );
     expect(stderr).not.toContain("supplies no credential to any registry");
   });
+
+  // A credential can be arbitrary bytes. `bun pm view` panicked on non-UTF-8 (lossy
+  // Display expanded U+FFFD past the reserved byte count) until the header append went
+  // raw. A JS `\xff` escape lands as valid UTF-8, so the bytes are written raw here.
+  for (const opt of ["_auth", "_authToken"]) {
+    it(`a non-UTF-8 ${opt} does not panic bun pm view`, async () => {
+      using dir = tempDir("npmrc-raw-bytes", {
+        "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+        "home/.gitkeep": "",
+      });
+      const prefix = Buffer.from(`registry=https://example.com/\n//example.com/:${opt}=`);
+      await write(join(String(dir), ".npmrc"), Buffer.concat([prefix, Buffer.from([0xff, 0xfe, 0xfd, 0x0a])]));
+      const home = join(String(dir), "home");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "view", "left-pad"],
+        cwd: String(dir),
+        env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("panic");
+      expect(stderr).not.toContain("invalid _auth");
+    });
+  }
 
   it("warns about an uppercase twin that would outrank the lowercase key", async () => {
     const stderr = await stderrOf(

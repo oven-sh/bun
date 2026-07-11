@@ -1240,6 +1240,28 @@ describe.concurrent("bun-install", () => {
         expect(seen).toEqual({ path: "/a:b/c/@myorg%2fpkg", auth: null });
       });
 
+      // An empty marker supplies nothing: it is stripped from the path, but it must not
+      // end the scan or shadow the credential the .npmrc supplies.
+      it("an empty embedded _auth does not discard the .npmrc credential", async () => {
+        const seen = await probeEmbedded("/api/:_auth=", host => `//${host}/:_auth=b3BhcXVlYmxvYg`);
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Basic b3BhcXVlYmxvYg" });
+      });
+
+      it("an empty embedded _authToken does not discard the .npmrc credential", async () => {
+        const seen = await probeEmbedded("/api/:_authToken=", host => `//${host}/:_auth=b3BhcXVlYmxvYg`);
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Basic b3BhcXVlYmxvYg" });
+      });
+
+      // An `.npmrc` `_auth` supersedes URL-embedded credentials outright, so `bun pm
+      // whoami` can never report an identity the registry did not authenticate.
+      it("an .npmrc _auth wins over embedded username and _password", async () => {
+        const seen = await probeEmbedded(
+          "/api/:username=embeddeduser/:_password=embeddedpass",
+          host => `//${host}/:_auth=T1BBUVVFQkxPQg==`,
+        );
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Basic T1BBUVVFQkxPQg==" });
+      });
+
       // The scan anchors on the `:<name>=` marker, not on any `:`, so a colon inside the
       // value neither ends it nor splits it.
       it("strips an embedded _authToken whose value contains a colon", async () => {

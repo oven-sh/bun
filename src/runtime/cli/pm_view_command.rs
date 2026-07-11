@@ -106,15 +106,11 @@ pub(crate) fn view(
     headers.allocate()?;
     headers.append(b"Accept", b"application/json");
     if !scope.token.is_empty() {
-        headers.append_fmt(
-            b"Authorization",
-            format_args!("Bearer {}", BStr::new(&*scope.token)),
-        );
+        // `format_args!`/`BStr` Display is lossy for non-UTF-8 credentials (U+FFFD
+        // expands 1->3 bytes) and overruns the byte count reserved above. Raw bytes.
+        headers.append_bytes_value(b"Authorization", b"Bearer ", &scope.token);
     } else if !scope.auth.is_empty() {
-        headers.append_fmt(
-            b"Authorization",
-            format_args!("Basic {}", BStr::new(&*scope.auth)),
-        );
+        headers.append_bytes_value(b"Authorization", b"Basic ", &scope.auth);
     }
 
     let mut response_buf = MutableString::init(2048)?;

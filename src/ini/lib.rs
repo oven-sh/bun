@@ -1587,7 +1587,7 @@ mod draft {
             });
             if names_a_registry {
                 log.add_error_opts(
-                    b"invalid _auth value, expected base64 encoded \"<username>:<password>\", received an empty string",
+                    b"empty _auth value: this line supplies no credentials",
                     bun_ast::AddErrorOptions {
                         source: Some(&sources[conf_item.source_idx as usize]),
                         loc: conf_item.loc,
@@ -1718,7 +1718,7 @@ mod draft {
                 }
             }
             ConfigOpt::_Auth => {
-                handle_auth(v, conf_item, log, source)?;
+                handle_auth(v, conf_item)?;
             }
             ConfigOpt::Email => {
                 if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
@@ -2172,12 +2172,7 @@ mod draft {
         })
     }
 
-    fn handle_auth(
-        v: &mut NpmRegistry,
-        conf_item: &ConfigItem,
-        log: &mut Log,
-        source: &Source,
-    ) -> OOM<()> {
+    fn handle_auth(v: &mut NpmRegistry, conf_item: &ConfigItem) -> OOM<()> {
         // Empty `_auth` supplies no credentials and never wins `hasAuth`; it is
         // diagnosed in `resolve_credentials`, where every registry is visible.
         if conf_item.value.is_empty() {
@@ -2189,16 +2184,9 @@ mod draft {
         let decode_len = bun_base64::decode_len(&conf_item.value);
         let mut decoded = vec![0u8; decode_len].into_boxed_slice();
         let result = bun_base64::decode(&mut decoded[..], &conf_item.value);
+        // npm sends the value regardless; failing to decode only means `bun pm whoami`
+        // cannot derive a username. Not an error about the credential.
         if !result.is_successful() {
-            log.add_error_opts(
-                b"invalid _auth value, expected valid base64",
-                bun_ast::AddErrorOptions {
-                    source: Some(source),
-                    loc: conf_item.loc,
-                    redact_sensitive_information: true,
-                    ..Default::default()
-                },
-            );
             return Ok(());
         }
         let username_password = &decoded[..result.count];

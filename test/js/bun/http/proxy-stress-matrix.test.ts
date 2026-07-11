@@ -24,13 +24,9 @@ import {
   restoreProxyEnv,
 } from "./proxy-stress-helpers";
 
-// Concurrency note: ~335 test.concurrent cases share one {http, https} proxy
-// pair from beforeAll. With a fresh proxy per test this file issued ~335
-// listen(0) calls for proxies alone; under the runner's rolling concurrency
-// window on darwin that churn lets a just-freed ephemeral port be handed to a
-// sibling test while this one is still mid-dial, surfacing as a one-off
-// ConnectionRefused. Tests that pass non-default proxy options or inspect
-// proxy.connections still create a dedicated proxy.
+// Concurrent stateless cases share one {http, https} proxy pair to avoid
+// ephemeral-port churn under test.concurrent; cases that pass non-default
+// proxy options or inspect proxy.connections still create a dedicated proxy.
 let savedEnv: Record<string, string | undefined>;
 let sharedHttpProxy: AdversarialProxy;
 let sharedHttpsProxy: AdversarialProxy;
@@ -42,13 +38,15 @@ beforeAll(async () => {
   sharedHttpsProxy = await createAdversarialProxy({ tls: true });
 });
 afterAll(async () => {
-  // Smoke check: the shared proxies actually carried traffic (i.e. the
-  // `proxy:` option was honored, not silently bypassed).
-  expect(sharedHttpProxy.connections.length).toBeGreaterThan(0);
-  expect(sharedHttpsProxy.connections.length).toBeGreaterThan(0);
-  await sharedHttpProxy?.close();
-  await sharedHttpsProxy?.close();
-  restoreProxyEnv(savedEnv);
+  try {
+    // Smoke check: the shared proxies actually carried traffic.
+    expect(sharedHttpProxy?.connections.length).toBeGreaterThan(0);
+    expect(sharedHttpsProxy?.connections.length).toBeGreaterThan(0);
+  } finally {
+    await sharedHttpProxy?.close();
+    await sharedHttpsProxy?.close();
+    restoreProxyEnv(savedEnv);
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

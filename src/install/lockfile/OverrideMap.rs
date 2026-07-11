@@ -1,7 +1,7 @@
 use core::cmp::Ordering;
 
+use crate::Error;
 use bun_collections::ArrayHashMap;
-use bun_core::Error;
 use bun_core::strings;
 use bun_install::dependency::{self, Behavior, Dependency, DependencyExt as _};
 use bun_install::{PackageManager, PackageNameHash};
@@ -178,7 +178,7 @@ impl OverrideMap {
                 value_loc_of(source, expr.loc),
                 format_args!("\"overrides\" must be an object"),
             );
-            return Err(bun_core::err!("Invalid"));
+            return Err(crate::Error::Invalid);
         }
 
         self.map.ensure_unused_capacity(expr.property_count())?;

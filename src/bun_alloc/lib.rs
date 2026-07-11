@@ -752,6 +752,13 @@ impl AllocError {
     }
 }
 
+impl core::fmt::Display for AllocError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("OutOfMemory")
+    }
+}
+impl core::error::Error for AllocError {}
+
 /// Stamp out `impl From<AllocError> for $t { → $t::OutOfMemory }` for one or
 /// more local error enums. Expansion is byte-identical to the hand-written
 /// 3-line impls this replaces.

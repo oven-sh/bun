@@ -2052,7 +2052,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             }
         });
 
-        let _ = this.client_mut().on_close(this); // TODO: properly propagate exception upwards
+        let _ = this.client_mut().on_close(this);
     }
 
     pub fn on_end(this: &JSValkeyClient, socket: SocketType<SSL>) {
@@ -2099,7 +2099,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
         this.ref_();
         let _d = deref_guard(this);
-        let _ = this.client_mut().on_data(this, data); // TODO: properly propagate exception upwards
+        let _ = this.client_mut().on_data(this, data);
         this.update_poll_ref();
     }
 

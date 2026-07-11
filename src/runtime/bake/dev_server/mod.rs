@@ -20,26 +20,10 @@ use bun_sys::FdExt as _;
 use super::jsc;
 use super::{Graph, Side};
 
-// ─── submodule bodies ────────────────────────────────────────────────────────
-// Assets body dissolved into `assets.rs`.
-#[path = "../DevServer/DirectoryWatchStore.rs"]
-pub(crate) mod directory_watch_store_body;
-#[path = "../DevServer/ErrorReportRequest.rs"]
-pub(crate) mod error_report_request_body;
-#[path = "../DevServer/HmrSocket.rs"]
-pub(crate) mod hmr_socket_body;
-// HotReloadEvent body draft dissolved into this file (see struct + impl below).
-#[path = "../DevServer/IncrementalGraph.rs"]
-pub(crate) mod incremental_graph_body;
-// PackedMap body draft dissolved into `packed_map.rs`.
-#[path = "../DevServer/RouteBundle.rs"]
-pub(crate) mod route_bundle_body;
-// SerializedFailure body draft dissolved into `serialized_failure.rs`.
-// SourceMapStore body draft dissolved into `source_map_store.rs`.
-#[path = "../DevServer/memory_cost.rs"]
-pub(crate) mod memory_cost_body;
-#[path = "../DevServer/WatcherAtomics.rs"]
-pub(crate) mod watcher_atomics_body;
+// ─── submodules ──────────────────────────────────────────────────────────────
+pub(crate) mod error_report_request;
+pub(crate) mod hmr_socket;
+pub(crate) mod memory_cost;
 
 // NOTE: the `DevServer` scoped-log static (`ScopedLogger`) is declared in
 // `dev_server_body` (`bun_output::declare_scope!(DevServer, visible)`) and
@@ -183,6 +167,14 @@ impl HmrTopic {
             b'r' => Some(HmrTopic::TestingWatchSynchronization),
             _ => None,
         }
+    }
+
+    /// uWS topic name for this HMR channel. The leading `0xFF` byte cannot
+    /// occur in WTF-8, so no topic string passed to `ServerWebSocket`
+    /// `subscribe()`/`publish()` or `Server.publish()` can ever name it.
+    #[inline]
+    pub fn uws_topic(self) -> [u8; 2] {
+        [0xFF, self as u8]
     }
 
     /// Maps a topic to its packed `HmrTopicBits` flag.
@@ -369,7 +361,7 @@ impl ResponseLike for bun_uws::AnyResponse {
 }
 
 /// `DevServer.HmrSocket` — per-WebSocket state. Method bodies (open/close/
-/// message handlers) live in `hmr_socket_body` (`../DevServer/HmrSocket.rs`).
+/// message handlers) live in [`hmr_socket`].
 pub struct HmrSocket {
     /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
     /// `remove` + `heap::take` in `on_close`.
@@ -443,10 +435,8 @@ impl HotReloadEvent {
     }
 
     /// Debug-asserts that the owning [`DevServer`]'s watcher thread-lock is
-    /// held. Centralises the back-ref deref so the four call sites in
-    /// `watcher_acquire_event` / `watcher_release_and_submit_event` (both the
-    /// `WatcherAtomics` impl here and the duplicate in
-    /// `DevServer/WatcherAtomics.rs`) stay safe.
+    /// held. Centralises the back-ref deref so the call sites in
+    /// `watcher_acquire_event` / `watcher_release_and_submit_event` stay safe.
     #[inline]
     pub fn assert_watcher_thread_locked(&self) {
         // SAFETY: BACKREF — `owner` is the DevServer whose
@@ -988,7 +978,17 @@ impl WatcherAtomics {
 }
 
 /// `DevServer.DirectoryWatchStore` — sparse map of directories under watch
-/// for resolution-failure recovery. Full body gated in `DirectoryWatchStore.rs`.
+/// for resolution-failure recovery.
+///
+/// When a file fails to import a relative path, directory watchers are added
+/// so that when a matching file is created, the dependencies can be rebuilt.
+/// This handles HMR cases where a user writes an import before creating the
+/// file, or moves files around. Not thread-safe.
+///
+/// Known gap: when the importing file fixes its resolution (the failing
+/// import is removed or renamed), nothing walks this store to release the
+/// now-unneeded watcher; it stays until the directory changes or the file
+/// is evicted from the incremental graph.
 #[derive(Default)]
 pub struct DirectoryWatchStore {
     pub watches: StringArrayHashMap<directory_watch_store::Entry>,

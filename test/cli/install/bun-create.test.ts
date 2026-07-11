@@ -157,6 +157,39 @@ for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/d
   }, 20_000);
 }
 
+it("should keep bun-create task and start strings containing escape sequences intact", async () => {
+  const bunCreateDir = join(x_dir, "bun-create");
+  const testTemplate = "escaped-config-template";
+
+  await Bun.write(
+    join(bunCreateDir, testTemplate, "package.json"),
+    `{
+  "name": "escaped-config-template",
+  "version": "1.0.0",
+  "bun-create": {
+    "postinstall": "echo cr\\u00e9ate-step-done",
+    "start": "bun run d\\u00e9v --hot"
+  }
+}
+`,
+  );
+  await Bun.write(join(bunCreateDir, testTemplate, "index.js"), "console.log('hi');\n");
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", testTemplate, join(x_dir, "escaped-dest")],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: { ...env, BUN_CREATE_DIR: bunCreateDir, MIMALLOC_PURGE_DELAY: "0" },
+  });
+
+  const [out, _err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(out).toContain("\n$ echo créate-step-done\n");
+  expect(out).toContain("\n  cd escaped-dest\n  bun run dév --hot\n");
+  expect(exitCode).toBe(0);
+});
+
 it("should not crash with --no-install and bun-create.postinstall starting with 'bun '", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
   const testTemplate = "postinstall-test";

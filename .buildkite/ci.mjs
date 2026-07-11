@@ -1012,27 +1012,29 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
 const BINARY_SIZE_THRESHOLD_MB = 0.5;
 
 /**
- * @param {Platform[]} buildPlatforms
+ * @param {Platform[]} releasePlatforms
  * @param {PipelineOptions} options
  * @param {{ signed: boolean }} [extra]
  * @returns {Step}
  */
-function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
+function getReleaseStep(releasePlatforms, options, { signed = false } = {}) {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
   // When signing ran, depend on windows-sign instead of the raw Windows builds
   // so we wait for signed artifacts before releasing.
   const depends_on = signed
-    ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
-    : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
+    ? [...releasePlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
+    : releasePlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
 
   return {
     key: "release",
     label: getBuildkiteEmoji("rocket"),
-    agents: {
-      queue: "test-darwin",
-    },
+    agents: getEc2Agent(
+      buildPlatforms.find(p => p.os === "linux" && p.arch === "aarch64" && p.distro === "amazonlinux"),
+      options,
+      { instanceType: "c8g.large" },
+    ),
     depends_on,
     env: {
       CANARY: revision,

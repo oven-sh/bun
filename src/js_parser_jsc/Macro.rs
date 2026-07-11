@@ -17,17 +17,14 @@ use bun_resolver::package_json::{
     MacroImportReplacementMap as MacroRemapEntry, MacroMap as MacroRemap,
 };
 
-// The C-API surface is intentionally `#[deprecated]` upstream but is the
-// call path used for `JSObjectCallAsFunctionReturnValueHoldingAPILock`.
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
 use bun_jsc::virtual_machine::{
     InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine, runtime_hooks,
 };
-#[allow(deprecated)]
 use bun_jsc::{
     self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue,
-    JsError, ModuleLoader, WebCore, c as js,
+    JsError, ModuleLoader, WebCore,
 };
 use bun_jsc::{BuildMessage, ResolveMessage};
 
@@ -562,19 +559,12 @@ impl<'a> Run<'a> {
             return Ok(caller);
         };
 
-        // SAFETY: `vm.global` is the live per-thread global; `macro_callback`
-        // was obtained from the VM's macro table; `args` is a stack slice of
-        // `#[repr(transparent)] i64` JSValues whose pointer is reinterpreted to
-        // the C-API `JSObjectRef` (same encoded value).
-        let result = unsafe {
-            js::JSObjectCallAsFunctionReturnValueHoldingAPILock(
-                vm.global,
-                macro_callback,
-                core::ptr::null_mut(),
-                args.len(),
-                args.as_ptr().cast::<js::JSValueRef>(),
-            )
-        };
+        let global = vm.global();
+        let result = vm.run_with_api_lock(|| {
+            macro_callback
+                .call(global, JSValue::ZERO, args)
+                .unwrap_or_else(|_| global.try_take_exception().unwrap_or(JSValue::ZERO))
+        });
 
         let mut runner = Run {
             caller,
@@ -786,10 +776,12 @@ impl<'a> Run<'a> {
                     // key into the `MacroContext` bump arena so it outlives the
                     // temporary `to_owned_slice()` Vec and the returned `Expr`.
                     let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
+                    let key = Expr::init(E::EString::init(key_bytes), self.caller.loc);
                     VecExt::append(
                         &mut properties,
                         G::Property {
-                            key: Some(Expr::init(E::EString::init(key_bytes), self.caller.loc)),
+                            flags: E::own_key_property_flags(&key),
+                            key: Some(key),
                             value: Some(object_value),
                             ..Default::default()
                         },

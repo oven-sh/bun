@@ -372,6 +372,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let jsc_vm: &mut jsc::VirtualMachineRef = global_this.bun_vm().as_mut();
 
     let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let mut user_specified_cwd = false;
 
     let mut stdio: [Stdio; 3] = [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit];
 
@@ -462,6 +463,18 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 let argv0_str = argv0_.get_zig_string(global_this)?;
                 if argv0_str.len > 0 {
                     let owned = argv0_str.to_owned_slice_z();
+                    // Check for null bytes in argv0 (security: prevent null byte injection)
+                    if strings::index_of_char(owned.as_bytes(), 0).is_some() {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::INVALID_ARG_VALUE,
+                                format_args!(
+                                    "The property 'options.argv0' must be a string without null bytes. Received {}",
+                                    bun_fmt::quote(owned.as_bytes())
+                                ),
+                            )
+                            .throw());
+                    }
                     argv0 = Some(owned.as_ptr());
                     cstr_storage.push(owned);
                 }
@@ -472,9 +485,22 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 let cwd_str = cwd_.get_zig_string(global_this)?;
                 if cwd_str.len > 0 {
                     cwd_owned = cwd_str.to_owned_slice_z();
+                    // Check for null bytes in cwd (security: prevent null byte injection)
+                    if strings::index_of_char(cwd_owned.as_bytes(), 0).is_some() {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::INVALID_ARG_VALUE,
+                                format_args!(
+                                    "The property 'options.cwd' must be a string without null bytes. Received {}",
+                                    bun_fmt::quote(cwd_owned.as_bytes())
+                                ),
+                            )
+                            .throw());
+                    }
                     // `cwd_owned` is never mutated again, so this borrow is valid
                     // for every read of `cwd` below.
                     cwd = cwd_owned.as_bytes();
+                    user_specified_cwd = true;
                 }
             }
         }
@@ -908,7 +934,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let _ = &inherited_env_storage;
 
     for fd_index in 0..stdio.len() {
-        if stdio[fd_index].can_use_memfd(IS_SYNC, fd_index > 0 && max_buffer.is_some()) {
+        if stdio[fd_index].can_use_memfd() {
             if stdio[fd_index].use_memfd(fd_index as u32) {
                 jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
             }
@@ -1086,7 +1112,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
     let mut spawn_options = SpawnOptions {
-        cwd: cwd.to_vec().into_boxed_slice(),
+        // Empty means "inherit the parent's working directory". Only chdir
+        // when the user asked for it: the stored cwd path string can be stale
+        // if the directory was renamed out from under the process (#33819).
+        cwd: if user_specified_cwd {
+            cwd.to_vec().into_boxed_slice()
+        } else {
+            Box::default()
+        },
         detached,
         uid,
         gid,
@@ -1413,11 +1446,16 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         IS_SYNC,
     ));
 
-    // For inline terminal options: close parent's slave_fd so EOF is received when child exits
-    // For existing terminal: keep slave_fd open so terminal can be reused for more spawns
+    // Inline terminals keep slave_fd until on_process_exit (BSD kernels flush
+    // pty output on last slave close; see Terminal::drain_and_close_slave_fd).
+    // Existing terminals keep slave_fd for reuse.
     if let Some(info) = terminal_info.take() {
         terminal_js_value = info.js_value;
-        // Spawn succeeded so the child holds its own copy of the slave fd.
+        #[cfg(unix)]
+        info.term().mark_inline_spawned();
+        // Windows: ConPTY's conhost buffers output, so the client handle can go
+        // now; EOF is delivered via close_pseudoconsole on exit.
+        #[cfg(windows)]
         info.term().close_slave_fd();
         subprocess.update_flags(|f| f.insert(Subprocess::Flags::OWNS_TERMINAL));
     }
@@ -1848,6 +1886,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
 
         let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);
+        let mut bun_test_fired = false;
 
         // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
         let sync_loop = unsafe { &mut *jsc_vm_ptr }
@@ -1856,12 +1895,13 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
-            let bun_test_timeout: Timespec =
-                if let Some(runner) = crate::test_runner::jest::Jest::runner() {
-                    runner.get_active_timeout()
-                } else {
-                    Timespec::EPOCH
-                };
+            let bun_test_timeout: Timespec = if bun_test_fired {
+                Timespec::EPOCH
+            } else if let Some(runner) = crate::test_runner::jest::Jest::runner() {
+                runner.get_active_timeout()
+            } else {
+                Timespec::EPOCH
+            };
             let has_bun_test_timeout = !bun_test_timeout.eql(&Timespec::EPOCH);
 
             if has_bun_test_timeout {
@@ -1913,6 +1953,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // different test fails, and that SHOULD be okay.
                     if has_bun_test_timeout {
                         if bun_test_timeout.order(&now) == core::cmp::Ordering::Less {
+                            bun_test_fired = true;
                             let mut active_file_strong = crate::test_runner::jest::Jest::runner()
                                 .unwrap()
                                 .bun_test_root
@@ -1938,10 +1979,20 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 // SAFETY: jsc_vm_ptr is the live thread VM.
                                 unsafe { &*jsc_vm_ptr },
                             );
+                            // The direct child may already be reaped (and
+                            // gone from the auto-killer), so kill it here too.
+                            let _ = subprocess.try_kill(subprocess.kill_signal);
                             // active_file_strong / taken_active_file drop here (was `defer .deinit()`).
                         }
                     }
                 }
+            }
+
+            // Once the wait is being terminated (timeout, maxBuffer, bun:test
+            // per-test timeout), stop waiting on pipe EOF; a grandchild may
+            // still hold the write end (Node.js SyncProcessRunner::Kill()).
+            if did_timeout || bun_test_fired || subprocess.exited_due_to_maxbuf.get().is_some() {
+                subprocess.close_readable_pipes();
             }
         }
     }

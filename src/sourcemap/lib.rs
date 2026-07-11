@@ -727,36 +727,31 @@ pub mod SerializedSourceMap {
         /// Only decompress source code once! Once a file is decompressed,
         /// it is stored here. Decompression failure is recorded as an empty
         /// `Vec`, which `source_file_contents` treats as "no contents".
-        pub decompressed_files: Box<[Option<Vec<u8>>]>,
+        pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
     }
 
     impl Loaded {
-        pub(crate) fn source_file_contents(&mut self, index: usize) -> Option<&[u8]> {
-            // Populate first if
-            // empty, then take a single borrow at the end (borrowck-friendly).
-            if self.decompressed_files[index].is_none() {
+        pub(crate) fn source_file_contents(&self, index: usize) -> Option<&[u8]> {
+            let decompressed = self.decompressed_files[index].get_or_init(|| {
                 let sp = self.map.compressed_source_file_at(index);
                 let compressed_file = sp.slice(self.map.bytes);
                 let size = bun_zstd::get_decompressed_size(compressed_file);
 
                 let mut bytes = vec![0u8; size];
-                self.decompressed_files[index] =
-                    Some(match bun_zstd::decompress(&mut bytes, compressed_file) {
-                        bun_zstd::Result::Err(err) => {
-                            bun_core::warn!(
-                                "Source map decompression error: {}",
-                                ::bstr::BStr::new(err.as_bytes()),
-                            );
-                            Vec::new()
-                        }
-                        bun_zstd::Result::Success(n) => {
-                            bytes.truncate(n);
-                            bytes
-                        }
-                    });
-            }
-
-            let decompressed = self.decompressed_files[index].as_deref().unwrap();
+                match bun_zstd::decompress(&mut bytes, compressed_file) {
+                    bun_zstd::Result::Err(err) => {
+                        bun_core::warn!(
+                            "Source map decompression error: {}",
+                            ::bstr::BStr::new(err.as_bytes()),
+                        );
+                        Vec::new()
+                    }
+                    bun_zstd::Result::Success(n) => {
+                        bytes.truncate(n);
+                        bytes
+                    }
+                }
+            });
             if decompressed.is_empty() {
                 None
             } else {
@@ -834,8 +829,11 @@ impl SourceMapPieces {
                 current += 1;
             }
 
+            // A single mapping can cross multiple shift boundaries when two
+            // placeholder substitutions have no mapping between them, so
+            // advance to the latest applicable shift before re-encoding.
             let mut did_cross_boundary = false;
-            if shifts.len() > 1 && LineColumnOffset::comes_before(shifts[1].before, generated) {
+            while shifts.len() > 1 && LineColumnOffset::comes_before(shifts[1].before, generated) {
                 shifts = &shifts[1..];
                 did_cross_boundary = true;
             }

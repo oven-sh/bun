@@ -1176,7 +1176,8 @@ pub mod time {
     // Defined in `util::time`; re-exported so `bun_core::time::*` resolves uniformly.
     pub use crate::util::time::{
         MS_PER_DAY, MS_PER_S, NS_PER_DAY, NS_PER_HOUR, NS_PER_MIN, NS_PER_MS, NS_PER_S, NS_PER_US,
-        NS_PER_WEEK, S_PER_DAY, US_PER_MS, US_PER_S, milli_timestamp, nano_timestamp, timestamp,
+        NS_PER_WEEK, S_PER_DAY, US_PER_MS, US_PER_S, milli_timestamp,
+        milli_timestamp_allow_mocked_time, nano_timestamp, timestamp,
     };
 
     #[derive(Clone, Copy)]
@@ -2737,6 +2738,12 @@ pub mod ffi {
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_BASIC_INFORMATION {}
     #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_ALL_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_DEVICE_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_VOLUME_INFORMATION {}
+    #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FILE_ATTRIBUTE_DATA {}
@@ -2984,6 +2991,13 @@ pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
 /// silently degrades to the full untrimmed trace.
 #[inline(always)]
 pub fn return_address() -> usize {
+    // Miri cannot execute `frame_address`'s inline asm, and an address read out
+    // of a register is not a pointer it can dereference. 0 = "no trim", the
+    // same value the arches without an asm! mapping return. `cfg!` rather than
+    // `#[cfg]` so the read below stays compiled (and `PC_OFFSET` live).
+    if cfg!(miri) {
+        return 0;
+    }
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         let fp = debug::frame_address();

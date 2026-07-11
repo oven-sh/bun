@@ -94,7 +94,12 @@ pub struct RuntimeState {
     /// (`Request.body` payloads).
     /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
     /// — far too large to construct on the stack inside `Box::new(RuntimeState{..})`.
-    pub body_value_pool: Box<crate::webcore::body::HiveAllocator>,
+    /// `ManuallyDrop` inside the `Box`: `deinit_runtime_state` runs after
+    /// `event_loop.deinit()`, so `HiveArray::Drop` on a leaked body would run
+    /// `Value::drop` (which touches `Blob`/`readable` state) at a point that
+    /// has not been proven safe; keep the prior behavior of leaking any
+    /// still-occupied slot while still freeing the pool allocation itself.
+    pub body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
     pub isolation_handles: IsolationHandles,
 }
 
@@ -326,7 +331,9 @@ unsafe fn init_runtime_state(
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
-        body_value_pool: Box::new(crate::webcore::body::HiveAllocator::init()),
+        body_value_pool: Box::new(core::mem::ManuallyDrop::new(
+            crate::webcore::body::HiveAllocator::init(),
+        )),
         isolation_handles: IsolationHandles::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
@@ -675,58 +682,66 @@ unsafe fn load_preloads(
             .strip_prefix(b"file://".as_slice())
             .unwrap_or(preload_slice);
 
-        // ── resolve ─────────────────────────────────────────────────────
-        // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
-        // singleton field.
-        let mut result = match unsafe {
-            (*vm).transpiler.resolver.resolve_and_auto_install(
-                &*top_level_dir,
-                normalized,
-                ImportKind::Stmt,
-                global_cache,
-            )
-        } {
-            ResolveResultUnion::Success(r) => r,
-            ResolveResultUnion::Failure(e) => {
-                // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
-                // `VirtualMachine::init`.
-                if let Some(log) = unsafe { &*vm }.log {
-                    // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                    let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "{} resolving preload {}",
-                            e.name(),
-                            bun_core::fmt::format_json_string_latin1(preload_slice),
-                        ),
-                    );
+        // node: builtin specifiers bypass the file resolver — JSModuleLoader
+        // resolves them internally. node:worker_threads is preloaded this way so
+        // its node-style worker bootstrap (stdio rebinding) runs before user code;
+        // this also means `bun --import node:*` works like Node's.
+        let module_name = if normalized.starts_with(b"node:") {
+            bun_core::String::from_bytes(normalized)
+        } else {
+            // ── resolve ─────────────────────────────────────────────────────
+            // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
+            // singleton field.
+            let mut result = match unsafe {
+                (*vm).transpiler.resolver.resolve_and_auto_install(
+                    &*top_level_dir,
+                    normalized,
+                    ImportKind::Stmt,
+                    global_cache,
+                )
+            } {
+                ResolveResultUnion::Success(r) => r,
+                ResolveResultUnion::Failure(e) => {
+                    // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
+                    // `VirtualMachine::init`.
+                    if let Some(log) = unsafe { &*vm }.log {
+                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "{} resolving preload {}",
+                                e.name(),
+                                bun_core::fmt::format_json_string_latin1(preload_slice),
+                            ),
+                        );
+                    }
+                    return Err(e);
                 }
-                return Err(e);
-            }
-            ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
-                // SAFETY: see above.
-                if let Some(log) = unsafe { &*vm }.log {
-                    // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                    let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "preload not found {}",
-                            bun_core::fmt::format_json_string_latin1(preload_slice),
-                        ),
-                    );
+                ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
+                    // SAFETY: see above.
+                    if let Some(log) = unsafe { &*vm }.log {
+                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "preload not found {}",
+                                bun_core::fmt::format_json_string_latin1(preload_slice),
+                            ),
+                        );
+                    }
+                    return Err(bun_core::err!("ModuleNotFound"));
                 }
-                return Err(bun_core::err!("ModuleNotFound"));
-            }
-        };
+            };
 
-        // ── import ──────────────────────────────────────────────────────
-        let path_text = result
-            .path()
-            .expect("resolver Success result has a primary path")
-            .text;
-        let module_name = bun_core::String::from_bytes(path_text);
+            // ── import ──────────────────────────────────────────────────────
+            let path_text = result
+                .path()
+                .expect("resolver Success result has a primary path")
+                .text;
+            bun_core::String::from_bytes(path_text)
+        };
         // Note: use `import_ptr` (not `import`) so the `*mut` we store in
         // `pending_internal_promise` keeps the FFI's mutable provenance instead
         // of being laundered through `&JSInternalPromise -> *const -> *mut`
@@ -5186,9 +5201,9 @@ pub(crate) fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoop
 
 /// `dateForHeader`: wrap the header bytes in a
 /// `bun.String`, call `String.parseDate(&s, vm.global)`, return the integer
-/// value if finite and non-negative, else `None`. Lives in this crate (sole
-/// caller is `server::FileRoute::on`) so `bun_uws_sys` (T0) has no upward
-/// hook into `bun_jsc`.
+/// value if finite and non-negative, else `None`. Lives in this crate (callers
+/// are `server::FileRoute` / `server::StaticRoute`) so `bun_uws_sys` (T0) has
+/// no upward hook into `bun_jsc`.
 pub fn parse_http_date(value: &[u8]) -> Option<u64> {
     let vm = bun_jsc::virtual_machine::VirtualMachine::get();
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives

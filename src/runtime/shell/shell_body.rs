@@ -44,7 +44,7 @@ pub use bun_shell_parser::parse::{
     LexerError, LexerUnicode, ParseError, Parser, ParserError, SPECIAL_CHARS, SPECIAL_CHARS_TABLE,
     ShellCharIter, SmolList, Src, SrcAscii, SrcUnicode, StringEncoding, SubShellKind, SubshellKind,
     TextRange, Token, TokenTag, assert_special_char, ast, escape_8bit, escape_bun_str,
-    escape_utf16, has_eq_sign, is_valid_var_name, needs_escape_bunstr,
+    escape_utf16, has_eq_sign, is_if_clause_keyword_bunstr, is_valid_var_name, needs_escape_bunstr,
     needs_escape_utf8_ascii_latin1, needs_escape_utf16,
 };
 
@@ -741,6 +741,7 @@ pub fn shell_cmd_from_js(
                 jsstrings,
                 &mut jsobjref_buf[..],
                 marked_argument_buffer,
+                0,
             )?;
             builder = ShellSrcBuilder::init(global, out_script, jsstrings);
         }
@@ -748,6 +749,8 @@ pub fn shell_cmd_from_js(
     }
     Ok(())
 }
+
+const MAX_TEMPLATE_ARRAY_DEPTH: u32 = 100;
 
 pub fn handle_template_value(
     global: &JSGlobalObject,
@@ -759,6 +762,7 @@ pub fn handle_template_value(
     jsstrings: &mut Vec<BunString>,
     jsobjref_buf: &mut [u8],
     marked_argument_buffer: &mut MarkedArgumentBuffer,
+    depth: u32,
 ) -> JsResult<()> {
     let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings);
     if !template_value.is_empty() {
@@ -845,6 +849,12 @@ pub fn handle_template_value(
         }
 
         if template_value.js_type().is_array() {
+            if depth >= MAX_TEMPLATE_ARRAY_DEPTH {
+                return Err(global.throw(format_args!(
+                    "Shell script template arrays cannot be nested more than {} levels deep",
+                    MAX_TEMPLATE_ARRAY_DEPTH
+                )));
+            }
             let mut array = template_value.array_iterator(global)?;
             let last = array.len.saturating_sub(1);
             let mut i: u32 = 0;
@@ -857,6 +867,7 @@ pub fn handle_template_value(
                     jsstrings,
                     jsobjref_buf,
                     marked_argument_buffer,
+                    depth + 1,
                 )?;
                 if i < last {
                     let str = BunString::static_(b" ");
@@ -985,7 +996,7 @@ impl<'a> ShellSrcBuilder<'a> {
             return Ok(true);
         }
         if ALLOW_ESCAPE {
-            if needs_escape_bunstr(bunstr) {
+            if needs_escape_bunstr(bunstr) || is_if_clause_keyword_bunstr(bunstr) {
                 self.append_js_str_ref(bunstr)?;
                 return Ok(true);
             }
@@ -1012,7 +1023,7 @@ impl<'a> ShellSrcBuilder<'a> {
             return Ok(false);
         }
         if ALLOW_ESCAPE {
-            if needs_escape_utf8_ascii_latin1(utf8) {
+            if needs_escape_utf8_ascii_latin1(utf8) || IfClauseTok::from_text(utf8).is_some() {
                 let bunstr = OwnedString::new(BunString::clone_utf8(utf8));
                 self.append_js_str_ref(bunstr.get())?;
                 return Ok(true);

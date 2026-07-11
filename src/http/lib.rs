@@ -43,8 +43,6 @@ pub mod signals;
 pub mod thread_safe_stream_buffer;
 #[path = "websocket.rs"]
 pub mod websocket;
-#[path = "websocket_http_client.rs"]
-pub mod websocket_http_client;
 #[path = "zlib.rs"]
 pub mod zlib;
 
@@ -286,6 +284,20 @@ pub static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
 #[inline]
 pub fn idle_timeout_seconds() -> c_uint {
     IDLE_TIMEOUT_SECONDS.load(Ordering::Relaxed)
+}
+
+/// Normalise an idle timeout (seconds) for uSockets' timers: the long-timeout
+/// counter wraps `% 240` minutes, so clamp to 239 min, and values above 240s
+/// are served by the minute-granularity long timer, so round them up to a
+/// whole minute so the floor-to-minute path never fires *earlier* than asked.
+#[inline]
+pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
+    let raw = raw.min(239 * 60);
+    (if raw > 240 {
+        raw.div_ceil(60) * 60
+    } else {
+        raw
+    }) as c_uint
 }
 
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
@@ -587,6 +599,141 @@ use bun_core::ZigStringSlice;
 use bun_url::URL;
 use core::ptr::NonNull;
 
+/// Owned copies of the proxy environment captured at request creation so the
+/// HTTP thread can re-resolve `HTTPClient::http_proxy` per redirect hop.
+/// curl / Node's undici `EnvHttpProxyAgent` both re-run the no_proxy match
+/// and the http/https proxy choice against each redirected URL.
+pub struct ProxySettings {
+    http_proxy: Box<[u8]>,
+    https_proxy: Box<[u8]>,
+    no_proxy: Box<[u8]>,
+}
+
+impl ProxySettings {
+    /// Returns `None` when neither proxy is set: no re-evaluation is needed.
+    pub fn new(
+        http_proxy: Option<&[u8]>,
+        https_proxy: Option<&[u8]>,
+        no_proxy: Option<&[u8]>,
+    ) -> Option<Box<Self>> {
+        let http_proxy = http_proxy.unwrap_or(b"");
+        let https_proxy = https_proxy.unwrap_or(b"");
+        if http_proxy.is_empty() && https_proxy.is_empty() {
+            return None;
+        }
+        Some(Box::new(Self {
+            http_proxy: http_proxy.into(),
+            https_proxy: https_proxy.into(),
+            no_proxy: no_proxy.unwrap_or(b"").into(),
+        }))
+    }
+
+    /// Capture `http_proxy` / `https_proxy` / `no_proxy` from the process env.
+    pub fn from_env(env: &bun_dotenv::Loader<'_>) -> Option<Box<Self>> {
+        #[inline]
+        fn is_emptyish(v: &[u8]) -> bool {
+            v.is_empty() || v == b"\"\"" || v == b"''"
+        }
+        // lowercase first; an empty lowercase value falls through to uppercase.
+        let read = |lower: &[u8], upper: &[u8]| -> Option<&[u8]> {
+            let v = env
+                .get(lower)
+                .filter(|v| !v.is_empty())
+                .or_else(|| env.get(upper))?;
+            if is_emptyish(v) { None } else { Some(v) }
+        };
+        Self::new(
+            read(b"http_proxy", b"HTTP_PROXY"),
+            read(b"https_proxy", b"HTTPS_PROXY"),
+            read(b"no_proxy", b"NO_PROXY"),
+        )
+    }
+
+    /// Build from an explicit `fetch(url, { proxy })` option. The same proxy is
+    /// used for both schemes; NO_PROXY is still consulted per hop.
+    pub fn from_explicit(proxy_href: &[u8], env: &bun_dotenv::Loader<'_>) -> Option<Box<Self>> {
+        let no_proxy = env
+            .get(b"no_proxy")
+            .filter(|v| !v.is_empty())
+            .or_else(|| env.get(b"NO_PROXY"))
+            .filter(|v| !(v.is_empty() || *v == b"\"\"" || *v == b"''"));
+        Self::new(Some(proxy_href), Some(proxy_href), no_proxy)
+    }
+
+    /// Proxy href to use for `url`, or `None` for a direct connection.
+    pub fn resolve(&self, url: &URL<'_>) -> Option<&[u8]> {
+        let href: &[u8] = if url.is_http() {
+            &self.http_proxy
+        } else {
+            &self.https_proxy
+        };
+        if href.is_empty() {
+            return None;
+        }
+        if no_proxy_matches(&self.no_proxy, url.hostname, url.host) {
+            return None;
+        }
+        Some(href)
+    }
+}
+
+/// Returns true if the given hostname/host should bypass the proxy according
+/// to the supplied `no_proxy` list. Runs on the HTTP thread from a captured
+/// copy of the env value; see https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/.
+fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool {
+    if hostname.is_empty() {
+        return false;
+    }
+    for item in no_proxy_text.split(|&b| b == b',') {
+        let mut entry = strings::trim(item, &strings::WHITESPACE_CHARS);
+        if entry.is_empty() {
+            continue;
+        }
+        if entry == b"*" {
+            return true;
+        }
+        if strings::starts_with_char(entry, b'.') {
+            entry = &entry[1..];
+            if entry.is_empty() {
+                continue;
+            }
+        }
+
+        // IPv6 literals contain multiple colons (e.g., "::1"); bracketed IPv6
+        // with port is "[::1]:8080"; host:port has a single colon.
+        let colon_count = entry.iter().filter(|&&b| b == b':').count();
+        let has_port = if strings::starts_with_char(entry, b'[') {
+            strings::index_of(entry, b"]:").is_some()
+        } else {
+            colon_count == 1
+        };
+
+        if has_port {
+            if strings::eql_case_insensitive_ascii(host, entry, true) {
+                return true;
+            }
+        } else {
+            let entry_len = entry.len();
+            if hostname.len() == entry_len {
+                if strings::eql_case_insensitive_ascii(hostname, entry, true) {
+                    return true;
+                }
+            } else if hostname.len() > entry_len
+                && hostname[hostname.len() - entry_len - 1] == b'.'
+                && strings::eql_case_insensitive_ascii(
+                    &hostname[hostname.len() - entry_len..],
+                    entry,
+                    true,
+                )
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
 //
@@ -623,6 +770,11 @@ pub struct HTTPClient<'a> {
 
     pub flags: Flags,
 
+    /// Per-request override of the global [`IDLE_TIMEOUT_SECONDS`], set from
+    /// `fetch(url, { timeout: <ms> })`. Already normalised (see
+    /// [`normalize_idle_timeout_seconds`]). `None` = use the global default.
+    pub idle_timeout_seconds: Option<c_uint>,
+
     pub state: InternalState<'a>,
     pub tls_props: Option<ssl_config::SharedPtr>,
     /// The custom SSL context used for this request (None = default context).
@@ -639,6 +791,10 @@ pub struct HTTPClient<'a> {
     pub request_content_len_buf: [u8; b"-4294967295".len()],
 
     pub http_proxy: Option<URL<'a>>,
+    /// Captured proxy env (http_proxy / https_proxy / no_proxy) so redirects
+    /// can re-resolve `http_proxy` against each hop's URL on the HTTP thread.
+    /// `None` means the initial `http_proxy` is used for every hop.
+    pub proxy_settings: Option<Box<ProxySettings>>,
     pub proxy_headers: Option<Headers>,
     pub proxy_authorization: Option<Vec<u8>>,
     /// Set while this request is tunneling through an HTTP proxy (CONNECT).
@@ -1124,7 +1280,15 @@ fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
     }
 }
 
+fn validate_request_target(target: &[u8]) -> Result<(), bun_core::Error> {
+    if target.iter().any(|&byte| byte <= 0x20 || byte == 0x7f) {
+        return Err(err!(InvalidURL));
+    }
+    Ok(())
+}
+
 fn write_proxy_connect(writer: &mut Vec<u8>, client: &HTTPClient) -> Result<(), bun_core::Error> {
+    validate_request_target(client.url.href)?;
     let port: &[u8] = if client.url.get_port().is_some() {
         client.url.port
     } else if client.url.is_https() {
@@ -1156,6 +1320,7 @@ fn write_proxy_request(
     request: &picohttp::Request<'_>,
     client: &HTTPClient,
 ) -> Result<(), bun_core::Error> {
+    validate_request_target(client.url.href)?;
     writer.extend_from_slice(request.method);
     // will always be http:// here, https:// needs CONNECT tunnel
     writer.extend_from_slice(b" http://");
@@ -1189,6 +1354,7 @@ fn write_request(
     writer: &mut Vec<u8>,
     request: &picohttp::Request<'_>,
 ) -> Result<(), bun_core::Error> {
+    validate_request_target(request.path)?;
     writer.extend_from_slice(request.method);
     writer.extend_from_slice(b" ");
     writer.extend_from_slice(request.path);
@@ -1856,13 +2022,18 @@ impl<'a> HTTPClient<'a> {
     pub fn retry_from_h2(&mut self) {
         debug_assert!(self.h2.is_none());
         self.unregister_abort_tracker();
+        // No owner buffer means the request is already terminal (see
+        // `InternalState::get_body_buffer`); there is nowhere to deliver a
+        // retried response.
+        let Some(body_out) = self.state.body_out_str else {
+            return;
+        };
         self.flags.protocol = Protocol::Http1_1;
         self.h2_retries += 1;
         let body = core::mem::replace(
             &mut self.state.original_request_body,
             HTTPRequestBody::Bytes(b""),
         );
-        let body_out = self.state.body_out_str.take().unwrap();
         self.state.reset();
         self.start(body, body_out::as_mut(body_out));
     }
@@ -1940,15 +2111,19 @@ impl<'a> HTTPClient<'a> {
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
         {
-            self.allow_retry = false;
-            // we need to retry the request, clean up the response message buffer and start again
-            self.state.response_message_buffer = MutableString::default();
-            let body = core::mem::replace(
-                &mut self.state.original_request_body,
-                HTTPRequestBody::Bytes(b""),
-            );
-            let body_out = self.state.body_out_str.take().unwrap();
-            self.start(body, body_out::as_mut(body_out));
+            // No owner buffer means the request is already terminal (see
+            // `InternalState::get_body_buffer`); there is nowhere to deliver
+            // a retried response.
+            if let Some(body_out) = self.state.body_out_str {
+                self.allow_retry = false;
+                // we need to retry the request, clean up the response message buffer and start again
+                self.state.response_message_buffer = MutableString::default();
+                let body = core::mem::replace(
+                    &mut self.state.original_request_body,
+                    HTTPRequestBody::Bytes(b""),
+                );
+                self.start(body, body_out::as_mut(body_out));
+            }
             return;
         }
 
@@ -2013,6 +2188,11 @@ impl<'a> HTTPClient<'a> {
         if FeatureFlags::ENABLE_KEEPALIVE {
             // TODO keepalive for unix sockets
             if self.unix_socket_path.slice().len() > 0 {
+                return false;
+            }
+            // A peer accepted by a per-request JS `checkServerIdentity` callback must
+            // not enter or leave the shared pool (same exclusion as `can_offer_h2`).
+            if self.signals.get(signals::Field::CertErrors) {
                 return false;
             }
             // check state
@@ -2418,9 +2598,14 @@ impl<'a> HTTPClient<'a> {
 
         self.state.response_message_buffer = MutableString::default();
 
-        // copy the NonNull, do NOT `.take()` — the
-        // TooManyRedirects `fail()` below still needs a populated body pointer.
-        let body_out_str = self.state.body_out_str.unwrap();
+        // Copy the NonNull, do NOT `.take()` — the TooManyRedirects `fail()`
+        // below still needs a populated body pointer. No owner buffer means
+        // the request is already terminal; there is nowhere to deliver a
+        // redirected response.
+        let Some(body_out_str) = self.state.body_out_str else {
+            GenHttpContext::<IS_SSL>::close_socket(socket);
+            return;
+        };
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -2490,11 +2675,40 @@ impl<'a> HTTPClient<'a> {
         self.flags.proxy_tunneling = false;
         self.close_proxy_tunnel(false);
         self.flags.protocol = Protocol::Http1_1;
+        self.reevaluate_proxy_for_redirect();
 
         self.start(
             HTTPRequestBody::Bytes(request_body),
             body_out::as_mut(body_out_str),
         );
+    }
+
+    /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
+    /// decision was made once on the JS thread at request creation; without
+    /// this, a redirect into a `no_proxy`-exempt host would still be sent via
+    /// the proxy, and a redirect out of one would bypass it.
+    fn reevaluate_proxy_for_redirect(&mut self) {
+        let Some(settings) = self.proxy_settings.as_deref() else {
+            return;
+        };
+        let new_href = settings.resolve(&self.url);
+        let current = self.http_proxy.as_ref().map(|p| p.href).unwrap_or(b"");
+        if new_href.unwrap_or(b"") == current {
+            return;
+        }
+        match new_href {
+            None => {
+                self.http_proxy = None;
+                self.proxy_authorization = None;
+            }
+            Some(href) => {
+                // SAFETY: self-borrow. `href` points into `self.proxy_settings`'s
+                // boxed storage, which lives as long as `self` (>= `'a`).
+                let proxy: URL<'a> = unsafe { URL::parse(href).erase_lifetime() };
+                self.proxy_authorization = async_http::build_proxy_authorization(&proxy);
+                self.http_proxy = Some(proxy);
+            }
+        }
     }
 
     /// **Not thread safe while request is in-flight**
@@ -2793,6 +3007,7 @@ impl<'a> HTTPClient<'a> {
             }
         } else {
             bun_core::scoped_log!(fetch, "normal request");
+            validate_request_target(self.url.host)?;
             write_request(writer, &request)?;
         }
 
@@ -3262,8 +3477,8 @@ impl<'a> HTTPClient<'a> {
                     let writer = &mut temporary_send_buffer;
 
                     let request = self.build_request(self.body_len_for_send());
-                    if write_request(writer, &request).is_err() {
-                        self.close_and_fail::<IS_SSL>(err!(OutOfMemory), socket);
+                    if let Err(e) = write_request(writer, &request) {
+                        self.close_and_fail::<IS_SSL>(e, socket);
                         return;
                     }
 
@@ -3486,6 +3701,12 @@ impl<'a> HTTPClient<'a> {
             // if less than 16 it will always be a ShortRead
             if to_read!().len() < 16 {
                 bun_core::scoped_log!(fetch, "handleShortRead");
+                if !needs_move {
+                    let remaining = to_read!().len();
+                    let buffer = &mut self.state.response_message_buffer.list;
+                    buffer.drain_front(buffer.len().saturating_sub(remaining));
+                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
+                }
                 self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                 return;
             }
@@ -3508,6 +3729,12 @@ impl<'a> HTTPClient<'a> {
                     if to_read!().len() > MAX_RESPONSE_HEADER_BUFFER {
                         self.close_and_fail::<IS_SSL>(err!(ResponseHeadersTooLarge), socket);
                         return;
+                    }
+                    if !needs_move {
+                        let remaining = to_read!().len();
+                        let buffer = &mut self.state.response_message_buffer.list;
+                        buffer.drain_front(buffer.len().saturating_sub(remaining));
+                        to_read = bun_ptr::RawSlice::new(buffer.as_slice());
                     }
                     self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                     return;
@@ -3532,7 +3759,9 @@ impl<'a> HTTPClient<'a> {
             to_read = bun_ptr::RawSlice::new(&to_read.slice()[bytes_read..]);
 
             if response.status_code == 101 {
-                if self.flags.upgrade_state == HTTPUpgradeState::None {
+                if self.flags.upgrade_state == HTTPUpgradeState::None
+                    || (self.flags.proxy_tunneling && self.proxy_tunnel.is_none())
+                {
                     // we cannot upgrade to websocket because the client did not request it!
                     self.close_and_fail::<IS_SSL>(err!(UnrequestedUpgrade), socket);
                     return;
@@ -3551,14 +3780,11 @@ impl<'a> HTTPClient<'a> {
                 bun_core::scoped_log!(fetch, "information headers");
 
                 self.state.pending_response = None;
-                if !needs_move {
-                    let remaining = to_read!().len();
-                    let buffer = &mut self.state.response_message_buffer.list;
-                    let consumed = buffer.len().saturating_sub(remaining);
-                    buffer.drain_front(consumed);
-                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
-                }
                 if to_read!().is_empty() {
+                    if !needs_move {
+                        let buffer = &mut self.state.response_message_buffer.list;
+                        buffer.drain_front(buffer.len());
+                    }
                     // we only received 1XX responses, we wanna wait for the next status code
                     return;
                 }
@@ -3866,19 +4092,25 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    pub fn set_timeout<S: SocketTimeout>(&self, socket: &S) {
-        // Duration comes from `IDLE_TIMEOUT_SECONDS` (tunable via
-        // `BUN_CONFIG_HTTP_IDLE_TIMEOUT`, set low in tests) and is normalised once
-        // in `HTTPThread::on_start` — clamped to the uSockets long-timer bound and
-        // rounded up to a whole minute above 240s — so this is a plain
-        // pass-through. `socket.set_timeout` picks the short-tick timer for values
-        // ≤ 240s and the minute-granularity long timer above that, so the default
-        // 300s maps to the same 5-minute long timer as before.
-        if self.flags.disable_timeout || idle_timeout_seconds() == 0 {
-            socket.set_timeout(0);
-            return;
+    /// The idle timeout to arm for this request, in seconds (0 = disabled):
+    /// the per-request `fetch({ timeout })` override when present, otherwise
+    /// the global `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default. Both are already
+    /// normalised (see [`normalize_idle_timeout_seconds`]).
+    #[inline]
+    pub fn effective_idle_timeout_seconds(&self) -> c_uint {
+        if self.flags.disable_timeout {
+            return 0;
         }
-        socket.set_timeout(idle_timeout_seconds());
+        self.idle_timeout_seconds
+            .unwrap_or_else(idle_timeout_seconds)
+    }
+
+    pub fn set_timeout<S: SocketTimeout>(&self, socket: &S) {
+        // Values are pre-normalised (global: `HTTPThread::on_start`;
+        // per-request: `AsyncHTTP::init`) so this is a plain pass-through.
+        // `socket.set_timeout` picks the short-tick timer for values ≤ 240s
+        // and the minute-granularity long timer above that.
+        socket.set_timeout(self.effective_idle_timeout_seconds());
     }
 
     fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
@@ -4259,9 +4491,13 @@ impl<'a> HTTPClient<'a> {
             b""
         };
         self.state.response_message_buffer = MutableString::default();
-        // copy the NonNull, do NOT `.take()` — the
-        // TooManyRedirects `fail()` below still needs a populated body pointer.
-        let body_out_str = self.state.body_out_str.unwrap();
+        // Copy the NonNull, do NOT `.take()` — the TooManyRedirects `fail()`
+        // below still needs a populated body pointer. No owner buffer means
+        // the request is already terminal; there is nowhere to deliver a
+        // redirected response.
+        let Some(body_out_str) = self.state.body_out_str else {
+            return;
+        };
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -4275,6 +4511,7 @@ impl<'a> HTTPClient<'a> {
         self.state.reset();
         self.flags.proxy_tunneling = false;
         self.flags.protocol = Protocol::Http1_1;
+        self.reevaluate_proxy_for_redirect();
         // SAFETY: body_out_str points at the caller-owned MutableString.
         self.start(
             HTTPRequestBody::Bytes(request_body),
@@ -4372,6 +4609,12 @@ impl<'a> HTTPClient<'a> {
             BodySize::Unknown
         };
 
+        // A followed redirect's intermediate head was only cloned to drive
+        // do_redirect(); on failure it must not surface as the final Response.
+        if self.state.flags.is_redirect_pending && self.state.fail.is_some() {
+            self.state.cloned_metadata = None;
+        }
+
         let mut certificate_info: Option<CertificateInfo> = None;
         if let Some(info) = self.state.certificate_info.take() {
             // transfer owner ship of the certificate info here
@@ -4455,9 +4698,10 @@ impl<'a> HTTPClient<'a> {
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
             if self.state.encoding.is_compressed() {
-                let body_out = self.state.body_out_str.unwrap();
-                self.state
-                    .decompress_bytes(incoming_data, body_out::as_mut(body_out), true)?;
+                if let Some(body_out) = self.state.body_out_str {
+                    self.state
+                        .decompress_bytes(incoming_data, body_out::as_mut(body_out), true)?;
+                }
             } else {
                 self.state
                     .get_body_buffer()
@@ -5122,9 +5366,13 @@ impl<'a> HTTPClient<'a> {
                                 }
 
                                 let new_url = new_url_.to_owned_slice();
+                                let parsed_url = URL::parse(&new_url);
+                                if !parsed_url.has_http_like_protocol() {
+                                    return Err(err!(UnsupportedRedirectProtocol));
+                                }
                                 // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
                                 // below, which lives as long as `self` (≥ `'a`).
-                                self.url = unsafe { URL::parse(&new_url).erase_lifetime() };
+                                self.url = unsafe { parsed_url.erase_lifetime() };
                                 is_same_origin = strings::eql_case_insensitive_ascii(
                                     strings::without_trailing_slash(self.url.origin),
                                     strings::without_trailing_slash(original_url.origin),
@@ -5233,13 +5481,22 @@ impl<'a> HTTPClient<'a> {
             return Ok(ShouldContinue::ContinueStreaming);
         }
 
+        // RFC 9112 §6.3: framing comes from Transfer-Encoding and Content-Length
+        // alone. `Connection: close` only means the socket won't be reused, so a
+        // `Content-Length: 0` response is still complete.
         if self.method.has_body()
             && (content_length.is_none()
                 || content_length.unwrap() > 0
-                || !self.state.flags.allow_keepalive
                 || self.state.transfer_encoding == Encoding::Chunked
                 || is_server_sent_events)
         {
+            if self.state.flags.is_redirect_pending {
+                // WHATWG HTTP-redirect fetch runs on the response head; the 3xx
+                // body is discarded, not awaited. The socket still carries
+                // undrained body bytes so it must be closed, not pooled.
+                self.state.flags.allow_keepalive = false;
+                return Ok(ShouldContinue::Finished);
+            }
             Ok(ShouldContinue::ContinueStreaming)
         } else {
             Ok(ShouldContinue::Finished)

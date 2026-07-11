@@ -91,6 +91,559 @@ async function setupTest(): Promise<TestCtx> {
   }
 }
 
+// The six multi-install tests below are the longest in the file (2-3 serial `bun install`s
+// each, some with cold caches). Declare them first so they start before the ~110 shorter
+// tests and overlap with them instead of forming a serial tail at the end of the run.
+test.concurrent("ignore-scripts is read from npmrc", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.2.3",
+        dependencies: {
+          "uses-what-bin": "1.0.0",
+        },
+        scripts: {
+          postinstall: `${bunExe()} -e 'await Bun.write("postinstall.txt", "postinstall!!")'`,
+        },
+        trustedDependencies: ["uses-what-bin"],
+      }),
+    ),
+    write(join(packageDir, ".npmrc"), "ignore-scripts=true"),
+  ]);
+
+  async function checkScripts(): Promise<boolean[]> {
+    return Promise.all([
+      exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")),
+      exists(join(packageDir, "postinstall.txt")),
+    ]);
+  }
+
+  await runBunInstall(env, packageDir);
+  expect(await checkScripts()).toEqual([false, false]);
+
+  await write(join(packageDir, ".npmrc"), "ignore-scripts=false");
+
+  await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(await checkScripts()).toEqual([false, true]);
+
+  await Promise.all([
+    rm(join(packageDir, "postinstall.txt")),
+    rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+  ]);
+  expect(await checkScripts()).toEqual([false, false]);
+
+  await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(await checkScripts()).toEqual([true, true]);
+});
+
+test.concurrent("trustedDependencies matches the resolved package name, not the dependency alias", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  // A dependent controls the aliases of its own dependencies, so an entry like
+  // `"esbuild": "npm:uses-what-bin@1.0.0"` must not inherit lifecycle-script
+  // trust from `trustedDependencies: ["esbuild"]`. Trust is keyed on the
+  // resolved package name, never the alias.
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "esbuild": "npm:uses-what-bin@1.0.0",
+      },
+      trustedDependencies: ["esbuild"],
+    }),
+  );
+
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  let err = await stderr.text();
+  let out = await stdout.text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(out).toContain("Blocked 1 postinstall");
+  expect(await exists(join(packageDir, "node_modules", "esbuild", "package.json"))).toBeTrue();
+  expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeFalse();
+  expect(await exited).toBe(0);
+
+  // Trusting the *resolved* package name still grants trust to the same
+  // aliased dependency.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "bun.lock"), { force: true });
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "esbuild": "npm:uses-what-bin@1.0.0",
+      },
+      trustedDependencies: ["uses-what-bin"],
+    }),
+  );
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  out = await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(out).not.toContain("Blocked");
+  expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeTrue();
+  expect(await exited).toBe(0);
+});
+
+test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  // No `trustedDependencies` in package.json: `electron` is on the default
+  // trusted list, so the genuine registry package's lifecycle scripts run.
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "electron": "1.0.0",
+      },
+    }),
+  );
+
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  let err = await stderr.text();
+  let out = await stdout.text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(out).not.toContain("Blocked");
+  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
+  expect(await exited).toBe(0);
+
+  // Tamper with the lockfile: keep the default-trusted name `electron` but
+  // point its tarball URL at a different package on the same registry. The
+  // install must still succeed, but the package must no longer inherit the
+  // default lifecycle-script grant because the URL is not the canonical
+  // registry tarball for `electron@1.0.0`.
+  const lockfilePath = join(packageDir, "bun.lock");
+  const lockfile = await file(lockfilePath).text();
+  expect(lockfile).toContain("/electron/-/electron-1.0.0.tgz");
+  await writeFile(
+    lockfilePath,
+    lockfile
+      .replace("/electron/-/electron-1.0.0.tgz", "/all-lifecycle-scripts/-/all-lifecycle-scripts-1.0.0.tgz")
+      .replace(/"sha512-[^"]+"/, '""'),
+  );
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  out = await stdout.text();
+  expect(err).not.toContain("error:");
+  // The redirected tarball (all-lifecycle-scripts content) installs under the
+  // recorded name, but its preinstall/install/postinstall must not run: the
+  // package no longer inherits default trust from the `electron` name because
+  // the URL is not the canonical registry tarball for `electron@1.0.0`.
+  expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+  expect(await exists(join(packageDir, "node_modules", "electron", "install.js"))).toBeTrue();
+  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+  expect(await exists(join(packageDir, "node_modules", "electron", "install.txt"))).toBeFalse();
+  expect(await exists(join(packageDir, "node_modules", "electron", "postinstall.txt"))).toBeFalse();
+  expect(await exited).toBe(0);
+
+  // Tamper again: keep the canonical path for `electron@1.0.0` but point the
+  // URL at a different origin — a second local server that proxies to the
+  // real registry. The tarball still downloads and the integrity still
+  // matches, but the origin is not the configured registry, so the default
+  // lifecycle-script grant must not apply.
+  using proxy = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      return fetch(`http://localhost:${verdaccio.port}${url.pathname}${url.search}`, {
+        method: req.method,
+        headers: req.headers,
+      });
+    },
+  });
+  const canonicalUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
+  expect(lockfile).toContain(canonicalUrl);
+  await writeFile(
+    lockfilePath,
+    lockfile.replace(canonicalUrl, `http://localhost:${proxy.port}/electron/-/electron-1.0.0.tgz`),
+  );
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  out = await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+  expect(await exists(join(packageDir, "node_modules", "electron", "install.txt"))).toBeFalse();
+  expect(await exists(join(packageDir, "node_modules", "electron", "postinstall.txt"))).toBeFalse();
+  expect(await exited).toBe(0);
+});
+
+test.concurrent("binary lockfile trusted dependency entries require an exact name match", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  // The binary lockfile (bun.lockb) stores trustedDependencies as truncated
+  // 32-bit name hashes with no name. A hash-only entry must never grant
+  // lifecycle-script trust to a different name that happens to collide with
+  // it. These two distinct names share the truncated hash 0x6c4a82d1 under
+  // `Wyhash11::hash(0, name) as u32` (same pair as "trustedDependencies entry
+  // must match by name, not truncated hash" above).
+  const trustedName = "pkg-xjd";
+  const colliderName = "pkg-ztd";
+
+  await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
+
+  const colliderPath = join(packageDir, "collider");
+  await mkdir(colliderPath, { recursive: true });
+  await writeFile(
+    join(colliderPath, "package.json"),
+    JSON.stringify({
+      name: colliderName,
+      version: "1.0.0",
+      scripts: {
+        postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
+      },
+    }),
+  );
+
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        [colliderName]: "file:./collider",
+      },
+      trustedDependencies: [trustedName],
+    }),
+  );
+
+  // First install writes a binary bun.lockb whose trustedDependencies entry
+  // for `pkg-xjd` is persisted as a hash with no name attached.
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  let err = await stderr.text();
+  let out = await stdout.text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(out).toContain("Blocked 1 postinstall");
+  expect(await exists(join(packageDir, "bun.lockb"))).toBeTrue();
+  expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeFalse();
+  expect(await exited).toBe(0);
+
+  // Reinstall from the binary lockfile. The hash-only entry loaded from disk
+  // must still not grant trust to the colliding name.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  out = await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(out).toContain("Blocked 1 postinstall");
+  expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeFalse();
+  expect(await exited).toBe(0);
+
+  // A trustedDependencies entry that names the real package keeps working
+  // across the same binary-lockfile round trip.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "bun.lockb"), { force: true });
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        [colliderName]: "file:./collider",
+      },
+      trustedDependencies: [colliderName],
+    }),
+  );
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  out = await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(out).not.toContain("Blocked");
+  expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeTrue();
+  expect(await exited).toBe(0);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  out = await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(out).not.toContain("Blocked");
+  expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeTrue();
+  expect(await exited).toBe(0);
+});
+
+test.concurrent(
+  "lifecycle script trust for file: dependencies is keyed on the dependency alias, not the package's self-declared name",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    // The user vets and trusts the names they wrote in `dependencies` /
+    // `trustedDependencies`. A folder/tarball/git dependency installed under a
+    // different alias must not inherit lifecycle-script trust just because the
+    // package.json inside the dependency declares the trusted name for itself.
+    const payloadDir = join(packageDir, "payload");
+    await mkdir(payloadDir, { recursive: true });
+    await writeFile(
+      join(payloadDir, "package.json"),
+      JSON.stringify({
+        name: "my-native-addon",
+        version: "1.0.0",
+        scripts: {
+          postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
+        },
+      }),
+    );
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "unrelated-alias": "file:./payload",
+        },
+        trustedDependencies: ["my-native-addon"],
+      }),
+    );
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await stderr.text();
+    let out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await exists(join(packageDir, "node_modules", "unrelated-alias", "package.json"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "unrelated-alias", "postinstall-ran.txt"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules", "my-native-addon", "postinstall-ran.txt"))).toBeFalse();
+    expect(await exited).toBe(0);
+
+    // The same folder dependency declared under the alias the user actually
+    // listed in trustedDependencies still runs its lifecycle scripts.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lock"), { force: true });
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "my-native-addon": "file:./payload",
+        },
+        trustedDependencies: ["my-native-addon"],
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("Blocked");
+    expect(await exists(join(packageDir, "node_modules", "my-native-addon", "postinstall-ran.txt"))).toBeTrue();
+    expect(await exited).toBe(0);
+  },
+);
+
+test.concurrent(
+  "trustedDependencies entries for non-npm dependencies only apply to dependencies declared by the root or a workspace",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    // A transitive dependency picks the aliases of its own dependencies. An alias
+    // that happens to match an entry in the root's `trustedDependencies` must not
+    // grant lifecycle-script trust to a tarball/git/folder package the root never
+    // declared itself.
+    const tarballUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
+    const middleDir = join(packageDir, "middle");
+    await mkdir(middleDir, { recursive: true });
+    await writeFile(
+      join(middleDir, "package.json"),
+      JSON.stringify({
+        name: "middle",
+        version: "1.0.0",
+        dependencies: {
+          "trusted-native-addon": tarballUrl,
+        },
+      }),
+    );
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "middle": "file:./middle",
+        },
+        trustedDependencies: ["trusted-native-addon"],
+      }),
+    );
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await stderr.text();
+    let out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    // The remote tarball was introduced by `middle`, not by the root, so its
+    // preinstall must stay blocked even though the alias matches an entry in the
+    // root's trustedDependencies.
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "trusted-native-addon", "preinstall.txt"))).toBeFalse();
+    expect(
+      await exists(
+        join(packageDir, "node_modules", "middle", "node_modules", "trusted-native-addon", "preinstall.txt"),
+      ),
+    ).toBeFalse();
+
+    // The same tarball declared by the root itself under the trusted alias still
+    // runs its lifecycle scripts.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lock"), { force: true });
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "trusted-native-addon": tarballUrl,
+        },
+        trustedDependencies: ["trusted-native-addon"],
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("Blocked");
+    expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "trusted-native-addon", "preinstall.txt"))).toBeTrue();
+  },
+);
+
 // waiter thread is only a thing on Linux.
 for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
   describe.concurrent("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {
@@ -3446,553 +3999,3 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
   });
 }
-
-test.concurrent("ignore-scripts is read from npmrc", async () => {
-  using ctx = await setupTest();
-  const { packageDir, packageJson, env } = ctx;
-  await Promise.all([
-    write(
-      packageJson,
-      JSON.stringify({
-        name: "foo",
-        version: "1.2.3",
-        dependencies: {
-          "uses-what-bin": "1.0.0",
-        },
-        scripts: {
-          postinstall: `${bunExe()} -e 'await Bun.write("postinstall.txt", "postinstall!!")'`,
-        },
-        trustedDependencies: ["uses-what-bin"],
-      }),
-    ),
-    write(join(packageDir, ".npmrc"), "ignore-scripts=true"),
-  ]);
-
-  async function checkScripts(): Promise<boolean[]> {
-    return Promise.all([
-      exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")),
-      exists(join(packageDir, "postinstall.txt")),
-    ]);
-  }
-
-  await runBunInstall(env, packageDir);
-  expect(await checkScripts()).toEqual([false, false]);
-
-  await write(join(packageDir, ".npmrc"), "ignore-scripts=false");
-
-  await runBunInstall(env, packageDir, { savesLockfile: false });
-  expect(await checkScripts()).toEqual([false, true]);
-
-  await Promise.all([
-    rm(join(packageDir, "postinstall.txt")),
-    rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
-  ]);
-  expect(await checkScripts()).toEqual([false, false]);
-
-  await runBunInstall(env, packageDir, { savesLockfile: false });
-  expect(await checkScripts()).toEqual([true, true]);
-});
-
-test.concurrent("trustedDependencies matches the resolved package name, not the dependency alias", async () => {
-  using ctx = await setupTest();
-  const { packageDir, packageJson, env } = ctx;
-
-  // A dependent controls the aliases of its own dependencies, so an entry like
-  // `"esbuild": "npm:uses-what-bin@1.0.0"` must not inherit lifecycle-script
-  // trust from `trustedDependencies: ["esbuild"]`. Trust is keyed on the
-  // resolved package name, never the alias.
-  await writeFile(
-    packageJson,
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      dependencies: {
-        "esbuild": "npm:uses-what-bin@1.0.0",
-      },
-      trustedDependencies: ["esbuild"],
-    }),
-  );
-
-  let { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  });
-
-  let err = await stderr.text();
-  let out = await stdout.text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("error:");
-  expect(out).toContain("Blocked 1 postinstall");
-  expect(await exists(join(packageDir, "node_modules", "esbuild", "package.json"))).toBeTrue();
-  expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeFalse();
-  expect(await exited).toBe(0);
-
-  // Trusting the *resolved* package name still grants trust to the same
-  // aliased dependency.
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await rm(join(packageDir, "bun.lock"), { force: true });
-  await writeFile(
-    packageJson,
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      dependencies: {
-        "esbuild": "npm:uses-what-bin@1.0.0",
-      },
-      trustedDependencies: ["uses-what-bin"],
-    }),
-  );
-
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  }));
-
-  err = await stderr.text();
-  out = await stdout.text();
-  expect(err).not.toContain("error:");
-  expect(out).not.toContain("Blocked");
-  expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeTrue();
-  expect(await exited).toBe(0);
-});
-
-test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {
-  using ctx = await setupTest();
-  const { packageDir, packageJson, env } = ctx;
-
-  // No `trustedDependencies` in package.json: `electron` is on the default
-  // trusted list, so the genuine registry package's lifecycle scripts run.
-  await writeFile(
-    packageJson,
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      dependencies: {
-        "electron": "1.0.0",
-      },
-    }),
-  );
-
-  let { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  });
-
-  let err = await stderr.text();
-  let out = await stdout.text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("error:");
-  expect(out).not.toContain("Blocked");
-  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
-  expect(await exited).toBe(0);
-
-  // Tamper with the lockfile: keep the default-trusted name `electron` but
-  // point its tarball URL at a different package on the same registry. The
-  // install must still succeed, but the package must no longer inherit the
-  // default lifecycle-script grant because the URL is not the canonical
-  // registry tarball for `electron@1.0.0`.
-  const lockfilePath = join(packageDir, "bun.lock");
-  const lockfile = await file(lockfilePath).text();
-  expect(lockfile).toContain("/electron/-/electron-1.0.0.tgz");
-  await writeFile(
-    lockfilePath,
-    lockfile
-      .replace("/electron/-/electron-1.0.0.tgz", "/all-lifecycle-scripts/-/all-lifecycle-scripts-1.0.0.tgz")
-      .replace(/"sha512-[^"]+"/, '""'),
-  );
-
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
-
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  }));
-
-  err = await stderr.text();
-  out = await stdout.text();
-  expect(err).not.toContain("error:");
-  // The redirected tarball (all-lifecycle-scripts content) installs under the
-  // recorded name, but its preinstall/install/postinstall must not run: the
-  // package no longer inherits default trust from the `electron` name because
-  // the URL is not the canonical registry tarball for `electron@1.0.0`.
-  expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
-  expect(await exists(join(packageDir, "node_modules", "electron", "install.js"))).toBeTrue();
-  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
-  expect(await exists(join(packageDir, "node_modules", "electron", "install.txt"))).toBeFalse();
-  expect(await exists(join(packageDir, "node_modules", "electron", "postinstall.txt"))).toBeFalse();
-  expect(await exited).toBe(0);
-
-  // Tamper again: keep the canonical path for `electron@1.0.0` but point the
-  // URL at a different origin — a second local server that proxies to the
-  // real registry. The tarball still downloads and the integrity still
-  // matches, but the origin is not the configured registry, so the default
-  // lifecycle-script grant must not apply.
-  using proxy = Bun.serve({
-    port: 0,
-    fetch(req) {
-      const url = new URL(req.url);
-      return fetch(`http://localhost:${verdaccio.port}${url.pathname}${url.search}`, {
-        method: req.method,
-        headers: req.headers,
-      });
-    },
-  });
-  const canonicalUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
-  expect(lockfile).toContain(canonicalUrl);
-  await writeFile(
-    lockfilePath,
-    lockfile.replace(canonicalUrl, `http://localhost:${proxy.port}/electron/-/electron-1.0.0.tgz`),
-  );
-
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
-
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  }));
-
-  err = await stderr.text();
-  out = await stdout.text();
-  expect(err).not.toContain("error:");
-  expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
-  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
-  expect(await exists(join(packageDir, "node_modules", "electron", "install.txt"))).toBeFalse();
-  expect(await exists(join(packageDir, "node_modules", "electron", "postinstall.txt"))).toBeFalse();
-  expect(await exited).toBe(0);
-});
-
-test.concurrent("binary lockfile trusted dependency entries require an exact name match", async () => {
-  using ctx = await setupTest();
-  const { packageDir, packageJson, env } = ctx;
-
-  // The binary lockfile (bun.lockb) stores trustedDependencies as truncated
-  // 32-bit name hashes with no name. A hash-only entry must never grant
-  // lifecycle-script trust to a different name that happens to collide with
-  // it. These two distinct names share the truncated hash 0x6c4a82d1 under
-  // `Wyhash11::hash(0, name) as u32` (same pair as "trustedDependencies entry
-  // must match by name, not truncated hash" above).
-  const trustedName = "pkg-xjd";
-  const colliderName = "pkg-ztd";
-
-  await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
-
-  const colliderPath = join(packageDir, "collider");
-  await mkdir(colliderPath, { recursive: true });
-  await writeFile(
-    join(colliderPath, "package.json"),
-    JSON.stringify({
-      name: colliderName,
-      version: "1.0.0",
-      scripts: {
-        postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
-      },
-    }),
-  );
-
-  await writeFile(
-    packageJson,
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      dependencies: {
-        [colliderName]: "file:./collider",
-      },
-      trustedDependencies: [trustedName],
-    }),
-  );
-
-  // First install writes a binary bun.lockb whose trustedDependencies entry
-  // for `pkg-xjd` is persisted as a hash with no name attached.
-  let { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  });
-
-  let err = await stderr.text();
-  let out = await stdout.text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("error:");
-  expect(out).toContain("Blocked 1 postinstall");
-  expect(await exists(join(packageDir, "bun.lockb"))).toBeTrue();
-  expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeFalse();
-  expect(await exited).toBe(0);
-
-  // Reinstall from the binary lockfile. The hash-only entry loaded from disk
-  // must still not grant trust to the colliding name.
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  }));
-
-  err = await stderr.text();
-  out = await stdout.text();
-  expect(err).not.toContain("error:");
-  expect(out).toContain("Blocked 1 postinstall");
-  expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeFalse();
-  expect(await exited).toBe(0);
-
-  // A trustedDependencies entry that names the real package keeps working
-  // across the same binary-lockfile round trip.
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await rm(join(packageDir, "bun.lockb"), { force: true });
-  await writeFile(
-    packageJson,
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      dependencies: {
-        [colliderName]: "file:./collider",
-      },
-      trustedDependencies: [colliderName],
-    }),
-  );
-
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  }));
-
-  err = await stderr.text();
-  out = await stdout.text();
-  expect(err).not.toContain("error:");
-  expect(out).not.toContain("Blocked");
-  expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeTrue();
-  expect(await exited).toBe(0);
-
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  }));
-
-  err = await stderr.text();
-  out = await stdout.text();
-  expect(err).not.toContain("error:");
-  expect(out).not.toContain("Blocked");
-  expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeTrue();
-  expect(await exited).toBe(0);
-});
-
-test.concurrent(
-  "lifecycle script trust for file: dependencies is keyed on the dependency alias, not the package's self-declared name",
-  async () => {
-    using ctx = await setupTest();
-    const { packageDir, packageJson, env } = ctx;
-
-    // The user vets and trusts the names they wrote in `dependencies` /
-    // `trustedDependencies`. A folder/tarball/git dependency installed under a
-    // different alias must not inherit lifecycle-script trust just because the
-    // package.json inside the dependency declares the trusted name for itself.
-    const payloadDir = join(packageDir, "payload");
-    await mkdir(payloadDir, { recursive: true });
-    await writeFile(
-      join(payloadDir, "package.json"),
-      JSON.stringify({
-        name: "my-native-addon",
-        version: "1.0.0",
-        scripts: {
-          postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
-        },
-      }),
-    );
-
-    await writeFile(
-      packageJson,
-      JSON.stringify({
-        name: "foo",
-        version: "1.0.0",
-        dependencies: {
-          "unrelated-alias": "file:./payload",
-        },
-        trustedDependencies: ["my-native-addon"],
-      }),
-    );
-
-    let { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stdin: "ignore",
-      stderr: "pipe",
-      env,
-    });
-
-    let err = await stderr.text();
-    let out = await stdout.text();
-    expect(err).toContain("Saved lockfile");
-    expect(err).not.toContain("error:");
-    expect(out).toContain("Blocked 1 postinstall");
-    expect(await exists(join(packageDir, "node_modules", "unrelated-alias", "package.json"))).toBeTrue();
-    expect(await exists(join(packageDir, "node_modules", "unrelated-alias", "postinstall-ran.txt"))).toBeFalse();
-    expect(await exists(join(packageDir, "node_modules", "my-native-addon", "postinstall-ran.txt"))).toBeFalse();
-    expect(await exited).toBe(0);
-
-    // The same folder dependency declared under the alias the user actually
-    // listed in trustedDependencies still runs its lifecycle scripts.
-    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-    await rm(join(packageDir, "bun.lock"), { force: true });
-    await writeFile(
-      packageJson,
-      JSON.stringify({
-        name: "foo",
-        version: "1.0.0",
-        dependencies: {
-          "my-native-addon": "file:./payload",
-        },
-        trustedDependencies: ["my-native-addon"],
-      }),
-    );
-
-    ({ stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stdin: "ignore",
-      stderr: "pipe",
-      env,
-    }));
-
-    err = await stderr.text();
-    out = await stdout.text();
-    expect(err).not.toContain("error:");
-    expect(out).not.toContain("Blocked");
-    expect(await exists(join(packageDir, "node_modules", "my-native-addon", "postinstall-ran.txt"))).toBeTrue();
-    expect(await exited).toBe(0);
-  },
-);
-
-test.concurrent(
-  "trustedDependencies entries for non-npm dependencies only apply to dependencies declared by the root or a workspace",
-  async () => {
-    using ctx = await setupTest();
-    const { packageDir, packageJson, env } = ctx;
-
-    // A transitive dependency picks the aliases of its own dependencies. An alias
-    // that happens to match an entry in the root's `trustedDependencies` must not
-    // grant lifecycle-script trust to a tarball/git/folder package the root never
-    // declared itself.
-    const tarballUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
-    const middleDir = join(packageDir, "middle");
-    await mkdir(middleDir, { recursive: true });
-    await writeFile(
-      join(middleDir, "package.json"),
-      JSON.stringify({
-        name: "middle",
-        version: "1.0.0",
-        dependencies: {
-          "trusted-native-addon": tarballUrl,
-        },
-      }),
-    );
-
-    await writeFile(
-      packageJson,
-      JSON.stringify({
-        name: "foo",
-        version: "1.0.0",
-        dependencies: {
-          "middle": "file:./middle",
-        },
-        trustedDependencies: ["trusted-native-addon"],
-      }),
-    );
-
-    let { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stdin: "ignore",
-      stderr: "pipe",
-      env,
-    });
-
-    let err = await stderr.text();
-    let out = await stdout.text();
-    expect(err).toContain("Saved lockfile");
-    expect(err).not.toContain("error:");
-    // The remote tarball was introduced by `middle`, not by the root, so its
-    // preinstall must stay blocked even though the alias matches an entry in the
-    // root's trustedDependencies.
-    expect(out).toContain("Blocked 1 postinstall");
-    expect(await exited).toBe(0);
-    expect(await exists(join(packageDir, "node_modules", "trusted-native-addon", "preinstall.txt"))).toBeFalse();
-    expect(
-      await exists(
-        join(packageDir, "node_modules", "middle", "node_modules", "trusted-native-addon", "preinstall.txt"),
-      ),
-    ).toBeFalse();
-
-    // The same tarball declared by the root itself under the trusted alias still
-    // runs its lifecycle scripts.
-    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-    await rm(join(packageDir, "bun.lock"), { force: true });
-    await writeFile(
-      packageJson,
-      JSON.stringify({
-        name: "foo",
-        version: "1.0.0",
-        dependencies: {
-          "trusted-native-addon": tarballUrl,
-        },
-        trustedDependencies: ["trusted-native-addon"],
-      }),
-    );
-
-    ({ stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stdin: "ignore",
-      stderr: "pipe",
-      env,
-    }));
-
-    err = await stderr.text();
-    out = await stdout.text();
-    expect(err).not.toContain("error:");
-    expect(out).not.toContain("Blocked");
-    expect(await exited).toBe(0);
-    expect(await exists(join(packageDir, "node_modules", "trusted-native-addon", "preinstall.txt"))).toBeTrue();
-  },
-);

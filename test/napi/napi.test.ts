@@ -429,6 +429,39 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const result = await checkSameOutput("test_threadsafe_function_abort_blocked_producers", []);
       expect(result).toContain("finalized: true");
     });
+
+    it("is marked closing when its worker_threads owner exits so a later release does not touch the freed loop", async () => {
+      // Reproduces the next-swc crash from next build: a Worker creates an
+      // unref'd TSF and exits; a foreign thread then releases it. Before the
+      // fix release() scheduled a dispatch on the worker's dealloc'd event
+      // loop (SIGSEGV in us_wakeup_loop on release builds, heap-use-after-free
+      // under ASAN). After the fix env teardown marks the TSF closing and runs
+      // its finalizer, so release() takes the is_closing early-return.
+      const addon = JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"));
+      const code = `
+        const { Worker } = require("node:worker_threads");
+        const main = require(${addon});
+        const w = new Worker(
+          "require(" + ${JSON.stringify(addon)} + ").create_tsfn_for_late_release()",
+          { eval: true },
+        );
+        w.on("error", e => { console.error(e); process.exit(1); });
+        w.on("exit", code => {
+          if (code !== 0) { console.error("worker exit " + code); process.exit(1); }
+          const finalized = main.release_tsfn_from_other_thread();
+          console.log("finalized=" + finalized);
+        });
+      `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", code],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "finalized=1", stderr: "", exitCode: 0 });
+      expect(proc.signalCode).toBeNull();
+    });
   });
 
   describe("exception handling", () => {

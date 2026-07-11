@@ -2668,6 +2668,16 @@ impl ThreadSafeFunction {
     pub unsafe fn destroy(this: *mut ThreadSafeFunction) {
         // SAFETY: caller contract — `this` is a live heap allocation; we consume it here.
         let self_ = unsafe { &mut *this };
+        // Drop the env-cleanup hook registered at creation so that a later env
+        // teardown does not call `env_cleanup` on freed storage.
+        // SAFETY: env is refcounted (alive while `self_.env` holds it).
+        unsafe {
+            napi_remove_env_cleanup_hook(
+                self_.env.as_ptr(),
+                Some(ThreadSafeFunction::env_cleanup),
+                this.cast::<c_void>(),
+            )
+        };
         self_.unref();
 
         if let Some(fun) = self_.finalizer_fun {
@@ -2708,6 +2718,63 @@ impl ThreadSafeFunction {
         }
         let _ = self.thread_count.fetch_add(1, Ordering::SeqCst);
         NapiStatus::ok as napi_status
+    }
+
+    /// Env-cleanup hook (registered in `napi_create_threadsafe_function`, removed
+    /// in `destroy`). Runs on the owning JS thread during `NapiEnv::cleanup()` /
+    /// `vm.on_exit()`, i.e. before the worker's `VirtualMachine` box is dealloc'd.
+    /// Marks the TSF closing so a later `napi_release_threadsafe_function` /
+    /// `napi_call_threadsafe_function` from a native thread takes the
+    /// `is_closing()` early-return instead of `schedule_dispatch()` (which would
+    /// touch `event_loop` after it is freed). Mirrors Node's
+    /// `ThreadSafeFunction::Cleanup` in node_api.cc.
+    extern "C" fn env_cleanup(data: *mut c_void) {
+        let this = data.cast::<ThreadSafeFunction>();
+        // SAFETY: `this` is the live heap allocation we registered at creation; the
+        // hook is removed in `destroy()` before the allocation is freed.
+        let self_ = unsafe { &mut *this };
+        {
+            let _g = self_.lock.lock_guard();
+            self_
+                .closing
+                .store(ClosingState::Closing as u8, Ordering::SeqCst);
+            self_.aborted.store(true, Ordering::SeqCst);
+            if self_.queue.max_queue_size > 0 {
+                self_.blocking_condvar.broadcast();
+            }
+        }
+        // Drop the Strong JS handle while JSC is still live; keep the C call_js_cb
+        // pointer so we can drain queued items. Anything left in the struct is plain
+        // heap state that the (leaked) allocation keeps valid for any late
+        // `release()`/`acquire()` from native threads.
+        let call_js_cb = match core::mem::replace(
+            &mut self_.callback,
+            TsfnCallback::Js(StrongOptional::empty()),
+        ) {
+            TsfnCallback::C {
+                napi_threadsafe_function_call_js,
+                ..
+            } => Some(napi_threadsafe_function_call_js),
+            TsfnCallback::Js(_) => None,
+        };
+        self_.poll_ref.disable();
+        // Call the user finalizer now (the normal finalize path goes through
+        // `event_loop.enqueue_task`, which we can no longer touch).
+        if let Some(fun) = self_.finalizer_fun.take() {
+            let env_ptr = self_.env.as_ptr();
+            // SAFETY: env is refcounted and still live during cleanup.
+            let env_ref = unsafe { &*env_ptr };
+            let _hs = NapiHandleScope::open_scoped(env_ref);
+            fun(env_ptr, self_.finalizer_data, self_.ctx);
+        }
+        // Drain queued items so the addon can free per-call data (Node calls
+        // `call_js_cb(null, null, ctx, data)` for each). No new items can be
+        // enqueued once `closing` is set under the lock.
+        if let Some(call_js_cb) = call_js_cb {
+            while let Some(item) = self_.queue.data.read_item() {
+                call_js_cb(core::ptr::null_mut(), napi_value(0), self_.ctx, item);
+            }
+        }
     }
 
     pub fn release(
@@ -2820,6 +2887,19 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
     function_ref.ref_();
     function_ref.tracker.did_schedule(vm.global());
+
+    // Node registers an env-cleanup hook per TSF so that teardown (worker
+    // termination / process exit) marks it closing before the loop is freed;
+    // without this a native thread's later `napi_release_threadsafe_function`
+    // would wake a dealloc'd event loop.
+    // SAFETY: `env_` is the non-null napi_env we validated via get_env! above.
+    unsafe {
+        napi_add_env_cleanup_hook(
+            env_,
+            Some(ThreadSafeFunction::env_cleanup),
+            function.cast::<c_void>(),
+        )
+    };
 
     *result = function;
     env.ok()

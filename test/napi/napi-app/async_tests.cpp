@@ -1,6 +1,7 @@
 #include "async_tests.h"
 
 #include "utils.h"
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <thread>
@@ -186,6 +187,53 @@ create_promise_with_threadsafe_function(const Napi::CallbackInfo &info) {
   return promise;
 }
 
+// Shared between a worker thread's env and the main thread's env (dlopen loads
+// the .node once per process so static storage is process-global).
+static std::atomic<napi_threadsafe_function> g_late_release_tsfn{nullptr};
+static std::atomic<int> g_late_release_finalized{0};
+
+static void late_release_noop_call_js(napi_env, napi_value, void *, void *) {}
+
+static void late_release_finalize(napi_env, void *, void *) {
+  g_late_release_finalized.fetch_add(1);
+}
+
+// Called inside a worker_thread: create a TSF and unref it so the worker's
+// event loop is free to drain. The main thread releases it after the worker has
+// exited (see release_tsfn_from_other_thread).
+napi_value create_tsfn_for_late_release(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value resource_name =
+      Napi::String::New(env, "napitests::create_tsfn_for_late_release");
+  napi_threadsafe_function tsfn;
+  NODE_API_CALL(env, napi_create_threadsafe_function(
+                         env, nullptr, nullptr, resource_name,
+                         /* max_queue_size */ 0, /* initial_thread_count */ 1,
+                         /* finalize_data */ nullptr, late_release_finalize,
+                         /* context */ nullptr, late_release_noop_call_js,
+                         &tsfn));
+  NODE_API_CALL(env, napi_unref_threadsafe_function(env, tsfn));
+  g_late_release_tsfn.store(tsfn);
+  return info.Env().Undefined();
+}
+
+// Called on the main thread after the worker's 'exit' event: release the TSF
+// created above. Without env-teardown handling this would schedule a dispatch
+// on the worker's freed event loop (heap-use-after-free under ASAN); with it
+// the TSF is already marked closing during worker env cleanup so release()
+// is a no-op and the finalizer has already run.
+napi_value release_tsfn_from_other_thread(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_threadsafe_function tsfn = g_late_release_tsfn.exchange(nullptr);
+  NODE_API_ASSERT(env, tsfn != nullptr);
+  napi_status status = napi_release_threadsafe_function(tsfn, napi_tsfn_release);
+  NODE_API_ASSERT(env, status == napi_ok);
+  napi_value result;
+  NODE_API_CALL(env,
+                napi_create_int32(env, g_late_release_finalized.load(), &result));
+  return result;
+}
+
 napi_value create_async_work_with_null_execute(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
@@ -326,6 +374,8 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_promise);
   REGISTER_FUNCTION(env, exports, create_promise_with_napi_cpp);
   REGISTER_FUNCTION(env, exports, create_promise_with_threadsafe_function);
+  REGISTER_FUNCTION(env, exports, create_tsfn_for_late_release);
+  REGISTER_FUNCTION(env, exports, release_tsfn_from_other_thread);
   REGISTER_FUNCTION(env, exports, create_async_work_with_null_execute);
   REGISTER_FUNCTION(env, exports, create_async_work_with_null_complete);
   REGISTER_FUNCTION(env, exports, test_cancel_async_work);

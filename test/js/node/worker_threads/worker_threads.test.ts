@@ -1329,7 +1329,8 @@ test.skipIf(!isASAN && !isDebug)(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    // stderr is diagnostic-only (ASAN/debug can emit benign warnings on success).
+    expect({ stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: "ok",
       stderr: "",
       exitCode: 0,

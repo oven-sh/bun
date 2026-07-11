@@ -25,9 +25,8 @@ test("src/jsc/ErrorCode.rs does not hand-maintain the discriminant table", async
 // low / mid / high indices of the table.
 test("Rust-thrown error codes round-trip through Bun__createErrorWithCode", async () => {
   const fixture = `
-    const out = [];
-    function t(fn) { try { fn(); out.push("NO THROW"); } catch (e) { out.push(e.code + ":" + e.constructor.name); } }
-    async function ta(fn) { try { await fn(); out.push("NO THROW"); } catch (e) { out.push(e.code + ":" + e.constructor.name); } }
+    function t(fn) { try { fn(); console.log("NO THROW"); } catch (e) { console.log(e.code + ":" + e.constructor.name); } }
+    async function ta(fn) { try { await fn(); console.log("NO THROW"); } catch (e) { console.log(e.code + ":" + e.constructor.name); } }
     t(() => require("crypto").timingSafeEqual(Buffer.alloc(1), Buffer.alloc(2)));
     t(() => new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array([0xff])));
     t(() => new TextDecoder("nope"));
@@ -37,7 +36,6 @@ test("Rust-thrown error codes round-trip through Bun__createErrorWithCode", asyn
     t(() => new (require("net").SocketAddress)({ port: 99999 }));
     t(() => Bun.randomUUIDv7("bogus"));
     await ta(() => new Response("x").formData());
-    console.log(JSON.stringify(out));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
@@ -46,19 +44,24 @@ test("Rust-thrown error codes round-trip through Bun__createErrorWithCode", asyn
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stderr, out: JSON.parse(stdout.trim()) }).toEqual({
+  // Assert the raw child output: if the C++ side reads past errors[] and the
+  // child crashes, the diff here shows partial/empty stdout plus stderr instead
+  // of a JSON parse error.
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout:
+      [
+        "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH:RangeError", // index 48
+        "ERR_ENCODING_INVALID_ENCODED_DATA:TypeError", // index 56
+        "ERR_ENCODING_NOT_SUPPORTED:RangeError", // index 57
+        "ERR_INVALID_ARG_TYPE:TypeError", // index 119
+        "ERR_INVALID_ARG_VALUE:TypeError", // index 120
+        "ERR_S3_INVALID_METHOD:Error", // index 210
+        "ERR_SOCKET_BAD_PORT:RangeError", // index 221
+        "ERR_UNKNOWN_ENCODING:TypeError", // index 261
+        "ERR_FORMDATA_PARSE_ERROR:TypeError", // index 61
+      ].join("\n") + "\n",
     stderr: "",
-    out: [
-      "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH:RangeError", // index 48
-      "ERR_ENCODING_INVALID_ENCODED_DATA:TypeError", // index 56
-      "ERR_ENCODING_NOT_SUPPORTED:RangeError", // index 57
-      "ERR_INVALID_ARG_TYPE:TypeError", // index 119
-      "ERR_INVALID_ARG_VALUE:TypeError", // index 120
-      "ERR_S3_INVALID_METHOD:Error", // index 210
-      "ERR_SOCKET_BAD_PORT:RangeError", // index 221
-      "ERR_UNKNOWN_ENCODING:TypeError", // index 261
-      "ERR_FORMDATA_PARSE_ERROR:TypeError", // index 61
-    ],
+    exitCode: 0,
+    signalCode: null,
   });
-  expect(exitCode).toBe(0);
 });

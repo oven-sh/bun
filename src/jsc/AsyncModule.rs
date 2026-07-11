@@ -721,12 +721,12 @@ impl AsyncModule {
         ));
         let errorable: ErrorableResolvedSource = match this.resume_loading_module(&mut log) {
             Ok(rs) => ErrorableResolvedSource::ok(rs),
-            Err(crate::CrateError::JSError | crate::CrateError::Bundler(bun_bundler::Error::Js(_))) => {
-                ErrorableResolvedSource::err(
-                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                    global_this.take_error(JsError::Thrown),
-                )
-            }
+            Err(
+                crate::CrateError::JSError | crate::CrateError::Bundler(bun_bundler::Error::Js(_)),
+            ) => ErrorableResolvedSource::err(
+                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                global_this.take_error(JsError::Thrown),
+            ),
             Err(err) => {
                 // Pre-seed the
                 // err so the `&mut` borrow is definitely-initialized;

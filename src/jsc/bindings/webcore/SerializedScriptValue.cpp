@@ -5156,6 +5156,10 @@ private:
             }
             VM& vm = m_lexicalGlobalObject->vm();
             RegExp* regExp = RegExp::create(vm, pattern->string(), reFlags.value());
+            if (!regExp->isValid()) [[unlikely]] {
+                fail();
+                return JSValue();
+            }
             RegExpObject* obj = RegExpObject::create(vm, m_globalObject->regExpStructure(), regExp);
             addTerminalToObjectPool(obj);
             return obj;

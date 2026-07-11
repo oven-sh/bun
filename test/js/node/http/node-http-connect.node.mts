@@ -308,11 +308,13 @@ describe("HTTP server CONNECT", () => {
     let bufferReceived = "";
 
     proxyServer.on("connect", (req, socket, head) => {
+      let sentTestData = false;
       socket.on("data", chunk => {
         bufferReceived += chunk.toString();
         // End only once the client's tunneled bytes have arrived so the
         // assertion on bufferReceived is not racing the server's FIN.
-        if (bufferReceived.includes("Client data")) {
+        if (!sentTestData && bufferReceived.includes("Client data")) {
+          sentTestData = true;
           socket.write("Test data");
           socket.end();
         }

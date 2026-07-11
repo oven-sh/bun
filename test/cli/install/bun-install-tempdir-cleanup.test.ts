@@ -119,7 +119,7 @@ async function runInstall(cwd: string, cacheDir: string, tmpDir: string) {
   return { stdout, stderr, exitCode };
 }
 
-test("concurrent installs sharing a cache do not leak temp directories", async () => {
+test.concurrent("concurrent installs sharing a cache do not leak temp directories", async () => {
   const packageCount = 8;
   const packages: Record<string, { tgz: Buffer; integrity: string }> = {};
   for (let i = 0; i < packageCount; i++) {
@@ -156,7 +156,7 @@ test("concurrent installs sharing a cache do not leak temp directories", async (
   expect(await readdirSorted(tmpDir)).toEqual([".keep"]);
 });
 
-test("a tarball that fails to extract does not leak its temp directory", async () => {
+test.concurrent("a tarball that fails to extract does not leak its temp directory", async () => {
   // Valid integrity (computed over the bytes) but not a gzip stream, so the
   // failure happens during extraction, after the temp dir was created.
   const tgz = Buffer.from("this is definitely not a gzipped tarball");
@@ -178,12 +178,12 @@ test("a tarball that fails to extract does not leak its temp directory", async (
 
   const { stderr, exitCode } = await runInstall(join(String(dir), "proj"), join(String(dir), "cache"), tmpDir);
   expect(stderr).toContain("corrupt-pkg");
-  expect(exitCode).not.toBe(0);
 
   expect(await readdirSorted(tmpDir)).toEqual([".keep"]);
+  expect(exitCode).not.toBe(0);
 });
 
-test("a patch that fails to apply does not leak its temp directory", async () => {
+test.concurrent("a patch that fails to apply does not leak its temp directory", async () => {
   using server = makeRegistry({ "patched-pkg": makePackageTarball("patched-pkg", 3) });
 
   // Parses fine, but targets a file the package doesn't contain.
@@ -212,8 +212,9 @@ test("a patch that fails to apply does not leak its temp directory", async () =>
   });
   const tmpDir = join(String(dir), "tmp");
 
-  const { stderr } = await runInstall(join(String(dir), "proj"), join(String(dir), "cache"), tmpDir);
+  const { stderr, exitCode } = await runInstall(join(String(dir), "proj"), join(String(dir), "cache"), tmpDir);
   expect(stderr).toContain("failed applying patch file");
 
   expect(await readdirSorted(tmpDir)).toEqual([".keep"]);
+  expect(exitCode).not.toBe(0);
 });

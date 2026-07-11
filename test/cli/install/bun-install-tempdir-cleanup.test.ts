@@ -103,9 +103,9 @@ function makeRegistry(packages: Record<string, { tgz: Buffer; integrity: string 
   return server;
 }
 
-async function runInstall(cwd: string, cacheDir: string, tmpDir: string) {
+async function runInstall(cwd: string, cacheDir: string, tmpDir: string, extraArgs: string[] = ["--no-save"]) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", "--no-save", "--linker=hoisted"],
+    cmd: [bunExe(), "install", "--linker=hoisted", ...extraArgs],
     cwd,
     env: {
       ...bunEnv,
@@ -217,4 +217,43 @@ test.concurrent("a patch that fails to apply does not leak its temp directory", 
 
   expect(await readdirSorted(tmpDir)).toEqual([".keep"]);
   expect(exitCode).not.toBe(0);
+});
+
+test.concurrent("re-extracting replaces an invalid cache entry", async () => {
+  using server = makeRegistry({ "heal-pkg": makePackageTarball("heal-pkg", 3) });
+
+  using dir = tempDir("tempdir-leak-heal", {
+    "proj/package.json": JSON.stringify({
+      name: "proj",
+      version: "1.0.0",
+      dependencies: { "heal-pkg": "1.0.0" },
+    }),
+    "proj/bunfig.toml": `[install]\nregistry = "${server.url}"\n`,
+    "tmp/.keep": "",
+    "cache/.keep": "",
+  });
+  const tmpDir = join(String(dir), "tmp");
+  const cacheDir = join(String(dir), "cache");
+  const proj = join(String(dir), "proj");
+
+  // Save a lockfile: with one, the reinstall below skips re-resolution and
+  // relies on the package.json-exists cache check that triggers re-extract.
+  const first = await runInstall(proj, cacheDir, tmpDir, []);
+  expect(first.exitCode).toBe(0);
+
+  const [cacheEntry] = (await readdirSorted(cacheDir)).filter(name => name.startsWith("heal-pkg@"));
+  expect(cacheEntry).toBeDefined();
+
+  // A cache entry without package.json is invalid; a reinstall whose
+  // node_modules copy also fails verification must replace it, not keep it.
+  await Promise.all([
+    rm(join(cacheDir, cacheEntry, "package.json")),
+    rm(join(proj, "node_modules", "heal-pkg", "package.json")),
+  ]);
+
+  const second = await runInstall(proj, cacheDir, tmpDir, []);
+  expect(await readdirSorted(join(cacheDir, cacheEntry))).toContain("package.json");
+  expect(await readdirSorted(join(proj, "node_modules", "heal-pkg"))).toContain("package.json");
+  expect(await readdirSorted(tmpDir)).toEqual([".keep"]);
+  expect(second.exitCode).toBe(0);
 });

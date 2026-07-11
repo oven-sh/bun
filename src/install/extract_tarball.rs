@@ -553,6 +553,27 @@ impl ExtractTarball {
             }
             let cache_dir = Dir::borrow(&self.cache_dir);
 
+            // An existing npm cache entry without package.json is invalid (the
+            // same check `package_missing_from_cache` uses), so no concurrent
+            // install reads from it. Delete it so the fresh copy below replaces
+            // it instead of being kept as an equivalent existing destination.
+            if self.resolution.tag == ResolutionTag::Npm {
+                let mut folder_name_z_buf = PathBuffer::uninit();
+                folder_name_z_buf[..folder_name.len()].copy_from_slice(folder_name);
+                folder_name_z_buf[folder_name.len()] = 0;
+                let folder_name_z = ZStr::from_buf(&folder_name_z_buf, folder_name.len());
+                if sys::directory_exists_at(cache_dir.fd(), folder_name_z).unwrap_or(false) {
+                    let mut json_buf = PathBuffer::uninit();
+                    let json_z = path::resolve_path::join_z_buf::<path::platform::Auto>(
+                        &mut json_buf.0,
+                        &[folder_name, b"package.json"],
+                    );
+                    if !sys::exists_at(cache_dir.fd(), json_z) {
+                        let _ = cache_dir.delete_tree(folder_name);
+                    }
+                }
+            }
+
             // e.g. @next
             // if it's a namespace package, we need to make sure the @name folder exists
             let create_subdir = basename.len() != name.len() && !self.resolution.tag.is_git();

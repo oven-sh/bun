@@ -9432,13 +9432,14 @@ pub fn renameat_concurrently_without_fallback(
         if opts.keep_existing_destination {
             // The errno didn't tell us whether the destination exists (e.g.
             // EOPNOTSUPP when the filesystem lacks RENAME_NOREPLACE); check
-            // before deleting a tree another process may be reading.
-            let destination_exists = if to_dir_fd.is_valid() {
-                exists_at(to_dir_fd, to)
+            // before deleting a tree another process may be reading. Windows
+            // `exists_at` is file-only, so ask for the directory explicitly.
+            let dir_fd = if to_dir_fd.is_valid() {
+                to_dir_fd
             } else {
-                exists_z(to)
+                Fd::cwd()
             };
-            if destination_exists {
+            if directory_exists_at(dir_fd, to).unwrap_or(false) {
                 delete_source();
                 break 'attempt;
             }

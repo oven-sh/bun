@@ -298,6 +298,12 @@ unsafe fn ssl_ctx_cache_get_or_create(
 /// # Safety
 /// `vm` is the freshly-boxed unique VM on this thread, with `vm.global` /
 /// `vm.jsc_vm` already populated by `bun_jsc::VirtualMachine::init`.
+#[allow(
+    clippy::large_stack_frames,
+    reason = "`Transpiler::init` returns a Transpiler by value (~216 KB: its Resolver embeds \
+              BSSMapInner<DirInfo, 2048>) and it is `ptr::write`n straight into `(*vm).transpiler`. \
+              The copy is elided in optimized builds, and this runs once per VM init."
+)]
 unsafe fn init_runtime_state(
     vm: *mut VirtualMachine,
     opts: &mut InitOptions,

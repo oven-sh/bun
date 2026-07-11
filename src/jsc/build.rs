@@ -47,11 +47,20 @@ fn main() {
         );
     }
 
+    let error_code_rs = codegen_dir.join("ErrorCode.generated.rs");
+    if !error_code_rs.exists() {
+        panic!(
+            "ErrorCode.generated.rs not found at {} — run `bun bd` (generate-node-errors codegen) first",
+            error_code_rs.display()
+        );
+    }
+
     println!("cargo:rustc-env=BUN_CODEGEN_DIR={}", codegen_dir.display());
     println!("cargo:rerun-if-changed={}", cpp_rs.display());
     println!(
         "cargo:rerun-if-changed={}",
         resolved_source_tag_rs.display()
     );
+    println!("cargo:rerun-if-changed={}", error_code_rs.display());
     println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");
 }

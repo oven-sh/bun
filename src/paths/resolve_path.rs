@@ -1143,9 +1143,7 @@ pub fn normalize_string_generic_tz<
         buf[buf_i] = T::from_u8(0);
     }
 
-    let result = &mut buf[0..buf_i];
-
-    result
+    &mut buf[0..buf_i]
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, core::marker::ConstParamTy)]

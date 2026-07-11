@@ -4947,6 +4947,7 @@ private:
 
     JSValue readTerminal()
     {
+        const uint8_t* preTagPtr = m_ptr;
         SerializationTag tag = readTag();
         // if (!isTypeExposedToGlobalObject(*m_globalObject, tag))
         //     return JSValue();
@@ -5428,7 +5429,7 @@ private:
             // ?
 
         default:
-            m_ptr--; // Push the tag back
+            m_ptr = preTagPtr; // Push the tag back
             return JSValue();
         }
     }
@@ -5436,9 +5437,10 @@ private:
     template<SerializationTag Tag>
     bool consumeCollectionDataTerminationIfPossible()
     {
+        const uint8_t* savedPtr = m_ptr;
         if (readTag() == Tag)
             return true;
-        m_ptr--;
+        m_ptr = savedPtr;
         return false;
     }
 

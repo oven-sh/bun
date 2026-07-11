@@ -566,6 +566,15 @@ pub(crate) fn execute_simple_s3_request(
         )?;
         return Ok(());
     }
+    if let Err(msg) = bun_http::http_thread::init(&Default::default()) {
+        drop(options.range);
+        callback.fail(
+            b"FailedToStartHTTPClientThread",
+            msg.as_bytes(),
+            callback_context,
+        )?;
+        return Ok(());
+    }
     let result = match this.sign_request::<false>(
         &SignOptions {
             path: options.path,
@@ -697,7 +706,6 @@ pub(crate) fn execute_simple_s3_request(
     // `schedule` below); scoped exclusive write of the `http` field.
     unsafe { (*task_ptr).http.write(async_http) };
     // queue http request
-    bun_http::http_thread::init(&Default::default());
     let mut batch = thread_pool::Batch::default();
     // SAFETY: `http` was initialised immediately above; scoped exclusive access.
     unsafe { (*task_ptr).http.assume_init_mut() }.schedule(&mut batch);

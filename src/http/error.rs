@@ -93,6 +93,8 @@ pub enum Error {
     HTTP3ContentLengthMismatch,
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
+    #[error("FailedToStartHTTPClientThread")]
+    FailedToStartHTTPClientThread,
     #[error("InvalidCRL")]
     InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
@@ -306,6 +308,7 @@ impl Error {
             Self::HTTP3StreamReset => "HTTP3StreamReset",
             Self::HTTP3ContentLengthMismatch => "HTTP3ContentLengthMismatch",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
+            Self::FailedToStartHTTPClientThread => "FailedToStartHTTPClientThread",
             Self::InvalidCRL => "InvalidCRL",
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
             Self::Cert(e) => <&'static str>::from(e),

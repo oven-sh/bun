@@ -2132,7 +2132,7 @@ impl TestCommand {
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
         jsc::initialize_with(false, ctx.test_options.isolate);
-        bun_http::http_thread::init(&Default::default());
+        bun_http::http_thread::init_or_crash(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
         let seed: u32 = if enable_random {

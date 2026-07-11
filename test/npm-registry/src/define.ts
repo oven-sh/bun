@@ -36,8 +36,9 @@ export type SpecFileEntry = FileContents | { contents: FileContents; mode?: numb
 export type SpecFileTree = Record<string, SpecFileEntry>;
 
 function splitSpecTree(tree: SpecFileTree): { files: FileTree; mode: Record<string, number> } {
-  const files: FileTree = {};
-  const mode: Record<string, number> = {};
+  // Null prototype: a file named `__proto__` must become a key, not a setter.
+  const files: FileTree = Object.create(null);
+  const mode: Record<string, number> = Object.create(null);
   for (const [path, entry] of Object.entries(tree)) {
     if (typeof entry === "string" || entry instanceof Uint8Array) {
       files[path] = entry;

@@ -119,12 +119,15 @@ it, which is what nearly every fixture wants.
 Three things to know when adding one:
 
 - **A file's execute bit in the packed tarball comes from being a `bin`
-  target** (not `directories.bin`; `npm pack` only reads `pkg.bin`),
-  never from its on-disk mode. `statSync().mode` has no execute bit on
-  Windows, so consulting it would give the same fixture a different
-  `dist.integrity` per platform. A fixture that needs a specific
-  non-default mode (e.g. a 0644 bin, the way real packages published
-  from Windows ship) stays as a kept `.tgz`.
+  target** (not `directories.bin`; `npm pack` only reads `pkg.bin`) or
+  from being named in `_registry.json`'s `executable` map (see
+  `test-native-binlink-altpath-target` for a file that is the target
+  of *another* package's bin), never from its on-disk mode.
+  `statSync().mode` has no execute bit on Windows, so consulting it
+  would give the same fixture a different `dist.integrity` per platform.
+  A fixture that needs a specific non-default mode (e.g. a 0644 bin,
+  the way real packages published from Windows ship) stays as a kept
+  `.tgz`.
 
 - **A fixture that ships a `node_modules` of its own** (a bundled-dependency
   package) needs nothing special here, but the repo's top-level

@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { once } from "events";
 import { tls as certs } from "harness";
 import net from "net";
-import tls from "tls";
 import { Duplex } from "node:stream";
+import tls from "tls";
 
 test("should be able to upgrade a paused socket and also have backpressure on it #15438", async () => {
   // enought to trigger backpressure

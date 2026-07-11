@@ -3927,7 +3927,7 @@ pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
         *p.add(bytes.len()) = 0;
     }
-    p as *const core::ffi::c_char
+    p.cast_const().cast::<core::ffi::c_char>()
 }
 
 /// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string

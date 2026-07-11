@@ -373,3 +373,54 @@ test("setDefaultCACertificates() applies to a server's client-cert verification 
     tls.setDefaultCACertificates(prevCerts);
   }
 });
+
+// `tls.Server.close()` must release the listener's SSL_CTX ref immediately.
+// It used to be dropped only when the GC finalized the Listener, so a `Server`
+// the program still references — or any server at process exit — kept its CTX
+// alive. That is the leak `leak:create_ssl_context_from_bun_options` used to
+// suppress. The listen socket up_refs its own ref in
+// `us_internal_init_listen_socket` and each accepted socket's `SSL_new()` takes
+// another, so releasing at close() cannot dangle.
+test("tls.Server.close() releases the listener's SSL_CTX without waiting for GC", async () => {
+  Bun.gc(true);
+  const before = sslCtxLiveCount();
+
+  // Hold strong references so the GC can never finalize these Listeners; a
+  // distinct `sessionTimeout` per server gives each its own cache entry.
+  const kept: tls.Server[] = [];
+  for (let i = 0; i < 5; i++) {
+    const server = tls.createServer({ ...tlsCerts, sessionTimeout: 100 + i });
+    server.listen(0);
+    await once(server, "listening");
+    server.close();
+    await once(server, "close");
+    kept.push(server);
+  }
+
+  // No Bun.gc() here on purpose: the point is that close() alone frees them.
+  expect({ leaked: sslCtxLiveCount() - before, servers: kept.length }).toEqual({ leaked: 0, servers: 5 });
+});
+
+// Releasing at close() must not pull the CTX out from under a socket the
+// server already accepted.
+test("a connection accepted before close() keeps working after it", async () => {
+  const server = tls.createServer({ ...tlsCerts }, s => {
+    s.on("error", () => {});
+    s.on("data", d => s.write(d));
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const { port } = server.address() as import("net").AddressInfo;
+
+  const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+  client.on("error", () => {});
+  await once(client, "secureConnect");
+
+  server.close(); // drops the listener's ref while `client` is still live
+  Bun.gc(true);
+
+  client.write("ping");
+  const [echoed] = await once(client, "data");
+  expect(echoed.toString()).toBe("ping");
+  client.destroy();
+});

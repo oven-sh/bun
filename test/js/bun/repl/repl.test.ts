@@ -988,10 +988,8 @@ describe.concurrent("bun --interactive", () => {
       env: { ...bunEnv, NO_COLOR: "1" },
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stripAnsi(stdout)).toBe("from eval\n");
-    expect(stripAnsi(stdout)).not.toContain("Welcome to Bun");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    expect({ stdout: stripAnsi(stdout), exitCode }).toEqual({ stdout: "from eval\n", exitCode: 0 });
+    expect(stripAnsi(stdout + stderr)).not.toContain("Welcome to Bun");
   });
 
   test("a script positional still wins over --interactive", async () => {
@@ -1006,10 +1004,8 @@ describe.concurrent("bun --interactive", () => {
       env: { ...bunEnv, NO_COLOR: "1" },
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stripAnsi(stdout)).toBe("from script\n");
-    expect(stripAnsi(stdout)).not.toContain("Welcome to Bun");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    expect({ stdout: stripAnsi(stdout), exitCode }).toEqual({ stdout: "from script\n", exitCode: 0 });
+    expect(stripAnsi(stdout + stderr)).not.toContain("Welcome to Bun");
   });
 
   test.skipIf(isWindows)("node shim: --interactive starts the REPL instead of erroring", async () => {

@@ -295,16 +295,19 @@ test("MessagePort.postMessage() returns true, or undefined when the port is clos
        parentPort.postMessage(parentPort.postMessage("x"));`,
       { eval: true },
     );
-    const results: any[] = [];
-    await new Promise<void>((resolve, reject) => {
-      w.on("message", m => {
-        results.push(m);
-        if (results.length === 2) resolve();
+    try {
+      const results: any[] = [];
+      await new Promise<void>((resolve, reject) => {
+        w.on("message", m => {
+          results.push(m);
+          if (results.length === 2) resolve();
+        });
+        w.on("error", reject);
       });
-      w.on("error", reject);
-    });
-    expect(results).toEqual(["x", true]);
-    await w.terminate();
+      expect(results).toEqual(["x", true]);
+    } finally {
+      await w.terminate();
+    }
   }
 });
 

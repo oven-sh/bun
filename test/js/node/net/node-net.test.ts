@@ -919,7 +919,9 @@ it.skipIf(isWindows)(
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      // Malloc=1 keeps JSC on the system heap so the mimalloc page count only
+      // tracks native allocations, also on builds where JSC uses mimalloc.
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0", Malloc: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });

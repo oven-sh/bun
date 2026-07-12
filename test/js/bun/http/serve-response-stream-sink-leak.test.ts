@@ -12,7 +12,9 @@ import { join } from "node:path";
 test("HTTPResponseSink is destroyed after a sync pull() that ends later", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "serve-response-stream-sink-leak-fixture.ts")],
-    env: bunEnv,
+    // Malloc=1 keeps JSC on the system heap so currentCommit (bun's mimalloc)
+    // tracks only native allocations, also on builds where JSC uses mimalloc.
+    env: { ...bunEnv, Malloc: "1" },
     stdout: "pipe",
     stderr: "pipe",
   });

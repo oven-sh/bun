@@ -31,6 +31,7 @@
 #include "WorkerOptions.h"
 #include "JSValueInWrappedObject.h"
 #include <JavaScriptCore/RuntimeFlags.h>
+#include <JavaScriptCore/Strong.h>
 #include <wtf/Deque.h>
 #include <wtf/HashMap.h>
 #include <wtf/text/AtomStringHash.h>

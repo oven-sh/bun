@@ -217,9 +217,6 @@ void MessagePort::close()
     // it in hasPendingActivity()); marking our side Closed is sufficient.
     m_pipe->close(m_side, MessagePortPipe::CloseKind::Explicit);
 
-    // A closed port can never dispatch again; release the creation snapshot.
-    m_creationAsyncContext.clear();
-
     // Release the self-reference taken by jsRef() (set when .onmessage is
     // assigned or .ref() is called from JS). The JS .close() binding calls
     // jsUnref() first, so m_hasRef is already false on that path; we only
@@ -256,6 +253,8 @@ void MessagePort::close()
         });
     } else {
         removeAllEventListeners();
+        // dispatchCloseEvent() would have released it, but this path can't reach it.
+        m_creationAsyncContext.clear();
     }
 }
 
@@ -273,8 +272,12 @@ void MessagePort::dispatchCloseEvent()
     auto* globalObject = defaultGlobalObject(context->globalObject());
     // Bypass the m_isDetached guard in MessagePort::dispatchEvent — the deferred
     // close task runs after m_isDetached is set.
-    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running)
+    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running) {
+        AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
         EventTarget::dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+    }
+    // The one-shot close event was the last possible dispatch; release the snapshot.
+    m_creationAsyncContext.clear();
 }
 
 void MessagePort::peerClosed()

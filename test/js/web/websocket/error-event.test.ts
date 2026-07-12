@@ -47,7 +47,7 @@ test("ErrorEvent with no message", async () => {
 describe("fires error before close on post-establishment failure", () => {
   const MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-  async function rawWsServer(afterUpgrade: (sock: net.Socket) => void) {
+  async function rawWsServer(afterUpgrade: (sock: net.Socket) => void, extraHeaders = "") {
     const { promise, resolve, reject } = Promise.withResolvers<net.Server>();
     const server = net.createServer(sock => {
       let buf = "";
@@ -68,7 +68,9 @@ describe("fires error before close on post-establishment failure", () => {
             "Connection: Upgrade\r\n" +
             "Sec-WebSocket-Accept: " +
             accept +
-            "\r\n\r\n",
+            "\r\n" +
+            extraHeaders +
+            "\r\n",
         );
         afterUpgrade(sock);
       });
@@ -79,15 +81,18 @@ describe("fires error before close on post-establishment failure", () => {
     return promise;
   }
 
-  async function connectAndTrace(server: net.Server, onOpen?: (ws: WebSocket) => void) {
+  async function connectAndTrace(
+    server: net.Server,
+    opts: { onOpen?: (ws: WebSocket) => void; protocols?: string[] } = {},
+  ) {
     const address = server.address() as net.AddressInfo;
-    const ws = new WebSocket(`ws://127.0.0.1:${address.port}/`);
+    const ws = new WebSocket(`ws://127.0.0.1:${address.port}/`, opts.protocols);
     const events: string[] = [];
     let errorMessage: string | undefined;
     const { promise, resolve } = Promise.withResolvers<void>();
     ws.onopen = () => {
       events.push("open");
-      onOpen?.(ws);
+      opts.onOpen?.(ws);
     };
     ws.onerror = e => {
       events.push("error");
@@ -105,7 +110,7 @@ describe("fires error before close on post-establishment failure", () => {
   test.concurrent("socket destroyed with no close frame", async () => {
     // Destroy once we see the client's first frame (proves open fired).
     const server = await rawWsServer(sock => sock.once("data", () => sock.destroy()));
-    const { events, errorMessage } = await connectAndTrace(server, ws => ws.send("x"));
+    const { events, errorMessage } = await connectAndTrace(server, { onOpen: ws => ws.send("x") });
     expect(events).toEqual(["open", "error", "close{1006,wasClean:false}"]);
     expect(errorMessage).toContain("Connection ended");
   });
@@ -140,47 +145,8 @@ describe("fires error before close on post-establishment failure", () => {
   });
 
   test.concurrent("subprotocol mismatch (server responds with unrequested protocol)", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<net.Server>();
-    const server = net.createServer(sock => {
-      let buf = "";
-      let upgraded = false;
-      sock.on("data", d => {
-        if (upgraded) return;
-        buf += d;
-        if (!buf.includes("\r\n\r\n")) return;
-        upgraded = true;
-        const key = /Sec-WebSocket-Key: (.+)\r\n/i.exec(buf)![1];
-        const accept = crypto
-          .createHash("sha1")
-          .update(key + MAGIC)
-          .digest("base64");
-        sock.write(
-          "HTTP/1.1 101 Switching Protocols\r\n" +
-            "Upgrade: websocket\r\n" +
-            "Connection: Upgrade\r\n" +
-            "Sec-WebSocket-Accept: " +
-            accept +
-            "\r\n" +
-            "Sec-WebSocket-Protocol: not-what-you-asked\r\n\r\n",
-        );
-      });
-      sock.on("error", () => {});
-    });
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve(server));
-    await promise;
-    const address = server.address() as net.AddressInfo;
-    const ws = new WebSocket(`ws://127.0.0.1:${address.port}/`, ["chat"]);
-    const events: string[] = [];
-    const done = Promise.withResolvers<void>();
-    ws.onopen = () => events.push("open");
-    ws.onerror = () => events.push("error");
-    ws.onclose = e => {
-      events.push(`close{${e.code},wasClean:${e.wasClean}}`);
-      done.resolve();
-    };
-    await done.promise;
-    await new Promise<void>(r => server.close(() => r()));
+    const server = await rawWsServer(() => {}, "Sec-WebSocket-Protocol: not-what-you-asked\r\n");
+    const { events } = await connectAndTrace(server, { protocols: ["chat"] });
     expect(events).toEqual(["error", "close{1002,wasClean:false}"]);
   });
 

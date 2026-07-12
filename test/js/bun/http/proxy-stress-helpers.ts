@@ -365,13 +365,9 @@ export async function createAdversarialProxy(opts: AdversarialProxyOptions = {})
       // and getaddrinfo want the bare literal.
       if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
 
-      // Every origin in this suite binds 127.0.0.1, but its URL says
-      // `localhost`. net.connect(.., "localhost") goes through
-      // autoSelectFamily, which on darwin tries `::1` first. IPv4 and IPv6
-      // ephemeral-port spaces are independent, so an unrelated process on the
-      // CI host can be answering at `[::1]:port` while our origin holds
-      // `127.0.0.1:port` (observed as a stray 204 in build 72283). Dial the
-      // bound address directly; the IPv6-literal tests pass `[::1]` explicitly.
+      // Origins bind 127.0.0.1 but advertise `localhost`; on darwin that
+      // resolves `::1` first, and v4/v6 ephemeral-port spaces are independent,
+      // so dial the bound address. IPv6-literal tests pass `[::1]` explicitly.
       if (host === "localhost") host = "127.0.0.1";
 
       upstream = net.connect(port, host);

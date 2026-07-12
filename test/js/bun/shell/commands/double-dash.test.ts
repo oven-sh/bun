@@ -199,4 +199,33 @@ describe("-- end-of-options delimiter", () => {
       expect(buffer.toString()).toEqual("-n\n-n\n");
     });
   });
+
+  describe("pwd", () => {
+    TestBuilder.command`pwd --`
+      .ensureTempDir()
+      .stdout("$TEMP_DIR\n")
+      .stderr("")
+      .exitCode(0)
+      .runAsTest("pwd -- prints cwd");
+  });
+
+  describe("exit", () => {
+    TestBuilder.command`exit -- 5`.stderr("").exitCode(5).runAsTest("exit -- 5");
+
+    TestBuilder.command`exit --`.stderr("").exitCode(0).runAsTest("exit -- with no operand exits 0");
+  });
+
+  describe("export", () => {
+    TestBuilder.command`export -- FOO=bar && echo $FOO`
+      .stdout("bar\n")
+      .stderr("")
+      .exitCode(0)
+      .runAsTest("export -- name=value");
+
+    TestBuilder.command`export --`
+      .stdout(str => expect(str).not.toContain("--="))
+      .stderr("")
+      .exitCode(0)
+      .runAsTest("export -- does not create a var named --");
+  });
 });

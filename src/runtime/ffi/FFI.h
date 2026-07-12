@@ -237,9 +237,15 @@ static void* JSVALUE_TO_PTR(EncodedJSValue val) {
     return (void*)(uintptr_t)JSVALUE_TO_INT32(val);
   }
 
-  // Assume the JSValue is a double
+  // Assume the JSValue is a double. (uintptr_t)d is C undefined behavior for NaN,
+  // negative, or d >= 2^64; clamp so the conversion is defined and identical on
+  // x86/arm64 (mirrors JSVALUE_TO_INT64/UINT64). A bad pointer is still the
+  // caller's problem when the C function dereferences it, but decoding it is not UB.
   val.asInt64 -= DoubleEncodeOffset;
-  return (void*)(uintptr_t)val.asDouble;
+  double d = val.asDouble;
+  if (d != d || d < 0.0) return 0;
+  if (d >= 18446744073709551616.0) return (void*)(uintptr_t)-1;
+  return (void*)(uintptr_t)d;
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {

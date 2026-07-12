@@ -491,6 +491,21 @@ function ffiRunner(fast) {
       "void*": null,
     };
 
+    it("toBuffer/toArrayBuffer run the finalizer exactly once on GC", () => {
+      // Exercises the finalizer path (create_buffer_with_ctx with a real
+      // deallocator) end to end: the C deallocator must fire exactly once when
+      // the view is collected. getDeallocatorCallback()/Buffer() reset the counter.
+      for (const wrap of [toBuffer, toArrayBuffer]) {
+        const cb = getDeallocatorCallback();
+        let view = wrap(getDeallocatorBuffer(), 0, 8, cb); // 4th arg alone = deallocator
+        expect(view.byteLength).toBe(8);
+        view = null;
+        // Drive GC (not time) until the finalizer runs, bounded.
+        for (let i = 0; i < 30 && getDeallocatorCalledCount() === 0; i++) Bun.gc(true);
+        expect(getDeallocatorCalledCount()).toBe(1);
+      }
+    });
+
     it("JSCallback", () => {
       var toClose = new JSCallback(
         input => {
@@ -719,6 +734,15 @@ describe.skipIf(isFFIUnavailable)("JSCallback validation", () => {
     ).toThrow(/Unknown type NOT_A_REAL_TYPE/);
   });
 
+  // buffer/napi_env args can't be reconstructed for a JS callback; they used to
+  // generate invalid C, fail to compile, AND leak the FFICallbackFunctionWrapper
+  // (+ its GC roots). Now rejected up front with a clear message.
+  it("rejects buffer/napi_env as callback argument types", () => {
+    for (const bad of ["buffer", "napi_env"]) {
+      expect(() => new JSCallback(() => {}, { returns: "void", args: [bad] })).toThrow(/not a supported argument type/);
+    }
+  });
+
   // The threadsafe-vs-non-void-return guard in the native helper used to read
   // a freshly-defaulted `function.threadsafe` (which was always false), making
   // the check dead code. Combined with the constructor swallowing errors,
@@ -866,6 +890,34 @@ describe.skipIf(isFFIUnavailable)("toBuffer is a non-owning view (regression)", 
     }).toEqual({
       stdout: "OK",
       invalidFree: false,
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
+describe.skipIf(isFFIUnavailable)("read.* / toArrayBuffer reject bad size args gracefully", () => {
+  // A non-number byteOffset used to reach JSC__JSValue__toInt64 (ASSERT abort in
+  // debug / UB in release); a byteLength past the u32 ArrayBuffer max used to
+  // panic in ArrayBuffer::from_bytes. Both must error, never crash the process.
+  it("does not crash on a non-number read.* byteOffset or an oversized byteLength", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { read, toArrayBuffer, toBuffer, ptr } = require("bun:ffi");
+        const p = ptr(new Uint8Array(8));
+        for (const bad of [{}, "x", true]) { try { read.u8(p, bad); } catch {} }
+        for (const f of [() => toArrayBuffer(p, 0, 2 ** 33), () => toBuffer(p, 0, 2 ** 33)]) { try { f(); } catch {} }
+        process.stdout.write("OK");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toMatchObject({
+      stdout: "OK",
       exitCode: 0,
       signalCode: null,
     });

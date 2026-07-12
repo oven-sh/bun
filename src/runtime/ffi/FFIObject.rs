@@ -267,9 +267,15 @@ pub mod reader {
         if arguments.is_empty() || !arguments[0].is_number() {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
         }
-        let off = if arguments.len() > 1 {
-            // Match ptr()/toBuffer()/toArrayBuffer(), which read byteOffset as a
-            // 64-bit value; `to_int32` would silently wrap an offset >= 2^31.
+        let off = if arguments.len() > 1 && !arguments[1].is_empty_or_undefined_or_null() {
+            // Guard the type before `to_int64`, matching ptr()/toBuffer()/
+            // toArrayBuffer(): a non-number here would hit `JSC__JSValue__toInt64`,
+            // whose ASSERT(isHeapBigInt||isNumber) aborts in debug and is UB in
+            // release. `to_int32` (the previous form) had the same hazard.
+            if !arguments[1].is_number() {
+                return Err(global_object
+                    .throw_invalid_arguments(format_args!("Expected number for byteOffset")));
+            }
             let off_i64 = arguments[1].to_int64();
             if off_i64 < 0 {
                 return Err(global_object
@@ -605,9 +611,12 @@ fn get_ptr_slice(
                 )));
             }
 
-            if length_i > i64::try_from(MAX_ADDRESSABLE_MEMORY).expect("int cast") {
+            // An ArrayBuffer/Buffer length is a u32 in JSC (`ArrayBuffer::from_bytes`
+            // does `u32::try_from(len).expect(...)`); reject a larger length here so
+            // it can't panic-abort there. A CString length this large is absurd too.
+            if length_i > u32::MAX as i64 {
                 return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
-                    "length exceeds max addressable memory. This usually means a bug in your code."
+                    "length exceeds the maximum ArrayBuffer size (2^32-1). This usually means a bug in your code."
                 )));
             }
 

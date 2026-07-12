@@ -267,25 +267,6 @@ impl ABIType {
     }
 }
 
-pub struct EnumMapFormatter<'a> {
-    pub name: &'a [u8],
-    pub entry: ABIType,
-}
-
-impl fmt::Display for EnumMapFormatter<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("['")?;
-        // these are not all valid identifiers
-        fmt::Display::fmt(BStr::new(self.name), f)?;
-        f.write_str("']:")?;
-        write!(f, "{}", self.entry as i32)?;
-        f.write_str(",'")?;
-        write!(f, "{}", self.entry as i32)?;
-        f.write_str("':")?;
-        write!(f, "{}", self.entry as i32)
-    }
-}
-
 pub struct ToCFormatter<'a> {
     pub symbol: &'a [u8],
     pub tag: ABIType,

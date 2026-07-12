@@ -245,6 +245,28 @@ describe.skipIf(isASAN || isFFIUnavailable)("int16_t arg clamping", () => {
   });
 }); // </int16_t arg clamping>
 
+// int8_t is the missed sibling of the int16_t/uint8_t clamps: without a clamp
+// the C `(int8_t)` cast wraps (128 -> -128).
+describe.skipIf(isASAN || isFFIUnavailable)("int8_t arg clamping", () => {
+  const library = makeValidCase(
+    "identity_int8",
+    /* c */ `
+      signed char identity_int8(signed char v) { return v; }
+    `,
+    {
+      identity_int8: { args: ["int8_t"], returns: "int8_t" },
+    },
+  );
+
+  it("clamps to [-128, 127] instead of wrapping", () => {
+    expect(library.symbols.identity_int8(127)).toBe(127);
+    expect(library.symbols.identity_int8(128)).toBe(127); // previously wrapped to -128
+    expect(library.symbols.identity_int8(1000)).toBe(127);
+    expect(library.symbols.identity_int8(-128)).toBe(-128);
+    expect(library.symbols.identity_int8(-129)).toBe(-128);
+  });
+}); // </int8_t arg clamping>
+
 // The double arg wrapper (before #33122) used Math.abs() when converting a
 // BigInt to double, silently flipping the sign of negative BigInts, and threw
 // a TypeError for any BigInt with |val| >= Number.MAX_VALUE. Current main
@@ -516,9 +538,9 @@ describe.skipIf(isWindows || isASAN)("threadsafe JSCallback invoked from a forei
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout).toBe("ok\n");
-    expect(exitCode).toBe(0);
+    // Assert stdout/exitCode precisely; keep stderr in the object only for
+    // diagnostics (ASAN/debug builds emit benign warnings, so don't require "").
+    expect({ stdout, stderr, exitCode }).toMatchObject({ stdout: "ok\n", exitCode: 0 });
   });
 });
 
@@ -1059,9 +1081,13 @@ describe.skipIf(isASAN || isFFIUnavailable)("DataView is accepted as ptr and buf
   it("passes a DataView's data pointer (respecting byteOffset)", () => {
     const ab = new ArrayBuffer(8);
     new Uint8Array(ab).fill(0);
-    const dv = new DataView(ab, 2);
-    dv.setUint8(0, 99); // writes ab[2]
-    expect(Number(library.symbols.addr(dv))).toBeGreaterThan(0);
-    expect(library.symbols.first(dv)).toBe(99);
+    const dv0 = new DataView(ab, 0);
+    const dv2 = new DataView(ab, 2);
+    dv2.setUint8(0, 99); // writes ab[2]
+    // The passed pointer must reflect the DataView's byteOffset, not just be
+    // non-null — a regression that dropped byteOffset would give addr(dv2) == addr(dv0).
+    expect(Number(library.symbols.addr(dv2))).toBe(Number(library.symbols.addr(dv0)) + 2);
+    expect(library.symbols.first(dv2)).toBe(99); // reads ab[2] through the view's vector
+    expect(library.symbols.first(dv0)).toBe(0); // reads ab[0]
   });
 });

@@ -612,7 +612,9 @@ impl CompileC {
             tcc_options_owned = ZBox::from_bytes(tcc_options);
             &tcc_options_owned
         } else {
-            zstr!("-std=c11 -Wl,--export-all-symbols -g -O2")
+            // Derive from the single source of truth rather than repeating the literal.
+            tcc_options_owned = ZBox::from_bytes(Self::DEFAULT_TCC_OPTIONS.as_bytes());
+            &tcc_options_owned
         };
 
         // TODO: correctly handle invalid user-provided options
@@ -1290,6 +1292,18 @@ impl FFI {
             })
         {
             return Ok(val);
+        }
+
+        // A `buffer`/`napi_env` arg can't be reconstructed for a JS callback (the
+        // callback-direction codegen would emit invalid C — `0.asZigRepr` etc.),
+        // so reject them here with a clear message instead of a compile failure.
+        for arg in func.arg_types.iter() {
+            if matches!(arg, ABIType::Buffer | ABIType::NapiEnv) {
+                return Ok(global_this.create_error_instance(format_args!(
+                    "\"{}\" is not a supported argument type for a JSCallback",
+                    <&'static str>::from(*arg)
+                )));
+            }
         }
 
         // TODO: WeakRefHandle that automatically frees it?
@@ -2098,6 +2112,16 @@ impl Function {
             self.fail(b"Expected callback to be a function");
             return Ok(());
         }
+        // The wrapper pins a Strong<JSFunction> + Strong<GlobalObject> (a GC root
+        // for the whole realm) and is only adopted by Step::Compiled on success.
+        // Free it on every early failure/`?`/return below; disarmed once ownership
+        // transfers, so a compile/relocate/link failure can't leak it (repeatably).
+        let mut wrapper_guard = scopeguard::guard(true, |armed| {
+            if armed {
+                // SAFETY: ffi_wrapper is the live wrapper from Bun__createFFICallbackFunction.
+                unsafe { FFICallbackFunctionWrapper_destroy(ffi_wrapper) };
+            }
+        });
         self.print_callback_source_code(Some(js_context), Some(ffi_wrapper), &mut source_code)?;
 
         #[cfg(all(debug_assertions, unix))]
@@ -2219,6 +2243,9 @@ impl Function {
             return Ok(());
         };
 
+        // Ownership of the wrapper transfers to Step::Compiled (freed in
+        // Function::drop); disarm the guard so it isn't double-freed.
+        *wrapper_guard = false;
         self.step = Step::Compiled(Compiled {
             ptr: symbol.as_ptr().cast::<c_void>(),
             // SAFETY: opaque-handle storage only. Never

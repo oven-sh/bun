@@ -1688,6 +1688,14 @@ impl PostgresSQLConnection {
     /// paired CloseComplete is consumed by `on()` without touching the
     /// request queue.
     fn evict_lru_statements(&self) {
+        // `write_bind` may be mid-frame on the stack (a bound value's
+        // toJSON/valueOf/toString can re-enter `do_run` on this connection):
+        // appending a Close now would be folded into that Bind's length and
+        // yield 08P01. Defer to the next insert; a running query's statement
+        // is not idle anyway, so this only postpones eviction.
+        if self.has_query_running() {
+            return;
+        }
         while self.statements.get().len() >= MAX_CACHED_PREPARED_STATEMENTS {
             let mut victim: Option<NonNull<PostgresSQLStatement>> = None;
             let mut oldest = u64::MAX;

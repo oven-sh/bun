@@ -1358,7 +1358,6 @@ impl Event {
 
     /// Wait for and consume a notification
     /// or wait for the event to be shutdown entirely
-    #[inline(never)]
     fn wait(&self) {
         self.wait_inner(false);
     }
@@ -1435,18 +1434,28 @@ impl Event {
             } else {
                 None
             };
-            if Futex::wait(&self.state, Self::WAITING, timeout_ns).is_err() {
+            let timed_out = Futex::wait(&self.state, Self::WAITING, timeout_ns).is_err();
+            if timed_out {
                 has_shrunk_memory = true;
                 bun_core::Global::mimalloc_cleanup(false);
                 bun_alloc::wtf::release_fast_malloc_free_memory_for_this_thread();
-            } else if return_on_broadcast {
-                // Woken by a wake(); if the notification is still pending the
-                // re-entered wait() consumes it immediately, so returning here
-                // never loses a wakeup.
-                return;
             }
             state = self.state.load(Ordering::Relaxed);
             acquire_with = Self::WAITING;
+            if return_on_broadcast
+                && !timed_out
+                && state != Self::NOTIFIED
+                && state != Self::SHUTDOWN
+            {
+                // Woken, but a sibling consumed the token (broadcast wake).
+                // Return so the caller drains its idle queue and re-enters.
+                // A still-pending NOTIFIED must instead fall through to the
+                // consume branch above: its NOTIFIED -> WAITING hand-off is
+                // what keeps `wake()`'s prev == WAITING futex-wake fast path
+                // armed for the next single notify(), so returning here with
+                // the token unconsumed would strand the other parked threads.
+                return;
+            }
         }
     }
 

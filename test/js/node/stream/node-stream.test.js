@@ -1203,8 +1203,59 @@ describe("node v26 stream semantics", () => {
     expect(r.read()).toBeNull();
   });
 
-  // Deliberate divergence from Node 26 (nodejs/node#62557 made pause/resume
-  // no-ops on destroyed streams): legacy Readable subclasses like fd-slicer
+  // Upstream: nodejs/node#62557 (test-stream-destroy.js).
+  it("pause() is a no-op on a destroyed stream", async () => {
+    const r = new Readable({ read() {} });
+    r.resume();
+    r.destroy();
+    const emitted = [];
+    r.on("pause", () => emitted.push("pause"));
+    expect(r.pause()).toBe(r);
+    expect(r.readableFlowing).toBe(true);
+    expect(r.isPaused()).toBe(false);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(emitted).toEqual([]);
+  });
+
+  // A completed pipe unpipes the source, and unpipe() calls source.pause().
+  // On a source that autoDestroy'd itself at 'end', that pause() must no-op so
+  // the post-pipe readable state matches a plain resume()'d stream.
+  it("a source autoDestroyed by a completed pipe stays flowing", async () => {
+    const sink = () =>
+      new Writable({
+        write(chunk, encoding, callback) {
+          callback();
+        },
+      });
+    // 'unpipe' on the destination is emitted by Readable.prototype.unpipe right
+    // after it calls source.pause(), so it is the exact point to assert on.
+    const unpiped = dest => new Promise(resolve => dest.on("unpipe", resolve));
+
+    const resumed = new PassThrough();
+    resumed.resume();
+    resumed.end("x");
+
+    const pipedDest = sink();
+    const piped = new PassThrough();
+    piped.pipe(pipedDest);
+    piped.end("x");
+
+    // autoDestroy: false keeps the source alive, so unpipe() does pause it.
+    const aliveDest = sink();
+    const pipedAlive = new PassThrough({ autoDestroy: false });
+    pipedAlive.pipe(aliveDest);
+    pipedAlive.end("x");
+
+    await Promise.all([new Promise(resolve => resumed.on("close", resolve)), unpiped(pipedDest), unpiped(aliveDest)]);
+
+    const state = s => ({ readableFlowing: s.readableFlowing, isPaused: s.isPaused(), destroyed: s.destroyed });
+    expect(state(resumed)).toEqual({ readableFlowing: true, isPaused: false, destroyed: true });
+    expect(state(piped)).toEqual({ readableFlowing: true, isPaused: false, destroyed: true });
+    expect(state(pipedAlive)).toEqual({ readableFlowing: false, isPaused: true, destroyed: false });
+  });
+
+  // Deliberate divergence from Node 26 (nodejs/node#62557 also made resume() a
+  // no-op on destroyed streams): legacy Readable subclasses like fd-slicer
   // (yauzl → extract-zip → puppeteer/electron tooling) assign
   // `this.destroyed = true` via the prototype setter right before push(null).
   // With the upstream guard, a piped destination's drain can no longer resume

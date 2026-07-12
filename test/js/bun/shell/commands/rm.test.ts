@@ -200,11 +200,7 @@ foo/
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
       stdout: "ok 800",
       stderr: "",

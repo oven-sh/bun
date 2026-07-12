@@ -74,9 +74,10 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
         }
 
         if (remainingRunsUntilSkipReleaseAccess-- > 0) {
+#if USE(MIMALLOC)
             // Advance the Full GC timer when JS just ran and the heap is
-            // non-trivial. Rate-limited so hot request loops pay at most one
-            // hint per window; stopIfNecessary() below handles the handshake.
+            // non-trivial, so freed extra memory reaches mimalloc's purger.
+            // Rate-limited; stopIfNecessary() below handles the handshake.
             if (justRanJS) {
                 static thread_local MonotonicTime lastAbandonHint;
                 const MonotonicTime now = MonotonicTime::now();
@@ -85,6 +86,7 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
                     vm->heap.reportAbandonedObjectGraph();
                 }
             }
+#endif
             // Constellation:
             // > If you are not moving a VM to the different thread, then you can aquire the access and do not need to release
             vm->heap.stopIfNecessary();

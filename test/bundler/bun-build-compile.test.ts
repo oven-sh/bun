@@ -188,12 +188,14 @@ describe("compiled binary validity", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("Bun.main matches import.meta.path in compiled binary with non-ASCII outfile", async () => {
+  test("Bun.main and Bun.cwd decode UTF-8 in compiled binary with non-ASCII outfile", async () => {
     using dir = tempDir("build-compile-utf8-outfile", {
-      "app.js": `console.log(JSON.stringify({ main: Bun.main, meta: import.meta.path, argv1: process.argv[1] }));`,
+      "app.js": `console.log(JSON.stringify({ main: Bun.main, meta: import.meta.path, argv1: process.argv[1], cwd: Bun.cwd, pcwd: process.cwd() }));`,
+      "tést/.keep": "",
     });
 
     const outfile = join(String(dir), "éxe");
+    const runCwd = join(String(dir), "tést");
 
     await using build = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
@@ -209,20 +211,28 @@ describe("compiled binary validity", () => {
     await using proc = Bun.spawn({
       cmd: [isWindows ? outfile + ".exe" : outfile],
       env: bunEnv,
+      cwd: runCwd,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // import.meta.path uses native separators on Windows (B:\~BUN\root\...); normalize before comparing.
-    const norm = (s: string) => s.replaceAll("\\", "/");
+    // import.meta.path uses native separators on Windows; Bun.cwd may carry a trailing one.
+    const norm = (s: string) => s.replaceAll("\\", "/").replace(/\/+$/, "");
     const out = JSON.parse(stdout.trim());
     const expected = (isWindows ? "B:/~BUN/root/" : "/$bunfs/root/") + "éxe";
-    expect({ main: norm(out.main), meta: norm(out.meta), argv1: norm(out.argv1) }).toEqual({
+    expect({
+      main: norm(out.main),
+      meta: norm(out.meta),
+      argv1: norm(out.argv1),
+      cwd: norm(out.cwd),
+    }).toEqual({
       main: expected,
       meta: expected,
       argv1: expected,
+      cwd: norm(out.pcwd),
     });
+    expect(out.cwd).toContain("tést");
     expect(exitCode).toBe(0);
   });
 });

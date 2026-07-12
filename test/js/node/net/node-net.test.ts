@@ -370,8 +370,12 @@ describe("net.Socket write", () => {
   function runWithServer(cb: (..._: any[]) => void) {
     return (done: (_?: any) => void) => {
       let server: TCPSocketListener<unknown>;
+      let finished = false;
 
       function close(socket: _BunSocket<Buffer[]>) {
+        // Registered for both `end` and `close`; settle the test once.
+        if (finished) return;
+        finished = true;
         expect(Buffer.concat(socket.data).toString("utf8")).toBe(message);
         server.stop();
         done();

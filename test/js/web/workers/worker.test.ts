@@ -81,16 +81,13 @@ describe("web worker", () => {
       done(e.error);
     };
     worker.onmessage = e => {
+      worker.terminate();
       try {
         expect(e.data).toEqual("initial message");
-      } catch (e) {
-        done(e);
-      } finally {
-        worker.terminate();
         done();
+      } catch (err) {
+        done(err);
       }
-      worker.terminate();
-      done();
     };
   });
 

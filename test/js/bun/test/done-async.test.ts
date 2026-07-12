@@ -43,21 +43,7 @@ async function runFixture(src: string) {
 }
 
 describe.concurrent("done() called multiple times", () => {
-  test("synchronous double done() fails the test", async () => {
-    const { stderr, exitCode } = await runFixture(`
-      const { test } = require("bun:test");
-      test("double done", (done) => {
-        done();
-        done();
-      });
-    `);
-    expect(stderr).toContain("Expected done to be called once, but it was called multiple times");
-    expect(stderr).toContain("1 fail");
-    expect(stderr).toContain("0 pass");
-    expect(exitCode).toBe(1);
-  });
-
-  test("synchronous done() then done(err) reports the user's error as the cause", async () => {
+  test("synchronous done() then done(err) fails the test and reports the user's error as the cause", async () => {
     const { stderr, exitCode } = await runFixture(`
       const { test } = require("bun:test");
       test("done then done(err)", (done) => {
@@ -89,25 +75,13 @@ describe.concurrent("done() called multiple times", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("late async double done() without an error is not silently swallowed", async () => {
-    const { stderr, exitCode } = await runFixture(`
-      const { test, expect } = require("bun:test");
-      test("done then late done()", (done) => {
-        done();
-        setTimeout(() => done(), 20);
-      });
-      test("tail keeps the loop alive past the late done()", async () => {
-        await new Promise((r) => setTimeout(r, 100));
-        expect(1).toBe(1);
-      });
-    `);
-    expect(stderr).toContain("Expected done to be called once, but it was called multiple times");
-    expect(exitCode).toBe(1);
-  });
-
-  test("done() called exactly once still passes", async () => {
+  test("a second done() without an error argument is a no-op", async () => {
     const { stderr, exitCode } = await runFixture(`
       const { test } = require("bun:test");
+      test("double bare done", (done) => {
+        done();
+        done();
+      });
       test("single done", (done) => {
         done();
       });
@@ -116,30 +90,31 @@ describe.concurrent("done() called multiple times", () => {
       });
     `);
     expect(stderr).not.toContain("Expected done to be called once");
-    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("3 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
 
-  test("double done() in a hook fails", async () => {
+  test("done(err) after done() in a hook fails", async () => {
     const { stderr, exitCode } = await runFixture(`
       const { test, beforeEach } = require("bun:test");
       beforeEach((done) => {
         done();
-        done();
+        done(new Error("hook double done"));
       });
       test("the test", () => {});
     `);
     expect(stderr).toContain("Expected done to be called once, but it was called multiple times");
+    expect(stderr).toContain("hook double done");
     expect(exitCode).toBe(1);
   });
 
-  test("test.failing inverts a double done() failure into a pass", async () => {
+  test("test.failing inverts a done()/done(err) failure into a pass", async () => {
     const { stderr, exitCode } = await runFixture(`
       const { test } = require("bun:test");
       test.failing("double done", (done) => {
         done();
-        done();
+        done(new Error("expected"));
       });
     `);
     expect(stderr).toContain("1 pass");

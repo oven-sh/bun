@@ -2996,6 +2996,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                             | TokenTag::BraceEnd
                                             | TokenTag::CmdSubstEnd
                                             | TokenTag::Asterisk
+                                            | TokenTag::DoubleAsterisk
                                     )
                                 )
                             {
@@ -3352,22 +3353,23 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     // TODO Arbitrary file descriptor redirect
     fn eat_redirect(&mut self, first: InputChar) -> FdRedirect {
         debug_assert!((u32::from(b'0')..=u32::from(b'9')).contains(&first.char));
-        let mut flags = ast::RedirectFlags::default();
-        match first.char {
-            c if c == u32::from(b'0') => flags |= ast::RedirectFlags::STDIN,
-            c if c == u32::from(b'1') => flags |= ast::RedirectFlags::STDOUT,
-            c if c == u32::from(b'2') => flags |= ast::RedirectFlags::STDERR,
-            _ => {}
-        }
-        // Consume remaining digits so multi-digit fds like `10>` are recognized
-        // as redirects instead of splitting into an argument plus `0>`.
+        // Consume the full digit run so multi-digit fds like `10>` are
+        // recognized as redirects instead of splitting into an argument plus
+        // `0>`, and so leading zeros (`01>`) still resolve to fd 1.
+        let mut fd: u32 = first.char - u32::from(b'0');
         while let Some(p) = self.peek() {
             if p.escaped || !(u32::from(b'0')..=u32::from(b'9')).contains(&p.char) {
                 break;
             }
             let _ = self.eat();
-            flags = ast::RedirectFlags::default();
+            fd = fd.saturating_mul(10).saturating_add(p.char - u32::from(b'0'));
         }
+        let mut flags = match fd {
+            0 => ast::RedirectFlags::STDIN,
+            1 => ast::RedirectFlags::STDOUT,
+            2 => ast::RedirectFlags::STDERR,
+            _ => ast::RedirectFlags::default(),
+        };
         if let Some(input) = self.peek() {
             if input.escaped {
                 return FdRedirect::NotRedirect;

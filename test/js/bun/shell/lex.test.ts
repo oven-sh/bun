@@ -495,6 +495,48 @@ describe("lex shell", () => {
       { "Eof": {} },
     ]);
 
+    // After a glob atom, a digit is still part of the same word.
+    for (const [script, glob, digit] of [
+      ["echo *1>f", "Asterisk", "1"],
+      ["echo **1>f", "DoubleAsterisk", "1"],
+      ["echo *3>f", "Asterisk", "3"],
+      ["echo **3>f", "DoubleAsterisk", "3"],
+    ] as const) {
+      expect(JSON.parse(lex`${{ raw: script }}`)).toEqual([
+        { "Text": "echo" },
+        { "Delimit": {} },
+        { [glob]: {} },
+        { "Text": digit },
+        { "Delimit": {} },
+        { "Redirect": redirect({ stdout: true }) },
+        { "Text": "f" },
+        { "Delimit": {} },
+        { "Eof": {} },
+      ]);
+    }
+
+    // Leading zeros on an fd number still resolve to the decimal value.
+    expect(JSON.parse(lex`echo z 01>f`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Text": "z" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdout: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+    expect(JSON.parse(lex`echo z 02>f`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Text": "z" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stderr: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
     // Standalone digit before the operator is an fd.
     expect(JSON.parse(lex`echo z 1>f`)).toEqual([
       { "Text": "echo" },

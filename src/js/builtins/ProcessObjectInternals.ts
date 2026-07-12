@@ -224,16 +224,36 @@ export function getStdinStream(
     return ret;
   };
 
+  function rethrowUncaught(err) {
+    throw err;
+  }
+
   async function internalRead(stream) {
     $debug("internalRead();");
     // The reader this read belongs to. releaseLock() rejects the in-flight read(); by the
     // time that rejection lands, own() may already have acquired a NEW reader, so the catch
     // must key on this acquisition rather than on the current `reader`.
     const readerForThisRead = reader;
+    let value;
     try {
       $assert(readerForThisRead);
-      const { value } = await readerForThisRead.read();
+      ({ value } = await readerForThisRead.read());
+    } catch (err) {
+      if (readerForThisRead !== reader) {
+        // disown() released this read's reader while it was in flight (stdin may have been
+        // re-owned since), so the read rejected because the stream was unref()ed, not
+        // because it failed. triggerRead() re-arms if/when it is ref()ed again.
+        triggerRead.$call(stream, undefined);
+        return;
+      }
+      stream.destroy(err);
+      return;
+    }
 
+    // push() runs user 'data'/'readable'/'end' listeners synchronously. A throw from
+    // one of them is a programming error, not a read failure: it must surface as an
+    // uncaughtException and must NOT destroy stdin (node keeps delivering input).
+    try {
       if (value) {
         stream.push(value);
       } else {
@@ -248,14 +268,10 @@ export function getStdinStream(
         stream.push(null);
       }
     } catch (err) {
-      if (readerForThisRead !== reader) {
-        // disown() released this read's reader while it was in flight (stdin may have been
-        // re-owned since), so the read rejected because the stream was unref()ed, not
-        // because it failed. triggerRead() re-arms if/when it is ref()ed again.
-        triggerRead.$call(stream, undefined);
-        return;
-      }
-      stream.destroy(err);
+      // The throw short-circuited addChunk() before maybeReadMore(), so re-arm
+      // the read loop ourselves to keep stdin flowing (libuv does this for node).
+      if (value) triggerRead.$call(stream, undefined);
+      process.nextTick(rethrowUncaught, err);
     }
   }
 

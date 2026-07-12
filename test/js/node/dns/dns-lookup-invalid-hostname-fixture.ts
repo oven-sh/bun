@@ -89,12 +89,19 @@ const httpCode = await new Promise<string | null>(resolve => {
 });
 
 // Underscore is widely used (SRV names etc.) and accepted by glibc; it must
-// still reach the resolver. This also proves the stub receives traffic at all.
-const underscore = await lookup("ok_name.invalid");
+// still reach the resolver. Trailing dot roots the name so c-ares skips
+// resolv.conf search expansion (ndots) and the stub sees the bare QNAME.
+const underscore = await lookup("ok_name.invalid.");
 
-// Numeric literals must still resolve.
+// Numeric literals must still resolve. node:dns short-circuits these via the
+// JS isIP() fast-path, so also exercise the native guard's IP exemption
+// directly via Bun.dns.lookup (which has no JS-side short-circuit).
 const v4 = await lookup("127.0.0.1");
 const v6 = await lookup("::1");
+const bunV6 = await Bun.dns.lookup("::1").then(
+  r => ({ err: null, address: r[0]?.address }),
+  (e: any) => ({ err: e.code ?? e.message, address: undefined }),
+);
 
 // Scoped IPv6 via the system getaddrinfo backend: `:` and `%` fail the charset
 // check and `ares_inet_pton` cannot parse the zone suffix, so the guard must
@@ -117,6 +124,7 @@ console.log(
     underscore: { err: underscore.err ? underscore.err.code : null, address: underscore.address },
     v4: { err: v4.err ? v4.err.code : null, address: v4.address },
     v6: { err: v6.err ? v6.err.code : null, address: v6.address },
+    bunV6,
     v6scopedErr,
     qnames: qnamesAfter,
     originHits,

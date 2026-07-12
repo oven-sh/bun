@@ -42,9 +42,11 @@ test.skipIf(!isLinux)(
     // stub is wired up and the valid-charset path is untouched.
     expect(out.underscore).toEqual({ err: null, address: "127.0.0.1" });
 
-    // Numeric literals still resolve (IPv6 contains ':' and must be exempted).
+    // Numeric literals still resolve. v4/v6 hit the node:dns isIP() fast-path;
+    // bunV6 goes through the native guard and covers the IP-literal exemption.
     expect(out.v4).toEqual({ err: null, address: "127.0.0.1" });
     expect(out.v6).toEqual({ err: null, address: "::1" });
+    expect(out.bunV6).toEqual({ err: null, address: "::1" });
     // Scoped IPv6 (`fe80::1%lo`) via the system backend still resolves.
     expect(out.v6scopedErr).toBeNull();
 

@@ -2984,7 +2984,9 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
     ["Blob([])", new Blob([])],
   ];
   test.concurrent.each(cases)("%s", async (_name, input) => {
-    const result = await $`${BUN} -e ${"process.stdout.write(await Bun.stdin.text())"} < ${input}`.env(bunEnv).nothrow();
+    const result = await $`${BUN} -e ${"process.stdout.write(await Bun.stdin.text())"} < ${input}`
+      .env(bunEnv)
+      .nothrow();
     expect({
       stdout: result.stdout.toString(),
       stderr: result.stderr.toString(),

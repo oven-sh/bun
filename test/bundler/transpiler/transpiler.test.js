@@ -2074,6 +2074,36 @@ console.log(<div {...obj} key="after" />);`),
       expect(imports.filter(({ path }) => path === "react")).toHaveLength(1);
       expect(imports).toHaveLength(2);
     });
+
+    it("reports require() and require.resolve() edges", () => {
+      const src = `
+        const p = require.resolve("./native-addon.node");
+        const q = require("./cjs-dep");
+        const r = require.resolve("side-a");
+        export { p, q, r };
+      `;
+      for (const loader of ["js", "ts", "jsx", "tsx"]) {
+        const imports = new Bun.Transpiler({ loader }).scanImports(src);
+        expect({ loader, imports }).toEqual({
+          loader,
+          imports: [
+            { kind: "require-resolve", path: "./native-addon.node" },
+            { kind: "require-call", path: "./cjs-dep" },
+            { kind: "require-resolve", path: "side-a" },
+          ],
+        });
+      }
+    });
+
+    it("does not report non-require .resolve() calls", () => {
+      const src = `
+        const a = foo.resolve("not-a-dep");
+        const b = require.other("also-not-a-dep");
+        const c = require.resolve(dynamic);
+        const d = require.resolve("two", { paths: [] });
+      `;
+      expect(new Bun.Transpiler({ loader: "js" }).scanImports(src)).toEqual([]);
+    });
   });
 
   const parsed = (code, trim = true, autoExport = false, transpiler_ = transpiler) => {

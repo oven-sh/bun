@@ -848,18 +848,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = Expr::init(t, loc);
         if SCAN_ONLY {
             if let js_ast::ExprData::ECall(call) = expr.data {
-                if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
-                    // is this a require("something")
-                    if self.load_name_from_ref(ident.ref_) == b"require" && call.args.len_u32() == 1
-                    {
-                        if let js_ast::ExprData::EString(s) = call.args.at(0).data {
-                            let _ = self.add_import_record(
-                                ImportKind::Require,
-                                loc,
-                                s.string(self.arena).expect("unreachable"),
-                            );
+                match call.target.data {
+                    js_ast::ExprData::EIdentifier(ident) => {
+                        // is this a require("something")
+                        if self.load_name_from_ref(ident.ref_) == b"require"
+                            && call.args.len_u32() == 1
+                        {
+                            if let js_ast::ExprData::EString(s) = call.args.at(0).data {
+                                let _ = self.add_import_record(
+                                    ImportKind::Require,
+                                    loc,
+                                    s.string(self.arena).expect("unreachable"),
+                                );
+                            }
                         }
                     }
+                    js_ast::ExprData::EDot(dot) => {
+                        // is this a require.resolve("something")
+                        if let js_ast::ExprData::EIdentifier(ident) = dot.target.data {
+                            if dot.name == b"resolve"
+                                && self.load_name_from_ref(ident.ref_) == b"require"
+                                && call.args.len_u32() == 1
+                            {
+                                if let js_ast::ExprData::EString(s) = call.args.at(0).data {
+                                    let _ = self.add_import_record(
+                                        ImportKind::RequireResolve,
+                                        loc,
+                                        s.string(self.arena).expect("unreachable"),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

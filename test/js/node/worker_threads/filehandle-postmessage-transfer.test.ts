@@ -3,7 +3,7 @@ import { tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join } from "node:path";
-import { MessageChannel, receiveMessageOnPort, Worker } from "node:worker_threads";
+import { markAsUntransferable, MessageChannel, receiveMessageOnPort, Worker } from "node:worker_threads";
 
 test("MessagePort.postMessage transfers a FileHandle", async () => {
   const dir = tmpdirSync("port-fh-transfer");
@@ -125,6 +125,36 @@ test("MessagePort.postMessage restores a transferred FileHandle when serializati
   } finally {
     if (rx?.fd >= 0) await rx.close();
     if (fh.fd !== -1) await fh.close();
+    port1.close();
+    port2.close();
+  }
+});
+
+test("MessagePort.postMessage rejects a FileHandle marked untransferable", async () => {
+  const dir = tmpdirSync("port-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh = await fs.promises.open(file, "r");
+  const ok = await fs.promises.open(file, "r");
+  markAsUntransferable(fh);
+  const { port1, port2 } = new MessageChannel();
+  let rx: any;
+  try {
+    // Second handle proves rollback restored the earlier neutered entry too.
+    expect(() => port2.postMessage({ ok, fh }, [ok as any, fh as any])).toThrow(
+      expect.objectContaining({ name: "DataCloneError" }),
+    );
+    expect(fh.fd).toBeGreaterThanOrEqual(0);
+    expect(ok.fd).toBeGreaterThanOrEqual(0);
+    // The unmarked handle still transfers on its own.
+    const received = new Promise<any>(resolve => port1.on("message", resolve));
+    port2.postMessage(ok, [ok as any]);
+    rx = await received;
+    expect(rx.fd).toBeGreaterThanOrEqual(0);
+  } finally {
+    if (rx?.fd >= 0) await rx.close();
+    if (ok.fd !== -1) await ok.close();
+    await fh.close();
     port1.close();
     port2.close();
   }

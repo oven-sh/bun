@@ -102,7 +102,9 @@ test("MessagePort.postMessage restores a transferred FileHandle when serializati
   try {
     // The function is non-cloneable, so native postMessage throws after the
     // handle was already neutered; the rollback must restore it.
-    expect(() => port2.postMessage({ fh, bad: () => {} }, [fh as any])).toThrow();
+    expect(() => port2.postMessage({ fh, bad: () => {} }, [fh as any])).toThrow(
+      expect.objectContaining({ name: "DataCloneError" }),
+    );
     expect(fh.fd).toBeGreaterThanOrEqual(0);
     const buf = Buffer.alloc(5);
     const { bytesRead } = await fh.read(buf, 0, 5, 0);

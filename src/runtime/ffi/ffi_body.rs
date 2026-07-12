@@ -439,6 +439,16 @@ static CACHED_DEFAULT_SYSTEM_LIBRARY_DIR: OnceLock<bun_core::ZBox> = OnceLock::n
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR_ONCE: Once = Once::new();
 
+/// TinyCC's in-memory error messages sometimes carry leading non-printable
+/// garbage bytes; skip to the first printable ASCII byte (`0x21..=0x7e`).
+fn strip_leading_nonprintable(msg: &[u8]) -> &[u8] {
+    let start = msg
+        .iter()
+        .position(|&b| (0x21..=0x7e).contains(&b))
+        .unwrap_or(msg.len());
+    &msg[start..]
+}
+
 impl CompileC {
     /// # Safety
     /// `this_` is the `ConfigErr::ctx` pointer round-tripped through TinyCC; it
@@ -455,7 +465,7 @@ impl CompileC {
         // SAFETY: TinyCC threads our own `&mut CompileC` back as `ctx`; we hold
         // the unique borrow for the duration of the callback.
         let this = unsafe { &mut *this_ };
-        let mut msg: &[u8] = if message.is_null() {
+        let msg: &[u8] = if message.is_null() {
             b""
         } else {
             // SAFETY: TCC guarantees `message` is a valid NUL-terminated string when non-null.
@@ -465,17 +475,7 @@ impl CompileC {
             return;
         }
 
-        let mut offset: usize = 0;
-        // the message we get from TCC sometimes has garbage in it
-        // i think because we're doing in-memory compilation
-        while offset < msg.len() {
-            if msg[offset] > 0x20 && msg[offset] < 0x7f {
-                break;
-            }
-            offset += 1;
-        }
-        msg = &msg[offset..];
-
+        let msg = strip_leading_nonprintable(msg);
         this.deferred_errors.push(Box::<[u8]>::from(msg));
     }
 
@@ -1979,19 +1979,8 @@ impl Function {
         // SAFETY: TinyCC threads our own `&mut Function` back as `ctx`.
         let this = unsafe { &mut *ctx };
         // SAFETY: TCC passes a valid NUL-terminated string
-        let mut msg: &[u8] = unsafe { bun_core::ffi::cstr(message) }.to_bytes();
-        if !msg.is_empty() {
-            let mut offset: usize = 0;
-            // the message we get from TCC sometimes has garbage in it
-            // i think because we're doing in-memory compilation
-            while offset < msg.len() {
-                if msg[offset] > 0x20 && msg[offset] < 0x7f {
-                    break;
-                }
-                offset += 1;
-            }
-            msg = &msg[offset..];
-        }
+        let msg: &[u8] = unsafe { bun_core::ffi::cstr(message) }.to_bytes();
+        let msg = strip_leading_nonprintable(msg);
 
         this.step = Step::Failed {
             msg: Box::<[u8]>::from(msg),

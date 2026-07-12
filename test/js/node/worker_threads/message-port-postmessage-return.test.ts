@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { MessageChannel, Worker } from "node:worker_threads";
 
 test("MessagePort.postMessage() returns true, or undefined when the port is closed/detached", async () => {

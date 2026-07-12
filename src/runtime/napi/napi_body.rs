@@ -2617,7 +2617,7 @@ impl ThreadSafeFunction {
     pub fn enqueue(&mut self, ctx: *mut c_void, block: bool) -> napi_status {
         let _g = self.lock.lock_guard();
         if block {
-            while self.queue.is_blocked() {
+            while self.queue.is_blocked() && !self.is_closing() {
                 self.blocking_condvar.wait(&self.lock);
             }
         } else {
@@ -2728,7 +2728,9 @@ impl ThreadSafeFunction {
                         .store(ClosingState::Closing as u8, Ordering::SeqCst);
                     self.aborted.store(true, Ordering::SeqCst);
                     if self.queue.max_queue_size > 0 {
-                        self.blocking_condvar.signal();
+                        // Wake all producers blocked in enqueue()'s bounded
+                        // queue wait so they observe is_closing and release.
+                        self.blocking_condvar.broadcast();
                     }
                 }
                 self.schedule_dispatch();

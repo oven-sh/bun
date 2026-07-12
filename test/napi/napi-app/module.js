@@ -94,6 +94,17 @@ nativeTests.test_threadsafe_function_abort_then_last_release = async () => {
   // keepalive would hang it forever
 };
 
+nativeTests.test_threadsafe_function_abort_blocked_producers = async () => {
+  // create (max_queue_size=1, thread_count=3), fill the queue, spawn two
+  // producers that block on the condvar, then abort
+  nativeTests.test_napi_threadsafe_function_abort_blocked_producers();
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_blocked_producers_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_blocked_producers_finalized());
+};
+
 nativeTests.test_get_exception = (_, value) => {
   function thrower() {
     throw value;

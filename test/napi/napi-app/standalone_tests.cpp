@@ -2,11 +2,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cinttypes>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #include "utils.h"
 
@@ -133,6 +136,61 @@ static napi_value
 test_napi_threadsafe_function_abort_then_last_release_finalized(
     const Napi::CallbackInfo &info) {
   return Napi::Boolean::New(info.Env(), tsfn_abort_release_finalized);
+}
+
+static napi_threadsafe_function tsfn_abort_blocked = nullptr;
+static bool tsfn_abort_blocked_finalized = false;
+static std::atomic<int> tsfn_abort_blocked_about_to_call{0};
+
+static void tsfn_abort_blocked_finalize(napi_env env, void *finalize_data,
+                                        void *finalize_hint) {
+  tsfn_abort_blocked_finalized = true;
+}
+
+static void tsfn_abort_blocked_producer() {
+  tsfn_abort_blocked_about_to_call.fetch_add(1);
+  napi_call_threadsafe_function(tsfn_abort_blocked, nullptr,
+                                napi_tsfn_blocking);
+}
+
+// Create a tsfn with max_queue_size=1 and initial_thread_count=3, fill the
+// queue, spawn two producers that block in napi_call_threadsafe_function
+// (napi_tsfn_blocking), then abort. Both producers must wake, observe
+// napi_closing, and the finalizer must run so the process exits.
+static napi_value test_napi_threadsafe_function_abort_blocked_producers(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "abort_blocked_producers");
+  tsfn_abort_blocked_finalized = false;
+  tsfn_abort_blocked_about_to_call.store(0);
+  NODE_API_CALL(
+      env, napi_create_threadsafe_function(
+               env, /* JavaScript function */ nullptr,
+               /* async resource */ nullptr, resource_name,
+               /* max queue size */ 1,
+               /* initial thread count */ 3, /* finalize data */ nullptr,
+               tsfn_abort_blocked_finalize, /* context */ nullptr,
+               &noop_callback, &tsfn_abort_blocked));
+  // Fill the queue so both producer threads block on the condvar. The JS
+  // thread is parked in this function, so dispatch cannot drain it yet.
+  NODE_API_CALL(env, napi_call_threadsafe_function(tsfn_abort_blocked, nullptr,
+                                                   napi_tsfn_nonblocking));
+  std::thread(tsfn_abort_blocked_producer).detach();
+  std::thread(tsfn_abort_blocked_producer).detach();
+  while (tsfn_abort_blocked_about_to_call.load() < 2) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_blocked,
+                                                      napi_tsfn_abort));
+  tsfn_abort_blocked = nullptr;
+  return env.Undefined();
+}
+
+static napi_value
+test_napi_threadsafe_function_abort_blocked_producers_finalized(
+    const Napi::CallbackInfo &info) {
+  return Napi::Boolean::New(info.Env(), tsfn_abort_blocked_finalized);
 }
 
 static napi_value
@@ -2550,6 +2608,11 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(
       env, exports,
       test_napi_threadsafe_function_abort_then_last_release_finalized);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_abort_blocked_producers);
+  REGISTER_FUNCTION(
+      env, exports,
+      test_napi_threadsafe_function_abort_blocked_producers_finalized);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_string);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_bigint);
   REGISTER_FUNCTION(env, exports, test_napi_delete_property);

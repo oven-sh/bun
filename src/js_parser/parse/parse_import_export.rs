@@ -72,7 +72,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Reshaped for borrowck — EString::slice takes &mut self (rope flatten),
             // so capture the slice (arena-lifetime) before re-using `value` by-value below.
             let slice_opt: Option<&'a [u8]> = if let ExprData::EString(e_string) = &mut value.data {
-                if e_string.is_utf8() && e_string.is_present() {
+                if e_string.is_present() {
                     Some(e_string.slice(p.arena))
                 } else {
                     None

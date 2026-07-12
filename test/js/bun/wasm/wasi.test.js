@@ -91,6 +91,42 @@ it("random_get returns EINVAL for out-of-bounds guest memory instead of throwing
   expect(wasi.wasiImport.random_get(byteLength - 8, 8)).toBe(WASI_ESUCCESS);
 });
 
+it("getImportObject returns wasi_snapshot_preview1 by default", () => {
+  const wasi = new WASI({});
+  const importObject = wasi.getImportObject();
+  expect(Object.keys(importObject)).toEqual(["wasi_snapshot_preview1"]);
+  expect(importObject.wasi_snapshot_preview1).toBe(wasi.wasiImport);
+});
+
+it("getImportObject respects version: 'preview1'", () => {
+  const wasi = new WASI({ version: "preview1" });
+  const importObject = wasi.getImportObject();
+  expect(Object.keys(importObject)).toEqual(["wasi_snapshot_preview1"]);
+  expect(importObject.wasi_snapshot_preview1).toBe(wasi.wasiImport);
+});
+
+it("getImportObject respects version: 'unstable'", () => {
+  const wasi = new WASI({ version: "unstable" });
+  const importObject = wasi.getImportObject();
+  expect(Object.keys(importObject)).toEqual(["wasi_unstable"]);
+  expect(importObject.wasi_unstable).toBe(wasi.wasiImport);
+});
+
+it("WASI throws for an unsupported version", () => {
+  expect(() => new WASI({ version: "bogus" })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+  );
+});
+
+it("getImportObject provides every import a WASI module needs", async () => {
+  // hello-wasi.wasm imports from the wasi_unstable namespace.
+  const wasi = new WASI({ version: "unstable" });
+  const bytes = fs.readFileSync(path.join(import.meta.dir, "hello-wasi.wasm"));
+  // A missing import throws a LinkError, so instantiating proves completeness.
+  const { instance } = await WebAssembly.instantiate(bytes, wasi.getImportObject());
+  expect(typeof instance.exports._start).toBe("function");
+});
+
 it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   using dir = tempDir("wasi-set-rights", {
     "inside.txt": "inside",

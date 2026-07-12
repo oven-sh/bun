@@ -794,6 +794,12 @@ var require_wasi = __commonJS({
         let preopens = wasiConfig.preopens ?? defaultConfig.preopens;
         this.env = wasiConfig.env ?? defaultConfig.env;
 
+        const version = wasiConfig.version ?? "preview1";
+        if (version !== "unstable" && version !== "preview1") {
+          throw $ERR_INVALID_ARG_VALUE("options.version", version, "unsupported WASI version");
+        }
+        this.version = version;
+
         const args = wasiConfig.args ?? defaultConfig.args;
         this.memory = void 0;
         this.view = void 0;
@@ -2003,6 +2009,14 @@ var require_wasi = __commonJS({
                 "\n",
             );
           }
+        }
+      }
+      getImportObject() {
+        switch (this.version) {
+          case "unstable":
+            return { wasi_unstable: this.wasiImport };
+          default:
+            return { wasi_snapshot_preview1: this.wasiImport };
         }
       }
       initWasiFdInfo() {

@@ -595,8 +595,11 @@ ${line}
 registry=https://somehost.com/org1/npm/registry/
 //somehost.com/:_auth=${Buffer.from("bilbo:verysecure").toString("base64")}
 `);
-      expect(result.default_registry_username).toBe("bilbo");
-      expect(result.default_registry_password).toBe("verysecure");
+      // `_auth` is forwarded verbatim; the config layer never decodes it into
+      // username/password (whoami derives the username in `Scope::from_api`).
+      expect(result.default_registry_auth).toBe(Buffer.from("bilbo:verysecure").toString("base64"));
+      expect(result.default_registry_username).toBe("");
+      expect(result.default_registry_password).toBe("");
     });
 
     test("host-root username + _password apply to a deep default registry", () => {
@@ -690,6 +693,78 @@ registry=https://:TOK@somehost.com/
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("supplies no credentials");
     expect(exitCode).toBe(0);
+  });
+
+  // `Scope::from_api` decodes `_auth` solely to derive the identity `bun pm whoami`
+  // prints; the credential itself is always forwarded verbatim.
+  describe("bun pm whoami derives the username from _auth", () => {
+    async function whoamiWith(files: Record<string, string>) {
+      using dir = tempDir("npmrc-whoami-auth", {
+        "home/.gitkeep": "",
+        "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+        ...files,
+      });
+      const homeDir = join(String(dir), "home");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "whoami"],
+        cwd: String(dir),
+        env: { ...env, HOME: homeDir, USERPROFILE: homeDir, XDG_CONFIG_HOME: homeDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    function whoami(authValue: string) {
+      return whoamiWith({
+        ".npmrc": `registry=https://somehost.com/\n//somehost.com/:_auth=${authValue}\n`,
+      });
+    }
+
+    test("a decodable _auth prints its username", async () => {
+      const { stdout, exitCode } = await whoami(Buffer.from("alice:s3cret").toString("base64"));
+      expect(stdout).toBe("alice\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a non-decodable _auth carries no identity", async () => {
+      const { stdout, stderr, exitCode } = await whoami("!!not-base64!!");
+      expect(stdout).toBe("");
+      expect(stderr).toContain("missing authentication");
+      expect(exitCode).toBe(1);
+    });
+
+    test("an _auth with a blank username carries no identity", async () => {
+      const { stdout, stderr, exitCode } = await whoami(Buffer.from(":s3cret").toString("base64"));
+      expect(stdout).toBe("");
+      expect(stderr).toContain("missing authentication");
+      expect(exitCode).toBe(1);
+    });
+
+    test("an _auth with a blank password carries no identity", async () => {
+      const { stdout, stderr, exitCode } = await whoami(Buffer.from("tok:").toString("base64"));
+      expect(stdout).toBe("");
+      expect(stderr).toContain("missing authentication");
+      expect(exitCode).toBe(1);
+    });
+
+    // The wire sends `Basic <_auth>` here (auth beats username+password), so whoami
+    // must not report the bunfig username — an identity from a credential never sent.
+    test.each([
+      ["opaque", "!!not-base64!!"],
+      ["blank-password", Buffer.from("tok:").toString("base64")],
+    ])("bunfig username/password does not leak an identity past _auth (%s)", async (_name, authValue) => {
+      const { stdout, stderr, exitCode } = await whoamiWith({
+        "bunfig.toml": `[install.registry]\nurl = "https://somehost.com/"\nusername = "bunfig-user"\npassword = "bunfig-pass"\n`,
+        ".npmrc": `//somehost.com/:_auth=${authValue}\n`,
+      });
+      expect(stdout).toBe("");
+      expect(stderr).toContain("missing authentication");
+      expect(exitCode).toBe(1);
+    });
   });
 });
 
@@ -843,7 +918,8 @@ describe("a config key that differs from the registry only by host case", () => 
     const stderr = await stderrOf(
       `registry=https://Registry.Example.COM/api/\n//Registry.Example.COM/:_authToken=SECRETTOKEN\n`,
     );
-    expect(stderr).toContain("supplies no credential to any registry");
+    expect(stderr).toContain('the .npmrc key "//Registry.Example.COM/" matches no registry');
+    expect(stderr).toContain('npm writes this key as "//registry.example.com/"');
     expect(stderr).not.toContain("SECRETTOKEN");
   });
 
@@ -851,23 +927,24 @@ describe("a config key that differs from the registry only by host case", () => 
     const stderr = await stderrOf(
       `registry=https://Registry.Example.COM/api/\n//registry.example.com/:_authToken=SECRETTOKEN\n`,
     );
-    expect(stderr).not.toContain("supplies no credential to any registry");
+    expect(stderr).not.toContain("matches no registry");
   });
 
   it("says nothing about an uppercase key for an unrelated host", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//Other.Example.COM/:_authToken=X\n`);
-    expect(stderr).not.toContain("supplies no credential to any registry");
+    expect(stderr).not.toContain("matches no registry");
   });
 
   it("warns about a key that spells out the default port", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//example.com:443/:_authToken=SECRETTOKEN\n`);
-    expect(stderr).toContain("supplies no credential to any registry");
+    expect(stderr).toContain('the .npmrc key "//example.com:443/" matches no registry');
+    expect(stderr).toContain('npm writes this key as "//example.com/"');
     expect(stderr).not.toContain("SECRETTOKEN");
   });
 
   it("says nothing about a non-default port spelled out", async () => {
     const stderr = await stderrOf(`registry=https://example.com:8443/api/\n//example.com:8443/:_authToken=S\n`);
-    expect(stderr).not.toContain("supplies no credential to any registry");
+    expect(stderr).not.toContain("matches no registry");
   });
 
   // The warning promises that respelling the key changes something. These are the shapes
@@ -876,27 +953,27 @@ describe("a config key that differs from the registry only by host case", () => 
     const stderr = await stderrOf(
       `registry=https://example.com/api/\n//example.com/api/:_authToken=GOOD\n//Example.COM/:_authToken=BAD\n`,
     );
-    expect(stderr).not.toContain("supplies no credential to any registry");
+    expect(stderr).not.toContain("matches no registry");
   });
 
   it("says nothing about an ancestor email, which never walks", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM/:email=me@x.com\n`);
-    expect(stderr).not.toContain("supplies no credential to any registry");
+    expect(stderr).not.toContain("matches no registry");
   });
 
   it("says nothing about an ancestor's lone username, which never applies", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM/:username=bob\n`);
-    expect(stderr).not.toContain("supplies no credential to any registry");
+    expect(stderr).not.toContain("matches no registry");
   });
 
   it("says nothing about an empty value", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//Example.COM/:_authToken=\n`);
-    expect(stderr).not.toContain("supplies no credential to any registry");
+    expect(stderr).not.toContain("matches no registry");
   });
 
   it("says nothing when the path case differs, since paths are case-sensitive", async () => {
     const stderr = await stderrOf(`registry=https://example.com/api/\n//example.com/API/:_authToken=X\n`);
-    expect(stderr).not.toContain("supplies no credential to any registry");
+    expect(stderr).not.toContain("matches no registry");
   });
 
   // A default port is a property of the scheme, so a key is only dead if it supplies
@@ -906,7 +983,7 @@ describe("a config key that differs from the registry only by host case", () => 
       `registry=http://example.com:443/api/\n` +
       `@s:registry=https://example.com/api/\n` +
       `//example.com:443/api/:_authToken=SECRETTOKEN\n`;
-    expect(await stderrOf(npmrc)).not.toContain("supplies no credential to any registry");
+    expect(await stderrOf(npmrc)).not.toContain("matches no registry");
     expect(loadNpmrc(npmrc).default_registry_token).toBe("SECRETTOKEN");
   });
 
@@ -916,7 +993,7 @@ describe("a config key that differs from the registry only by host case", () => 
     const stderr = await stderrOf(
       `registry=https://example.com/\n//Example.COM/:_authToken=A\n//example.com/:_authToken=B\n`,
     );
-    expect(stderr).not.toContain("supplies no credential to any registry");
+    expect(stderr).not.toContain("matches no registry");
   });
 
   // A credential can be arbitrary bytes. `bun pm view` panicked on non-UTF-8 (lossy
@@ -949,6 +1026,7 @@ describe("a config key that differs from the registry only by host case", () => 
     const stderr = await stderrOf(
       `registry=https://example.com/\n//example.com/:_authToken=B\n//Example.COM/:_authToken=A\n`,
     );
-    expect(stderr).toContain("supplies no credential to any registry");
+    expect(stderr).toContain('the .npmrc key "//Example.COM/" matches no registry');
+    expect(stderr).toContain('npm writes this key as "//example.com/"');
   });
 });

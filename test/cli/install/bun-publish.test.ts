@@ -9,6 +9,7 @@ import {
   pack,
   runBunInstall,
   stderrForInstall,
+  tempDir,
   tmpdirSync,
 } from "harness";
 import { join } from "path";
@@ -284,6 +285,49 @@ test("can publish a package then install it", async () => {
   await runBunInstall(env, packageDir);
   expect(await exists(join(packageDir, "node_modules", "publish-pkg-1", "package.json"))).toBeTrue();
 });
+
+describe("can publish with only _auth from .npmrc", () => {
+  // npm forwards whatever `_auth` holds as `Basic <value>`, decodable or not.
+  const cases: Array<[name: string, blob: string]> = [
+    ["decodable base64", Buffer.from("alice:s3cret").toString("base64")],
+    ["opaque non-base64", "!!not-base64!!"],
+  ];
+
+  test.each(cases)("%s reaches the registry verbatim", async (_name, blob) => {
+    const { promise: sawPublish, resolve: onPublish, reject: onUnexpected } = Promise.withResolvers<string | null>();
+    using mockRegistry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const pathname = new URL(req.url).pathname;
+        if (req.method === "PUT" && pathname === "/npmrc-auth-pkg") {
+          onPublish(req.headers.get("authorization"));
+          return new Response("OK", { status: 200 });
+        }
+        onUnexpected(new Error(`unexpected request: ${req.method} ${pathname}`));
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    const host = `localhost:${mockRegistry.port}`;
+    using dir = tempDir("publish-npmrc-auth", {
+      "package.json": JSON.stringify({ name: "npmrc-auth-pkg", version: "1.0.0" }),
+      ".npmrc": `registry=http://${host}/\n//${host}/:_auth=${blob}\n`,
+      // An empty home so the developer's own `.npmrc`/global bunfig can't leak in.
+      "home/.gitkeep": "",
+    });
+    const home = join(String(dir), "home");
+
+    const { out, err, exitCode } = await publish(
+      { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+      String(dir),
+    );
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ npmrc-auth-pkg@1.0.0");
+    expect(await sawPublish).toBe(`Basic ${blob}`);
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("can publish from a tarball", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const bunfig = await registry.authBunfig("tarball");

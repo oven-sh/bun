@@ -1,5 +1,6 @@
 import { write } from "bun";
 import { describe, expect, test } from "bun:test";
+import { iniInternals } from "bun:internal-for-testing";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 
@@ -81,14 +82,17 @@ describe.concurrent("redact", async () => {
     },
     {
       // The most common .npmrc authoring mistake, and the value is always a live secret.
+      // npm decodes _password with Buffer.from(v, "base64"), which never throws — it
+      // skips invalid bytes — so there is no diagnostic and nothing may reach stderr.
       title: "plaintext _password",
       npmrc: "//registry.npmjs.org/:username=alice\n//registry.npmjs.org/:_password=p@ssw0rd!",
-      expected: "*",
+      expected: "",
       secret: "p@ssw0rd!",
+      forbidden: "is not valid base64",
     },
   ];
 
-  for (const { title, bunfig, npmrc, expected, secret } of tests) {
+  for (const { title, bunfig, npmrc, expected, secret, forbidden } of tests) {
     test(title + (bunfig ? " (bunfig)" : " (npmrc)"), async () => {
       const testDir = tmpdirSync();
       await Promise.all([
@@ -110,6 +114,7 @@ describe.concurrent("redact", async () => {
       expect(exitCode1).toBe(+!!bunfig);
       if (expected) expect(err1).toContain(expected);
       if (secret) expect(err1).not.toContain(secret);
+      if (forbidden) expect(err1).not.toContain(forbidden);
 
       // once with color
       await using proc2 = Bun.spawn({
@@ -125,6 +130,21 @@ describe.concurrent("redact", async () => {
       expect(exitCode2).toBe(+!!bunfig);
       if (expected) expect(err2).toContain(expected);
       if (secret) expect(err2).not.toContain(secret);
+      if (forbidden) expect(err2).not.toContain(forbidden);
     });
   }
+});
+
+// The retention half of the "plaintext _password" case above: Buffer.from(v, "base64")
+// parity means an invalid-base64 _password is decoded leniently (invalid bytes skipped),
+// not dropped — "aGVsbG8*!" must yield the same credential npm derives: "hello".
+test("invalid base64 _password keeps the lenient-decoded credential", () => {
+  const result = iniInternals.loadNpmrc(
+    "registry=https://registry.npmjs.org/\n" +
+      "//registry.npmjs.org/:username=alice\n" +
+      "//registry.npmjs.org/:_password=aGVsbG8*!",
+  );
+  expect(result.default_registry_username).toBe("alice");
+  expect(result.default_registry_password).toBe(Buffer.from("aGVsbG8*!", "base64").toString());
+  expect(result.default_registry_password).toBe("hello");
 });

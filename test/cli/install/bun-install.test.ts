@@ -936,6 +936,32 @@ describe.concurrent("bun-install", () => {
         expect(auth).toBe(`Basic ${frodo}`);
       });
 
+      // `if (token)` comes before `else if (auth)`, so `_authToken` wins over
+      // `_auth` at the same path regardless of line order.
+      it("_authToken beats _auth at the same path: _authToken first", async () => {
+        const auth = await probeAuthorization(host => `//${host}/:_authToken=TOKEN\n//${host}/:_auth=${frodo}`);
+        expect(auth).toBe("Bearer TOKEN");
+      });
+
+      it("_authToken beats _auth at the same path: _auth first", async () => {
+        const auth = await probeAuthorization(host => `//${host}/:_auth=${frodo}\n//${host}/:_authToken=TOKEN`);
+        expect(auth).toBe("Bearer TOKEN");
+      });
+
+      it("_authToken beats username + _password at the same path: _authToken first", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:_authToken=TOKEN\n//${host}/:username=gandalf\n//${host}/:_password=${password}`,
+        );
+        expect(auth).toBe("Bearer TOKEN");
+      });
+
+      it("_authToken beats username + _password at the same path: username first", async () => {
+        const auth = await probeAuthorization(
+          host => `//${host}/:username=gandalf\n//${host}/:_password=${password}\n//${host}/:_authToken=TOKEN`,
+        );
+        expect(auth).toBe("Bearer TOKEN");
+      });
+
       it("a deeper email is not a credential and does not shadow a shallower _authToken", async () => {
         const auth = await probeAuthorization(
           host => `//${host}/:_authToken=ROOT\n//${host}${registryPath}:email=gandalf@example.com`,
@@ -1159,6 +1185,12 @@ describe.concurrent("bun-install", () => {
         expect(auth).toBe(`Basic ${blob}`);
       });
 
+      it("sends an _auth that is not even valid base64", async () => {
+        const blob = "!!not-base64!!";
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${blob}`);
+        expect(auth).toBe(`Basic ${blob}`);
+      });
+
       it("sends an _auth with a blank password", async () => {
         const value = b64("tok:");
         const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${value}`);
@@ -1179,6 +1211,32 @@ describe.concurrent("bun-install", () => {
       it("sends a decodable _auth verbatim rather than re-encoding it", async () => {
         const value = b64("ab:cd");
         const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${value}`);
+        expect(auth).toBe(`Basic ${value}`);
+      });
+
+      // Which credential wins must not depend on whether `_auth` decodes: with
+      // bunfig.toml username + password also present, all three blobs go out verbatim.
+      it("a non-decodable _auth wins over bunfig.toml username + password", async () => {
+        const blob = "!!not-base64!!";
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${blob}`, {
+          bunfigBasic: { username: "bunfig-user", password: "bunfig-pass" },
+        });
+        expect(auth).toBe(`Basic ${blob}`);
+      });
+
+      it("a colon-less _auth wins over bunfig.toml username + password", async () => {
+        const blob = b64("opaquetokenblob");
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${blob}`, {
+          bunfigBasic: { username: "bunfig-user", password: "bunfig-pass" },
+        });
+        expect(auth).toBe(`Basic ${blob}`);
+      });
+
+      it("a decodable _auth wins over bunfig.toml username + password, verbatim", async () => {
+        const value = b64("alice:s3cret");
+        const auth = await probeAuthorization(host => `//${host}${registryPath}:_auth=${value}`, {
+          bunfigBasic: { username: "bunfig-user", password: "bunfig-pass" },
+        });
         expect(auth).toBe(`Basic ${value}`);
       });
     });

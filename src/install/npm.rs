@@ -295,13 +295,11 @@ pub mod registry {
     pub struct Scope {
         pub name: Box<[u8]>,
         // https://github.com/npm/npm-registry-fetch/blob/main/lib/auth.js#L96
-        // base64("${username}:${password}")
+        // Sent verbatim as `Basic <auth>`. Usually base64("${username}:${password}"),
+        // but npm forwards whatever `_auth` holds — do not assume it decodes.
         pub auth: Box<[u8]>,
-        // URL may contain these special suffixes in the pathname:
-        //  :_authToken
-        //  :username
-        //  :_password
-        //  :_auth
+        // Registry href; yarn-style `:_authToken`/`:username`/`:_password`/`:_auth`
+        // pathname suffixes are always stripped by `parse_embedded_auth`.
         pub url: OwnedURL,
         pub url_hash: u64,
         pub token: Box<[u8]>,
@@ -486,9 +484,30 @@ pub mod registry {
 
                     // `.npmrc`'s `_auth`, forwarded verbatim: npm never decodes it, so an
                     // opaque blob or a blank password is a credential, not an error. The
-                    // decoded halves below still populate `user` for `bun pm whoami`.
+                    // decode below only derives `user` for `bun pm whoami` and never
+                    // gates the credential.
                     if auth.is_empty() && !registry_auth.is_empty() {
                         auth = &registry_auth;
+                        let decode_len = bun_base64::decode_len(&registry_auth);
+                        let mut decoded = vec![0u8; decode_len].into_boxed_slice();
+                        let result = bun_base64::decode(&mut decoded[..], &registry_auth);
+                        if result.is_successful() {
+                            let count = result.count;
+                            // A blank password (`user:`) or blank username (`:pass`) is
+                            // a real registry pattern; leave `user` empty for whoami then.
+                            if let Some(colon_idx) =
+                                decoded[..count].iter().position(|&b| b == b':')
+                            {
+                                if colon_idx > 0 && colon_idx + 1 < count {
+                                    output_buf_owned = decoded;
+                                    user = &mut output_buf_owned[..count];
+                                }
+                            }
+                        }
+                        // `_auth` is the chosen credential either way; falling through
+                        // would let a bunfig/npmrc username set `user` to an identity
+                        // the wire never sends.
+                        break 'outer;
                     }
 
                     registry.username = env.get_auto(&registry.username).into();
@@ -508,11 +527,6 @@ pub mod registry {
                         if auth.is_empty() {
                             auth = bun_core::base64::standard_encode(output_buf, user);
                         }
-                        break 'outer;
-                    }
-
-                    // An opaque `_auth` with no decodable halves: nothing else to build.
-                    if !auth.is_empty() {
                         break 'outer;
                     }
                 }

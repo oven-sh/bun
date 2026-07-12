@@ -8,7 +8,7 @@
 use core::fmt;
 
 use bun_alloc::AllocError;
-use bun_ast::{Loc, Log, Source};
+use bun_ast::Loc;
 
 type OOM<T> = Result<T, AllocError>;
 
@@ -89,7 +89,7 @@ impl<T> IniOption<T> {
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
 pub enum ConfigOpt {
-    /// `${username}:${password}` encoded in base64
+    /// usually `${username}:${password}` encoded in base64, but sent verbatim
     #[strum(serialize = "_auth")]
     _Auth,
 
@@ -151,30 +151,17 @@ impl ConfigItem {
         }))
     }
 
-    /// Duplicate the value, decoding it if it is base64 encoded.
-    pub fn dupe_value_decoded(&self, log: &mut Log, source: &Source) -> OOM<Option<Box<[u8]>>> {
+    /// Duplicate the value, decoding it if it is base64 encoded. Decoding
+    /// matches npm's `Buffer.from(value, "base64")`: it never fails — invalid
+    /// bytes are skipped and as much data as possible is decoded.
+    pub fn dupe_value_decoded(&self) -> OOM<Box<[u8]>> {
         if self.optname.is_base64_encoded() {
-            if self.value.is_empty() {
-                return Ok(Some(Box::default()));
-            }
-            let len = bun_base64::decode_len(&self.value);
+            let len = bun_base64::decode_lenient_len(self.value.len());
             let mut slice = vec![0u8; len].into_boxed_slice();
-            let result = bun_base64::decode(&mut slice[..], &self.value);
-            if !result.is_successful() {
-                log.add_error_fmt_opts(
-                    format_args!("{} is not valid base64", <&'static str>::from(self.optname)),
-                    bun_ast::AddErrorOptions {
-                        source: Some(source),
-                        loc: self.loc,
-                        redact_sensitive_information: true,
-                        ..Default::default()
-                    },
-                );
-                return Ok(None);
-            }
-            return Ok(Some(Box::<[u8]>::from(&slice[..result.count])));
+            let count = bun_base64::decode_lenient(&mut slice[..], &self.value, false);
+            return Ok(Box::<[u8]>::from(&slice[..count]));
         }
-        Ok(Some(Box::<[u8]>::from(&*self.value)))
+        Ok(Box::<[u8]>::from(&*self.value))
     }
 
     // deinit -> Drop: Box<[u8]> fields drop automatically.
@@ -1571,7 +1558,7 @@ mod draft {
             scope_urls.push(Box::<[u8]>::from(&*v.url));
         }
 
-        // An empty `_auth` never wins `hasAuth`, so it never reaches `handle_auth`.
+        // An empty `_auth` never wins `hasAuth`, so it never reaches `apply_conf_item`.
         // Diagnose it here, where every registry is visible. npm walks past ancestor
         // keys silently, so only a line naming a registry exactly is diagnosed.
         for conf_item in configs.iter() {
@@ -1621,7 +1608,7 @@ mod draft {
             }
         }
 
-        let mut dead = vec![false; configs.len()];
+        let mut dead: Vec<Option<Box<[u8]>>> = vec![None; configs.len()];
         for (host, pathname, default_port) in registries.iter() {
             let differs = |c: &ConfigItem| {
                 *normalize_conf_key(&c.registry_url, default_port) != *c.registry_url
@@ -1638,18 +1625,25 @@ mod draft {
                 normalized.push(dup);
             }
             for i in credential_items(&normalized, host, pathname) {
-                if !applied[i] && differs(&configs[i]) {
-                    dead[i] = true;
+                if !applied[i] && differs(&configs[i]) && dead[i].is_none() {
+                    dead[i] = Some(core::mem::take(&mut normalized[i].registry_url));
                 }
             }
         }
 
         for (i, conf_item) in configs.iter().enumerate() {
-            if !dead[i] {
+            let Some(respelled) = &dead[i] else {
                 continue;
-            }
-            log.add_warning_opts(
-                b"this .npmrc line supplies no credential to any registry: keys are matched literally, and npm writes them with a lowercase host and no default port",
+            };
+            log.add_warning_fmt_opts_with_note(
+                format_args!(
+                    "the .npmrc key \"//{}\" matches no registry",
+                    bstr::BStr::new(&conf_item.registry_url),
+                ),
+                format_args!(
+                    "npm writes this key as \"//{}\"",
+                    bstr::BStr::new(respelled)
+                ),
                 bun_ast::AddErrorOptions {
                     source: Some(&sources[conf_item.source_idx as usize]),
                     loc: conf_item.loc,
@@ -1678,16 +1672,14 @@ mod draft {
                 install.default_registry.as_mut().unwrap()
             };
             for &i in &default_items {
-                let conf_item = &configs[i];
-                apply_conf_item(v, conf_item, log, &sources[conf_item.source_idx as usize])?;
+                apply_conf_item(v, &configs[i])?;
             }
         }
 
         for (url_bytes, v) in scope_urls.iter().zip(registry_map.scopes.values_mut()) {
             let (host, pathname) = registry_key_parts(&URL::parse(url_bytes));
             for &i in &credential_items(configs, &host, &pathname) {
-                let conf_item = &configs[i];
-                apply_conf_item(v, conf_item, log, &sources[conf_item.source_idx as usize])?;
+                apply_conf_item(v, &configs[i])?;
             }
         }
 
@@ -1695,35 +1687,26 @@ mod draft {
         Ok(())
     }
 
-    fn apply_conf_item(
-        v: &mut NpmRegistry,
-        conf_item: &ConfigItem,
-        log: &mut Log,
-        source: &Source,
-    ) -> OOM<()> {
+    fn apply_conf_item(v: &mut NpmRegistry, conf_item: &ConfigItem) -> OOM<()> {
         match conf_item.optname {
             ConfigOpt::_AuthToken => {
-                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                    v.token = x;
-                }
+                v.token = conf_item.dupe_value_decoded()?;
             }
             ConfigOpt::Username => {
-                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                    v.username = x;
-                }
+                v.username = conf_item.dupe_value_decoded()?;
             }
             ConfigOpt::_Password => {
-                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                    v.password = x;
-                }
+                v.password = conf_item.dupe_value_decoded()?;
             }
             ConfigOpt::_Auth => {
-                handle_auth(v, conf_item)?;
+                // npm forwards `_auth` verbatim as `Basic <value>`; `Scope::from_api`
+                // decodes it only to derive a username for `bun pm whoami`.
+                if !conf_item.value.is_empty() {
+                    v.auth = Box::<[u8]>::from(&*conf_item.value);
+                }
             }
             ConfigOpt::Email => {
-                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                    v.email = x;
-                }
+                v.email = conf_item.dupe_value_decoded()?;
             }
             ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
         }
@@ -2170,39 +2153,5 @@ mod draft {
             matchers: matchers.into_boxed_slice(),
             behavior,
         })
-    }
-
-    fn handle_auth(v: &mut NpmRegistry, conf_item: &ConfigItem) -> OOM<()> {
-        // Empty `_auth` supplies no credentials and never wins `hasAuth`; it is
-        // diagnosed in `resolve_credentials`, where every registry is visible.
-        if conf_item.value.is_empty() {
-            return Ok(());
-        }
-        // npm forwards `_auth` verbatim as `Basic <value>`; the decode below only
-        // recovers a username for `bun pm whoami`, and must not gate the credential.
-        v.auth = Box::<[u8]>::from(&*conf_item.value);
-        let decode_len = bun_base64::decode_len(&conf_item.value);
-        let mut decoded = vec![0u8; decode_len].into_boxed_slice();
-        let result = bun_base64::decode(&mut decoded[..], &conf_item.value);
-        // npm sends the value regardless; failing to decode only means `bun pm whoami`
-        // cannot derive a username. Not an error about the credential.
-        if !result.is_successful() {
-            return Ok(());
-        }
-        let username_password = &decoded[..result.count];
-        // An opaque blob is a credential to npm, not an error. `v.auth` already has it.
-        let Some(colon_idx) = username_password.iter().position(|&b| b == b':') else {
-            return Ok(());
-        };
-        let username = &username_password[..colon_idx];
-        // A blank password is a real registry pattern (token-as-username). `v.auth` is
-        // what gets sent; username/password only feed `bun pm whoami`.
-        if colon_idx + 1 >= username_password.len() {
-            return Ok(());
-        }
-        let password = &username_password[colon_idx + 1..];
-        v.username = Box::<[u8]>::from(username);
-        v.password = Box::<[u8]>::from(password);
-        Ok(())
     }
 } // mod draft

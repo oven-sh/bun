@@ -117,10 +117,12 @@ impl IniTestingAPIs {
             default_registry_username,
             default_registry_password,
             default_registry_email,
+            default_registry_auth,
         ) = 'brk: {
             let Some(default_registry) = install.default_registry.as_ref() else {
                 break 'brk (
                     BunString::static_(Registry::DEFAULT_URL),
+                    BunString::empty(),
                     BunString::empty(),
                     BunString::empty(),
                     BunString::empty(),
@@ -134,6 +136,7 @@ impl IniTestingAPIs {
                 BunString::from_bytes(&default_registry.username),
                 BunString::from_bytes(&default_registry.password),
                 BunString::from_bytes(&default_registry.email),
+                BunString::from_bytes(&default_registry.auth),
             )
         };
         // `defer { *.deref() }` deleted — bun_core::String impls Drop.
@@ -148,9 +151,10 @@ impl IniTestingAPIs {
             default_registry_username: BunString,
             default_registry_password: BunString,
             default_registry_email: BunString,
+            default_registry_auth: BunString,
         }
         impl bun_jsc::js_object::PojoFields for Pojo {
-            const FIELD_COUNT: usize = 5;
+            const FIELD_COUNT: usize = 6;
             fn put_fields(
                 &self,
                 global: &JSGlobalObject,
@@ -176,6 +180,10 @@ impl IniTestingAPIs {
                     b"default_registry_email",
                     self.default_registry_email.to_js(global)?,
                 )?;
+                put(
+                    b"default_registry_auth",
+                    self.default_registry_auth.to_js(global)?,
+                )?;
                 Ok(())
             }
         }
@@ -185,6 +193,7 @@ impl IniTestingAPIs {
             default_registry_username,
             default_registry_password,
             default_registry_email,
+            default_registry_auth,
         };
         Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
     }

@@ -154,15 +154,9 @@ export const profiles = {
     buildDir: "build/btg",
   },
 
-  /**
-   * Release + WebKit compiled against mimalloc instead of libpas. Linux glibc
-   * only. The WebKit archives ship `mi_*` unresolved; bun's own mimalloc dep
-   * satisfies them, so JSC and bun share one allocator.
-   *
-   * Pinned to the oven-sh/WebKit#283 preview release until that PR merges and
-   * WEBKIT_VERSION is bumped to an autobuild that carries the -mimalloc
-   * artifacts; drop `webkitVersion` here once that lands.
-   */
+  /** Release with WebKit on mimalloc instead of libpas (Linux glibc only);
+   * JSC and bun share one allocator. Pinned to the oven-sh/WebKit#283 preview
+   * until WEBKIT_VERSION carries -mimalloc artifacts; drop webkitVersion then. */
   "release-mimalloc": {
     buildType: "Release",
     webkit: "prebuilt",

@@ -136,11 +136,9 @@ export interface Config {
   logs: boolean;
   /** x64-only: target nehalem (no AVX) instead of haswell. */
   baseline: boolean;
-  /**
-   * Use the `-mimalloc` WebKit prebuilt (JSC routed through mimalloc instead of
-   * libpas). The archives ship `mi_*` as undefined symbols; bun's own mimalloc
-   * dep (oven-sh/mimalloc) satisfies them at link time. Linux glibc only.
-   */
+  /** Use the `-mimalloc` WebKit prebuilt (JSC on mimalloc instead of libpas);
+   * its undefined `mi_*` symbols resolve against bun's own mimalloc dep at
+   * link time. Linux glibc only. */
   webkitMimalloc: boolean;
   canary: boolean;
   /** MinSizeRel → optimize for size. */

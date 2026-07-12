@@ -437,6 +437,11 @@ impl<'a> Parser<'a> {
             p.parse_pass_symbol_uses = Some(&mut scan_pass.used_symbols);
         }
 
+        // Consume a leading hashbang comment
+        if p.lexer.token == js_lexer::T::THashbang {
+            p.lexer.next()?;
+        }
+
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             is_module_scope: true,

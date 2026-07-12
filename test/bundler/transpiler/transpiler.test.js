@@ -2074,6 +2074,18 @@ console.log(<div {...obj} key="after" />);`),
       expect(imports.filter(({ path }) => path === "react")).toHaveLength(1);
       expect(imports).toHaveLength(2);
     });
+
+    it.each(["ts", "tsx", "js", "jsx"])("accepts a leading hashbang (%s)", loader => {
+      const src = '#!/usr/bin/env bun\nimport { dep } from "./dep";\nconsole.log(dep);\n';
+      const t = new Bun.Transpiler({ loader });
+      expect(t.scanImports(src)).toEqual([{ kind: "import-statement", path: "./dep" }]);
+      expect(t.scan(src).imports).toEqual([{ kind: "import-statement", path: "./dep" }]);
+    });
+
+    it("accepts a hashbang-only file", () => {
+      expect(new Bun.Transpiler().scanImports("#!/usr/bin/env bun\n")).toEqual([]);
+      expect(new Bun.Transpiler().scanImports("#!/usr/bin/env bun")).toEqual([]);
+    });
   });
 
   const parsed = (code, trim = true, autoExport = false, transpiler_ = transpiler) => {

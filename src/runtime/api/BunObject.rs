@@ -981,7 +981,9 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             .unwrap_or(JSValue::ZERO);
     }
 
-    ZigString::init(vm.main()).with_encoding().to_js(global_this)
+    ZigString::init(vm.main())
+        .with_encoding()
+        .to_js(global_this)
 }
 
 // HOST_EXPORT(BunObject_setter_main, jsc)

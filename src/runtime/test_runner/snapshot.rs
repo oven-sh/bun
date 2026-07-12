@@ -39,10 +39,15 @@ pub struct Snapshots<'a> {
     /// Snapshot keys loaded from the `.snap` file but not yet matched this run.
     /// Remaining entries at file close are obsolete (or removed under `-u`).
     pub unchecked_keys: &'a mut StringHashMap<()>,
-    /// Full names of tests that were skipped/todo/filtered in the current file.
-    /// Reconciled against `unchecked_keys` at `write_snapshot_file` so ordering
-    /// relative to the first `toMatchSnapshot` call does not matter.
+    /// Full names of tests that completed without matching all of their keys
+    /// (skipped/todo/filtered/failed). Reconciled against `unchecked_keys` at
+    /// `write_snapshot_file` so ordering relative to the first
+    /// `toMatchSnapshot` call does not matter.
     pub skipped_test_names: &'a mut Vec<(FileId, Box<[u8]>)>,
+    /// Set when the current file used `.only()` (CLI or in-source). Unchecked
+    /// keys are then ignored for the obsolete tally since non-only tests were
+    /// never sequenced.
+    pub had_only_in_file: bool,
     pub _current_file: Option<File>,
     /// Read-only backref into `Jest::RUNNER.files[..].source.path` (not owned
     /// here, never freed): the runner is process-global and its files are
@@ -354,7 +359,7 @@ impl<'a> Snapshots<'a> {
                 // Skipped tests' entries are not rewritten into `file_buf`, so
                 // they are physically removed; keep them in the tally.
                 self.removed += self.unchecked_keys.len();
-            } else {
+            } else if !self.had_only_in_file {
                 for (id, name) in self.skipped_test_names.iter() {
                     if *id == file.id {
                         Self::mark_snapshots_as_checked_for_test(self.unchecked_keys, name);
@@ -363,6 +368,7 @@ impl<'a> Snapshots<'a> {
                 self.obsolete += self.unchecked_keys.len();
             }
             self.skipped_test_names.retain(|(id, _)| *id != file.id);
+            self.had_only_in_file = false;
 
             file.file
                 .write_all(self.file_buf)
@@ -383,8 +389,8 @@ impl<'a> Snapshots<'a> {
         Ok(())
     }
 
-    /// Record a skipped/todo/filtered test so its snapshot keys are excluded
-    /// from the obsolete tally when the file is flushed.
+    /// Record a test that did not run its full body (skip/todo/filtered/fail)
+    /// so its snapshot keys are excluded from the obsolete tally.
     pub fn note_skipped_test(&mut self, file_id: FileId, test_name: Box<[u8]>) {
         self.skipped_test_names.push((file_id, test_name));
     }

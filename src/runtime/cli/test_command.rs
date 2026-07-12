@@ -2117,6 +2117,7 @@ impl TestCommand {
                     skipped_test_names: unsafe {
                         bun_ptr::detach_lifetime_mut(&mut snapshot_skipped_test_names)
                     },
+                    had_only_in_file: false,
                     _current_file: None,
                     snapshot_dir_path: None,
                     // SAFETY: same never-returning-frame invariant as `file_buf` above.
@@ -2857,11 +2858,7 @@ impl TestCommand {
                 }
 
                 let mut print_expect_calls = summary.expectations > 0;
-                let obsolete = if reporter.jest.only {
-                    0
-                } else {
-                    reporter.jest.snapshots.obsolete
-                };
+                let obsolete = reporter.jest.snapshots.obsolete;
                 let removed = reporter.jest.snapshots.removed;
                 if reporter.jest.snapshots.total > 0 || obsolete > 0 || removed > 0 {
                     let passed = reporter.jest.snapshots.passed;

@@ -25,7 +25,7 @@ async function run(dir: string, extra: string[] = []) {
 describe.concurrent("obsolete snapshot detection", () => {
   test("reports obsolete snapshots without -u", async () => {
     const dir = tempDirWithFiles(
-      "obsolete-detect",
+      "snapobs-detect",
       snapFixture(`test("keeps", () => expect({ a: 1 }).toMatchSnapshot());`),
     );
     const { stderr, exitCode } = await run(dir);
@@ -38,7 +38,7 @@ describe.concurrent("obsolete snapshot detection", () => {
 
   test("-u labels dropped entries as removed, not added", async () => {
     const dir = tempDirWithFiles(
-      "obsolete-update",
+      "snapobs-update",
       snapFixture(`test("keeps", () => expect({ a: 1 }).toMatchSnapshot());`),
     );
     const { stderr, exitCode } = await run(dir, ["-u"]);
@@ -59,7 +59,7 @@ describe.concurrent("obsolete snapshot detection", () => {
           `test("keeps", () => expect({ a: 1 }).toMatchSnapshot());`
         : `test("keeps", () => expect({ a: 1 }).toMatchSnapshot());\n` +
           `test.skip("skipped", () => expect({ b: 2 }).toMatchSnapshot());`;
-      const dir = tempDirWithFiles("obsolete-skip", snapFixture(body));
+      const dir = tempDirWithFiles("snapobs-skip", snapFixture(body));
       const { stderr, exitCode } = await run(dir);
       expect(stderr).toContain("1 obsolete");
       expect(stderr).not.toContain("2 obsolete");
@@ -69,7 +69,7 @@ describe.concurrent("obsolete snapshot detection", () => {
 
   test("-u counts a skipped test's dropped entry in removed", async () => {
     const dir = tempDirWithFiles(
-      "obsolete-skip-u",
+      "snapobs-skip-u",
       snapFixture(
         `test.skip("skipped", () => expect({ b: 2 }).toMatchSnapshot());\n` +
           `test("keeps", () => expect({ a: 1 }).toMatchSnapshot());`,
@@ -84,9 +84,39 @@ describe.concurrent("obsolete snapshot detection", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("in-source test.only() suppresses obsolete", async () => {
+    const dir = tempDirWithFiles(
+      "snapobs-only",
+      snapFixture(
+        `test.only("keeps", () => expect({ a: 1 }).toMatchSnapshot());\n` +
+          `test("skipped", () => expect({ b: 2 }).toMatchSnapshot());`,
+      ),
+    );
+    const { stderr, exitCode } = await run(dir);
+    expect(stderr).not.toContain("obsolete");
+    expect(exitCode).toBe(0);
+  });
+
+  test("test that fails before its toMatchSnapshot is not counted obsolete", async () => {
+    const dir = tempDirWithFiles("snap-fail", {
+      "snap.test.ts":
+        `import { test, expect } from "bun:test";\n` +
+        `test("keeps", () => expect({ a: 1 }).toMatchSnapshot());\n` +
+        `test("failing", () => { expect(1).toBe(2); expect({ x: 1 }).toMatchSnapshot(); });\n`,
+      "__snapshots__/snap.test.ts.snap":
+        "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\n" +
+        'exports[`keeps 1`] = `\n{\n  "a": 1,\n}\n`;\n\n' +
+        'exports[`failing 1`] = `\n{\n  "x": 1,\n}\n`;\n',
+    });
+    const { stderr, exitCode } = await run(dir);
+    expect(stderr).not.toContain("obsolete");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
   test("-t filtered test's snapshot is not counted obsolete", async () => {
     const dir = tempDirWithFiles(
-      "obsolete-filter",
+      "snapobs-filter",
       snapFixture(
         `test("keeps", () => expect({ a: 1 }).toMatchSnapshot());\n` +
           `test("skipped", () => expect({ b: 2 }).toMatchSnapshot());`,
@@ -100,7 +130,7 @@ describe.concurrent("obsolete snapshot detection", () => {
 
   test("-u with a truly new snapshot still reports added", async () => {
     const dir = tempDirWithFiles(
-      "obsolete-added",
+      "snapobs-added",
       snapFixture(
         `test("keeps", () => expect({ a: 1 }).toMatchSnapshot());\n` +
           `test("brand-new", () => expect({ c: 3 }).toMatchSnapshot());`,
@@ -115,7 +145,7 @@ describe.concurrent("obsolete snapshot detection", () => {
   // https://github.com/oven-sh/bun/issues/12114
   test("-u does not truncate the .snap file before afterAll runs", async () => {
     const dir = tempDirWithFiles(
-      "obsolete-afterall",
+      "snapobs-afterall",
       snapFixture(
         `const fs = require("node:fs");\n` +
           `test("keeps", () => expect({ a: 1 }).toMatchSnapshot());\n` +

@@ -708,16 +708,19 @@ impl Execution {
                 _ => Result::Pass,
             };
         }
-        if matches!(
-            sequence.result,
-            Result::Skip | Result::Todo | Result::SkippedBecauseLabel
-        ) {
-            if let Some(entry_ptr) = sequence.test_entry {
-                if let Some(runner) = super::jest::Jest::runner() {
+        if let Some(entry_ptr) = sequence.test_entry {
+            if let Some(runner) = super::jest::Jest::runner() {
+                // SAFETY: `buntest` is the live parent BunTest (owns `sequence`).
+                let (file_id, root_only) = {
+                    let bt = unsafe { buntest.as_ref() };
+                    (bt.file_id, bt.collection.root_scope.base.only)
+                };
+                if root_only != super::bun_test::Only::No {
+                    runner.snapshots.had_only_in_file = true;
+                }
+                if sequence.result != Result::Pass {
                     // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
                     let name = Self::snapshot_name_for_entry(unsafe { entry_ptr.as_ref() });
-                    // SAFETY: `buntest` is the live parent BunTest (owns `sequence`).
-                    let file_id = unsafe { buntest.as_ref() }.file_id;
                     runner
                         .snapshots
                         .note_skipped_test(file_id, name.into_boxed_slice());

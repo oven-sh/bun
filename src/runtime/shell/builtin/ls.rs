@@ -280,7 +280,7 @@ impl Ls {
                 b'b' | b'B' | b'c' | b'C' | b'D' | b'F' | b'g' | b'G' | b'h' | b'H' | b'i'
                 | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p' | b'q' | b'Q' | b's'
                 | b'S' | b't' | b'T' | b'u' | b'v' | b'w' | b'x' | b'X' | b'Z' => {}
-                _ => return ParseFlag::IllegalOption(Box::from(&flag[1..2])),
+                _ => return ParseFlag::IllegalOption(Box::from(&[ch][..])),
             }
         }
         ParseFlag::ContinueParsing

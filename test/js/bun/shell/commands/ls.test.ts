@@ -317,14 +317,14 @@ describe.concurrent("bunshell ls", () => {
     test("invalid flag", async () => {
       await TestBuilder.command`ls -z`
         .exitCode(1)
-        .stderr(s => expect(s).toContain("illegal option"))
+        .stderr(s => expect(s).toContain("illegal option -- z"))
         .run();
     });
 
     test("invalid combined flags", async () => {
       await TestBuilder.command`ls -az`
         .exitCode(1)
-        .stderr(s => expect(s).toContain("illegal option"))
+        .stderr(s => expect(s).toContain("illegal option -- z"))
         .run();
     });
 

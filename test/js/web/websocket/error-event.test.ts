@@ -48,7 +48,7 @@ describe("fires error before close on post-establishment failure", () => {
   const MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
   async function rawWsServer(afterUpgrade: (sock: net.Socket) => void) {
-    const { promise, resolve } = Promise.withResolvers<net.Server>();
+    const { promise, resolve, reject } = Promise.withResolvers<net.Server>();
     const server = net.createServer(sock => {
       let buf = "";
       let upgraded = false;
@@ -74,6 +74,7 @@ describe("fires error before close on post-establishment failure", () => {
       });
       sock.on("error", () => {});
     });
+    server.once("error", reject);
     server.listen(0, "127.0.0.1", () => resolve(server));
     return promise;
   }
@@ -138,6 +139,51 @@ describe("fires error before close on post-establishment failure", () => {
     expect(events).toEqual(["open", "error", "close{1002,wasClean:false}"]);
   });
 
+  test.concurrent("subprotocol mismatch (server responds with unrequested protocol)", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<net.Server>();
+    const server = net.createServer(sock => {
+      let buf = "";
+      let upgraded = false;
+      sock.on("data", d => {
+        if (upgraded) return;
+        buf += d;
+        if (!buf.includes("\r\n\r\n")) return;
+        upgraded = true;
+        const key = /Sec-WebSocket-Key: (.+)\r\n/i.exec(buf)![1];
+        const accept = crypto
+          .createHash("sha1")
+          .update(key + MAGIC)
+          .digest("base64");
+        sock.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            "Sec-WebSocket-Accept: " +
+            accept +
+            "\r\n" +
+            "Sec-WebSocket-Protocol: not-what-you-asked\r\n\r\n",
+        );
+      });
+      sock.on("error", () => {});
+    });
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve(server));
+    await promise;
+    const address = server.address() as net.AddressInfo;
+    const ws = new WebSocket(`ws://127.0.0.1:${address.port}/`, ["chat"]);
+    const events: string[] = [];
+    const done = Promise.withResolvers<void>();
+    ws.onopen = () => events.push("open");
+    ws.onerror = () => events.push("error");
+    ws.onclose = e => {
+      events.push(`close{${e.code},wasClean:${e.wasClean}}`);
+      done.resolve();
+    };
+    await done.promise;
+    await new Promise<void>(r => server.close(() => r()));
+    expect(events).toEqual(["error", "close{1002,wasClean:false}"]);
+  });
+
   test.concurrent("clean close does NOT fire error", async () => {
     // FIN=1, opcode=close, len=2, code=1000
     const server = await rawWsServer(sock => sock.write(Buffer.from([0x88, 0x02, 0x03, 0xe8])));
@@ -146,7 +192,7 @@ describe("fires error before close on post-establishment failure", () => {
   });
 
   test.concurrent("handshake failure fires error then close (control, pre-establishment)", async () => {
-    const { promise, resolve } = Promise.withResolvers<net.Server>();
+    const { promise, resolve, reject } = Promise.withResolvers<net.Server>();
     const server = net.createServer(sock => {
       sock.on("data", () => {
         sock.write("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
@@ -154,6 +200,7 @@ describe("fires error before close on post-establishment failure", () => {
       });
       sock.on("error", () => {});
     });
+    server.once("error", reject);
     server.listen(0, "127.0.0.1", () => resolve(server));
     await promise;
     const address = server.address() as net.AddressInfo;

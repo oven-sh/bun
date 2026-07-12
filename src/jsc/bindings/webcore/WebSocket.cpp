@@ -1726,11 +1726,11 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         break;
     }
     case Bun::WebSocketErrorCode::missing_client_protocol: {
-        didReceiveClose(CleanStatus::Clean, 1002, "Missing client protocol"_s);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Missing client protocol"_s);
         break;
     }
     case Bun::WebSocketErrorCode::mismatch_client_protocol: {
-        didReceiveClose(CleanStatus::Clean, 1002, "Mismatch client protocol"_s);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Mismatch client protocol"_s);
         break;
     }
     case Bun::WebSocketErrorCode::timeout: {

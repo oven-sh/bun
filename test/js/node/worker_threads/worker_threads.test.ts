@@ -1,4 +1,5 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -21,6 +22,10 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+
+// Many of these tests spawn nested workers or whole bun subprocesses that each
+// spawn workers, which the 5s default does not cover on a debug/ASAN build.
+setDefaultTimeout(isDebug ? 90_000 : 10_000);
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
@@ -413,9 +418,6 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
-// The fixture spawns six workers that each parse 100 MiB of source, which the
-// default 5s budget cannot cover on a debug/ASAN build (~27s there, ~2s in
-// release). The sizes are load-bearing: they keep RSS growth above the noise.
 test("eval does not leak source code", async () => {
   const proc = Bun.spawn({
     cmd: [bunExe(), "eval-source-leak-fixture.js"],
@@ -428,7 +430,7 @@ test("eval does not leak source code", async () => {
   const errors = await proc.stderr.text();
   if (errors.length > 0) throw new Error(errors);
   expect(proc.exitCode).toBe(0);
-}, 120_000);
+});
 
 describe("captured stdio backpressure", () => {
   // node flow control (lib/internal/worker/io.js): a writev batch's callback is

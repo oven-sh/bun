@@ -45,6 +45,7 @@ const FFIType = {
   uint64_t: 8,
   uint8_t: 2,
   usize: 8,
+  size_t: 8,
   "void*": 12,
   ptr: 12,
   pointer: 12,
@@ -185,7 +186,7 @@ ffiWrappers[FFIType.int32_t] = "val|0";
 ffiWrappers[FFIType.uint32_t] = "val<0?0:val>0xFFFFFFFF?-1:val|0";
 ffiWrappers[FFIType.i64_fast] = `{
   if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
+    if (val <= ${Number.MAX_SAFE_INTEGER} && val >= ${-Number.MAX_SAFE_INTEGER}) {
       return Number(val).valueOf() || 0;
     }
 
@@ -221,7 +222,7 @@ ffiWrappers[FFIType.uint64_t] = `{
 
 ffiWrappers[FFIType.u64_fast] = `{
   if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(0)) return Number(val);
+    if (val <= ${Number.MAX_SAFE_INTEGER} && val >= 0) return Number(val);
     return val;
   }
 
@@ -275,7 +276,7 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
     return val;
   }
 
-  if (val instanceof ArrayBuffer) {
+  if (val instanceof ArrayBuffer || val instanceof DataView) {
     return __GlobalBunFFIPtrFunctionForWrapper(val);
   }
 
@@ -291,12 +292,17 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
 }`;
 
 ffiWrappers[FFIType.buffer] = `{
-  if (!__GlobalBunFFIPtrArrayBufferViewFn(val)) {
-    throw new TypeError("Expected a TypedArray");
+  if (!__GlobalBunFFIPtrArrayBufferViewFn(val) && !(val instanceof DataView)) {
+    throw new TypeError("Expected a TypedArray or DataView");
   }
 
   return val;
 }`;
+
+// napi_value arguments must reach the compiled trampoline as the raw
+// EncodedJSValue bits. The default "val|0" wrapper would coerce the JSValue to
+// an int32 first, silently corrupting it — pass it through untouched instead.
+ffiWrappers[FFIType.napi_value] = "val";
 
 ffiWrappers[FFIType.function] = `{
   if (typeof val === "number") {
@@ -446,7 +452,7 @@ function dlopen(path, options) {
         //    "/usr/lib/sqlite3.so"
         // we want
         //    "sqlite3_get_version() - sqlit3.so"
-        path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
+        typeof path === "string" ? `${key} (${path.split(/[\\/]/).pop()})` : `${key} (${path})`,
       );
     } else {
       // consistentcy
@@ -495,7 +501,7 @@ function cc(options) {
         //    "/usr/lib/sqlite3.so"
         // we want
         //    "sqlite3_get_version() - sqlit3.so"
-        path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
+        typeof path === "string" ? `${key} (${path.split(/[\\/]/).pop()})` : `${key} (${path})`,
       );
     } else {
       // consistentcy

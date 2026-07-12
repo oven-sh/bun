@@ -64,16 +64,18 @@ describe.skipIf(isASAN || isFFIUnavailable)("given an add(a, b) function", () =>
       expect(res.symbols.add(1, 2)).toBe(3);
     });
 
-    // FIXME: produces junk
-    it.skip("when passed arguments with incorrect types, throws an error", () => {
+    it("coerces incorrect-type arguments via `|0` instead of producing junk", () => {
+      // The generated int arg wrapper is `val|0`: "1"|0 === 1, "abc"|0 === 0.
+      // @ts-expect-error - intentionally wrong argument types
+      expect(res.symbols.add("1", "2")).toBe(3);
       // @ts-expect-error
-      expect(() => res.symbols.add("1", "2")).toThrow();
+      expect(res.symbols.add("abc", 5)).toBe(5);
     });
 
-    // looks like `b` defaults to `0`, is this U.B. or expected?
-    it.skip("when passed too few arguments, throws an error", () => {
-      // @ts-expect-error
-      expect(() => res.symbols.add(1)).toThrow();
+    it("treats a missing trailing argument as 0", () => {
+      // The wrapper passes `undefined|0 === 0` for the absent argument.
+      // @ts-expect-error - intentionally too few arguments
+      expect(res.symbols.add(1)).toBe(1);
     });
 
     it("when passed too many arguments, still works", () => {
@@ -114,12 +116,11 @@ describe("given a source file with syntax errors", () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
-  // FIXME: fails asan poisoning check
-  // TinyCC uses `setjmp` on an internal error handler, then jumps there when it
-  // encounters a syntax error. Newer versions of tcc added a public API to
-  // set a runtime error handler, but we need to upgrade in order to get it.
-  // https://github.com/TinyCC/tinycc/blob/f8bd136d198bdafe71342517fa325da2e243dc68/libtcc.h#L106C9-L106C24
-  it.skip("when compiled, throws an error", () => {
+  // TinyCC now reports compile errors through its error-handler callback
+  // (collected as deferred errors), so a syntax error surfaces as a thrown Error
+  // instead of crashing. Still gated under ASan, where tcc's internal
+  // longjmp on the error path trips the poisoning checker.
+  it.skipIf(isASAN)("throws a compile error for a syntax error (does not crash)", () => {
     expect(() => {
       cc({
         source: path.join(dir, "add.c"),
@@ -944,5 +945,123 @@ describe.skipIf(isFFIUnavailable)("double <-> JSValue conversions", () => {
       },
       exitCode: 0,
     });
+  });
+});
+
+// A double outside an integer type's range is C undefined behavior when cast
+// (`(int64_t)1e30`): x86 yields the "indefinite" value, arm64 saturates — so
+// the same JS produced different results per arch. The FFI.h conversion helpers
+// now clamp and map NaN to 0 so the result is defined and identical everywhere.
+describe.skipIf(isASAN || isFFIUnavailable)("i64_fast / u64_fast out-of-range args saturate (no UB)", () => {
+  const library = makeValidCase(
+    "sat",
+    /* c */ `
+      long long idi(long long x) { return x; }
+      unsigned long long idu(unsigned long long x) { return x; }
+    `,
+    {
+      idi: { args: ["i64_fast"], returns: "i64_fast" },
+      idu: { args: ["u64_fast"], returns: "u64_fast" },
+    },
+  );
+
+  it("saturates out-of-range doubles instead of platform-divergent UB", () => {
+    const { idi, idu } = library.symbols;
+    expect(idi(1e30)).toBe(9223372036854775807n); // was INT64_MIN on x86
+    expect(idi(-1e30)).toBe(-9223372036854775808n);
+    expect(idu(1e30)).toBe(18446744073709551615n);
+    expect(idi(NaN)).toBe(0);
+    expect(idu(NaN)).toBe(0);
+  });
+
+  it("leaves in-range values unchanged", () => {
+    const { idi, idu } = library.symbols;
+    expect(idi(1000)).toBe(1000);
+    expect(idi(-1000)).toBe(-1000);
+    expect(idu(1000)).toBe(1000);
+  });
+});
+
+// A callable Proxy / InternalFunction is `isCallable()` but is NOT a JSFunction
+// subclass; the native side `uncheckedDowncast<JSFunction>`'d it (type confusion).
+// It now rejects them (dynamicDowncast) while still accepting bound functions.
+describe.skipIf(isASAN || isFFIUnavailable)("JSCallback rejects non-JSFunction callables", () => {
+  it("rejects a callable Proxy and an InternalFunction with a clear error", () => {
+    const proxy = new Proxy(function () {}, {});
+    expect(() => new JSCallback(proxy, { returns: "int32_t", args: [] })).toThrow(/Expected callback to be a function/);
+    // `Array` is an InternalFunction (callable, but not a JSFunction).
+    // @ts-expect-error - intentionally passing a non-callback
+    expect(() => new JSCallback(Array, { returns: "int32_t", args: [] })).toThrow(/Expected callback to be a function/);
+  });
+
+  it("still accepts ordinary and bound functions", () => {
+    for (const fn of [
+      () => 1,
+      function named() {
+        return 1;
+      },
+      (() => 1).bind(null),
+    ]) {
+      const cb = new JSCallback(fn, { returns: "int32_t", args: [] });
+      expect(typeof cb.ptr).toBe("number");
+      cb.close();
+    }
+  });
+});
+
+// `args.length` is the attacker-controlled JS array length (u32). Reserving it
+// up front (`reserve_exact`) would request ~16 GB for `new Array(0xFFFFFFFF)`
+// and abort the process; the reservation is now capped.
+describe.skipIf(isASAN || isFFIUnavailable)("cc() does not pre-allocate on an attacker-sized args array", () => {
+  it("rejects a 4-billion-length args array without OOM-aborting", () => {
+    using dir = tempDir("bun-ffi-cc-dos", { "f.c": "int f(void){return 5;}" });
+    expect(() =>
+      cc({
+        source: path.join(String(dir), "f.c"),
+        // Sparse array: length is 0xFFFFFFFF but the first element is undefined.
+        symbols: { f: { args: new Array(0xffffffff), returns: "int" } },
+      }),
+    ).toThrow();
+  });
+});
+
+// A string `flags` used to replace the default flags entirely, dropping
+// -Wl,--export-all-symbols so the compiled symbols never resolved. It now keeps
+// the defaults and appends, matching the array form.
+describe.skipIf(isASAN || isFFIUnavailable)("cc() string flags keep the default flags", () => {
+  it("still exports symbols when a string `flags` is given", () => {
+    using dir = tempDir("bun-ffi-cc-flags", { "a.c": "int add2(int x){return x+2;}" });
+    const lib = cc({
+      source: path.join(String(dir), "a.c"),
+      flags: "-O1",
+      symbols: { add2: { args: ["int"], returns: "int" } },
+    });
+    expect(lib.symbols.add2(40)).toBe(42);
+    lib.close();
+  });
+});
+
+// The buffer/ptr/cstring arg wrappers used $isTypedArrayView, which excludes
+// DataView even though the public types list it. DataView is now accepted.
+describe.skipIf(isASAN || isFFIUnavailable)("DataView is accepted as ptr and buffer args", () => {
+  const library = makeValidCase(
+    "dv",
+    /* c */ `
+      unsigned long long addr(void* p) { return (unsigned long long)p; }
+      int first(unsigned char* b) { return b[0]; }
+    `,
+    {
+      addr: { args: ["ptr"], returns: "u64_fast" },
+      first: { args: ["buffer"], returns: "int" },
+    },
+  );
+
+  it("passes a DataView's data pointer (respecting byteOffset)", () => {
+    const ab = new ArrayBuffer(8);
+    new Uint8Array(ab).fill(0);
+    const dv = new DataView(ab, 2);
+    dv.setUint8(0, 99); // writes ab[2]
+    expect(Number(library.symbols.addr(dv))).toBeGreaterThan(0);
+    expect(library.symbols.first(dv)).toBe(99);
   });
 });

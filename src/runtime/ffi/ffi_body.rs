@@ -1062,9 +1062,18 @@ impl FFI {
                     ));
                 }
 
-                let str = flags_value.get_zig_string(global_this)?;
-                if str.len > 0 {
-                    compile_c.flags = str.to_owned_slice_z();
+                let slice = flags_value.to_slice(global_this)?;
+                if !slice.slice().is_empty() {
+                    // Match the array branch (and the documented example, which
+                    // adds -framework flags): keep the default flags — notably
+                    // -Wl,--export-all-symbols, without which the FFI symbols
+                    // never resolve — and append the user's instead of replacing.
+                    let mut flags: Vec<u8> = Vec::new();
+                    flags.extend_from_slice(CompileC::DEFAULT_TCC_OPTIONS.as_bytes());
+                    flags.push(b' ');
+                    flags.extend_from_slice(slice.slice());
+                    flags.push(0);
+                    compile_c.flags = ZBox::from_vec_with_nul(flags);
                 }
             }
         }
@@ -1295,7 +1304,10 @@ impl FFI {
         }
         match &func.step {
             Step::Failed { msg, .. } => {
-                let message = ZigString::init(msg).to_error_instance(global_this);
+                // `create_error_instance` copies `msg` into the error synchronously;
+                // `ZigString::init` only borrows the heap `msg`, which is freed with
+                // `func` before JS reads the message (yielding garbage bytes).
+                let message = global_this.create_error_instance(format_args!("{}", BStr::new(msg)));
                 Ok(message)
             }
             Step::Pending => Ok(ZigString::init(
@@ -1723,7 +1735,10 @@ pub(super) fn generate_symbol_for_function(
 
         let mut array = args.array_iterator(global)?;
 
-        abi_types.reserve_exact(array.len as usize);
+        // `array.len` is the attacker-controlled JS `args.length` (up to u32::MAX):
+        // a sparse `new Array(0xFFFFFFFF)` would otherwise reserve ~16 GB up front.
+        // Cap the hint; the Vec still grows past it for any legitimate arg count.
+        abi_types.reserve_exact((array.len as usize).min(64));
         while let Some(val) = array.next()? {
             if val.is_empty_or_undefined_or_null() {
                 return Ok(Some(
@@ -2087,6 +2102,13 @@ impl Function {
         let mut source_code: Vec<u8> = Vec::new();
         // SAFETY: js_context/js_function are live for the call
         let ffi_wrapper = unsafe { Bun__createFFICallbackFunction(js_context, js_function) };
+        // Null means the value was callable but not a real JSFunction (a callable
+        // Proxy or InternalFunction). Reject before baking the wrapper ptr into
+        // the trampoline — otherwise the callback would jump through a null ctx.
+        if ffi_wrapper.is_null() {
+            self.fail(b"Expected callback to be a function");
+            return Ok(());
+        }
         self.print_callback_source_code(Some(js_context), Some(ffi_wrapper), &mut source_code)?;
 
         #[cfg(all(debug_assertions, unix))]
@@ -2253,7 +2275,7 @@ impl Function {
                 writer.write_all(b", ")?;
             }
             first = false;
-            arg.param_typename(writer)?;
+            arg.typename(writer)?;
             write!(writer, " arg{}", i)?;
         }
         writer.write_all(

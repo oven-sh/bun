@@ -330,7 +330,13 @@ static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) {
   }
 
   if (JSVALUE_IS_NUMBER(value)) {
-    return (uint64_t)JSVALUE_TO_DOUBLE(value);
+    // (uint64_t)d is undefined in C when d is outside [0, 2^64) or NaN, and the
+    // result differs across x86 (indefinite) and arm64 (saturating). Clamp so a
+    // u64_fast arg like 1e30 is defined and identical on every target.
+    double d = JSVALUE_TO_DOUBLE(value);
+    if (d >= 18446744073709551616.0) return 0xFFFFFFFFFFFFFFFFULL;
+    if (d < 0.0 || d != d) return 0;
+    return (uint64_t)d;
   }
 
   if (JSCELL_IS_TYPED_ARRAY(value)) {
@@ -345,7 +351,14 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
   }
 
   if (JSVALUE_IS_NUMBER(value)) {
-    return (int64_t)JSVALUE_TO_DOUBLE(value);
+    // (int64_t)d is undefined in C when d is outside [-2^63, 2^63) or NaN, and
+    // the result differs across x86 (indefinite) and arm64 (saturating). Clamp
+    // so an i64_fast arg like 1e30 is defined and identical on every target.
+    double d = JSVALUE_TO_DOUBLE(value);
+    if (d >= 9223372036854775808.0) return 9223372036854775807LL;
+    if (d < -9223372036854775808.0) return (-9223372036854775807LL - 1);
+    if (d != d) return 0;
+    return (int64_t)d;
   }
 
   return JSVALUE_TO_INT64_SLOW(value);

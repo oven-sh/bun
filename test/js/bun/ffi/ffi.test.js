@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe, isArm64, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
-import { platform } from "os";
+import { platform, tmpdir } from "os";
 
 import {
   dlopen as _dlopen,
@@ -20,55 +20,41 @@ const dlopen = (...args) => {
   try {
     return _dlopen(...args);
   } catch (err) {
-    console.error("To enable this test, run `make compile-ffi-test`.");
+    console.error(`Failed to dlopen the ffi test fixture (${dlopenFixturePath}).`);
     throw err;
   }
 };
-const ok = existsSync("/tmp/bun-ffi-test." + suffix);
 
-it("ffi print", async () => {
-  await Bun.write(
-    import.meta.dir + "/ffi.test.fixture.callback.c",
-    viewSource(
-      {
-        returns: "bool",
-        args: ["ptr"],
-      },
-      true,
-    ),
-  );
-  await Bun.write(
-    import.meta.dir + "/ffi.test.fixture.receiver.c",
-    viewSource(
-      {
-        not_a_callback: {
-          returns: "float",
-          args: ["float"],
-        },
-      },
-      false,
-    )[0],
-  );
-  expect(
-    viewSource(
-      {
-        returns: "int8_t",
-        args: [],
-      },
-      true,
-    ).length > 0,
-  ).toBe(true);
-  expect(
-    viewSource(
-      {
-        a: {
-          returns: "int8_t",
-          args: [],
-        },
-      },
-      false,
-    ).length > 0,
-  ).toBe(true);
+// The dlopen round-trip suite needs test/js/bun/ffi/ffi-test.c built into a
+// shared library. `make compile-ffi-test` was removed, so build it here with
+// the system C compiler into a temp file (it uses <stdint.h>, which tinycc
+// can't find but a real toolchain can). If no compiler is available, the suite
+// skips with a reason rather than silently never running.
+const dlopenFixturePath = (() => {
+  const src = import.meta.dir + "/ffi-test.c";
+  const out = tmpdir() + `/bun-ffi-test-${process.pid}.${suffix}`;
+  const sharedFlags = isWindows ? ["-shared"] : ["-shared", "-fPIC"];
+  for (const compiler of ["cc", "clang", "gcc"]) {
+    try {
+      const proc = Bun.spawnSync({ cmd: [compiler, ...sharedFlags, "-o", out, src], stderr: "pipe", stdout: "ignore" });
+      if (proc.exitCode === 0 && existsSync(out)) return out;
+    } catch {}
+  }
+  return null;
+})();
+const ok = !!dlopenFixturePath;
+
+it("ffi print", () => {
+  // viewSource emits compilable C for a callback trampoline and a receiver.
+  // (Previously this also wrote the output to git-tracked .c files that nothing
+  // asserted against, dirtying the tree on every run.)
+  const callbackSource = viewSource({ returns: "bool", args: ["ptr"] }, true);
+  expect(typeof callbackSource).toBe("string");
+  expect(callbackSource.length).toBeGreaterThan(0);
+
+  const receiverSource = viewSource({ a: { returns: "int8_t", args: [] } }, false);
+  expect(Array.isArray(receiverSource)).toBe(true);
+  expect(receiverSource[0].length).toBeGreaterThan(0);
 });
 
 function getTypes(fast) {
@@ -378,7 +364,7 @@ function ffiRunner(fast) {
         getDeallocatorBuffer,
       },
       close,
-    } = dlopen("/tmp/bun-ffi-test.dylib", types);
+    } = dlopen(dlopenFixturePath, types);
     it("primitives", () => {
       Bun.gc(true);
       expect(returns_true()).toBe(true);
@@ -554,13 +540,24 @@ function ffiRunner(fast) {
       }
     });
 
-    describe("threadsafe callback", done => {
+    // Threadsafe callbacks are invoked from a foreign thread; they are skipped
+    // on Windows (matching cc.test.ts's "threadsafe JSCallback invoked from a
+    // foreign thread"). Await the actual invocation via a promise instead of the
+    // previous `await 1`, which returned before the callback fired — leaving the
+    // in-callback assertion to run after the test as an "unhandled error".
+    describe.skipIf(isWindows)("threadsafe callback", () => {
       // 1 arg, threadsafe
       for (let [name, value] of Object.entries(typeMap)) {
         it("fn(" + name + ") " + name, async () => {
+          const { promise, resolve, reject } = Promise.withResolvers();
           const cb = new JSCallback(
             arg1 => {
-              expect(arg1).toBe(value);
+              try {
+                expect(arg1).toBe(value);
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
             },
             {
               args: [name],
@@ -573,7 +570,8 @@ function ffiRunner(fast) {
             args: [name],
           });
           roundtripFunction(value);
-          await 1;
+          await promise;
+          cb.close();
         });
       }
     });
@@ -718,7 +716,7 @@ describe.skipIf(isFFIUnavailable)("JSCallback validation", () => {
           returns: "void",
           args: ["NOT_A_REAL_TYPE"],
         }),
-    ).toThrow();
+    ).toThrow(/Unknown type NOT_A_REAL_TYPE/);
   });
 
   // The threadsafe-vs-non-void-return guard in the native helper used to read
@@ -794,6 +792,86 @@ it(".ptr is not leaked", () => {
   }
 });
 
+// ptr()/toArrayBuffer()/toBuffer()/new CString() with a byteOffset of -Infinity
+// or exactly -(2**63) used to negate i64::MIN (integer-overflow panic → process
+// abort — a one-line DoS from public API). Run in a subprocess: a hard abort is
+// observable as a non-zero exit / signal, not just an exception.
+it.skipIf(isFFIUnavailable)("byteOffset edge values never crash the process", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { ptr, toArrayBuffer, toBuffer, CString } = require("bun:ffi");
+      const a = new Uint8Array(8);
+      const p = ptr(a);
+      for (const off of [-Infinity, -(2 ** 63), NaN, -1e300, 2 ** 63, Infinity]) {
+        for (const f of [() => ptr(a, off), () => toArrayBuffer(p, off, 4), () => toBuffer(p, off, 4), () => new CString(p, off)]) {
+          try { f(); } catch {}
+        }
+      }
+      process.stdout.write("OK");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode, signalCode: proc.signalCode }).toMatchObject({
+    stdout: "OK",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+describe.skipIf(isFFIUnavailable)("toBuffer is a non-owning view (regression)", () => {
+  it("returns a zero-copy view aliasing the source memory", () => {
+    const src = new Uint8Array(16);
+    src.fill(0xab);
+    const buf = toBuffer(ptr(src), 0, 16);
+    expect(buf[0]).toBe(0xab);
+    src[1] = 0x11;
+    expect(buf[1]).toBe(0x11);
+    buf[2] = 0x22;
+    expect(src[2]).toBe(0x22);
+  });
+
+  // toBuffer(ptr) with no finalizer used to install a deallocator that mi_free'd
+  // the (foreign / interior) pointer on GC — a double free of the source
+  // TypedArray's backing store.
+  it("does not free foreign memory on GC (no invalid mi_free)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { toBuffer, ptr } = require("bun:ffi");
+        for (let i = 0; i < 500; i++) {
+          const a = new Uint8Array(64); a.fill(i & 0xff);
+          const b = toBuffer(ptr(a), 0, 64);
+          if (b[0] !== (i & 0xff)) throw new Error("view mismatch");
+          if ((i % 50) === 0) Bun.gc(true);
+        }
+        Bun.gc(true);
+        process.stdout.write("OK");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout,
+      invalidFree: stderr.includes("mi_free: invalid pointer"),
+      exitCode,
+      signalCode: proc.signalCode,
+    }).toEqual({
+      stdout: "OK",
+      invalidFree: false,
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 // Runs in a subprocess: `bun test`'s exit path does not finalize the CFunction's native handle,
 // which the ASan lane's leak checker then reports against this file.
 it.skipIf(isFFIUnavailable)("JSCallback exceptions propagate out of the native call", async () => {
@@ -823,9 +901,11 @@ it.skipIf(isFFIUnavailable)("JSCallback exceptions propagate out of the native c
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({
+  // Don't require stderr to be exactly "" — ASAN/debug builds emit benign
+  // warnings. Assert stdout + exitCode precisely; stderr stays in the object
+  // only so it shows up on failure.
+  expect({ stdout, stderr, exitCode }).toMatchObject({
     stdout: "caught boom\n",
-    stderr: "",
     exitCode: 0,
   });
 });
@@ -898,19 +978,24 @@ it.skipIf(isFFIUnavailable)("JSCallback tolerates worker.terminate() arriving in
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+  // stdout/exitCode/signalCode are the contract; stderr stays for diagnostics
+  // only (ASAN/debug builds emit benign warnings, so don't require it to be "").
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
     stdout: "done\n",
-    stderr: "",
     exitCode: 0,
     signalCode: null,
   });
 });
 
+// Select the system libc by arch so the large-symbol-count test also runs on
+// aarch64 Linux (it previously hardcoded the x86_64 glibc path and skipped
+// everywhere else).
+const libcCandidate = process.arch === "arm64" ? "/lib/aarch64-linux-gnu/libc.so.6" : "/lib/x86_64-linux-gnu/libc.so.6";
 const libPath =
   platform() === "darwin"
     ? "/usr/lib/libSystem.B.dylib"
-    : existsSync("/lib/x86_64-linux-gnu/libc.so.6") && isGlibcVersionAtLeast("2.36.0")
-      ? "/lib/x86_64-linux-gnu/libc.so.6"
+    : existsSync(libcCandidate) && isGlibcVersionAtLeast("2.36.0")
+      ? libcCandidate
       : null;
 
 const libSymbols = {

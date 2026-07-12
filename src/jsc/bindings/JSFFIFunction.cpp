@@ -71,7 +71,14 @@ extern "C" FFICallbackFunctionWrapper* Bun__createFFICallbackFunction(
     auto* vm = &globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(*vm);
 
-    auto* callbackFunction = uncheckedDowncast<JSC::JSFunction>(JSC::JSValue::decode(callbackFn));
+    // dynamicCast, not uncheckedDowncast: isCallable() (the Rust-side guard) is
+    // true for callable Proxies and InternalFunctions, which are NOT JSFunction
+    // subclasses — unchecked-casting one is type confusion. Reject them here
+    // (the Rust caller turns a null return into a recoverable error).
+    auto* callbackFunction = dynamicDowncast<JSC::JSFunction>(JSC::JSValue::decode(callbackFn));
+    if (!callbackFunction) {
+        return nullptr;
+    }
 
     auto* wrapper = new FFICallbackFunctionWrapper(callbackFunction, globalObject);
 

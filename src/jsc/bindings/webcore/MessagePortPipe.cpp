@@ -255,6 +255,17 @@ void MessagePortPipe::detach(uint8_t side)
     s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled), std::memory_order_acq_rel);
 }
 
+void MessagePortPipe::markClosed(uint8_t side)
+{
+    ASSERT(side < 2);
+    {
+        auto& s = m_sides[side];
+        Locker locker { s.lock };
+        s.state.fetch_or(Closed | ClosedByRequest, std::memory_order_acq_rel);
+    }
+    notifyPeerClosed(1 - side);
+}
+
 void MessagePortPipe::close(uint8_t side, CloseKind kind)
 {
     ASSERT(side < 2);

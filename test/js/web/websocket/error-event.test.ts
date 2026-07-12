@@ -1,6 +1,6 @@
-import { expect, test, describe } from "bun:test";
-import net from "node:net";
+import { describe, expect, test } from "bun:test";
 import crypto from "node:crypto";
+import net from "node:net";
 
 test("WebSocket error event snapshot", async () => {
   const ws = new WebSocket("ws://127.0.0.1:8080");
@@ -58,7 +58,10 @@ describe("fires error before close on post-establishment failure", () => {
         if (!buf.includes("\r\n\r\n")) return;
         upgraded = true;
         const key = /Sec-WebSocket-Key: (.+)\r\n/i.exec(buf)![1];
-        const accept = crypto.createHash("sha1").update(key + MAGIC).digest("base64");
+        const accept = crypto
+          .createHash("sha1")
+          .update(key + MAGIC)
+          .digest("base64");
         sock.write(
           "HTTP/1.1 101 Switching Protocols\r\n" +
             "Upgrade: websocket\r\n" +

@@ -134,11 +134,20 @@ describe("-- end-of-options delimiter", () => {
       .exitCode(0)
       .runAsTest("cd -- dir");
 
+    TestBuilder.command`mkdir ./-sub; cd -- -sub && echo ok`
+      .ensureTempDir()
+      .stdout("ok\n")
+      .stderr("")
+      .exitCode(0)
+      .runAsTest("cd -- -sub treats -sub as an operand");
+
     TestBuilder.command`cd -- && echo ok`.stdout("ok\n").stderr("").exitCode(0).runAsTest("cd -- with no operand");
   });
 
   describe("basename", () => {
     TestBuilder.command`basename -- /a/b`.stdout("b\n").stderr("").exitCode(0).runAsTest("basename -- path");
+
+    TestBuilder.command`basename -- -name`.stdout("-name\n").stderr("").exitCode(0).runAsTest("basename -- -name");
 
     TestBuilder.command`basename --`
       .stderr("usage: basename string\n")
@@ -148,6 +157,8 @@ describe("-- end-of-options delimiter", () => {
 
   describe("dirname", () => {
     TestBuilder.command`dirname -- /a/b`.stdout("/a\n").stderr("").exitCode(0).runAsTest("dirname -- path");
+
+    TestBuilder.command`dirname -- -dir/x`.stdout("-dir\n").stderr("").exitCode(0).runAsTest("dirname -- -dir/x");
 
     TestBuilder.command`dirname --`
       .stderr("usage: dirname string\n")
@@ -164,6 +175,15 @@ describe("-- end-of-options delimiter", () => {
       .stderr("")
       .exitCode(1)
       .runAsTest("which -- name does not treat -- as an operand");
+
+    TestBuilder.command`which -- -nope`
+      .stdout(str => {
+        expect(str).not.toContain("-- not found");
+        expect(str).toContain("-nope not found\n");
+      })
+      .stderr("")
+      .exitCode(1)
+      .runAsTest("which -- -nope treats -nope as an operand");
   });
 
   describe("yes", () => {

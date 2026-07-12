@@ -21,7 +21,7 @@ impl Dirname {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let bltn = Builtin::of(interp, cmd);
         let argc = bltn.args_slice().len();
-        let start = (argc != 0 && bltn.arg_bytes(0) == b"--") as usize;
+        let start = bltn.operand_start();
         if start >= argc {
             return Self::fail(interp, cmd, b"usage: dirname string\n");
         }

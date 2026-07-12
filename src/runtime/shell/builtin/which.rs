@@ -32,7 +32,7 @@ pub enum State {
 impl Which {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
-        let start = (argc != 0 && Builtin::of(interp, cmd).arg_bytes(0) == b"--") as usize;
+        let start = Builtin::of(interp, cmd).operand_start();
         if start >= argc {
             if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
                 Self::state_mut(interp, cmd).state = State::OneArg;

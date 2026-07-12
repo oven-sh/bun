@@ -524,6 +524,9 @@ pub(crate) fn writable_stream(
         uploadid_buffer: MutableString::default(),
         multipart_etags: Vec::new(),
         multipart_upload_list: Vec::new(),
+        retry_timer: multipart::retry_timer_init(),
+        retry_attempt: 0,
+        pending_retry: multipart::PendingRetry::None,
         state: MultiPartUploadState::NotStarted,
         callback: wrapper_callback_thunk,
         on_writable: None, // assigned below after response_stream exists
@@ -881,6 +884,9 @@ pub fn upload_stream(
         uploadid_buffer: MutableString::default(),
         multipart_etags: Vec::new(),
         multipart_upload_list: Vec::new(),
+        retry_timer: multipart::retry_timer_init(),
+        retry_attempt: 0,
+        pending_retry: multipart::PendingRetry::None,
         state: MultiPartUploadState::WaitStreamCheck,
         callback: resolve_thunk,
         on_writable: None,                       // assigned below after ctx exists

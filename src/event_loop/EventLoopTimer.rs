@@ -196,6 +196,8 @@ pub enum Tag {
     ValkeyConnectionTimeout,
     ValkeyConnectionReconnect,
     SubprocessTimeout,
+    S3UploadPartRetry,
+    S3MultiPartUploadRetry,
     DevServerSweepSourceMaps,
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,

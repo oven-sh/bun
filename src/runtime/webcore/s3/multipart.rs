@@ -111,6 +111,8 @@ use bun_s3_signing::storage_class::StorageClass;
 // File-level mods are declared flat in `webcore.rs` via `#[path]`, so `super`
 // here is `crate::webcore`, not the `s3` directory. Route through the `s3`
 // re-export hub instead.
+use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::webcore::ResumableSinkBackpressure;
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
@@ -121,6 +123,29 @@ use crate::webcore::s3::simple_request::{
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 
 declare_scope!(S3MultiPartUpload, hidden);
+
+const MAX_RETRY_BACKOFF_MS: u64 = 20_000;
+
+#[inline]
+pub fn retry_timer_init() -> EventLoopTimer {
+    EventLoopTimer::init_paused(EventLoopTimerTag::S3MultiPartUploadRetry)
+}
+
+/// Equal-jitter exponential backoff for the `attempt`th retry (1-based).
+/// Returns a delay in the range [cap/2, cap) where cap = min(MAX, base * 2^(attempt-1)).
+fn retry_backoff_ms(attempt: u8) -> u64 {
+    let base = bun_core::env_var::BUN_S3_RETRY_BASE_DELAY_MS
+        .get()
+        .unwrap_or(200)
+        .max(1);
+    let shift = u32::from(attempt.saturating_sub(1)).min(16);
+    let cap = base
+        .saturating_mul(1u64 << shift)
+        .min(MAX_RETRY_BACKOFF_MS)
+        .max(2);
+    let half = cap / 2;
+    half + (bun_core::fast_random() % half)
+}
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MultiPartUpload {
@@ -156,6 +181,10 @@ pub struct MultiPartUpload {
     pub multipart_etags: Vec<UploadPartResult>,
     pub multipart_upload_list: Vec<u8>, // was bun.Vec<u8>
 
+    pub retry_timer: EventLoopTimer,
+    pub retry_attempt: u8,
+    pub pending_retry: PendingRetry,
+
     pub state: State,
 
     pub callback: fn(S3UploadResult, *mut c_void) -> JsTerminatedResult<()>,
@@ -172,6 +201,15 @@ pub enum State {
     MultipartCompleted,
     SinglefileStarted,
     Finished,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PendingRetry {
+    None,
+    SingleFile,
+    Commit,
+    Rollback,
 }
 
 impl MultiPartUpload {
@@ -212,11 +250,16 @@ pub struct UploadPart {
     pub data: *const [u8],
     pub ctx: bun_ptr::BackRef<MultiPartUpload>, // BACKREF (LIFETIMES.tsv)
     pub allocated_size: usize,
+    pub retry_timer: EventLoopTimer,
     pub state: PartState,
     pub part_number: u16, // max is 10,000
     pub retry: u8,        // auto retry, decrement until 0 and fail after this
+    pub retry_attempt: u8,
     pub index: u8,
 }
+
+bun_event_loop::impl_timer_owner!(UploadPart; from_retry_timer_ptr => retry_timer);
+bun_event_loop::impl_timer_owner!(MultiPartUpload; from_retry_timer_ptr => retry_timer);
 
 pub struct UploadPartResult {
     pub number: u16,
@@ -284,8 +327,7 @@ impl UploadPart {
                         this.part_number
                     );
                     this.retry -= 1;
-                    // retry failed
-                    this.perform()?;
+                    this.schedule_retry();
                     Ok(())
                 } else {
                     this.state = PartState::NotAssigned;
@@ -378,9 +420,63 @@ impl UploadPart {
         self.perform()
     }
 
+    fn schedule_retry(&mut self) {
+        debug_assert!(self.retry_timer.state != EventLoopTimerState::ACTIVE);
+        self.retry_attempt = self.retry_attempt.saturating_add(1);
+        let delay = retry_backoff_ms(self.retry_attempt);
+        scoped_log!(
+            S3MultiPartUpload,
+            "schedule_retry part {} attempt {} delay {}ms",
+            self.part_number,
+            self.retry_attempt,
+            delay
+        );
+        self.state = PartState::Started;
+        let next = bun_core::Timespec::ms_from_now(
+            bun_core::TimespecMockMode::AllowMockedTime,
+            delay as i64,
+        );
+        self.retry_timer.next = ElTimespec {
+            sec: next.sec,
+            nsec: next.nsec,
+        };
+        timer_all().insert(&raw mut self.retry_timer);
+    }
+
+    /// Timer-fire entry point (via `dispatch.rs`). The part still holds its
+    /// ref on `ctx` from `start()`; on cancel/finished that ref is released
+    /// here instead of by `on_part_response`.
+    ///
+    /// # Safety
+    /// `this` must be the `retry_timer` owner recovered by `dispatch.rs`; the
+    /// part lives in `ctx.queue` and `ctx` is kept alive by the ref this part
+    /// took in `start()`.
+    pub(crate) unsafe fn on_retry_timer(this: *mut Self) {
+        // SAFETY: per fn contract.
+        let this = unsafe { &mut *this };
+        this.retry_timer.state = EventLoopTimerState::FIRED;
+        let mut ctx_ref = this.ctx;
+        // SAFETY: ctx is a live BACKREF while the part holds its ref.
+        let ctx = unsafe { ctx_ref.get_mut() };
+        if this.state == PartState::Canceled || ctx.state == State::Finished {
+            this.free_allocated_slice();
+            MultiPartUpload::deref_(this.ctx.as_ptr());
+            return;
+        }
+        // TODO: properly propagate exception upwards
+        let _ = this.perform();
+    }
+
     pub(crate) fn cancel(&mut self) {
         let state = self.state;
         self.state = PartState::Canceled;
+
+        if self.retry_timer.state == EventLoopTimerState::ACTIVE {
+            timer_all().remove(&raw mut self.retry_timer);
+            self.free_allocated_slice();
+            MultiPartUpload::deref_(self.ctx.as_ptr());
+            return;
+        }
 
         match state {
             PartState::Pending => {
@@ -395,6 +491,9 @@ impl UploadPart {
 impl Drop for MultiPartUpload {
     fn drop(&mut self) {
         scoped_log!(S3MultiPartUpload, "deinit");
+        if self.retry_timer.state == EventLoopTimerState::ACTIVE {
+            timer_all().remove(&raw mut self.retry_timer);
+        }
         // queue: Box<[UploadPart]> — dropped automatically (parts' raw `data` already freed during lifecycle)
         // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
@@ -433,27 +532,7 @@ impl MultiPartUpload {
                         this.options.retry
                     );
                     this.options.retry -= 1;
-                    let callback_context: *mut c_void =
-                        std::ptr::from_mut::<Self>(this).cast::<c_void>();
-                    execute_simple_s3_request(
-                        &*this.credentials,
-                        s3_simple_request::S3RequestOptions {
-                            path: &this.path,
-                            method: bun_http::Method::PUT,
-                            proxy_url: this.proxy_url(),
-                            body: this.buffered.slice(),
-                            content_type: this.content_type.as_deref(),
-                            content_disposition: this.content_disposition.as_deref(),
-                            content_encoding: this.content_encoding.as_deref(),
-                            acl: this.acl,
-                            storage_class: this.storage_class,
-                            request_payer: this.request_payer,
-                            ..Default::default()
-                        },
-                        s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
-                        callback_context,
-                    )?;
-
+                    this.schedule_retry(PendingRetry::SingleFile);
                     Ok(())
                 } else {
                     scoped_log!(S3MultiPartUpload, "singleSendUploadResponse failed");
@@ -469,6 +548,72 @@ impl MultiPartUpload {
                 this.done()
             }
         }
+    }
+
+    fn send_single_file_request(&mut self) -> JsTerminatedResult<()> {
+        let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
+        execute_simple_s3_request(
+            &*self.credentials,
+            s3_simple_request::S3RequestOptions {
+                path: &self.path,
+                method: bun_http::Method::PUT,
+                proxy_url: self.proxy_url(),
+                body: self.buffered.slice(),
+                content_type: self.content_type.as_deref(),
+                content_disposition: self.content_disposition.as_deref(),
+                content_encoding: self.content_encoding.as_deref(),
+                acl: self.acl,
+                storage_class: self.storage_class,
+                request_payer: self.request_payer,
+                ..Default::default()
+            },
+            s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
+            callback_context,
+        )
+    }
+
+    fn schedule_retry(&mut self, action: PendingRetry) {
+        debug_assert!(self.retry_timer.state != EventLoopTimerState::ACTIVE);
+        self.retry_attempt = self.retry_attempt.saturating_add(1);
+        self.pending_retry = action;
+        let delay = retry_backoff_ms(self.retry_attempt);
+        scoped_log!(
+            S3MultiPartUpload,
+            "schedule_retry action {} attempt {} delay {}ms",
+            action as u8,
+            self.retry_attempt,
+            delay
+        );
+        let next = bun_core::Timespec::ms_from_now(
+            bun_core::TimespecMockMode::AllowMockedTime,
+            delay as i64,
+        );
+        self.retry_timer.next = ElTimespec {
+            sec: next.sec,
+            nsec: next.nsec,
+        };
+        timer_all().insert(&raw mut self.retry_timer);
+    }
+
+    /// Timer-fire entry point (via `dispatch.rs`) for single-file / commit /
+    /// rollback retries. `self` holds the final-step ref; it is released by
+    /// the eventual response callback (never here).
+    ///
+    /// # Safety
+    /// `this` must be the heap-allocated `MultiPartUpload` recovered via
+    /// `from_retry_timer_ptr`; the final-step ref is still held.
+    pub(crate) unsafe fn on_retry_timer(this: *mut Self) {
+        // SAFETY: per fn contract.
+        let this = unsafe { &mut *this };
+        this.retry_timer.state = EventLoopTimerState::FIRED;
+        let action = core::mem::replace(&mut this.pending_retry, PendingRetry::None);
+        // TODO: properly propagate exception upwards
+        let _ = match action {
+            PendingRetry::SingleFile => this.send_single_file_request(),
+            PendingRetry::Commit => this.commit_multi_part_request(),
+            PendingRetry::Rollback => this.rollback_multi_part_request(),
+            PendingRetry::None => Ok(()),
+        };
     }
 
     /// This is the only place we allocate the queue or the parts, this is responsible for the flow of parts and the max allowed concurrency
@@ -499,10 +644,12 @@ impl MultiPartUpload {
                 queue.push(UploadPart {
                     data: std::ptr::from_ref::<[u8]>(b"" as &[u8]),
                     allocated_size: 0,
+                    retry_timer: EventLoopTimer::init_paused(EventLoopTimerTag::S3UploadPartRetry),
                     part_number: 0,
                     ctx: self_ref,
                     index: 0,
                     retry: 0,
+                    retry_attempt: 0,
                     state: PartState::NotAssigned,
                 });
             }
@@ -520,14 +667,17 @@ impl MultiPartUpload {
         self.current_part_number += 1;
 
         let queue_item = &mut self.queue.as_mut().unwrap()[index];
+        debug_assert!(queue_item.retry_timer.state != EventLoopTimerState::ACTIVE);
         // always set all struct fields to avoid undefined behavior
         *queue_item = UploadPart {
             data,
             allocated_size: allocated_len,
+            retry_timer: EventLoopTimer::init_paused(EventLoopTimerTag::S3UploadPartRetry),
             part_number,
             ctx: self_ref,
             index: index as u8, // @truncate
             retry: self.options.retry,
+            retry_attempt: 0,
             state: PartState::Pending,
         };
         Some(std::ptr::from_mut::<UploadPart>(queue_item))
@@ -750,8 +900,7 @@ impl MultiPartUpload {
             S3CommitResult::Failure(err) => {
                 if this_ref.options.retry > 0 {
                     this_ref.options.retry -= 1;
-                    // retry commit
-                    this_ref.commit_multi_part_request()?;
+                    this_ref.schedule_retry(PendingRetry::Commit);
                     return Ok(());
                 }
                 this_ref.state = State::Finished;
@@ -790,8 +939,7 @@ impl MultiPartUpload {
             S3UploadResult::Failure(_err) => {
                 if this_ref.options.retry > 0 {
                     this_ref.options.retry -= 1;
-                    // retry rollback
-                    this_ref.rollback_multi_part_request()?;
+                    this_ref.schedule_retry(PendingRetry::Rollback);
                     return Ok(());
                 }
                 // SAFETY: `this` is live (final-step ref held until this deref).
@@ -1025,25 +1173,7 @@ impl MultiPartUpload {
             );
             self.state = State::SinglefileStarted;
             // we can do only 1 request
-            let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-            let _ = execute_simple_s3_request(
-                &*self.credentials,
-                s3_simple_request::S3RequestOptions {
-                    path: &self.path,
-                    method: bun_http::Method::PUT,
-                    proxy_url: self.proxy_url(),
-                    body: self.buffered.slice(),
-                    content_type: self.content_type.as_deref(),
-                    content_disposition: self.content_disposition.as_deref(),
-                    content_encoding: self.content_encoding.as_deref(),
-                    acl: self.acl,
-                    storage_class: self.storage_class,
-                    request_payer: self.request_payer,
-                    ..Default::default()
-                },
-                s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
-                callback_context,
-            ); // TODO: properly propagate exception upwards
+            let _ = self.send_single_file_request(); // TODO: properly propagate exception upwards
         } else {
             // we need to split
             let _ = self.process_multi_part(part_size); // TODO: properly propagate exception upwards

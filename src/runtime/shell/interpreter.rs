@@ -1356,9 +1356,9 @@ impl Interpreter {
         self.started.store(true, Ordering::SeqCst);
         Script::start(self, root).run(self);
         if global_this.has_exception() {
-            // A state node threw synchronously (`Yield::failed()`); undo the
-            // pending-activity increment and release the event-loop keepalive.
-            Self::decr_pending_activity_flag(&self.has_pending_activity);
+            // A state node threw (`Yield::failed()`); release the event-loop
+            // keepalive. `has_pending_activity` stays non-zero so GC cannot
+            // collect us while a PipeReader still holds our pointer.
             self.keep_alive.with_mut(|k| k.disable());
             return Err(crate::jsc::JsError::Thrown);
         }

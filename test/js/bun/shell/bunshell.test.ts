@@ -1554,11 +1554,12 @@ describe("deno_task", () => {
       .runAsTest("bunception redirect /dev/null");
 
     describe("ReadableStream as redirect target throws instead of panicking", () => {
-      test.each([
+      test.concurrent.each([
         ["stdin to subprocess", `$\`\${process.execPath} -e 0 < \${stream}\``],
         ["stdin to subprocess (Response.body)", `$\`\${process.execPath} -e 0 < \${new Response("x").body}\``],
         ["stdout from subprocess", `$\`\${process.execPath} -e 0 > \${stream}\``],
         ["stderr from subprocess", `$\`\${process.execPath} -e 0 2> \${stream}\``],
+        ["in pipeline", `$\`\${process.execPath} -e 0 | \${process.execPath} -e 0 < \${stream}\``],
       ])("%s", async (_, shellExpr) => {
         const script = /* ts */ `
           import { $ } from "bun";
@@ -1569,6 +1570,7 @@ describe("deno_task", () => {
           } catch (e) {
             console.log("caught:", e.message);
           }
+          Bun.gc(true);
         `;
         await using proc = Bun.spawn({
           cmd: [bunExe(), "-e", script],

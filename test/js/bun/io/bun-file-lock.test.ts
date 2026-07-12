@@ -150,22 +150,19 @@ describe("Bun.file().lock()", () => {
   // On Windows, LockFileEx semantics differ enough from flock (per-handle byte
   // ranges) that same-process shared→exclusive contention on separate handles
   // is not a reliable test; covered by the cross-process test above.
-  test.skipIf(isWindows)(
-    "nonblocking exclusive lock fails when shared lock is held on another fd",
-    async () => {
-      using dir = tempDir("bun-file-lock", { "a.txt": "hello" });
-      const path = join(String(dir), "a.txt");
-      await using _shared = await Bun.file(path).lock({ exclusive: false });
-      const err = await Bun.file(path)
-        .lock({ nonblocking: true })
-        .then(
-          () => null,
-          e => e,
-        );
-      expect(err).not.toBeNull();
-      expect(err.syscall).toBe("flock");
-    },
-  );
+  test.skipIf(isWindows)("nonblocking exclusive lock fails when shared lock is held on another fd", async () => {
+    using dir = tempDir("bun-file-lock", { "a.txt": "hello" });
+    const path = join(String(dir), "a.txt");
+    await using _shared = await Bun.file(path).lock({ exclusive: false });
+    const err = await Bun.file(path)
+      .lock({ nonblocking: true })
+      .then(
+        () => null,
+        e => e,
+      );
+    expect(err).not.toBeNull();
+    expect(err.syscall).toBe("flock");
+  });
 
   test("Bun.file(fd).lock() and .unlock()", async () => {
     using dir = tempDir("bun-file-lock", { "a.txt": "hello" });

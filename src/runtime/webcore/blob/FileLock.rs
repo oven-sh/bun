@@ -57,7 +57,10 @@ impl FileLock {
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_unlock(&self, global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         match self.release() {
-            Ok(()) => Ok(JSPromise::resolved_promise_value(global, JSValue::UNDEFINED)),
+            Ok(()) => Ok(JSPromise::resolved_promise_value(
+                global,
+                JSValue::UNDEFINED,
+            )),
             Err(err) => Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global,
@@ -71,14 +74,28 @@ impl FileLock {
     pub(crate) fn do_bytes(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let fd = self.live_fd(global, "bytes")?;
         let len = optional_byte_count(global, frame)?;
-        Ok(schedule_io(global, IoOp::Read { fd, len, kind: ReadKind::Uint8Array }))
+        Ok(schedule_io(
+            global,
+            IoOp::Read {
+                fd,
+                len,
+                kind: ReadKind::Uint8Array,
+            },
+        ))
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_text(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let fd = self.live_fd(global, "text")?;
         let len = optional_byte_count(global, frame)?;
-        Ok(schedule_io(global, IoOp::Read { fd, len, kind: ReadKind::Text }))
+        Ok(schedule_io(
+            global,
+            IoOp::Read {
+                fd,
+                len,
+                kind: ReadKind::Text,
+            },
+        ))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -89,7 +106,14 @@ impl FileLock {
     ) -> JsResult<JSValue> {
         let fd = self.live_fd(global, "arrayBuffer")?;
         let len = optional_byte_count(global, frame)?;
-        Ok(schedule_io(global, IoOp::Read { fd, len, kind: ReadKind::ArrayBuffer }))
+        Ok(schedule_io(
+            global,
+            IoOp::Read {
+                fd,
+                len,
+                kind: ReadKind::ArrayBuffer,
+            },
+        ))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -210,9 +234,8 @@ impl ConcurrentPromiseTaskContext for LockTaskCtx<'_> {
             }
         };
         if self.nonblocking {
-            self.result = Some(
-                bun_sys::flock(fd, self.exclusive, true).map(|()| LockedFd { fd, owns_fd }),
-            );
+            self.result =
+                Some(bun_sys::flock(fd, self.exclusive, true).map(|()| LockedFd { fd, owns_fd }));
         } else {
             // Abortable wait: poll LOCK_NB, sleeping on the `aborted` futex
             // between attempts so an abort wakes us immediately.
@@ -335,9 +358,19 @@ pub struct IoTaskCtx<'a> {
 }
 
 enum IoOp {
-    Read { fd: Fd, len: Option<usize>, kind: ReadKind },
-    Write { fd: Fd, data: jsc::ThreadSafe<StringOrBuffer> },
-    Truncate { fd: Fd, len: i64 },
+    Read {
+        fd: Fd,
+        len: Option<usize>,
+        kind: ReadKind,
+    },
+    Write {
+        fd: Fd,
+        data: jsc::ThreadSafe<StringOrBuffer>,
+    },
+    Truncate {
+        fd: Fd,
+        len: i64,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -401,9 +434,7 @@ impl ConcurrentPromiseTaskContext for IoTaskCtx<'_> {
                     Err(_) => promise.reject(global, Err(jsc::JsError::Thrown)),
                 }
             }
-            Some(Ok(IoResult::Wrote(n))) => {
-                promise.resolve(global, JSValue::js_number(n as f64))
-            }
+            Some(Ok(IoResult::Wrote(n))) => promise.resolve(global, JSValue::js_number(n as f64)),
             Some(Ok(IoResult::Truncated)) => promise.resolve(global, JSValue::UNDEFINED),
             Some(Err(err)) => promise.reject(global, Ok(err.to_js(global))),
             None => promise.reject(
@@ -415,7 +446,11 @@ impl ConcurrentPromiseTaskContext for IoTaskCtx<'_> {
 }
 
 fn schedule_io<'a>(global_this: &'a JSGlobalObject, op: IoOp) -> JSValue {
-    let ctx = Box::new(IoTaskCtx { global_this, op, result: None });
+    let ctx = Box::new(IoTaskCtx {
+        global_this,
+        op,
+        result: None,
+    });
     let task = FileLockIOTask::create_on_js_thread(global_this, ctx);
     let promise_value = task.promise.value();
     let raw = bun_core::heap::into_raw(task);

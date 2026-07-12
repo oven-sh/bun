@@ -1454,9 +1454,7 @@ impl BlobExt for Blob {
                     }
                 }
             } else if !options.is_undefined_or_null() {
-                return Err(
-                    global_this.throw_invalid_argument_type("lock", "options", "object")
-                );
+                return Err(global_this.throw_invalid_argument_type("lock", "options", "object"));
             }
         }
         let source = match &file.pathlike {
@@ -5447,9 +5445,8 @@ fn store_as_file_for_lock<'a>(
         store::Data::Bytes(_) => Err(global_this.throw_invalid_arguments(format_args!(
             "{op}() is only available on files (from Bun.file())"
         ))),
-        store::Data::S3(_) => Err(global_this.throw_invalid_arguments(format_args!(
-            "{op}() is not supported on S3 files"
-        ))),
+        store::Data::S3(_) => Err(global_this
+            .throw_invalid_arguments(format_args!("{op}() is not supported on S3 files"))),
     }
 }
 

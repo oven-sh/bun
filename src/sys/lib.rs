@@ -3073,7 +3073,11 @@ mod posix_impl {
         Ok(())
     }
     pub fn flock(fd: Fd, exclusive: bool, nonblocking: bool) -> Maybe<()> {
-        let mut op = if exclusive { libc::LOCK_EX } else { libc::LOCK_SH };
+        let mut op = if exclusive {
+            libc::LOCK_EX
+        } else {
+            libc::LOCK_SH
+        };
         if nonblocking {
             op |= libc::LOCK_NB;
         }
@@ -3980,9 +3984,8 @@ mod windows_impl {
         }
         let mut ov: w::OVERLAPPED = bun_core::ffi::zeroed();
         // SAFETY: `ov` is valid for the duration of the call.
-        let ok = unsafe {
-            w::kernel32::LockFileEx(fd.native() as w::HANDLE, flags, 0, !0, !0, &mut ov)
-        };
+        let ok =
+            unsafe { w::kernel32::LockFileEx(fd.native() as w::HANDLE, flags, 0, !0, !0, &mut ov) };
         if ok == 0 {
             return Err(Error::new(w::get_last_errno(), Tag::flock).with_fd(fd));
         }
@@ -3991,8 +3994,7 @@ mod windows_impl {
     pub fn funlock(fd: Fd) -> Maybe<()> {
         let mut ov: w::OVERLAPPED = bun_core::ffi::zeroed();
         // SAFETY: `ov` is valid for the duration of the call.
-        let ok =
-            unsafe { w::kernel32::UnlockFileEx(fd.native() as w::HANDLE, 0, !0, !0, &mut ov) };
+        let ok = unsafe { w::kernel32::UnlockFileEx(fd.native() as w::HANDLE, 0, !0, !0, &mut ov) };
         if ok == 0 {
             return Err(Error::new(w::get_last_errno(), Tag::flock).with_fd(fd));
         }

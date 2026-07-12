@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
@@ -152,14 +152,13 @@ foo/
   // subdirectory is the minimal trigger; the window is a few instructions
   // so this is a stress probe rather than a deterministic repro.
   test("recursive rm never hangs on the DirTask hand-off", async () => {
+    using base = tempDir("rm-handoff", {});
     const fixture = /* ts */ `
       import { $ } from "bun";
-      import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+      import { mkdirSync, writeFileSync } from "node:fs";
       import { join } from "node:path";
-      import { tmpdir } from "node:os";
 
-      const base = mkdtempSync(join(tmpdir(), "rm-handoff-"));
-      process.on("exit", () => rmSync(base, { recursive: true, force: true }));
+      const base = ${JSON.stringify(String(base))};
 
       function tree(n: number): string {
         const d = join(base, "t" + n);

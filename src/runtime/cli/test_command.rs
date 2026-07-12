@@ -2858,7 +2858,11 @@ impl TestCommand {
                 }
 
                 let mut print_expect_calls = summary.expectations > 0;
-                let obsolete = reporter.jest.snapshots.obsolete;
+                let obsolete = if reporter.jest.unhandled_errors_between_tests > 0 {
+                    0
+                } else {
+                    reporter.jest.snapshots.obsolete
+                };
                 let removed = reporter.jest.snapshots.removed;
                 if reporter.jest.snapshots.total > 0 || obsolete > 0 || removed > 0 {
                     let passed = reporter.jest.snapshots.passed;

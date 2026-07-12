@@ -893,7 +893,9 @@ pub(crate) fn register_macro(
 }
 
 pub(crate) fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    ZigString::init(bun_resolver::fs::FileSystem::get().top_level_dir).to_js(global_this)
+    ZigString::init(bun_resolver::fs::FileSystem::get().top_level_dir)
+        .with_encoding()
+        .to_js(global_this)
 }
 
 pub(crate) fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -979,7 +981,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             .unwrap_or(JSValue::ZERO);
     }
 
-    ZigString::init(vm.main()).to_js(global_this)
+    ZigString::init(vm.main()).with_encoding().to_js(global_this)
 }
 
 // HOST_EXPORT(BunObject_setter_main, jsc)

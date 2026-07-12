@@ -187,6 +187,41 @@ describe("compiled binary validity", () => {
     expect(stdout.trim()).toBe("compile-test-output");
     expect(exitCode).toBe(0);
   });
+
+  test("Bun.main matches import.meta.path in compiled binary with non-ASCII outfile", async () => {
+    using dir = tempDir("build-compile-utf8-outfile", {
+      "app.js": `console.log(JSON.stringify({ main: Bun.main, meta: import.meta.path, argv1: process.argv[1] }));`,
+    });
+
+    const outfile = join(String(dir), "éxe");
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error:");
+    expect(buildExit).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [isWindows ? outfile + ".exe" : outfile],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const expected = (isWindows ? "B:/~BUN/root/" : "/$bunfs/root/") + "éxe";
+    expect(JSON.parse(stdout.trim())).toEqual({
+      main: expected,
+      meta: expected,
+      argv1: expected,
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 if (isLinux) {

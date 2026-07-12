@@ -77,10 +77,10 @@ ExceptionOr<JSC::JSValue> MessagePort::postMessage(JSC::JSGlobalObject& state, J
     // simulated throw on asan/debug that must be consumed before any nested scope.
     auto& vm = state.vm();
     auto warnScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    // node samples closed/detached at call time, so a getter that closes or
-    // transfers this port during serialization still returns true. The peer's
-    // close propagating (m_closeEventDispatched) counts as closed.
-    bool wasDetachedOnEntry = m_isDetached || m_closeEventDispatched;
+    // node: undefined when already closed/transferred or the peer's close has
+    // propagated, true otherwise. Sample at call time; the disentangle/send work
+    // below stays gated on m_isDetached so transfer-list ports are still detached.
+    JSC::JSValue returnValue = (m_isDetached || m_closeEventDispatched) ? JSC::jsUndefined() : JSC::jsBoolean(true);
     // Reject a bad port in the transfer list before serialization, so the post
     // aborts before any ArrayBuffer in the list is detached (transfer is atomic).
     // Node checks each entry in order: source port first, then detached.
@@ -108,13 +108,8 @@ ExceptionOr<JSC::JSValue> MessagePort::postMessage(JSC::JSGlobalObject& state, J
     }
     RETURN_IF_EXCEPTION(warnScope, JSC::jsUndefined());
 
-    // node returns undefined from postMessage() on a port that was already closed,
-    // transferred, or whose peer's close has propagated; every other non-throwing
-    // path returns true.
-    if (wasDetachedOnEntry)
-        return JSC::jsUndefined();
     if (!isEntangled())
-        return JSC::jsBoolean(true);
+        return returnValue;
 
     Vector<TransferredMessagePort> transferredPorts;
     if (!ports.isEmpty()) {
@@ -145,12 +140,12 @@ ExceptionOr<JSC::JSValue> MessagePort::postMessage(JSC::JSGlobalObject& state, J
                 JSC::JSValue::encode(JSC::jsUndefined()));
             CLEAR_IF_EXCEPTION(warnScope);
             close();
-            return JSC::jsBoolean(true);
+            return returnValue;
         }
     }
 
     m_pipe->send(m_side, MessageWithMessagePorts { messageData.releaseReturnValue(), WTF::move(transferredPorts) });
-    return JSC::jsBoolean(true);
+    return returnValue;
 }
 
 void MessagePort::start()

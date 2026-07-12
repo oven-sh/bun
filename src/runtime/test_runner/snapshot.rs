@@ -43,10 +43,11 @@ pub struct Snapshots<'a> {
     /// Reconciled against `unchecked_keys` at `write_snapshot_file` so ordering
     /// relative to the first `toMatchSnapshot` call does not matter.
     pub skipped_test_names: &'a mut Vec<(FileId, Box<[u8]>)>,
-    /// File whose run was partial: `.only()` drops siblings before sequencing,
-    /// and a failing hook or test can jump past later tests. Unchecked keys are
-    /// ignored for the obsolete tally when this matches the file being flushed.
-    pub partial_file_id: Option<FileId>,
+    /// Files whose run was partial: `.only()` drops siblings before sequencing,
+    /// a failing hook or test can jump past later tests, and a throwing describe
+    /// callback unsequences its children during collection. Unchecked keys are
+    /// ignored for the obsolete tally when the file being flushed is listed.
+    pub partial_file_ids: Vec<FileId>,
     pub _current_file: Option<File>,
     /// Read-only backref into `Jest::RUNNER.files[..].source.path` (not owned
     /// here, never freed): the runner is process-global and its files are
@@ -358,7 +359,7 @@ impl<'a> Snapshots<'a> {
                 // Skipped tests' entries are not rewritten into `file_buf`, so
                 // they are physically removed; keep them in the tally.
                 self.removed += self.unchecked_keys.len();
-            } else if self.partial_file_id != Some(file.id) {
+            } else if !self.partial_file_ids.contains(&file.id) {
                 for (id, name) in self.skipped_test_names.iter() {
                     if *id == file.id {
                         Self::mark_snapshots_as_checked_for_test(self.unchecked_keys, name);
@@ -392,6 +393,14 @@ impl<'a> Snapshots<'a> {
         self.skipped_test_names.push((file_id, test_name));
     }
 
+    /// Mark `file_id` as having run partially so its unchecked keys are not
+    /// tallied as obsolete.
+    pub fn mark_file_partial(&mut self, file_id: FileId) {
+        if !self.partial_file_ids.contains(&file_id) {
+            self.partial_file_ids.push(file_id);
+        }
+    }
+
     /// Remove every unchecked snapshot key that belongs to `test_name` so that
     /// skipped/todo/filtered tests do not cause false-positive obsolete counts.
     fn mark_snapshots_as_checked_for_test(unchecked_keys: &mut StringHashMap<()>, test_name: &[u8]) {
@@ -414,7 +423,9 @@ impl<'a> Snapshots<'a> {
                 return false;
             }
             // Also match `{test_name}: {hint}` so skipped tests with hinted
-            // snapshots are not counted obsolete (Jest does not handle this).
+            // snapshots are not counted obsolete. The key format is ambiguous
+            // (a distinct test literally named `{test_name}: {hint}` collides),
+            // trading a rare false negative for Jest's false positive here.
             if stripped.len() > test_name.len() + 2
                 && strings::starts_with(stripped, test_name)
                 && stripped[test_name.len()] == b':'

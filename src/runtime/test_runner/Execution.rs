@@ -679,7 +679,7 @@ impl Execution {
                 (bt.file_id, bt.collection.root_scope.base.only)
             };
             if root_only != super::bun_test::Only::No || sequence.result.is_fail() {
-                runner.snapshots.partial_file_id = Some(file_id);
+                runner.snapshots.mark_file_partial(file_id);
             }
             if let Some(entry_ptr) = sequence.test_entry {
                 if sequence.result != Result::Pass

@@ -762,9 +762,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // -baseline WebKit prebuilt has no -lto variant).
   const baseline = partial.baseline ?? false;
 
-  // WebKit-uses-mimalloc variant: Linux glibc only for now (the only
-  // -mimalloc prebuilts oven-sh/WebKit ships).
-  const webkitMimalloc = partial.webkitMimalloc ?? false;
+  // WebKit-uses-mimalloc variant: on by default for Linux glibc release so JSC
+  // and bun share one allocator. Gated to the exact combinations oven-sh/WebKit
+  // ships -mimalloc prebuilts for (amd64/arm64 glibc, release + release-lto).
+  const webkitMimalloc = partial.webkitMimalloc ?? (linux && abi === "gnu" && release && !asan && !baseline);
 
   // LTO: default on for CI release non-asan non-assertions builds on Linux
   // and on darwin cross-compiles. Windows is NOT in the default even though
@@ -919,8 +920,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // ─── Validation ───
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
   assert(
-    !webkitMimalloc || (linux && abi === "gnu" && !asan && !debug),
-    "webkitMimalloc=true requires Linux glibc release (only -mimalloc and -mimalloc-lto WebKit prebuilts exist)",
+    !webkitMimalloc || (linux && abi === "gnu" && !asan && !debug && !baseline),
+    "webkitMimalloc=true requires Linux glibc release non-baseline (only -mimalloc and -mimalloc-lto WebKit prebuilts exist)",
   );
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
@@ -1048,7 +1049,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
-  const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
+  // The -mimalloc prebuilts only exist in the oven-sh/WebKit#283 preview
+  // release; drop this override once that PR merges and WEBKIT_VERSION is
+  // bumped to an autobuild that carries the -mimalloc artifacts.
+  const webkitVersion =
+    partial.webkitVersion ?? (webkitMimalloc ? "autobuild-preview-pr-283-22b4f7cd" : versionDefaults.webkitVersion);
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.

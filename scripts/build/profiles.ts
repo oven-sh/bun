@@ -155,14 +155,13 @@ export const profiles = {
   },
 
   /** Release with WebKit on mimalloc instead of libpas (Linux glibc only);
-   * JSC and bun share one allocator. Pinned to the oven-sh/WebKit#283 preview
-   * until WEBKIT_VERSION carries -mimalloc artifacts; drop webkitVersion then. */
+   * JSC and bun share one allocator. Default for Linux glibc release now
+   * (see resolveConfig); this profile just forces lto=false for local testing. */
   "release-mimalloc": {
     buildType: "Release",
     webkit: "prebuilt",
     lto: false,
     webkitMimalloc: true,
-    webkitVersion: "autobuild-preview-pr-283-22b4f7cd",
   },
 
   /** Release with local WebKit. */

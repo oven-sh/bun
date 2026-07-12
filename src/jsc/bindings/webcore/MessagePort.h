@@ -67,7 +67,7 @@ public:
     static Ref<MessagePort> create(ScriptExecutionContext&, Ref<MessagePortPipe>&&, uint8_t side);
     virtual ~MessagePort();
 
-    ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
+    ExceptionOr<JSC::JSValue> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
 
     void start();
     bool hasMessageEventListener() const { return m_hasMessageEventListener; }

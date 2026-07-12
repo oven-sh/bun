@@ -942,7 +942,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 
     worker->enqueueToParent(MessageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() });
 
-    return JSValue::encode(jsUndefined());
+    // node's parentPort is a MessagePort, whose postMessage() returns true.
+    return JSValue::encode(jsBoolean(true));
 }
 
 } // namespace WebCore

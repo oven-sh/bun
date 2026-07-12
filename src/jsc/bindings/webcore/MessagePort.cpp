@@ -71,7 +71,7 @@ MessagePort::~MessagePort()
         m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected);
 }
 
-ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
+ExceptionOr<JSC::JSValue> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
     // Own a function-level scope: SerializedScriptValue::create() below leaves a
     // simulated throw on asan/debug that must be consumed before any nested scope.
@@ -102,10 +102,12 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
         (void)warnScope.exception();
         return messageData.releaseException();
     }
-    RETURN_IF_EXCEPTION(warnScope, {});
+    RETURN_IF_EXCEPTION(warnScope, JSC::jsUndefined());
 
+    // node returns undefined from postMessage() on a port that is already closed
+    // or transferred; every other non-throwing path returns true.
     if (!isEntangled())
-        return {};
+        return JSC::jsUndefined();
 
     Vector<TransferredMessagePort> transferredPorts;
     if (!ports.isEmpty()) {
@@ -136,12 +138,12 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
                 JSC::JSValue::encode(JSC::jsUndefined()));
             CLEAR_IF_EXCEPTION(warnScope);
             close();
-            return {};
+            return JSC::jsBoolean(true);
         }
     }
 
     m_pipe->send(m_side, MessageWithMessagePorts { messageData.releaseReturnValue(), WTF::move(transferredPorts) });
-    return {};
+    return JSC::jsBoolean(true);
 }
 
 void MessagePort::start()

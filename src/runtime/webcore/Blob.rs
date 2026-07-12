@@ -1473,7 +1473,7 @@ impl BlobExt for Blob {
         }
         let source = match &file.pathlike {
             PathOrFileDescriptor::Fd(fd) => file_lock::LockSource::Fd(*fd),
-            PathOrFileDescriptor::Path(p) => file_lock::LockSource::Path(p.clone()),
+            PathOrFileDescriptor::Path(p) => file_lock::LockSource::Path(p.slice().to_vec()),
         };
         Ok(file_lock::schedule_lock(
             global_this,

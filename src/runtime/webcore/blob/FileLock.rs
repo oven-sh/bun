@@ -10,8 +10,7 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use crate::node::types::{PathLikeExt as _, StringOrBuffer};
-use crate::webcore::node_types::PathLike;
+use crate::node::types::StringOrBuffer;
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
     self as jsc, AbortSignal, CallFrame, JSGlobalObject, JSPromise, JSValue, JsClass as _,
@@ -45,6 +44,12 @@ impl Drop for HeldFd {
 pub struct FileLock {
     held: Cell<Option<Arc<HeldFd>>>,
     unlocked: Cell<bool>,
+}
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        let _ = self.release();
+    }
 }
 
 impl FileLock {
@@ -140,10 +145,12 @@ impl FileLock {
                 "FileLock.write(data) requires a string, ArrayBuffer, or ArrayBufferView"
             )));
         };
-        let Some(data) = StringOrBuffer::from_js(global, arg)? else {
+        // is_async=true pins + protects ArrayBuffer inputs so a `transfer()`
+        // between now and the WorkPool read can't detach the backing store.
+        let Some(data) = StringOrBuffer::from_js_maybe_async(global, arg, true, true)? else {
             return Err(global.throw_invalid_argument_type("write", "data", "string or buffer"));
         };
-        let data = data.into_thread_safe();
+        let data = jsc::ThreadSafe::adopt(data);
         Ok(schedule_io(global, held, IoOp::Write { data }))
     }
 
@@ -205,7 +212,9 @@ pub struct LockTaskCtx<'a> {
 
 pub(crate) enum LockSource {
     Fd(Fd),
-    Path(PathLike),
+    /// Owned copy of the path bytes; the `PathLike` inside the Blob's store
+    /// may borrow JS-heap memory that nothing on this task roots.
+    Path(Vec<u8>),
 }
 
 extern "C" fn lock_abort_cb(ctx: *mut c_void, _reason: JSValue) {
@@ -224,9 +233,12 @@ impl ConcurrentPromiseTaskContext for LockTaskCtx<'_> {
     fn run(&mut self) {
         let (fd, owns_fd) = match &self.source {
             LockSource::Fd(fd) => (*fd, false),
-            LockSource::Path(path_like) => {
+            LockSource::Path(bytes) => {
                 let mut buf = bun_paths::path_buffer_pool::get();
-                let path = path_like.slice_z(&mut buf);
+                let n = bytes.len().min(buf.len() - 1);
+                buf[..n].copy_from_slice(&bytes[..n]);
+                buf[n] = 0;
+                let path = bun_core::ZStr::from_buf(&buf[..], n);
                 let opened = match bun_sys::open(path, O::RDWR | O::CREAT | O::CLOEXEC, 0o666) {
                     Ok(fd) => Ok(fd),
                     // flock(2) permits shared locks regardless of open mode;

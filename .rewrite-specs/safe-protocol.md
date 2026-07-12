@@ -123,3 +123,51 @@ drop, never dangles); the save/restore re-entrancy protocol is an RAII scope
 guard (nested TLS entry from JS re-entrancy restores on drop, enforced by
 type). Verify against tls-semantics.md §re-entrancy rules; both reviewer
 lenses; ws + upgradeTLS + server-SNI suites are the regression gate.
+
+## P0b clarification (epoch lifetime + width)
+The per-chunk epoch table is loop-owned and NEVER freed before loop teardown —
+it is the deliberate irreducible residue of stale-handle safety (one word per
+64-slot chunk; ~13KB at 100k-socket high-water). Chunk reuse (recommit) is
+preferred over appending, so the table is bounded by peak chunk count.
+Generation width: u64 in both slots and handles (SocketRef has free padding) —
+epoch in high 32, slot counter in low 32 — so epoch wrap is unreachable
+(~2^32 decommit cycles per chunk). Do NOT pack into u32.
+
+## P0b REVISION (owner directive — SUPERSEDES the mmap/decommit design above)
+Chunks are plain mimalloc allocations (bun_alloc default allocator), 256 slots
+per chunk, mi_free'd when empty (hysteresis: keep the most-recently-emptied
+chunk). NO mmap reserve / madvise / recommit machinery.
+Validation root moves to the loop-owned CHUNK TABLE (never shrinks; the
+irreducible residue, now peak/256 entries): handle = {ptr, chunk_idx: u32,
+gen: u32}; validate = bounds-check chunk_idx -> entry {base, len, epoch};
+dead if entry freed/epoch-mismatch or ptr outside [base, base+len); else
+deref slot counter. NEVER deref the slot before the table check (freed chunk
+memory is recycled — a raw deref could falsely validate). Epoch bumps on
+chunk free; table slot reuse for new chunks keeps the table bounded by peak.
+Kernel udata: unchanged discipline (poll_stop precedes slot free, per W2);
+debug_assert layer may keep the old deref check on the dispatch path since
+dispatch only sees live-registration pointers.
+Tests: stale-handle-after-chunk-free safety (must not touch freed memory —
+ASAN is the oracle), epoch ABA across chunk-slot reuse, hysteresis, 256-slot
+boundary churn. Size classes (uWS inline ext) unchanged, applied per class.
+
+## P0b FINAL (owner decision — supersedes BOTH prior P0b reclamation designs)
+Reclamation = the MADV design, with the mimalloc revision's sizing kept:
+- Chunks: mmap-reserved, 256 slots each. Empty chunk (hysteresis: keep the
+  most-recently-emptied one committed) -> madvise(MADV_DONTNEED) (Linux/mac;
+  MADV_DONTNEED specifically, NEVER MADV_FREE — zero-fill guarantee is load-
+  bearing) / VirtualFree(MEM_DECOMMIT) on Windows. Address range stays
+  reserved; stale-handle validation remains a single slot deref (zero page =>
+  gen 0 => dead). NO chunk table on the validation path.
+- Generations u64: chunk epoch (loop-side array, bumped per decommit) in high
+  32, slot counter low 32. Epoch array = the residue (~8B per 256 peak
+  sockets), lives until loop teardown.
+- LOOP TEARDOWN MUST FULLY RELEASE: munmap / VirtualFree(MEM_RELEASE) every
+  reservation + free the epoch array when the loop is destroyed (workers +
+  HTTP thread churn must not accumulate reservations). Safe per the existing
+  on_thread_exit ordering: validation only runs on the loop's thread and
+  teardown is its final act after group drain.
+- Tests: RSS drop after drain (touch/measure/decommit/measure), stale-handle
+  read-after-decommit returns dead (and ASAN-clean), epoch ABA across
+  recommit, hysteresis boundary churn, full-release-at-teardown (no
+  reservation growth across N worker create/destroy cycles).

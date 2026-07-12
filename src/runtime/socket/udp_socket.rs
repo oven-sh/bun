@@ -8,7 +8,7 @@ use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, Ref as JscRef,
-    StringJsc, SysErrorJsc, SystemError,
+    StringJsc, Strong, SysErrorJsc, SystemError,
 };
 use bun_ptr::BackRef;
 
@@ -78,6 +78,7 @@ type UsSockaddrStorage = sockaddr_storage;
 /// Exclusive reborrow of the udp socket. Invariant: `socket` came from
 /// `udp::Socket::create` and stays readable until the tick-postlude sweep of
 /// `closed_udp_head` (C15); the JS thread is the sole accessor.
+/// Residue: core UDP has no generation-checked handle (Protocol v2 is TCP-only).
 #[inline]
 fn udp_mut<'a>(socket: *mut udp::Socket) -> &'a mut udp::Socket {
     // SAFETY: fn invariant above; callback-held pointers are provenance
@@ -106,6 +107,18 @@ unsafe extern "C" {
     safe fn htons(hshort: u16) -> u16;
 }
 
+/// Consumer-held stand-in for the Protocol-v2 core dispatch guard: pins the JS
+/// wrapper (whose `finalize()` frees the `UDPSocket` box) so re-entrant close
+/// plus a GC inside a handler cannot free the owner before dispatch returns.
+#[inline]
+fn dispatch_guard(this: &UDPSocket) -> Option<(Strong, JSValue)> {
+    let this_value = this.this_value.get().try_get()?;
+    Some((
+        Strong::create(this_value, this.global_this.get()),
+        this_value,
+    ))
+}
+
 extern "C" fn on_close(socket: *mut udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     this.closed.set(true);
@@ -122,15 +135,19 @@ extern "C" fn on_recv_error(socket: *mut udp::Socket, errno: c_int) {
     // SystemError from the ICMP errno (ECONNREFUSED, EHOSTUNREACH,
     // ENETUNREACH, EMSGSIZE, ...) and dispatches through the 'error' handler.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
+    // Guard before any JS: the error handler may close + drop the wrapper.
+    let Some((_guard, this_value)) = dispatch_guard(this) else {
+        return;
+    };
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
     let err_value = sys_err.to_js(global_this);
-    this.call_error_handler(JSValue::ZERO, err_value);
+    this.call_error_handler(this_value, err_value);
 }
 
 extern "C" fn on_drain(socket: *mut udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
-    let Some(this_value) = this.this_value.get().try_get() else {
+    let Some((_guard, this_value)) = dispatch_guard(this) else {
         return;
     };
     let Some(callback) = js::on_drain_get_cached(this_value) else {
@@ -145,7 +162,7 @@ extern "C" fn on_drain(socket: *mut udp::Socket) {
     let global_this = this.global_this.get();
     let result = callback.call(global_this, this_value, &[this_value]);
     if let Err(err) = result {
-        this.call_error_handler(JSValue::ZERO, global_this.take_exception(err));
+        this.call_error_handler(this_value, global_this.take_exception(err));
     }
     event_loop.exit();
 }
@@ -156,7 +173,10 @@ extern "C" fn on_data(
     packets: c_int,
 ) {
     let udp_socket: &UDPSocket = UDPSocket::from_uws(socket);
-    let Some(this_value) = udp_socket.this_value.get().try_get() else {
+    // Guard before the batch loop: a mid-batch close downgrades `this_value`,
+    // after which a GC inside a later packet's callback could finalize the
+    // wrapper and free `udp_socket` while the `closed` recheck still reads it.
+    let Some((_guard, this_value)) = dispatch_guard(udp_socket) else {
         return;
     };
     let Some(callback) = js::on_data_get_cached(this_value) else {
@@ -266,7 +286,6 @@ extern "C" fn on_data(
             Ok(v) => v,
             Err(_) => {
                 loop_.exit();
-                this_value.ensure_still_alive();
                 return;
             }
         };
@@ -274,7 +293,6 @@ extern "C" fn on_data(
             Ok(v) => v,
             Err(_) => {
                 loop_.exit();
-                this_value.ensure_still_alive();
                 return;
             }
         };
@@ -291,16 +309,13 @@ extern "C" fn on_data(
             ],
         );
         if let Err(err) = result {
-            udp_socket.call_error_handler(JSValue::ZERO, global_this.take_exception(err));
+            udp_socket.call_error_handler(this_value, global_this.take_exception(err));
         }
 
-        this_value.ensure_still_alive();
         loop_.exit();
 
         i += 1;
     }
-
-    this_value.ensure_still_alive();
 }
 
 pub struct ConnectConfig {
@@ -516,13 +531,12 @@ impl UDPSocket {
         bun_core::heap::into_raw(Box::new(init))
     }
 
-    /// Recover `&UDPSocket` from the usockets user-data slot. Centralises the
-    /// back-ref deref shared by every `extern "C"` callback below — the user
-    /// pointer was set to the heap-allocated `UDPSocket` in [`udp_socket`] via
-    /// `udp::Socket::create(.., user_data = this_ptr)` and remains live
-    /// until `on_close` (usockets dispatches no callback after close, C15).
-    /// All mutated fields are `Cell`/`JsCell`, so a shared borrow is
-    /// sufficient (R-2).
+    /// Owner recovery from the usockets user slot — live at dispatch entry
+    /// (C15: no callback after `on_close`); JS-running callbacks then extend
+    /// liveness across user JS via [`dispatch_guard`]. The raw deref is the
+    /// residue: core UDP keeps the C-shape surface (`user()` = `*mut c_void`,
+    /// no Protocol-v2 owner registry — safe-protocol.md covers TCP kinds
+    /// only). Mutated fields are `Cell`/`JsCell`, so `&self` suffices (R-2).
     #[inline]
     fn from_uws<'a>(socket: *mut udp::Socket) -> &'a UDPSocket {
         let user = udp_mut(socket).user();
@@ -682,15 +696,8 @@ impl UDPSocket {
         ))
     }
 
-    pub fn call_error_handler(&self, this_value_: JSValue, err: JSValue) {
-        let this_value = if this_value_.is_empty() {
-            match self.this_value.get().try_get() {
-                Some(v) => v,
-                None => return,
-            }
-        } else {
-            this_value_
-        };
+    /// `this_value` is non-empty and pinned by the caller's [`dispatch_guard`].
+    pub fn call_error_handler(&self, this_value: JSValue, err: JSValue) {
         let callback = js::on_error_get_cached(this_value).unwrap_or(JSValue::ZERO);
         let global_this = self.global_this.get();
         let vm = global_this.bun_vm().as_mut();

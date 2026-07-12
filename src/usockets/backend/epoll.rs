@@ -1,18 +1,16 @@
 //! epoll backend (Linux/Android). Implements core-semantics.md §1-2 poll
 //! mechanics: epoll_pwait2 with an ENOSYS fallback latch, level-triggered
-//! R/W with implicit EPOLLHUP|EPOLLERR, tagged-pointer udata routed to Bun's
-//! FilePoll dispatch (`Bun__internal_dispatch_ready_poll`).
+//! R/W with implicit EPOLLHUP|EPOLLERR. All udata are untagged slot pointers
+//! (P10 removed the tagged-pointer FilePoll back-channel).
 
-use core::ffi::c_void;
 use core::ptr;
 
-use crate::backend::{self, Backend, Events, PollState, POINTER_TAG_MASK};
+use crate::backend::{self, Backend, Events, PollState};
 use crate::loop_::Loop;
-use crate::unsafe_core::{ffi, poll_access};
+use crate::unsafe_core::poll_access;
 use crate::LIBUS_SOCKET_DESCRIPTOR;
 
-/// `ready_polls` element type; `Bun__internal_dispatch_ready_poll` reads it
-/// back via `Loop::current_ready_event`.
+/// `ready_polls` element type.
 pub type EventType = libc::epoll_event;
 
 /// Epoll delivers one coalesced entry per fd (R1.21).
@@ -51,6 +49,24 @@ impl Backend for Epoll {
 
     fn wait(&mut self, loop_: *mut Loop, timeout_ns: i64) -> i32 {
         poll_access::epoll_wait_ready(loop_, timeout_ns)
+    }
+
+    fn arm_source(
+        &mut self,
+        p: *mut PollState,
+        loop_: *mut Loop,
+        source: crate::loop_::poll_registry::PollSource,
+    ) -> i32 {
+        registry_arm(p, loop_, source)
+    }
+
+    fn disarm_source(
+        &mut self,
+        p: *mut PollState,
+        loop_: *mut Loop,
+        armed: crate::loop_::poll_registry::ArmedSource,
+    ) {
+        registry_disarm(p, loop_, armed)
     }
 }
 
@@ -119,6 +135,48 @@ pub(crate) fn accept_poll_event(p: *mut PollState) -> u64 {
     poll_access::read_eventfd8(poll_access::read_poll(p).fd())
 }
 
+// ── P0c registry sources (Fd + Pri on epoll) ────────────────────────────────
+
+pub(crate) fn registry_arm(
+    p: *mut PollState,
+    loop_: *mut Loop,
+    source: crate::loop_::poll_registry::PollSource,
+) -> i32 {
+    match source {
+        crate::loop_::poll_registry::PollSource::Fd {
+            readable, writable, ..
+        } => poll_start_rc(p, loop_, backend::fd_interest(readable, writable)),
+        // PSI trigger fds signal via EPOLLPRI only; the slot's believed events
+        // are READABLE (dispatch translates PRI→IN before the R1.18 mask).
+        crate::loop_::poll_registry::PollSource::Pri { .. } => {
+            let mut st = poll_access::read_poll(p);
+            st.set_polling(Events::READABLE);
+            poll_access::write_poll(p, st);
+            poll_access::epoll_ctl(
+                poll_access::loop_fd(loop_),
+                libc::EPOLL_CTL_ADD,
+                st.fd(),
+                (libc::EPOLLPRI | libc::EPOLLERR) as u32,
+                p as usize as u64,
+            )
+        }
+    }
+}
+
+/// Interest update — identical mechanics to socket [`poll_change`] (epoll is
+/// level-triggered for both directions already).
+pub(crate) fn registry_change(p: *mut PollState, loop_: *mut Loop, events: Events) {
+    poll_change(p, loop_, events);
+}
+
+pub(crate) fn registry_disarm(
+    p: *mut PollState,
+    loop_: *mut Loop,
+    _armed: crate::loop_::poll_registry::ArmedSource,
+) {
+    poll_stop(p, loop_);
+}
+
 pub(crate) fn wait_immediate(loop_: *mut Loop) -> i32 {
     poll_access::epoll_wait_ready(loop_, 0)
 }
@@ -132,16 +190,18 @@ pub(crate) fn dispatch_ready_polls(loop_: *mut Loop) {
         let entry = poll_access::ready_poll_at(loop_, i);
         let udata = entry.u64;
         if udata != 0 {
-            if udata & POINTER_TAG_MASK != 0 {
-                ffi::dispatch_ready_poll(loop_, udata as usize as *mut c_void);
-            } else {
-                let kernel_events = entry.events;
-                // Normalized to 0/1 like kqueue's EV_ERROR: a raw EPOLLERR (8)
-                // would read as errno 8 downstream (R1.18).
-                let error = kernel_events & libc::EPOLLERR as u32 != 0;
-                let eof = kernel_events & libc::EPOLLHUP as u32 != 0;
-                backend::dispatch_untagged(udata, error, eof, Events(kernel_events));
+            let mut kernel_events = entry.events;
+            // EPOLLPRI is only ever requested by registry Pri sources (PSI
+            // trigger fds), whose believed events are READABLE — translate so
+            // the R1.18 mask passes the event through.
+            if kernel_events & libc::EPOLLPRI as u32 != 0 {
+                kernel_events |= libc::EPOLLIN as u32;
             }
+            // Normalized to 0/1 like kqueue's EV_ERROR: a raw EPOLLERR (8)
+            // would read as errno 8 downstream (R1.18).
+            let error = kernel_events & libc::EPOLLERR as u32 != 0;
+            let eof = kernel_events & libc::EPOLLHUP as u32 != 0;
+            backend::dispatch_untagged(udata, error, eof, Events(kernel_events));
         }
         poll_access::set_current_ready_poll(loop_, poll_access::current_ready_poll(loop_) + 1);
     }

@@ -395,3 +395,66 @@ spawn-ipc: 13/13 pass. websocket rerun (after node_modules install) pending.
   load causes. No new suppressions, no skipped tests, no weakened assertions.
 - Possible follow-ups (unchanged from D1 flags): relocate the 3 surviving C++
   files out of src/uws_sys/; dedupe doubled extra-CA warning (pre-existing).
+
+## 2026-07-12 — Phase D wave D1 applier (core shards P0/P0b/P0c/P0d integration)
+
+### Compile fixes (applier edits on top of the shard diffs)
+1. handle.rs: added `+ 'static` to all 7 `O: RefCounted<DestructorCtx: Default>`
+   generic bounds — `Protocol::Owner` is `'static` and
+   `dispatch::owner_registered_as::<O>` requires it (E0310 x6).
+2. unsafe_core/test_support.rs: two new link stubs for the crate-local test
+   binary — `SSL_free` (unreachable!, tests never create TLS) and
+   `__bun_crash_handler_out_of_memory` (abort) — per P0c's "add stubs rather
+   than weakening tests" instruction. cfg(test)-only module, no product impact.
+3. unsafe_core/poll_access.rs: `make_kev_ex` re-export narrowed to
+   cfg(macos) — it is only used by the darwin PollSource arms, so the
+   freebsd target failed with deny(unused_imports).
+4. spawn/process.rs + spawn/Cargo.toml: `WindowsLoop::run/tick` became
+   associated functions (P0 loop rework); rewrote the two windows-only
+   method-syntax call sites to `bun_usockets::Loop::run/tick(ptr)` (the
+   canonical style used by jsc/event_loop.rs) and added a
+   `[target.'cfg(windows)'.dependencies] bun_usockets` dep.
+   NOTE: BUN_CODEGEN_DIR must be THIS WORKTREE's build/debug/codegen — the
+   main-repo copy is stale for this branch (JSBundler stream slot).
+
+### Flag resolutions
+- P0b PARTIAL (family-max registration): DONE at the C++ layer.
+  HttpContext.h gains `maxExtSize()` = max(sizeof(HttpResponseData<SSL>),
+  sizeof(WebSocketData)+sizeof(void*)), used by both listen sites;
+  HttpResponse.h upgrade() static_asserts `sizeof(UserData) <= sizeof(void*)`
+  so a future larger instantiation fails at compile time instead of at the
+  Rust adopt assert. WS suites pass — the release adopt assert never fires.
+- P0b/P0d stale comments: "trailing-area" -> "inline-area" (handle.rs,
+  trampolines.rs, group.rs); tls/context.rs FatalReason docs updated from
+  "PER-SOCKET (api.md CHANGES 2)" to the P0d loop-shared+SocketRef design;
+  ffi.rs loop-scratch section header now cites P0d. socket_body.rs ALPN
+  comment was already correct (P0d shard fixed it) — verified, no edit.
+- P0d new unsafe surface desk-checked: tls_shared_ptr/with_shared borrows are
+  scoped, bio_write_cb's `&mut *c.shared` is a distinct allocation from the
+  BioCtl and its borrow ends (NLL) before raw_write.
+- Deviations left for owner sign-off (unchanged from shard reports):
+  P0b Windows MEM_RESET instead of MEM_DECOMMIT (decommit would AV the
+  single-slot-deref validation path); P0 `on_fd` takes bun_core::Fd not
+  OwnedFd; Rc owners unsupported (intrusive RefCounted only); P0c
+  poll_registry not re-exported at crate root (P10's call).
+
+### Verification
+- cargo check -p bun_usockets: default / --no-default-features /
+  --all-features all green.
+- cargo test -p bun_usockets: 22/22 (10 prior slab + 8 new P0b
+  decommit/epoch/hysteresis/teardown + 4 new P0c poll_registry).
+- cargo check --workspace: green. rust:check-all: 10/10 targets green
+  (was 7/10: freebsd unused-import, 2x windows bun_spawn — fixed above).
+- bun bd: builds clean (1.4.0-debug), including the HttpContext.h/
+  HttpResponse.h C++ edits.
+- Smoke (box loadavg ~260 throughout):
+  * bun/net socket.test.ts 65/2skip/0 (incl. 2048-cycle GC+upgradeTLS stress)
+  * websocket-server.test.ts 104/3todo/1 — only "(benchmark)" (documented
+    wave-B/C LOAD failure: 300k echoes vs 30s budget on the fuzz-soaked box)
+  * websocket upgrade-reentrant 3/0, upgrade-signal-gc 1/0
+  * node-tls-server.test.ts (SNI gate) 40/1 — only destroySoon, in the
+    wave-B proven-pre-existing set
+  * serve.test.ts 251/1skip/1todo/3 — the EXACT wave-B set (root-range-port
+    ENV, not-instanciate-error MARGINAL, abort-sendfile PRE-EXISTING)
+  * happy-eyeballs stale-timer 2/1skip/0, socket-retention 4/0
+- No new suppressions, no skipped/weakened tests. No git commit (applier rule).

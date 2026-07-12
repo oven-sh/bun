@@ -93,9 +93,6 @@ pub struct MiniEventLoop<'a> {
     pub env: Option<NonNull<DotEnvLoader<'a>>>,
     // Never freed in `deinit`. Use Box<[u8]> and dupe on assign.
     pub top_level_dir: Box<[u8]>,
-    // Opaque ctx assigned externally; only read/cleared here.
-    pub after_event_loop_callback_ctx: Option<NonNull<c_void>>,
-    pub after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
     pub pipe_read_buffer: Option<Box<PipeReadBuffer>>,
     // SAFETY: erased `*mut webcore::blob::Store` (tier-6). Constructed via
     // `__bun_stdio_blob_store_new` with ref_count=2: one owning intrusive ref
@@ -257,17 +254,6 @@ impl<'a> MiniEventLoop<'a> {
             .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)[..]
     }
 
-    pub fn on_after_event_loop(&mut self) {
-        if let Some(cb) = self.after_event_loop_callback {
-            let ctx = self.after_event_loop_callback_ctx;
-            self.after_event_loop_callback = None;
-            self.after_event_loop_callback_ctx = None;
-            // SAFETY: `cb` is a C-ABI callback registered by the owner of `ctx`; the owner
-            // guarantees `ctx` is valid until the callback fires.
-            unsafe { cb(ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr())) };
-        }
-    }
-
     pub fn file_polls(&mut self) -> &mut FilePollStore {
         if self.file_polls_.is_none() {
             self.file_polls_ = Some(Box::new(FilePollStore::init()));
@@ -316,8 +302,6 @@ impl<'a> MiniEventLoop<'a> {
             file_polls_: None,
             env: None,
             top_level_dir: Box::default(),
-            after_event_loop_callback_ctx: None,
-            after_event_loop_callback: None,
             pipe_read_buffer: None,
             stdout_store: None,
             stderr_store: None,
@@ -373,7 +357,6 @@ impl<'a> MiniEventLoop<'a> {
             UwsLoop::tick(self.loop_ptr());
             // SAFETY: as above.
             unsafe { (*self.loop_ptr()).dec() };
-            self.on_after_event_loop();
         }
 
         while let Some(task) = self.tasks.read_item() {
@@ -396,7 +379,6 @@ impl<'a> MiniEventLoop<'a> {
                 break;
             }
         }
-        self.on_after_event_loop();
     }
 
     pub fn tick<F>(&mut self, context: *mut c_void, is_done: F)
@@ -522,11 +504,6 @@ bun_io::link_impl_EventLoopCtx! {
         // mutating uws counters off-thread.
         ref_concurrently()   => unreachable!("KeepAlive::refConcurrently is JS-VM-only"),
         unref_concurrently() => unreachable!("KeepAlive::unrefConcurrently is JS-VM-only"),
-        after_event_loop_callback() => (*this).after_event_loop_callback,
-        set_after_event_loop_callback(cb, ctx) => {
-            (*this).after_event_loop_callback = cb;
-            (*this).after_event_loop_callback_ctx = ctx;
-        },
         pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
     }
 }

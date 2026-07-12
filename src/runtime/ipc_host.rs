@@ -225,8 +225,8 @@ pub(crate) fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> 
     // mutable); `get_ipc_instance` writes `self.ipc` on first call.
     let vm = global.bun_vm().as_mut();
     // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
-    // `None`); the `&mut SendQueue` borrow is scoped to this call and does not
-    // alias `vm` (the instance is heap-allocated, not embedded in `vm`).
-    let ipc = vm.get_ipc_instance().map(|i| unsafe { &mut (*i).data });
+    // `None`); `queue()` is the audited `JsCell` projection and the borrow is
+    // scoped to this call.
+    let ipc = vm.get_ipc_instance().map(|i| unsafe { &*i }.queue());
     do_send(ipc, global, frame, FromEnum::Process)
 }

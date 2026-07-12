@@ -378,10 +378,14 @@ impl Listener {
                 }
             }
         }
+        // The kind passed to listen() is stamped on ACCEPTED sockets (the
+        // listener itself never dispatches — its header kind is Invalid), so
+        // accepted sockets are born with their final Protocol v2 kind; the
+        // old BunListener* restamp arm is gone.
         let kind: uws::SocketKind = if ssl_enabled {
-            uws::SocketKind::BunListenerTls
+            uws::SocketKind::BunSocketTls
         } else {
-            uws::SocketKind::BunListenerTcp
+            uws::SocketKind::BunSocketTcp
         };
 
         // The `hostname` Box<[u8]> drops on error path automatically
@@ -495,6 +499,21 @@ impl Listener {
 
         this_ref.connection = connection;
         this_ref.listener.set(ListenerType::Uws(listen_socket));
+        {
+            // Protocol v2 accept hook: runs once per accepted socket BEFORE
+            // its on_open dispatch, attaching the owner. The listener
+            // strictly outlives its listen socket (`do_stop`/`finalize` close
+            // it first), so the BackRef stays valid for the hook's lifetime.
+            let listener_ref = bun_ptr::BackRef::new(&*this_ref);
+            ls_mut(listen_socket).on_create(move |s: uws::AnySocket| {
+                let l: &Listener = listener_ref.get();
+                if l.ssl {
+                    Listener::on_create::<true>(l, s);
+                } else {
+                    Listener::on_create::<false>(l, s);
+                }
+            });
+        }
         if !default_data.is_empty() {
             this_ref
                 .strong_data
@@ -589,23 +608,23 @@ impl Listener {
         s
     }
 
-    /// Called from `BunListener::on_open` (uws dispatch) for every accepted socket.
-    /// Allocates the `NewSocket` wrapper, stashes it in the socket ext, then
-    /// re-stamps the kind to `.bun_socket_{tcp,tls}` so subsequent events route
-    /// straight to `BunSocket` (the listener arm only fires once per accept).
-    pub fn on_create<const SSL: bool>(
-        listener: &Listener,
-        socket: uws::NewSocketHandler<SSL>,
-    ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
+    /// Protocol v2 accept hook body (registered on the ListenSocket in
+    /// `listen`): allocates the `NewSocket` wrapper and transfers one strong
+    /// owner ref to core via `attach_owner`. Core dispatches the socket's
+    /// `on_open` right after this returns — same tick as the accept.
+    pub fn on_create<const SSL: bool>(listener: &Listener, socket: uws::AnySocket) {
         jsc::mark_binding!();
         log!("onCreate");
 
         debug_assert!(SSL == listener.ssl);
+        debug_assert!(SSL == socket.is_ssl());
 
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             ref_count: bun_ptr::RefCount::init(),
             handlers: JsCell::new(Some(Rc::clone(&listener.handlers))),
-            socket: Cell::new(socket),
+            socket: Cell::new(uws::NewSocketHandler::<SSL> {
+                socket: *socket.socket(),
+            }),
             protos: JsCell::new(listener.protos.clone()),
             // `protos` is `Option<Box<[u8]>>` so each accepted socket clones
             // the listener's slice; one small allocation per accept.
@@ -624,23 +643,14 @@ impl Listener {
             verify_error: JsCell::new(None),
         });
         let s = this_socket;
-        s.ref_();
-        let default_data = listener.strong_data.get().get();
-        if let Some(default_data) = default_data {
+        if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
         }
-        if let Some(ctx) = socket.ext::<*mut c_void>() {
-            // SAFETY: ext storage is at least pointer-sized; we stash *mut NewSocket<SSL>
-            unsafe { *ctx = this_socket.as_ptr().cast::<c_void>() };
-        }
-        socket.set_kind(if SSL {
-            uws::SocketKind::BunSocketTls
-        } else {
-            uws::SocketKind::BunSocketTcp
-        });
+        // Transfer one strong ref to core; released exactly once at the
+        // socket's terminal (Protocol v2 owner contract).
+        socket.attach_owner(uws::owner_ref_of(s.get()));
         socket.set_timeout(120);
-        this_socket
     }
 
     pub fn add_server_name(
@@ -1464,8 +1474,9 @@ fn connect_finish<const IS_SSL: bool>(
         })
     };
     // Either the caller's JS-owned socket (reconnect) or the fresh one above.
+    // Core's owner ref (+1) is minted inside `do_connect` when it attaches
+    // the socket, so no optimistic ref is taken here.
     let socket_ref = socket;
-    socket_ref.ref_();
     NewSocket::<IS_SSL>::data_set_cached(socket_ref.get_this_value(global), global, default_data);
     // On the reuse-prev path, `prev.this_value` was downgraded to Weak by the
     // previous close's `mark_inactive()`. `get_this_value()` returns the
@@ -1524,12 +1535,9 @@ fn connect_finish<const IS_SSL: bool>(
                 bun_sys::SystemErrno::ECONNREFUSED as c_int
             }
         };
-        {
-            let this = socket;
-            let _ = NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);
-            // Balance the unconditional `socket_ref.ref_()` above.
-            NewSocket::deref(&this);
-        }
+        // `do_connect` failed before any owner ref transferred to core, so
+        // there is nothing to balance here.
+        let _ = NewSocket::<IS_SSL>::handle_connect_error(socket, errno, 0);
         return Ok(promise_value);
     }
 

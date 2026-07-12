@@ -85,9 +85,9 @@ pub struct SocketHeader {
     pub(crate) connect_state: *mut ConnectingSocket,
     pub(crate) transport: Transport,
     /// Rust kinds: one 8-byte owner word (`Option<NonNull<Owner>>` niche
-    /// layout — the word IS the storage). uWS/Dynamic kinds: pointer to a
-    /// heap ext area sized at creation for the adoption family (api.md
-    /// §Strategy 3; freed by `group::free_socket_ext` in the closed drain).
+    /// layout — the word IS the storage). uWS/Dynamic kinds: pointer to the
+    /// slot's INLINE ext area, contiguous after this header and sized at
+    /// creation for the adoption family (P0b; freed with the slab slot).
     /// Listener (kind == Invalid): `Box<ListenerData>` (group.rs).
     pub(crate) ext: *mut c_void,
 }
@@ -100,7 +100,9 @@ pub type us_socket_t = SocketHeader;
 
 /// One slab slot, stamped per R3.3 (all four creation paths funnel here:
 /// accept / connect / from_fd / listen). Timeouts start disarmed; every flag
-/// beyond the caller-provided ones is zero; transport is Plain.
+/// beyond the caller-provided ones is zero; transport is Plain. `ext_size`
+/// picks the slab size class for group-vtable kinds (family-max ext bytes,
+/// inline after the header — P0b); Rust kinds always use the word (class 0).
 pub(crate) fn alloc(
     loop_: *mut Loop,
     poll_kind: PollType,
@@ -108,9 +110,14 @@ pub(crate) fn alloc(
     group: *mut SocketGroup,
     kind: SocketKind,
     flags: SocketFlags,
-    ext: *mut c_void,
+    ext_size: c_int,
 ) -> *mut us_socket_t {
-    crate::loop_::alloc_socket(
+    let ext_capacity = if dispatch::uses_group_vtable(kind) {
+        ext_size.max(0) as usize
+    } else {
+        0
+    };
+    let s = crate::loop_::alloc_socket(
         loop_,
         SocketHeader {
             p: PollState::init(fd, poll_kind),
@@ -127,9 +134,14 @@ pub(crate) fn alloc(
             group,
             connect_state: ptr::null_mut(),
             transport: Transport::Plain,
-            ext,
+            ext: ptr::null_mut(),
         },
-    )
+        ext_capacity,
+    );
+    if ext_capacity > 0 {
+        header_mut(s).ext = crate::unsafe_core::ext::inline_ext_ptr(s);
+    }
+    s
 }
 
 /// Return a slot whose kernel registration FAILED (never linked, never
@@ -334,6 +346,10 @@ pub(crate) fn close_raw_errno(s: *mut SocketHeader, code: c_int, reason: *mut c_
         // TLS §5.3: user on_close first (ALPN/cert still inspectable) — the
         // SSL is freed in step 8, after the dispatch.
         dispatch::dispatch_close(s, code, reason);
+    } else {
+        // Silent SEMI_SOCKET close: no callback, but core's owner ext ref is
+        // still released exactly once (safe-protocol.md terminal contract).
+        dispatch::release_owner_on_silent_terminal(s);
     }
     // Step 8: idempotent SSL free (no-op for plain / already detached).
     if let Some(t) = tls_state(s) {
@@ -351,11 +367,16 @@ pub(crate) fn socket_detach(s: *mut SocketHeader) {
     let loop_ = socket_loop(s);
     unlink_for_death(s, loop_);
     poll_stop_on(s, loop_);
+    // IS_CLOSED before the owner release (close_raw step-6 ordering): the
+    // release may run the owner's destructor, and a re-entrant close must
+    // see the socket already closed (C6 idempotence).
+    with_socket(s, |h| h.flags.set(SocketFlags::IS_CLOSED, true));
+    // Terminal without on_close: release core's owner ext ref exactly once.
+    dispatch::release_owner_on_silent_terminal(s);
     if let Some(t) = tls_state(s) {
         deref_mut(t).detach();
     }
     push_closed(s, loop_);
-    with_socket(s, |h| h.flags.set(SocketFlags::IS_CLOSED, true));
 }
 
 /// R6.10 step 2: direct fd teardown of a happy-eyeballs attempt — no
@@ -405,8 +426,7 @@ fn tls_close(s: *mut SocketHeader, code: CloseCode, reason: *mut c_void) {
         close_raw(s, code, reason);
         return;
     }
-    let loop_ = socket_loop(s);
-    TlsState::handshake(t, s, loop_); // drive a final step
+    TlsState::handshake(t, s); // drive a final step
     if tls_gone(s) {
         return;
     }
@@ -441,9 +461,8 @@ pub(crate) fn socket_open(s: *mut SocketHeader, is_client: bool, ip: &[u8]) {
     if tls_gone(s) {
         return;
     }
-    let loop_ = socket_loop(s);
     if let Some(t) = tls_state(s) {
-        TlsState::handshake(t, s, loop_);
+        TlsState::handshake(t, s);
     }
 }
 
@@ -1056,7 +1075,7 @@ impl SocketHeader {
         deref_mut(self.ext_ptr().cast::<T>())
     }
 
-    /// Same storage predicate as `group::make_ext` / `ext::downcast_raw`
+    /// Same storage predicate as `ext::downcast_raw`
     /// (`dispatch::uses_group_vtable`) — Dynamic sockets carry an ext area.
     pub fn ext_ptr(&mut self) -> *mut u8 {
         crate::unsafe_core::ext::ext_ptr_raw(self)
@@ -1074,8 +1093,8 @@ impl SocketHeader {
 
     /// Move this socket to a new group/kind. In-place (api.md §Strategy 3):
     /// `Some` is always `self`; `None` = refused (closed/shut-down, R3.5).
-    /// Ext capacity was fixed at creation; `old_ext`/`new_ext` are surface
-    /// parity only — never realloc'd.
+    /// Ext capacity was fixed at creation — never realloc'd; `new_ext` is
+    /// release-checked against the slot's inline capacity (P0b family max).
     pub fn adopt(
         &mut self,
         g: &mut SocketGroup,
@@ -1084,7 +1103,8 @@ impl SocketHeader {
         new_ext: i32,
     ) -> Option<NonNull<us_socket_t>> {
         let s: *mut Self = self;
-        let _ = (old_ext, new_ext);
+        let _ = old_ext;
+        assert_adopt_ext_fits(s, k, new_ext);
         debug_assert!(
             dispatch::uses_group_vtable(self.kind) == dispatch::uses_group_vtable(k),
             "adoption across ext families (capacity fixed at creation)"
@@ -1121,8 +1141,9 @@ impl SocketHeader {
         if self.is_closed() || self.is_tls() {
             return None;
         }
-        let _ = (old_ext, new_ext);
+        let _ = old_ext;
         let s: *mut Self = self;
+        assert_adopt_ext_fits(s, k, new_ext);
         crate::group::adopt_tls_socket(s, g, k, ptr::from_mut(ssl_ctx), sni, is_client);
         // §6.1: adopt → attach → resume (readable was likely disabled by the
         // pre-upgrade pause).
@@ -1144,6 +1165,24 @@ impl SocketHeader {
     }
 }
 
+/// P0b family-max enforcement: inline ext capacity is fixed at creation, so
+/// an adopt declaring more ext bytes than the slot carries would overwrite
+/// the ADJACENT slab slot — fail loudly instead of corrupting cross-socket.
+fn assert_adopt_ext_fits(s: *mut us_socket_t, k: SocketKind, new_ext: i32) {
+    if !dispatch::uses_group_vtable(k) || new_ext <= 0 {
+        return;
+    }
+    let nn = NonNull::new(s).expect("null socket in adopt");
+    let cap = crate::unsafe_core::slab::inline_ext_capacity_of(nn);
+    // Capacity-0 slots keep the pre-inline area-pointer word (see
+    // ext::downcast_raw) — no inline bound exists to enforce.
+    assert!(
+        cap == 0 || new_ext as u32 <= cap,
+        "us_socket_adopt ext size ({new_ext}) exceeds the slot's inline capacity ({cap}); \
+the creation site must register the adoption family's max ext size"
+    );
+}
+
 /// Send ClientHello; split from `adopt_tls` so ext can be repointed first.
 /// No-op on a closed (or non-TLS) socket, like C us_socket_start_tls_handshake.
 /// Raw entry: the handshake dispatches consumer callbacks (C17).
@@ -1151,9 +1190,8 @@ pub(crate) fn socket_start_tls_handshake(s: *mut SocketHeader) {
     if header_mut(s).is_closed() {
         return;
     }
-    let loop_ = socket_loop(s);
     if let Some(t) = tls_state(s) {
-        TlsState::handshake(t, s, loop_);
+        TlsState::handshake(t, s);
     }
 }
 

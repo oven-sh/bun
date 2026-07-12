@@ -1,6 +1,3 @@
-#[cfg(unix)]
-use core::ffi::c_int;
-use core::ffi::c_void;
 use core::fmt;
 #[cfg(unix)]
 use core::ptr;
@@ -16,59 +13,7 @@ bun_core::declare_scope!(KeepAlive, visible);
 #[cfg(not(windows))]
 use bun_sys::syslog;
 
-/// Local `errno_sys` helper. `bun_sys`
-/// does not yet expose this helper on `Result<T>`; once it does, drop this and
-/// call `sys::Result::<()>::errno_sys` directly.
-///
-/// Decodes the -1-sentinel *return-code* convention (the thread-local errno is
-/// only read when `rc` is the all-ones failure value). Do NOT feed it a value
-/// that already is an errno — use [`kevent_change_error`] for those.
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-#[inline]
-fn errno_sys<R>(rc: R, syscall: sys::Tag) -> Option<sys::Result<()>>
-where
-    R: sys::GetErrno,
-{
-    match sys::get_errno(rc) {
-        sys::E::SUCCESS => None,
-        e => Some(sys::Result::Err(sys::Error::from_code(e, syscall))),
-    }
-}
-
-/// Error for a kevent changelist entry that came back with `EV_ERROR` set:
-/// the kernel stores the errno *value* in `data`. That is not the -1-sentinel
-/// return-code convention `errno_sys` decodes — feeding `data` through it
-/// yields `None` for every real errno.
-#[cfg(any(target_os = "macos", all(test, not(windows))))]
-#[inline]
-fn kevent_change_error(data: i64) -> sys::Result<()> {
-    sys::Result::Err(sys::Error::from_code(
-        sys::SystemErrno::init(data).unwrap_or(sys::E::EINVAL),
-        sys::Tag::kevent,
-    ))
-}
-
-/// Is this errno from a failed deregistration just "the registration is
-/// already gone"? Two routine producers:
-/// - the fd was closed while the poll was still registered (close() removes
-///   an fd's kevents; epoll drops closed fds automatically) → EBADF/ENOENT
-/// - on macOS, closing a pty master marks the slave's knotes
-///   `EV_EOF|EV_ONESHOT`, so the kernel deletes them when the hangup event is
-///   delivered; the reader's teardown `EV_DELETE` then finds nothing → ENOENT.
-///   This happens on every terminal window/tab close while a tty is polled.
-///
-/// Both mean the kernel-side state already matches what unregistration wants,
-/// so they count as success — in particular the registration flags must still
-/// be cleared, which an error return would skip, leaving the poll claiming to
-/// be registered and re-issuing doomed deletes on later teardown calls. libuv
-/// ignores the same errnos for its kqueue/epoll delete operations.
-#[cfg(not(windows))]
-#[inline]
-fn deregistration_already_gone(errno: sys::E) -> bool {
-    matches!(errno, sys::E::ENOENT | sys::E::EBADF)
-}
-
-pub use crate::{EventLoopCtx, EventLoopCtxKind, EventLoopKind, OpaqueCallback};
+pub use crate::{EventLoopCtx, EventLoopCtxKind, EventLoopKind};
 
 unsafe extern "Rust" {
     /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.
@@ -128,54 +73,9 @@ pub fn js_vm_ctx() -> EventLoopCtx {
 // `windows_event_loop.rs`; both copies now live in `crate::keep_alive`.
 
 // ──────────────────────────────────────────────────────────────────────────
-// FilePoll
+// FilePoll — registered through the bun_usockets P0c poll registry. No raw
+// epoll_ctl/kevent here: kernel mechanics live in src/usockets/backend/.
 // ──────────────────────────────────────────────────────────────────────────
-
-// `KQueueGenerationNumber` is `usize` on macOS-debug, else a zero-size sentinel.
-#[cfg(all(target_os = "macos", debug_assertions))]
-type KQueueGenerationNumber = usize;
-#[cfg(all(unix, not(all(target_os = "macos", debug_assertions))))]
-type KQueueGenerationNumber = u8; // Note: conceptually zero-width; smallest Rust int is u8. Gated by cfg below.
-
-// Debug-only diagnostic; `Relaxed` (no synchronization implied).
-#[cfg(all(target_os = "macos", debug_assertions))]
-static MAX_GENERATION_NUMBER: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
-
-/// Darwin uses the extended `kevent64_s` (extra `ext` field carries our
-/// generation number); FreeBSD only has the plain `struct kevent`.
-#[cfg(target_os = "macos")]
-type KQueueEvent = bun_sys::darwin::kevent64_s;
-#[cfg(target_os = "freebsd")]
-type KQueueEvent = bun_sys::freebsd::Kevent;
-
-/// Build a `struct kevent` without naming every field. FreeBSD ≥12 added
-/// `ext: [u64; 4]` to the struct, so a literal initializer fails to compile
-/// against older/newer libc ABI variants. Start from zeroed and assign.
-#[cfg(target_os = "freebsd")]
-#[inline]
-fn make_kevent(
-    ident: usize,
-    filter: i16,
-    flags: u16,
-    fflags: u32,
-    udata: *mut core::ffi::c_void,
-) -> KQueueEvent {
-    // SAFETY: all-zero is a valid `struct kevent` (POD).
-    let mut ev: KQueueEvent = bun_core::ffi::zeroed();
-    ev.ident = ident;
-    ev.filter = filter;
-    ev.flags = flags;
-    ev.fflags = fflags;
-    ev.data = 0;
-    ev.udata = udata;
-    ev
-}
-
-/// The kernel value is the
-/// same as Darwin/OpenBSD (sys/event.h: `#define EV_EOF 0x8000`).
-#[cfg(any(target_os = "macos", target_os = "freebsd"))]
-const EV_EOF: u16 = 0x8000;
 
 // ──────────────────────────────────────────────────────────────────────────
 // FilePoll Owner — hot-path tag+ptr (CYCLEBREAK §Hot dispatch list).
@@ -273,25 +173,73 @@ pub enum AllocatorType {
     Mini,
 }
 
-// `FilePoll`/`Store` here are POSIX-specific (kqueue/epoll registration,
-// generation_number, allocator_type). On Windows the variants live in
-// `windows_event_loop`; the shared `EventLoopCtxVTable` above names
-// `crate::FilePoll`/`crate::Store` so the right one is picked.
+// `FilePoll`/`Store` here are POSIX-specific (registry registration,
+// allocator_type). On Windows the variants live in `windows_event_loop`; the
+// shared `EventLoopCtxVTable` above names `crate::FilePoll`/`crate::Store`
+// so the right one is picked.
 #[cfg(not(windows))]
 pub struct FilePoll {
     pub fd: Fd,
     pub flags: FlagsSet,
     pub owner: Owner,
 
-    /// We re-use FilePoll objects to avoid allocating new ones.
-    ///
-    /// That means we might run into situations where the event is stale.
-    /// on macOS kevent64 has an extra pointer field so we use it for that
-    /// linux doesn't have a field like that
-    pub generation_number: KQueueGenerationNumber,
-    pub next_to_free: *mut FilePoll,
+    /// Live core-registry registration (kernel arm). `None` = disarmed
+    /// (never registered, one-shot already fired, or unregistered).
+    registration: Option<Registration>,
 
     pub allocator_type: AllocatorType,
+}
+
+/// One armed registry slot. INVARIANT: released only via
+/// [`FilePoll::drop_registration`] — `poll_ref.unregister()` (kernel disarm +
+/// generation bump; stale same-tick events are dropped core-side), then the
+/// shim backpointer is nulled, then our shim ref is released.
+#[cfg(not(windows))]
+struct Registration {
+    poll_ref: bun_usockets::PollRef,
+    /// Owned strong ref (`RefPtr` has no Drop); discharged in
+    /// `drop_registration`. The registry slot + dispatch guard hold their own.
+    shim: bun_ptr::RefPtr<RegistryShim>,
+}
+
+/// Refcounted dispatch owner handed to the core registry. Holds a raw
+/// backpointer to the hive-resident `FilePoll`; nulled before the slot can be
+/// recycled, so a late-held guard ref can never dispatch into a reused slot.
+#[cfg(not(windows))]
+#[derive(bun_ptr::RefCounted)]
+struct RegistryShim {
+    ref_count: bun_ptr::RefCount<RegistryShim>,
+    poll: core::cell::Cell<*mut FilePoll>,
+}
+
+#[cfg(not(windows))]
+struct FilePollProtocol;
+
+#[cfg(not(windows))]
+impl bun_usockets::PollProtocol for FilePollProtocol {
+    type Owner = RegistryShim;
+
+    fn on_event(
+        shim: &RegistryShim,
+        _poll: bun_usockets::PollRef,
+        events: bun_usockets::PollEvents,
+    ) {
+        let ptr = shim.poll.get();
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: `poll` is nulled in `drop_registration` before the hive
+        // slot is recycled, and the loop is single-threaded, so a non-null
+        // backpointer is a live slot. The `&mut` is SCOPED to this statement:
+        // it ends before the dispatch below, whose handler may deinit
+        // (recycle or free) the slot — a live protected `&mut` across that
+        // call would be deallocation under a protector (SB-UB).
+        let size_or_offset = unsafe { &mut *ptr }.prepare_registry_event(events);
+        // SAFETY: `ptr` is still live (nothing ran since the borrow above;
+        // this thread is the sole accessor). The handler owns any subsequent
+        // deinit; `ptr` is never touched after the call.
+        unsafe { __bun_run_file_poll(ptr, size_or_offset) };
+    }
 }
 
 #[cfg(not(windows))]
@@ -301,8 +249,7 @@ impl Default for FilePoll {
             fd: INVALID_FD,
             flags: FlagsSet::empty(),
             owner: Owner::NULL,
-            generation_number: 0,
-            next_to_free: ptr::null_mut(),
+            registration: None,
             allocator_type: AllocatorType::Js,
         }
     }
@@ -335,34 +282,74 @@ impl FilePoll {
         FileType::Pipe
     }
 
-    // Note: these handlers take no loop parameter: holding a
-    // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
-    // that downstream `__bun_run_file_poll` handlers conjure via
-    // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
-    // (`register_with_fd`/`unregister`/`deinit`).
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub fn on_kqueue_event(&mut self, kqueue_event: &KQueueEvent) {
-        self.update_flags(Flags::from_kqueue_event(kqueue_event));
-        syslog!("onKQueueEvent: {}", self);
-
-        #[cfg(all(target_os = "macos", debug_assertions))]
-        debug_assert!(self.generation_number == kqueue_event.ext[0] as usize);
-
-        // EVFILT_MEMORYSTATUS reports the pressure level in `fflags`, not `data`;
-        // thread it through `size_or_offset` so the dispatch arm can read it.
-        #[cfg(target_os = "macos")]
-        if kqueue_event.filter == bun_sys::darwin::EVFILT::MEMORYSTATUS {
-            self.on_update(kqueue_event.fflags as i64);
-            return;
+    /// Release the registry slot: kernel disarm + slot free (generation bump
+    /// drops same-tick stale events core-side), null the shim backpointer,
+    /// then release our shim ref. Safe from inside `on_registry_event` — the
+    /// core dispatch guard keeps the shim alive until dispatch returns.
+    fn drop_registration(&mut self) {
+        if let Some(reg) = self.registration.take() {
+            reg.poll_ref.unregister();
+            reg.shim.data().poll.set(ptr::null_mut());
+            reg.shim.deref();
         }
-
-        self.on_update(kqueue_event.data as i64);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn on_epoll_event(&mut self, epoll_event: &bun_sys::linux::epoll_event) {
-        self.update_flags(Flags::from_epoll_event(epoll_event));
-        self.on_update(0);
+    /// Flag mapping + one-shot disarm for a delivered registry event; returns
+    /// the `size_or_offset` payload for `__bun_run_file_poll`. Deliberately
+    /// does NOT dispatch: the `&mut self` borrow must end before the handler
+    /// runs (it may deinit this very poll).
+    fn prepare_registry_event(&mut self, events: bun_usockets::PollEvents) -> i64 {
+        let mut updated = FlagsSet::empty();
+        // Single-purpose sources (proc exit, machport, memory pressure)
+        // report which kind fired via the registered-kind flag; Fd sources
+        // report the direction bits.
+        if self.flags.contains(Flags::PollProcess) {
+            updated.insert(Flags::Process);
+        } else if self.flags.contains(Flags::PollMachport) {
+            updated.insert(Flags::Machport);
+        } else if self.flags.contains(Flags::PollMemoryPressure) {
+            updated.insert(Flags::MemoryPressure);
+        } else {
+            if events.readable {
+                updated.insert(Flags::Readable);
+            }
+            if events.writable {
+                updated.insert(Flags::Writable);
+            }
+        }
+        if events.eof {
+            updated.insert(Flags::Hup);
+        }
+        // EPOLLERR → Eof parity (kqueue reported no error bit to FilePolls).
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if events.error {
+            updated.insert(Flags::Eof);
+        }
+
+        // kqueue filter payload: NOTE_EXIT status / bytes available in
+        // `data`; EVFILT_MEMORYSTATUS pressure level in `fflags`.
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        let size_or_offset: i64 = if self.flags.contains(Flags::PollMemoryPressure) {
+            i64::from(events.fflags)
+        } else {
+            events.data
+        };
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let size_or_offset: i64 = 0;
+
+        self.update_flags(updated);
+        syslog!("onRegistryEvent: {}", self);
+
+        // One-shot parity: the kernel used to auto-disarm before the
+        // callback; the registry is level-triggered, so disarm here — a
+        // handler that re-registers gets a fresh slot.
+        if self.flags.contains(Flags::OneShot) {
+            self.drop_registration();
+            self.flags.insert(Flags::NeedsRearm);
+        }
+
+        debug_assert!(!self.owner.is_null());
+        size_or_offset
     }
 
     pub fn clear_event(&mut self, flag: Flags) {
@@ -410,9 +397,11 @@ impl FilePoll {
         // deref in `EventLoopCtx`); the `&mut Loop` is consumed by `unregister`
         // and dropped before any `&mut Store` is materialised.
         let _ = self.unregister(vm.loop_mut(), force_unregister);
+        // Belt-and-braces: the needs-rearm skip leaves `registration` None,
+        // but a leaked slot here would keep a dangling shim backpointer.
+        self.drop_registration();
 
         self.owner.clear();
-        let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
         self.flags = FlagsSet::empty();
         self.fd = INVALID_FD;
         // `self` may live inside the `Store.hive` inline array, so a
@@ -420,12 +409,10 @@ impl FilePoll {
         // access over the slot and invalidate `self`'s tag (Stacked Borrows).
         // Decay `self` to a raw slot pointer first, *then* materialise the
         // `&mut Store` via the crate-private backref-deref accessor.
+        // Immediate reuse is safe: the registry's generation bump + pending
+        // ready-list nulling (the core closed-drain) drop any stale event.
         let this = ptr::NonNull::from(self);
-        // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
-        // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
-        // the `&mut Store` it produces is the sole unique borrow into the hive.
-        // `Store::put` touches `this` only via raw-pointer ops (see its doc).
-        vm.file_polls_mut().put(this, vm, was_ever_registered);
+        vm.file_polls_mut().put(this);
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
@@ -438,21 +425,6 @@ impl FilePoll {
             || self.flags.contains(Flags::PollProcess)
             || self.flags.contains(Flags::PollMachport)
             || self.flags.contains(Flags::PollMemoryPressure)
-    }
-
-    pub fn on_update(&mut self, size_or_offset: i64) {
-        if self.flags.contains(Flags::OneShot) && !self.flags.contains(Flags::NeedsRearm) {
-            self.flags.insert(Flags::NeedsRearm);
-        }
-
-        debug_assert!(!self.owner.is_null());
-
-        // Hot-path hoisted-match: the per-tag `switch` lives in
-        // `bun_runtime::dispatch::__bun_run_file_poll` (link-time extern) so
-        // this T3 crate names no variant types.
-        // SAFETY: `self` is a live FilePoll for the duration of the call
-        // (guaranteed by the uws loop callback contract).
-        unsafe { __bun_run_file_poll(self, size_or_offset) };
     }
 
     #[inline]
@@ -536,38 +508,23 @@ impl FilePoll {
     /// Note: the previous `&mut *pool.get()` + field-assign pattern was
     /// instant validity UB — `FilePoll.owner`/`allocator_type` are enums with
     /// niches, and `&mut FilePoll` over an uninitialized hive slot asserts a
-    /// valid discriminant. It also left `generation_number` uninitialized on
-    /// non-macOS-debug builds and then read it in the `syslog!` below. Building
-    /// the whole struct by value fixes both.
+    /// valid discriminant. Building the whole struct by value fixes that.
     #[inline]
     fn new_value(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> FilePoll {
         FilePoll {
             fd,
             flags,
             owner,
-            next_to_free: ptr::null_mut(),
+            registration: None,
             allocator_type: if vm.is_js() { AllocatorType::Js } else { AllocatorType::Mini },
-            #[cfg(all(target_os = "macos", debug_assertions))]
-            // Single-threaded event loop so `Relaxed` ordering is sufficient.
-            generation_number: MAX_GENERATION_NUMBER
-                .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
-                .wrapping_add(1),
-            #[cfg(not(all(target_os = "macos", debug_assertions)))]
-            generation_number: 0,
         }
     }
 
     // Note: callers normalize to EventLoopCtx before calling.
     pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let value = Self::new_value(vm, fd, flags, owner);
-        let generation_number = value.generation_number;
         let poll = vm.alloc_file_poll(value).as_ptr();
-        syslog!(
-            "FilePoll.init(0x{:x}, generation_number={}, fd={})",
-            poll as usize,
-            generation_number,
-            fd
-        );
+        syslog!("FilePoll.init(0x{:x}, fd={})", poll as usize, fd);
         poll
     }
 
@@ -661,12 +618,9 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-        let watcher_fd = loop_.fd;
-
         syslog!(
-            "register: FilePoll(0x{:x}, generation_number={}) {} ({})",
+            "register: FilePoll(0x{:x}) {} ({})",
             std::ptr::from_mut(self) as usize,
-            self.generation_number,
             <&'static str>::from(flag),
             fd
         );
@@ -677,229 +631,19 @@ impl FilePoll {
             self.flags.insert(Flags::OneShot);
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        // Bidirectional one-shot is unsupported (kernel parity: EPOLLONESHOT
+        // disarmed the whole fd after either direction fired).
+        if (flag == Flags::Readable && self.flags.contains(Flags::PollWritable))
+            || (flag == Flags::Writable && self.flags.contains(Flags::PollReadable))
         {
-            use bun_sys::linux::{self, EPOLL};
-            let one_shot_flag: u32 = if !self.flags.contains(Flags::OneShot) {
-                0
-            } else {
-                EPOLL::ONESHOT
-            };
-
-            let mut flags: u32 = match flag {
-                Flags::Process | Flags::Readable => EPOLL::IN | EPOLL::HUP | one_shot_flag,
-                Flags::Writable => EPOLL::OUT | EPOLL::HUP | EPOLL::ERR | one_shot_flag,
-                // PSI trigger fds signal via POLLPRI only.
-                Flags::MemoryPressure => EPOLL::PRI | EPOLL::ERR | one_shot_flag,
-                _ => unreachable!(),
-            };
-            // epoll keys on fd alone; if the other direction is already
-            // registered on this poll, preserve it in the CTL_MOD mask.
-            // (EPOLLONESHOT disarms the whole fd after the first event in
-            // either direction, so bidirectional one-shot is not supported.)
-            if flag == Flags::Readable && self.flags.contains(Flags::PollWritable) {
-                debug_assert!(!self.flags.contains(Flags::OneShot));
-                flags |= EPOLL::OUT | EPOLL::ERR;
-            }
-            if flag == Flags::Writable && self.flags.contains(Flags::PollReadable) {
-                debug_assert!(!self.flags.contains(Flags::OneShot));
-                flags |= EPOLL::IN;
-            }
-
-            // Note: libc::epoll_event flattens the data union to a single `u64` field.
-            let mut event = linux::epoll_event {
-                events: flags,
-                u64: Pollable::init(self).ptr() as u64,
-            };
-
-            let op: c_int = if self.is_registered() || self.flags.contains(Flags::NeedsRearm) {
-                EPOLL::CTL_MOD
-            } else {
-                EPOLL::CTL_ADD
-            };
-
-            // SAFETY: FFI syscall; `event` is a stack-local valid for the call.
-            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &raw mut event) };
-            self.flags.insert(Flags::WasEverRegistered);
-            if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
-                self.deactivate(loop_);
-                return errno;
-            }
+            debug_assert!(!self.flags.contains(Flags::OneShot));
         }
-        #[cfg(target_os = "macos")]
-        {
-            use bun_sys::darwin::{EV, EVFILT, NOTE, kevent64_s};
-            // SAFETY: all-zero is a valid kevent64_s
-            let mut changelist: [kevent64_s; 2] = bun_core::ffi::zeroed();
-            let one_shot_flag: u16 = if !self.flags.contains(Flags::OneShot) {
-                0
-            } else if one_shot == OneShotFlag::Dispatch {
-                EV::DISPATCH | EV::ENABLE
-            } else {
-                EV::ONESHOT
-            };
 
-            changelist[0] = match flag {
-                Flags::Readable => kevent64_s {
-                    ident: u64::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::READ,
-                    data: 0,
-                    fflags: 0,
-                    udata: Pollable::init(self).ptr() as u64,
-                    flags: EV::ADD | one_shot_flag,
-                    ext: [self.generation_number as u64, 0],
-                },
-                Flags::Writable => kevent64_s {
-                    ident: u64::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::WRITE,
-                    data: 0,
-                    fflags: 0,
-                    udata: Pollable::init(self).ptr() as u64,
-                    flags: EV::ADD | one_shot_flag,
-                    ext: [self.generation_number as u64, 0],
-                },
-                Flags::Process => kevent64_s {
-                    ident: u64::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::PROC,
-                    data: 0,
-                    fflags: NOTE::EXIT,
-                    udata: Pollable::init(self).ptr() as u64,
-                    flags: EV::ADD | one_shot_flag,
-                    ext: [self.generation_number as u64, 0],
-                },
-                Flags::Machport => kevent64_s {
-                    ident: u64::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::MACHPORT,
-                    data: 0,
-                    fflags: 0,
-                    udata: Pollable::init(self).ptr() as u64,
-                    flags: EV::ADD | one_shot_flag,
-                    ext: [self.generation_number as u64, 0],
-                },
-                // System-wide memory pressure. ident is always 0; EV_CLEAR so each
-                // transition delivers once (matches libdispatch's registration).
-                Flags::MemoryPressure => kevent64_s {
-                    ident: 0,
-                    filter: EVFILT::MEMORYSTATUS,
-                    data: 0,
-                    fflags: NOTE::MEMORYSTATUS_PRESSURE_WARN | NOTE::MEMORYSTATUS_PRESSURE_CRITICAL,
-                    udata: Pollable::init(self).ptr() as u64,
-                    flags: EV::ADD | EV::CLEAR | one_shot_flag,
-                    ext: [self.generation_number as u64, 0],
-                },
-                _ => unreachable!(),
-            };
-
-            // output events only include change errors
-            const KEVENT_FLAG_ERROR_EVENTS: u32 = 0x000002;
-
-            // The kevent() system call returns the number of events placed in
-            // the eventlist, up to the value given by nevents.  If the time
-            // limit expires, then kevent() returns 0.
-            let rc = 'rc: loop {
-                // SAFETY: FFI syscall; pointers reference stack-local changelist valid for the call.
-                let rc = unsafe {
-                    bun_sys::darwin::kevent64(
-                        watcher_fd,
-                        changelist.as_ptr(),
-                        1,
-                        // The same array may be used for the changelist and eventlist.
-                        changelist.as_mut_ptr(),
-                        // we set 0 here so that if we get an error on
-                        // registration, it becomes errno
-                        0,
-                        KEVENT_FLAG_ERROR_EVENTS,
-                        &raw const TIMEOUT,
-                    )
-                };
-                if sys::get_errno(rc) == sys::E::EINTR {
-                    continue;
-                }
-                break 'rc rc;
-            };
-
-            self.flags.insert(Flags::WasEverRegistered);
-
-            // If an error occurs while
-            // processing an element of the changelist and there is enough room
-            // in the eventlist, then the event will be placed in the eventlist
-            // with EV_ERROR set in flags and the system error in data. xnu ORs
-            // EV_ERROR into the existing action bits, so test the bit.
-            if (changelist[0].flags & EV::ERROR) != 0 && changelist[0].data != 0 {
-                return kevent_change_error(changelist[0].data);
-                // Otherwise, -1 will be returned, and errno will be set to
-                // indicate the error condition.
-            }
-
-            let errno = sys::get_errno(rc);
-            if errno != sys::E::SUCCESS {
-                self.deactivate(loop_);
-                return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::kqueue));
-            }
-        }
-        #[cfg(target_os = "freebsd")]
-        {
-            use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE, kevent};
-            // SAFETY: all-zero is a valid Kevent
-            let mut changelist: [Kevent; 1] = bun_core::ffi::zeroed();
-            let one_shot_flag: u16 = if !self.flags.contains(Flags::OneShot) {
-                0
-            } else if one_shot == OneShotFlag::Dispatch {
-                EV::DISPATCH | EV::ENABLE
-            } else {
-                EV::ONESHOT
-            };
-
-            let ident = usize::try_from(fd.native()).expect("int cast");
-            let udata = Pollable::init(self).ptr();
-            changelist[0] = match flag {
-                Flags::Readable => {
-                    make_kevent(ident, EVFILT::READ, EV::ADD | one_shot_flag, 0, udata)
-                }
-                Flags::Writable => {
-                    make_kevent(ident, EVFILT::WRITE, EV::ADD | one_shot_flag, 0, udata)
-                }
-                Flags::Process => make_kevent(
-                    ident,
-                    EVFILT::PROC,
-                    EV::ADD | one_shot_flag,
-                    NOTE::EXIT,
-                    udata,
-                ),
-                Flags::Machport | Flags::MemoryPressure => {
-                    return sys::Result::Err(sys::Error::from_code(
-                        sys::E::EOPNOTSUPP,
-                        sys::Tag::kevent,
-                    ));
-                }
-                _ => unreachable!(),
-            };
-
-            let rc = 'rc: loop {
-                // SAFETY: FFI syscall; pointers reference stack-local changelist valid for the call.
-                let rc = unsafe {
-                    kevent(
-                        watcher_fd,
-                        changelist.as_ptr(),
-                        1,
-                        // Same array for changelist and eventlist; nevents=0 so
-                        // registration errors come back via errno.
-                        changelist.as_mut_ptr(),
-                        0,
-                        ptr::null(),
-                    )
-                };
-                if sys::get_errno(rc) == sys::E::EINTR {
-                    continue;
-                }
-                break 'rc rc;
-            };
-
-            self.flags.insert(Flags::WasEverRegistered);
-            if let Some(err) = errno_sys(rc, sys::Tag::kevent) {
-                self.deactivate(loop_);
-                return err;
-            }
+        let result = self.arm(loop_, flag, fd);
+        self.flags.insert(Flags::WasEverRegistered);
+        if let sys::Result::Err(err) = result {
+            self.deactivate(loop_);
+            return sys::Result::Err(err);
         }
 
         self.activate(loop_);
@@ -925,6 +669,102 @@ impl FilePoll {
         sys::Result::Ok(())
     }
 
+    /// Kernel-arm through the core poll registry: interest-set update on the
+    /// live slot for Fd directions, or a fresh slot registration (first
+    /// registration and post-one-shot rearm both land here).
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "freebsd"
+    ))]
+    fn arm(&mut self, loop_: &mut Loop, flag: Flags, fd: Fd) -> sys::Result<()> {
+        use bun_usockets::PollSource;
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        const REGISTER_TAG: sys::Tag = sys::Tag::epoll_ctl;
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        const REGISTER_TAG: sys::Tag = sys::Tag::kevent;
+
+        // On Linux a process watch is a readable pidfd — an Fd direction.
+        let is_fd_direction = matches!(flag, Flags::Readable | Flags::Writable)
+            || (cfg!(any(target_os = "linux", target_os = "android")) && flag == Flags::Process);
+
+        if let Some(reg) = &self.registration {
+            // Already armed. Fd sources take the union of the live directions
+            // plus `flag`; single-purpose sources (proc/machport/
+            // memorystatus) are level-armed already — nothing to change.
+            if is_fd_direction {
+                let readable = matches!(flag, Flags::Readable | Flags::Process)
+                    || self.flags.contains(Flags::PollReadable);
+                let writable =
+                    flag == Flags::Writable || self.flags.contains(Flags::PollWritable);
+                reg.poll_ref.change(readable, writable);
+            }
+            return sys::Result::Ok(());
+        }
+
+        let source = match flag {
+            Flags::Readable | Flags::Writable => {
+                let readable =
+                    flag == Flags::Readable || self.flags.contains(Flags::PollReadable);
+                let writable =
+                    flag == Flags::Writable || self.flags.contains(Flags::PollWritable);
+                PollSource::Fd {
+                    fd: fd.native(),
+                    readable,
+                    writable,
+                }
+            }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            Flags::Process => PollSource::Fd {
+                fd: fd.native(),
+                readable: true,
+                writable: false,
+            },
+            // PSI trigger fds signal via EPOLLPRI only.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            Flags::MemoryPressure => PollSource::Pri { fd: fd.native() },
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            Flags::Process => PollSource::Proc { pid: fd.native() },
+            #[cfg(target_os = "macos")]
+            Flags::Machport => PollSource::Machport {
+                port: u32::try_from(fd.native()).expect("int cast"),
+            },
+            #[cfg(target_os = "macos")]
+            Flags::MemoryPressure => PollSource::Memorystatus,
+            #[cfg(target_os = "freebsd")]
+            Flags::Machport | Flags::MemoryPressure => {
+                return sys::Result::Err(sys::Error::from_code(
+                    sys::E::EOPNOTSUPP,
+                    sys::Tag::kevent,
+                ));
+            }
+            _ => unreachable!(),
+        };
+
+        let shim = bun_ptr::RefPtr::new(RegistryShim {
+            ref_count: bun_ptr::RefCount::init(),
+            poll: core::cell::Cell::new(std::ptr::from_mut(self)),
+        });
+        // One strong ref transfers to the registry slot; ours lives in
+        // `Registration` and is discharged in `drop_registration`.
+        match loop_.register_poll::<FilePollProtocol>(source, shim.dupe_ref(), false) {
+            Ok(poll_ref) => {
+                self.registration = Some(Registration { poll_ref, shim });
+                sys::Result::Ok(())
+            }
+            Err(errno) => {
+                shim.data().poll.set(ptr::null_mut());
+                shim.deref();
+                sys::Result::Err(sys::Error::from_code(
+                    sys::SystemErrno::init(i64::from(errno)).unwrap_or(sys::E::EINVAL),
+                    REGISTER_TAG,
+                ))
+            }
+        }
+    }
+
     pub fn unregister(&mut self, loop_: &mut Loop, force_unregister: bool) -> sys::Result<()> {
         self.unregister_with_fd(loop_, self.fd, force_unregister)
     }
@@ -943,7 +783,7 @@ impl FilePoll {
             target_os = "macos",
             target_os = "freebsd"
         ))]
-        let result = self.unregister_with_fd_impl(loop_, fd, force_unregister);
+        let result = self.unregister_with_fd_impl(fd, force_unregister);
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
@@ -964,54 +804,18 @@ impl FilePoll {
         target_os = "macos",
         target_os = "freebsd"
     ))]
-    fn unregister_with_fd_impl(
-        &mut self,
-        loop_: &mut Loop,
-        fd: Fd,
-        force_unregister: bool,
-    ) -> sys::Result<()> {
+    fn unregister_with_fd_impl(&mut self, fd: Fd, force_unregister: bool) -> sys::Result<()> {
         #[cfg(debug_assertions)]
         debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
 
-        if !(self.flags.contains(Flags::PollReadable)
-            || self.flags.contains(Flags::PollWritable)
-            || self.flags.contains(Flags::PollProcess)
-            || self.flags.contains(Flags::PollMachport)
-            || self.flags.contains(Flags::PollMemoryPressure))
-        {
-            // no-op
+        if !self.is_registered() {
             return sys::Result::Ok(());
         }
 
-        debug_assert!(fd != INVALID_FD);
-        let watcher_fd = loop_.fd;
-        let both_directions =
-            self.flags.contains(Flags::PollReadable) && self.flags.contains(Flags::PollWritable);
-        let flag: Flags = 'brk: {
-            if self.flags.contains(Flags::PollReadable) {
-                break 'brk Flags::Readable;
-            }
-            if self.flags.contains(Flags::PollWritable) {
-                break 'brk Flags::Writable;
-            }
-            if self.flags.contains(Flags::PollProcess) {
-                break 'brk Flags::Process;
-            }
-            if self.flags.contains(Flags::PollMachport) {
-                break 'brk Flags::Machport;
-            }
-            if self.flags.contains(Flags::PollMemoryPressure) {
-                break 'brk Flags::MemoryPressure;
-            }
-            return sys::Result::Ok(());
-        };
-
         if self.flags.contains(Flags::NeedsRearm) && !force_unregister {
-            syslog!(
-                "unregister: {} ({}) skipped due to needs_rearm",
-                <&'static str>::from(flag),
-                fd
-            );
+            // The one-shot delivery already released its registry slot.
+            debug_assert!(self.registration.is_none());
+            syslog!("unregister: ({}) skipped due to needs_rearm", fd);
             self.flags.remove(Flags::PollProcess);
             self.flags.remove(Flags::PollReadable);
             self.flags.remove(Flags::PollWritable);
@@ -1021,192 +825,15 @@ impl FilePoll {
         }
 
         syslog!(
-            "unregister: FilePoll(0x{:x}, generation_number={}) {}{} ({})",
+            "unregister: FilePoll(0x{:x}) ({})",
             std::ptr::from_mut(self) as usize,
-            self.generation_number,
-            <&'static str>::from(flag),
-            if both_directions { "+writable" } else { "" },
             fd
         );
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            use bun_sys::linux::{self, EPOLL};
-            // CTL_DEL keys on fd alone, so both directions are removed together.
-            // SAFETY: FFI syscall; null event is valid for CTL_DEL on Linux ≥2.6.9.
-            let ctl = unsafe {
-                linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), ptr::null_mut())
-            };
-
-            match sys::get_errno(ctl) {
-                sys::E::SUCCESS => {}
-                e if deregistration_already_gone(e) => {}
-                e => return sys::Result::Err(sys::Error::from_code(e, sys::Tag::epoll_ctl)),
-            }
-        }
-        #[cfg(target_os = "macos")]
-        {
-            use bun_sys::darwin::{EV, EVFILT, NOTE, kevent64, kevent64_s};
-            // SAFETY: all-zero is a valid kevent64_s
-            let mut changelist: [kevent64_s; 2] = bun_core::ffi::zeroed();
-
-            changelist[0] = match flag {
-                Flags::Readable => kevent64_s {
-                    ident: u64::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::READ,
-                    data: 0,
-                    fflags: 0,
-                    udata: Pollable::init(self).ptr() as u64,
-                    flags: EV::DELETE,
-                    ext: [0, 0],
-                },
-                Flags::Machport => kevent64_s {
-                    ident: u64::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::MACHPORT,
-                    data: 0,
-                    fflags: 0,
-                    udata: Pollable::init(self).ptr() as u64,
-                    flags: EV::DELETE,
-                    ext: [0, 0],
-                },
-                Flags::Writable => kevent64_s {
-                    ident: u64::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::WRITE,
-                    data: 0,
-                    fflags: 0,
-                    udata: Pollable::init(self).ptr() as u64,
-                    flags: EV::DELETE,
-                    ext: [0, 0],
-                },
-                Flags::Process => kevent64_s {
-                    ident: u64::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::PROC,
-                    data: 0,
-                    fflags: NOTE::EXIT,
-                    udata: Pollable::init(self).ptr() as u64,
-                    flags: EV::DELETE,
-                    ext: [0, 0],
-                },
-                Flags::MemoryPressure => kevent64_s {
-                    ident: 0,
-                    filter: EVFILT::MEMORYSTATUS,
-                    data: 0,
-                    fflags: 0,
-                    udata: Pollable::init(self).ptr() as u64,
-                    flags: EV::DELETE,
-                    ext: [0, 0],
-                },
-                _ => unreachable!(),
-            };
-
-            let mut nchanges: c_int = 1;
-            if both_directions {
-                // kqueue keys on (fd, filter); delete EVFILT_WRITE as a second change.
-                changelist[1] = kevent64_s {
-                    ident: u64::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::WRITE,
-                    data: 0,
-                    fflags: 0,
-                    udata: Pollable::init(self).ptr() as u64,
-                    flags: EV::DELETE,
-                    ext: [0, 0],
-                };
-                nchanges = 2;
-            }
-
-            // output events only include change errors
-            const KEVENT_FLAG_ERROR_EVENTS: u32 = 0x000002;
-
-            // The kevent() system call returns the number of events placed in
-            // the eventlist, up to the value given by nevents.  If the time
-            // limit expires, then kevent() returns 0.
-            // SAFETY: FFI syscall; pointers reference stack-local changelist valid for the call.
-            let rc = unsafe {
-                kevent64(
-                    watcher_fd,
-                    changelist.as_ptr(),
-                    nchanges,
-                    // The same array may be used for the changelist and eventlist.
-                    changelist.as_mut_ptr(),
-                    nchanges,
-                    KEVENT_FLAG_ERROR_EVENTS,
-                    &raw const TIMEOUT,
-                )
-            };
-
-            let errno = sys::get_errno(rc);
-            // Global failure (e.g. EBADF on the kqueue fd): the eventlist
-            // was not written, so per-entry checks below would read our
-            // own input. Report errno and stop.
-            if rc < 0 {
-                return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::kevent));
-            }
-
-            // If an error occurs while processing an element of the changelist
-            // and there is enough room in the eventlist, then the event will be
-            // placed in the eventlist with EV_ERROR set in flags and the system
-            // error in data. With KEVENT_FLAG_ERROR_EVENTS, rc is the count of
-            // such error events; they are packed from index 0 regardless of
-            // which change failed. xnu ORs EV_ERROR into the existing action
-            // bits (EV_DELETE|EV_ERROR = 0x4002), so test the bit, not equality.
-            for i in 0..usize::try_from(rc.min(2)).expect("int cast") {
-                if (changelist[i].flags & EV::ERROR) == 0 || changelist[i].data == 0 {
-                    continue;
-                }
-                if sys::SystemErrno::init(changelist[i].data)
-                    .is_some_and(deregistration_already_gone)
-                {
-                    continue;
-                }
-                return kevent_change_error(changelist[i].data);
-            }
-        }
-        #[cfg(target_os = "freebsd")]
-        {
-            use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE, kevent};
-            // SAFETY: all-zero is a valid Kevent
-            let mut changelist: [Kevent; 2] = bun_core::ffi::zeroed();
-            let ident = usize::try_from(fd.native()).expect("int cast");
-            let udata = Pollable::init(self).ptr();
-            changelist[0] = match flag {
-                Flags::Readable => make_kevent(ident, EVFILT::READ, EV::DELETE, 0, udata),
-                Flags::Writable => make_kevent(ident, EVFILT::WRITE, EV::DELETE, 0, udata),
-                Flags::Process => make_kevent(ident, EVFILT::PROC, EV::DELETE, NOTE::EXIT, udata),
-                Flags::Machport | Flags::MemoryPressure => {
-                    return sys::Result::Err(sys::Error::from_code(
-                        sys::E::EOPNOTSUPP,
-                        sys::Tag::kevent,
-                    ));
-                }
-                _ => unreachable!(),
-            };
-
-            let mut nchanges: c_int = 1;
-            if both_directions {
-                changelist[1] = make_kevent(ident, EVFILT::WRITE, EV::DELETE, 0, udata);
-                nchanges = 2;
-            }
-
-            // nevents=0: per-entry errors surface as rc=-1/errno for the
-            // first failing change. For EV_DELETE (typically ENOENT) a silent
-            // miss on the second entry is harmless.
-            // SAFETY: FFI syscall; pointers reference stack-local changelist valid for the call.
-            let rc = unsafe {
-                kevent(
-                    watcher_fd,
-                    changelist.as_ptr(),
-                    nchanges,
-                    changelist.as_mut_ptr(),
-                    0,
-                    ptr::null(),
-                )
-            };
-            match sys::get_errno(rc) {
-                sys::E::SUCCESS => {}
-                e if deregistration_already_gone(e) => {}
-                e => return sys::Result::Err(sys::Error::from_code(e, sys::Tag::kevent)),
-            }
-        }
+        // Kernel disarm + slot free happen core-side; already-gone
+        // registrations (fd closed while registered, pty knotes reaped on
+        // EV_EOF|EV_ONESHOT hangup) are tolerated there, matching libuv.
+        self.drop_registration();
 
         self.flags.remove(Flags::NeedsRearm);
         self.flags.remove(Flags::OneShot);
@@ -1225,9 +852,8 @@ impl fmt::Display for FilePoll {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "FilePoll(fd={}, generation_number={}) = {}",
+            "FilePoll(fd={}) = {}",
             self.fd,
-            self.generation_number,
             FlagsFormatter(self.flags)
         )
     }
@@ -1277,7 +903,6 @@ pub enum Flags {
     Nonblocking,
 
     WasEverRegistered,
-    IgnoreUpdates,
 
     /// Was O_NONBLOCK set on the file descriptor?
     Nonblock,
@@ -1300,59 +925,6 @@ impl Flags {
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub fn from_kqueue_event(kqueue_event: &KQueueEvent) -> FlagsSet {
-        #[cfg(target_os = "macos")]
-        use bun_sys::darwin::EVFILT;
-        #[cfg(target_os = "freebsd")]
-        use bun_sys::freebsd::EVFILT;
-        let mut flags = FlagsSet::empty();
-        if kqueue_event.filter == EVFILT::READ {
-            flags.insert(Flags::Readable);
-            if kqueue_event.flags & EV_EOF != 0 {
-                flags.insert(Flags::Hup);
-            }
-        } else if kqueue_event.filter == EVFILT::WRITE {
-            flags.insert(Flags::Writable);
-            if kqueue_event.flags & EV_EOF != 0 {
-                flags.insert(Flags::Hup);
-            }
-        } else if kqueue_event.filter == EVFILT::PROC {
-            flags.insert(Flags::Process);
-        } else {
-            #[cfg(target_os = "macos")]
-            if kqueue_event.filter == EVFILT::MACHPORT {
-                flags.insert(Flags::Machport);
-            }
-            #[cfg(target_os = "macos")]
-            if kqueue_event.filter == EVFILT::MEMORYSTATUS {
-                flags.insert(Flags::MemoryPressure);
-            }
-        }
-        flags
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn from_epoll_event(epoll: &bun_sys::linux::epoll_event) -> FlagsSet {
-        use bun_sys::linux::EPOLL;
-        let mut flags = FlagsSet::empty();
-        if epoll.events & EPOLL::IN != 0 {
-            flags.insert(Flags::Readable);
-        }
-        if epoll.events & EPOLL::OUT != 0 {
-            flags.insert(Flags::Writable);
-        }
-        if epoll.events & EPOLL::PRI != 0 {
-            flags.insert(Flags::MemoryPressure);
-        }
-        if epoll.events & EPOLL::ERR != 0 {
-            flags.insert(Flags::Eof);
-        }
-        if epoll.events & EPOLL::HUP != 0 {
-            flags.insert(Flags::Hup);
-        }
-        flags
-    }
 }
 
 #[allow(dead_code)]
@@ -1384,13 +956,13 @@ const HIVE_SIZE: usize = 128;
 #[cfg(not(windows))]
 type FilePollHive = bun_collections::hive_array::Fallback<FilePoll, HIVE_SIZE>;
 
-/// We defer freeing FilePoll until the end of the next event loop iteration
-/// This ensures that we don't free a FilePoll before the next callback is called
+/// FilePoll slot pool. Freed slots are recycled immediately: staleness
+/// protection moved core-side (the registry slot is the kernel udata; its
+/// generation bump + pending ready-list nulling drop any same-tick event, and
+/// the dispatch shim backpointer is nulled before the slot returns here).
 #[cfg(not(windows))]
 pub struct Store {
     hive: FilePollHive,
-    pending_free_head: *mut FilePoll,
-    pending_free_tail: *mut FilePoll,
 }
 
 #[cfg(not(windows))]
@@ -1398,8 +970,6 @@ impl Store {
     pub fn init() -> Store {
         Store {
             hive: FilePollHive::init(),
-            pending_free_head: ptr::null_mut(),
-            pending_free_tail: ptr::null_mut(),
         }
     }
 
@@ -1409,188 +979,17 @@ impl Store {
         self.hive.get_init(value)
     }
 
-    pub fn process_deferred_frees(&mut self) {
-        let mut next = self.pending_free_head;
-        while !next.is_null() {
-            let current = next;
-            // SAFETY: intrusive list; nodes were allocated by this hive. Walk via
-            // raw-pointer reads/writes only — materializing a `&mut FilePoll`
-            // here would alias the `&mut self.hive` borrow taken by `put()`
-            // below (the slot may live inside the inline hive array).
-            unsafe {
-                next = (*current).next_to_free;
-                (*current).next_to_free = ptr::null_mut();
-                // FilePoll has no drop glue; `put` is a no-op drop + recycle.
-                self.hive.put(current);
-            }
-        }
-        self.pending_free_head = ptr::null_mut();
-        self.pending_free_tail = ptr::null_mut();
-    }
-
     /// `poll` is a live, fully-initialized slot in `self.hive`. It may point
     /// *inside* `self.hive`'s inline `[FilePoll; 128]` buffer, so accepting it
     /// as `&mut FilePoll` while `&mut self` is live would retag overlapping
-    /// storage under Stacked Borrows (UB). Take it as a raw pointer and
-    /// touch fields only through raw pointer ops — same
-    /// rationale as `process_deferred_frees` above.
-    pub fn put(&mut self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
-        let poll = poll.as_ptr();
-        if !ever_registered {
-            // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no
-            // drop glue, so `put` is a no-op drop + recycle.
-            unsafe { self.hive.put(poll) };
-            return;
-        }
-
-        // SAFETY: `poll` is a live hive slot (see fn-level comment); raw read of a POD field.
-        debug_assert!(unsafe { (*poll).next_to_free }.is_null());
-
-        if !self.pending_free_tail.is_null() {
-            debug_assert!(!self.pending_free_head.is_null());
-            // SAFETY: tail is non-null and points into the hive.
-            unsafe {
-                debug_assert!((*self.pending_free_tail).next_to_free.is_null());
-                (*self.pending_free_tail).next_to_free = poll;
-            }
-        }
-
-        if self.pending_free_head.is_null() {
-            self.pending_free_head = poll;
-            debug_assert!(self.pending_free_tail.is_null());
-        }
-
-        // SAFETY: see fn-level comment — raw-pointer field access only.
-        unsafe { (*poll).flags.insert(Flags::IgnoreUpdates) };
-        self.pending_free_tail = poll;
-
-        let callback: OpaqueCallback = Self::process_deferred_frees_thunk;
-        debug_assert!(
-            vm.after_event_loop_callback().is_none()
-                || vm.after_event_loop_callback().map(|f| f as usize) == Some(callback as usize)
-        );
-        vm.set_after_event_loop_callback(
-            Some(callback),
-            core::ptr::NonNull::new(std::ptr::from_mut::<Store>(self).cast::<c_void>()),
-        );
-    }
-
-    // Safe fn item: module-private thunk, only coerced to the C-ABI
-    // `OpaqueCallback` fn-pointer type — never callable by name outside
-    // `Store`. Body wraps its raw-ptr op explicitly.
-    extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
-        // SAFETY: ctx was set to `self as *mut Store` in `put` above.
-        let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
-        this.process_deferred_frees();
+    /// storage under Stacked Borrows (UB). Take it as a raw pointer instead.
+    pub fn put(&mut self, poll: ptr::NonNull<FilePoll>) {
+        // SAFETY: `poll` is a fully-initialized hive slot whose registration
+        // was already released (deinit contract); FilePoll has no drop glue,
+        // so `put` is a no-op drop + recycle.
+        unsafe { self.hive.put(poll.as_ptr()) };
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// onTick (exported)
-// ──────────────────────────────────────────────────────────────────────────
-
-// `Pollable` is a single-variant tagged-pointer union over `FilePoll`.
-//
-// Note: `bun_collections::TaggedPtrUnion<(FilePoll,)>` cannot be
-// instantiated here — `impl_tagged_ptr_union!` would generate
-// `impl TypeList for (FilePoll,)`, which trips the orphan rule (foreign trait
-// on a tuple). Since the union has exactly one variant, wrap the raw
-// `TaggedPtr` directly with the same tag scheme (`1024 - index`).
-#[derive(Copy, Clone)]
-#[allow(dead_code)]
-pub(crate) struct Pollable {
-    repr: bun_collections::TaggedPointer,
-}
-
-impl Pollable {
-    /// Tag value for `FilePoll` (index 0 → `1024 - 0`).
-    #[allow(dead_code)]
-    pub(crate) const FILE_POLL_TAG: u16 = 1024;
-
-    #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn init(ptr: *const crate::FilePoll) -> Self {
-        Self {
-            repr: bun_collections::TaggedPointer::init(ptr, Self::FILE_POLL_TAG),
-        }
-    }
-
-    #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn from(val: *mut c_void) -> Self {
-        Self {
-            repr: bun_collections::TaggedPointer::from(val),
-        }
-    }
-
-    #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn tag(self) -> u16 {
-        self.repr.data()
-    }
-
-    #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn as_file_poll(self) -> *mut crate::FilePoll {
-        self.repr.get::<crate::FilePoll>()
-    }
-
-    #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn ptr(self) -> *mut c_void {
-        self.repr.to()
-    }
-}
-
-// `current_ready_poll`/`ready_polls` only exist on the POSIX uws loop layout;
-// on Windows the libuv loop drives readiness, so this entry point is never
-// linked there. Restrict to the platforms where the fields are present.
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "macos",
-    target_os = "freebsd"
-))]
-#[unsafe(no_mangle)]
-/// # Safety
-/// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
-/// was registered via `Pollable::init` in `register_with_fd`.
-pub(crate) unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
-    loop_: *mut Loop,
-    tagged_pointer: *mut c_void,
-) {
-    let tag = Pollable::from(tagged_pointer);
-
-    if tag.tag() != Pollable::FILE_POLL_TAG {
-        return;
-    }
-
-    // SAFETY: tag matched FilePoll; pointer was set via Pollable::init in register_with_fd.
-    let file_poll: &mut FilePoll = unsafe { &mut *tag.as_file_poll() };
-    if file_poll.flags.contains(Flags::IgnoreUpdates) {
-        return;
-    }
-
-    // SAFETY: `loop_` is the live uws loop. Do *not* materialize `&mut *loop_`
-    // here — `on_update` (via `__bun_run_file_poll`) re-enters the loop and conjures
-    // a fresh `&mut Loop` through `EventLoopCtx::platform_event_loop()`; a
-    // protected `&mut Loop` spanning that call would be SB-UB. Take a short-lived
-    // `&*loop_` only to copy the POD event onto the stack (the `BackRef`-style
-    // accessor returns by value), then drop the borrow before dispatching so the
-    // handler is free to form its own `&mut Loop`.
-    let ev = unsafe { &*loop_ }.current_ready_event();
-
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    file_poll.on_kqueue_event(&ev);
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    file_poll.on_epoll_event(&ev);
-}
-
-#[cfg(target_os = "macos")]
-static TIMEOUT: bun_sys::posix::timespec = bun_sys::posix::timespec {
-    tv_sec: 0,
-    tv_nsec: 0,
-};
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1617,29 +1016,3 @@ pub use crate::closer::Closer;
 pub use crate::waker::KEventWaker;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 pub use crate::waker::Waker;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// kevent `EV_ERROR` entries carry the errno value itself in `data`.
-    /// These used to be round-tripped through `errno_sys`, which decodes the
-    /// -1-sentinel return-code convention and therefore returned `None` for
-    /// every real errno — panicking at the `.unwrap()` call sites whenever an
-    /// `EV_DELETE` failed (e.g. EBADF/ENOENT from a pipe fd closed while its
-    /// `FilePoll` was still registered).
-    #[cfg(not(windows))]
-    #[test]
-    fn kevent_change_error_decodes_errno_value_not_return_code() {
-        let err = kevent_change_error(sys::E::EBADF as i64).unwrap_err();
-        assert_eq!(err.get_errno(), sys::E::EBADF);
-        assert_eq!(err.syscall, sys::Tag::kevent);
-
-        let err = kevent_change_error(sys::E::ENOENT as i64).unwrap_err();
-        assert_eq!(err.get_errno(), sys::E::ENOENT);
-
-        // Out-of-range data must not panic either.
-        let err = kevent_change_error(i64::MAX).unwrap_err();
-        assert_eq!(err.get_errno(), sys::E::EINVAL);
-    }
-}

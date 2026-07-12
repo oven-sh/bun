@@ -1,15 +1,15 @@
 //! kqueue backend (macOS/FreeBSD). Implements core-semantics.md §1-2 poll
 //! mechanics: kevent64 changelists with KEVENT_FLAG_ERROR_EVENTS errno
 //! mirroring, level-triggered EVFILT_READ + one-shot EVFILT_WRITE (incl. the
-//! zero-events add-oneshot-WRITE-for-FIN rule), two-pass per-poll coalesce,
-//! tagged-pointer udata routed to `Bun__internal_dispatch_ready_poll`.
+//! zero-events add-oneshot-WRITE-for-FIN rule), two-pass per-poll coalesce.
+//! All udata are untagged slot pointers (P10 removed the tagged-pointer
+//! FilePoll back-channel).
 
-use core::ffi::c_void;
 use core::ptr;
 
-use crate::backend::{self, Backend, Events, PollState, MAX_READY_POLLS, POINTER_TAG_MASK};
+use crate::backend::{self, Backend, Events, PollState, MAX_READY_POLLS};
 use crate::loop_::Loop;
-use crate::unsafe_core::{ffi, poll_access};
+use crate::unsafe_core::poll_access;
 use crate::LIBUS_SOCKET_DESCRIPTOR;
 
 /// macOS uses `kevent64_s`; usockets aliases it to `struct kevent` on FreeBSD.
@@ -59,6 +59,24 @@ impl Backend for Kqueue {
 
     fn wait(&mut self, loop_: *mut Loop, timeout_ns: i64) -> i32 {
         poll_access::kevent_wait_ready(loop_, timeout_ns, timeout_ns == 0)
+    }
+
+    fn arm_source(
+        &mut self,
+        p: *mut PollState,
+        loop_: *mut Loop,
+        source: crate::loop_::poll_registry::PollSource,
+    ) -> i32 {
+        registry_arm(p, loop_, source)
+    }
+
+    fn disarm_source(
+        &mut self,
+        p: *mut PollState,
+        loop_: *mut Loop,
+        armed: crate::loop_::poll_registry::ArmedSource,
+    ) {
+        registry_disarm(p, loop_, armed)
     }
 }
 
@@ -179,6 +197,186 @@ pub(crate) fn accept_poll_event(_p: *mut PollState) -> u64 {
     0
 }
 
+// ── P0c registry sources ─────────────────────────────────────────────────────
+// Registry Fd polls are LEVEL-triggered in both directions — the socket
+// oneshot-WRITE / zero-events-FIN rules above do not apply to them.
+
+/// `EVFILT_MEMORYSTATUS` (xnu <sys/event_private.h>; not in libc). fflags per
+/// libdispatch's pressure registration.
+#[cfg(target_os = "macos")]
+const EVFILT_MEMORYSTATUS: i16 = -14;
+#[cfg(target_os = "macos")]
+const NOTE_MEMORYSTATUS_PRESSURE_WARN: u32 = 0x00000002;
+#[cfg(target_os = "macos")]
+const NOTE_MEMORYSTATUS_PRESSURE_CRITICAL: u32 = 0x00000004;
+
+/// ≤2 EV_ADD/EV_DELETE deltas moving an Fd registration `old` → `new`.
+/// One submission per filter (same discipline as `Kqueue::remove`):
+/// FreeBSD's no-ERROR_EVENTS shim can abort a batched changelist at the
+/// first error, which would leave the second filter's knote armed with
+/// soon-stale udata (W2). Returns the first nonzero rc.
+fn registry_fd_delta(
+    kqfd: i32,
+    fd: LIBUS_SOCKET_DESCRIPTOR,
+    old: Events,
+    new: Events,
+    udata: u64,
+) -> i32 {
+    let mut rc = 0;
+    for (bit, filter) in [
+        (Events::READABLE, libc::EVFILT_READ),
+        (Events::WRITABLE, libc::EVFILT_WRITE),
+    ] {
+        let now = new.contains(bit);
+        if now != old.contains(bit) {
+            let mut ch = [poll_access::make_kev(
+                fd,
+                filter,
+                if now { libc::EV_ADD } else { libc::EV_DELETE },
+                udata,
+            )];
+            let r = poll_access::kevent_error_events(kqfd, &mut ch);
+            if rc == 0 {
+                rc = r;
+            }
+        }
+    }
+    rc
+}
+
+pub(crate) fn registry_arm(
+    p: *mut PollState,
+    loop_: *mut Loop,
+    source: crate::loop_::poll_registry::PollSource,
+) -> i32 {
+    use crate::loop_::poll_registry::PollSource;
+    let kqfd = poll_access::loop_fd(loop_);
+    let udata = p as usize as u64;
+    let mut st = poll_access::read_poll(p);
+    match source {
+        PollSource::Fd {
+            readable, writable, ..
+        } => {
+            let events = backend::fd_interest(readable, writable);
+            st.set_polling(events);
+            poll_access::write_poll(p, st);
+            registry_fd_delta(kqfd, st.fd(), Events::NONE, events, udata)
+        }
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        PollSource::Proc { pid } => {
+            st.set_polling(Events::READABLE);
+            poll_access::write_poll(p, st);
+            let mut ch = [poll_access::make_kev_ex(
+                pid as u64,
+                libc::EVFILT_PROC,
+                libc::EV_ADD,
+                libc::NOTE_EXIT,
+                udata,
+            )];
+            poll_access::kevent_error_events(kqfd, &mut ch)
+        }
+        #[cfg(target_os = "macos")]
+        PollSource::Machport { port } => {
+            st.set_polling(Events::READABLE);
+            poll_access::write_poll(p, st);
+            let mut ch = [poll_access::make_kev_ex(
+                u64::from(port),
+                libc::EVFILT_MACHPORT,
+                libc::EV_ADD,
+                0,
+                udata,
+            )];
+            poll_access::kevent_error_events(kqfd, &mut ch)
+        }
+        #[cfg(target_os = "macos")]
+        PollSource::Memorystatus => {
+            st.set_polling(Events::READABLE);
+            poll_access::write_poll(p, st);
+            // EV_CLEAR: each pressure transition delivers once (libdispatch
+            // parity, same as io/'s registration).
+            let mut ch = [poll_access::make_kev_ex(
+                0,
+                EVFILT_MEMORYSTATUS,
+                libc::EV_ADD | libc::EV_CLEAR,
+                NOTE_MEMORYSTATUS_PRESSURE_WARN | NOTE_MEMORYSTATUS_PRESSURE_CRITICAL,
+                udata,
+            )];
+            poll_access::kevent_error_events(kqfd, &mut ch)
+        }
+    }
+}
+
+/// Level-triggered interest update for a registry Fd source.
+pub(crate) fn registry_change(p: *mut PollState, loop_: *mut Loop, events: Events) {
+    let mut st = poll_access::read_poll(p);
+    let old_events = st.events();
+    if old_events == events {
+        return;
+    }
+    st.set_polling(events);
+    poll_access::write_poll(p, st);
+    registry_fd_delta(
+        poll_access::loop_fd(loop_),
+        st.fd(),
+        old_events,
+        events,
+        p as usize as u64,
+    );
+    backend::update_pending_ready_polls(loop_, p, p, old_events, events);
+}
+
+pub(crate) fn registry_disarm(
+    p: *mut PollState,
+    loop_: *mut Loop,
+    armed: crate::loop_::poll_registry::ArmedSource,
+) {
+    use crate::loop_::poll_registry::ArmedSource;
+    let kqfd = poll_access::loop_fd(loop_);
+    let st = poll_access::read_poll(p);
+    match armed {
+        ArmedSource::Fd => {
+            let old = st.events();
+            if !old.is_empty() {
+                registry_fd_delta(kqfd, st.fd(), old, Events::NONE, 0);
+            }
+        }
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        ArmedSource::Proc { pid } => {
+            let mut ch = [poll_access::make_kev_ex(
+                pid as u64,
+                libc::EVFILT_PROC,
+                libc::EV_DELETE,
+                0,
+                0,
+            )];
+            let _ = poll_access::kevent_error_events(kqfd, &mut ch);
+        }
+        #[cfg(target_os = "macos")]
+        ArmedSource::Machport { port } => {
+            let mut ch = [poll_access::make_kev_ex(
+                u64::from(port),
+                libc::EVFILT_MACHPORT,
+                libc::EV_DELETE,
+                0,
+                0,
+            )];
+            let _ = poll_access::kevent_error_events(kqfd, &mut ch);
+        }
+        #[cfg(target_os = "macos")]
+        ArmedSource::Memorystatus => {
+            let mut ch = [poll_access::make_kev_ex(
+                0,
+                EVFILT_MEMORYSTATUS,
+                libc::EV_DELETE,
+                0,
+                0,
+            )];
+            let _ = poll_access::kevent_error_events(kqfd, &mut ch);
+        }
+    }
+    backend::update_pending_ready_polls(loop_, p, ptr::null_mut(), st.events(), Events::NONE);
+}
+
 pub(crate) fn wait_immediate(loop_: *mut Loop) -> i32 {
     poll_access::kevent_wait_ready(loop_, 0, true)
 }
@@ -189,6 +387,9 @@ const FL_WRITABLE: u8 = 1 << 1;
 const FL_ERROR: u8 = 1 << 2;
 const FL_EOF: u8 = 1 << 3;
 const FL_SKIP: u8 = 1 << 4;
+/// P0c registry poll: dispatched per-kevent in pass 2 (no coalesce) so the
+/// filter payload (fflags/data) survives to the handler.
+const FL_REGISTERED: u8 = 1 << 5;
 
 #[cfg(target_os = "macos")]
 fn is_readable_filter(filter: i16) -> bool {
@@ -208,6 +409,55 @@ fn entry_parts(e: &EventType) -> (u64, i16, u16) {
     (e.udata as u64, e.filter as i16, e.flags)
 }
 
+#[cfg(target_os = "macos")]
+fn entry_payload(e: &EventType) -> (u32, i64) {
+    (e.fflags, e.data)
+}
+#[cfg(target_os = "freebsd")]
+fn entry_payload(e: &EventType) -> (u32, i64) {
+    (e.fflags, e.data as i64)
+}
+
+/// Untagged, non-UDP udata pointing at an occupied-or-vacant slot with kind
+/// bits == Registered. UDP low-bit tags are excluded FIRST — a tagged word
+/// does not point at a PollState.
+fn is_registered_udata(udata: u64) -> bool {
+    udata & backend::UDP_TAG_MASK == 0
+        && poll_access::read_poll(udata as usize as *mut PollState).kind_bits()
+            == backend::KIND_REGISTERED
+}
+
+/// Per-kevent registry dispatch: direction from the filter (everything that
+/// is not EVFILT_WRITE reads as readable — PROC/MACHPORT/MEMORYSTATUS
+/// included), error/eof from the flags, raw filter payload passed through.
+/// R1.18 parity with epoll's `dispatch_untagged` mask: the filter direction
+/// is ANDed with the slot's believed polling bits, so a same-batch stale
+/// kevent for a direction removed by `PollRef::change` is dropped.
+fn dispatch_registered_kevent(e: &EventType) {
+    let (udata, filter, flags) = entry_parts(e);
+    let (fflags, data) = entry_payload(e);
+    let p = udata as usize as *mut PollState;
+    let believed = poll_access::read_poll(p).events();
+    let readable = filter != libc::EVFILT_WRITE && believed.contains(Events::READABLE);
+    let writable = filter == libc::EVFILT_WRITE && believed.contains(Events::WRITABLE);
+    let error = flags & libc::EV_ERROR != 0;
+    let eof = flags & libc::EV_EOF != 0;
+    if !readable && !writable && !error && !eof {
+        return;
+    }
+    crate::loop_::poll_registry::dispatch_ready(
+        p,
+        crate::loop_::poll_registry::PollEvents {
+            readable,
+            writable,
+            error,
+            eof,
+            fflags,
+            data,
+        },
+    );
+}
+
 /// R1.19: kqueue delivers each filter as a separate kevent, so pass 1
 /// coalesces same-poll entries (backward scan; ≤2 kevents per fd) and pass 2
 /// dispatches in kernel order of each poll's FIRST kevent.
@@ -222,8 +472,14 @@ pub(crate) fn dispatch_ready_polls(loop_: *mut Loop) {
     for i in 0..n {
         let entry = poll_access::ready_poll_at(loop_, i);
         let (udata, filter, flags) = entry_parts(&entry);
-        if udata == 0 || udata & POINTER_TAG_MASK != 0 {
+        if udata == 0 {
             coalesced[i as usize] = FL_SKIP;
+            continue;
+        }
+        // P0c registry entries skip the coalesce entirely — pass 2 dispatches
+        // each kevent with its filter payload intact.
+        if is_registered_udata(udata) {
+            coalesced[i as usize] = FL_REGISTERED;
             continue;
         }
 
@@ -243,7 +499,7 @@ pub(crate) fn dispatch_ready_polls(loop_: *mut Loop) {
 
         let mut merged = false;
         for j in (0..i).rev() {
-            if coalesced[j as usize] & FL_SKIP == 0
+            if coalesced[j as usize] & (FL_SKIP | FL_REGISTERED) == 0
                 && poll_access::ready_poll_udata(loop_, j) == udata
             {
                 coalesced[j as usize] |= bits;
@@ -264,11 +520,15 @@ pub(crate) fn dispatch_ready_polls(loop_: *mut Loop) {
         let i = poll_access::current_ready_poll(loop_);
         let udata = poll_access::ready_poll_udata(loop_, i);
         if udata != 0 {
-            if udata & POINTER_TAG_MASK != 0 {
-                ffi::dispatch_ready_poll(loop_, udata as usize as *mut c_void);
+            if coalesced[i as usize] & FL_REGISTERED != 0 {
+                let entry = poll_access::ready_poll_at(loop_, i);
+                dispatch_registered_kevent(&entry);
             } else {
                 let bits = coalesced[i as usize];
-                if bits & FL_SKIP == 0 {
+                // bits == 0: nested-tick-appended entry beyond pass 1's count
+                // (already dispatched by the nested tick) — dropped here, so
+                // dispatch_untagged never sees an all-empty kqueue event.
+                if bits & FL_SKIP == 0 && bits != 0 {
                     let mut events = Events::NONE;
                     if bits & FL_READABLE != 0 {
                         events |= Events::READABLE;

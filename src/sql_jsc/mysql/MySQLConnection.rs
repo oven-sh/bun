@@ -325,9 +325,9 @@ impl MySQLConnection {
         let Socket::SocketTcp(tcp) = self.socket else {
             return Ok(());
         };
-        if !matches!(tcp.socket, uws::InternalSocket::Connected(_)) {
+        let uws::InternalSocket::Connected(sref) = tcp.socket else {
             return Ok(());
-        }
+        };
 
         // `as_mut()` is `'static`, so `tls_group` borrows the VM singleton —
         // not `*self` — and stays live across the field reads below.
@@ -352,21 +352,27 @@ impl MySQLConnection {
             // `tls_config` for the connection lifetime.
             Some(unsafe { bun_core::ffi::cstr(server_name) })
         };
-        let js_connection = self.get_js_connection();
 
         // Reachable off-dispatch (AutoFlusher -> drain_internal), so C6 does
-        // not cover `tcp`'s ref: the helper's stale/closed bail is load-bearing.
-        if !crate::shared::tls_adopt::adopt_socket_into_tls(
-            tcp,
-            tls_group,
+        // not cover `sref`: `adopt_tls_owned` refuses stale/closed handles.
+        // The new owner ref is stamped before the old Mysql-kind ref is
+        // released (core swap), so dispatch never sees a stale owner.
+        let owner = self.js_connection_ref().owner_ref();
+        let Some(tls) = uws::SocketTLS::adopt_tls_owned(
+            sref,
+            std::ptr::from_mut(tls_group),
             uws::SocketKind::MysqlTls,
             ssl_ctx,
             sni,
-            js_connection,
-            |tls| self.socket = Socket::SocketTls(tls),
-        ) {
+            true, // is_client
+            owner,
+        ) else {
             return Err(FlushQueueError::AuthenticationFailed);
-        }
+        };
+        self.socket = Socket::SocketTls(tls);
+        // Owner already swapped by core; safe to kick the handshake (any
+        // dispatch lands on the live owner).
+        tls.start_tls_handshake();
         Ok(())
     }
 
@@ -390,7 +396,7 @@ impl MySQLConnection {
 
     pub fn do_handshake(
         &mut self,
-        success: i32,
+        success: bool,
         ssl_error: uws::us_bun_verify_error_t,
     ) -> Result<bool, AnyMySQLError> {
         bun_core::scoped_log!(
@@ -400,9 +406,8 @@ impl MySQLConnection {
             ssl_error.error_no,
             self.ssl_mode
         );
-        let handshake_success = success == 1;
         self.sequence_id = self.sequence_id.wrapping_add(1);
-        if handshake_success {
+        if success {
             self.tls_status = TLSStatus::SslOk;
             if self.tls_config.reject_unauthorized() != 0 {
                 // follow the same rules as postgres

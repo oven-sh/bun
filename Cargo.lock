@@ -1954,6 +1954,7 @@ dependencies = [
  "bun_spawn_sys",
  "bun_sys",
  "bun_threading",
+ "bun_usockets",
  "bun_which",
  "libc",
  "scopeguard",
@@ -2180,6 +2181,7 @@ dependencies = [
  "bun_core",
  "bun_dns",
  "bun_libuv_sys",
+ "bun_ptr",
  "libc",
 ]
 

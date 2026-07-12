@@ -1,13 +1,17 @@
-//! Per-socket TLS engine: SSL* + a per-socket custom BIO pair + per-socket
-//! spill (api.md CHANGES 2 — relocation and loop-shared routing are gone).
+//! Per-socket TLS engine: SSL* + a per-socket custom BIO pair; the growable
+//! ciphertext buffers (batch + the single spill slot) and the fatal-reason
+//! scratch are loop-shared, O(1) per loop (safe-protocol.md P0d), owned by a
+//! generation-checked `SocketRef` (stale ⇒ dropped, never dangles).
 //! Handshake / read / write / shutdown machines per tls-semantics.md §2-§5.
 //! Batch thresholds ported verbatim: 16 KiB records, 128 KiB flush.
+
+use core::ptr::NonNull;
 
 use crate::dispatch::{
     dispatch_data, dispatch_handshake, dispatch_keylog, dispatch_session, dispatch_ssl_raw_tap,
     dispatch_writable,
 };
-use crate::handle::CloseCode;
+use crate::handle::{CloseCode, SocketRef};
 use crate::kind::SocketKind;
 use crate::loop_::Loop;
 use crate::socket::{SocketFlags, SocketHeader};
@@ -46,17 +50,13 @@ pub(crate) enum HandshakeState {
 pub(crate) struct BioCtl {
     /// Slab-resident owner; never moves while the loop lives.
     pub(crate) s: *mut SocketHeader,
+    /// Loop-shared engine buffers; outlives every socket on the loop.
+    pub(crate) shared: *mut LoopTlsShared,
     /// Borrowed ciphertext window (read BIO input). Valid only while the
     /// caller's buffer is; `read_len` is the REMAINING byte count.
     pub(crate) read_ptr: *const u8,
     pub(crate) read_len: usize,
     pub(crate) read_off: usize,
-    /// Per-socket batch buffer == spill slot: sealed records the wire has
-    /// not taken yet. Bytes here are already counted written by BoringSSL.
-    pub(crate) pending: Vec<u8>,
-    pub(crate) pending_off: usize,
-    /// True only inside `TlsState::write`'s record loop (tls-semantics §4).
-    pub(crate) batching: bool,
     /// `ssl_in_use` bracket around SSL_read/SSL_do_handshake (§1.4).
     pub(crate) in_use: bool,
     /// A callback destroyed the socket mid-SSL-call; BIO write swallows
@@ -68,29 +68,33 @@ pub(crate) struct BioCtl {
 }
 
 /// Saved read-window snapshot for the §1.4 save/restore protocol around JS
-/// dispatched from inside `SSL_read`.
+/// dispatched from inside `SSL_read` (always via the `WindowGuard` RAII).
 #[derive(Copy, Clone)]
-pub(crate) struct WindowSave {
+struct WindowSave {
     ptr: *const u8,
     len: usize,
     off: usize,
 }
 
 impl BioCtl {
-    fn new(s: *mut SocketHeader) -> BioCtl {
+    fn new(s: *mut SocketHeader, shared: *mut LoopTlsShared) -> BioCtl {
         BioCtl {
             s,
+            shared,
             read_ptr: core::ptr::null(),
             read_len: 0,
             read_off: 0,
-            pending: Vec::new(),
-            pending_off: 0,
-            batching: false,
             in_use: false,
             pending_detach: false,
             pending_close_code: 0,
             fatal: false,
         }
+    }
+
+    /// Generation-stamped identity of the owning socket (spill/fatal-reason
+    /// ownership key). `s` is live for the whole BioCtl lifetime (C6).
+    fn me(&self) -> SocketRef {
+        SocketRef::from_live(NonNull::new(self.s).expect("BioCtl.s is live"))
     }
 
     pub(crate) fn set_window(&mut self, data: &[u8]) {
@@ -105,7 +109,7 @@ impl BioCtl {
         self.read_off = 0;
     }
 
-    pub(crate) fn save_window(&self) -> WindowSave {
+    fn save_window(&self) -> WindowSave {
         WindowSave {
             ptr: self.read_ptr,
             len: self.read_len,
@@ -113,7 +117,7 @@ impl BioCtl {
         }
     }
 
-    pub(crate) fn restore_window(&mut self, w: WindowSave) {
+    fn restore_window(&mut self, w: WindowSave) {
         self.read_ptr = w.ptr;
         self.read_len = w.len;
         self.read_off = w.off;
@@ -123,34 +127,256 @@ impl BioCtl {
         self.read_len
     }
 
-    pub(crate) fn spill_len(&self) -> usize {
-        self.pending.len() - self.pending_off
+    /// This socket's spilled-ciphertext byte count (0 when the loop slot is
+    /// free, stale, or owned by another socket).
+    fn spill_len(&mut self) -> usize {
+        let me = self.me();
+        ffi::with_shared(self.shared, |sh| sh.spill_remaining(me))
     }
 
-    /// Drain the spill to the wire in order. True = fully drained (or empty).
+    /// Drain this socket's spill to the wire in order. True = fully drained,
+    /// empty, or not ours (C `ssl_drain_spill`, openssl.c:602-617).
     pub(crate) fn flush_pending(&mut self) -> bool {
-        while self.spill_len() > 0 {
-            let n = crate::write::raw_write(self.s, &self.pending[self.pending_off..]);
+        let (s, me) = (self.s, self.me());
+        ffi::with_shared(self.shared, |sh| sh.drain_spill(s, me))
+    }
+
+    /// Teardown: one last drain attempt, then drop whatever remains of this
+    /// socket's spill (C `ssl_release_spill`, openssl.c:620-634).
+    pub(crate) fn release_pending(&mut self) {
+        let (s, me) = (self.s, self.me());
+        ffi::with_shared(self.shared, |sh| sh.release_spill(s, me));
+    }
+
+    /// Batching is allowed only while no socket's spill occupies the loop
+    /// slot (§4.4); a stale owner is dropped here, never dangles.
+    fn spill_slot_free(&mut self) -> bool {
+        let me = self.me();
+        ffi::with_shared(self.shared, |sh| {
+            let _ = sh.spill_remaining(me);
+            sh.spill_owner.is_none()
+        })
+    }
+
+    fn set_batching(&mut self, batching: bool) {
+        ffi::with_shared(self.shared, |sh| sh.batching = batching);
+    }
+
+    fn batch_len(&self) -> usize {
+        ffi::with_shared(self.shared, |sh| sh.batch.len())
+    }
+
+    /// Flush the loop batch buffer; a partial write parks the remainder as
+    /// this socket's spill. True = wire took everything.
+    fn flush_batch(&mut self) -> bool {
+        let (s, me) = (self.s, self.me());
+        match ffi::with_shared(self.shared, |sh| sh.flush_batch(s, me)) {
+            FlushOutcome::Drained => true,
+            FlushOutcome::Blocked => false,
+            FlushOutcome::Oom => {
+                // Records already sequenced; the connection cannot stay
+                // coherent (§1.3.2).
+                self.fatal = true;
+                false
+            }
+        }
+    }
+
+    fn park_fatal_reason(&mut self, reason: &[u8; TLS_FATAL_REASON_MAX]) {
+        let me = self.me();
+        ffi::with_shared(self.shared, |sh| {
+            sh.fatal_reason = *reason;
+            sh.fatal_reason_owner = Some(me);
+        });
+    }
+
+    /// Claim this socket's parked reason (owner check mandatory — §3.4); a
+    /// stale owner's reason is dropped.
+    fn take_fatal_reason(&mut self) -> Option<[u8; TLS_FATAL_REASON_MAX]> {
+        let me = self.me();
+        ffi::with_shared(self.shared, |sh| match sh.fatal_reason_owner {
+            Some(o) if o == me => {
+                sh.fatal_reason_owner = None;
+                Some(sh.fatal_reason)
+            }
+            Some(o) if o.resolve().is_none() => {
+                sh.fatal_reason_owner = None;
+                None
+            }
+            _ => None,
+        })
+    }
+}
+
+/// RAII §1.4 save/restore: restores the saved read window on drop, so a JS
+/// dispatch that re-enters TLS on this socket (`write` zeroes the window)
+/// cannot leave the outer SSL_read loop with a clobbered window.
+struct WindowGuard {
+    ctl: *mut BioCtl,
+    saved: WindowSave,
+}
+
+impl WindowGuard {
+    fn save(ctl: *mut BioCtl) -> WindowGuard {
+        WindowGuard {
+            ctl,
+            saved: ffi::with_ctl(ctl, |c| c.save_window()),
+        }
+    }
+}
+
+impl Drop for WindowGuard {
+    fn drop(&mut self) {
+        ffi::with_ctl(self.ctl, |c| c.restore_window(self.saved));
+    }
+}
+
+/// Consumer-facing §1.4 save/restore keyed by the SSL handle: brackets user
+/// JS run from inside SSL_do_handshake/SSL_read (ALPN/SNI callbacks) so a
+/// same-socket re-entrant write cannot clobber the ciphertext read window.
+pub struct SslWindowGuard {
+    _saved: Option<WindowGuard>,
+}
+
+impl SslWindowGuard {
+    pub fn save(ssl: *mut SSL) -> SslWindowGuard {
+        let ctl = if ssl.is_null() {
+            core::ptr::null_mut()
+        } else {
+            ffi::ssl_wbio_ctl(ssl)
+        };
+        SslWindowGuard {
+            _saved: (!ctl.is_null()).then(|| WindowGuard::save(ctl)),
+        }
+    }
+}
+
+enum FlushOutcome {
+    Drained,
+    Blocked,
+    Oom,
+}
+
+/// Loop-shared TLS engine state (C `loop_ssl_data`, tls-semantics §1.2):
+/// the ciphertext batch buffer, the SINGLE spill slot, the parked
+/// fatal-reason scratch and the plaintext read scratch — O(1) memory per
+/// loop (safe-protocol.md P0d). Owned by the loop via `ssl_data`.
+pub(crate) struct LoopTlsShared {
+    /// Plaintext read scratch slot; `Option::take` semantics via LoopScratch.
+    pub(crate) scratch: *mut core::ffi::c_void,
+    /// True only inside `TlsState::write`'s record loop (tls-semantics §4).
+    pub(crate) batching: bool,
+    /// Sealed records batched this write call; already counted written.
+    pub(crate) batch: Vec<u8>,
+    spill: Vec<u8>,
+    spill_off: usize,
+    /// Generation-checked spill owner: stale ⇒ dropped, never dangles.
+    spill_owner: Option<SocketRef>,
+    fatal_reason: [u8; TLS_FATAL_REASON_MAX],
+    fatal_reason_owner: Option<SocketRef>,
+}
+
+impl LoopTlsShared {
+    pub(crate) fn new() -> LoopTlsShared {
+        LoopTlsShared {
+            scratch: core::ptr::null_mut(),
+            batching: false,
+            batch: Vec::new(),
+            spill: Vec::new(),
+            spill_off: 0,
+            spill_owner: None,
+            fatal_reason: [0; TLS_FATAL_REASON_MAX],
+            fatal_reason_owner: None,
+        }
+    }
+
+    /// True iff the slot holds `me`'s spill; drops a stale owner's spill.
+    fn spill_is(&mut self, me: SocketRef) -> bool {
+        match self.spill_owner {
+            None => false,
+            Some(o) if o == me => true,
+            Some(o) => {
+                if o.resolve().is_none() {
+                    self.clear_spill();
+                }
+                false
+            }
+        }
+    }
+
+    fn clear_spill(&mut self) {
+        self.spill = Vec::new();
+        self.spill_off = 0;
+        self.spill_owner = None;
+    }
+
+    fn spill_remaining(&mut self, me: SocketRef) -> usize {
+        if self.spill_is(me) {
+            self.spill.len() - self.spill_off
+        } else {
+            0
+        }
+    }
+
+    fn drain_spill(&mut self, s: *mut SocketHeader, me: SocketRef) -> bool {
+        if !self.spill_is(me) {
+            return true;
+        }
+        while self.spill_off < self.spill.len() {
+            let n = crate::write::raw_write(s, &self.spill[self.spill_off..]);
             if n <= 0 {
                 return false;
             }
-            self.pending_off += n as usize;
+            self.spill_off += n as usize;
         }
-        self.pending.clear();
-        self.pending_off = 0;
-        if !self.batching {
-            // Idle sockets hold no batch capacity (peak is ~144 KiB; the
-            // mid-batch flushes above keep it for the current write loop).
-            self.pending = Vec::new();
-        }
+        self.clear_spill();
         true
     }
 
-    /// Teardown: one last drain attempt, then drop whatever remains.
-    pub(crate) fn release_pending(&mut self) {
-        let _ = self.flush_pending();
-        self.pending = Vec::new();
-        self.pending_off = 0;
+    fn release_spill(&mut self, s: *mut SocketHeader, me: SocketRef) {
+        if self.spill_is(me) {
+            let _ = self.drain_spill(s, me);
+            self.clear_spill();
+        }
+    }
+
+    /// One raw write of the whole batch; a partial write parks the remainder
+    /// as `me`'s spill (C `ssl_flush_write_batch`, openssl.c:575-598). The
+    /// batch keeps its capacity — loop-level O(1).
+    fn flush_batch(&mut self, s: *mut SocketHeader, me: SocketRef) -> FlushOutcome {
+        let mut off = 0usize;
+        while off < self.batch.len() {
+            let n = crate::write::raw_write(s, &self.batch[off..]);
+            if n <= 0 {
+                break;
+            }
+            off += n as usize;
+        }
+        if off < self.batch.len() {
+            let rest = &self.batch[off..];
+            let mut spill = Vec::new();
+            if spill.try_reserve(rest.len()).is_err() {
+                self.batch.clear();
+                return FlushOutcome::Oom;
+            }
+            spill.extend_from_slice(rest);
+            self.spill = spill;
+            self.spill_off = 0;
+            self.spill_owner = Some(me);
+            self.batch.clear();
+            return FlushOutcome::Blocked;
+        }
+        self.batch.clear();
+        FlushOutcome::Drained
+    }
+}
+
+impl Drop for LoopTlsShared {
+    fn drop(&mut self) {
+        if !self.scratch.is_null() {
+            ffi::scratch_free(self.scratch);
+            self.scratch = core::ptr::null_mut();
+        }
     }
 }
 
@@ -176,8 +402,6 @@ pub struct TlsState {
     read_wants_write: bool,
     shutdown_after_spill: bool,
     close_after_spill: bool,
-    /// Parked EPROTO reason (per-socket — api.md CHANGES 2), NUL-terminated.
-    fatal_reason: Option<Box<[u8; TLS_FATAL_REASON_MAX]>>,
 }
 
 impl Drop for TlsState {
@@ -237,7 +461,7 @@ pub(crate) fn sni_resolve(this: *mut TlsState, s: *mut SocketHeader, ctx: *mut S
         // select-cert re-fire consumes it.
         bssl::sni_set(ssl, bssl::SniSuspension::Resolved(ctx));
     }
-    TlsState::handshake(this, s, crate::socket::socket_loop(s));
+    TlsState::handshake(this, s);
 }
 
 impl TlsState {
@@ -249,7 +473,8 @@ impl TlsState {
         is_client: bool,
         sni: Option<&core::ffi::CStr>,
     ) -> Box<TlsState> {
-        let ctl = Box::into_raw(Box::new(BioCtl::new(s)));
+        let shared = ffi::tls_shared_ptr(crate::socket::socket_loop(s));
+        let ctl = Box::into_raw(Box::new(BioCtl::new(s, shared)));
         let ssl = ffi::ssl_new_attached(ssl_ctx, ctl);
 
         let state = Box::new(TlsState {
@@ -263,7 +488,6 @@ impl TlsState {
             read_wants_write: false,
             shutdown_after_spill: false,
             close_after_spill: false,
-            fatal_reason: None,
         });
 
         if ssl.is_null() {
@@ -332,10 +556,6 @@ impl TlsState {
         !self.ssl.is_null() && ffi::ssl_in_init(self.ssl)
     }
 
-    pub(crate) fn is_in_use(&self) -> bool {
-        ffi::with_ctl(self.ctl, |c| c.in_use)
-    }
-
     /// Close arrived from inside SSL_read/SSL_do_handshake (§1.4): release
     /// the spill now and defer the close to the driver's epilogue. Returns
     /// true when deferred (caller must NOT proceed with teardown).
@@ -390,7 +610,9 @@ impl TlsState {
         // reports 0 once the SSL is gone (openssl.c:2033-2035).
         self.handshake_callback_fired = false;
         // An unclaimed parked reason dies with its owner (§3.4).
-        self.fatal_reason = None;
+        ffi::with_ctl(self.ctl, |c| {
+            let _ = c.take_fatal_reason();
+        });
     }
 
     // ── on_handshake firing (exactly once per handshake; §2.3) ──────────────
@@ -401,9 +623,9 @@ impl TlsState {
         if self.handshake_state != HandshakeState::Completed {
             let e = bssl::err_peek_last_error();
             if e != 0 {
-                let mut buf = Box::new([0u8; TLS_FATAL_REASON_MAX]);
+                let mut buf = [0u8; TLS_FATAL_REASON_MAX];
                 bssl::err_error_string(e, &mut buf[..]);
-                self.fatal_reason = Some(buf);
+                ffi::with_ctl(self.ctl, |c| c.park_fatal_reason(&buf));
             }
         }
         bssl::err_clear_error();
@@ -422,7 +644,8 @@ impl TlsState {
         t(this).handshake_state = HandshakeState::Completed;
         t(this).handshake_callback_fired = true;
         if !success {
-            if let Some(reason) = t(this).fatal_reason.take() {
+            // Copied to the stack and un-parked BEFORE any JS runs (§3.4).
+            if let Some(reason) = ffi::with_ctl(t(this).ctl, |c| c.take_fatal_reason()) {
                 // Fatal protocol error recorded just before this failure:
                 // report it instead of the X509 verdict (Node tlsClientError).
                 let err = us_bun_verify_error_t {
@@ -443,7 +666,7 @@ impl TlsState {
     pub(crate) fn trigger_handshake_econnreset(this: *mut TlsState, s: *mut SocketHeader) {
         t(this).handshake_state = HandshakeState::Completed;
         t(this).handshake_callback_fired = true;
-        if let Some(reason) = t(this).fatal_reason.take() {
+        if let Some(reason) = ffi::with_ctl(t(this).ctl, |c| c.take_fatal_reason()) {
             let err = us_bun_verify_error_t {
                 error_no: -71,
                 code: c"EPROTO".as_ptr(),
@@ -465,11 +688,10 @@ impl TlsState {
     // ── handshake driver (§2.2) ─────────────────────────────────────────────
 
     /// Drive SSL_do_handshake; delivers on_handshake exactly once. JS may run
-    /// inside (ALPN/SNI callbacks) — per-socket BIO state makes cross-socket
-    /// clobbering impossible; same-socket writes zero the window (C11). No
-    /// `&mut TlsState` is held across the dispatches (C17).
-    pub(crate) fn handshake(this: *mut TlsState, s: *mut SocketHeader, loop_: *mut Loop) {
-        let _ = loop_;
+    /// inside (ALPN/SNI callbacks, each bracketed by the §1.4 window
+    /// save/restore guard). No `&mut TlsState` is held across the
+    /// dispatches (C17).
+    pub(crate) fn handshake(this: *mut TlsState, s: *mut SocketHeader) {
         // Per-thread error queue may hold another socket's leftovers.
         bssl::err_clear_error();
         if t(this).ssl.is_null() || t(this).handshake_state != HandshakeState::Pending {
@@ -736,26 +958,26 @@ impl TlsState {
                 if t(this).handshake_state != HandshakeState::Completed {
                     // Firing site 2: handshake completed with app data in the
                     // same flight — fire BEFORE delivering data (ALPN/re-tag),
-                    // window save/restored around the JS (§1.4).
-                    let saved = ffi::with_ctl(t(this).ctl, |c| c.save_window());
+                    // window restored on guard drop around the JS (§1.4).
+                    let _window = WindowGuard::save(t(this).ctl);
                     Self::trigger_handshake(this, s, true);
                     if t(this).gone(s) {
                         return;
                     }
-                    ffi::with_ctl(t(this).ctl, |c| c.restore_window(saved));
                 }
                 read += just as usize;
                 if read == LEN {
-                    let saved = ffi::with_ctl(t(this).ctl, |c| c.save_window());
-                    Self::flush_pending_events(this, s);
-                    if t(this).gone(s) {
-                        return;
+                    {
+                        let _window = WindowGuard::save(t(this).ctl);
+                        Self::flush_pending_events(this, s);
+                        if t(this).gone(s) {
+                            return;
+                        }
+                        dispatch_data(s, &mut out[PAD..PAD + read]);
+                        if t(this).gone(s) {
+                            return;
+                        }
                     }
-                    dispatch_data(s, &mut out[PAD..PAD + read]);
-                    if t(this).gone(s) {
-                        return;
-                    }
-                    ffi::with_ctl(t(this).ctl, |c| c.restore_window(saved));
                     read = 0;
                 }
             }
@@ -782,7 +1004,8 @@ impl TlsState {
 
     /// Encrypt + flush; returns plaintext bytes accepted (0 = would-block,
     /// caller buffers). Honesty invariant: reported bytes are on the wire or
-    /// in this socket's bounded spill — never unboundedly parked (§4).
+    /// in the loop's bounded spill slot owned by this socket — never
+    /// unboundedly parked (§4).
     pub(crate) fn write(this: *mut TlsState, s: *mut SocketHeader, data: &[u8]) -> i32 {
         // C7: int-bounded surface — the unreported tail reads as a short
         // write and the caller arms backpressure.
@@ -800,15 +1023,19 @@ impl TlsState {
             return 0;
         }
         let ctl = t(this).ctl;
-        // Earlier sealed records must reach the wire first: SSL already
-        // counts them written; nothing new may be sealed while they pend.
+        // This socket's earlier sealed records must reach the wire first: SSL
+        // already counts them written; nothing new may be sealed while they
+        // pend (§4.2).
         if !ffi::with_ctl(ctl, |c| c.flush_pending()) {
             return 0;
         }
+        // Batching only while the loop spill slot is free (§4.4); behind
+        // another socket's spill this write goes through per-record.
+        let batching = ffi::with_ctl(ctl, |c| c.spill_slot_free());
 
         ffi::with_ctl(ctl, |c| {
             c.clear_window();
-            c.batching = true;
+            c.set_batching(batching);
         });
 
         let mut total: usize = 0;
@@ -823,9 +1050,9 @@ impl TlsState {
             if ffi::with_ctl(ctl, |c| c.fatal) {
                 break;
             }
-            if ffi::with_ctl(ctl, |c| c.spill_len()) >= TLS_BATCH_FLUSH {
-                // Wire blocked: stop consuming plaintext.
-                if !ffi::with_ctl(ctl, |c| c.flush_pending()) {
+            if batching && ffi::with_ctl(ctl, |c| c.batch_len()) >= TLS_BATCH_FLUSH {
+                // Wire blocked (spill created): stop consuming plaintext.
+                if !ffi::with_ctl(ctl, |c| c.flush_batch()) {
                     break;
                 }
                 if ffi::with_ctl(ctl, |c| c.fatal) {
@@ -834,8 +1061,8 @@ impl TlsState {
             }
         }
         let fatal = ffi::with_ctl(ctl, |c| {
-            c.batching = false;
-            let _ = c.flush_pending();
+            c.set_batching(false);
+            let _ = c.flush_batch();
             c.fatal
         });
         if fatal {
@@ -878,7 +1105,7 @@ impl TlsState {
             ffi::socket_close(s, CloseCode::fast_shutdown);
             return false;
         }
-        Self::handshake(this, s, loop_);
+        Self::handshake(this, s);
         if t(this).gone(s) {
             return false;
         }
@@ -1083,9 +1310,9 @@ fn x509_error_code(err: core::ffi::c_long) -> *const core::ffi::c_char {
 
 // ── loop plaintext scratch ────────────────────────────────────────────────────
 
-/// RAII take/restore of the loop-shared plaintext scratch (`ssl_data`):
-/// `take()` on entry, restore on drop; a re-entrant nesting sees an empty
-/// loop slot and allocates fresh (api.md CHANGES 2).
+/// RAII take/restore of the loop-shared plaintext scratch
+/// (`LoopTlsShared.scratch`): `take()` on entry, restore on drop; a
+/// re-entrant nesting sees an empty slot and allocates fresh.
 pub(crate) struct LoopScratch {
     loop_: *mut Loop,
     buf: Option<*mut core::ffi::c_void>,
@@ -1093,8 +1320,8 @@ pub(crate) struct LoopScratch {
 
 impl LoopScratch {
     pub(crate) fn take(loop_: *mut Loop) -> LoopScratch {
-        let mut buf = deref::with_loop_data(loop_, |ld| {
-            core::mem::replace(&mut ld.ssl_data, core::ptr::null_mut())
+        let mut buf = ffi::with_tls_shared(loop_, |sh| {
+            core::mem::replace(&mut sh.scratch, core::ptr::null_mut())
         });
         if buf.is_null() {
             buf = ffi::scratch_alloc();
@@ -1116,9 +1343,9 @@ impl Drop for LoopScratch {
         if let Some(buf) = self.buf.take() {
             // Refill the loop slot if empty; a nested take already put an
             // equivalent buffer back, so free ours instead.
-            let leftover = deref::with_loop_data(self.loop_, |ld| {
-                if ld.ssl_data.is_null() {
-                    ld.ssl_data = buf;
+            let leftover = ffi::with_tls_shared(self.loop_, |sh| {
+                if sh.scratch.is_null() {
+                    sh.scratch = buf;
                     None
                 } else {
                     Some(buf)

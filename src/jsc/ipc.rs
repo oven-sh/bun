@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 use core::mem::size_of;
 
 use crate as jsc;
@@ -666,6 +666,176 @@ pub fn get_nack_packet(mode: Mode) -> &'static [u8] {
 // `<false>` is the non-SSL handler.
 pub type Socket = bun_usockets::SocketHandler<false>;
 
+/// Protocol v2 owner for `SocketKind::SpawnIpc` (safe-protocol.md): a
+/// refcounted heap cell owning the [`SendQueue`]. Refs: the embedder
+/// (`Subprocess` / `IPCInstance`) holds one, released after
+/// [`IpcData::owner_teardown`]; the socket core holds one from
+/// `from_fd_owned` until the terminal callback (or `detach_owner`).
+#[derive(bun_ptr::RefCounted)]
+pub struct IpcData {
+    ref_count: bun_ptr::RefCount<IpcData>,
+    q: crate::JsCell<SendQueue>,
+}
+
+/// Owning handle to an [`IpcData`]: the embedder's single strong ref.
+/// `Drop` runs [`IpcData::owner_teardown`] and then releases the ref, so
+/// every embedder drop path (finalizer, spawn error paths, struct drop)
+/// tears the socket down before the `SendQueue.owner` backref dangles.
+pub struct IpcRef(bun_ptr::RefPtr<IpcData>);
+
+impl IpcRef {
+    pub fn new(mode: Mode, owner: *mut dyn SendQueueOwner) -> IpcRef {
+        IpcRef(bun_ptr::RefPtr::new(IpcData {
+            ref_count: bun_ptr::RefCount::init(),
+            q: crate::JsCell::new(SendQueue::init(mode, owner, SocketUnion::Uninitialized)),
+        }))
+    }
+
+    /// A new strong ref (for transfer to the socket core at adoption).
+    pub fn dupe_ref(&self) -> bun_ptr::RefPtr<IpcData> {
+        self.0.dupe_ref()
+    }
+}
+
+impl core::ops::Deref for IpcRef {
+    type Target = IpcData;
+    fn deref(&self) -> &IpcData {
+        self.0.data()
+    }
+}
+
+impl Drop for IpcRef {
+    fn drop(&mut self) {
+        self.0.owner_teardown();
+        // Inherent `RefPtr::deref` (refcount release), not `Deref::deref`.
+        self.0.deref();
+    }
+}
+
+impl IpcData {
+    /// Shared read of the queue (e.g. `close_event_sent` / `is_connected`).
+    #[inline]
+    pub fn queue(&self) -> &SendQueue {
+        self.q.get()
+    }
+
+    /// Closure-scoped mutable access (the safe `JsCell` spelling).
+    #[inline]
+    pub fn with_queue<R>(&self, f: impl FnOnce(&mut SendQueue) -> R) -> R {
+        self.q.with_mut(f)
+    }
+
+    /// Single audited `JsCell` projection for the host-fn paths that hold the
+    /// borrow across JS re-entry (same discipline as the old inline storage).
+    ///
+    /// # Safety
+    /// Single JS thread; caller must not hold another live `&mut SendQueue`
+    /// obtained from this cell across this borrow's uses.
+    #[allow(clippy::mut_from_ref)]
+    #[inline]
+    pub unsafe fn queue_mut(&self) -> &mut SendQueue {
+        // SAFETY: forwarded to caller (JsCell::get_mut contract).
+        unsafe { self.q.get_mut() }
+    }
+
+    /// Root-provenance raw pointer to the queue (Windows `uv_handle_t.data`).
+    #[inline]
+    pub fn queue_ptr(&self) -> *mut SendQueue {
+        self.q.as_ptr()
+    }
+
+    /// Owner-side teardown: close the socket (detaching dispatch), close any
+    /// unconsumed SCM_RIGHTS fd, cancel queued tasks pointing back into this
+    /// cell. The embedder MUST call this before releasing its ref — the
+    /// `SendQueue.owner` backref becomes dangling once the embedder is freed.
+    pub fn owner_teardown(&self) {
+        self.q.with_mut(|q| q.teardown());
+    }
+}
+
+/// Protocol v2 registration tag for [`SocketKind::SpawnIpc`]; the same owner
+/// type serves the parent side (`Bun.spawn({ipc})`) and the child side
+/// (`process.send`).
+pub struct SpawnIpcProtocol;
+
+/// Idempotent. Must run before the first spawn-IPC socket is adopted; both
+/// adoption sites (spawn bindings, `VirtualMachine::get_ipc_instance`) call it.
+pub fn register_protocol() {
+    bun_usockets::register::<SpawnIpcProtocol>();
+}
+
+impl bun_usockets::Protocol for SpawnIpcProtocol {
+    type Owner = IpcData;
+    const KIND: bun_usockets::SocketKind = bun_usockets::SocketKind::SpawnIpc;
+
+    fn on_open(_o: &IpcData, _s: bun_usockets::AnySocket, _is_client: bool, _ip: &[u8]) {
+        log!("onOpen");
+        // The adopter writes the version packet itself (covered by the
+        // `has_written_version` assertion); nothing to do at open.
+    }
+
+    fn on_data(o: &IpcData, _s: bun_usockets::AnySocket, data: &mut [u8]) {
+        o.with_queue(|q| {
+            let global_this = q.get_global_this();
+            // RAII: `enter()` now, `exit()` on drop.
+            let _scope = global_this.bun_vm().enter_event_loop_scope();
+            on_data2(q, data);
+        });
+    }
+
+    fn on_fd(o: &IpcData, _s: bun_usockets::AnySocket, fd: Fd) {
+        log!("onFd: {:?}", fd);
+        o.with_queue(|q| {
+            if let Some(existing_fd) = q.incoming_fd.take() {
+                log!("onFd: incoming_fd already set; overwriting");
+                FdExt::close(existing_fd);
+            }
+            q.incoming_fd = Some(fd);
+        });
+    }
+
+    fn on_writable(o: &IpcData, _s: bun_usockets::AnySocket) {
+        log!("onWritable");
+        o.with_queue(|q| {
+            let global_this = q.get_global_this();
+            // RAII: see `on_data`.
+            let _scope = global_this.bun_vm().enter_event_loop_scope();
+            log!("IPC call continueSend() from onWritable");
+            q.continue_send(&global_this, ContinueSendReason::OnWritable);
+        });
+    }
+
+    fn on_close(
+        o: &IpcData,
+        _s: bun_usockets::AnySocket,
+        _code: bun_usockets::CloseCode2,
+        _errno: i32,
+    ) {
+        // uSockets has already freed the underlying socket.
+        log!("SpawnIpcProtocol#onClose");
+        o.with_queue(|q| q._socket_closed());
+    }
+
+    fn on_end(o: &IpcData, _s: bun_usockets::AnySocket) {
+        log!("onEnd");
+        // No half-close: a peer FIN closes the socket outright.
+        o.with_queue(|q| q.close_socket(CloseReason::Failure, CloseFrom::User));
+    }
+
+    fn on_timeout(_o: &IpcData, _s: bun_usockets::AnySocket) {
+        log!("onTimeout");
+    }
+
+    fn on_long_timeout(_o: &IpcData, _s: bun_usockets::AnySocket) {
+        log!("onLongTimeout");
+    }
+
+    fn on_connect_error(o: &IpcData, _err: bun_usockets::ConnectFailure) {
+        log!("onConnectError");
+        o.with_queue(|q| q.close_socket(CloseReason::Failure, CloseFrom::User));
+    }
+}
+
 pub struct Handle {
     pub fd: Fd,
     pub js: Protected,
@@ -963,14 +1133,10 @@ impl SendQueue {
                 }
                 #[cfg(not(windows))]
                 {
-                    // Clear the dispatch owner word first: the close below
-                    // dispatches on_close synchronously, which must not derive
-                    // a second `&mut SendQueue` under a live caller frame (C17).
-                    if let Some(slot) = s.ext::<Option<core::ptr::NonNull<SendQueue>>>() {
-                        // SAFETY: raw place write; no dispatch ext borrow is
-                        // active on this frame.
-                        unsafe { *slot = None };
-                    }
+                    // Detach the core-held owner ref first: the close below
+                    // dispatches `on_close` synchronously and this path
+                    // notifies via `_socket_closed` itself (C17).
+                    s.detach_owner();
                     s.close(match reason {
                         CloseReason::Normal => bun_usockets::CloseCode::Normal,
                         CloseReason::Failure => bun_usockets::CloseCode::Failure,
@@ -1712,8 +1878,11 @@ impl uv::StreamReader for SendQueue {
     }
 }
 
-impl Drop for SendQueue {
-    fn drop(&mut self) {
+impl SendQueue {
+    /// Full owner-side teardown; idempotent. Runs from `Drop` and from
+    /// [`IpcData::owner_teardown`] (which the embedder calls before releasing
+    /// its ref, while the `owner` backref target is still alive).
+    fn teardown(&mut self) {
         log!("SendQueue#deinit");
         // must go first
         self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
@@ -1727,7 +1896,7 @@ impl Drop for SendQueue {
         }
 
         // if there is a close next tick task, cancel it so it doesn't get called and then UAF
-        if let Some(close_next_tick_task) = self.close_next_tick {
+        if let Some(close_next_tick_task) = self.close_next_tick.take() {
             // SAFETY: the task was created via `ManagedTask::new` (tag ==
             // ManagedTask) and `Task.ptr` is the heap-allocated ManagedTask.
             let managed: &mut ManagedTask =
@@ -1738,13 +1907,18 @@ impl Drop for SendQueue {
         // just enqueued this (VM-shutdown path with the socket still open),
         // or it may be left over from an earlier `_socketClosed` that hasn't
         // drained yet; either way the owner is about to free our storage.
-        if let Some(after_close_task) = self.after_close_task {
+        if let Some(after_close_task) = self.after_close_task.take() {
             // SAFETY: see above.
             let managed: &mut ManagedTask =
                 unsafe { &mut *(after_close_task.ptr.cast::<ManagedTask>()) };
             managed.cancel();
-            self.after_close_task = None;
         }
+    }
+}
+
+impl Drop for SendQueue {
+    fn drop(&mut self) {
+        self.teardown();
     }
 }
 
@@ -2043,89 +2217,10 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
     }
 }
 
-/// Used on POSIX
+// POSIX socket events are the `Protocol for SpawnIpcProtocol` impl above.
 #[allow(non_snake_case)]
 pub mod IPCHandlers {
     use super::*;
-
-    pub mod PosixSocket {
-        use super::*;
-
-        pub fn on_open(_: *mut c_void, _: Socket) {
-            log!("onOpen");
-            // it is NOT safe to use the first argument here because it has not been initialized yet.
-            // ideally we would call .ipc.writeVersionPacket() here, and we need that to handle the
-            // theoretical write failure, but since the .ipc.outgoing buffer isn't available, that
-            // data has nowhere to go.
-            //
-            // therefore, initializers of IPC handlers need to call .ipc.writeVersionPacket() themselves
-            // this is covered by an assertion.
-        }
-
-        pub fn on_close(send_queue: &mut SendQueue, _: Socket, _: c_int, _: Option<*mut c_void>) {
-            // uSockets has already freed the underlying socket
-            log!("NewSocketIPCHandler#onClose\n");
-            send_queue._socket_closed();
-        }
-
-        pub fn on_data(send_queue: &mut SendQueue, _: Socket, all_data: &[u8]) {
-            let global_this = send_queue.get_global_this();
-            // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
-            // `*mut EventLoop` so `&mut EventLoop` isn't held across `on_data2`.
-            let _scope = global_this.bun_vm().enter_event_loop_scope();
-            on_data2(send_queue, all_data);
-        }
-
-        pub fn on_fd(send_queue: &mut SendQueue, _: Socket, fd: c_int) {
-            // SCM_RIGHTS is POSIX-only; on Windows this arm is unreachable but
-            // still type-checked, and `FD.fromNative` takes `*anyopaque` there.
-            #[cfg(windows)]
-            {
-                let _ = (send_queue, fd);
-                return;
-            }
-            #[cfg(not(windows))]
-            {
-                log!("onFd: {}", fd);
-                if let Some(existing_fd) = send_queue.incoming_fd.take() {
-                    log!("onFd: incoming_fd already set; overwriting");
-                    FdExt::close(existing_fd);
-                }
-                send_queue.incoming_fd = Some(Fd::from_native(fd));
-            }
-        }
-
-        pub fn on_writable(send_queue: &mut SendQueue, _: Socket) {
-            log!("onWritable");
-
-            let global_this = send_queue.get_global_this();
-            // RAII: see `on_data`.
-            let _scope = global_this.bun_vm().enter_event_loop_scope();
-            log!("IPC call continueSend() from onWritable");
-            send_queue.continue_send(&global_this, ContinueSendReason::OnWritable);
-        }
-
-        pub fn on_timeout(_: &mut SendQueue, _: Socket) {
-            log!("onTimeout");
-            // unref if needed
-        }
-
-        pub fn on_long_timeout(_: &mut SendQueue, _: Socket) {
-            log!("onLongTimeout");
-            // onLongTimeout
-        }
-
-        pub fn on_connect_error(send_queue: &mut SendQueue, _: Socket, _: c_int) {
-            log!("onConnectError");
-            // context has not been initialized
-            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-        }
-
-        pub fn on_end(send_queue: &mut SendQueue, _: Socket) {
-            log!("onEnd");
-            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-        }
-    }
 
     pub mod WindowsNamedPipe {
         use super::*;

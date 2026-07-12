@@ -348,6 +348,11 @@ public:
         LoopData *loopData = Super::getLoopData();
         int corkedSlot = loopData->findCorkSlot(this);
 
+        /* The listen site registered the family max assuming UserData is pointer-sized
+         * (HttpContext::maxExtSize) — a larger UserData would overflow the inline ext. */
+        static_assert(sizeof(UserData) <= sizeof(void *),
+            "register a larger family-max ext size in HttpContext::maxExtSize");
+
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         us_socket_t *usSocket = us_socket_adopt((us_socket_t *) this, webSocketContext->getSocketGroup(),
             WebSocketContext<SSL, true, UserData>::socketKind(),

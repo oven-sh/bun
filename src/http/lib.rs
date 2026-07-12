@@ -1166,11 +1166,11 @@ pub(crate) fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> 
 /// Remove every abort-tracker entry whose stored socket is `socket`.
 ///
 /// Backstop for the per-client `unregister_abort_tracker()` calls: when
-/// `Handler::on_close` fires on a socket whose ext has already been retagged
-/// to `DeadSocket`/`PooledSocket`, the client/session dispatch is skipped and
-/// any stale entry would survive into `us_internal_free_closed_sockets`,
-/// leaving `drain_queued_shutdowns` to dereference freed memory on a later
-/// abort. O(n) over live abortable requests; no-op on a `Detached` socket.
+/// `Handler::on_close` fires on a socket whose owner has already been
+/// retagged `Dead`/`Pooled`, the client/session dispatch is skipped and any
+/// stale entry would silently swallow a later abort for that request id in
+/// `drain_queued_shutdowns`. O(n) over live abortable requests; no-op on a
+/// `Detached` socket.
 pub(crate) fn unregister_abort_tracker_for_socket(socket: uws::InternalSocket) {
     if socket.is_detached() {
         return;

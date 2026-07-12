@@ -1,6 +1,3 @@
-use core::cell::Cell;
-use core::ffi::c_void;
-
 use crate::jsc::{
     CallFrame, EventLoopSqlExt as _, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
     GlobalRef, HasAutoFlush, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, KeepAlive,
@@ -18,7 +15,7 @@ use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 use bun_sql::mysql::protocol::new_reader::NewReader;
 use bun_sql::mysql::protocol::new_writer::NewWriter;
 use bun_sql::mysql::ssl_mode::SSLMode;
-use bun_usockets::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
+use bun_usockets::{self as uws, AnySocket, SocketTCP};
 
 use super::js_mysql_query::JSMySQLQuery;
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
@@ -46,11 +43,13 @@ bun_core::declare_scope!(MySQLConnection, visible);
 // `JsCell` is `#[repr(transparent)]`, so `from_field_ptr!` recovery
 // (`from_timer_ptr` / `MySQLConnection::get_js_connection`) sees identical
 // offsets.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLConnection {
-    // intrusive refcount (bun.ptr.RefCount mixin); destroy callback = `deinit`
-    ref_count: Cell<u32>,
+    // intrusive refcount (bun.ptr.RefCount mixin); destroy callback = `deinit`.
+    // `RefCount<Self>` (not `Cell<u32>`): Protocol v2 owners must satisfy
+    // `bun_ptr::RefCounted` so the core dispatch guard can ref/deref them.
+    ref_count: bun_ptr::RefCount<JSMySQLConnection>,
     js_value: JsCell<JsRef>,
     // LIFETIMES.tsv: JSC_BORROW — assigned from createInstance param; never freed
     global_object: GlobalRef,
@@ -94,9 +93,8 @@ bun_jsc::impl_js_class_via_generated!(JSMySQLConnection => crate::jsc::codegen::
 /// RAII owner for one intrusive refcount on a `JSMySQLConnection`. Dropping
 /// calls [`JSMySQLConnection::deref`], which may free `*self.0` — so callers
 /// must not hold a live `&`/`&mut JSMySQLConnection` across the guard's drop
-/// point. Construct via [`JSMySQLConnection::ref_guard`] (which also bumps the
-/// count) or directly when adopting a ref taken elsewhere (e.g. the socket ref
-/// from `on_open`).
+/// point. Construct via [`JSMySQLConnection::ref_guard`] (which also bumps
+/// the count).
 struct DerefOnDrop(*mut JSMySQLConnection);
 impl Drop for DerefOnDrop {
     fn drop(&mut self) {
@@ -107,6 +105,32 @@ impl Drop for DerefOnDrop {
 }
 
 impl JSMySQLConnection {
+    /// Bump the intrusive refcount (`&self` proves liveness).
+    #[inline]
+    pub(crate) fn ref_(&self) {
+        // SAFETY: `&self` is a live borrow of the pointee.
+        unsafe { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) }
+    }
+
+    /// Release one intrusive ref; runs `deinit` at zero.
+    ///
+    /// # Safety
+    /// `this` must point to a live `Self` and the caller must own one ref;
+    /// `this` may be dangling afterwards.
+    #[inline]
+    pub(crate) unsafe fn deref(this: *mut Self) {
+        // SAFETY: forwarded caller contract.
+        unsafe { bun_ptr::RefCount::<Self>::deref(this) }
+    }
+
+    /// Fresh strong ref for the Protocol v2 attach surface
+    /// (`connect_owned` / `adopt_tls_owned`); core releases it exactly once
+    /// at the socket terminal.
+    #[inline]
+    pub(crate) fn owner_ref(&self) -> uws::OwnerRef<Self> {
+        uws::owner_ref_of(self)
+    }
+
     /// RAII pair for `ref_()` / `deref()`: bumps the intrusive refcount now and
     /// releases it on drop. The guard stashes a raw pointer (not `&Self`) so no Rust
     /// reference is held across the potential free in `deref()`; the `&self`
@@ -409,7 +433,7 @@ impl JSMySQLConnection {
     /// `&mut self` protector live across the dealloc would be UB under Stacked
     /// Borrows.
     fn deinit(this: *mut Self) {
-        // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
+        // SAFETY: routed only through `RefCounted::destructor` (refcount==0);
         // `this` is the live `heap::alloc` ptr from `create_instance`, sole
         // owner; no `&`/`&mut Self` outlives the `heap::take` below.
         unsafe {
@@ -522,7 +546,7 @@ impl JSMySQLConnection {
         let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(tls_guard);
 
         let ptr: *mut JSMySQLConnection = bun_core::heap::into_raw(Box::new(JSMySQLConnection {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             js_value: JsCell::new(JsRef::empty()),
             global_object: GlobalRef::from(global_object),
             vm: BackRef::new_mut(vm),
@@ -559,25 +583,28 @@ impl JSMySQLConnection {
             let hostname = args.hostname_str.to_utf8();
 
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
-            // group after the SSLRequest exchange.
+            // group after the SSLRequest exchange. `owner_ref()` transfers one
+            // strong ref to core; core releases it at the socket terminal
+            // (incl. the silent no-event close of a never-completed connect).
+            uws::register::<MySQLSocketProtocol>();
             let group = vm.mysql_socket_group::<false>();
             let result = if !path.is_empty() {
-                SocketTCP::connect_unix_group(
+                SocketTCP::connect_unix_owned(
                     group,
-                    uws::DispatchKind::Mysql,
+                    uws::SocketKind::Mysql,
                     None,
                     &path[..],
-                    ptr,
+                    this.owner_ref(),
                     false,
                 )
             } else {
-                SocketTCP::connect_group(
+                SocketTCP::connect_owned(
                     group,
-                    uws::DispatchKind::Mysql,
+                    uws::SocketKind::Mysql,
                     None,
                     hostname.slice(),
                     args.port,
-                    ptr,
+                    this.owner_ref(),
                     false,
                 )
             };
@@ -585,8 +612,10 @@ impl JSMySQLConnection {
                 Ok(s) => s,
                 Err(e) => {
                     let _ = this;
-                    // SAFETY: `ptr` is the freshly-boxed allocation; sole owner.
-                    // `this` (a `ParentRef`) is not used past this point, so no
+                    // The transferred owner ref was already released by
+                    // `connect_*_owned` on failure; this drops the ctor's +1.
+                    // SAFETY: `ptr` is the freshly-boxed allocation; `this`
+                    // (a `ParentRef`) is not used past this point, so no
                     // borrow outlives the `heap::take` inside `deinit`.
                     unsafe { Self::deref(ptr) };
                     return Err(global_object.throw_error(e.into(), "failed to connect to mysql"));
@@ -938,31 +967,25 @@ impl JSMySQLConnection {
     }
 }
 
-/// uSockets event handlers for the MySQL connection (plain and TLS).
-pub struct SocketHandler<const SSL: bool>;
+/// Protocol v2 socket handlers for the MySQL connection (plain + TLS kinds).
+/// The trampoline holds a strong owner ref across every handler and releases
+/// the core-held ext ref at the terminal, so the old on_open/on_close socket
+/// ref pair and per-handler ref brackets are gone.
+pub struct MySQLSocketProtocol;
 
-// Inherent associated types are unstable in Rust
-// (`feature(inherent_associated_types)`), so spell out
-// `NewSocketHandler<SSL>` at every use site instead.
-impl<const SSL: bool> SocketHandler<SSL> {
-    fn _socket(s: NewSocketHandler<SSL>) -> AnySocket {
-        if SSL {
-            AnySocket::SocketTls(s.assume_ssl())
-        } else {
-            AnySocket::SocketTcp(s.assume_tcp())
-        }
-    }
+impl uws::Protocol for MySQLSocketProtocol {
+    type Owner = JSMySQLConnection;
+    const KIND: uws::SocketKind = uws::SocketKind::Mysql;
+    const KIND_TLS: Option<uws::SocketKind> = Some(uws::SocketKind::MysqlTls);
 
-    pub fn on_open(this: &JSMySQLConnection, s: NewSocketHandler<SSL>) {
-        let socket = Self::_socket(s);
+    fn on_open(this: &JSMySQLConnection, socket: AnySocket, _is_client: bool, _ip: &[u8]) {
         let is_tcp = matches!(socket, AnySocket::SocketTcp(_));
         this.connection_mut().set_socket(socket);
 
         if is_tcp {
-            // This handshake is not TLS handleshake is actually the MySQL handshake
-            // When a connection is upgraded to TLS, the onOpen callback is called again and at this moment we dont wanna to change the status to handshaking
+            // This is the MySQL handshake, not TLS: on TLS upgrade on_open
+            // fires again and the status must not regress to Handshaking.
             this.connection_mut().status = my_sql_connection::Status::Handshaking;
-            this.ref_(); // keep a ref for the socket
         }
         // Only set up the timers after all status changes are complete — the timers rely on the status to determine timeouts.
         this.setup_max_lifetime_timer_if_necessary();
@@ -970,14 +993,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.update_reference_type();
     }
 
-    fn on_handshake_(
+    // Fires only on the MysqlTls kind (plain sockets never handshake).
+    fn on_handshake(
         this: &JSMySQLConnection,
-        _: NewSocketHandler<SSL>,
-        success: i32,
-        ssl_error: uws::us_bun_verify_error_t,
+        _: AnySocket,
+        ok: bool,
+        ssl_error: uws::VerifyError,
     ) {
-        let handshake_was_successful = match this.connection_mut().do_handshake(success, ssl_error)
-        {
+        let handshake_was_successful = match this.connection_mut().do_handshake(ok, ssl_error) {
             Ok(v) => v,
             Err(e) => {
                 return this.fail_fmt(e, format_args!("Failed to send handshake response"));
@@ -991,21 +1014,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    // pub const onHandshake = if (ssl) onHandshake_ else null;
-    pub const ON_HANDSHAKE: Option<
-        fn(&JSMySQLConnection, NewSocketHandler<SSL>, i32, uws::us_bun_verify_error_t),
-    > = if SSL { Some(Self::on_handshake_) } else { None };
-
-    pub fn on_close(
-        this: &JSMySQLConnection,
-        _: NewSocketHandler<SSL>,
-        _: i32,
-        _: Option<*mut c_void>,
-    ) {
-        // Releases the socket ref taken in on_open.
-        // RAII guard adopts that existing ref (no `ref_()` here); raw-pointer
-        // shaped so no reference outlives the potential free.
-        let _ref = DerefOnDrop(this.as_ctx_ptr());
+    fn on_close(this: &JSMySQLConnection, _: AnySocket, _: uws::CloseCode2, _errno: i32) {
         // A close before the handshake finished means the server (or an
         // intermediary like a container port proxy) accepted the TCP
         // connection but went away before completing startup — e.g. the
@@ -1023,34 +1032,26 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.fail(message, err);
     }
 
-    pub fn on_end(_: &JSMySQLConnection, socket: NewSocketHandler<SSL>) {
+    fn on_end(_: &JSMySQLConnection, socket: AnySocket) {
         // no half closed sockets
         socket.close(uws::CloseKind::Normal);
     }
 
-    pub fn on_connect_error(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32) {
+    fn on_connect_error(this: &JSMySQLConnection, _: uws::ConnectFailure) {
         this.fail(b"Failed to connect", AnyMySQLErrorT::ConnectionRefused);
     }
 
-    pub fn on_timeout(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {
+    fn on_timeout(this: &JSMySQLConnection, _: AnySocket) {
         this.fail(b"Connection timeout", AnyMySQLErrorT::ConnectionTimedOut);
     }
 
-    pub fn on_data(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
-        // Both guards re-enter via raw pointer so no reference is live across
-        // the potential free. Guard drop order is LIFO, so `_ref` (deref) runs
-        // last.
-        let p = ParentRef::new(this);
-        let _ref = this.ref_guard();
-
+    fn on_data(this: &JSMySQLConnection, _: AnySocket, data: &mut [u8]) {
+        // The dispatch guard keeps `this` alive through the defer body.
         scopeguard::defer! {
-            // `_ref` has not yet dropped, so `*p` is still live; `ParentRef`
-            // yields a fresh `&JSMySQLConnection` per access (R-2: every
-            // callee is `&self`).
             // reset the connection timeout after we're done processing the data
-            p.reset_connection_timeout();
-            p.update_reference_type();
-            p.register_auto_flusher();
+            this.reset_connection_timeout();
+            this.update_reference_type();
+            this.register_auto_flusher();
         }
         if this.vm().is_shutting_down() {
             // we are shutting down lets not process the data
@@ -1065,7 +1066,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub fn on_writable(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {
+    fn on_writable(this: &JSMySQLConnection, _: AnySocket) {
         this.connection_mut().reset_backpressure();
         this.drain_internal();
     }

@@ -10,4 +10,6 @@ pub mod ffi;
 pub mod io;
 pub mod poll_access;
 pub mod slab;
+#[cfg(all(test, not(miri), any(target_os = "linux", target_os = "android")))]
+pub mod test_support;
 pub mod trampolines;

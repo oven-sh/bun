@@ -12,9 +12,11 @@ use crate::connecting::{self, ConnectingSocket};
 use crate::group::{ConnectResult, SocketGroup};
 use crate::kind::SocketKind;
 use crate::socket::{SocketHeader, us_socket_t};
+use crate::protocol::OwnerRef;
 use crate::tls::SSL;
 use crate::tls::context::{SslCtx, ssl_ctx_unref, us_bun_verify_error_t};
 use crate::unsafe_core::ext as uext;
+use crate::unsafe_core::trampolines;
 use crate::unsafe_core::ffi::duplex;
 #[cfg(windows)]
 use crate::unsafe_core::ffi::named_pipe;
@@ -61,7 +63,7 @@ impl CloseCode {
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct SocketRef {
     pub ptr: NonNull<SocketHeader>,
-    pub generation: u32,
+    pub generation: u64,
 }
 
 impl SocketRef {
@@ -83,7 +85,7 @@ impl SocketRef {
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct ConnectingRef {
     pub ptr: NonNull<ConnectingSocket>,
-    pub generation: u32,
+    pub generation: u64,
 }
 
 impl ConnectingRef {
@@ -924,6 +926,22 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         this: *mut This,
         is_ipc: bool,
     ) -> Option<Self> {
+        // Fail closed (release-checked): a raw non-refcounted pointer on a
+        // Protocol v2 kind would be rc_deref'd at the terminal (confusion).
+        if crate::dispatch::owner_ops(k).is_some() {
+            debug_assert!(false, "from_fd: {k:?} is a Protocol v2 kind (use from_fd_owned)");
+            return None;
+        }
+        Self::from_fd_raw(g, k, handle, this, is_ipc)
+    }
+
+    fn from_fd_raw<This>(
+        g: &mut SocketGroup,
+        k: SocketKind,
+        handle: Fd,
+        this: *mut This,
+        is_ipc: bool,
+    ) -> Option<Self> {
         let ext_size = size_of::<Option<NonNull<This>>>() as c_int;
         let raw = g.from_fd(
             k,
@@ -934,9 +952,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         );
         let nn = NonNull::new(raw)?;
         // Rust kinds: the ext word IS the storage (null-niche pointer bits).
-        // Group-vtable (Dynamic) kinds keep a trailing-area pointer there
-        // instead — stamping would clobber it and free_socket_ext would later
-        // free the caller's pointer as an ExtBlock. They must not come here.
+        // Group-vtable (Dynamic) kinds keep the slot's inline-ext-area pointer
+        // there instead (P0b) — stamping would clobber it. Not for them.
         debug_assert!(!crate::dispatch::uses_group_vtable(k));
         uext::header_mut(raw).ext = this.cast::<c_void>();
         Some(Self {
@@ -948,6 +965,24 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// both the fast (resolved) and slow (Connecting) arms. Strips `[v6]`
     /// brackets and NUL-terminates the host.
     pub fn connect_group<Owner>(
+        g: &mut SocketGroup,
+        kind: SocketKind,
+        ssl_ctx: Option<*mut SslCtx>,
+        raw_host: &[u8],
+        port: c_int,
+        owner: *mut Owner,
+        allow_half_open: bool,
+    ) -> Result<Self, ConnectError> {
+        // Fail closed (release-checked): a raw non-refcounted pointer on a
+        // Protocol v2 kind would be rc_deref'd at the terminal (confusion).
+        if crate::dispatch::owner_ops(kind).is_some() {
+            debug_assert!(false, "connect_group: {kind:?} is a Protocol v2 kind (use connect_owned)");
+            return Err(ConnectError::FailedToOpenSocket);
+        }
+        Self::connect_group_raw(g, kind, ssl_ctx, raw_host, port, owner, allow_half_open)
+    }
+
+    fn connect_group_raw<Owner>(
         g: &mut SocketGroup,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
@@ -1018,6 +1053,25 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         owner: *mut Owner,
         allow_half_open: bool,
     ) -> Result<Self, ConnectError> {
+        // Same release-checked v2-kind guard as `connect_group`.
+        if crate::dispatch::owner_ops(kind).is_some() {
+            debug_assert!(
+                false,
+                "connect_unix_group: {kind:?} is a Protocol v2 kind (use connect_unix_owned)"
+            );
+            return Err(ConnectError::FailedToOpenSocket);
+        }
+        Self::connect_unix_group_raw(g, kind, ssl_ctx, path, owner, allow_half_open)
+    }
+
+    fn connect_unix_group_raw<Owner>(
+        g: &mut SocketGroup,
+        kind: SocketKind,
+        ssl_ctx: Option<*mut SslCtx>,
+        path: &[u8],
+        owner: *mut Owner,
+        allow_half_open: bool,
+    ) -> Result<Self, ConnectError> {
         let opts: c_int = if allow_half_open {
             LIBUS_SOCKET_ALLOW_HALF_OPEN
         } else {
@@ -1043,6 +1097,11 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         owner: *mut Owner,
         set_socket_field: impl FnOnce(*mut Owner, Self),
     ) -> bool {
+        // Same release-checked v2-kind guard as `connect_group`.
+        if crate::dispatch::owner_ops(kind).is_some() {
+            debug_assert!(false, "adopt_group: {kind:?} is a Protocol v2 kind (use adopt_owned)");
+            return false;
+        }
         let Some(p) = tcp.resolve() else {
             return false;
         };
@@ -1061,6 +1120,313 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             },
         );
         true
+    }
+
+    // ── Protocol v2 owner surface (safe-protocol.md) ─────────────────────────
+    // Attach methods TRANSFER the passed strong ref to core; core releases it
+    // exactly once at the terminal (on_close / on_connect_error / silent
+    // SEMI_SOCKET close). On failure the ref is released here instead.
+
+    /// Clear the core-held owner ref; subsequent dispatch on this socket
+    /// no-ops (cancel paths — replaces hand-nulling the raw ext). Idempotent;
+    /// stale/detached handles are a no-op.
+    pub fn detach_owner(&self) {
+        match self.socket {
+            InternalSocket::Connected(r) => {
+                if let Some(p) = r.resolve() {
+                    let cs = trampolines::socket_connect_state(p.as_ptr());
+                    if cs.is_null() {
+                        trampolines::release_owner_ext(p.as_ptr());
+                    } else {
+                        // Live happy-eyeballs attempt: the owned ref lives on
+                        // the ConnectingSocket — release there (also nulls
+                        // every attempt's borrowed copy).
+                        trampolines::release_owner_ext_connecting(cs);
+                    }
+                }
+            }
+            InternalSocket::Connecting(r) => {
+                if let Some(c) = conn_ptr(r) {
+                    trampolines::release_owner_ext_connecting(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Stamp (or swap) the core-held owner on an already-created v2 socket
+    /// (accept-path `on_create`, post-connect attach). Any previous owner ref
+    /// is released AFTER the new one is stamped; wrapped/stale/closed handles
+    /// release `owner` (a closed socket's terminal already ran — no future
+    /// release).
+    pub fn attach_owner<O>(&self, owner: OwnerRef<O>)
+    where
+        O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
+    {
+        let r = match self.socket {
+            InternalSocket::Connected(r) => r,
+            InternalSocket::Connecting(r) => {
+                let Some(c) = conn_ptr(r) else {
+                    owner.deref();
+                    return;
+                };
+                // Closed connecting socket: its terminal already released the
+                // owner word — a stamp here would leak the ref forever.
+                if connecting::is_closed_raw(c) {
+                    owner.deref();
+                    return;
+                }
+                let kind = trampolines::connecting_kind(c);
+                if !crate::dispatch::owner_registered_as::<O>(kind) {
+                    debug_assert!(
+                        false,
+                        "attach_owner: {kind:?} not registered for this owner type"
+                    );
+                    owner.deref();
+                    return;
+                }
+                // Owned word lives on the ConnectingSocket; attempts get
+                // borrowed copies (same routing as detach_owner).
+                let old =
+                    trampolines::swap_owner_ext_connecting(c, owner.into_raw().cast::<c_void>());
+                trampolines::release_owner_for_kind(old, kind);
+                return;
+            }
+            _ => {
+                owner.deref();
+                return;
+            }
+        };
+        let Some(p) = r.resolve() else {
+            owner.deref();
+            return;
+        };
+        let h = uext::header_mut(p.as_ptr());
+        // Closed-but-not-yet-freed: the terminal release already ran and no
+        // future terminal exists — a stamp here would leak the ref forever.
+        if h.is_closed() {
+            owner.deref();
+            return;
+        }
+        let kind = h.kind();
+        // Fail closed (release-checked): the kind must be a v2 kind whose
+        // registered owner type is exactly `O` — anything else is type
+        // confusion in dispatch or a permanent leak at the terminal.
+        if !crate::dispatch::owner_registered_as::<O>(kind) {
+            debug_assert!(false, "attach_owner: {kind:?} not registered for this owner type");
+            owner.deref();
+            return;
+        }
+        let cs = h.connect_state;
+        if !cs.is_null() {
+            // Live happy-eyeballs attempt: attempt ext words are BORROWS —
+            // the owned ref lives on the ConnectingSocket. Swap it there
+            // (mirrors detach_owner's connect_state routing).
+            let old = trampolines::swap_owner_ext_connecting(cs, owner.into_raw().cast::<c_void>());
+            trampolines::release_owner_for_kind(old, kind);
+            return;
+        }
+        let old_word = h.ext;
+        h.ext = owner.into_raw().cast::<c_void>();
+        trampolines::release_owner_for_kind(old_word, kind);
+    }
+
+    /// [`Self::connect_group`] with a transferred [`OwnerRef`].
+    pub fn connect_owned<O>(
+        g: &mut SocketGroup,
+        kind: SocketKind,
+        ssl_ctx: Option<*mut SslCtx>,
+        raw_host: &[u8],
+        port: c_int,
+        owner: OwnerRef<O>,
+        allow_half_open: bool,
+    ) -> Result<Self, ConnectError>
+    where
+        O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
+    {
+        // Same fail-closed typed-owner check as `attach_owner`.
+        if !crate::dispatch::owner_registered_as::<O>(kind) {
+            debug_assert!(false, "connect_owned: {kind:?} not registered for this owner type");
+            owner.deref();
+            return Err(ConnectError::FailedToOpenSocket);
+        }
+        match Self::connect_group_raw::<O>(
+            g,
+            kind,
+            ssl_ctx,
+            raw_host,
+            port,
+            owner.as_ptr(),
+            allow_half_open,
+        ) {
+            Ok(s) => {
+                // The stamped word now carries this ref.
+                let _ = owner.into_raw();
+                Ok(s)
+            }
+            Err(e) => {
+                owner.deref();
+                Err(e)
+            }
+        }
+    }
+
+    /// [`Self::connect_unix_group`] with a transferred [`OwnerRef`].
+    pub fn connect_unix_owned<O>(
+        g: &mut SocketGroup,
+        kind: SocketKind,
+        ssl_ctx: Option<*mut SslCtx>,
+        path: &[u8],
+        owner: OwnerRef<O>,
+        allow_half_open: bool,
+    ) -> Result<Self, ConnectError>
+    where
+        O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
+    {
+        if !crate::dispatch::owner_registered_as::<O>(kind) {
+            debug_assert!(false, "connect_unix_owned: {kind:?} not registered for this owner type");
+            owner.deref();
+            return Err(ConnectError::FailedToOpenSocket);
+        }
+        match Self::connect_unix_group_raw::<O>(g, kind, ssl_ctx, path, owner.as_ptr(), allow_half_open)
+        {
+            Ok(s) => {
+                let _ = owner.into_raw();
+                Ok(s)
+            }
+            Err(e) => {
+                owner.deref();
+                Err(e)
+            }
+        }
+    }
+
+    /// [`Self::from_fd`] with a transferred [`OwnerRef`].
+    pub fn from_fd_owned<O>(
+        g: &mut SocketGroup,
+        k: SocketKind,
+        handle: Fd,
+        owner: OwnerRef<O>,
+        is_ipc: bool,
+    ) -> Option<Self>
+    where
+        O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
+    {
+        if !crate::dispatch::owner_registered_as::<O>(k) {
+            debug_assert!(false, "from_fd_owned: {k:?} not registered for this owner type");
+            owner.deref();
+            return None;
+        }
+        match Self::from_fd_raw::<O>(g, k, handle, owner.as_ptr(), is_ipc) {
+            Some(s) => {
+                let _ = owner.into_raw();
+                Some(s)
+            }
+            None => {
+                owner.deref();
+                None
+            }
+        }
+    }
+
+    /// Owner-swapping adopt: moves the socket into `g`/`kind` and stamps
+    /// `owner` before the OLD kind's owner ref is released — no window where
+    /// dispatch sees a stale owner. Refused adopts release `owner` and leave
+    /// the old owner attached.
+    pub fn adopt_owned<O>(
+        tcp: SocketRef,
+        g: *mut SocketGroup,
+        kind: SocketKind,
+        owner: OwnerRef<O>,
+    ) -> Option<Self>
+    where
+        O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
+    {
+        let Some(p) = tcp.resolve() else {
+            owner.deref();
+            return None;
+        };
+        if !crate::dispatch::owner_registered_as::<O>(kind) {
+            debug_assert!(false, "adopt_owned: {kind:?} not registered for this owner type");
+            owner.deref();
+            return None;
+        }
+        let word = size_of::<*mut c_void>() as i32;
+        let h = uext::header_mut(p.as_ptr());
+        // Live connect_state (release-checked): the ext word is a borrowed
+        // attempt copy owned by the ConnectingSocket — releasing it as owned
+        // would double-release at the connecting terminal.
+        if !h.connect_state.is_null() {
+            owner.deref();
+            return None;
+        }
+        let (old_word, old_kind) = (h.ext, h.kind());
+        // api.md adoption-families invariant, release-checked: a group-vtable
+        // source's ext word is an inline-area pointer, not an owner ref.
+        if crate::dispatch::uses_group_vtable(old_kind) {
+            debug_assert!(false, "adopt_owned from a group-vtable kind {old_kind:?}");
+            owner.deref();
+            return None;
+        }
+        if h.adopt(uext::deref_mut(g), kind, word, word).is_none() {
+            owner.deref();
+            return None;
+        }
+        h.ext = owner.into_raw().cast::<c_void>();
+        trampolines::release_owner_for_kind(old_word, old_kind);
+        Some(Self {
+            socket: InternalSocket::Connected(tcp),
+        })
+    }
+
+    /// Owner-swapping TLS adopt (C10 upgrade path). Same swap ordering as
+    /// [`Self::adopt_owned`]; caller kicks `start_tls_handshake` afterwards.
+    pub fn adopt_tls_owned<O>(
+        tcp: SocketRef,
+        g: *mut SocketGroup,
+        kind: SocketKind,
+        ssl_ctx: &mut SslCtx,
+        sni: Option<&core::ffi::CStr>,
+        is_client: bool,
+        owner: OwnerRef<O>,
+    ) -> Option<Self>
+    where
+        O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
+    {
+        let Some(p) = tcp.resolve() else {
+            owner.deref();
+            return None;
+        };
+        if !crate::dispatch::owner_registered_as::<O>(kind) {
+            debug_assert!(false, "adopt_tls_owned: {kind:?} not registered for this owner type");
+            owner.deref();
+            return None;
+        }
+        let word = size_of::<*mut c_void>() as i32;
+        let h = uext::header_mut(p.as_ptr());
+        // Same release-checked borrowed-attempt guard as `adopt_owned`.
+        if !h.connect_state.is_null() {
+            owner.deref();
+            return None;
+        }
+        let (old_word, old_kind) = (h.ext, h.kind());
+        // Same release-checked adoption-families guard as `adopt_owned`.
+        if crate::dispatch::uses_group_vtable(old_kind) {
+            debug_assert!(false, "adopt_tls_owned from a group-vtable kind {old_kind:?}");
+            owner.deref();
+            return None;
+        }
+        if h.adopt_tls(uext::deref_mut(g), kind, ssl_ctx, sni, is_client, word, word)
+            .is_none()
+        {
+            owner.deref();
+            return None;
+        }
+        h.ext = owner.into_raw().cast::<c_void>();
+        trampolines::release_owner_for_kind(old_word, old_kind);
+        Some(Self {
+            socket: InternalSocket::Connected(tcp),
+        })
     }
 }
 
@@ -1143,7 +1509,21 @@ impl AnySocket {
         .unwrap_or(core::ptr::null_mut())
     }
 
+    /// Forward of [`NewSocketHandler::attach_owner`] (generic — outside the
+    /// non-generic forwarding macro).
+    #[inline]
+    pub fn attach_owner<O>(&self, owner: OwnerRef<O>)
+    where
+        O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
+    {
+        match self {
+            AnySocket::SocketTcp(s) => s.attach_owner(owner),
+            AnySocket::SocketTls(s) => s.attach_owner(owner),
+        }
+    }
+
     any_socket_forward! {
+        fn detach_owner(&self);
         fn is_closed(&self) -> bool;
         fn is_shutdown(&self) -> bool;
         fn is_established(&self) -> bool;
@@ -1262,6 +1642,15 @@ impl ListenSocket {
         let ls: *mut Self = self;
         let sni = crate::group::listener_data(ls).sni.as_ref()?;
         NonNull::new(sni.find_userdata(hostname).cast::<T>())
+    }
+
+    /// Protocol v2 accept hook (safe-protocol.md `Listener::on_create`): runs
+    /// once per accepted socket BEFORE its on_open dispatch — attach the
+    /// owner via [`AnySocket::attach_owner`] inside. Replaces any prior hook;
+    /// closing the listener from inside the hook drops it.
+    pub fn on_create(&mut self, hook: impl FnMut(AnySocket) + 'static) {
+        let ls: *mut Self = self;
+        crate::group::listener_data(ls).on_create = Some(Box::new(hook));
     }
 
     /// Missing-SNI dynamic resolver registration (cabi-surface.md §4.3).

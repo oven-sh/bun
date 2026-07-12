@@ -31,6 +31,10 @@ pub enum SocketKind {
     UwsHttpTls = 20,
     UwsWs = 21,
     UwsWsTls = 22,
+    /// `bun test --parallel` coordinator↔worker channel. Rust-only kind,
+    /// appended after the frozen cabi range — never crosses the C boundary
+    /// (`cabi::kind_from_c` still tops out at `UwsWsTls`).
+    TestChannel = 23,
 }
 
 impl SocketKind {
@@ -62,6 +66,7 @@ impl SocketKind {
             20 => SocketKind::UwsHttpTls,
             21 => SocketKind::UwsWs,
             22 => SocketKind::UwsWsTls,
+            23 => SocketKind::TestChannel,
             _ => unreachable!("invalid SocketKind discriminant {v}"),
         }
     }

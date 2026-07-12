@@ -14,7 +14,7 @@ use crate::jsc::{JSGlobalObject, JSValue};
 pub mod valkey; // ValkeyClient state machine, fail/reject paths, auto-flush
 
 #[path = "js_valkey.rs"]
-pub mod js_valkey; // JSValkeyClient host fns, SocketHandler, constructor
+pub mod js_valkey; // JSValkeyClient host fns, ValkeyProtocol, constructor
 
 #[path = "js_valkey_functions.rs"]
 pub mod js_valkey_functions; // 200+ prototype methods (get/set/hget/…)

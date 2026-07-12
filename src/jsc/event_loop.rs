@@ -1134,7 +1134,6 @@ impl EventLoop {
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
         uws::Loop::tick_with_timeout(loop_ptr, Some(&bun_core::Timespec { sec: 1, nsec: 0 }));
 
-        self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();
         self.tick();
     }
@@ -1327,23 +1326,6 @@ bun_event_loop::link_impl_JsEventLoop! {
                 .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
                 .as_mut(),
         ),
-        put_file_poll(poll, was_ever_registered) => {
-            // `Store::put` only needs the VM as an opaque `EventLoopCtx`; reach it
-            // via the JS-ctx hook so we don't form a competing `&mut VirtualMachine`
-            // while holding the store.
-            let store = core::ptr::from_mut(
-                (*this)
-                    .vm_ref()
-                    .as_mut()
-                    .rare_data()
-                    .file_polls_
-                    .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
-                    .as_mut(),
-            );
-            let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
-            // `poll` is a live hive-slot pointer (vtable contract) — non-null.
-            (*store).put(core::ptr::NonNull::new_unchecked(poll), ctx, was_ever_registered);
-        },
         uws_loop() => (*this).usockets_loop(),
         pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
         tick() => (*this).tick(),

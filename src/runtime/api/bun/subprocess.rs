@@ -143,8 +143,10 @@ pub struct Subprocess<'a> {
     pub closed: Cell<EnumSet<StdioKind>>,
     pub this_value: JsCell<JsRef>,
 
-    /// `None` indicates all of the IPC data is uninitialized.
-    pub ipc_data: JsCell<Option<IPC::SendQueue>>,
+    /// `None` indicates all of the IPC data is uninitialized. `IpcRef::drop`
+    /// (finalize, or any error-path Subprocess drop) tears the socket down
+    /// and releases the ref; the socket core holds its own ref.
+    pub ipc_data: JsCell<Option<IPC::IpcRef>>,
     pub flags: Cell<Flags>,
 
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
@@ -413,7 +415,7 @@ impl Subprocess<'_> {
         // window where the socket is already `.closed` but the task holding a
         // raw `*SendQueue` into `ipc_data` is still queued.
         if let Some(ipc) = self.ipc_data.get() {
-            if !ipc.close_event_sent {
+            if !ipc.queue().close_event_sent {
                 return true;
             }
         }
@@ -821,7 +823,7 @@ impl Subprocess<'_> {
             .ipc_data
             .get()
             .as_ref()
-            .map(|d| d.is_connected())
+            .map(|d| d.queue().is_connected())
             .unwrap_or(false);
         JSValue::from(connected)
     }
@@ -1298,10 +1300,10 @@ impl Subprocess<'_> {
         if let Some(ipc_data) = this.ipc_data.replace(None) {
             // In normal operation the socket is already `.closed` by the time we
             // get here (that is what allowed `computeHasPendingActivity` to drop
-            // to false and let GC collect us). `disconnectIPC` would be a no-op
-            // in that state and would leak the SendQueue's buffers; deinit it
-            // instead. `SendQueue.deinit` handles the VM-shutdown case where the
-            // socket is still open.
+            // to false and let GC collect us). `IpcRef::drop` runs the owner
+            // teardown (covering the VM-shutdown case where the socket is
+            // still open) before releasing the ref — required while this
+            // Subprocess, the `SendQueue.owner` backref target, is alive.
             drop(ipc_data);
         }
 
@@ -1439,10 +1441,13 @@ impl Subprocess<'_> {
 
     #[allow(clippy::mut_from_ref)]
     pub fn ipc(&self) -> Option<&mut IPC::SendQueue> {
-        // SAFETY: single JS-mutator thread; the SendQueue is inline in the
-        // `JsCell` and callers do not hold the borrow across JS re-entry that
-        // touches `ipc_data` itself.
-        unsafe { self.ipc_data.get_mut() }.as_mut()
+        // SAFETY: single JS-mutator thread; the heap `IpcData` outlives this
+        // borrow (we hold a ref in `ipc_data`) and callers do not hold the
+        // borrow across JS re-entry that touches `ipc_data` itself.
+        self.ipc_data
+            .get()
+            .as_ref()
+            .map(|r| unsafe { r.queue_mut() })
     }
 
     pub fn get_global_this(&self) -> Option<&JSGlobalObject> {

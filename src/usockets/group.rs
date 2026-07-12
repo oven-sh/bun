@@ -20,7 +20,7 @@ use crate::tls::context::{self as tls_context, SslCtx, us_bun_verify_error_t};
 use crate::tls::sni::{OnServerName, SniMap};
 use crate::tls::state::TlsState;
 use crate::tls::Transport;
-use crate::unsafe_core::ext::{alloc_ext_area, deref_mut, drop_box, free_ext_area, header_mut};
+use crate::unsafe_core::ext::{deref_mut, drop_box, header_mut};
 use crate::unsafe_core::{ffi, io};
 use crate::{LIBUS_LISTEN_DEFER_ACCEPT, LIBUS_SOCKET_ALLOW_HALF_OPEN, LIBUS_SOCKET_DESCRIPTOR};
 
@@ -151,6 +151,9 @@ pub(crate) struct ListenerData {
     pub(crate) deferred_accept: bool,
     /// Owner word backing `ListenSocket::ext<T>()` (8-byte slot).
     pub(crate) owner_ext: *mut c_void,
+    /// Protocol v2 accept hook (safe-protocol.md `Listener::on_create`): runs
+    /// per accepted socket BEFORE its on_open so the handler sees the owner.
+    pub(crate) on_create: Option<Box<dyn FnMut(crate::handle::AnySocket)>>,
 }
 
 /// Recover the accept state of a not-yet-closed listener. The listener
@@ -239,7 +242,8 @@ impl SocketGroup {
     /// Listener owns embedded accept state; accepted sockets get `kind`
     /// stamped, `socket_ext_size` ext, link into THIS group. `*err` receives
     /// an errno-ish code on null return (failure-only write, OQ-8 resolved).
-    /// core-semantics.md §7 (R7.2).
+    /// core-semantics.md §7 (R7.2). CONTRACT (P0b): `socket_ext_size` is the
+    /// adoption FAMILY's max — capacity is fixed here; larger adopts panic.
     pub fn listen(
         &mut self,
         kind: SocketKind,
@@ -395,11 +399,10 @@ impl SocketGroup {
             }
         };
         let ssl_ctx = ssl_ctx.unwrap_or(ptr::null_mut());
-        let s = start_semi_socket(this, kind, fd, options, ptr::null_mut());
+        let s = start_semi_socket(this, kind, fd, options, socket_ext_size, ptr::null_mut());
         if s.is_null() {
             return ptr::null_mut();
         }
-        header_mut(s).ext = make_ext(kind, socket_ext_size);
         if !ssl_ctx.is_null() {
             attach_tls(s, ssl_ctx, true, None);
         }
@@ -436,7 +439,7 @@ impl SocketGroup {
                 this,
                 kind,
                 flags,
-                ptr::null_mut(),
+                socket_ext_size,
             );
             poll_created(loop_);
             if start_poll(loop_, s, Events::READABLE | Events::WRITABLE) != 0 {
@@ -445,7 +448,6 @@ impl SocketGroup {
                 socket::free_unstarted(loop_, s);
                 return ptr::null_mut();
             }
-            header_mut(s).ext = make_ext(kind, socket_ext_size);
             io::nodelay(fd, true);
             io::no_sigpipe(fd);
             io::set_nonblocking(fd);
@@ -594,7 +596,7 @@ fn finish_listen(
         this,
         SocketKind::Invalid,
         flags,
-        ptr::null_mut(),
+        0,
     );
     poll_created(loop_);
     if start_poll(loop_, s, Events::READABLE) != 0 {
@@ -621,6 +623,7 @@ fn finish_listen(
         accept_kind: kind,
         deferred_accept: false,
         owner_ext: ptr::null_mut(),
+        on_create: None,
     };
     let ls = s.cast::<ListenSocket>();
     {
@@ -682,7 +685,7 @@ pub(crate) fn on_accept_poll_ready(ls: *mut ListenSocket) {
             accept_group,
             accept_kind,
             flags,
-            ptr::null_mut(),
+            ext_size,
         );
         poll_created(loop_);
         if start_poll(loop_, s, Events::READABLE) != 0 {
@@ -694,7 +697,6 @@ pub(crate) fn on_accept_poll_ready(ls: *mut ListenSocket) {
             continue;
         }
 
-        header_mut(s).ext = make_ext(accept_kind, ext_size);
         // We always use nodelay.
         io::nodelay(client_fd, true);
         link_socket(accept_group, s);
@@ -702,7 +704,28 @@ pub(crate) fn on_accept_poll_ready(ls: *mut ListenSocket) {
         if !ssl_ctx.is_null() {
             attach_tls_accepted(s, ssl_ctx, ls);
         }
-        socket::socket_open(s, false, addr.ip());
+        // Protocol v2 owner attach (`Listener::on_create`): take the hook out
+        // of ListenerData first — the hook may close the listener, which
+        // drops the ListenerData box (no borrow may span the call).
+        if let Some(mut hook) = listener_data(ls).on_create.take() {
+            hook(crate::unsafe_core::trampolines::any_socket(s));
+            // Spec-shape deviation (safe-protocol.md has on_create RETURN the
+            // owner): the hook attaches manually — surface a forgotten attach.
+            debug_assert!(
+                header_mut(s).is_closed()
+                    || crate::dispatch::owner_ops(header_mut(s).kind).is_none()
+                    || !header_mut(s).ext.is_null(),
+                "on_create hook did not attach_owner on a Protocol v2 socket"
+            );
+            // Put back only if the slot is still empty: the hook may have
+            // registered a replacement on its own listener.
+            if !header_mut(listen_s).is_closed() && listener_data(ls).on_create.is_none() {
+                listener_data(ls).on_create = Some(hook);
+            }
+        }
+        if !header_mut(s).is_closed() {
+            socket::socket_open(s, false, addr.ip());
+        }
         // In-place adoption (api.md §Strategy 3): `s` stays the live pointer
         // even if a callback adopted it — no forwarding needed (vs R3.6).
 
@@ -826,6 +849,7 @@ fn start_semi_socket(
     kind: SocketKind,
     fd: LIBUS_SOCKET_DESCRIPTOR,
     options: c_int,
+    ext_size: c_int,
     connect_state: *mut ConnectingSocket,
 ) -> *mut us_socket_t {
     let loop_ = deref_mut(group).loop_;
@@ -841,7 +865,7 @@ fn start_semi_socket(
         group,
         kind,
         flags,
-        ptr::null_mut(),
+        ext_size,
     );
     header_mut(s).connect_state = connect_state;
     poll_created(loop_);
@@ -875,11 +899,10 @@ fn connect_resolved_dns(
         }
     };
     io::nodelay(fd, true);
-    let s = start_semi_socket(group, kind, fd, options, ptr::null_mut());
+    let s = start_semi_socket(group, kind, fd, options, ext_size, ptr::null_mut());
     if s.is_null() {
         return ptr::null_mut();
     }
-    header_mut(s).ext = make_ext(kind, ext_size);
     if !ssl_ctx.is_null() {
         // Fast path has no connecting socket to stage the ctx on —
         // attach client TLS now (R6.3).
@@ -904,7 +927,8 @@ pub(crate) fn connect_attempt(
         Err(_) => return ptr::null_mut(),
     };
     io::nodelay(fd, true);
-    let s = start_semi_socket(group, kind, fd, options, c);
+    // ext_size 0: the caller installs the connecting's 8-byte ext word.
+    let s = start_semi_socket(group, kind, fd, options, 0, c);
     if s.is_null() {
         return ptr::null_mut();
     }
@@ -924,7 +948,7 @@ pub(crate) fn adopt_socket(s: *mut us_socket_t, group: *mut SocketGroup, kind: S
     if header_mut(s).is_closed() || socket::is_shut_down_full(s) {
         return;
     }
-    // Adoption stays within one ext-storage family (word vs trailing area);
+    // Adoption stays within one ext-storage family (word vs inline area);
     // crossing families would reinterpret the ext word (api.md Strategy 3).
     debug_assert!(
         dispatch::uses_group_vtable(header_mut(s).kind) == dispatch::uses_group_vtable(kind)
@@ -980,40 +1004,31 @@ pub(crate) fn adopt_tls_socket(
 // Ext + TLS attach helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Ext storage rule (api.md §Strategy 3): group-vtable kinds (uWS/Dynamic)
-/// get a heap area of `ext_size` (the adoption-family max, passed in at
-/// listen/context creation); Rust kinds use the header's 8-byte word itself.
-fn make_ext(kind: SocketKind, ext_size: c_int) -> *mut c_void {
-    if dispatch::uses_group_vtable(kind) {
-        alloc_ext_area(ext_size.max(0) as usize)
-    } else {
-        ptr::null_mut()
-    }
-}
-
 /// Release whatever the header's `ext` word owns; called from the
 /// closed-socket drain right before the slab slot is returned. Rust kinds
-/// own nothing (the word is the consumer's back-pointer); listeners normally
+/// own nothing (the word is the consumer's back-pointer); group-vtable ext
+/// is inline in the slab slot (P0b) and dies with it; listeners normally
 /// dropped their `ListenerData` in `close_listen_socket` already (null here).
 pub(crate) fn free_socket_ext(s: *mut us_socket_t) {
     let (kind, ext) = {
         let h = header_mut(s);
         (h.kind, h.ext)
     };
-    if ext.is_null() {
-        return;
-    }
-    if matches!(kind, SocketKind::Invalid) {
+    if matches!(kind, SocketKind::Invalid) && !ext.is_null() {
         header_mut(s).ext = ptr::null_mut();
         drop_box(ext.cast::<ListenerData>());
-    } else if dispatch::uses_group_vtable(kind) {
-        header_mut(s).ext = ptr::null_mut();
-        free_ext_area(ext);
     }
 }
 
 /// Attach TLS to a plain socket (no handshake kick — C10/R6.3).
 fn attach_tls(s: *mut us_socket_t, ssl_ctx: *mut SslCtx, is_client: bool, sni: Option<&CStr>) {
+    // C6: a live Transport::Tls Box must stay in place until the tick
+    // postlude — overwriting would Drop (SSL_free) it past the §1.4
+    // deferral. adopt_tls also refuses is_tls().
+    if header_mut(s).is_tls() {
+        debug_assert!(false, "attach_tls on an already-TLS socket");
+        return;
+    }
     let tls = TlsState::attach(s, ssl_ctx, is_client, sni);
     header_mut(s).transport = Transport::Tls(tls);
 }

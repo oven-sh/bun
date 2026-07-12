@@ -458,7 +458,7 @@ impl<'a> Coordinator<'a> {
     pub(crate) fn try_reap(&mut self, w: &mut Worker) {
         // SpawnStatus is not Copy (Err arm owns a path); take()
         // instead of pattern-match-by-copy.
-        if w.exit_status.is_none() || !w.ipc.done {
+        if w.exit_status.is_none() || !w.ipc.done() {
             return;
         }
         let status = w.exit_status.take().expect("checked above");

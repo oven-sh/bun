@@ -10,30 +10,21 @@ use core::ptr::NonNull;
 use bun_ptr::ThisPtr;
 use bun_usockets as uws;
 use bun_usockets::dispatch::{self, TlsSideChannelHooks};
-use bun_usockets::{ConnectingSocket, SocketKind, us_socket_t};
+use bun_usockets::{SocketKind, us_socket_t};
 
 use super::uws_handlers as handlers;
 
-/// Reborrow a live socket pointer. Sound in two contexts: (1) dispatch — the
-/// core only dispatches live slab-resident sockets and slots are not recycled
-/// until the tick postlude (C6); (2) synchronous JS entry points (connect /
-/// upgrade ext stamps) — the pointer was generation-validated on entry and no
-/// postlude can run mid-call. The returned `&mut` must NOT span any call that
-/// can dispatch (close/write/handshake/feed) — use the raw-routed
-/// `NewSocketHandler` methods for those (C17).
+/// Reborrow a live socket pointer arriving from a core callback (TLS
+/// side-channel hooks here, the SNI select-cert callback in Listener.rs):
+/// the core only hands out live slab-resident sockets and slots are not
+/// recycled until the tick postlude (C6). The returned `&mut` must NOT span
+/// any call that can dispatch (close/write/handshake/feed) — use the
+/// raw-routed `NewSocketHandler` methods for those (C17).
 #[inline]
 pub(crate) fn hdr<'a>(s: *mut us_socket_t) -> &'a mut us_socket_t {
     debug_assert!(!s.is_null());
     // SAFETY: per the contract above.
     unsafe { &mut *s }
-}
-
-/// Connecting-socket variant of [`hdr`] (same slab-residency contract).
-#[inline]
-pub(crate) fn conn<'a>(c: *mut ConnectingSocket) -> &'a mut ConnectingSocket {
-    debug_assert!(!c.is_null());
-    // SAFETY: per the contract above.
-    unsafe { &mut *c }
 }
 
 /// Wrap a raw dispatch pointer in a generation-carrying handle.
@@ -44,43 +35,33 @@ pub(crate) fn wrap<const SSL: bool>(s: *mut us_socket_t) -> uws::NewSocketHandle
     ))
 }
 
-/// Register every Rust-handled kind's vtable + the TLS side-channel hooks.
-/// Idempotent; must run before the first socket of any Rust kind is created.
-/// Callers: process start (`cli::Command::start`, covering VM-less paths like
-/// `bun install`), VM init (`jsc_hooks::init_runtime_state`, covering
-/// embedded/worker paths), and each Bun-socket entry point — lower-tier
-/// consumers (fetch/WebSocket/SQL/spawn-IPC) cannot call up into this crate.
+/// Register every Protocol v2 kind this binary dispatches on the JS thread,
+/// plus the TLS side-channel hooks. Idempotent; must run before the first
+/// socket of any of these kinds is created. Callers: process start
+/// (`cli::Command::start`, covering VM-less paths like `bun install`), VM
+/// init (`jsc_hooks::init_runtime_state`, covering embedded/worker paths),
+/// and each Bun-socket entry point. Registration is `Once`-guarded here and
+/// idempotent in the kind tables, so consumers that self-register at their
+/// own entry points (postgres/mysql at connect, spawn-IPC at adoption) are
+/// safe to double-register.
 pub fn ensure_registered() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        use dispatch::register_kind;
+        // Bun.connect / Bun.listen (accepted sockets carry the same kinds —
+        // the listener itself never dispatches; see `Listener::listen`).
+        uws::register::<handlers::BunSocket<false>>();
+        uws::register::<handlers::BunSocket<true>>();
 
-        // Bun.connect / Bun.listen
-        register_kind::<handlers::BunSocket<false>>(SocketKind::BunSocketTcp);
-        register_kind::<handlers::BunSocket<true>>(SocketKind::BunSocketTls);
-        register_kind::<handlers::BunListener<false>>(SocketKind::BunListenerTcp);
-        register_kind::<handlers::BunListener<true>>(SocketKind::BunListenerTls);
+        // HTTP client thread (kind tables are process-global; registering
+        // from the JS thread covers the HTTP thread's loop too).
+        bun_http::http_context::register_protocol();
 
-        // HTTP client thread
-        register_kind::<handlers::HTTPClient<false>>(SocketKind::HttpClient);
-        register_kind::<handlers::HTTPClient<true>>(SocketKind::HttpClientTls);
+        // WebSocket client (upgrade + framed, TCP + TLS).
+        bun_http_jsc::websocket_client::register_ws_client_protocols();
 
-        // WebSocket client
-        register_kind::<handlers::WSUpgrade<false>>(SocketKind::WsClientUpgrade);
-        register_kind::<handlers::WSUpgrade<true>>(SocketKind::WsClientUpgradeTls);
-        register_kind::<handlers::WSClient<false>>(SocketKind::WsClient);
-        register_kind::<handlers::WSClient<true>>(SocketKind::WsClientTls);
-
-        // SQL drivers
-        register_kind::<handlers::Postgres<false>>(SocketKind::Postgres);
-        register_kind::<handlers::Postgres<true>>(SocketKind::PostgresTls);
-        register_kind::<handlers::MySQL<false>>(SocketKind::Mysql);
-        register_kind::<handlers::MySQL<true>>(SocketKind::MysqlTls);
-        register_kind::<handlers::Valkey<false>>(SocketKind::Valkey);
-        register_kind::<handlers::Valkey<true>>(SocketKind::ValkeyTls);
-
-        // IPC
-        register_kind::<handlers::SpawnIPC>(SocketKind::SpawnIpc);
+        // Valkey (postgres/mysql/spawn-IPC self-register at their own
+        // connect/adoption entry points in their crates).
+        uws::register::<crate::valkey_jsc::js_valkey::ValkeyProtocol>();
 
         dispatch::register_tls_side_channel(&TLS_HOOKS);
     });
@@ -103,9 +84,11 @@ type TLSSocket = super::NewSocket<true>;
 /// TLSSocket's `on_data`.
 fn ssl_raw_tap_hook(s: *mut us_socket_t, data: &[u8]) {
     debug_assert!(hdr(s).kind() == SocketKind::BunSocketTls);
+    // The ext word is the core-held Protocol v2 owner (`*mut TLSSocket`,
+    // nullable) — layout-identical to `Option<ThisPtr<..>>`; read-only here.
     let ext = *hdr(s).ext::<Option<ThisPtr<TLSSocket>>>();
-    // upgradeTLS sets the tap bit only after stamping ext, so an unstamped
-    // slot here is an invariant violation — loud in debug, no-op in release.
+    // upgradeTLS sets the tap bit only after the owner-swapping adopt, so an
+    // unstamped slot here is an invariant violation — loud in debug only.
     debug_assert!(ext.is_some(), "ssl_raw_tap on unstamped ext");
     let Some(tls) = ext else { return };
     if let Some(raw) = tls.twin.get().as_ref() {

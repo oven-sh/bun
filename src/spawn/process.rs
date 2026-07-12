@@ -2673,10 +2673,10 @@ mod spawn_process_body {
 
             // SAFETY: read-only field access between uv ticks; the uv exit
             // callback's `&mut Process` does not overlap this `&Process`.
+            // `loop_` is the live `uws::WindowsLoop*` from
+            // `EventLoopHandle::platform_event_loop`.
             while !unsafe { (*process).has_exited() } {
-                // SAFETY: `loop_` is the live `uws::WindowsLoop*` from
-                // `EventLoopHandle::platform_event_loop`.
-                unsafe { (*loop_).run() };
+                bun_usockets::Loop::run(loop_);
             }
 
             Ok(Ok(Result {
@@ -2770,9 +2770,9 @@ mod spawn_process_body {
 
             // SAFETY: read-only field access between uv ticks; callbacks fired
             // inside `tick()` write through the same `this_ptr` root.
+            // `loop_` wraps a live `uws::WindowsLoop*`.
             while unsafe { (*this_ptr).waiting_count } > 0 {
-                // SAFETY: `loop_` wraps a live `uws::WindowsLoop*`.
-                unsafe { (*loop_.platform_event_loop()).tick() };
+                bun_usockets::Loop::tick(loop_.platform_event_loop());
             }
 
             // SAFETY: loop drained (waiting_count == 0); no further uv callback

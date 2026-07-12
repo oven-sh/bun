@@ -935,8 +935,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // drain JS tasks and never touch kqueue/epoll.
         UwsLoop::tick_without_idle(loop_);
         // Still run the post-poll hooks.
-        // SAFETY: per fn contract.
-        unsafe { (*vm).on_after_event_loop() };
         // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
         unsafe { (*(*vm).global).handle_rejected_promises() };
         return;
@@ -1007,8 +1005,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     #[cfg(not(unix))]
     let _ = state;
 
-    // SAFETY: per fn contract.
-    unsafe { (*vm).on_after_event_loop() };
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     unsafe { (*(*vm).global).handle_rejected_promises() };
 }
@@ -1063,8 +1059,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 
     if state.is_null() {
         UwsLoop::tick_without_idle(loop_);
-        // SAFETY: per fn contract.
-        unsafe { (*vm).on_after_event_loop() };
         return;
     }
 
@@ -1110,9 +1104,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     }
     #[cfg(not(unix))]
     let _ = state;
-
-    // SAFETY: per fn contract.
-    unsafe { (*vm).on_after_event_loop() };
 }
 
 /// `printException` / `printErrorlikeObject` — formats `value` to stderr via

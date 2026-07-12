@@ -25,6 +25,7 @@ pub mod handle;
 pub mod kind;
 #[path = "loop_/mod.rs"]
 pub mod loop_;
+pub mod protocol;
 pub mod socket;
 pub mod tls;
 pub mod udp;
@@ -91,9 +92,14 @@ pub use handle::{
 #[cfg(windows)]
 pub use handle::WindowsNamedPipe;
 pub use kind::SocketKind;
+pub use protocol::{
+    CloseCode2, ConnectFailure, OwnerRef, Protocol, VerifyError, owner_ref_of, register,
+    this_ptr_of,
+};
 #[cfg(not(windows))]
 pub use loop_::PosixLoop;
 pub use loop_::{InternalLoopData, Loop, LoopHandler};
+pub use loop_::{PollEvents, PollProtocol, PollRef, PollSource};
 #[cfg(windows)]
 pub use loop_::WindowsLoop;
 pub use loop_::on_thread_exit;

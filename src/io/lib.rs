@@ -29,8 +29,8 @@
 pub mod windows_event_loop;
 
 // `posix_event_loop` also defines the *shared* event-loop scaffolding
-// (`EventLoopCtx`, `AllocatorType`, `Owner`, `Flags`, `PollTag`, `Store`,
-// `OpaqueCallback`); `windows_event_loop` re-uses those types and only
+// (`EventLoopCtx`, `AllocatorType`, `Owner`, `Flags`, `PollTag`, `Store`);
+// `windows_event_loop` re-uses those types and only
 // overrides `FilePoll`/`KeepAlive`/`Closer`/`Loop`/`Waker`. The platform-
 // specific bits inside (kqueue/epoll wakers, fd polling) are individually
 // `#[cfg(unix)]`-gated so the module still compiles on Windows.
@@ -102,8 +102,6 @@ pub fn uws_to_native(uws: *mut bun_usockets::Loop) -> *mut Loop {
 
 pub use posix_event_loop::{AllocatorType, Owner, PollTag, get_vm_ctx, js_vm_ctx};
 
-pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
-
 // At crate root so the per-method `$crate::__EventLoopCtx__*` type aliases the
 // macro emits (and the impl-macro reads back) actually resolve from impl
 // crates. `Store`/`FilePoll` here are the *platform* re-exports above.
@@ -125,11 +123,6 @@ bun_dispatch::link_interface! {
         fn increment_pending_unref_counter();
         fn ref_concurrently();
         fn unref_concurrently();
-        fn after_event_loop_callback() -> Option<OpaqueCallback>;
-        fn set_after_event_loop_callback(
-            cb: Option<OpaqueCallback>,
-            ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
-        );
         fn pipe_read_buffer() -> *mut [u8];
     }
 }

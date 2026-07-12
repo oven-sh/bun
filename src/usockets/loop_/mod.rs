@@ -5,9 +5,12 @@
 //! callbacks that re-fetch the same loop — a nested tick through a `&mut`
 //! receiver would alias the outer frame's exclusive borrow, C17/R1.12).
 
+pub mod poll_registry;
 pub mod tick;
 pub mod timeouts;
 pub mod wakeup;
+
+pub use poll_registry::{PollEvents, PollProtocol, PollRef, PollSource};
 
 use core::ffi::{c_char, c_int, c_void};
 
@@ -60,8 +63,9 @@ pub struct InternalLoopData {
     pub iterator: *mut SocketGroup,
     pub recv_buf: *mut u8,
     pub send_buf: *mut u8,
-    /// Loop-shared TLS plaintext read scratch, taken/restored around
-    /// re-entrant JS (api.md CHANGES 2; RAII `Option::take` in tls/state.rs).
+    /// Lazily-created `tls::state::LoopTlsShared` (C `loop_ssl_data`, P0d):
+    /// loop-shared ciphertext batch + single spill slot + fatal-reason
+    /// scratch + plaintext read scratch. Freed by `free_loop_raw`.
     pub ssl_data: *mut c_void,
     pub pre_cb: Option<unsafe extern "C" fn(*mut Loop)>,
     pub post_cb: Option<unsafe extern "C" fn(*mut Loop)>,
@@ -124,9 +128,7 @@ struct ReadyPollsAlign {
     _unused: [u8; 0],
 }
 
-/// `us_loop_t` (POSIX). Consumers field-poke `num_polls`/`active`/`fd`/
-/// `ready_polls` today; those ~10 sites migrate to the inherent methods in
-/// this PR. The C-visible PREFIX (through `ready_polls`) keeps its layout so
+/// `us_loop_t` (POSIX). The C-visible PREFIX (through `ready_polls`) keeps its layout so
 /// quic.c can keep reading through its checked header; the slabs appended
 /// after it are crate-private (ext still starts at `loop + 1`, i.e. after
 /// them — computed only by `us_loop_ext`).
@@ -139,13 +141,12 @@ pub struct PosixLoop {
     pub num_polls: i32,
 
     /// Number of ready polls this iteration.
-    pub num_ready_polls: i32,
+    pub(crate) num_ready_polls: i32,
 
     /// Current index in the list of ready polls.
-    pub current_ready_poll: i32,
+    pub(crate) current_ready_poll: i32,
 
-    /// The epoll/kqueue fd. FilePolls register directly against it
-    /// (consumers/10-event-loop.md §6).
+    /// The epoll/kqueue fd.
     pub fd: i32,
 
     /// Number of polls owned by Bun.
@@ -157,14 +158,17 @@ pub struct PosixLoop {
 
     _ready_polls_align: ReadyPollsAlign,
 
-    /// Ready-poll back-channel read by `Bun__internal_dispatch_ready_poll`.
-    pub ready_polls: [EventType; 1024],
+    /// Kernel ready-event buffer (crate-internal; the P10 back-channel
+    /// exposure is gone, but the C-visible prefix layout is preserved).
+    pub(crate) ready_polls: [EventType; 1024],
 
     /// Per-loop socket slab (api.md §Strategy 1) — slot addresses are stable
     /// and generation-bumped; released only by the tick postlude drain.
     pub(crate) sockets: ChunkedSlab<us_socket_t>,
     /// Per-loop connecting-socket slab (same rules; R6.11 deferred free).
     pub(crate) connectings: ChunkedSlab<ConnectingSocket>,
+    /// Per-loop registered-poll slab (P0c non-socket registrations).
+    pub(crate) polls: ChunkedSlab<poll_registry::RegisteredPoll>,
 }
 
 /// Windows: uv_loop-backed loop. Prefix mirrors the libuv `us_loop_t`; the
@@ -180,6 +184,9 @@ pub struct WindowsLoop {
     pub check: *mut c_void,
     pub(crate) sockets: ChunkedSlab<us_socket_t>,
     pub(crate) connectings: ChunkedSlab<ConnectingSocket>,
+    /// P0c registered-poll slab. Registration is vestigial on Windows
+    /// (uv-driven readiness stays outside the registry until P10).
+    pub(crate) polls: ChunkedSlab<poll_registry::RegisteredPoll>,
 }
 
 #[cfg(windows)]
@@ -189,12 +196,18 @@ pub type Loop = PosixLoop;
 
 // ── slab access (the loop OWNS all socket storage — api.md §Strategy 1) ──────
 
-/// Allocate a socket slot. The returned address is stable until the loop is
-/// freed; the slot itself recycles with a generation bump at the drain.
-/// Raw field projection only — waker threads fetch_add `pending_wakeups`
-/// concurrently, so no `&mut Loop` may span the call (R10.1, C17).
-pub(crate) fn alloc_socket(loop_: *mut Loop, value: us_socket_t) -> *mut us_socket_t {
-    ffi::slab_alloc_socket(loop_, value)
+/// Allocate a socket slot with `ext_capacity` inline ext bytes (size-class
+/// pick, P0b; 0 for Rust kinds). The returned address is stable until the
+/// loop is freed; the slot itself recycles with a generation bump at the
+/// drain. Raw field projection only — waker threads fetch_add
+/// `pending_wakeups` concurrently, so no `&mut Loop` may span the call
+/// (R10.1, C17).
+pub(crate) fn alloc_socket(
+    loop_: *mut Loop,
+    value: us_socket_t,
+    ext_capacity: usize,
+) -> *mut us_socket_t {
+    ffi::slab_alloc_socket(loop_, value, ext_capacity)
 }
 
 /// Return a socket slot to the slab (generation bump). Callers: the closed
@@ -467,14 +480,6 @@ impl PosixLoop {
 
     pub fn iteration_number(&self) -> u64 {
         self.internal_loop_data.iteration_nr
-    }
-
-    /// Copy of `ready_polls[current_ready_poll]` — the FilePoll dispatch
-    /// back-channel (consumers/10-event-loop.md §6).
-    #[inline]
-    pub fn current_ready_event(&self) -> EventType {
-        let idx = usize::try_from(self.current_ready_poll).expect("int cast");
-        self.ready_polls[idx]
     }
 
     pub fn should_enable_date_header_timer(&self) -> bool {

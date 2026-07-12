@@ -46,13 +46,27 @@ pub(crate) fn invoke_callback(cb: CallbackFn, arg: *mut core::ffi::c_void) {
     unsafe { cb(arg) }
 }
 
+/// Closure-scoped access to an OCCUPIED registered-poll slot (P0c registry).
+/// Contract: caller validated generation parity; loop thread only; `f` must
+/// not re-enter the registry or dispatch (the exclusive borrow ends with `f`).
+#[inline]
+pub(crate) fn with_registered<R>(
+    p: *mut crate::loop_::poll_registry::RegisteredPoll,
+    f: impl FnOnce(&mut crate::loop_::poll_registry::RegisteredPoll) -> R,
+) -> R {
+    // SAFETY: per fn contract; slab slots never move or unmap while the loop
+    // lives (api.md §Strategy 1).
+    unsafe { f(&mut *p) }
+}
+
 /// Current generation of the socket-slab slot holding `p` (odd = occupied).
 /// OQ-4: dispatch drops events whose udata resolves to a vacant slot.
-pub(crate) fn slab_generation(p: *mut PollState) -> u32 {
+pub(crate) fn slab_generation(p: *mut PollState) -> u64 {
     let header = NonNull::new(p.cast::<SocketHeader>()).expect("null slab poll");
-    // SAFETY: slab-kind udata always points at a socket slab slot (value-
-    // first repr(C) Slot); slab memory is never returned to the OS while the
-    // loop lives, so reading a vacant slot's generation is defined.
+    // SAFETY: slab-kind udata always points at a socket slab slot (fixed
+    // 16-byte meta prelude before the value); slab mappings stay readable
+    // while the loop lives — decommitted chunks read stale-even/zero
+    // generations, which never match an occupied (odd) handle.
     unsafe { ChunkedSlab::<SocketHeader>::generation(header) }
 }
 
@@ -344,6 +358,35 @@ mod kqueue_sys {
         unsafe { core::mem::zeroed() }
     }
 
+    /// [`make_kev`] with a full-width ident and an fflags payload (P0c
+    /// registry sources: EVFILT_PROC/NOTE_EXIT, EVFILT_MEMORYSTATUS levels).
+    pub(crate) fn make_kev_ex(
+        ident: u64,
+        filter: i16,
+        flags: u16,
+        fflags: u32,
+        udata: u64,
+    ) -> EventType {
+        let mut e = zeroed_kev();
+        #[cfg(target_os = "macos")]
+        {
+            e.ident = ident;
+            e.filter = filter;
+            e.flags = flags;
+            e.fflags = fflags;
+            e.udata = udata;
+        }
+        #[cfg(target_os = "freebsd")]
+        {
+            e.ident = ident as usize;
+            e.filter = filter;
+            e.flags = flags;
+            e.fflags = fflags;
+            e.udata = udata as *mut core::ffi::c_void;
+        }
+        e
+    }
+
     pub(crate) fn make_kev(
         fd: LIBUS_SOCKET_DESCRIPTOR,
         filter: i16,
@@ -486,9 +529,10 @@ mod kqueue_sys {
 }
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-pub(crate) use kqueue_sys::{
-    kevent_error_events, kevent_wait_ready, kqueue_create, make_kev, zeroed_kev,
-};
+pub(crate) use kqueue_sys::{kevent_error_events, kevent_wait_ready, kqueue_create, make_kev, zeroed_kev};
+// Extended form (filter payloads) is only used by the darwin PollSource arms.
+#[cfg(target_os = "macos")]
+pub(crate) use kqueue_sys::make_kev_ex;
 
 // ── W4 additions: pending_wakeups + wakeup-async platform primitives ─────────
 // (loop_/wakeup.rs is `deny(unsafe_code)`; everything below is its raw edge.)

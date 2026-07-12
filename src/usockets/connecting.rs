@@ -424,6 +424,11 @@ pub(crate) fn promote_winner(c: *mut ConnectingSocket, winner: *mut us_socket_t)
 /// on_connecting_error} terminates a connect (C2, R6.12).
 pub(crate) fn finish_promotion(c: *mut ConnectingSocket) {
     let cm = deref_mut(c);
+    // Owner-ref transfer: the winner's header ext now carries the owned word.
+    // Null + mark closed so the consumer's still-live Connecting handle can't
+    // release (detach_owner) or re-terminate (close) the same ref again.
+    cm.ext = core::ptr::null_mut();
+    cm.closed = true;
     if !cm.addrinfo_req.is_null() {
         ffi::addrinfo_free_request(cm.addrinfo_req, false);
         cm.addrinfo_req = core::ptr::null_mut();

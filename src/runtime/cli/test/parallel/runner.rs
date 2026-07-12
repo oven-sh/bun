@@ -697,10 +697,10 @@ pub fn run_as_worker(
     worker_flush_aggregates(wloop.reporter, vm_ref, ctx, worker_tmp, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
     // sees repeat_bufs/junit_file/coverage_file.
-    while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done {
+    while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done() {
         // SAFETY: event_loop pointer is valid while vm lives.
         unsafe { (*vm_ref.event_loop()).tick() };
-        if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done {
+        if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done() {
             break;
         }
         // SAFETY: event_loop pointer is valid while vm lives.

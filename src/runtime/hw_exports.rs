@@ -153,7 +153,7 @@ pub fn close_child_ipc(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if let Some(current_ipc) = vm.get_ipc_instance() {
         // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance`.
-        unsafe { (*current_ipc).data.close_socket_next_tick(true) };
+        unsafe { &*current_ipc }.queue().close_socket_next_tick(true);
     }
 }
 

@@ -1,7 +1,6 @@
 use core::ptr::NonNull;
 
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_io::FilePoll;
 use bun_ptr::BackRef;
 use bun_usockets::Loop as UwsLoop;
 
@@ -258,11 +257,6 @@ impl AnyEventLoop<'static> {
     #[inline]
     pub fn file_polls(&mut self) -> *mut bun_io::file_poll::Store {
         EventLoopHandle::from_any(self).file_polls()
-    }
-
-    #[inline]
-    pub fn put_file_poll(&mut self, poll: &mut FilePoll) {
-        EventLoopHandle::from_any(self).put_file_poll(poll)
     }
 
     /// Returns the shared pipe-read scratch buffer as a raw fat ptr.
@@ -536,30 +530,6 @@ impl EventLoopHandle {
         match self {
             EventLoopHandle::Js { owner } => owner.file_polls(),
             EventLoopHandle::Mini(mut mini) => std::ptr::from_mut(mini_mut(&mut mini).file_polls()),
-        }
-    }
-
-    pub fn put_file_poll(&mut self, poll: &mut FilePoll) {
-        let was_ever_registered = poll
-            .flags
-            .contains(bun_io::file_poll::Flags::WasEverRegistered);
-        // Decay `poll` to `NonNull` *before* taking any further `&mut` so
-        // `Store::put`'s raw-pointer field touches don't alias a live `&mut`.
-        let poll_ptr = NonNull::from(poll);
-        match self {
-            // `JsEventLoop::put_file_poll` takes a raw `*mut FilePoll`; pass
-            // the decayed `poll_ptr` straight through.
-            EventLoopHandle::Js { owner } => {
-                owner.put_file_poll(poll_ptr.as_ptr(), was_ever_registered)
-            }
-            // ctx only touches `after_event_loop_callback{,_ctx}`, field-disjoint
-            // from `file_polls_` — safe to hold both across `Store::put`.
-            EventLoopHandle::Mini(mini) => {
-                let ctx = MiniEventLoop::as_event_loop_ctx(mini_mut(mini));
-                mini_mut(mini)
-                    .file_polls()
-                    .put(poll_ptr, ctx, was_ever_registered);
-            }
         }
     }
 

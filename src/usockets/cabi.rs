@@ -173,7 +173,9 @@ pub extern "C" fn us_internal_loop_quic_timer_set(
 /// Poll-first-member contract: the fd is at offset 0 of the handle. Only UDP
 /// handles from [`us_udp_socket_poll`] qualify (quic.c is the sole surviving
 /// caller — cabi-surface.md §3.4); `SocketHeader`'s fd offset is NOT part of
-/// this contract and must not be passed here (use `us_socket_get_fd`).
+/// this contract and must not be passed here (use `us_socket_get_fd`). P0c
+/// registry polls (`loop_::poll_registry`) are never C-visible — out of
+/// contract for both `us_poll_*` fns.
 #[unsafe(no_mangle)]
 pub extern "C" fn us_poll_fd(p: *mut us_poll_t) -> LIBUS_SOCKET_DESCRIPTOR {
     const {

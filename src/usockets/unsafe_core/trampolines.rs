@@ -314,3 +314,417 @@ invoke_unary! {
     invoke_long_timeout => on_long_timeout,
     invoke_end => on_end,
 }
+
+// ── Protocol v2 (safe-protocol.md): owner-guarded trampolines ───────────────
+// Owner storage: the 8-byte ext word of a static (non-group-vtable) kind
+// holds a `*mut P::Owner` carrying ONE strong ref transferred by the attach
+// APIs (handle.rs). Attempt sockets of an in-flight connect carry a BORROWED
+// copy (connect_state != null); the owned word lives on the ConnectingSocket.
+
+use crate::handle::{AnySocket, NewSocketHandler, SocketRef};
+use crate::protocol::{CloseCode2, ConnectFailure, Protocol};
+
+/// Type-erased owner release for the dispatch-side kind registry.
+///
+/// # Safety
+/// `word` must point to a live `O` with an outstanding strong ref (the one
+/// being released here).
+pub(crate) unsafe fn owner_deref_erased<O>(word: *mut c_void)
+where
+    O: bun_ptr::RefCounted,
+    O::DestructorCtx: Default,
+{
+    // SAFETY: forwarded caller contract.
+    unsafe { <O as bun_ptr::AnyRefCounted>::rc_deref(word.cast::<O>()) };
+}
+
+/// Raw ext-word snapshot of a static-kind socket (never the group-vtable
+/// inline-area pointer). Invariant: occupied slab slot.
+fn owner_word(s: *mut us_socket_t) -> *mut c_void {
+    debug_assert!(!crate::dispatch::uses_group_vtable(socket_kind(s)));
+    // SAFETY: occupied slab slot (callers validate parity first); raw field
+    // read, no reference formed (C17).
+    unsafe { (*s).ext }
+}
+
+/// Raw `connect_state` snapshot; occupied slab slot (callers resolve the
+/// handle / validate parity first). Non-null = live happy-eyeballs attempt.
+pub(crate) fn socket_connect_state(s: *mut us_socket_t) -> *mut ConnectingSocket {
+    // SAFETY: occupied slab slot; raw field read, no reference formed (C17).
+    unsafe { (*s).connect_state }
+}
+
+/// Generation-checked [`AnySocket`] handle for a live dispatched socket;
+/// SSL flavor follows the kind tag.
+pub(crate) fn any_socket(s: *mut us_socket_t) -> AnySocket {
+    let r = SocketRef::from_live(NonNull::new(s).expect("dispatch on null socket"));
+    if socket_kind(s).is_tls() {
+        AnySocket::SocketTls(NewSocketHandler::from(r))
+    } else {
+        AnySocket::SocketTcp(NewSocketHandler::from(r))
+    }
+}
+
+/// Release the core-owned ext ref at a socket terminal (on_close /
+/// on_connect_error return, silent SEMI_SOCKET close, detach). Exactly-once:
+/// the word is nulled before the deref. No-op for v1 kinds (no owner ops),
+/// stale slots, null words, and borrowed attempt copies (connect_state set —
+/// that ref is owned by the ConnectingSocket and released at ITS terminal).
+pub(crate) fn release_owner_ext(s: *mut us_socket_t) {
+    if !socket_slot_live(s) {
+        return;
+    }
+    let Some(ops) = crate::dispatch::owner_ops(socket_kind(s)) else {
+        return;
+    };
+    // SAFETY: occupied slab slot; raw field reads/writes, no reference formed.
+    let word = unsafe {
+        if !(*s).connect_state.is_null() {
+            return;
+        }
+        core::mem::replace(&mut (*s).ext, core::ptr::null_mut())
+    };
+    if word.is_null() {
+        return;
+    }
+    // SAFETY: `word` was stamped from an `OwnerRef` for this kind (attach
+    // invariant) and its strong ref is still outstanding (nulled-once above).
+    unsafe { (ops.deref)(word) };
+}
+
+/// Connecting-socket variant of [`release_owner_ext`]. Also nulls every live
+/// attempt's borrowed ext copy so a later promotion/terminal cannot see a
+/// dangling word.
+pub(crate) fn release_owner_ext_connecting(cs: *mut ConnectingSocket) {
+    if !connecting_slot_live(cs) {
+        return;
+    }
+    let Some(ops) = crate::dispatch::owner_ops(connecting_kind(cs)) else {
+        return;
+    };
+    // SAFETY: occupied slab slot; raw field access only (pending window, C13).
+    let word = unsafe {
+        let word = core::mem::replace(&mut (*cs).ext, core::ptr::null_mut());
+        for attempt in (*cs).attempts {
+            if !attempt.is_null() {
+                (*attempt).ext = core::ptr::null_mut();
+            }
+        }
+        word
+    };
+    if word.is_null() {
+        return;
+    }
+    // SAFETY: as in `release_owner_ext`.
+    unsafe { (ops.deref)(word) };
+}
+
+/// Swap the OWNED ext word of a live in-flight connect (owner attach during
+/// happy-eyeballs): stamps `word` on the ConnectingSocket and every live
+/// attempt's borrowed copy; returns the previous owned word.
+pub(crate) fn swap_owner_ext_connecting(
+    cs: *mut ConnectingSocket,
+    word: *mut c_void,
+) -> *mut c_void {
+    // SAFETY: caller resolved a live socket whose connect_state is `cs`, so
+    // the slot is occupied; raw field access only (pending window, C13).
+    unsafe {
+        let old = core::mem::replace(&mut (*cs).ext, word);
+        for attempt in (*cs).attempts {
+            if !attempt.is_null() {
+                (*attempt).ext = word;
+            }
+        }
+        old
+    }
+}
+
+/// Release an owner word captured BEFORE an adopt re-stamped the kind
+/// (owner-swap: the new owner is stamped first, then the old ref is released
+/// under the old kind's ops — no window where dispatch sees a stale owner).
+pub(crate) fn release_owner_for_kind(word: *mut c_void, kind: SocketKind) {
+    let Some(ops) = crate::dispatch::owner_ops(kind) else {
+        return;
+    };
+    if word.is_null() {
+        return;
+    }
+    // SAFETY: `word` was stamped from an `OwnerRef` for `kind` (attach
+    // invariant); the caller detached it from the socket, so this is the
+    // sole release of that ref.
+    unsafe { (ops.deref)(word) };
+}
+
+/// Mint a strong [`bun_ptr::RefPtr`] from a live owner borrow. Safe: `&O`
+/// proves liveness (`RefPtr::init_ref`'s precondition) and the intrusive
+/// count is interior-mutable, so the `&`-derived `*mut` never writes fields.
+pub fn owner_ref_of<O: bun_ptr::AnyRefCounted>(o: &O) -> bun_ptr::RefPtr<O> {
+    // SAFETY: `o` is a live borrow; init_ref only touches the intrusive count.
+    unsafe { bun_ptr::RefPtr::init_ref(core::ptr::from_ref(o).cast_mut()) }
+}
+
+/// [`bun_ptr::ThisPtr`] view of a live owner borrow, for legacy
+/// dispatch-shaped call sites. Liveness beyond the borrow is the Protocol v2
+/// dispatch guard's guarantee (the trampoline holds a ref across the handler).
+pub fn this_ptr_of<O>(o: &O) -> bun_ptr::ThisPtr<O> {
+    // SAFETY: non-null and live per the borrow.
+    unsafe { bun_ptr::ThisPtr::new(core::ptr::from_ref(o).cast_mut()) }
+}
+
+/// Consumer-facing SAFE owner access (Protocol v2, safe-protocol.md P5):
+/// take a transient strong ref on the typed owner of a live socket handle.
+/// `None` for stale/detached handles, v1 kinds, owner-type mismatches, and
+/// the detached/pre-stamp (null-word) window. The caller must `deref()` (or
+/// transfer) the returned ref — `RefPtr` has no `Drop`.
+pub fn socket_owner_ref<const SSL: bool, O>(
+    s: &NewSocketHandler<SSL>,
+) -> Option<bun_ptr::RefPtr<O>>
+where
+    O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
+{
+    let word = match s.socket {
+        crate::handle::InternalSocket::Connected(r) => {
+            let p = r.resolve()?.as_ptr();
+            if !crate::dispatch::owner_registered_as::<O>(socket_kind(p)) {
+                return None;
+            }
+            let cs = socket_connect_state(p);
+            if cs.is_null() {
+                owner_word(p)
+            } else {
+                // Live happy-eyeballs attempt: the owned word lives on the
+                // ConnectingSocket (the attempt's copy is a borrow).
+                // SAFETY: occupied slab slot; raw field read only (C13).
+                unsafe { (*cs).ext }
+            }
+        }
+        crate::handle::InternalSocket::Connecting(r) => {
+            let cs = r.resolve()?.as_ptr();
+            if !crate::dispatch::owner_registered_as::<O>(connecting_kind(cs)) {
+                return None;
+            }
+            // SAFETY: occupied slab slot; raw field read only (C13).
+            unsafe { (*cs).ext }
+        }
+        _ => return None,
+    };
+    let p = NonNull::new(word.cast::<O>())?;
+    // SAFETY: `owner_registered_as` proved the registered owner type is `O`,
+    // and the attach invariant says a non-null word is a live `O` carrying an
+    // outstanding strong ref; `init_ref` adds the caller's own ref.
+    Some(unsafe { bun_ptr::RefPtr::init_ref(p.as_ptr()) })
+}
+
+/// Closure form of [`socket_owner_ref`]: borrow the owner for the duration
+/// of `f`, ref-guarded so a re-entrant release inside `f` cannot free it.
+pub fn with_socket_owner<const SSL: bool, O, R>(
+    s: &NewSocketHandler<SSL>,
+    f: impl FnOnce(&O) -> R,
+) -> Option<R>
+where
+    O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
+{
+    let guard = socket_owner_ref::<SSL, O>(s)?;
+    let out = f(guard.data());
+    guard.deref();
+    Some(out)
+}
+
+pub(crate) struct Trampolines2<P>(core::marker::PhantomData<P>);
+
+impl<P: Protocol> Trampolines2<P> {
+    /// The core-held dispatch guard: take a strong owner ref BEFORE the
+    /// handler and drop it after — the owner may lose every other ref
+    /// mid-callback (re-entrant JS) and still outlives the handler frame.
+    /// Null word (detached / pre-stamp window) is a silent no-op.
+    fn with_owner(word: *mut c_void, f: impl FnOnce(&P::Owner)) {
+        let Some(p) = NonNull::new(word.cast::<P::Owner>()) else {
+            return;
+        };
+        // SAFETY: the attach APIs stamped a live owner with a transferred
+        // strong ref; the loop thread is the only accessor.
+        let guard = unsafe { bun_ptr::RefPtr::init_ref(p.as_ptr()) };
+        f(guard.data());
+        // May run the owner's destructor — AFTER the handler returned; if the
+        // handler closed the socket, core's deferred-close already ran (C6).
+        guard.deref();
+    }
+
+    fn dispatch(s: *mut us_socket_t, f: impl FnOnce(&P::Owner, AnySocket)) {
+        let sock = any_socket(s);
+        Self::with_owner(owner_word(s), |o| f(o, sock));
+    }
+
+    pub(crate) extern "C" fn on_open(
+        s: *mut us_socket_t,
+        is_client: c_int,
+        ip: *mut u8,
+        ip_len: c_int,
+    ) -> *mut us_socket_t {
+        // SAFETY: the loop guarantees `ip[0..ip_len]` is valid when non-null.
+        let ip_slice = unsafe { ext::c_slice(ip, usize::try_from(ip_len).expect("int cast")) };
+        Self::dispatch(s, |o, sock| P::on_open(o, sock, is_client != 0, ip_slice));
+        s
+    }
+
+    pub(crate) extern "C" fn on_data(
+        s: *mut us_socket_t,
+        data: *mut u8,
+        len: c_int,
+    ) -> *mut us_socket_t {
+        // SAFETY: the loop guarantees `data[0..len]` is valid (shared
+        // recv_buf, writable for in-place unmasking).
+        let slice = unsafe { ext::c_slice_mut(data, usize::try_from(len).expect("int cast")) };
+        Self::dispatch(s, |o, sock| P::on_data(o, sock, slice));
+        s
+    }
+
+    pub(crate) extern "C" fn on_fd(s: *mut us_socket_t, fd: c_int) -> *mut us_socket_t {
+        // POSIX-only event (SCM_RIGHTS); the `as _` widens for the Windows
+        // Fd backing type, where this slot never fires.
+        Self::dispatch(s, |o, sock| P::on_fd(o, sock, bun_core::Fd::from_native(fd as _)));
+        s
+    }
+
+    pub(crate) extern "C" fn on_writable(s: *mut us_socket_t) -> *mut us_socket_t {
+        Self::dispatch(s, P::on_writable);
+        s
+    }
+
+    pub(crate) extern "C" fn on_close(
+        s: *mut us_socket_t,
+        code: c_int,
+        _reason: *mut c_void,
+    ) -> *mut us_socket_t {
+        let (code, errno) = CloseCode2::decode(code);
+        Self::dispatch(s, |o, sock| P::on_close(o, sock, code, errno));
+        s
+    }
+
+    pub(crate) extern "C" fn on_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
+        Self::dispatch(s, P::on_timeout);
+        s
+    }
+
+    pub(crate) extern "C" fn on_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
+        Self::dispatch(s, P::on_long_timeout);
+        s
+    }
+
+    pub(crate) extern "C" fn on_end(s: *mut us_socket_t) -> *mut us_socket_t {
+        Self::dispatch(s, P::on_end);
+        s
+    }
+
+    pub(crate) extern "C" fn on_connect_error(
+        s: *mut us_socket_t,
+        code: c_int,
+    ) -> *mut us_socket_t {
+        Self::with_owner(owner_word(s), |o| {
+            P::on_connect_error(o, ConnectFailure { errno: code })
+        });
+        s
+    }
+
+    pub(crate) extern "C" fn on_connecting_error(
+        cs: *mut ConnectingSocket,
+        code: c_int,
+    ) -> *mut ConnectingSocket {
+        // SAFETY: occupied slab slot (dispatch validates parity first); raw
+        // field read only (pending window, C13).
+        let word = unsafe { (*cs).ext };
+        Self::with_owner(word, |o| P::on_connect_error(o, ConnectFailure { errno: code }));
+        cs
+    }
+
+    pub(crate) extern "C" fn on_handshake(
+        s: *mut us_socket_t,
+        ok: c_int,
+        err: us_bun_verify_error_t,
+        _user: *mut c_void,
+    ) {
+        Self::dispatch(s, |o, sock| P::on_handshake(o, sock, ok != 0, err));
+    }
+}
+
+// ── P0c registry: owner-guarded poll dispatch ────────────────────────────────
+
+use crate::loop_::poll_registry::{PollEvents, PollOwnerOps, PollProtocol, PollRef};
+
+/// Monomorphized owner ops for a registered poll — the non-socket sibling of
+/// `make2` (same core-held dispatch-guard contract).
+pub(crate) fn poll_owner_ops<P: PollProtocol>() -> &'static PollOwnerOps {
+    &MakePollOps::<P>::OPS
+}
+
+struct MakePollOps<P>(core::marker::PhantomData<P>);
+
+impl<P: PollProtocol> MakePollOps<P> {
+    const OPS: PollOwnerOps = PollOwnerOps {
+        dispatch: Self::dispatch_erased,
+        deref: owner_deref_erased::<P::Owner>,
+    };
+
+    /// # Safety
+    /// `word` must point to a live `P::Owner` holding the slot-transferred
+    /// strong ref (registry invariant — dispatch validated the slot first).
+    unsafe fn dispatch_erased(word: *mut c_void, poll: PollRef, events: PollEvents) {
+        let Some(p) = NonNull::new(word.cast::<P::Owner>()) else {
+            return;
+        };
+        // SAFETY: forwarded caller contract. The guard ref keeps the owner
+        // alive across the handler even if it loses every other ref (C17);
+        // its release runs AFTER the handler returned.
+        let guard = unsafe { bun_ptr::RefPtr::init_ref(p.as_ptr()) };
+        P::on_event(guard.data(), poll, events);
+        guard.deref();
+    }
+}
+
+/// Owner-guarded dispatch of a registered-poll event.
+pub(crate) fn dispatch_poll_owner(
+    ops: &PollOwnerOps,
+    word: *mut c_void,
+    poll: PollRef,
+    events: PollEvents,
+) {
+    // SAFETY: registry invariant — `word` was stamped from an `OwnerRef` at
+    // register and its strong ref is outstanding (nulled only at unregister,
+    // which frees the slot first so dispatch can no longer resolve it).
+    unsafe { (ops.dispatch)(word, poll, events) }
+}
+
+/// Release the slot-transferred owner ref (unregister / slab-Drop teardown).
+/// Null words (already-released) are a no-op.
+pub(crate) fn release_poll_owner(ops: &PollOwnerOps, word: *mut c_void) {
+    if word.is_null() {
+        return;
+    }
+    // SAFETY: sole release of the register-transferred strong ref — every
+    // caller nulls the slot's word before (or while) handing it here.
+    unsafe { (ops.deref)(word) }
+}
+
+/// Produce the `&'static VTable` for a Protocol v2 registration — every slot
+/// filled (v2 defaults are no-ops, so a filled slot == v1's skipped None).
+pub(crate) fn make2<P: Protocol>() -> &'static VTable {
+    &Make2::<P>::VT
+}
+
+struct Make2<P>(core::marker::PhantomData<P>);
+
+impl<P: Protocol> Make2<P> {
+    const VT: VTable = VTable {
+        on_open: Some(Trampolines2::<P>::on_open),
+        on_data: Some(Trampolines2::<P>::on_data),
+        on_fd: Some(Trampolines2::<P>::on_fd),
+        on_writable: Some(Trampolines2::<P>::on_writable),
+        on_close: Some(Trampolines2::<P>::on_close),
+        on_timeout: Some(Trampolines2::<P>::on_timeout),
+        on_long_timeout: Some(Trampolines2::<P>::on_long_timeout),
+        on_end: Some(Trampolines2::<P>::on_end),
+        on_connect_error: Some(Trampolines2::<P>::on_connect_error),
+        on_connecting_error: Some(Trampolines2::<P>::on_connecting_error),
+        on_handshake: Some(Trampolines2::<P>::on_handshake),
+    };
+}

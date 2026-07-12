@@ -20,6 +20,8 @@ workspace = true
 
 [dependencies]
 bun_core.workspace = true
+# Protocol v2 owner refcounting (protocol.rs; safe-protocol.md).
+bun_ptr.workspace = true
 # Platform-split `addrinfo` type shared with the DNS bridge (consumers/04).
 bun_dns.workspace = true
 libc.workspace = true

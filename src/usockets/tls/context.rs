@@ -55,7 +55,7 @@ impl create_bun_socket_error_t {
 
 /// `struct us_bun_verify_error_t` — TLS handshake verification result, BY
 /// VALUE across the ABI. Only `code` is static; `reason` may point into the
-/// per-socket `FatalReason` (tls-semantics §3.4) — copy it before the callback returns.
+/// parked `FatalReason` (tls-semantics §3.4) — copy it before the callback returns.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct us_bun_verify_error_t {
@@ -174,9 +174,9 @@ pub fn x509_error_code(err: c_long) -> &'static CStr {
     }
 }
 
-/// Fatal OpenSSL reason parked for the handshake-failure dispatch — stored
-/// PER-SOCKET in `TlsState` (api.md CHANGES 2), replacing the loop-shared
-/// scratch + owner pointer.
+/// Fatal OpenSSL reason parked for the handshake-failure dispatch — parked in
+/// the loop-shared slot whose owner is a generation-checked `SocketRef`
+/// (safe-protocol.md P0d; stale owner = drop, never dangles).
 pub struct FatalReason {
     /// NUL-terminated `ERR_error_string_n` output.
     buf: [u8; US_SSL_FATAL_ERROR_REASON_MAX],

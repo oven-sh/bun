@@ -203,7 +203,7 @@ impl<H: Handler> Make<H> {
 // switches on `s.kind` and falls back to the group vtable for UwsHttp{,Tls},
 // UwsWs{,Tls} and Dynamic (cabi-surface.md §2.1).
 
-const SOCKET_KIND_COUNT: usize = SocketKind::UwsWsTls as usize + 1;
+const SOCKET_KIND_COUNT: usize = SocketKind::TestChannel as usize + 1;
 
 /// Per-kind static tables for Rust-handled kinds, with the registering
 /// handler's `TypeId` so a conflicting second registration panics.
@@ -217,16 +217,74 @@ static KIND_TABLES: [OnceLock<(&'static VTable, TypeId)>; SOCKET_KIND_COUNT] =
 /// (Dynamic/uWS) are rejected — their routing is fixed. Panics on a second
 /// registration with a different handler type.
 pub fn register_kind<H: Handler>(kind: SocketKind) {
+    register_kind_raw(kind, make::<H>(), TypeId::of::<H>());
+}
+
+/// Shared registration funnel for v1 handlers and Protocol v2
+/// (`protocol::register`); `id` identifies the registering handler/protocol
+/// type so a conflicting second registration panics.
+pub(crate) fn register_kind_raw(kind: SocketKind, vt: &'static VTable, id: TypeId) {
     assert!(
         kind != SocketKind::Invalid && !uses_group_vtable(kind),
         "register_kind: {kind:?} does not dispatch through the static tables"
     );
-    let (_, registered) =
-        KIND_TABLES[kind as usize].get_or_init(|| (make::<H>(), TypeId::of::<H>()));
+    let (_, registered) = KIND_TABLES[kind as usize].get_or_init(|| (vt, id));
     assert!(
-        *registered == TypeId::of::<H>(),
+        *registered == id,
         "register_kind: conflicting handler registration for {kind:?}"
     );
+}
+
+// ── Protocol v2 owner registry (safe-protocol.md) ─────────────────────────────
+
+/// Type-erased owner operations for a Protocol v2 kind. Presence in
+/// `OWNER_OPS` is what marks a kind as v2: terminal dispatch releases the
+/// core-owned ext ref through `deref` (trampolines::release_owner_ext).
+#[derive(Copy, Clone)]
+pub(crate) struct OwnerOps {
+    /// SAFETY (caller): the word points to a live owner of the registered
+    /// type with an outstanding strong ref — the one being released.
+    pub(crate) deref: unsafe fn(*mut c_void),
+}
+
+static OWNER_OPS: [OnceLock<(OwnerOps, TypeId)>; SOCKET_KIND_COUNT] =
+    [const { OnceLock::new() }; SOCKET_KIND_COUNT];
+
+/// Register the owner ops dispatched for a Protocol v2 `kind`; panics on a
+/// conflicting owner type (same rule as [`register_kind_raw`]).
+pub(crate) fn register_owner_ops(kind: SocketKind, ops: OwnerOps, owner_id: TypeId) {
+    let (_, registered) = OWNER_OPS[kind as usize].get_or_init(|| (ops, owner_id));
+    assert!(
+        *registered == owner_id,
+        "register_owner_ops: conflicting owner registration for {kind:?}"
+    );
+}
+
+/// True iff `kind` is a Protocol v2 kind whose registered owner type is `O`.
+/// The attach surface fails closed on anything else: a v1/unregistered kind
+/// would leak the ref at the terminal, a different owner type is confusion.
+pub(crate) fn owner_registered_as<O: 'static>(kind: SocketKind) -> bool {
+    if uses_group_vtable(kind) || kind == SocketKind::Invalid {
+        return false;
+    }
+    OWNER_OPS[kind as usize]
+        .get()
+        .is_some_and(|(_, id)| *id == TypeId::of::<O>())
+}
+
+/// `Some` iff `kind` was registered through Protocol v2 (owner-carrying ext).
+pub(crate) fn owner_ops(kind: SocketKind) -> Option<&'static OwnerOps> {
+    if uses_group_vtable(kind) || kind == SocketKind::Invalid {
+        return None;
+    }
+    OWNER_OPS[kind as usize].get().map(|(ops, _)| ops)
+}
+
+/// Silent-terminal owner release (C1: SEMI_SOCKET closes and detach dispatch
+/// NO callback, but core's ext-held owner ref is still released exactly once
+/// — documented deviation from C parity, safe-protocol.md terminal contract).
+pub(crate) fn release_owner_on_silent_terminal(s: *mut us_socket_t) {
+    trampolines::release_owner_ext(s);
 }
 
 /// Debug ext-type check backing `Trampolines::ext` (api.md kind registry):
@@ -345,6 +403,9 @@ pub(crate) fn dispatch_writable(s: *mut us_socket_t) {
 pub(crate) fn dispatch_close(s: *mut us_socket_t, code: c_int, reason: *mut c_void) {
     if let Some(vt) = vt(s) {
         trampolines::invoke_close(vt, s, code, reason);
+        // Terminal contract: core's ext-held owner ref is released exactly
+        // once after on_close returns (safe-protocol.md; no-op for v1 kinds).
+        trampolines::release_owner_ext(s);
     }
 }
 
@@ -375,12 +436,17 @@ pub(crate) fn dispatch_fd(s: *mut us_socket_t, fd: c_int) {
 pub(crate) fn dispatch_connect_error(s: *mut us_socket_t, code: c_int) {
     if let Some(vt) = vt(s) {
         trampolines::invoke_connect_error(vt, s, code);
+        // Terminal (C2): release core's owner ref after on_connect_error.
+        trampolines::release_owner_ext(s);
     }
 }
 
 pub(crate) fn dispatch_connecting_error(cs: *mut ConnectingSocket, code: c_int) {
     if let Some(vt) = vtc(cs) {
         trampolines::invoke_connecting_error(vt, cs, code);
+        // Terminal (C2): release the connecting socket's owner ref (also
+        // nulls the attempts' borrowed copies).
+        trampolines::release_owner_ext_connecting(cs);
     }
 }
 
@@ -422,9 +488,9 @@ pub(crate) fn dispatch_keylog(s: *mut us_socket_t, line: &[u8]) {
 
 /// True when `kind` routes through the group vtable instead of a static
 /// per-kind Rust handler. Also the single source of the ext storage class:
-/// these kinds get a trailing heap ext area (`group::make_ext`,
-/// `unsafe_core::ext::downcast_raw`); all others store ext in the header
-/// word. Invariant (api.md adoption families): adoption never crosses this
+/// these kinds get an inline slab ext area contiguous after the header
+/// (`socket::alloc` / `unsafe_core::ext::downcast_raw`, P0b); all others
+/// store ext in the header word. Invariant (api.md adoption families): adoption never crosses this
 /// predicate — `group::adopt_socket` re-stamps kind without touching ext, so
 /// `uses_group_vtable(old) == uses_group_vtable(new)` must hold at adopt.
 pub(crate) fn uses_group_vtable(kind: SocketKind) -> bool {

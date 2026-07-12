@@ -55,24 +55,6 @@ pub(crate) fn quic_loop_process(loop_: *mut Loop) {
     unsafe { us_quic_loop_process(loop_) }
 }
 
-#[cfg(not(windows))]
-#[allow(improper_ctypes)]
-unsafe extern "C" {
-    /// Defined in `src/io/posix_event_loop.rs` (POSIX only); decodes the tag
-    /// and routes to the owning FilePoll.
-    fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged: *mut c_void);
-}
-
-/// FilePoll back-channel: `Bun__internal_dispatch_ready_poll(loop, udata)`
-/// for non-socket ready polls (consumers/10-event-loop.md §6). The FULL
-/// tagged pointer is passed through — Bun strips the tag itself.
-#[cfg(not(windows))]
-pub(crate) fn dispatch_ready_poll(loop_: *mut Loop, tagged: *mut c_void) {
-    // SAFETY: `loop_` is the live loop mid-dispatch; `tagged` came out of
-    // `ready_polls` and was registered by Bun's `register_with_fd`.
-    unsafe { Bun__internal_dispatch_ready_poll(loop_, tagged) }
-}
-
 /// Sweep refcount 0→1 hook (core-semantics.md R12.9/R5.5): keeps Bun.serve's
 /// Date-header timer running while sockets exist.
 pub(crate) fn ensure_date_header_timer_is_enabled(loop_: *mut Loop) {
@@ -205,6 +187,10 @@ pub(crate) unsafe fn create_loop_raw(
             &raw mut (*loop_).connectings,
             crate::unsafe_core::slab::ChunkedSlab::new(),
         );
+        core::ptr::write(
+            &raw mut (*loop_).polls,
+            crate::unsafe_core::slab::ChunkedSlab::new(),
+        );
     }
 
     #[cfg(not(windows))]
@@ -294,7 +280,10 @@ pub(crate) unsafe fn free_loop_raw(loop_: *mut Loop) {
         let ld = &raw mut (*loop_).internal_loop_data;
         let ssl_data = core::ptr::replace(&raw mut (*ld).ssl_data, core::ptr::null_mut());
         if !ssl_data.is_null() {
-            scratch_free(ssl_data);
+            // LoopTlsShared::drop frees the parked plaintext scratch.
+            drop(Box::from_raw(
+                ssl_data.cast::<crate::tls::state::LoopTlsShared>(),
+            ));
         }
         free_loop_buf((*ld).recv_buf, RECV_BUF_BYTES);
         free_loop_buf((*ld).send_buf, crate::udp::LIBUS_SEND_BUFFER_LENGTH);
@@ -325,11 +314,40 @@ pub(crate) unsafe fn free_loop_raw(loop_: *mut Loop) {
     #[cfg(windows)]
     crate::backend::libuv::loop_teardown(loop_);
 
+    // P0c two-phase teardown (W2): take every registered poll's owner word
+    // and free its slot while the slab is intact; release the refs only
+    // after the slab borrow ends — an owner destructor may re-enter PollRef
+    // methods (all stale no-ops now) or even `register` anew (the arm fails
+    // on the closed fd and self-unwinds), so loop until the slab quiesces.
+    loop {
+        let mut live: Vec<core::ptr::NonNull<crate::loop_::poll_registry::RegisteredPoll>> =
+            Vec::new();
+        // SAFETY: loop-thread teardown; the borrow covers only the `polls`
+        // field place and ends before any owner ref is released.
+        unsafe { (*loop_).polls.for_each_occupied(|p| live.push(p)) };
+        if live.is_empty() {
+            break;
+        }
+        let mut owners = Vec::with_capacity(live.len());
+        for p in live {
+            owners.push(crate::loop_::poll_registry::take_owner_for_teardown(p));
+            // SAFETY: `p` is an occupied slot of THIS loop's poll slab; its
+            // owner word was just taken, so the value drop releases nothing.
+            unsafe { (*loop_).polls.free(p) };
+        }
+        for (ops, word) in owners {
+            super::trampolines::release_poll_owner(ops, word);
+        }
+    }
+
     // Drop the slabs in place (releases every remaining slot value + chunk).
     // SAFETY: fields were ptr::written at creation; dropped exactly once.
+    // The polls slab is quiesced (loop above), so no owner code can run
+    // under `ChunkedSlab::drop`'s exclusive borrow.
     unsafe {
         core::ptr::drop_in_place(&raw mut (*loop_).sockets);
         core::ptr::drop_in_place(&raw mut (*loop_).connectings);
+        core::ptr::drop_in_place(&raw mut (*loop_).polls);
     }
     free_loop_block(loop_);
 }
@@ -338,11 +356,16 @@ pub(crate) unsafe fn free_loop_raw(loop_: *mut Loop) {
 
 /// Allocate a socket slot straight off the raw slab place — never forms
 /// `&mut Loop`, so the span excludes `pending_wakeups`, which other threads
-/// `fetch_add` concurrently (R10.1, C17).
-pub(crate) fn slab_alloc_socket(loop_: *mut Loop, value: us_socket_t) -> *mut us_socket_t {
+/// `fetch_add` concurrently (R10.1, C17). `ext_capacity` picks the size
+/// class carrying that many inline ext bytes after the header (P0b).
+pub(crate) fn slab_alloc_socket(
+    loop_: *mut Loop,
+    value: us_socket_t,
+    ext_capacity: usize,
+) -> *mut us_socket_t {
     // SAFETY: loop-thread call on a live loop; the autoref borrow covers only
     // the `sockets` field place.
-    unsafe { (*loop_).sockets.alloc(value).0.as_ptr() }
+    unsafe { (*loop_).sockets.alloc_with_ext(value, ext_capacity).0.as_ptr() }
 }
 
 /// Connecting-slab twin of [`slab_alloc_socket`] (same aliasing rationale).
@@ -369,6 +392,29 @@ pub(crate) fn slab_free_connecting(loop_: *mut Loop, c: *mut crate::connecting::
     // SAFETY: `c` was allocated from THIS loop's connecting slab and is
     // freed exactly once (closed_connecting drain).
     unsafe { (*loop_).connectings.free(nn) }
+}
+
+/// Registered-poll twin of [`slab_alloc_socket`] (P0c; same aliasing
+/// rationale — never forms `&mut Loop`).
+pub(crate) fn slab_alloc_poll(
+    loop_: *mut Loop,
+    value: crate::loop_::poll_registry::RegisteredPoll,
+) -> *mut crate::loop_::poll_registry::RegisteredPoll {
+    // SAFETY: see `slab_alloc_socket`.
+    unsafe { (*loop_).polls.alloc(value).0.as_ptr() }
+}
+
+/// Return a registered-poll slot (generation bump; kernel disarm precedes
+/// this per W2). Callers must take the owner word out FIRST — the ref
+/// release runs outside the slab borrow (RegisteredPoll has no Drop).
+pub(crate) fn slab_free_poll(
+    loop_: *mut Loop,
+    p: *mut crate::loop_::poll_registry::RegisteredPoll,
+) {
+    let nn = core::ptr::NonNull::new(p).expect("null registered-poll slot");
+    // SAFETY: `p` was allocated from THIS loop's poll slab and is freed
+    // exactly once (unregister / failed-registration unwind).
+    unsafe { (*loop_).polls.free(nn) }
 }
 
 // ── loop-thread callback invocation + cross-thread wakeup reads (W4) ─────────
@@ -578,34 +624,6 @@ pub(crate) fn quic_flush_if_pending(loop_: *mut Loop) {
 pub(crate) fn clear_loop_at_thread_exit() {
     // SAFETY: no arguments; thread-local clear.
     unsafe { bun_clear_loop_at_thread_exit() }
-}
-
-// ── loop plaintext scratch slot (tls LoopScratch's raw half) ─────────────────
-
-/// Take the loop's shared scratch (`ssl_data`), leaving null — a re-entrant
-/// nesting sees null and allocates fresh (api.md CHANGES 2).
-pub(crate) fn loop_scratch_take(loop_: *mut Loop) -> *mut c_void {
-    // SAFETY: loop-thread swap of a single pointer slot.
-    unsafe {
-        core::ptr::replace(
-            &raw mut (*loop_).internal_loop_data.ssl_data,
-            core::ptr::null_mut(),
-        )
-    }
-}
-
-/// Restore a taken/allocated scratch: park it if the slot is empty, else
-/// free it (the loop keeps at most ONE shared scratch).
-pub(crate) fn loop_scratch_restore(loop_: *mut Loop, buf: *mut c_void) {
-    // SAFETY: loop-thread access to the single pointer slot.
-    unsafe {
-        let slot = &raw mut (*loop_).internal_loop_data.ssl_data;
-        if (*slot).is_null() {
-            *slot = buf;
-        } else {
-            scratch_free(buf);
-        }
-    }
 }
 
 /// `us_poll_change` on a poll-first handle: only UDP handles qualify
@@ -1467,12 +1485,11 @@ use std::sync::OnceLock;
 
 use crate::handle::CloseCode;
 use crate::tls::SSL;
-use crate::tls::state::BioCtl;
+use crate::tls::state::{BioCtl, LoopTlsShared};
 use crate::unsafe_core::bssl::{BIO, BIO_METHOD, X509_STORE, X509_STORE_CTX};
 use crate::{LIBUS_RECV_BUFFER_LENGTH, LIBUS_RECV_BUFFER_PADDING};
 
 // Values verified against vendor/boringssl/include/openssl/{ssl,bio}.h.
-const BIO_TYPE_MEM: c_int = 1 | 0x0400;
 const BIO_CTRL_FLUSH: c_int = 11;
 const SSL_SENT_SHUTDOWN: c_int = 1;
 const SSL_RECEIVED_SHUTDOWN: c_int = 2;
@@ -1527,6 +1544,8 @@ unsafe extern "C" {
     fn BIO_clear_retry_flags(bio: *mut BIO);
     fn BIO_set_retry_read(bio: *mut BIO);
     fn BIO_set_retry_write(bio: *mut BIO);
+    fn BIO_method_type(bio: *const BIO) -> c_int;
+    fn BIO_get_new_index() -> c_int;
 }
 
 /// Decomposed `SSL_get_error` result.
@@ -1555,6 +1574,31 @@ pub(crate) fn with_ctl<R>(ctl: *mut BioCtl, f: impl FnOnce(&mut BioCtl) -> R) ->
     f(unsafe { &mut *ctl })
 }
 
+/// The loop's lazily-created shared TLS state, stored in `ssl_data` (C
+/// `us_internal_init_loop_ssl_data`); freed only by `free_loop_raw`.
+pub(crate) fn tls_shared_ptr(loop_: *mut Loop) -> *mut LoopTlsShared {
+    // SAFETY: loop-thread access to the single owning pointer slot.
+    unsafe {
+        let slot = &raw mut (*loop_).internal_loop_data.ssl_data;
+        if (*slot).is_null() {
+            *slot = Box::into_raw(Box::new(LoopTlsShared::new())).cast();
+        }
+        (*slot).cast()
+    }
+}
+
+/// Scoped access to the loop-shared TLS state — same borrow contract as
+/// [`with_ctl`] (must end before any SSL call or dispatch).
+pub(crate) fn with_shared<R>(sh: *mut LoopTlsShared, f: impl FnOnce(&mut LoopTlsShared) -> R) -> R {
+    // SAFETY: `sh` is the loop-owned Box from `tls_shared_ptr` (freed only in
+    // free_loop_raw, after every socket); the borrow is confined to `f`.
+    f(unsafe { &mut *sh })
+}
+
+pub(crate) fn with_tls_shared<R>(loop_: *mut Loop, f: impl FnOnce(&mut LoopTlsShared) -> R) -> R {
+    with_shared(tls_shared_ptr(loop_), f)
+}
+
 /// Close entry for the TLS deferred-close epilogue (tls-semantics §1.4): the
 /// caller's `&mut TlsState` must not be touched again after this returns.
 pub(crate) fn socket_close(s: *mut us_socket_t, code: CloseCode) {
@@ -1572,12 +1616,24 @@ pub(crate) fn ctl_free(ctl: *mut BioCtl) {
 // ── custom BIO pair (per socket; tls-semantics §1.3) ─────────────────────────
 
 static BIO_METHOD_PTR: OnceLock<usize> = OnceLock::new();
+static BIO_METHOD_TYPE: OnceLock<c_int> = OnceLock::new();
+
+/// Unique BIO type index: identifies OUR BIOs (data == BioCtl) vs foreign
+/// ones (SSLWrapper's BIO_s_mem stores a BUF_MEM*, tls-semantics §6.2).
+fn bio_type() -> c_int {
+    *BIO_METHOD_TYPE.get_or_init(|| {
+        // SAFETY: one-time process init.
+        let ty = unsafe { BIO_get_new_index() };
+        assert!(ty > 0, "BIO_get_new_index exhausted");
+        ty
+    })
+}
 
 fn bio_method() -> *const BIO_METHOD {
     *BIO_METHOD_PTR.get_or_init(|| {
         // SAFETY: one-time process init; BIO_meth_* on a fresh method object.
         unsafe {
-            let m = BIO_meth_new(BIO_TYPE_MEM, c"bun BIO".as_ptr());
+            let m = BIO_meth_new(bio_type(), c"bun BIO".as_ptr());
             assert!(!m.is_null(), "BIO_meth_new failed");
             BIO_meth_set_create(m, Some(bio_create_cb));
             BIO_meth_set_write(m, Some(bio_write_cb));
@@ -1645,16 +1701,19 @@ unsafe extern "C" fn bio_write_cb(bio: *mut BIO, data: *const c_char, len: c_int
     }
     // SAFETY: BoringSSL guarantees `data[..len]` for the duration of the call.
     let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), len as usize) };
-    if c.batching || c.spill_len() > 0 {
-        // Batch (or preserve wire order behind this socket's spill). Report
-        // full length so BoringSSL seals the next record instead of parking a
-        // partial one; alloc failure → fatal, still report written (record
-        // sequence numbers already advanced — §1.3.2).
-        if c.pending.try_reserve(bytes.len()).is_err() {
+    // SAFETY: `shared` is the loop-owned LoopTlsShared, live for every socket
+    // on the loop; distinct allocation from `c`, no with_* borrow is active.
+    let sh = unsafe { &mut *c.shared };
+    if sh.batching {
+        // Append the sealed record to the loop batch. Report full length so
+        // BoringSSL seals the next record instead of parking a partial one;
+        // alloc failure → fatal, still report written (record sequence
+        // numbers already advanced — §1.3.2).
+        if sh.batch.try_reserve(bytes.len()).is_err() {
             c.fatal = true;
             return len;
         }
-        c.pending.extend_from_slice(bytes);
+        sh.batch.extend_from_slice(bytes);
         return len;
     }
     let written = crate::write::raw_write(c.s, bytes);
@@ -1849,7 +1908,7 @@ pub(crate) fn ssl_get_error(ssl: *mut SSL, ret: c_int) -> SslErr {
     }
 }
 
-// ── loop plaintext scratch (api.md CHANGES 2) ─────────────────────────────────
+// ── loop plaintext scratch (loop-shared per safe-protocol.md P0d) ─────────────
 
 const SCRATCH_BYTES: usize = LIBUS_RECV_BUFFER_LENGTH + 2 * LIBUS_RECV_BUFFER_PADDING;
 
@@ -1903,11 +1962,9 @@ pub(crate) fn loop_recv_area<'a>(loop_: *mut Loop) -> &'a mut [u8] {
 // ── SNI certificate selection (tls-semantics §2.6; openssl.c:2317-2454) ──────
 // Registered on listener default contexts: `sni_cb` when the first server
 // name is added (us_listen_socket_add_server_name), `select_cert_cb` when a
-// dynamic resolver is set (us_listen_socket_on_server_name). The C loop-state
-// save/restore around the resolver (openssl.c:2385-2389) is structurally
-// unnecessary here: the read window and current-socket routing live in the
-// per-socket `BioCtl`, so a resolver re-entering another socket on the same
-// loop cannot clobber this handshake's state.
+// dynamic resolver is set (us_listen_socket_on_server_name). A same-socket
+// write from the resolver's JS clears this handshake's read window, so the C
+// save/restore bracket (openssl.c:2385-2389) is kept as the §1.4 RAII guard.
 
 use crate::unsafe_core::bssl;
 
@@ -1966,11 +2023,12 @@ fn static_tree_select(ssl: *mut SSL, ls: *mut ListenSocket, host: &HostName) {
 
 /// The `BioCtl` behind the socket's write BIO (C's
 /// `BIO_get_data(SSL_get_wbio(ssl))->ssl_socket` analog); null pre-attach.
-fn ssl_wbio_ctl(ssl: *mut SSL) -> *mut BioCtl {
-    // SAFETY: live ssl; the wbio was created by attach with data == BioCtl.
+pub(crate) fn ssl_wbio_ctl(ssl: *mut SSL) -> *mut BioCtl {
+    // SAFETY: live ssl; only wbios carrying our unique BIO type hold a
+    // BioCtl in their data slot — foreign BIOs (BIO_s_mem) return null.
     unsafe {
         let wbio = bssl_sys::SSL_get_wbio(ssl);
-        if wbio.is_null() {
+        if wbio.is_null() || BIO_method_type(wbio.cast()) != bio_type() {
             core::ptr::null_mut()
         } else {
             BIO_get_data(wbio.cast()).cast()
@@ -2044,8 +2102,13 @@ pub(crate) unsafe extern "C" fn select_cert_cb(
     // Dynamic resolver runs FIRST — a user SNICallback replaces default SNI
     // handling entirely (openssl.c:2371-2389). Non-null return is OWNED.
     let mut abort_handshake: c_int = 0;
-    // SAFETY: resolver is the registered cb; host is NUL-terminated.
-    let dyn_ctx = unsafe { resolver(ls, host.as_ptr(), &mut abort_handshake, cb_socket) };
+    // §1.4 nesting trigger 1: the resolver runs user JS from inside
+    // SSL_do_handshake/SSL_read — save/restore the read window around it.
+    let dyn_ctx = {
+        let _window = crate::tls::SslWindowGuard::save(ssl);
+        // SAFETY: resolver is the registered cb; host is NUL-terminated.
+        unsafe { resolver(ls, host.as_ptr(), &mut abort_handshake, cb_socket) }
+    };
     match abort_handshake {
         1 => {
             // Drop without a TLS alert: mark deferred detach so the BIO

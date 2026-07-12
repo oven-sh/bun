@@ -167,11 +167,7 @@ async function runFixture(src: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const line = stdout.trim().split("\n").pop() ?? "";
   return { stdout, stderr, exitCode, line };
 }

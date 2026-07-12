@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlink
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
-import { WEBKIT_VERSION } from "./deps/webkit.ts";
+import { WEBKIT_MIMALLOC_PREVIEW, WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
 import { clangTargetArch } from "./tools.ts";
@@ -1050,10 +1050,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
   // -mimalloc prebuilts only exist at the oven-sh/WebKit#283 preview head (a
   // sha so process.versions.webkit stays a commit hash; deps/webkit.ts maps it
-  // to the release tag). Drop once #283 merges and WEBKIT_VERSION is bumped.
+  // to the release tag).
   const webkitVersion =
-    partial.webkitVersion ??
-    (webkitMimalloc ? "22b4f7cd40c0dce65973b3dcc54689fa58c5a213" : versionDefaults.webkitVersion);
+    partial.webkitVersion ?? (webkitMimalloc ? WEBKIT_MIMALLOC_PREVIEW.commit : versionDefaults.webkitVersion);
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.

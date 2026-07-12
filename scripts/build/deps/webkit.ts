@@ -9,6 +9,14 @@
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
 export const WEBKIT_VERSION = "c9ad5813fd23bd8b98b0738abc3d037ec716aa92";
 
+/** oven-sh/WebKit#283 preview head, the only release with -mimalloc prebuilts.
+ * Tagged by PR rather than commit; drop once the PR merges and WEBKIT_VERSION
+ * is bumped to an autobuild carrying the -mimalloc artifacts. */
+export const WEBKIT_MIMALLOC_PREVIEW = {
+  commit: "22b4f7cd40c0dce65973b3dcc54689fa58c5a213",
+  tag: "autobuild-preview-pr-283-22b4f7cd",
+} as const;
+
 /**
  * WebKit (JavaScriptCore) — the JS engine.
  *
@@ -82,11 +90,9 @@ function prebuiltUrl(cfg: Config): string {
   const arch = cfg.arm64 ? "arm64" : "amd64";
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
   const version = cfg.webkitVersion;
-  // The oven-sh/WebKit#283 preview is tagged by PR, not commit; drop this
-  // mapping with the webkitVersion pin in config.ts once the PR merges.
   const tag =
-    version === "22b4f7cd40c0dce65973b3dcc54689fa58c5a213"
-      ? "autobuild-preview-pr-283-22b4f7cd"
+    version === WEBKIT_MIMALLOC_PREVIEW.commit
+      ? WEBKIT_MIMALLOC_PREVIEW.tag
       : version.startsWith("autobuild-")
         ? version
         : `autobuild-${version}`;

@@ -1,6 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { parseEnv } from "node:util";
 import {
   bunEnv,
   bunExe,
@@ -13,6 +12,7 @@ import {
   isWindows,
   tempDirWithFiles,
 } from "harness";
+import { parseEnv } from "node:util";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {

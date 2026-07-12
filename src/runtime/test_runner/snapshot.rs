@@ -39,6 +39,10 @@ pub struct Snapshots<'a> {
     /// Snapshot keys loaded from the `.snap` file but not yet matched this run.
     /// Remaining entries at file close are obsolete (or removed under `-u`).
     pub unchecked_keys: &'a mut StringHashMap<()>,
+    /// Full names of tests that were skipped/todo/filtered in the current file.
+    /// Reconciled against `unchecked_keys` at `write_snapshot_file` so ordering
+    /// relative to the first `toMatchSnapshot` call does not matter.
+    pub skipped_test_names: &'a mut Vec<(FileId, Box<[u8]>)>,
     pub _current_file: Option<File>,
     /// Read-only backref into `Jest::RUNNER.files[..].source.path` (not owned
     /// here, never freed): the runner is process-global and its files are
@@ -346,18 +350,26 @@ impl<'a> Snapshots<'a> {
 
     pub fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
-            let unchecked = self.unchecked_keys.len();
             if self.update_snapshots {
-                self.removed += unchecked;
+                // Skipped tests' entries are not rewritten into `file_buf`, so
+                // they are physically removed; keep them in the tally.
+                self.removed += self.unchecked_keys.len();
             } else {
-                self.obsolete += unchecked;
+                for (id, name) in self.skipped_test_names.iter() {
+                    if *id == file.id {
+                        Self::mark_snapshots_as_checked_for_test(self.unchecked_keys, name);
+                    }
+                }
+                self.obsolete += self.unchecked_keys.len();
             }
+            self.skipped_test_names.retain(|(id, _)| *id != file.id);
 
             file.file
                 .write_all(self.file_buf)
                 .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
             if self.update_snapshots {
-                let _ = bun_sys::ftruncate(file.file.handle, self.file_buf.len() as i64);
+                bun_sys::ftruncate(file.file.handle, self.file_buf.len() as i64)
+                    .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
             }
             let _ = file.file.close();
             self.file_buf.clear();
@@ -371,13 +383,19 @@ impl<'a> Snapshots<'a> {
         Ok(())
     }
 
+    /// Record a skipped/todo/filtered test so its snapshot keys are excluded
+    /// from the obsolete tally when the file is flushed.
+    pub fn note_skipped_test(&mut self, file_id: FileId, test_name: Box<[u8]>) {
+        self.skipped_test_names.push((file_id, test_name));
+    }
+
     /// Remove every unchecked snapshot key that belongs to `test_name` so that
     /// skipped/todo/filtered tests do not cause false-positive obsolete counts.
-    pub fn mark_snapshots_as_checked_for_test(&mut self, test_name: &[u8]) {
-        if self.unchecked_keys.is_empty() {
+    fn mark_snapshots_as_checked_for_test(unchecked_keys: &mut StringHashMap<()>, test_name: &[u8]) {
+        if unchecked_keys.is_empty() {
             return;
         }
-        self.unchecked_keys.retain(|key, ()| {
+        unchecked_keys.retain(|key, ()| {
             let key: &[u8] = key.as_ref();
             // Snapshot keys are `{snapshot_name} {counter}`; strip the trailing
             // decimal counter before comparing (matches Jest's `keyToTestName`).

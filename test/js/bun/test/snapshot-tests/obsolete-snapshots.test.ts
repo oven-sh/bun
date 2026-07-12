@@ -22,7 +22,7 @@ async function run(dir: string, extra: string[] = []) {
   return { stdout, stderr, exitCode };
 }
 
-describe("obsolete snapshot detection", () => {
+describe.concurrent("obsolete snapshot detection", () => {
   test("reports obsolete snapshots without -u", async () => {
     const dir = tempDirWithFiles(
       "obsolete-detect",
@@ -52,17 +52,35 @@ describe("obsolete snapshot detection", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("skipped test's snapshot is not counted obsolete", async () => {
+  for (const skipFirst of [false, true]) {
+    test(`skipped test's snapshot is not counted obsolete (skip ${skipFirst ? "before" : "after"} first match)`, async () => {
+      const body = skipFirst
+        ? `test.skip("skipped", () => expect({ b: 2 }).toMatchSnapshot());\n` +
+          `test("keeps", () => expect({ a: 1 }).toMatchSnapshot());`
+        : `test("keeps", () => expect({ a: 1 }).toMatchSnapshot());\n` +
+          `test.skip("skipped", () => expect({ b: 2 }).toMatchSnapshot());`;
+      const dir = tempDirWithFiles("obsolete-skip", snapFixture(body));
+      const { stderr, exitCode } = await run(dir);
+      expect(stderr).toContain("1 obsolete");
+      expect(stderr).not.toContain("2 obsolete");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test("-u counts a skipped test's dropped entry in removed", async () => {
     const dir = tempDirWithFiles(
-      "obsolete-skip",
+      "obsolete-skip-u",
       snapFixture(
-        `test("keeps", () => expect({ a: 1 }).toMatchSnapshot());\n` +
-          `test.skip("skipped", () => expect({ b: 2 }).toMatchSnapshot());`,
+        `test.skip("skipped", () => expect({ b: 2 }).toMatchSnapshot());\n` +
+          `test("keeps", () => expect({ a: 1 }).toMatchSnapshot());`,
       ),
     );
-    const { stderr, exitCode } = await run(dir);
-    expect(stderr).toContain("1 obsolete");
-    expect(stderr).not.toContain("2 obsolete");
+    const { stderr, exitCode } = await run(dir, ["-u"]);
+    expect(stderr).toContain("2 removed");
+    const after = readFileSync(dir + "/__snapshots__/snap.test.ts.snap", "utf8");
+    expect(after).not.toContain("skipped 1");
+    expect(after).not.toContain("obsolete-gone");
+    expect(after).toContain("keeps 1");
     expect(exitCode).toBe(0);
   });
 

@@ -716,7 +716,11 @@ impl Execution {
                 if let Some(runner) = super::jest::Jest::runner() {
                     // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
                     let name = Self::snapshot_name_for_entry(unsafe { entry_ptr.as_ref() });
-                    runner.snapshots.mark_snapshots_as_checked_for_test(&name);
+                    // SAFETY: `buntest` is the live parent BunTest (owns `sequence`).
+                    let file_id = unsafe { buntest.as_ref() }.file_id;
+                    runner
+                        .snapshots
+                        .note_skipped_test(file_id, name.into_boxed_slice());
                 }
             }
         }

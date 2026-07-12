@@ -2037,6 +2037,7 @@ impl TestCommand {
             bun_collections::HashMap::new();
         let mut snapshot_counts: StringHashMap<usize> = StringHashMap::new();
         let mut snapshot_unchecked_keys: StringHashMap<()> = StringHashMap::new();
+        let mut snapshot_skipped_test_names: Vec<(FileId, Box<[u8]>)> = Vec::new();
         let mut inline_snapshots_to_write: ArrayHashMap<FileId, Vec<InlineSnapshotToWrite>> =
             ArrayHashMap::new();
         jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
@@ -2111,6 +2112,10 @@ impl TestCommand {
                     // SAFETY: same never-returning-frame invariant as `file_buf` above.
                     unchecked_keys: unsafe {
                         bun_ptr::detach_lifetime_mut(&mut snapshot_unchecked_keys)
+                    },
+                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
+                    skipped_test_names: unsafe {
+                        bun_ptr::detach_lifetime_mut(&mut snapshot_skipped_test_names)
                     },
                     _current_file: None,
                     snapshot_dir_path: None,

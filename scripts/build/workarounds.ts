@@ -32,6 +32,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange } from "./tools.ts";
 
@@ -200,6 +201,28 @@ export const workarounds: Workaround[] = [
     cleanup:
       `Delete needsMuslCrtDecompress(), MUSL_CRT_OBJECTS, the shim_crt_decompress rule, and the ` +
       `musl block in emitShims() (scripts/build/shims.ts), and this entry.`,
+  },
+  {
+    id: "webkit-mimalloc-preview-pin",
+    issue: "https://github.com/oven-sh/WebKit/pull/283",
+    description:
+      "The -mimalloc WebKit prebuilts only exist in the oven-sh/WebKit#283 preview release, so " +
+      "resolveConfig pins webkitVersion to WEBKIT_MIMALLOC_PREVIEW.commit on webkitMimalloc lanes, " +
+      "bypassing WEBKIT_VERSION. Without this check, a routine WEBKIT_VERSION bump would silently " +
+      "leave the Linux glibc release lanes on the stale preview while every other lane advances.",
+    applies: cfg => cfg.webkitMimalloc,
+    expectedToBeFixed: () => {
+      // The pin was written against this WEBKIT_VERSION. Any bump means
+      // oven-sh/WebKit#283 likely merged and the new autobuild carries the
+      // -mimalloc artifacts; retire the pin (or re-pin deliberately).
+      const PINNED_AGAINST = "c9ad5813fd23bd8b98b0738abc3d037ec716aa92";
+      return WEBKIT_VERSION !== PINNED_AGAINST;
+    },
+    cleanup:
+      `Confirm the new WEBKIT_VERSION autobuild ships the -mimalloc artifacts, then delete ` +
+      `WEBKIT_MIMALLOC_PREVIEW and the commit-to-tag mapping in prebuiltUrl() (deps/webkit.ts), ` +
+      `the webkitVersion ternary in resolveConfig() (config.ts), update ` +
+      `test/internal/webkit-mimalloc-config.test.ts, and delete this entry.`,
   },
   {
     id: "android-posix-spawn-setsid-const",

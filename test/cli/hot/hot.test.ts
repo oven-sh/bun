@@ -54,6 +54,13 @@ async function driveErrorReloadCycle(
         return reloadCounter;
       }
 
+      // Windows: writeHotFileAtomicSync's rm+rename has a brief gap where the
+      // entry file doesn't exist. A reload that lands in it prints one of
+      // "Module not found" / "ENOENT reading" / "EPERM reading" (delete
+      // pending). Skip it; the rename's own watcher event drives the real
+      // reload, so re-saving here would only race that.
+      if (/Module not found|\w+ reading "/.test(line)) continue;
+
       // If we see the previous error repeated, the pending reload hasn't
       // taken effect yet. Re-save the file and put remaining unprocessed
       // lines back into the buffer so they aren't lost.
@@ -516,7 +523,9 @@ const comment_spam = Buffer.alloc(comment_line.length * 1000, comment_line).toSt
 function writeHotFileAtomicSync(path: string, content: string) {
   const tmp = path + ".next";
   writeFileSync(tmp, content);
-  // rmSync first on Windows so renameSync doesn't EPERM on the existing target
+  // rmSync first on Windows so renameSync doesn't EPERM on the existing target.
+  // driveErrorReloadCycle skips the transient "Module not found"/ENOENT/EPERM
+  // that --hot can print when a reload lands in the gap between rm and rename.
   if (process.platform === "win32") {
     try {
       rmSync(path);

@@ -1118,3 +1118,23 @@ describe.skipIf(isASAN || isFFIUnavailable)("cc() rejects an empty source array"
     });
   });
 });
+
+// A `napi_value` return opens a NapiHandleScope in the generated wrapper (which
+// references Bun__thisFFIModuleNapiEnv), but that symbol was only added for napi
+// ARGS — so a napi_value return with no napi args failed to relocate / bind.
+describe.skipIf(isASAN || isFFIUnavailable)("cc() binds a napi_value return with no napi args", () => {
+  const library = makeValidCase(
+    "napi_ret",
+    /* c */ `
+      typedef long long napi_value;
+      napi_value get_val(void) { return (napi_value)0; }
+    `,
+    {
+      get_val: { args: [], returns: "napi_value" },
+    },
+  );
+
+  it("compiles and relocates (the handle-scope env symbol is resolved)", () => {
+    expect(typeof library.symbols.get_val).toBe("function");
+  });
+}); // </cc() binds a napi_value return with no napi args>

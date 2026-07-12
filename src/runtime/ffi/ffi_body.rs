@@ -788,7 +788,10 @@ impl CompileC {
             .map_err(|_| crate::Error::DeferredErrors)?;
 
         for symbol in self.symbols.map.values() {
-            if symbol.needs_napi_env() {
+            // `needs_handle_scope` (superset of `needs_napi_env`): the generated
+            // wrapper compiled into this same state opens a NapiHandleScope — and
+            // references Bun__thisFFIModuleNapiEnv — for a `napi_value` return too.
+            if symbol.needs_handle_scope() {
                 // napi env is process-lifetime; valid for JIT'd code.
                 state
                     .add_symbol(
@@ -2803,7 +2806,12 @@ fn make_napi_env_if_needed<'a>(
     // to `'a` (the iterator borrow) is over-restrictive and blocks the
     // immediate-after `values_mut()` loop at every call site.
     for function in functions {
-        if function.needs_napi_env() {
+        // `needs_handle_scope`, not `needs_napi_env`: the generated wrapper opens a
+        // NapiHandleScope (referencing `Bun__thisFFIModuleNapiEnv`) whenever a handle
+        // scope is needed — which includes `returns: "napi_value"` with no napi args.
+        // Gating on args-only left that env symbol unresolved, so the symbol failed
+        // to relocate. `needs_handle_scope` is a strict superset, so nothing regresses.
+        if function.needs_handle_scope() {
             // SAFETY: C++ returns a non-null fresh NapiEnv; we hand back a shared `&` only.
             // `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
             // `bun_runtime::napi`; the concrete type lives here, so cast at the boundary.

@@ -2378,6 +2378,12 @@ pub struct ThreadSafeFunction {
     pub blocking_condvar: Condvar,
     pub closing: AtomicU8, // ClosingState
     pub aborted: AtomicBool,
+    /// Cleared (under `lock`) by the VM-exit cleanup hook: a worker frees its
+    /// VM — and thus `event_loop` — at shutdown, and next-swc-style addon
+    /// threads may still call release() afterwards. Once false, dispatch is
+    /// dropped instead of touching the dead loop (the TSF leaks, matching
+    /// Node's best-effort post-teardown semantics).
+    pub event_loop_alive: AtomicBool,
 }
 
 pub enum TsfnCallback {
@@ -2642,6 +2648,12 @@ impl ThreadSafeFunction {
     }
 
     fn schedule_dispatch(&mut self) {
+        // Callers hold `self.lock`, so this load is ordered against the
+        // cleanup hook's store: once observed false, the VM (and its
+        // event_loop) may already be freed — do not touch it.
+        if !self.event_loop_alive.load(Ordering::SeqCst) {
+            return;
+        }
         let prev = self
             .dispatch_state
             .swap(DispatchState::Pending as u8, Ordering::SeqCst);
@@ -2660,12 +2672,37 @@ impl ThreadSafeFunction {
         }
     }
 
+    /// VM-exit cleanup hook (drained by `vm.on_exit()`, which worker shutdown
+    /// runs BEFORE freeing the VM). `destroy()` unregisters it, so `ctx` is
+    /// always a live TSF here.
+    extern "C" fn mark_event_loop_dead(ctx: *mut c_void) {
+        // SAFETY: registered in `napi_create_threadsafe_function` with a live
+        // TSF pointer; removed in `destroy()` before the TSF is freed. Shared
+        // ref: addon threads hold &self concurrently; lock + atomic store
+        // need no &mut.
+        let self_ = unsafe { &*ctx.cast::<ThreadSafeFunction>() };
+        // The lock orders this store against a foreign thread mid-release():
+        // any release that already holds the lock finishes against the
+        // still-alive VM first; later ones observe the store and bail.
+        let _g = self_.lock.lock_guard();
+        self_.event_loop_alive.store(false, Ordering::SeqCst);
+    }
+
     /// Consumes and frees a heap-allocated ThreadSafeFunction (allocated by `new`).
     /// SAFETY: `this` must be a live `*mut ThreadSafeFunction` returned from `heap::alloc`
     /// and not aliased; caller transfers ownership.
     pub unsafe fn destroy(this: *mut ThreadSafeFunction) {
         // SAFETY: caller contract — `this` is a live heap allocation; we consume it here.
         let self_ = unsafe { &mut *this };
+        // destroy() only runs via event-loop dispatch, so the VM is alive;
+        // drop the exit hook that would otherwise fire on freed memory.
+        // SAFETY: `env` holds a ref, so the pointer is live.
+        unsafe { &*self_.env.get() }
+            .to_js()
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .remove_cleanup_hook(this.cast(), Self::mark_event_loop_dead);
         self_.unref();
 
         if let Some(fun) = self_.finalizer_fun {
@@ -2803,7 +2840,17 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
         blocking_condvar: Condvar::default(),
         closing: AtomicU8::new(ClosingState::NotClosing as u8),
         aborted: AtomicBool::new(true),
+        event_loop_alive: AtomicBool::new(true),
     });
+
+    // Sever `event_loop` before the VM frees it: a worker's shutdown drains
+    // these hooks in `vm.on_exit()` while addon threads may still hold this
+    // TSF. `destroy()` removes the hook.
+    vm.rare_data().push_cleanup_hook(
+        env.to_js(),
+        function.cast(),
+        ThreadSafeFunction::mark_event_loop_dead,
+    );
 
     // SAFETY: function is non-null (just allocated).
     let function_ref = unsafe { &mut *function };

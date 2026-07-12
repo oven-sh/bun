@@ -10,7 +10,9 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 // FAIL_EPOLL_ADD=listener: listening TCP sockets (SO_ACCEPTCONN).
 // FAIL_EPOLL_ADD=accepted: connected SOCK_STREAM. FAIL_EPOLL_ADD=udp: SOCK_DGRAM.
-// Non-socket fds (timerfd, eventfd) always pass through.
+// Only AF_INET/AF_INET6 sockets are failed: spawned stdio pipes are AF_UNIX
+// socketpairs, and failing their registration would deafen the fixture's own
+// stdin/stdout. Non-socket fds (timerfd, eventfd) always pass through.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -32,7 +34,11 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
     if (op == EPOLL_CTL_ADD) {
         int acceptconn = 0, type = 0;
         socklen_t len = sizeof(int);
-        if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &len) == 0) {
+        struct sockaddr_storage ss;
+        socklen_t sslen = sizeof(ss);
+        if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &len) == 0 &&
+            getsockname(fd, (struct sockaddr *)&ss, &sslen) == 0 &&
+            (ss.ss_family == AF_INET || ss.ss_family == AF_INET6)) {
             len = sizeof(int);
             getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &acceptconn, &len);
             int is_stream = (type == SOCK_STREAM);

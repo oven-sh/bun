@@ -923,6 +923,38 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   );
 });
 
+describe.skipIf(!canBuildNodeAddons())("napi_threadsafe_function", () => {
+  it("can be released after the Worker that created it exited", async () => {
+    // next-swc shape: an addon creates an unref'd TSFN on a Worker's env, the
+    // Worker exits (freeing its VM and event loop), and only then does another
+    // thread release the TSFN. The release must not touch the dead loop
+    // (heap-use-after-free under ASAN).
+    const fixture = /* js */ `
+      const path = ${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))};
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(
+        "require(" + JSON.stringify(path) + ").create_orphaned_tsfn(() => {});",
+        { eval: true },
+      );
+      await new Promise((resolve, reject) => {
+        worker.on("exit", resolve);
+        worker.on("error", reject);
+      });
+      const status = require(path).release_orphaned_tsfn();
+      console.log("release_status=" + status);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // 0 == napi_ok; a UAF aborts the process (empty stdout, nonzero exit).
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "release_status=0", exitCode: 0 });
+  });
+});
+
 // Kept outside describe.concurrent("napi") so RSS measurement isn't skewed by
 // the other tests' subprocesses and doesn't add load to the --compile tests.
 describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {

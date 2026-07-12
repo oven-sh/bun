@@ -322,6 +322,39 @@ napi_value test_cancel_async_work(const Napi::CallbackInfo &info) {
   return result;
 }
 
+// Process-global on purpose: created on a Worker's env, released from the
+// main thread after that Worker (and its env/event loop) is gone.
+static napi_threadsafe_function orphaned_tsfn = nullptr;
+
+static void orphaned_tsfn_callback(napi_env env, napi_value js_callback,
+                                   void *context, void *data) {}
+
+// Creates a TSFN on the calling env (run this inside a Worker) and unrefs it
+// so the Worker's event loop can exit while the TSFN is still acquired.
+napi_value create_orphaned_tsfn(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "napitests::orphaned_tsfn");
+  NODE_API_CALL(env, napi_create_threadsafe_function(
+                         env, info[0], nullptr, resource_name,
+                         // max_queue_size, initial_thread_count
+                         1, 1,
+                         // thread_finalize_data, thread_finalize_cb
+                         nullptr, nullptr,
+                         // context
+                         nullptr, orphaned_tsfn_callback, &orphaned_tsfn));
+  NODE_API_CALL(env, napi_unref_threadsafe_function(env, orphaned_tsfn));
+  return info.Env().Undefined();
+}
+
+// Run this on the main thread AFTER the Worker exited: the release must not
+// touch the dead Worker's event loop (heap-use-after-free under ASAN).
+napi_value release_orphaned_tsfn(const Napi::CallbackInfo &info) {
+  napi_status status =
+      napi_release_threadsafe_function(orphaned_tsfn, napi_tsfn_release);
+  orphaned_tsfn = nullptr;
+  return Napi::Number::New(info.Env(), status);
+}
+
 void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_promise);
   REGISTER_FUNCTION(env, exports, create_promise_with_napi_cpp);
@@ -329,6 +362,8 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_async_work_with_null_execute);
   REGISTER_FUNCTION(env, exports, create_async_work_with_null_complete);
   REGISTER_FUNCTION(env, exports, test_cancel_async_work);
+  REGISTER_FUNCTION(env, exports, create_orphaned_tsfn);
+  REGISTER_FUNCTION(env, exports, release_orphaned_tsfn);
 }
 
 } // namespace napitests

@@ -716,6 +716,14 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
+    /// Unregister a hook whose `ctx` is about to be freed (Node's
+    /// `RemoveCleanupHook` equivalent). No-op if it already ran or was
+    /// never pushed.
+    pub fn remove_cleanup_hook(&mut self, ctx: *mut c_void, func: CleanupHookFunction) {
+        self.cleanup_hooks
+            .retain(|h| !(h.ctx == ctx && core::ptr::fn_addr_eq(h.func, func)));
+    }
+
     pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the

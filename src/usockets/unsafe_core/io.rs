@@ -1440,13 +1440,22 @@ mod imp {
         path: &[u8],
         f: impl FnOnce(*const libc::sockaddr, libc::socklen_t) -> Result<LIBUS_SOCKET_DESCRIPTOR, i32>,
     ) -> Result<LIBUS_SOCKET_DESCRIPTOR, i32> {
-        let ua = create_unix_socket_address(path)?;
+        // C sets errno on every synthesized address failure (bsd.c:1223-1339);
+        // callers like the server's listen-error path read thread errno.
+        let ua = match create_unix_socket_address(path) {
+            Ok(ua) => ua,
+            Err(e) => {
+                set_errno(e);
+                return Err(e);
+            }
+        };
 
         // SAFETY: dirfd is a live directory fd owned by `ua`.
         #[cfg(target_vendor = "apple")]
         if ua.dirfd != -1 && unsafe { __pthread_fchdir(ua.dirfd) } != 0 {
             // SAFETY: closing our own dirfd.
             unsafe { libc::close(ua.dirfd) };
+            set_errno(libc::ENAMETOOLONG);
             return Err(libc::ENAMETOOLONG);
         }
 
@@ -2351,14 +2360,18 @@ mod imp {
     // and NT paths can't be shortened the /proc/self/fd way). The C
     // simulated ENOENT/ENAMETOOLONG via SetLastError win32 codes.
 
+    /// Failures also set the thread last-error (C used `SetLastError`;
+    /// consumers such as the server's listen-error path read it back).
     fn create_unix_socket_address(path: &[u8]) -> Result<win::sockaddr_un, i32> {
         if path.is_empty() {
-            return Err(win::ERROR_PATH_NOT_FOUND); // simulated ENOENT
+            set_errno(win::ERROR_PATH_NOT_FOUND); // simulated ENOENT
+            return Err(win::ERROR_PATH_NOT_FOUND);
         }
         let mut addr: win::sockaddr_un = win::pod_zeroed();
         addr.sun_family = ws2::AF_UNIX as u16;
         if path.len() >= addr.sun_path.len() {
-            return Err(win::ERROR_FILENAME_EXCED_RANGE); // simulated ENAMETOOLONG
+            set_errno(win::ERROR_FILENAME_EXCED_RANGE); // simulated ENAMETOOLONG
+            return Err(win::ERROR_FILENAME_EXCED_RANGE);
         }
         addr.sun_path[..path.len()].copy_from_slice(path);
         Ok(addr)
@@ -2380,11 +2393,13 @@ mod imp {
             512,
         ) {
             close(fd, false);
-            return Err(if e == win::WSAENETDOWN {
+            let e = if e == win::WSAENETDOWN {
                 win::ERROR_PATH_NOT_FOUND
             } else {
                 e
-            });
+            };
+            set_errno(e);
+            return Err(e);
         }
         Ok(fd)
     }

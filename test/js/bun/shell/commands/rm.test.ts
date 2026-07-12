@@ -172,14 +172,17 @@ foo/
       const PAR = 8;
       for (let it = 0; it < ITERS; it++) {
         const dirs = Array.from({ length: PAR }, (_, i) => tree(it * PAR + i));
+        let watchdogTimer!: ReturnType<typeof setTimeout>;
+        const watchdog = new Promise<"hang">(r => (watchdogTimer = setTimeout(() => r("hang"), 10_000)));
         const results = await Promise.all(
           dirs.map(d =>
             Promise.race([
-              $\`rm -rfv \${d}/foo\`.quiet().then(r => r.exitCode),
-              Bun.sleep(10_000).then(() => "hang" as const),
+              $\`rm -rfv \${d}/foo\`.quiet().nothrow().then(r => r.exitCode),
+              watchdog,
             ]),
           ),
         );
+        clearTimeout(watchdogTimer);
         for (const r of results) {
           if (r === "hang") {
             console.error("rm -rfv hung at iteration", it);
@@ -192,6 +195,7 @@ foo/
         }
       }
       console.log("ok", ITERS * PAR);
+      process.exit(0);
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],

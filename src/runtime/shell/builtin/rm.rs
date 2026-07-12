@@ -1509,8 +1509,7 @@ impl DirTask {
                 .store(true, Ordering::SeqCst);
             (*this).need_to_wait.store(false, Ordering::SeqCst);
             // The caller just took `subtask_count` to 0; restore the slot
-            // that `post_run`'s own decrement (and any enqueue from
-            // `remove_entry_dir_after_children`) expects.
+            // `post_run`'s own decrement expects.
             (*this).subtask_count.store(1, Ordering::SeqCst);
             let tm = &*(*this).task_manager;
             let mut do_post_run = true;

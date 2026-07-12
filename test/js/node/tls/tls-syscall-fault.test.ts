@@ -27,13 +27,15 @@ test.skipIf(!fault.available())(
       cmd: [bunExe(), join(import.meta.dir, "tls-loop-buffer-oom-fixture.ts")],
       // BUN_CRASH_REPORT_URL="": this OOM is deliberate; uploading it to CI's
       // remap server would pin a spurious "crash reported" error on the next
-      // unrelated failing test. With reporting off the phrasing is stable.
+      // unrelated failing test.
       env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const outOfMemory = stderr.includes("Bun ran out of memory");
+    // `CrashReason::OutOfMemory` phrasing varies with SHOW_CRASH_TRACE, so
+    // match the shared substring (see run-crash-handler.test.ts).
+    const outOfMemory = stderr.toLowerCase().includes("out of memory");
     expect({
       markers: stdout
         .split("\n")

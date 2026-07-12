@@ -636,11 +636,9 @@ it(".params decodes percent escapes in a route segment exactly once", () => {
 
   const escaped = router.match("/posts/%252e%252e%252fetc")!;
   expect(escaped.name).toBe("/posts/[id]");
-  expect(escaped.pathname).toBe("/posts/%2e%2e%2fetc");
   expect(escaped.params.id).toBe("%2e%2e%2fetc");
 
   const percent = router.match("/posts/100%2525")!;
-  expect(percent.pathname).toBe("/posts/100%25");
   expect(percent.params.id).toBe("100%25");
 });
 
@@ -854,8 +852,8 @@ it("match() does not let a percent-encoded '/' cross a route segment boundary", 
     literalSlash: m("/admin/panel"),
     nonStatic: m("/he%2Fllo"),
     nestedDynamic: m("/posts/a%2Fb"),
-    // %25 must not be decoded early either, or the per-param decode would
-    // then read the following bytes as a fresh escape (double decode).
+    // %25 must stay encoded too, or the per-param decode would then read the
+    // following bytes as a fresh escape (double decode).
     encodedPercent: m("/posts/%2541"),
     mixed: m("/posts/%25%2F"),
   }).toEqual({

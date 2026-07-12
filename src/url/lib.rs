@@ -1065,10 +1065,16 @@ impl QueryStringMap {
 
             let name_hash: u64 = wyhash(name_slice);
 
+            // `URLPath::parse` decoded every escape in the path except the
+            // `%2F`/`%25` PRESERVE_STRUCTURE kept, so decoding those here is
+            // the single decode applied to a captured param value.
             let value_slice = result.raw_value(scanner.pathname.pathname);
-            value.length = u32::try_from(value_slice.len()).unwrap();
             value.offset = buf_writer_pos;
-            buf.extend_from_slice(value_slice);
+            value.length = PercentEncoding::decode(&mut buf, value_slice).unwrap_or_else(|_| {
+                buf.truncate(buf_writer_pos as usize);
+                buf.extend_from_slice(value_slice);
+                u32::try_from(value_slice.len()).unwrap()
+            });
             buf_writer_pos += value.length;
 
             list.push(Param {
@@ -1413,7 +1419,7 @@ impl PercentEncoding {
 
     /// `PRESERVE_STRUCTURE` copies `%2F` and `%25` through verbatim so route
     /// matchers that split the output on `/` never see a decoded slash, and
-    /// so a later per-value decode of a captured segment is the only decode.
+    /// so the per-value decode of a captured segment is the only decode.
     pub fn decode_fault_tolerant<
         W: bun_core::io::Write,
         const FAULT_TOLERANT: bool,

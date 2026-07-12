@@ -69,8 +69,8 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         // escape must not allocate query-sized storage first.
         let mut buf: Vec<u8> = Vec::with_capacity(capped.len());
         // `PRESERVE_STRUCTURE` keeps `%2F`/`%25` encoded so an escaped slash
-        // can't cross a route segment boundary and the per-value decode of a
-        // captured param in `QueryStringMap` is the single decode applied.
+        // can't cross a route segment boundary; `QueryStringMap` decodes those
+        // two escapes per captured param value as the single applied decode.
         let n = PercentEncoding::decode_fault_tolerant::<_, true, true>(
             &mut buf,
             capped,

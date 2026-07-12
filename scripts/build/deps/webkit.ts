@@ -67,6 +67,10 @@ function prebuiltSuffix(cfg: Config): string {
   // arm64 or macOS. Suffix order matches the release asset names:
   // bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
   if (cfg.baseline && cfg.x64) s += "-baseline";
+  // -mimalloc: JSC compiled against mimalloc instead of libpas. Linux glibc
+  // only (enforced in resolveConfig). Suffix before -lto to match the release
+  // asset names: bun-webkit-linux-amd64-mimalloc-lto.tar.gz
+  if (cfg.webkitMimalloc) s += "-mimalloc";
   if (cfg.debug) s += "-debug";
   else if (cfg.lto) s += "-lto";
   if (cfg.asan) s += "-asan";
@@ -341,6 +345,7 @@ export const webkit: Dependency = {
       ENABLE_MEDIA_STREAM: "OFF",
       ENABLE_WEB_RTC: "OFF",
       ...(cfg.asan ? { ENABLE_SANITIZERS: "address" } : {}),
+      ...(cfg.webkitMimalloc ? { USE_MIMALLOC: "ON", USE_EXTERNAL_MIMALLOC: "ON" } : {}),
     };
 
     const spec: NestedCmakeBuild = {

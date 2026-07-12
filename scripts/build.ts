@@ -411,6 +411,7 @@ function parseArgs(argv: string[]): CliArgs {
     "assertions",
     "logs",
     "baseline",
+    "webkitMimalloc",
     "canary",
     "staticSqlite",
     "staticLibatomic",

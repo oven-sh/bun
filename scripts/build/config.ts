@@ -136,6 +136,12 @@ export interface Config {
   logs: boolean;
   /** x64-only: target nehalem (no AVX) instead of haswell. */
   baseline: boolean;
+  /**
+   * Use the `-mimalloc` WebKit prebuilt (JSC routed through mimalloc instead of
+   * libpas). The archives ship `mi_*` as undefined symbols; bun's own mimalloc
+   * dep (oven-sh/mimalloc) satisfies them at link time. Linux glibc only.
+   */
+  webkitMimalloc: boolean;
   canary: boolean;
   /** MinSizeRel → optimize for size. */
   smol: boolean;
@@ -336,6 +342,7 @@ export interface PartialConfig {
   assertions?: boolean;
   logs?: boolean;
   baseline?: boolean;
+  webkitMimalloc?: boolean;
   canary?: boolean;
   staticSqlite?: boolean;
   staticLibatomic?: boolean;
@@ -757,6 +764,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // -baseline WebKit prebuilt has no -lto variant).
   const baseline = partial.baseline ?? false;
 
+  // WebKit-uses-mimalloc variant: Linux glibc only for now (the only
+  // -mimalloc prebuilts oven-sh/WebKit ships).
+  const webkitMimalloc = partial.webkitMimalloc ?? false;
+
   // LTO: default on for CI release non-asan non-assertions builds on Linux
   // and on darwin cross-compiles. Windows is NOT in the default even though
   // the windows x64 cross toolchain fully supports ThinLTO + cross-language
@@ -909,6 +920,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // ─── Validation ───
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
+  assert(
+    !webkitMimalloc || (linux && abi === "gnu" && !asan && !debug),
+    "webkitMimalloc=true requires Linux glibc release (only -mimalloc and -mimalloc-lto WebKit prebuilts exist)",
+  );
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
   assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu, musl, or android)");
@@ -1130,6 +1145,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     assertions,
     logs,
     baseline,
+    webkitMimalloc,
     canary,
     smol,
     staticSqlite,
@@ -1460,6 +1476,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.assertions) features.push("assertions");
   if (cfg.logs) features.push("logs");
   if (cfg.baseline) features.push("baseline");
+  if (cfg.webkitMimalloc) features.push("webkit-mimalloc");
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
   if (cfg.socketFaultInjection !== cfg.asan) {

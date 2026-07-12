@@ -59,6 +59,7 @@ test("MessagePort.postMessage() returns true, or undefined when the port is clos
     try {
       let delivered = false;
       port1.on("message", () => (delivered = true));
+      const closed = new Promise<void>(resolve => port1.on("close", () => resolve()));
       const msg = {
         get x() {
           port2.close();
@@ -66,6 +67,9 @@ test("MessagePort.postMessage() returns true, or undefined when the port is clos
         },
       };
       expect(port2.postMessage(msg)).toBe(true);
+      // Delivery is async; await port1's 'close' (fired after peer-close
+      // propagation flushes port1's inbox) so a regressed send would have landed.
+      await closed;
       expect(delivered).toBe(false);
     } finally {
       port1.close();

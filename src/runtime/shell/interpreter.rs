@@ -1257,11 +1257,12 @@ impl Interpreter {
     }
 
     /// `Yield::Failed`: reject the ShellPromise with the pending exception and
-    /// release the keepalive. `has_pending_activity` stays non-zero so GC
-    /// cannot collect us while a PipeReader still holds our pointer.
+    /// release the keepalive. `has_pending_activity` is decremented only when
+    /// no spawned subprocess still holds a raw backref into us.
     pub fn reject_pending_exception(&self) {
         use crate::jsc::JSValue;
         use crate::jsc::generated::JSShellInterpreter;
+        use crate::shell::states::cmd::Exec;
 
         let Some(global) = self.global_this_ref() else {
             return;
@@ -1271,6 +1272,12 @@ impl Interpreter {
         };
         let err = exc.to_error().unwrap_or(exc);
         self.keep_alive.with_mut(|k| k.disable());
+        let has_live_subproc = self.nodes.get().iter().any(|n| {
+            matches!(n, Node::Cmd(c) if matches!(&c.exec, Exec::Subproc(s) if !s.child.is_null()))
+        });
+        if !has_live_subproc {
+            Self::decr_pending_activity_flag(&self.has_pending_activity);
+        }
         let this_jsvalue = self.this_jsvalue.get();
         let reject = (this_jsvalue != JSValue::ZERO)
             .then(|| JSShellInterpreter::reject_get_cached(this_jsvalue))

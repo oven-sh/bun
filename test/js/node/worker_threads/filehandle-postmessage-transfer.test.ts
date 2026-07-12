@@ -1,15 +1,13 @@
 import { expect, test } from "bun:test";
-import { tmpdirSync } from "harness";
+import { tempDir } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join } from "node:path";
 import { markAsUntransferable, MessageChannel, receiveMessageOnPort, Worker } from "node:worker_threads";
 
 test("MessagePort.postMessage transfers a FileHandle", async () => {
-  const dir = tmpdirSync("port-fh-transfer");
-  const file = join(dir, "x.txt");
-  fs.writeFileSync(file, "hello");
-  const fh = await fs.promises.open(file, "r");
+  using dir = tempDir("port-fh-transfer", { "x.txt": "hello" });
+  const fh = await fs.promises.open(join(String(dir), "x.txt"), "r");
   const origFd = fh.fd;
   const { port1, port2 } = new MessageChannel();
   let rx: any;
@@ -32,10 +30,8 @@ test("MessagePort.postMessage transfers a FileHandle", async () => {
 });
 
 test("MessagePort.postMessage transfers a FileHandle with the {transfer} form", async () => {
-  const dir = tmpdirSync("port-fh-transfer");
-  const file = join(dir, "x.txt");
-  fs.writeFileSync(file, "hello");
-  const fh = await fs.promises.open(file, "r");
+  using dir = tempDir("port-fh-transfer", { "x.txt": "hello" });
+  const fh = await fs.promises.open(join(String(dir), "x.txt"), "r");
   const { port1, port2 } = new MessageChannel();
   let rx: any;
   try {
@@ -53,10 +49,8 @@ test("MessagePort.postMessage transfers a FileHandle with the {transfer} form", 
 });
 
 test("receiveMessageOnPort reconstructs a transferred FileHandle", async () => {
-  const dir = tmpdirSync("port-fh-transfer");
-  const file = join(dir, "x.txt");
-  fs.writeFileSync(file, "hello");
-  const fh = await fs.promises.open(file, "r");
+  using dir = tempDir("port-fh-transfer", { "x.txt": "hello" });
+  const fh = await fs.promises.open(join(String(dir), "x.txt"), "r");
   const { port1, port2 } = new MessageChannel();
   let res: any;
   try {
@@ -74,10 +68,8 @@ test("receiveMessageOnPort reconstructs a transferred FileHandle", async () => {
 });
 
 test("MessagePort.postMessage on an in-use FileHandle throws DataCloneError and leaves it usable", async () => {
-  const dir = tmpdirSync("port-fh-transfer");
-  const file = join(dir, "x.txt");
-  fs.writeFileSync(file, "hello");
-  const fh = await fs.promises.open(file, "r");
+  using dir = tempDir("port-fh-transfer", { "x.txt": "hello" });
+  const fh = await fs.promises.open(join(String(dir), "x.txt"), "r");
   const pending = fh.read(Buffer.alloc(5), 0, 5, 0);
   const { port1, port2 } = new MessageChannel();
   let rx: any;
@@ -103,10 +95,8 @@ test("MessagePort.postMessage on an in-use FileHandle throws DataCloneError and 
 });
 
 test("MessagePort.postMessage restores a transferred FileHandle when serialization fails", async () => {
-  const dir = tmpdirSync("port-fh-transfer");
-  const file = join(dir, "x.txt");
-  fs.writeFileSync(file, "hello");
-  const fh = await fs.promises.open(file, "r");
+  using dir = tempDir("port-fh-transfer", { "x.txt": "hello" });
+  const fh = await fs.promises.open(join(String(dir), "x.txt"), "r");
   const { port1, port2 } = new MessageChannel();
   let rx: any;
   try {
@@ -131,9 +121,8 @@ test("MessagePort.postMessage restores a transferred FileHandle when serializati
 });
 
 test("MessagePort.postMessage rejects a FileHandle marked untransferable", async () => {
-  const dir = tmpdirSync("port-fh-transfer");
-  const file = join(dir, "x.txt");
-  fs.writeFileSync(file, "hello");
+  using dir = tempDir("port-fh-transfer", { "x.txt": "hello" });
+  const file = join(String(dir), "x.txt");
   const fh = await fs.promises.open(file, "r");
   const ok = await fs.promises.open(file, "r");
   markAsUntransferable(fh);
@@ -161,10 +150,8 @@ test("MessagePort.postMessage rejects a FileHandle marked untransferable", async
 });
 
 test("a FileHandle referenced twice in a posted message deserializes to one instance", async () => {
-  const dir = tmpdirSync("port-fh-transfer");
-  const file = join(dir, "x.txt");
-  fs.writeFileSync(file, "hello");
-  const fh = await fs.promises.open(file, "r");
+  using dir = tempDir("port-fh-transfer", { "x.txt": "hello" });
+  const fh = await fs.promises.open(join(String(dir), "x.txt"), "r");
   const { port1, port2 } = new MessageChannel();
   let rx: any;
   try {
@@ -183,27 +170,24 @@ test("a FileHandle referenced twice in a posted message deserializes to one inst
 });
 
 test("Worker.postMessage and parentPort.postMessage transfer FileHandles", async () => {
-  const dir = tmpdirSync("worker-fh-post");
-  const file = join(dir, "x.txt");
-  fs.writeFileSync(file, "hello");
-  const script = join(dir, "w.mjs");
-  fs.writeFileSync(
-    script,
-    `import { parentPort } from "node:worker_threads";
-     import { open } from "node:fs/promises";
-     parentPort.on("message", async (fh) => {
-       const buf = Buffer.alloc(5);
-       const { bytesRead } = await fh.read(buf, 0, 5, 0);
-       await fh.close();
-       const out = await open(${JSON.stringify(file)}, "r");
-       parentPort.postMessage({ text: buf.toString("utf8", 0, bytesRead), back: out }, [out]);
-     });`,
-  );
+  using dir = tempDir("worker-fh-post", {
+    "x.txt": "hello",
+    "w.mjs": `import { parentPort } from "node:worker_threads";
+      import { open } from "node:fs/promises";
+      parentPort.on("message", async ({ fh, file }) => {
+        const buf = Buffer.alloc(5);
+        const { bytesRead } = await fh.read(buf, 0, 5, 0);
+        await fh.close();
+        const out = await open(file, "r");
+        parentPort.postMessage({ text: buf.toString("utf8", 0, bytesRead), back: out }, [out]);
+      });`,
+  });
+  const file = join(String(dir), "x.txt");
   const fh = await fs.promises.open(file, "r");
-  const worker = new Worker(script);
+  const worker = new Worker(join(String(dir), "w.mjs"));
   let reply: any;
   try {
-    worker.postMessage(fh, [fh as any]);
+    worker.postMessage({ fh, file }, [fh as any]);
     expect(fh.fd).toBe(-1);
     [reply] = await once(worker, "message");
     expect(reply.text).toBe("hello");

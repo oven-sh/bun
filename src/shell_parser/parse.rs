@@ -3362,7 +3362,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 break;
             }
             let _ = self.eat();
-            fd = fd.saturating_mul(10).saturating_add(p.char - u32::from(b'0'));
+            fd = fd
+                .saturating_mul(10)
+                .saturating_add(p.char - u32::from(b'0'));
         }
         let mut flags = match fd {
             0 => ast::RedirectFlags::STDIN,

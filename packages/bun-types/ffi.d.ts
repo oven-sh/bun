@@ -429,6 +429,15 @@ declare module "bun:ffi" {
     ["napi_env"]: FFIType.napi_env;
     ["napi_value"]: FFIType.napi_value;
     ["buffer"]: FFIType.buffer;
+    // Fast 64-bit variants and C aliases the runtime's ABI_TYPE_LABEL accepts.
+    ["i64_fast"]: FFIType.i64_fast;
+    ["u64_fast"]: FFIType.u64_fast;
+    ["c_int"]: FFIType.int32_t;
+    ["c_uint"]: FFIType.uint32_t;
+    ["isize"]: FFIType.int64_t;
+    ["char*"]: FFIType.ptr;
+    ["void*"]: FFIType.ptr;
+    ["fn"]: FFIType.function;
   }
 
   type FFITypeOrString = FFIType | keyof FFITypeStringToType;

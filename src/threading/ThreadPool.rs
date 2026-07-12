@@ -901,7 +901,7 @@ impl ThreadPool {
                 if stats_enabled() {
                     self.stats.sleeps.fetch_add(1, Ordering::Relaxed);
                 }
-                self.idle_event.wait();
+                self.idle_event.wait_broadcastable();
                 sync = self.sync.load(Ordering::Relaxed);
             }
         }
@@ -1360,6 +1360,24 @@ impl Event {
     /// or wait for the event to be shutdown entirely
     #[inline(never)]
     fn wait(&self) {
+        self.wait_inner(false);
+    }
+
+    /// Like [`Self::wait`], but also returns when this thread is woken while
+    /// another thread consumed the notification — the case for every thread
+    /// but one after a broadcast (`wake(NOTIFIED, u32::MAX)`,
+    /// i.e. `wake_for_idle_events`). Plain `wait()` puts those threads back
+    /// to sleep inside the futex loop without ever returning, so the
+    /// per-thread idle tasks queued before the broadcast (the bundler's
+    /// `Worker::deinit`) would not run until the next real task wakes them.
+    /// A spurious return is safe for the caller: it re-checks its queues,
+    /// drains idle events, and re-enters.
+    fn wait_broadcastable(&self) {
+        self.wait_inner(true);
+    }
+
+    #[inline(never)]
+    fn wait_inner(&self, return_on_broadcast: bool) {
         let mut acquire_with: u32 = Self::EMPTY;
         let mut state = self.state.load(Ordering::Relaxed);
         let mut has_shrunk_memory: bool = false;
@@ -1421,6 +1439,11 @@ impl Event {
                 has_shrunk_memory = true;
                 bun_core::Global::mimalloc_cleanup(false);
                 bun_alloc::wtf::release_fast_malloc_free_memory_for_this_thread();
+            } else if return_on_broadcast {
+                // Woken by a wake(); if the notification is still pending the
+                // re-entered wait() consumes it immediately, so returning here
+                // never loses a wakeup.
+                return;
             }
             state = self.state.load(Ordering::Relaxed);
             acquire_with = Self::WAITING;

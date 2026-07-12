@@ -242,7 +242,12 @@ impl<C: CompletionStruct> BundleThread<C> {
             }
 
             if has_bundled {
-                bun_alloc::mimalloc::mi_collect(false);
+                // `force = true` so mimalloc purges (decommits) the arena
+                // slices freed by the per-bundle heaps right away. A plain
+                // collect only schedules a delayed purge, and with
+                // back-to-back `Bun.build()` calls that deadline is rarely
+                // honored — RSS then grows by one bundle graph per build.
+                bun_alloc::mimalloc::mi_collect(true);
                 has_bundled = false;
             }
 

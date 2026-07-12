@@ -155,8 +155,8 @@ export const profiles = {
   },
 
   /** Release with WebKit on mimalloc instead of libpas (Linux glibc only);
-   * JSC and bun share one allocator. Default for Linux glibc release now
-   * (see resolveConfig); this profile just forces lto=false for local testing. */
+   * JSC and bun share one allocator. Opt-in while the -mimalloc prebuilt is
+   * validated; lto=false for local testing. */
   "release-mimalloc": {
     buildType: "Release",
     webkit: "prebuilt",

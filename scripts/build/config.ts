@@ -762,18 +762,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // -baseline WebKit prebuilt has no -lto variant).
   const baseline = partial.baseline ?? false;
 
-  // WebKit-uses-mimalloc variant: on by default for Linux glibc release on the
-  // pinned prebuilt (the only combination with -mimalloc artifacts). Local
-  // WebKit and explicit --webkit-version overrides stay on libpas.
-  const webkitMimalloc =
-    partial.webkitMimalloc ??
-    (linux &&
-      abi === "gnu" &&
-      release &&
-      !asan &&
-      !baseline &&
-      (partial.webkit ?? "prebuilt") === "prebuilt" &&
-      partial.webkitVersion === undefined);
+  // WebKit-uses-mimalloc variant (JSC and bun share one allocator). Opt-in:
+  // -mimalloc prebuilts exist only for Linux glibc release (enforced below).
+  const webkitMimalloc = partial.webkitMimalloc ?? false;
 
   // LTO: default on for CI release non-asan non-assertions builds on Linux
   // and on darwin cross-compiles. Windows is NOT in the default even though

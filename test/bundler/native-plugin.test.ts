@@ -453,7 +453,13 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     `;
 
     await Bun.$`echo ${build_code} > build.ts`;
-    const { stdout, stderr } = await Bun.$`BUN_TEST_TEMP_DIR=${tempdir} ${bunExe()} run build.ts`.throws(false);
+    // BUN_CRASH_REPORT_URL="": this segfault is deliberate; uploading it to
+    // CI's remap server pins a spurious "crash reported" error on the next
+    // unrelated failing test (runner only drains /traces on non-zero exit).
+    const { stdout, stderr } =
+      await Bun.$`BUN_CRASH_REPORT_URL="" BUN_ENABLE_CRASH_REPORTING=0 BUN_TEST_TEMP_DIR=${tempdir} ${bunExe()} run build.ts`.throws(
+        false,
+      );
     const errorString = stderr.toString();
     expect(errorString).toContain('\x1b[31m\x1b[2m"native_plugin_test"\x1b[0m');
   });

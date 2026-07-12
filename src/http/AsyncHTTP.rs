@@ -596,22 +596,16 @@ impl<'a> AsyncHTTP<'a> {
 }
 
 impl AsyncHTTP<'static> {
-    /// Fail a queued request that was never handed to `start_queued_task`.
-    /// Runs the caller's `result_callback` with `fail = err` so the owning
-    /// `fetch()` promise (or install NetworkTask) rejects. Used when the HTTP
-    /// thread cannot create its event loop under fd exhaustion.
+    /// Fail a queued-but-never-started request via its `result_callback` so
+    /// the owning fetch/NetworkTask rejects (HTTP-thread loop init failed).
     ///
     /// # Safety
-    /// `http` must be a live JS-thread-owned `AsyncHTTP` popped from
-    /// `HttpThread::queued_tasks`.
+    /// `http` must be live and just popped from `HttpThread::queued_tasks`.
     pub unsafe fn fail_before_start(http: NonNull<AsyncHTTP<'static>>, err: crate::Error) {
-        // Callbacks (e.g. `FetchTasklet::callback`) borrow both the JS-side
-        // `AsyncHTTP` and the `async_http` arg. Mirror `start_queued_task`: a
-        // bitwise stack copy supplies the arg; it is forgotten afterwards as
-        // every owned field still belongs to the original.
+        // Callbacks borrow both the JS-side original and the `async_http` arg,
+        // so pass an undropped stack copy (mirrors `start_queued_task`).
         let http = http.as_ptr();
-        // SAFETY: caller guarantees `http` is live and exclusively owned by
-        // this thread (popped from the MPSC queue).
+        // SAFETY: MPSC pop — `http` is live and exclusively owned here.
         let mut copy = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(http) });
         copy.real = NonNull::new(http);
         copy.err = Some(err);

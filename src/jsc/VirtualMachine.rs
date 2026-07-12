@@ -1990,10 +1990,8 @@ impl VirtualMachine {
     pub fn init(mut opts: InitOptions) -> crate::CrateResult<*mut VirtualMachine> {
         jsc::mark_binding();
 
-        // `uws::Loop::get()` lazily creates the per-thread uSockets loop; on
-        // fd exhaustion (epoll_create1/timerfd/eventfd → EMFILE) it returns
-        // null. Check before allocating anything so the worker's null-vm
-        // `shutdown()` path has nothing to reclaim.
+        // `uws::Loop::get()` returns null on EMFILE; bail before allocating
+        // so the worker's null-vm `shutdown()` has nothing to reclaim.
         if uws::Loop::get().is_null() {
             return Err(bun_errno::SystemErrno::EMFILE.into());
         }

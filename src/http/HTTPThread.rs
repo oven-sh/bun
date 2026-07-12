@@ -1271,11 +1271,8 @@ mod _event_loop_draft {
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        // Ensure this thread's uSockets loop exists before `init_global`
-        // derefs it. `uws::Loop::get()` returns null if epoll_create1 /
-        // timerfd_create / eventfd fail (EMFILE). Rather than aborting the
-        // process, reject every queued fetch with `FailedToOpenSocket` and
-        // retry once fds free up — the next `get()` re-attempts creation.
+        // `uws::Loop::get()` is null on EMFILE (epoll/eventfd); reject every
+        // queued fetch and retry so `init_global` never derefs a null loop.
         while uws::Loop::get().is_null() {
             let thread = crate::http_thread_mut();
             while let Some(http) = NonNull::new(thread.queued_tasks.pop()) {

@@ -786,11 +786,9 @@ impl WebWorker {
         let vm_ptr = match self.start_vm() {
             Ok(vm) => vm,
             Err(err) => {
-                // VM init failed before a JSGlobalObject exists (e.g. EMFILE
-                // from the per-thread uSockets loop, or getcwd ENOENT from
-                // the transpiler hook). Surface it as a Worker `error` event
-                // on the parent and tear down this thread cleanly, matching
-                // Node's ERR_WORKER_INIT_FAILED behaviour.
+                // VM init failed before a JSGlobalObject exists (e.g. EMFILE on
+                // the per-thread loop). Fire a Worker `error` event on the
+                // parent and shut down, matching Node's ERR_WORKER_INIT_FAILED.
                 let mut msg = BunString::clone_utf8(
                     format!("Worker initialization failed: {}", err.name()).as_bytes(),
                 );

@@ -1019,6 +1019,11 @@ const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \xA0\n\r";
 /// legitimate env var but well below where allocation becomes a DoS vector.
 const MAX_EXPANDED_VALUE_LEN: usize = 4 * 1024 * 1024;
 
+/// Upper bound on the sum of expanded-value bytes stored per `_parse` call.
+/// Bounds the linear case (many variables each referencing one at-cap value)
+/// that the per-value cap alone does not.
+const MAX_EXPANDED_TOTAL_LEN: usize = 32 * 1024 * 1024;
+
 enum Expansion<'a> {
     /// No `$` reference in the input; keep the original value.
     Unchanged,
@@ -1325,25 +1330,31 @@ impl<'a> Parser<'a> {
             // `values_mut()`. Values are dupe'd by `_parse` above, so length
             // is bounded by file size.
             let total = map.map.count();
+            let mut expanded_total: usize = 0;
             let mut idx = count;
             while idx < total {
                 let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
-                match self.expand_value(map, &current)? {
-                    Expansion::Unchanged => {}
-                    Expansion::Value(expanded) => {
-                        map.map.values_mut()[idx] = HashTableValue {
-                            value: Box::from(expanded),
-                            conditional: false,
-                        };
+                let expansion = match self.expand_value(map, &current)? {
+                    Expansion::Unchanged => {
+                        idx += 1;
+                        continue;
                     }
-                    Expansion::TooLarge => {
+                    Expansion::Value(expanded)
+                        if expanded_total.saturating_add(expanded.len())
+                            <= MAX_EXPANDED_TOTAL_LEN =>
+                    {
+                        expanded_total += expanded.len();
+                        Box::from(expanded)
+                    }
+                    Expansion::Value(_) | Expansion::TooLarge => {
                         expansion_capped = true;
-                        map.map.values_mut()[idx] = HashTableValue {
-                            value: Box::default(),
-                            conditional: false,
-                        };
+                        Box::default()
                     }
-                }
+                };
+                map.map.values_mut()[idx] = HashTableValue {
+                    value: expansion,
+                    conditional: false,
+                };
                 idx += 1;
             }
             count = 0;

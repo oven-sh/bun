@@ -271,6 +271,30 @@ test(".env value expansion is bounded", async () => {
   expect(exitCode).toBe(0);
 });
 
+test(".env total expansion is bounded", async () => {
+  // A0..A22 doubles to exactly 4 MiB (at the per-value cap). Then ten B lines
+  // each reference A22; uncapped, all ten would be 4 MiB for ~40 MiB retained.
+  // The per-file aggregate cap stops storing expansions once the sum exceeds
+  // its limit, so the tail of B9 must be empty.
+  let env = "A0=a\n";
+  for (let i = 1; i <= 22; i++) env += `A${i}=$A${i - 1}$A${i - 1}\n`;
+  for (let i = 0; i <= 9; i++) env += `B${i}=$A22\n`;
+  const dir = tempDirWithFiles("dotenv-expand-aggregate", {
+    ".env": env,
+    "index.ts": `console.log(JSON.stringify({ B0: process.env.B0?.length ?? -1, B9: process.env.B9 }));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    cwd: dir,
+    env: { ...bunEnv, NODE_ENV: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({ B0: 4194304, B9: "" });
+  expect(exitCode).toBe(0);
+});
+
 // ulimit -v is a no-op under ASAN (which reserves ~20 TiB of shadow VM).
 test.skipIf(!isLinux || isASAN)(".env value expansion doesn't abort the process", async () => {
   // A 419-byte .env whose doubling chain requests 2^35 bytes. Under a

@@ -350,23 +350,24 @@ impl Mv {
         let mut idx = 0usize;
         while idx < argc {
             let flag = Builtin::of(interp, cmd).arg_bytes(idx);
+            if flag == b"--" {
+                idx += 1;
+                break;
+            }
             match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
-                MvFlag::Done => {
-                    let filepath_args = argc - idx;
-                    if filepath_args < 2 {
-                        return Err(MvParseError::ShowUsage);
-                    }
-                    let me = Self::state_mut(interp, cmd);
-                    me.args.sources_start = idx;
-                    me.args.target_idx = argc - 1;
-                    return Ok(());
-                }
-                MvFlag::ContinueParsing => {}
+                MvFlag::Done => break,
+                MvFlag::ContinueParsing => idx += 1,
                 MvFlag::IllegalOption(s) => return Err(MvParseError::IllegalOption(s)),
             }
-            idx += 1;
         }
-        Err(MvParseError::ShowUsage)
+        let filepath_args = argc - idx;
+        if filepath_args < 2 {
+            return Err(MvParseError::ShowUsage);
+        }
+        let me = Self::state_mut(interp, cmd);
+        me.args.sources_start = idx;
+        me.args.target_idx = argc - 1;
+        Ok(())
     }
 
     fn parse_flag(opts: &mut Opts, flag: &[u8]) -> MvFlag {

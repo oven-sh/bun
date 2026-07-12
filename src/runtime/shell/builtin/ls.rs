@@ -244,6 +244,10 @@ impl Ls {
         let mut idx = 0usize;
         while idx < argc {
             let flag = Builtin::of(interp, cmd).arg_bytes(idx);
+            if flag == b"--" {
+                idx += 1;
+                return Ok(if idx < argc { Some(idx) } else { None });
+            }
             match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
                 ParseFlag::Done => return Ok(Some(idx)),
                 ParseFlag::ContinueParsing => {}

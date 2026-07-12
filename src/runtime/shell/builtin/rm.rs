@@ -149,7 +149,13 @@ impl Rm {
                     }
 
                     let arg = Builtin::of(interp, cmd).arg_bytes(idx as usize).to_vec();
-                    match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, &arg) {
+                    let is_end_of_options = arg == b"--";
+                    let parsed = if is_end_of_options {
+                        RmParseFlag::Done
+                    } else {
+                        Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, &arg)
+                    };
+                    match parsed {
                         RmParseFlag::ContinueParsing => {
                             if let RmState::ParseOpts { idx: i, .. } =
                                 &mut Self::state_mut(interp, cmd).state
@@ -174,7 +180,11 @@ impl Rm {
                                 return Self::write_err_literal(interp, cmd, idx, buf);
                             }
 
-                            let args_start = idx as usize;
+                            let args_start = idx as usize + is_end_of_options as usize;
+                            if args_start >= argc {
+                                let usage = Kind::Rm.usage_string();
+                                return Self::write_err_literal(interp, cmd, idx, usage);
+                            }
 
                             // Check that none of the paths will delete the root.
                             {

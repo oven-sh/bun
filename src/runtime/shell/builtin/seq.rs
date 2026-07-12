@@ -89,6 +89,9 @@ impl Seq {
                 idx += 1;
                 continue;
             }
+            if arg == b"--" {
+                idx += 1;
+            }
             break;
         }
 

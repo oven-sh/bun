@@ -2577,6 +2577,10 @@ pub fn parse_flags<'a, O: FlagParser>(
     while idx < args.len() {
         // SAFETY: argv entries are NUL-terminated C strings (see Builtin::init).
         let flag = unsafe { bun_core::ffi::cstr(args[idx]) }.to_bytes();
+        if flag == b"--" {
+            let rest = &args[idx + 1..];
+            return Ok(if rest.is_empty() { None } else { Some(rest) });
+        }
         match parse_one_flag(opts, flag) {
             ParseFlagResult::Done => return Ok(Some(&args[idx..])),
             ParseFlagResult::ContinueParsing => {}

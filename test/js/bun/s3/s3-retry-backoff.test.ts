@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// Verifies that S3Client retries back off exponentially instead of re-firing
-// immediately. A fake S3 server fails the PUT three times before succeeding
-// and we measure wall-clock gaps between the error being written and the
-// first byte of the next attempt.
+// Verifies S3Client retries back off exponentially: a fake S3 server fails the
+// PUT three times before succeeding and we measure the gap between each error
+// and the first byte of the next attempt.
 
 const env = {
   ...bunEnv,
@@ -151,10 +150,9 @@ function checkBackoff(r: Awaited<ReturnType<typeof runFixture>>) {
   });
 
   const gaps = r.result!.gaps;
-  // With BUN_S3_RETRY_BASE_DELAY_MS=100 and equal-jitter backoff, the minimum
-  // delay for attempt N is base*2^(N-1)/2: 50ms, 100ms, 200ms. Allow slack for
-  // wall-clock measurement; the pre-fix behavior is ~0-20ms for every attempt
-  // so these bounds cleanly separate.
+  // Equal-jitter min delay per attempt with base=100ms is 50/100/200ms; the
+  // thresholds below add slack for wall-clock jitter and still separate
+  // cleanly from the pre-fix ~0-20ms per-attempt gaps.
   expect(gaps[0]).toBeGreaterThanOrEqual(40);
   expect(gaps[1]).toBeGreaterThanOrEqual(80);
   expect(gaps[2]).toBeGreaterThanOrEqual(160);

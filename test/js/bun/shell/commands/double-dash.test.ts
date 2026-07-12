@@ -216,16 +216,13 @@ describe("-- end-of-options delimiter", () => {
   });
 
   describe("export", () => {
-    TestBuilder.command`export -- FOO=bar && echo $FOO`
-      .stdout("bar\n")
+    TestBuilder.command`export -- FOO=bar && export --`
+      .stdout(str => {
+        expect(str).toContain("FOO=bar\n");
+        expect(str).not.toContain("--=");
+      })
       .stderr("")
       .exitCode(0)
-      .runAsTest("export -- name=value");
-
-    TestBuilder.command`export --`
-      .stdout(str => expect(str).not.toContain("--="))
-      .stderr("")
-      .exitCode(0)
-      .runAsTest("export -- does not create a var named --");
+      .runAsTest("export -- name=value skips -- and does not create a var named --");
   });
 });

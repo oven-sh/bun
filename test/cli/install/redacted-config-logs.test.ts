@@ -1,6 +1,6 @@
 import { write } from "bun";
-import { describe, expect, test } from "bun:test";
 import { iniInternals } from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 

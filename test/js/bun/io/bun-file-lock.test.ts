@@ -212,8 +212,9 @@ describe("Bun.file().lock()", () => {
     expect(await Bun.file(path).exists()).toBe(true);
   });
 
-  // chmod 0o444 is a no-op on Windows; the O_RDONLY fallback is POSIX-relevant.
-  test.skipIf(isWindows)("shared lock works on a read-only file", async () => {
+  // chmod 0o444 is a no-op on Windows, and root bypasses file permissions,
+  // so the O_RDONLY fallback is only exercised as a non-root POSIX user.
+  test.skipIf(isWindows || process.getuid?.() === 0)("shared lock works on a read-only file", async () => {
     using dir = tempDir("bun-file-lock", { "ro.txt": "hello" });
     const path = join(String(dir), "ro.txt");
     chmodSync(path, 0o444);

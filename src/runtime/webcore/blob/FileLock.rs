@@ -187,6 +187,8 @@ fn optional_byte_count(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<O
 
 // ───────────────────────────── Lock acquisition task ────────────────────────
 
+const LOCK_POLL_INTERVAL_NS: u64 = 10_000_000;
+
 pub type FileLockTask<'a> = ConcurrentPromiseTask<'a, LockTaskCtx<'a>>;
 
 pub struct LockTaskCtx<'a> {
@@ -266,7 +268,7 @@ impl ConcurrentPromiseTaskContext for LockTaskCtx<'_> {
                     // POSIX flock → EWOULDBLOCK (== EAGAIN); Win32
                     // ERROR_LOCK_VIOLATION → EBUSY.
                     Err(e) if e.is_retry() || e.get_errno() == bun_sys::E::EBUSY => {
-                        let _ = Futex::wait(&self.aborted, 0, Some(10_000_000));
+                        let _ = Futex::wait(&self.aborted, 0, Some(LOCK_POLL_INTERVAL_NS));
                     }
                     Err(e) => {
                         self.result = Some(Err(e));

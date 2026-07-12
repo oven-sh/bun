@@ -12,6 +12,9 @@ describe("util.inspect large arrays with maxArrayLength", () => {
     ["Float64Array", n => new Float64Array(n)],
   ]) {
     test(`${label}: bounded by maxArrayLength, not length`, () => {
+      // Warm up inspect and allocate outside the timed region so the assertion
+      // measures only the inspect call itself.
+      util.inspect(make(8), { maxArrayLength: 4 });
       const big = make(1_000_000);
       const start = performance.now();
       const out = util.inspect(big, { maxArrayLength: 4 });
@@ -30,6 +33,17 @@ describe("util.inspect large arrays with maxArrayLength", () => {
     big[Symbol.for("s")] = "sym";
     const out = util.inspect(big, { maxArrayLength: 2, breakLength: Infinity });
     assert.strictEqual(out, "[ 7, 7, ... 999998 more items, foo: 'bar', Symbol(s): 'sym' ]");
+  });
+
+  test("Array: numeric-string keys at the array-index boundary are non-index", () => {
+    const a = [1, 2, 3];
+    a["4294967295"] = "not-an-index"; // 2**32 - 1 is not a valid array index
+    a["4294967296"] = "also-not-an-index";
+    a.foo = "bar";
+    assert.strictEqual(
+      util.inspect(a, { breakLength: Infinity }),
+      "[ 1, 2, 3, '4294967295': 'not-an-index', '4294967296': 'also-not-an-index', foo: 'bar' ]",
+    );
   });
 
   test("Array: showHidden includes non-enumerable own keys", () => {
@@ -56,6 +70,7 @@ describe("util.inspect large arrays with maxArrayLength", () => {
   });
 
   test("util.format %o on large array is bounded", () => {
+    util.format("%o", [1, 2, 3]);
     const big = new Array(1_000_000).fill(7);
     const start = performance.now();
     const out = util.format("%o", big);

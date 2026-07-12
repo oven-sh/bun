@@ -549,7 +549,8 @@ fn get_ptr_slice(
             // overflows (a process abort). `unsigned_abs` maps it safely.
             if !byte_off.as_number().is_finite() {
                 return ValueOrError::Err(
-                    global_this.to_invalid_arguments(format_args!("ptr must be a finite number.")),
+                    global_this
+                        .to_invalid_arguments(format_args!("byteOffset must be a finite number")),
                 );
             }
             let off = byte_off.to_int64();

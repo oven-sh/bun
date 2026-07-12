@@ -1468,7 +1468,6 @@ impl FFI {
             return JSValue::ZERO;
         }
         jsc::mark_binding();
-        let vm = jsc::VirtualMachineRef::get();
         let name_slice = name_str.to_slice();
 
         if object_value.is_empty_or_undefined_or_null() {
@@ -1497,7 +1496,6 @@ impl FFI {
             // on-disk temp file, returning the tmpfile path; libc `dlopen(2)`
             // can't see the bunfs virtual FS. The helper lives in
             // `crate::jsc_hooks` — same crate, so a direct call.
-            let _ = vm;
             if let Some(len) = crate::jsc_hooks::resolve_embedded_file_to_buf(
                 name_slice.slice(),
                 ext,

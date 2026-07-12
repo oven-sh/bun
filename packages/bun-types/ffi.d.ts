@@ -422,10 +422,10 @@ declare module "bun:ffi" {
     ["pointer"]: FFIType.pointer;
     ["void"]: FFIType.void;
     ["cstring"]: FFIType.cstring;
-    ["function"]: FFIType.pointer; // for now
+    ["function"]: FFIType.function;
     ["usize"]: FFIType.uint64_t; // for now
     ["size_t"]: FFIType.uint64_t;
-    ["callback"]: FFIType.pointer; // for now
+    ["callback"]: FFIType.function;
     ["napi_env"]: FFIType.napi_env;
     ["napi_value"]: FFIType.napi_value;
     ["buffer"]: FFIType.buffer;

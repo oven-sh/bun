@@ -77,6 +77,23 @@ nativeTests.test_promise_with_threadsafe_function = async () => {
   return await nativeTests.create_promise_with_threadsafe_function(() => 1234);
 };
 
+nativeTests.test_threadsafe_function_abort_then_last_release = async () => {
+  // create (thread_count=1), acquire (=2), abort (=1, closing)
+  nativeTests.test_napi_threadsafe_function_abort_then_last_release();
+  // let the abort's scheduled dispatch run first
+  await new Promise(resolve => setImmediate(resolve));
+  // release the last reference of the already-closing tsfn (=0)
+  nativeTests.test_napi_threadsafe_function_abort_then_last_release_drop();
+  // wait for the finalizer (bounded poll, not a timed sleep)
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_then_last_release_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_then_last_release_finalized());
+  // the process must exit on its own after this returns; a leaked event-loop
+  // keepalive would hang it forever
+};
+
 nativeTests.test_get_exception = (_, value) => {
   function thrower() {
     throw value;

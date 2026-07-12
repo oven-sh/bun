@@ -416,6 +416,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const result = await checkSameOutput("test_napi_threadsafe_function_does_not_hang_after_finalize", []);
       expect(result).toBe("success!");
     });
+
+    it("runs the finalizer and exits when the last reference is released after abort", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_then_last_release", []);
+      expect(result).toContain("finalized: true");
+    });
   });
 
   describe("exception handling", () => {

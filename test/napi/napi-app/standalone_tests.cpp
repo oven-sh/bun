@@ -88,6 +88,53 @@ static napi_value test_napi_threadsafe_function_does_not_hang_after_finalize(
   return env.Undefined();
 }
 
+static napi_threadsafe_function tsfn_abort_release = nullptr;
+static bool tsfn_abort_release_finalized = false;
+
+static void tsfn_abort_release_finalize(napi_env env, void *finalize_data,
+                                        void *finalize_hint) {
+  tsfn_abort_release_finalized = true;
+}
+
+// Create a tsfn (thread_count=1), acquire a second reference (thread_count=2),
+// then abort it (thread_count=1, closing). The abort's dispatch runs on the
+// next event-loop turn, sees thread_count!=0, and returns without finalizing.
+static napi_value test_napi_threadsafe_function_abort_then_last_release(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "abort_then_last_release");
+  tsfn_abort_release_finalized = false;
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, /* JavaScript function */ nullptr,
+                    /* async resource */ nullptr, resource_name,
+                    /* max queue size (unlimited) */ 0,
+                    /* initial thread count */ 1, /* finalize data */ nullptr,
+                    tsfn_abort_release_finalize, /* context */ nullptr,
+                    &noop_callback, &tsfn_abort_release));
+  NODE_API_CALL(env, napi_acquire_threadsafe_function(tsfn_abort_release));
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_release,
+                                                      napi_tsfn_abort));
+  return env.Undefined();
+}
+
+// Releases the last reference of the already-closing tsfn. The finalizer must
+// run and the event-loop keepalive must drop so the process exits.
+static napi_value test_napi_threadsafe_function_abort_then_last_release_drop(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_release,
+                                                      napi_tsfn_release));
+  tsfn_abort_release = nullptr;
+  return env.Undefined();
+}
+
+static napi_value
+test_napi_threadsafe_function_abort_then_last_release_finalized(
+    const Napi::CallbackInfo &info) {
+  return Napi::Boolean::New(info.Env(), tsfn_abort_release_finalized);
+}
+
 static napi_value
 test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
@@ -2496,6 +2543,13 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_get_value_string_utf8_with_buffer);
   REGISTER_FUNCTION(env, exports,
                     test_napi_threadsafe_function_does_not_hang_after_finalize);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_abort_then_last_release);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_abort_then_last_release_drop);
+  REGISTER_FUNCTION(
+      env, exports,
+      test_napi_threadsafe_function_abort_then_last_release_finalized);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_string);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_bigint);
   REGISTER_FUNCTION(env, exports, test_napi_delete_property);

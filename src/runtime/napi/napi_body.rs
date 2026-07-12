@@ -2732,6 +2732,11 @@ impl ThreadSafeFunction {
                     }
                 }
                 self.schedule_dispatch();
+            } else if prev_remaining == 1 {
+                // Already closing from an earlier abort. The last release must
+                // still reach dispatch_one's thread_count==0 path so the
+                // finalizer runs and the event-loop keepalive is dropped.
+                self.schedule_dispatch();
             }
         }
 

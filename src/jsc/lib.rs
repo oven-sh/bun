@@ -1558,7 +1558,7 @@ pub use self::event_loop::{
     Task, WorkPool, WorkPoolTask, WorkTask, WorkTaskContext,
 };
 #[cfg(unix)]
-pub type PlatformEventLoop = bun_uws::Loop;
+pub type PlatformEventLoop = bun_usockets::Loop;
 #[cfg(not(unix))]
 pub type PlatformEventLoop = bun_io::Loop;
 

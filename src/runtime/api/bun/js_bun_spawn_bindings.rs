@@ -1507,20 +1507,21 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 .rare_data()
                 .spawn_ipc_group(unsafe { &mut *jsc_vm_ptr })
                 .from_fd(
-                    bun_uws::SocketKind::SpawnIpc,
+                    bun_usockets::SocketKind::SpawnIpc,
                     None,
                     core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
                     posix_ipc_fd.native(),
                     true,
                 );
-            if !raw_socket.is_null() {
-                let socket = raw_socket;
+            if let Some(socket) = core::ptr::NonNull::new(raw_socket) {
                 subprocess.ipc_data.set(Some(IPC::SendQueue::init(
                     mode,
                     subprocess_ipc_owner(subprocess_ptr),
                     IPC::SocketUnion::Uninitialized,
                 )));
-                posix_ipc_info = Some(IPC::Socket::from(socket));
+                posix_ipc_info = Some(IPC::Socket::from(bun_usockets::SocketRef::from_live(
+                    socket,
+                )));
             }
         }
     }

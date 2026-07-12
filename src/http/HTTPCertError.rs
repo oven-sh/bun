@@ -1,13 +1,12 @@
-use bun_core::ZStr;
+use bun_core::{ZBox, ZStr};
 
 pub struct HTTPCertError {
     pub error_no: i32,
-    // `code`/`reason` borrow process-lifetime static string tables (uSockets'
-    // verify-error strings and BoringSSL's `X509_verify_cert_error_string`
-    // literals — see the SAFETY note in `from_verify_error`), so nothing owns
-    // or frees them here.
+    // `code` borrows the core's static verify-error code table; `reason` is
+    // owned — the EPROTO arm hands us a per-socket `FatalReason` that dies
+    // when `on_handshake` returns, so it must be copied, never widened.
     pub code: &'static ZStr,
-    pub reason: &'static ZStr,
+    pub reason: ZBox,
 }
 
 impl Default for HTTPCertError {
@@ -15,7 +14,7 @@ impl Default for HTTPCertError {
         Self {
             error_no: 0,
             code: ZStr::EMPTY,
-            reason: ZStr::EMPTY,
+            reason: ZBox::default(),
         }
     }
 }
@@ -23,39 +22,30 @@ impl Default for HTTPCertError {
 impl HTTPCertError {
     /// Build from the uSockets verify-error struct delivered to `on_handshake`.
     ///
-    /// Centralises the two `cstr → ZStr` upgrades so each handshake handler
-    /// (outer-TLS in `HTTPContext::Handler::on_handshake`, inner-TLS in
+    /// Centralises the decode so each handshake handler (outer-TLS in
+    /// `HTTPContext::Handler::on_handshake`, inner-TLS in
     /// `ProxyTunnel::on_handshake`) doesn't repeat the raw deref.
     ///
     /// `reason` is gated on `code` being non-null (the
     /// uSockets API populates both together or neither).
-    pub fn from_verify_error(ssl_error: bun_uws::us_bun_verify_error_t) -> Self {
-        /// Borrow a NUL-terminated C string from uSockets as `&'static ZStr`.
-        /// Both sources are process-lifetime static string tables (see the
-        /// SAFETY note below), so the `'static` widen is genuine, not a
-        /// convenience.
-        #[inline]
-        fn zstr(p: *const core::ffi::c_char) -> &'static ZStr {
-            // SAFETY: (`bun_ptr::Interned`-style audit — Population A,
-            // process-lifetime): `code` is uSockets'
-            // `us_ssl_socket_verify_error_str` lookup into a static
-            // string-literal table; `reason` is BoringSSL's
-            // `X509_verify_cert_error_string`, which likewise returns a
-            // pointer to a compile-time string literal (switch over
-            // `X509_V_ERR_*`). Both are genuinely process-lifetime, so the
-            // widen to `&'static ZStr` is sound. (`Interned` itself is
-            // `[u8]`-only; `ZStr` keeps the open-coded widen but the owner is
-            // now named per the `Interned::assume` contract.)
-            unsafe { ZStr::from_c_ptr(p) }
-        }
+    pub fn from_verify_error(ssl_error: bun_usockets::us_bun_verify_error_t) -> Self {
+        // SAFETY: `code` is always a pointer into a process-lifetime static
+        // table (`x509_error_code`, the `"EPROTO"`/`"ECONNRESET"` literals in
+        // `us_bun_verify_error_t`'s constructors), so the `'static` widen is
+        // sound for `code` only.
+        let code = unsafe { ZStr::from_c_ptr(ssl_error.code) };
+        let reason = if ssl_error.code.is_null() {
+            ZBox::default()
+        } else {
+            // SAFETY: `reason` is NUL-terminated and live for the duration of
+            // the `on_handshake` dispatch only — the EPROTO arm borrows the
+            // socket's parked `FatalReason` (§3.4) — so copy it here.
+            ZBox::from_bytes(unsafe { ZStr::from_c_ptr(ssl_error.reason) }.as_bytes())
+        };
         Self {
             error_no: ssl_error.error_no,
-            code: zstr(ssl_error.code),
-            reason: if ssl_error.code.is_null() {
-                ZStr::EMPTY
-            } else {
-                zstr(ssl_error.reason)
-            },
+            code,
+            reason,
         }
     }
 }

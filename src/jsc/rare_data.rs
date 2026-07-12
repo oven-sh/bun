@@ -15,7 +15,7 @@ use bun_http::MimeType as mime_type;
 use bun_io::{self as Async};
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self as syscall, Fd, FdExt as _, Mode};
-use bun_uws::{self as uws, SocketGroup, SslCtx};
+use bun_usockets::{SocketGroup, SslCtx};
 
 use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
 
@@ -1036,7 +1036,7 @@ fn get_tls_default_ciphers_from_js(
     let rare = global_this.bun_vm().as_mut().rare_data();
     let bytes = match rare.tls_default_ciphers() {
         Some(c) => c,
-        None => uws::get_default_ciphers().as_bytes(),
+        None => bun_usockets::tls::context::default_ciphers().to_bytes(),
     };
     crate::bun_string_jsc::create_utf8_for_js(global_this, bytes)
 }

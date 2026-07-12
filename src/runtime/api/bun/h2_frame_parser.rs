@@ -1246,7 +1246,7 @@ thread_local! {
     // copying 16 KB per frame into the batch.
     static BATCH_SEGMENTS: RefCell<Vec<BatchSegment>> = const { RefCell::new(Vec::new()) };
     // Reused iovec scratch for the vectored flush.
-    static BATCH_IOVECS: RefCell<Vec<bun_uws_sys::UsIoVec>> = const { RefCell::new(Vec::new()) };
+    static BATCH_IOVECS: RefCell<Vec<bun_usockets::UsIoVec>> = const { RefCell::new(Vec::new()) };
     static CORKED_H2: Cell<Option<*mut H2FrameParser>> = const { Cell::new(None) };
     // `ManuallyDrop` inside the `Box`: the TLS destructor runs after
     // `WebWorker::destroy` has raw-deallocated the VM, so `HiveArray::Drop`
@@ -3273,7 +3273,7 @@ impl H2FrameParser {
                             continue;
                         }
                         total += len;
-                        iov.push(bun_uws_sys::UsIoVec {
+                        iov.push(bun_usockets::UsIoVec {
                             base: ptr.cast(),
                             len,
                         });

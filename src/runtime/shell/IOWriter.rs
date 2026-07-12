@@ -1111,7 +1111,7 @@ bun_io::impl_buffered_writer_parent! {
     on_close   = on_close,
     get_buffer = |this| (*this).get_buffer(),
     event_loop = |this| (*this).io_evtloop(),
-    uv_loop    = |this| (*(*this).evtloop().loop_()).uv_loop,
+    uv_loop    = |this| (*(*this).evtloop().loop_()).uv_loop.cast(),
     // INVARIANT: `this` is `Arc::as_ptr` stashed via `writer.set_parent` in
     // `IOWriter::init` (sole constructor); passing a non-Arc ptr is UB.
     ref_       = |this| std::sync::Arc::increment_strong_count(this as *const Self),

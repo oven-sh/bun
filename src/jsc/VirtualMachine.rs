@@ -9,7 +9,7 @@ use core::ptr::NonNull;
 
 use bun_bundler::Transpiler;
 use bun_io as Async;
-use bun_uws as uws;
+use bun_usockets as uws;
 
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
@@ -1179,6 +1179,10 @@ impl VirtualMachine {
 
     pub fn enter_uws_loop(&mut self) {
         // event_loop_handle is set in ensure_waker before any caller reaches here.
+        #[cfg(unix)]
+        // `run` takes `*mut Loop` — re-entrant callbacks re-fetch the loop.
+        uws::Loop::run(self.event_loop_handle.expect("event_loop_handle"));
+        #[cfg(not(unix))]
         self.platform_loop_opt().expect("event_loop_handle").run();
     }
 
@@ -1531,10 +1535,10 @@ impl VirtualMachine {
         if self.should_destruct_main_thread_on_exit() {
             #[cfg(windows)]
             if let Some(t) = self.event_loop_mut().forever_timer.take() {
-                // SAFETY: `t` is the live usockets timer created in
-                // `EventLoop::tick_possibly_forever`; `close::<true>()`
-                // (fallthrough) frees it without re-entering the loop.
-                unsafe { uws::Timer::close::<true>(t.as_ptr()) };
+                // Stops the usockets timer created in
+                // `EventLoop::tick_possibly_forever`; the blob is freed by its
+                // uv_close callback.
+                uws::backend::libuv::Timer::close(t.as_ptr());
             }
             // Drain `TimeoutObject`s / `ImmediateObject`s from `All.timers`
             // while `runtime_state`, the event loop, and the JSC heap are all
@@ -1705,7 +1709,7 @@ pub struct RuntimeHooks {
     /// `bun_runtime::RuntimeState` (b2-cycle).
     pub ssl_ctx_cache_get_or_create: unsafe fn(
         vm: *mut VirtualMachine,
-        opts: &uws::SocketContext::BunSocketContextOptions,
+        opts: &uws::BunSocketContextOptions,
         err: &mut uws::create_bun_socket_error_t,
     ) -> Option<*mut uws::SslCtx>,
     /// Lazy `NodeFS` creation.

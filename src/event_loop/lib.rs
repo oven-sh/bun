@@ -52,7 +52,7 @@ bun_dispatch::link_interface! {
         fn iteration_number() -> u64;
         fn file_polls() -> *mut bun_io::file_poll::Store;
         fn put_file_poll(poll: *mut bun_io::FilePoll, was_ever_registered: bool);
-        fn uws_loop() -> *mut bun_uws::Loop;
+        fn uws_loop() -> *mut bun_usockets::Loop;
         fn pipe_read_buffer() -> *mut [u8];
         fn tick();
         fn auto_tick();

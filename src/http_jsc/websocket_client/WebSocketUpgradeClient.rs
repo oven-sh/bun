@@ -35,7 +35,7 @@ use bun_io::KeepAlive;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
 use bun_picohttp as picohttp;
 use bun_ptr::ThisPtr;
-use bun_uws::{self as uws, SocketHandler, SocketKind, SslCtx};
+use bun_usockets::{self as uws, SocketHandler, SocketKind, SslCtx};
 
 use super::cpp_websocket::CppWebSocket;
 use super::websocket_deflate as WebSocketDeflate;
@@ -102,9 +102,9 @@ impl SslCtxOwned {
 
 impl Drop for SslCtxOwned {
     fn drop(&mut self) {
-        // SAFETY: `self.0` is an owned retained ref (returned with +1 by
+        // `self.0` is an owned retained ref (returned with +1 by
         // `ssl_ctx_cache_get_or_create`) that has not been transferred out.
-        unsafe { boringssl::c::SSL_CTX_free(self.0) };
+        bun_usockets::tls::context::ssl_ctx_unref(self.0);
     }
 }
 
@@ -1652,10 +1652,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // SAFETY: short-lived `&mut` for the field detach; ends before the FFI call below.
             unsafe { (*this).tcp.detach() };
             if let uws::InternalSocket::Connected(native_socket) = socket.socket {
+                // Raw header pointer round-trips opaquely through C++ into
+                // `Bun__WebSocketClient__init`, which re-derives a SocketRef.
                 // SAFETY: live C++ back-reference.
                 unsafe {
                     (*ws).did_connect(
-                        &mut *native_socket,
+                        native_socket.ptr.as_ptr(),
                         overflow_ptr,
                         overflow_len,
                         if deflate_result.enabled {
@@ -1665,7 +1667,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         },
                         // ownership transferred; `into_raw` suppresses the
                         // RAII release at fn end.
-                        saved_secure.take().map(|s| &mut *s.into_raw()),
+                        saved_secure
+                            .take()
+                            .map_or(core::ptr::null_mut(), SslCtxOwned::into_raw),
                     )
                 };
             } else {

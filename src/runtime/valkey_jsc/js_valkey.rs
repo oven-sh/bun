@@ -13,7 +13,7 @@ use bun_jsc::{
     JsRef, JsResult,
 };
 use bun_ptr::{AsCtxPtr, BackRef};
-use bun_uws as uws;
+use bun_usockets as uws;
 
 use super::protocol_jsc;
 use super::valkey;
@@ -1602,7 +1602,10 @@ impl JSValkeyClient {
                 // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a
                 // stable address for the VM's lifetime, JS-thread-only.
                 let cache = unsafe { &mut (*state).ssl_ctx_cache };
-                self._secure.set(cache.get_or_create(custom, &mut err));
+                // bun_usockets::SslCtx and bun_boringssl's SSL_CTX are the same
+                // C object behind distinct bindgen nominals; cross opaquely.
+                self._secure
+                    .set(cache.get_or_create(custom, &mut err).map(|p| p.cast()));
             }
             self._secure.get().is_none()
         } else {
@@ -1622,7 +1625,7 @@ impl JSValkeyClient {
             valkey::TLS::None => None,
             valkey::TLS::Enabled => {
                 // SAFETY: `vm_ptr` is the live per-thread VM (see above).
-                Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm_ptr) })
+                Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm_ptr) }.cast())
             }
             valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
         };
@@ -1736,7 +1739,7 @@ impl JSValkeyClient {
             debug_assert!(this_ref.client.get().socket.is_closed());
             if let Some(s) = this_ref._secure.get() {
                 // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
-                unsafe { boringssl::c::SSL_CTX_free(s) };
+                unsafe { boringssl::c::SSL_CTX_free(s.cast()) };
             }
             this_ref.client_mut().shutdown(None);
             this_ref.poll_ref.with_mut(|r| r.disable());

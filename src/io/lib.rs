@@ -76,17 +76,17 @@ pub use posix_event_loop::{FilePoll, Loop};
 #[cfg(windows)]
 pub use windows_event_loop::{FilePoll, Loop};
 
-/// Project a `*mut bun_uws_sys::Loop` (the uws wrapper — `PosixLoop` /
+/// Project a `*mut bun_usockets::Loop` (the uws wrapper — `PosixLoop` /
 /// `WindowsLoop`) to the platform-native [`Loop`] (`us_loop_t*` on POSIX,
 /// `uv_loop_t*` on Windows).
 ///
-/// On POSIX `bun_io::Loop` **is** `bun_uws_sys::Loop` (nominal identity), so
+/// On POSIX `bun_io::Loop` **is** `bun_usockets::Loop` (nominal identity), so
 /// this is the identity. On Windows the wrapper stores the libuv loop in its
 /// `uv_loop` field — set once in C at `us_create_loop` and immutable
 /// thereafter — which we project here so callers needn't open an `unsafe`
 /// block per site just to read a set-once field.
 #[inline]
-pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
+pub fn uws_to_native(uws: *mut bun_usockets::Loop) -> *mut Loop {
     #[cfg(not(windows))]
     {
         uws
@@ -96,7 +96,7 @@ pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
     // `uv_loop` is initialised in C before any Rust caller can observe the
     // handle and is never mutated.
     {
-        unsafe { (*uws).uv_loop }
+        unsafe { (*uws).uv_loop.cast::<Loop>() }
     }
 }
 
@@ -108,14 +108,14 @@ pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 // macro emits (and the impl-macro reads back) actually resolve from impl
 // crates. `Store`/`FilePoll` here are the *platform* re-exports above.
 //
-// `platform_event_loop_ptr` is typed `*mut bun_uws_sys::Loop` (the uws
+// `platform_event_loop_ptr` is typed `*mut bun_usockets::Loop` (the uws
 // wrapper — `PosixLoop`/`WindowsLoop`), NOT the cfg-aliased `crate::Loop`
 // re-export. On POSIX those coincide, but on Windows `crate::Loop` is the raw
 // `uv_loop_t` whereas the impl bodies
 // (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) hand back the wrapper.
 bun_dispatch::link_interface! {
     pub EventLoopCtx[Js, Mini] {
-        fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
+        fn platform_event_loop_ptr() -> *mut bun_usockets::Loop;
         fn file_polls_ptr() -> *mut Store;
         // `alloc_file_poll() -> *mut FilePoll` was removed — it
         // returned an *uninitialized* hive slot, and any caller forming
@@ -140,7 +140,7 @@ impl EventLoopCtx {
     /// SAFETY: caller must not hold another live `&mut` to the same loop
     /// across this borrow (resolver-style accessor; the loop is per-thread).
     #[inline]
-    pub unsafe fn platform_event_loop(&self) -> &'static mut bun_uws_sys::Loop {
+    pub unsafe fn platform_event_loop(&self) -> &'static mut bun_usockets::Loop {
         // Route through the single nonnull-asref accessor below; the `unsafe`
         // on this fn's signature is the caller-side aliasing contract — the
         // body itself needs no extra `unsafe`.
@@ -170,7 +170,7 @@ impl EventLoopCtx {
     // `posix_event_loop`/`windows_event_loop` route their N identical
     // `ctx.platform_event_loop()` derefs through this single accessor.
     #[inline]
-    pub(crate) fn loop_mut(&self) -> &'static mut bun_uws_sys::Loop {
+    pub(crate) fn loop_mut(&self) -> &'static mut bun_usockets::Loop {
         // SAFETY: per-thread set-once pointer (the uws loop singleton); the
         // event loop is single-threaded so no concurrent `&mut` exists, and
         // every crate-internal caller is a leaf op that drops the borrow
@@ -244,7 +244,7 @@ impl EventLoopCtx {
         self.is(EventLoopCtxKind::Js)
     }
     #[inline]
-    pub fn loop_(&self) -> *mut bun_uws_sys::Loop {
+    pub fn loop_(&self) -> *mut bun_usockets::Loop {
         self.platform_event_loop_ptr()
     }
     /// Platform-native loop pointer (`us_loop_t*` / `uv_loop_t*`); see
@@ -1855,13 +1855,13 @@ impl FilePollRef {
     /// point of use. Collapses the two identical `&mut *loop_` deref blocks in
     /// those wrappers into one.
     #[inline(always)]
-    fn uws_loop_mut<'a>(loop_: *mut bun_uws_sys::Loop) -> &'a mut bun_uws_sys::Loop {
+    fn uws_loop_mut<'a>(loop_: *mut bun_usockets::Loop) -> &'a mut bun_usockets::Loop {
         debug_assert!(!loop_.is_null());
         // SAFETY: type invariant — see doc comment above.
         unsafe { &mut *loop_ }
     }
     #[inline]
-    pub fn unregister(self, loop_: *mut bun_uws_sys::Loop, force: bool) -> sys::Result<()> {
+    pub fn unregister(self, loop_: *mut bun_usockets::Loop, force: bool) -> sys::Result<()> {
         let loop_ = Self::uws_loop_mut(loop_);
         #[cfg(not(windows))]
         {
@@ -1879,7 +1879,7 @@ impl FilePollRef {
     #[inline]
     pub fn register_with_fd(
         self,
-        loop_: *mut bun_uws_sys::Loop,
+        loop_: *mut bun_usockets::Loop,
         kind: FilePollKind,
         fd: Fd,
     ) -> sys::Result<()> {
@@ -2153,7 +2153,7 @@ pub mod waker {
         ///
         /// [`placeholder`]: Self::placeholder
         /// [`init`]: Self::init
-        pub loop_: Option<bun_ptr::BackRef<bun_uws_sys::WindowsLoop>>,
+        pub loop_: Option<bun_ptr::BackRef<bun_usockets::WindowsLoop>>,
     }
 
     #[cfg(windows)]
@@ -2171,7 +2171,7 @@ pub mod waker {
         pub fn init() -> Result<Self, bun_core::Error> {
             Ok(Self {
                 loop_: Some(bun_ptr::BackRef::from(
-                    core::ptr::NonNull::new(bun_uws_sys::WindowsLoop::get())
+                    core::ptr::NonNull::new(bun_usockets::WindowsLoop::get())
                         .expect("WindowsLoop::get() singleton"),
                 )),
             })
@@ -2181,7 +2181,7 @@ pub mod waker {
         /// is the same precondition the previous raw-pointer deref carried
         /// (just loud instead of UB).
         #[inline]
-        fn loop_ref(&self) -> bun_ptr::BackRef<bun_uws_sys::WindowsLoop> {
+        fn loop_ref(&self) -> bun_ptr::BackRef<bun_usockets::WindowsLoop> {
             self.loop_.expect("WindowsWaker used before init()")
         }
 
@@ -2194,19 +2194,15 @@ pub mod waker {
             // allocation is UB under Stacked/Tree Borrows. Call the C entry
             // point with the raw pointer directly so no Rust reference is
             // ever formed.
-            // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton,
-            // non-null after `init()`.
-            unsafe { bun_uws_sys::loop_::us_loop_run(self.loop_ref().as_ptr()) };
+            bun_usockets::us_loop_run(self.loop_ref().as_ptr());
         }
 
         pub fn wake(&self) {
             // See `wait()` — this is the cross-thread wake path; forming a
             // `&mut WindowsLoop` here would alias the event-loop thread's
             // borrow held across `us_loop_run`. Pass the raw pointer to the
-            // thread-safe C wake (`uv_async_send`) instead.
-            // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
-            // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-            unsafe { bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_ptr()) };
+            // thread-safe wake (`uv_async_send`) instead.
+            bun_usockets::us_wakeup_loop(self.loop_ref().as_ptr());
         }
 
         /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.
@@ -2218,8 +2214,8 @@ pub mod waker {
         #[inline]
         pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
             // `BackRef` deref is safe (process-lifetime singleton); `uv_loop`
-            // is a `Copy` field set once by C `us_create_loop`.
-            self.loop_ref().uv_loop
+            // is a `Copy` field set once by `us_create_loop`.
+            self.loop_ref().uv_loop.cast()
         }
     }
 }

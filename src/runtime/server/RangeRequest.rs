@@ -4,7 +4,7 @@
 //! (serve full body) rather than 416, matching common static-server behavior.
 
 use bun_core::strings;
-use bun_uws::AnyRequest;
+use bun_uws_shim::AnyRequest;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Result {
@@ -115,7 +115,7 @@ pub fn parse(header: &[u8], total: u64) -> Result {
     parse_raw(header).resolve(total)
 }
 
-// `bun_uws::AnyRequest::header` borrows `&self` and returns `&[u8]` tied to
+// `bun_uws_shim::AnyRequest::header` borrows `&self` and returns `&[u8]` tied to
 // it, so take `&AnyRequest` here.
 pub(crate) fn from_request(req: &AnyRequest, total: u64) -> Result {
     let Some(h) = req.header(b"range") else {

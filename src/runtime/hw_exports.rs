@@ -208,9 +208,9 @@ pub(crate) mod sql_hooks {
     }
     unsafe fn ssl_ctx_get_or_create(
         cache: *mut c_void,
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> *mut bun_uws::SslCtx {
+        opts: &bun_uws_shim::us_bun_socket_context_options_t,
+        err: &mut bun_uws_shim::create_bun_socket_error_t,
+    ) -> *mut bun_uws_shim::SslCtx {
         // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`.
         let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
         cache
@@ -236,7 +236,7 @@ pub(crate) mod sql_hooks {
     }
     unsafe fn ssl_config_as_usockets_client(
         this: *const c_void,
-    ) -> bun_uws::us_bun_socket_context_options_t {
+    ) -> bun_uws_shim::us_bun_socket_context_options_t {
         // SAFETY: `this` is a live boxed `SSLConfig` from `ssl_config_from_js`.
         unsafe { &*this.cast::<crate::socket::SSLConfig>() }.as_usockets_for_client_verification()
     }

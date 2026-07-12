@@ -856,7 +856,7 @@ impl ClientSession {
         }
         NewHTTPContext::<true>::mark_socket_as_dead(sock);
         self.on_close(err);
-        sock.close(bun_uws::CloseKind::Failure);
+        sock.close(bun_usockets::CloseKind::Failure);
     }
 
     /// Called from the HTTP thread's shutdown queue when a fetch on this

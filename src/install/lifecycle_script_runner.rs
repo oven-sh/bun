@@ -21,11 +21,9 @@ use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status};
 #[cfg(unix)]
 use bun_sys::Fd;
-// `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
-// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
-// on Windows. `AnyEventLoop::native_loop()` projects through the uws wrapper
-// (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
-// `BufferedReaderParent::loop_` expects.
+// `bun_io::Loop` is `BufferedReaderParent::loop_`'s nominal: `bun_usockets::Loop`
+// on POSIX, `uv_loop_t` on Windows. `AnyEventLoop::native_loop()` projects
+// `WindowsLoop::uv_loop` on Windows so both paths hand back the same shape.
 
 bun_output::declare_scope!(Script, visible);
 

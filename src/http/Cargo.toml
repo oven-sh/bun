@@ -41,7 +41,9 @@ bun_ptr.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
 bun_url.workspace = true
-bun_uws.workspace = true
+bun_usockets.workspace = true
+# SSLWrapper, MaybeAnySocket and quic/h3 (surviving C++/lsquic bindings).
+bun_uws_shim.workspace = true
 bun_wyhash.workspace = true
 bun_zlib.workspace = true
 bun_zstd.workspace = true

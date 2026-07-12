@@ -3,7 +3,7 @@
 
 use core::ffi::{c_uint, c_void};
 
-use bun_uws as uws;
+use bun_uws_shim as uws;
 
 use crate::webcore::CookieMap;
 
@@ -179,13 +179,18 @@ impl AnyRequestContext {
         })
     }
 
-    pub fn get_request(self) -> Option<*mut uws::Request> {
+    /// Returns the OLD crate's `bun_uws::Request` handle: all consumers live in
+    /// unmigrated webcore (`Request.rs`). Both ZSTs alias the same C `uws_req_t`.
+    /// TODO(M11 bun_uws repoint): when webcore `Request.rs` migrates, flip this
+    /// return type to `bun_uws_shim::Request` in the same change, or this
+    /// bridge silently keeps the old crate alive.
+    pub fn get_request(self) -> Option<*mut bun_uws::Request> {
         dispatch!(self, None, |T, ctx| {
             if T::IS_H3 {
                 // url/headers already on the Request
                 return None;
             }
-            ctx.req.map(|p| p.cast::<uws::Request>())
+            ctx.req.map(|p| p.cast::<bun_uws::Request>())
         })
     }
 

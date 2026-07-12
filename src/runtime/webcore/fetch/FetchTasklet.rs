@@ -2077,7 +2077,7 @@ impl FetchTasklet {
         Ok(fetch_tasklet_ptr)
     }
 
-    #[bun_uws::uws_callback]
+    #[bun_uws_shim::uws_callback]
     pub(crate) fn abort_listener(&mut self, reason: JSValue) {
         bun_output::scoped_log!(FetchTasklet, "abortListener");
         let this = self;
@@ -2477,7 +2477,7 @@ impl FetchTasklet {
 }
 
 impl FetchTasklet {
-    #[bun_uws::uws_callback(export = "Bun__FetchResponse_finalize", no_catch)]
+    #[bun_uws_shim::uws_callback(export = "Bun__FetchResponse_finalize", no_catch)]
     pub(crate) fn on_response_finalize(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "onResponseFinalize");
         let this = self;

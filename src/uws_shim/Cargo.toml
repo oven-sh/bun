@@ -1,0 +1,23 @@
+[package]
+name = "bun_uws_shim"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bitflags.workspace = true
+bstr.workspace = true
+bun_boringssl.workspace = true
+bun_core.workspace = true
+bun_http_types.workspace = true
+bun_jsc_macros.workspace = true
+bun_opaque.workspace = true
+bun_ptr.workspace = true
+bun_usockets.workspace = true
+scopeguard.workspace = true
+strum.workspace = true

@@ -16,7 +16,8 @@ use bun_paths::PathBuffer;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
-use bun_uws::{self as uws, us_bun_verify_error_t};
+use bun_usockets as uws;
+use bun_uws_shim::us_bun_verify_error_t;
 
 bun_output::declare_scope!(WindowsNamedPipeContext, visible);
 

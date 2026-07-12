@@ -11,8 +11,7 @@ use bun_core::{ZigString, ZigStringSlice};
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
-use bun_uws as uws;
-use bun_uws_sys as uws_sys;
+use bun_uws_shim as uws;
 
 use crate::server::jsc::{
     self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
@@ -99,9 +98,9 @@ impl Flags {
 }
 
 pub struct UpgradeCTX {
-    pub context: *mut uws_sys::WebSocketUpgradeContext,
+    pub context: *mut uws::WebSocketUpgradeContext,
     // request will be detached when go async
-    pub request: *mut uws_sys::Request,
+    pub request: *mut uws::Request,
 
     // we need to store this, if we wanna to enable async upgrade
     pub sec_websocket_key: Box<[u8]>,
@@ -2047,10 +2046,10 @@ pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
     any_server_tag: u64,
     global_object: &JSGlobalObject,
     has_body: *mut bool,
-    request: *mut uws_sys::Request,
+    request: *mut uws::Request,
     is_ssl: i32,
     response_ptr: *mut c_void,
-    upgrade_ctx: *mut uws_sys::WebSocketUpgradeContext,
+    upgrade_ctx: *mut uws::WebSocketUpgradeContext,
     node_response_ptr: *mut *mut NodeHTTPResponse,
 ) -> JSValue {
     // SAFETY: all pointers are provided by C++ NodeHTTPServer and are live for the call.

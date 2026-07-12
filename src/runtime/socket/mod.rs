@@ -30,13 +30,13 @@ pub mod windows_named_pipe;
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
 
-/// Re-export of the canonical `bun_uws::ssl_wrapper` plus the runtime-tier
-/// `init(&SSLConfig, ..)` constructor that the lower tier can't see (it would
-/// need to name `crate::server::server_config::SSLConfig`). The body is the
-/// same `as_usockets() → init_from_options()` round-trip the old local copy
-/// did; the duplicate module file is gone.
+/// Re-export of the canonical `bun_uws_shim::ssl_wrapper` plus the
+/// runtime-tier `init(&SSLConfig, ..)` constructor that the lower tier can't
+/// see (it would need to name `crate::server::server_config::SSLConfig`). The
+/// body is the same `as_usockets() → init_from_options()` round-trip the old
+/// local copy did; the duplicate module file is gone.
 pub mod ssl_wrapper {
-    pub use bun_uws::ssl_wrapper::*;
+    pub use bun_uws_shim::ssl_wrapper::*;
 
     /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
     /// tier can keep passing `&SSLConfig` directly.
@@ -117,29 +117,29 @@ pub mod socket {
 
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
-// vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`,
-// not `PtrHandler`). The handlers take `ThisPtr<Self>` rather than `&mut self`:
+// vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`).
+// The handlers take `ThisPtr<Self>` rather than `&mut self`:
 // a JS callback can close the socket and drop its last ref mid-dispatch, and a
 // `&mut` argument protector outliving the allocation is UB.
 impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
     const HAS_ON_OPEN: bool = true;
 
     #[inline]
-    fn on_open(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
+    fn on_open(this: bun_ptr::ThisPtr<Self>, s: bun_usockets::NewSocketHandler<SSL>) {
         NewSocket::on_open(this, s);
     }
     #[inline]
-    fn on_data(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>, data: &[u8]) {
+    fn on_data(this: bun_ptr::ThisPtr<Self>, s: bun_usockets::NewSocketHandler<SSL>, data: &[u8]) {
         NewSocket::on_data(this, s, data);
     }
     #[inline]
-    fn on_writable(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
+    fn on_writable(this: bun_ptr::ThisPtr<Self>, s: bun_usockets::NewSocketHandler<SSL>) {
         NewSocket::on_writable(this, s);
     }
     #[inline]
     fn on_close(
         this: bun_ptr::ThisPtr<Self>,
-        s: bun_uws::NewSocketHandler<SSL>,
+        s: bun_usockets::NewSocketHandler<SSL>,
         code: i32,
         reason: *mut core::ffi::c_void,
     ) {
@@ -151,17 +151,17 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         );
     }
     #[inline]
-    fn on_timeout(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
+    fn on_timeout(this: bun_ptr::ThisPtr<Self>, s: bun_usockets::NewSocketHandler<SSL>) {
         NewSocket::on_timeout(this, s);
     }
     #[inline]
-    fn on_end(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
+    fn on_end(this: bun_ptr::ThisPtr<Self>, s: bun_usockets::NewSocketHandler<SSL>) {
         NewSocket::on_end(this, s);
     }
     #[inline]
     fn on_connect_error(
         this: bun_ptr::ThisPtr<Self>,
-        s: bun_uws::NewSocketHandler<SSL>,
+        s: bun_usockets::NewSocketHandler<SSL>,
         code: i32,
     ) {
         let _ = NewSocket::on_connect_error(this, s, code);
@@ -169,9 +169,9 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
     #[inline]
     fn on_handshake(
         this: bun_ptr::ThisPtr<Self>,
-        s: bun_uws::NewSocketHandler<SSL>,
+        s: bun_usockets::NewSocketHandler<SSL>,
         ok: i32,
-        err: bun_uws_sys::us_bun_verify_error_t,
+        err: bun_usockets::us_bun_verify_error_t,
     ) {
         let _ = NewSocket::on_handshake(this, s, ok, err);
     }

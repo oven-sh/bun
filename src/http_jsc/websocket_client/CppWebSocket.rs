@@ -12,7 +12,7 @@ use core::ffi::c_void;
 
 use bun_core::{String as BunString, ZigString};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_uws_sys::{Socket, SslCtx};
+use bun_usockets::{Socket, SslCtx};
 
 use super::ErrorCode;
 use super::websocket_deflate;
@@ -120,15 +120,18 @@ impl CppWebSocket {
         result
     }
 
-    // Forwards `buffered_data` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    // Forwards `socket`/`buffered_data` to C++ without dereferencing;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    // `socket` is a raw header pointer (never a `&mut`): C++ synchronously
+    // re-enters `Bun__WebSocketClient__init`, which adopts (mutates) the header.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn did_connect(
         &self,
-        socket: &mut Socket,
+        socket: *mut Socket,
         buffered_data: *mut u8,
         buffered_len: usize,
         deflate_params: Option<&websocket_deflate::Params>,
-        secure: Option<&mut SslCtx>,
+        secure: *mut SslCtx,
     ) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
@@ -142,7 +145,7 @@ impl CppWebSocket {
                 buffered_data,
                 buffered_len,
                 deflate_params.map_or(core::ptr::null(), std::ptr::from_ref),
-                secure.map_or(core::ptr::null_mut(), std::ptr::from_mut),
+                secure,
             )
         };
         event_loop.exit();

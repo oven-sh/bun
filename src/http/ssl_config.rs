@@ -6,7 +6,7 @@ use core::ffi::{CStr, c_char};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
-use bun_uws as uws;
+use bun_usockets as uws;
 // Wyhash final4 variant. NOT `Wyhash11`.
 use bun_threading::Guarded as Mutex;
 use bun_wyhash::Wyhash;
@@ -171,8 +171,8 @@ impl SSLConfig {
         maybe_shared.map(|s| &raw const **s)
     }
 
-    pub fn as_usockets(&self) -> uws::socket_context::BunSocketContextOptions {
-        let mut ctx_opts = uws::socket_context::BunSocketContextOptions::default();
+    pub fn as_usockets(&self) -> uws::BunSocketContextOptions {
+        let mut ctx_opts = uws::BunSocketContextOptions::default();
 
         if !self.key_file_name.is_null() {
             ctx_opts.key_file_name = self.key_file_name;
@@ -223,7 +223,7 @@ impl SSLConfig {
     /// (to handle verification manually in handshake callback).
     pub fn as_usockets_for_client_verification(
         &self,
-    ) -> uws::socket_context::BunSocketContextOptions {
+    ) -> uws::BunSocketContextOptions {
         let mut opts = self.as_usockets();
         opts.request_cert = 1;
         opts.reject_unauthorized = 0;

@@ -118,6 +118,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bssl-macros"
+version = "0.1.0"
+
+[[package]]
+name = "bssl-sys"
+version = "0.1.0"
+dependencies = [
+ "bssl-macros",
+]
+
+[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -739,7 +750,7 @@ dependencies = [
  "bun_ptr",
  "bun_sys",
  "bun_threading",
- "bun_uws",
+ "bun_usockets",
  "const_format",
  "enum-map",
  "enumset",
@@ -835,7 +846,8 @@ dependencies = [
  "bun_sys",
  "bun_threading",
  "bun_url",
- "bun_uws",
+ "bun_usockets",
+ "bun_uws_shim",
  "bun_wyhash",
  "bun_zlib",
  "bun_zstd",
@@ -871,8 +883,8 @@ dependencies = [
  "bun_picohttp",
  "bun_ptr",
  "bun_sha_hmac",
- "bun_uws",
- "bun_uws_sys",
+ "bun_usockets",
+ "bun_uws_shim",
  "bun_zlib",
  "const_format",
  "enum-map",
@@ -972,7 +984,6 @@ dependencies = [
  "bun_threading",
  "bun_transpiler",
  "bun_url",
- "bun_uws",
  "bun_which",
  "bun_wyhash",
  "bun_zlib",
@@ -1050,7 +1061,7 @@ dependencies = [
  "bun_spawn_sys",
  "bun_sys",
  "bun_threading",
- "bun_uws_sys",
+ "bun_usockets",
  "const_format",
  "enum-map",
  "enumset",
@@ -1194,6 +1205,7 @@ dependencies = [
  "bun_threading",
  "bun_transpiler",
  "bun_url",
+ "bun_usockets",
  "bun_uws",
  "bun_watcher",
  "bun_wyhash",
@@ -1675,7 +1687,9 @@ dependencies = [
  "bun_threading",
  "bun_transpiler",
  "bun_url",
+ "bun_usockets",
  "bun_uws",
+ "bun_uws_shim",
  "bun_uws_sys",
  "bun_valkey",
  "bun_watcher",
@@ -1970,8 +1984,8 @@ dependencies = [
  "bun_ptr",
  "bun_sha_hmac",
  "bun_sql",
+ "bun_usockets",
  "bun_uws",
- "bun_uws_sys",
  "const_format",
  "enum-map",
  "enumset",
@@ -2128,6 +2142,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_usockets"
+version = "0.0.0"
+dependencies = [
+ "bssl-sys",
+ "bun_core",
+ "bun_dns",
+ "bun_libuv_sys",
+ "libc",
+]
+
+[[package]]
 name = "bun_uws"
 version = "0.0.0"
 dependencies = [
@@ -2143,6 +2168,23 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
+ "scopeguard",
+ "strum",
+]
+
+[[package]]
+name = "bun_uws_shim"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bstr",
+ "bun_boringssl",
+ "bun_core",
+ "bun_http_types",
+ "bun_jsc_macros",
+ "bun_opaque",
+ "bun_ptr",
+ "bun_usockets",
  "scopeguard",
  "strum",
 ]

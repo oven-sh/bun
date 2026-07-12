@@ -7,7 +7,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
 
 use bun_threading::{Mutex, UnboundedQueue};
-use bun_uws as uws;
+use bun_usockets as uws;
 
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
 use crate::http_context::ActiveSocketExt;
@@ -1074,11 +1074,11 @@ impl HttpThread {
         // observes the published value. This is the canonical "Relaxed gives
         // no happens-before for the init it guards" case.
         if self.has_awoken.load(Ordering::Acquire) {
-            // SAFETY: uws_loop is the live HTTP-thread loop set in on_start.
-            // Call the raw extern (not `Loop::wakeup(&mut self)`) — this runs
+            // Raw-ptr wakeup (not `Loop::wakeup(&mut self)`) — this runs
             // cross-thread while the HTTP thread owns the loop, so forming
-            // `&mut Loop` here would alias.
-            unsafe { uws::us_wakeup_loop(self.uws_loop) };
+            // `&mut Loop` here would alias. `us_wakeup_loop` is the one
+            // documented thread-safe entry point.
+            uws::us_wakeup_loop(self.uws_loop);
         }
     }
 
@@ -1183,19 +1183,22 @@ fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
     crate::abort_tracker()
 }
 
-/// Debug+ASAN invariant check: every socket pointer in the abort tracker must
-/// point at live (unfreed) memory. A stale entry here means some socket-close
-/// path forgot `unregister_abort_tracker`, which later manifests as a
-/// use-after-free in `drain_queued_shutdowns`/`drain_queued_writes` when the
-/// JS thread aborts that request id. Runs before and after each loop tick so
-/// the report fires at the tick that leaked, not at the eventual abort.
+/// Debug invariant check: every abort-tracker entry must still resolve to a
+/// live (generation-matching) socket. A stale entry means some socket-close
+/// path forgot `unregister_abort_tracker` — with generation-checked handles
+/// that is no longer a use-after-free (stale handles are safe no-ops in
+/// `drain_queued_shutdowns`/`drain_queued_writes`), but it still silently
+/// drops a later abort for that request id. Runs before and after each loop
+/// tick so the report fires at the tick that leaked, not at the eventual
+/// abort. `ext()` is the generation-validated probe (None == stale/recycled).
 #[inline]
 fn assert_abort_tracker_sockets_alive() {
     if cfg!(debug_assertions) {
-        for socket in abort_tracker().values() {
-            if let Some(usocket) = socket.socket().get() {
-                bun_core::asan::assert_unpoisoned(usocket);
-            }
+        for (async_http_id, socket) in abort_tracker().iter() {
+            assert!(
+                socket.ext::<core::ffi::c_void>().is_some(),
+                "stale abort-tracker entry for async_http_id {async_http_id}: a close path skipped unregister_abort_tracker"
+            );
         }
     }
 }
@@ -1366,10 +1369,11 @@ mod _event_loop_draft {
                 assert_abort_tracker_sockets_alive();
                 Output::flush();
 
-                let uws_loop = self.uws_loop_mut();
-                uws_loop.inc();
-                uws_loop.tick();
-                uws_loop.dec();
+                self.uws_loop_mut().inc();
+                // Raw-ptr tick: no `&mut Loop` may span the tick — wakeup
+                // threads touch `pending_wakeups` concurrently (C17).
+                uws::Loop::tick(self.uws_loop);
+                self.uws_loop_mut().dec();
                 assert_abort_tracker_sockets_alive();
 
                 if cfg!(debug_assertions) {

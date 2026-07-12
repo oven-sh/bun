@@ -129,9 +129,8 @@ impl<'a> Coordinator<'a> {
                     nsec: (self.scale_up_after_ms % MS_PER_S) * bun_core::time::NS_PER_MS as i64,
                 };
                 // SAFETY: event_loop()/usockets_loop() return live pointers for the VM lifetime.
-                unsafe {
-                    (*(*self.vm.event_loop()).usockets_loop()).tick_with_timeout(Some(&ts));
-                }
+                let loop_ = unsafe { (*self.vm.event_loop()).usockets_loop() };
+                bun_usockets::Loop::tick_with_timeout(loop_, Some(&ts));
             } else {
                 self.vm.event_loop_ref().auto_tick();
             }

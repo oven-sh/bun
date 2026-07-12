@@ -28,8 +28,8 @@ use bun_jsc::{
     ZigStackFramePosition, ZigStackTrace,
 };
 use bun_paths::path_buffer_pool;
-use bun_uws::{self as uws, AnyResponse, Request};
-use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
+use bun_uws_shim::{self as uws, AnyResponse, Request};
+use bun_uws_shim::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 
 use super::source_map_store::{self, GetResult, Key as SourceMapKey};
 use super::{CLIENT_PREFIX, DevServer};

@@ -1059,7 +1059,7 @@ impl All {
     // documented in `# Safety` above. Cannot be `&mut` without breaking the
     // out-of-file call sites that hold raw pointers.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    pub fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_usockets::Loop) {
         let old = self.immediate_ref_count;
         let new = old + delta;
         self.immediate_ref_count = new;
@@ -1109,7 +1109,7 @@ impl All {
     // documented in `# Safety` above. Cannot be `&mut` without breaking the
     // out-of-file call sites that hold raw pointers.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    pub fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_usockets::Loop) {
         let old = self.active_timer_count;
         let new = old + delta;
         debug_assert!(new >= 0);

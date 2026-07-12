@@ -5,7 +5,7 @@ use bun_sys::FdExt as _;
 
 use bun_core::String as BunString;
 use bun_http_types::Method::Method;
-use bun_uws::{self as uws, WebSocketUpgradeContext};
+use bun_uws_shim::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use crate::server::{RangeRequest, ServerLike};
@@ -50,7 +50,7 @@ pub type Req<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
 pub type Resp<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
 
 // Surface gaps `AnyResponse` doesn't expose yet — hand-dispatched here so the
-// state machine can call them without touching `bun_uws_sys`.
+// state machine can call them without touching `bun_uws_shim`.
 pub trait AnyResponseExt {
     fn has_responded(self) -> bool;
     fn override_write_offset(self, offset: u64);
@@ -551,7 +551,9 @@ impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: b
 where
     ThisServer: ServerLike + 'static,
 {
-    const RESP_KIND: uws::ResponseKind = uws::ResponseKind::from(SSL_ENABLED, HTTP3);
+    // bun_uws::ResponseKind, not the shim's: consumed only by unmigrated
+    // bun_uws-typed FFI (`FetchHeaders::to_uws_response`, `CookieMap::write`).
+    const RESP_KIND: bun_uws::ResponseKind = bun_uws::ResponseKind::from(SSL_ENABLED, HTTP3);
 
     /// Reborrow the owning server. `server` is a BACKREF (LIFETIMES.tsv): set
     /// at construction in `init()` from the `NewServer` that owns the request
@@ -1308,9 +1310,9 @@ where
     #[inline]
     fn any_request(r: *mut Req<SSL_ENABLED, HTTP3>) -> uws::AnyRequest {
         if HTTP3 {
-            uws::AnyRequest::H3(r.cast::<bun_uws_sys::h3::Request>())
+            uws::AnyRequest::H3(r.cast::<bun_uws_shim::h3::Request>())
         } else {
-            uws::AnyRequest::H1(r.cast::<bun_uws_sys::Request>())
+            uws::AnyRequest::H1(r.cast::<bun_uws_shim::Request>())
         }
     }
 
@@ -1320,9 +1322,9 @@ where
         // the request callback; both surfaces return request-owned slices.
         unsafe {
             if HTTP3 {
-                (*r.cast::<bun_uws_sys::h3::Request>()).method()
+                (*r.cast::<bun_uws_shim::h3::Request>()).method()
             } else {
-                (*r.cast::<bun_uws_sys::Request>()).method()
+                (*r.cast::<bun_uws_shim::Request>()).method()
             }
         }
     }
@@ -4188,8 +4190,8 @@ where
 
     pub fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {
         let resp = self.resp?;
-        // `AnyResponse::get_remote_socket_info` returns the uws_sys
-        // variant; convert to the owned `bun_uws::SocketAddress`.
+        // `AnyResponse::get_remote_socket_info` returns a borrowed view;
+        // convert to the owned `bun_uws_shim::SocketAddress`.
         // SAFETY: FFI handle
         let info = resp.get_remote_socket_info()?;
         Some(uws::SocketAddress {
@@ -4394,9 +4396,9 @@ where
                 // SAFETY: req is the live uWS request handle.
                 let url: &[u8] = unsafe {
                     if H3 {
-                        (*req.cast::<bun_uws_sys::h3::Request>()).url()
+                        (*req.cast::<bun_uws_shim::h3::Request>()).url()
                     } else {
-                        (*req.cast::<bun_uws_sys::Request>()).url()
+                        (*req.cast::<bun_uws_shim::Request>()).url()
                     }
                 };
                 return write!(writer, "{}", bstr::BStr::new(url));

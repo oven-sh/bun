@@ -3,7 +3,7 @@ use core::ptr;
 
 use bun_sys::Fd;
 use bun_sys::windows::libuv as uv;
-use bun_uws_sys::WindowsLoop;
+use bun_usockets::WindowsLoop;
 
 use crate::posix_event_loop as posix;
 // Shared scaffolding lives in `posix_event_loop` (platform-agnostic types);
@@ -203,14 +203,14 @@ impl FilePoll {
 
     /// Only intended to be used from EventLoop.Pollable
     // Note: the cycle-broken `EventLoopCtx::platform_event_loop` vtable is typed
-    // `*mut bun_uws_sys::Loop` (the uws `WindowsLoop` wrapper) so the
+    // `*mut bun_usockets::Loop` (the uws `WindowsLoop` wrapper) so the
     // impl-crate bodies (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`)
     // type-check. `WindowsLoop::sub_active`/`add_active` proxy straight through
     // to `(*self.uv_loop).{sub,add}_active`, so accept the wrapper here.
     pub fn deactivate(&mut self, loop_: &mut WindowsLoop) {
         debug_assert!(self.flags.contains(Flags::HasIncrementedPollCount));
         loop_.sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
-        bun_core::scoped_log!(FilePoll, "deactivate - {}", loop_.uv().active_handles);
+        bun_core::scoped_log!(FilePoll, "deactivate - active={}", loop_.is_active());
         self.flags.remove(Flags::HasIncrementedPollCount);
     }
 
@@ -220,7 +220,7 @@ impl FilePoll {
             (!self.flags.contains(Flags::Closed)
                 && !self.flags.contains(Flags::HasIncrementedPollCount)) as u32,
         );
-        bun_core::scoped_log!(FilePoll, "activate - {}", loop_.uv().active_handles);
+        bun_core::scoped_log!(FilePoll, "activate - active={}", loop_.is_active());
         self.flags.insert(Flags::HasIncrementedPollCount);
     }
 
@@ -399,7 +399,7 @@ impl Waker {
         // `BackRef` deref is safe (pointee outlives holder); `uv_loop` is a
         // `Copy` field set once by `us_create_loop` and immutable for the
         // process.
-        self.loop_.uv_loop
+        self.loop_.uv_loop.cast()
     }
 
     // `getFd`/`initWithFileDescriptor` must never be referenced on Windows,
@@ -407,35 +407,20 @@ impl Waker {
     // `cfg`-gated, so a stray Windows use fails the build.
 
     pub fn wait(&self) {
-        // Do NOT go through `WindowsLoop::wait(&mut self)`: that would
+        // Do NOT go through a `&mut WindowsLoop` receiver: that would
         // materialize a `&mut WindowsLoop` over the process-global singleton
         // for the entire duration of `us_loop_run`/`uv_run`, and a concurrent
         // `wake()` from a worker thread would alias it (two live `&mut T` to
-        // one allocation = UB under Stacked/Tree Borrows). Call the C entry
-        // point with the raw pointer directly — no exclusivity claimed.
-        // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton.
-        unsafe { waker_c::us_loop_run(self.loop_.as_ptr()) };
+        // one allocation = UB under Stacked/Tree Borrows). The raw entry
+        // point takes `*mut Loop` — no exclusivity claimed.
+        bun_usockets::us_loop_run(self.loop_.as_ptr());
     }
 
     pub fn wake(&self) {
-        // See `wait()` — call the thread-safe C wake path with the raw pointer
+        // See `wait()` — the thread-safe raw wake path (`uv_async_send`)
         // instead of forming a `&mut WindowsLoop` that would alias the
-        // event-loop thread's borrow held across `us_loop_run`.
-        // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
-        // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-        unsafe { waker_c::us_wakeup_loop(self.loop_.as_ptr()) };
-    }
-}
-
-// Local extern shims for `Waker`: the canonical decls live in
-// `bun_uws_sys::loop_::c` but that module is crate-private. Re-declaring the
-// two symbols here lets `Waker::{wait,wake}` pass the raw `*mut WindowsLoop`
-// without round-tripping through a `&mut self` receiver (see comments above).
-mod waker_c {
-    use super::WindowsLoop;
-    unsafe extern "C" {
-        pub(super) fn us_loop_run(loop_: *mut WindowsLoop);
-        pub(super) fn us_wakeup_loop(loop_: *mut WindowsLoop);
+        // event-loop thread's access held across `us_loop_run`.
+        bun_usockets::us_wakeup_loop(self.loop_.as_ptr());
     }
 }
 

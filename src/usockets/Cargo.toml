@@ -1,0 +1,34 @@
+[package]
+name = "bun_usockets"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[features]
+# OFF by default: with the feature on, cabi.rs exports `#[no_mangle]` us_*
+# symbols that collide at link time with the still-compiled C core in
+# packages/bun-usockets. The deletion shard flips this on when the C is removed.
+cabi = []
+# Fault-injection API (fault.rs). Mirrors the old `--cfg socket_fault_injection`
+# RUSTFLAGS knob as a cargo feature so `cargo check -p bun_usockets` can gate it.
+socket_fault_injection = []
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_core.workspace = true
+# Platform-split `addrinfo` type shared with the DNS bridge (consumers/04).
+bun_dns.workspace = true
+libc.workspace = true
+# Raw BoringSSL bindings (tls-semantics.md Part 2d), consumed through the
+# crate's BINDGEN_RS_FILE escape hatch: pre-generated per-target bindings are
+# committed in tls/bssl_bindings/ and build.rs is replaced by
+# patches/boringssl/bssl-sys-prebuilt-bindings.patch (no link directives —
+# Bun compiles/links its own BoringSSL objects via scripts/build/deps/boringssl.ts).
+bssl-sys = { path = "../../vendor/boringssl/rust/bssl-sys" }
+
+[target.'cfg(windows)'.dependencies]
+bun_libuv_sys.workspace = true

@@ -1,8 +1,8 @@
 use bun_collections::HashMap;
 use bun_core::strings;
 use bun_core::{Output, feature_flags};
-use bun_uws::AnyWebSocket;
-use bun_uws_sys::{Opcode, SendStatus};
+use bun_uws_shim::AnyWebSocket;
+use bun_uws_shim::{Opcode, SendStatus};
 
 use crate::timer::EventLoopTimerState;
 
@@ -220,7 +220,7 @@ impl HmrSocket {
                             dev.publish(
                                 HmrTopic::TestingWatchSynchronization,
                                 &[MessageId::TestingWatchSynchronization.char(), 0],
-                                bun_uws::Opcode::BINARY,
+                                bun_uws_shim::Opcode::BINARY,
                             );
                         }
                     }
@@ -243,7 +243,7 @@ impl HmrSocket {
                             dev.publish(
                                 HmrTopic::TestingWatchSynchronization,
                                 &[MessageId::TestingWatchSynchronization.char(), 2],
-                                bun_uws::Opcode::BINARY,
+                                bun_uws_shim::Opcode::BINARY,
                             );
                             return;
                         }

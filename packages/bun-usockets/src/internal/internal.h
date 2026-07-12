@@ -108,6 +108,10 @@ void Bun__lock(zig_mutex_t *lock);
 void Bun__unlock(zig_mutex_t *lock);
 
 struct addrinfo_request;
+/* Shared guard with libusockets_cabi.h so a TU seeing both headers gets one
+ * definition; this copy dies with the C core. */
+#ifndef LIBUS_ADDRINFO_RESULT_DEFINED
+#define LIBUS_ADDRINFO_RESULT_DEFINED
 struct addrinfo_result_entry {
     struct addrinfo info;
     struct sockaddr_storage _storage;
@@ -116,6 +120,7 @@ struct addrinfo_result {
     struct addrinfo_result_entry* entries;
     int error;
 };
+#endif
 
 /* Dispatch — defined out-of-library (src/runtime/socket/uws_dispatch.rs). loop.c
  * never reads s->group->vtable directly; it calls these and the closed-world

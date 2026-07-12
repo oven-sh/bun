@@ -10,7 +10,7 @@ use crate::webcore::jsc::{
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
-use bun_uws as uws;
+use bun_uws_shim as uws;
 
 use crate::webcore::blob::Any as AnyBlob;
 use crate::webcore::sink::Sink;

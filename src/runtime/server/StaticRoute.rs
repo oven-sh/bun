@@ -12,7 +12,7 @@ use bun_http_types::ETag;
 
 use bun_http_types::MimeType::MimeType;
 use bun_jsc::HTTPHeaderName;
-use bun_uws::{AnyRequest, AnyResponse};
+use bun_uws_shim::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::{AnyServer, HTTPStatusText, write_status};

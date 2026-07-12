@@ -87,6 +87,8 @@ members = [
   "src/router",
   "src/shell_parser",
   "src/tcc_sys",
+  "src/usockets",
+  "src/uws_shim",
   "src/uws_sys",
   "src/zstd",
   "src/options_types",
@@ -436,6 +438,8 @@ bun_shell_parser = { path = "src/shell_parser" }
 bun_spawn = { path = "src/spawn" }
 bun_spawn_sys = { path = "src/spawn_sys" }
 bun_tcc_sys = { path = "src/tcc_sys" }
+bun_usockets = { path = "src/usockets" }
+bun_uws_shim = { path = "src/uws_shim" }
 bun_uws_sys = { path = "src/uws_sys" }
 bun_zstd = { path = "src/zstd" }
 bun_options_types = { path = "src/options_types" }

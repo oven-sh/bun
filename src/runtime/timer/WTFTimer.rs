@@ -102,7 +102,7 @@ impl WTFTimer {
         RunLoopTimer::fire(self.run_loop_timer);
     }
 
-    #[bun_uws::uws_callback(export = "WTFTimer__isActive", no_catch)]
+    #[bun_uws_shim::uws_callback(export = "WTFTimer__isActive", no_catch)]
     pub fn is_active(&self) -> bool {
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             return true;
@@ -113,7 +113,7 @@ impl WTFTimer {
         loaded.cast_const().cast::<WTFTimer>() == ptr::from_ref(self)
     }
 
-    #[bun_uws::uws_callback(export = "WTFTimer__secondsUntilTimer", no_catch)]
+    #[bun_uws_shim::uws_callback(export = "WTFTimer__secondsUntilTimer", no_catch)]
     pub fn seconds_until_timer(&self) -> f64 {
         let _g = self.lock.lock_guard();
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {

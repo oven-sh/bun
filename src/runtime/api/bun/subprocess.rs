@@ -319,7 +319,7 @@ macro_rules! assert_stdio_result {
 pub(crate) use assert_stdio_result;
 
 impl Subprocess<'_> {
-    #[bun_uws::uws_callback(thunk = "on_abort_signal_c")]
+    #[bun_uws_shim::uws_callback(thunk = "on_abort_signal_c")]
     fn handle_abort_signal(&self, _reason: JSValue) {
         self.clear_abort_signal();
         let _ = self.try_kill(self.kill_signal);

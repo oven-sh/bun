@@ -289,7 +289,7 @@ bun_io::impl_buffered_reader_parent! {
         let ev = (&*this).event_loop.get();
         // The event loop is a libuv
         // `uv_loop_t*` on Windows. `.cast()` reconciles the impl-declared
-        // `bun_uws_sys::Loop` nominal with `bun_io::Loop` (= `uv::Loop`).
+        // `bun_usockets::Loop` nominal with `bun_io::Loop` (= `uv::Loop`).
         #[cfg(windows)] { ev.uv_loop().cast() }
         #[cfg(not(windows))] { ev.r#loop() }
     };

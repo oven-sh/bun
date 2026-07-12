@@ -47,6 +47,7 @@ use bun_resolve_builtins::Module as HardcodedModule;
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
+use bun_usockets::Loop as UwsLoop;
 
 use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
 use crate::timer;
@@ -227,11 +228,11 @@ pub(crate) unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeSt
 ///
 /// # Safety
 /// `vm` must be the live per-thread VM; called only from the JS thread.
-pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_uws::SslCtx {
+pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_usockets::SslCtx {
     // SAFETY: per fn contract; `rare_data()` lazy-inits the box.
     let rare = unsafe { (*vm).rare_data() };
     if rare.default_client_ssl_ctx.is_none() {
-        let mut err = bun_uws::create_bun_socket_error_t::none;
+        let mut err = bun_usockets::create_bun_socket_error_t::none;
         let state = runtime_state();
         debug_assert!(
             !state.is_null(),
@@ -267,9 +268,9 @@ pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun
 /// `vm` must be the live per-thread VM; called only from the JS thread.
 unsafe fn ssl_ctx_cache_get_or_create(
     _vm: *mut VirtualMachine,
-    opts: &bun_uws::SocketContext::BunSocketContextOptions,
-    err: &mut bun_uws::create_bun_socket_error_t,
-) -> Option<*mut bun_uws::SslCtx> {
+    opts: &bun_usockets::BunSocketContextOptions,
+    err: &mut bun_usockets::create_bun_socket_error_t,
+) -> Option<*mut bun_usockets::SslCtx> {
     let state = runtime_state();
     debug_assert!(
         !state.is_null(),
@@ -305,6 +306,11 @@ unsafe fn init_runtime_state(
     // Note: do NOT form `&mut *vm` here — the caller
     // (`VirtualMachine::init`) may still hold a `&mut VirtualMachine` to the
     // same allocation. Dereference per-field via the raw `vm` ptr if needed.
+
+    // Every socket consumer (fetch/WebSocket/SQL/spawn-IPC) reaches dispatch
+    // only after some VM initialized on this or an ancestor thread, so this is
+    // the registration point for kinds whose entry points live in lower tiers.
+    crate::socket::uws_dispatch::ensure_registered();
 
     // Note: `uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm` is already
     // done by
@@ -925,8 +931,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // poll. The uws loop must always be polled
         // (`tickWithTimeout`/`tickWithoutIdle`); `EventLoop::tick()` would only
         // drain JS tasks and never touch kqueue/epoll.
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        unsafe { (*loop_).tick_without_idle() };
+        UwsLoop::tick_without_idle(loop_);
         // Still run the post-poll hooks.
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
@@ -980,13 +985,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                     vm.cast(),
                 )
             };
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
-            };
+            UwsLoop::tick_with_timeout(loop_, if have_timeout { Some(&timespec) } else { None });
         } else {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).tick_without_idle() };
+            UwsLoop::tick_without_idle(loop_);
         }
     }
 
@@ -1059,8 +1060,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     }
 
     if state.is_null() {
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        unsafe { (*loop_).tick_without_idle() };
+        UwsLoop::tick_without_idle(loop_);
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
         return;
@@ -1094,13 +1094,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                     vm.cast(),
                 )
             };
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
-            };
+            UwsLoop::tick_with_timeout(loop_, if have_timeout { Some(&timespec) } else { None });
         } else {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).tick_without_idle() };
+            UwsLoop::tick_without_idle(loop_);
         }
     }
 

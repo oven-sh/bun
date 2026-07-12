@@ -26,6 +26,7 @@
 #include "AsyncSocket.h"
 #include "WebSocketData.h"
 #include "SocketKinds.h"
+#include <libusockets_cabi.h>
 
 #include <string>
 #include <map>
@@ -684,7 +685,7 @@ public:
         auto socket = us_socket_group_listen(&group, socketKind(), sslCtx, host, port, options | LIBUS_LISTEN_DEFER_ACCEPT, sizeof(HttpResponseData<SSL>), &error);
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
-          us_socket_unref(&socket->s);
+          us_listen_socket_unref(socket);
         }
         return socket;
     }
@@ -695,7 +696,7 @@ public:
         auto* socket = us_socket_group_listen_unix(&group, socketKind(), sslCtx, path, pathlen, options, sizeof(HttpResponseData<SSL>), &error);
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
-            us_socket_unref(&socket->s);
+            us_listen_socket_unref(socket);
         }
 
         return socket;

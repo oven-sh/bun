@@ -20,7 +20,7 @@ use bun_sys::ReturnCodeExt as _;
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
-use bun_uws;
+use bun_usockets;
 
 // `bun.cpp.*` — generated C++ dispatch shims for IPC handle (de)serialization
 // (`IPCSerialize` / `IPCParse`) are declared once in `crate::cpp` and called
@@ -662,9 +662,9 @@ pub fn get_nack_packet(mode: Mode) -> &'static [u8] {
     }
 }
 
-// `bun_uws::SocketHandler<SSL>` is an alias for `NewSocketHandler<SSL>`
-// (uws_sys/socket.rs); `<false>` is the non-SSL handler.
-pub type Socket = bun_uws::SocketHandler<false>;
+// `bun_usockets::SocketHandler<SSL>` is an alias for `NewSocketHandler<SSL>`;
+// `<false>` is the non-SSL handler.
+pub type Socket = bun_usockets::SocketHandler<false>;
 
 pub struct Handle {
     pub fd: Fd,
@@ -964,8 +964,8 @@ impl SendQueue {
                 #[cfg(not(windows))]
                 {
                     s.close(match reason {
-                        CloseReason::Normal => bun_uws::CloseCode::Normal,
-                        CloseReason::Failure => bun_uws::CloseCode::Failure,
+                        CloseReason::Normal => bun_usockets::CloseCode::Normal,
+                        CloseReason::Failure => bun_usockets::CloseCode::Failure,
                     });
                     self._socket_closed();
                 }

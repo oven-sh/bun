@@ -11,7 +11,7 @@ use core::sync::atomic::Ordering;
 
 use bstr::BStr;
 use bun_core::err;
-use bun_uws::quic;
+use bun_uws_shim::quic;
 
 use super::client_context::ClientContext;
 use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};

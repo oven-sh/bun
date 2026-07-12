@@ -30,6 +30,7 @@ import { ar, cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
+import { boringssl } from "./deps/boringssl.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
@@ -228,7 +229,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       // not built into a separate archive — cargo needs `vendor/lolhtml/` on
       // disk before it resolves the manifest. The `.ref` stamp's content is
       // the pinned commit, so a bump re-invokes cargo.
-      vendorStamps: depsByName.get("lolhtml")?.outputs ?? [],
+      // boringssl: same — bssl-sys (vendor/boringssl/rust/bssl-sys) is a path
+      // dep of bun_usockets; cargo needs the fetched (patched) tree on disk.
+      vendorStamps: [...(depsByName.get("lolhtml")?.outputs ?? []), ...(depsByName.get("boringssl")?.outputs ?? [])],
     });
   }
 
@@ -551,10 +554,15 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.comment("════════════════════════════════════════════════════════════════");
   n.blank();
 
-  // Only dep: lolhtml, fetched as a cargo path dependency. resolveDep
-  // emits its fetch; emitRust depends on the fetch stamp via vendorStamps.
+  // Deps fetched as cargo path dependencies: lolhtml (bun_runtime/bun_bundler)
+  // and boringssl (bssl-sys, path dep of bun_usockets — only the fetched,
+  // patched source tree is needed; its compile edges go unpulled here).
+  // resolveDep emits the fetches; emitRust depends on the fetch stamps via
+  // vendorStamps.
   const lolhtmlDep = resolveDep(n, cfg, lolhtml, new Map());
   assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
+  const boringsslDep = resolveDep(n, cfg, boringssl, new Map());
+  assert(boringsslDep !== null, "boringssl resolveDep returned null — should never be skipped");
 
   // Codegen: emitted fully, but only the embed-input subset is pulled.
   // The cpp-related outputs (cppSources, bindgenV2Cpp) have no consumer
@@ -565,13 +573,13 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     codegenInputs: codegen.rustInputs,
     codegenOrderOnly: codegen.rustOrderOnly,
     rustSources: sources.rust,
-    vendorStamps: lolhtmlDep.outputs,
+    vendorStamps: [...lolhtmlDep.outputs, ...boringsslDep.outputs],
   });
 
   n.phony("bun", rustObjects);
   n.default(["bun"]);
 
-  return { deps: [lolhtmlDep], codegen, rustObjects, objects: [] };
+  return { deps: [lolhtmlDep, boringsslDep], codegen, rustObjects, objects: [] };
 }
 
 /**

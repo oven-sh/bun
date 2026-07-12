@@ -145,8 +145,8 @@ pub(crate) fn do_send(
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
                     // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
-                    // owned by uSockets; `get_socket` only reinterpret-casts to
-                    // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
+                    // owned by uSockets; `get_socket` borrows the embedded
+                    // header and `get_fd` is a read-only accessor.
                     let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
                     zig_handle = Some(Handle::init(fd, handle));
                 }

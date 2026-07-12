@@ -3,7 +3,6 @@
 #include "libusockets.h"
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/AsyncSocket.h>
-#include <bun-usockets/src/internal/internal.h>
 #include <string_view>
 
 extern "C" const char* ares_inet_ntop(int af, const char *src, char *dst, size_t size);
@@ -1707,15 +1706,6 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     }
   }
 
-  void us_socket_mark_needs_more_not_ssl(uws_res_r res)
-  {
-    us_socket_r s = (us_socket_t *)res;
-    if(us_socket_is_closed(s)) return;
-    s->flags.last_write_failed = 1;
-    us_poll_change(&s->p, s->group->loop,
-                   LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-  }
-
   void uws_res_override_write_offset(int ssl, uws_res_r res, uint64_t offset)
   {
     if (ssl)
@@ -1872,16 +1862,6 @@ __attribute__((callback (corker, ctx)))
     } else {
       return ((TCPWebSocket*)ws)->memoryCost();
     }
-  }
-
-  void us_socket_sendfile_needs_more(us_socket_r s) {
-    if(us_socket_is_closed(s)) return;
-    s->flags.last_write_failed = 1;
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-  }
-
-  LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) {
-    return us_poll_fd(&s->p);
   }
 
   // Gets the remote address and port

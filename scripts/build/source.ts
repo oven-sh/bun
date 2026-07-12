@@ -750,7 +750,11 @@ export function resolveDep(
   const directSources: string[] = [];
   if (buildSpec.kind === "direct") {
     for (const s of buildSpec.sources) {
-      directSources.push(resolve(srcDir, typeof s === "string" ? s : s.path));
+      const abs = resolve(srcDir, typeof s === "string" ? s : s.path);
+      // In-tree sources compiled alongside a dep (boringssl's bssl-sys
+      // wrapper.c) are not produced by the fetch — declaring them as fetch
+      // outputs would let `ninja -t clean` delete committed files.
+      if (abs.startsWith(join(srcDir, "/"))) directSources.push(abs);
     }
     for (const h of Object.values(buildSpec.headers ?? {})) {
       if (typeof h !== "string") directSources.push(resolve(srcDir, h.from));

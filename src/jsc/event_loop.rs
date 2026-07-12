@@ -13,7 +13,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
 use bun_io::{self as Async, Waker};
-use bun_uws as uws;
+use bun_usockets as uws;
 
 use crate::js_promise::Status as PromiseStatus;
 use crate::virtual_machine::VirtualMachine;
@@ -77,7 +77,7 @@ pub struct EventLoop {
     pub waker: Option<Waker>,
     // see `hold_forever_poll`
     #[cfg(windows)]
-    pub forever_timer: Option<NonNull<uws::Timer>>,
+    pub forever_timer: Option<NonNull<uws::backend::libuv::Timer>>,
     #[cfg(not(windows))]
     pub holds_forever_poll: bool,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
@@ -556,15 +556,9 @@ impl EventLoop {
         #[cfg(not(windows))]
         {
             if delta > 0 {
-                loop_.num_polls += delta;
-                loop_.active = loop_
-                    .active
-                    .saturating_add(u32::try_from(delta).expect("int cast"));
+                loop_.ref_count(delta);
             } else {
-                loop_.num_polls -= -delta;
-                loop_.active = loop_
-                    .active
-                    .saturating_sub(u32::try_from(-delta).expect("int cast"));
+                loop_.unref_count(-delta);
             }
         }
     }
@@ -900,10 +894,8 @@ impl EventLoop {
             }
         }
         // Note: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
-        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`. The
-        // typed `set_parent_event_loop` extension trait in `bun_uws` expects
-        // a `ParentEventLoopHandle` impl, but `EventLoopHandle` already
-        // exposes `into_tag_ptr()` — go straight to the sys-level setter.
+        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`;
+        // `into_tag_ptr()` erases to the `(tag, ptr)` pair the loop stores.
         // `self` is the live per-thread `jsc::EventLoop` (mut ref) — non-null.
         let self_ptr = core::ptr::from_mut(self).cast::<()>();
         let (tag, ptr) = EventLoopHandle::init(self_ptr).into_tag_ptr();
@@ -957,22 +949,20 @@ impl EventLoop {
     }
 
     pub fn wakeup(&self) {
+        // Cross-thread callers (enqueue_task_concurrent, worker terminate)
+        // reach here while the loop thread may be parked inside a tick —
+        // use the raw `us_wakeup_loop(*mut Loop)`, never a `&mut Loop`.
         #[cfg(windows)]
         {
             if let Some(loop_) = self.uws_loop {
-                // SAFETY: uws_loop is a valid live uws::Loop handle
-                unsafe { (*loop_.as_ptr()).wakeup() };
+                uws::us_wakeup_loop(loop_.as_ptr());
             }
             return;
         }
         #[cfg(not(windows))]
         {
-            // Route through the single audited `platform_loop_opt()` accessor
-            // (set-once `Option<*mut>` deref) instead of open-coding the raw
-            // `(*event_loop_handle).wakeup()` here. Same `&mut Loop` is formed
-            // either way (autoref), so no soundness change vs the prior code.
-            if let Some(loop_) = self.vm_ref().platform_loop_opt() {
-                loop_.wakeup();
+            if let Some(loop_) = self.vm_ref().event_loop_handle {
+                uws::us_wakeup_loop(loop_);
             }
         }
     }
@@ -1047,6 +1037,20 @@ impl EventLoop {
     /// `done` must point to a live `bool`; C++ writes `true` through it from a
     /// callback inside `tick()`, so it cannot be a Rust `&mut` (would alias).
     pub unsafe fn tick_while_paused(&mut self, done: *const bool) {
+        #[cfg(not(windows))]
+        {
+            // The tick takes `*mut Loop` (re-entrant callbacks re-fetch the
+            // same loop); no `&mut Loop` is held across it.
+            let loop_ = self
+                .vm_ref()
+                .event_loop_handle
+                .expect("event_loop_handle");
+            // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
+            while !unsafe { done.read_volatile() } {
+                uws::Loop::tick(loop_);
+            }
+        }
+        #[cfg(windows)]
         // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
         while !unsafe { done.read_volatile() } {
             self.vm_ref()
@@ -1084,38 +1088,34 @@ impl EventLoop {
     #[cfg(windows)]
     fn hold_forever_poll(&mut self, loop_: &mut uws::Loop) {
         if self.forever_timer.is_none() {
-            let mut t = uws::Timer::create(
-                loop_,
-                std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
+            let t = uws::backend::libuv::Timer::create(core::ptr::from_mut(loop_), false, 0);
+            uws::backend::libuv::Timer::set(
+                t,
+                Some(noop_forever_timer),
+                1000 * 60 * 4,
+                1000 * 60 * 4,
             );
-            // SAFETY: t is a fresh non-null timer handle
-            unsafe {
-                t.as_mut().set(
-                    std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
-                    Some(noop_forever_timer),
-                    1000 * 60 * 4,
-                    1000 * 60 * 4,
-                )
-            };
-            self.forever_timer = Some(t);
+            self.forever_timer = NonNull::new(t);
         }
     }
 
     pub fn tick_possibly_forever(&mut self) {
         let loop_ptr = self.usockets_loop();
-        // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
-        let loop_ = unsafe { &mut *loop_ptr };
 
         #[cfg(unix)]
         {
             let pending_unref = self.vm_ref().take_pending_unref();
             if pending_unref > 0 {
-                loop_.unref_count(pending_unref);
+                // SAFETY: usockets_loop() returns a live uws loop for the VM
+                // lifetime; short-lived `&mut` on the loop thread.
+                unsafe { (*loop_ptr).unref_count(pending_unref) };
             }
         }
 
-        if !loop_.is_active() {
-            self.hold_forever_poll(loop_);
+        // SAFETY: as above — short-lived borrows, dropped before the tick.
+        if !unsafe { (*loop_ptr).is_active() } {
+            // SAFETY: as above.
+            self.hold_forever_poll(unsafe { &mut *loop_ptr });
         }
 
         self.process_gc_timer();
@@ -1123,7 +1123,7 @@ impl EventLoop {
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        loop_.tick_with_timeout(Some(&bun_core::Timespec { sec: 1, nsec: 0 }));
+        uws::Loop::tick_with_timeout(loop_ptr, Some(&bun_core::Timespec { sec: 1, nsec: 0 }));
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();
@@ -1222,7 +1222,7 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
 }
 
 #[cfg(windows)]
-extern "C" fn noop_forever_timer(_: *mut uws::Timer) {
+extern "C" fn noop_forever_timer(_: *mut uws::backend::libuv::Timer) {
     // do nothing
 }
 

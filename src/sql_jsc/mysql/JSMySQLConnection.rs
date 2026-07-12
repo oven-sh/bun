@@ -18,7 +18,7 @@ use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 use bun_sql::mysql::protocol::new_reader::NewReader;
 use bun_sql::mysql::protocol::new_writer::NewWriter;
 use bun_sql::mysql::ssl_mode::SSLMode;
-use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
+use bun_usockets::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 
 use super::js_mysql_query::JSMySQLQuery;
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
@@ -640,12 +640,10 @@ impl JSMySQLConnection {
         }
         use my_sql_connection::Status as S;
         match this.connection.get().status {
-            // A close while the connect/handshake is still in flight gets no
-            // socket event (uws skips the on_close dispatch for sockets whose
-            // connect never completed), so the socket-close -> on_close ->
-            // fail chain never runs: fail directly so the JS onclose callback
-            // fires and the status goes terminal instead of staying
-            // Connecting forever.
+            // A TCP-stage in-flight close gets no socket event, but a
+            // DNS-stage close dispatches on_connecting_error synchronously
+            // (C4). Fail directly so the JS onclose callback fires and the
+            // status goes terminal on both variants.
             S::Connecting | S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => {
                 this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
             }

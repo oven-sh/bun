@@ -29,7 +29,7 @@ use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_paths::MAX_PATH_BYTES;
 use bun_paths::{self as paths, PathBuffer};
 use bun_sys as sys;
-use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
+use bun_uws_shim::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
 use bun_watcher::WatchItemColumns as _;
 use bun_wyhash::{Wyhash, hash};
 
@@ -1573,8 +1573,8 @@ fn origin_forbidden(resp: AnyResponse) {
 /// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and wraps
 /// the raw `uws_res` as `AnyResponse`, then calls the handler for `ID`.
 extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
-    res: *mut bun_uws_sys::uws_res,
-    req: *mut bun_uws_sys::Request,
+    res: *mut bun_uws_shim::uws_res,
+    req: *mut bun_uws_shim::Request,
     ud: *mut c_void,
 ) {
     // SAFETY: `ud`/`req`/`res` were registered by `set_routes` and outlive the
@@ -1583,9 +1583,9 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     // SAFETY: see above; uWS passes a non-null `Request*` valid for the callback.
     let req = unsafe { &mut *req.cast::<Request>() };
     let resp = if SSL {
-        AnyResponse::SSL(res.cast::<bun_uws_sys::response::TLSResponse>())
+        AnyResponse::SSL(res.cast::<bun_uws_shim::response::TLSResponse>())
     } else {
-        AnyResponse::TCP(res.cast::<bun_uws_sys::response::TCPResponse>())
+        AnyResponse::TCP(res.cast::<bun_uws_shim::response::TCPResponse>())
     };
     if !is_allowed_dev_host(dev, req) {
         return host_forbidden(resp);
@@ -1611,41 +1611,41 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
 }
 
 fn on_report_error_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
-    use bun_uws_sys::thunk::OpaqueHandle as _;
+    use bun_uws_shim::thunk::OpaqueHandle as _;
     match resp {
         AnyResponse::SSL(r) => {
-            ErrorReportRequest::run(dev, req, bun_uws_sys::response::TLSResponse::as_handle(r))
+            ErrorReportRequest::run(dev, req, bun_uws_shim::response::TLSResponse::as_handle(r))
         }
         AnyResponse::TCP(r) => {
-            ErrorReportRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
+            ErrorReportRequest::run(dev, req, bun_uws_shim::response::TCPResponse::as_handle(r))
         }
         AnyResponse::H3(_) => not_found(resp),
     }
 }
 
 fn on_unref_source_map_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
-    use bun_uws_sys::thunk::OpaqueHandle as _;
+    use bun_uws_shim::thunk::OpaqueHandle as _;
     match resp {
         AnyResponse::SSL(r) => {
-            UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TLSResponse::as_handle(r))
+            UnrefSourceMapRequest::run(dev, req, bun_uws_shim::response::TLSResponse::as_handle(r))
         }
         AnyResponse::TCP(r) => {
-            UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
+            UnrefSourceMapRequest::run(dev, req, bun_uws_shim::response::TCPResponse::as_handle(r))
         }
         AnyResponse::H3(_) => not_found(resp),
     }
 }
 
 /// `WebSocketBehavior.Wrap(DevServer, HmrSocket, ssl).apply(.{})`.
-fn hmr_socket_behavior<const SSL: bool>() -> bun_uws_sys::WebSocketBehavior {
-    bun_uws_sys::web_socket::Wrap::<DevServer, HmrSocket, SSL>::apply(&Default::default())
+fn hmr_socket_behavior<const SSL: bool>() -> bun_uws_shim::WebSocketBehavior {
+    bun_uws_shim::web_socket::Wrap::<DevServer, HmrSocket, SSL>::apply(&Default::default())
 }
 
 // `WebSocketBehavior.Wrap(ServerType, Type, ssl)` requires `Type` (= `HmrSocket`)
 // to be a `WebSocketHandler` and `ServerType` (= `DevServer`) to be a
 // `WebSocketUpgradeServer<SSL>`. The trait is wired explicitly and forward to the inherent method bodies in
 // `dev_server::hmr_socket`.
-impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
+impl bun_uws_shim::web_socket::WebSocketHandler for HmrSocket {
     // `Wrap.apply` leaves the drain/ping/pong C callbacks `null` when
     // `HAS_ON_* == false`.
     const HAS_ON_DRAIN: bool = false;
@@ -1658,34 +1658,34 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
     // re-derive a fresh `&mut *this` here (not carried in from a `noalias`
     // dispatch-frame borrow).
     #[inline]
-    unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket) {
+    unsafe fn on_open(this: *mut Self, ws: bun_uws_shim::AnyWebSocket) {
         // SAFETY: `this` is the live user-data pointer (per trait contract).
         HmrSocket::on_open(unsafe { &mut *this }, ws)
     }
     #[inline]
     unsafe fn on_message(
         this: *mut Self,
-        ws: bun_uws_sys::AnyWebSocket,
+        ws: bun_uws_shim::AnyWebSocket,
         message: &[u8],
-        opcode: bun_uws_sys::Opcode,
+        opcode: bun_uws_shim::Opcode,
     ) {
         // SAFETY: see `on_open`.
         HmrSocket::on_message(unsafe { &mut *this }, ws, message, opcode)
     }
     #[inline]
-    unsafe fn on_close(this: *mut Self, ws: bun_uws_sys::AnyWebSocket, code: i32, message: &[u8]) {
+    unsafe fn on_close(this: *mut Self, ws: bun_uws_shim::AnyWebSocket, code: i32, message: &[u8]) {
         // SAFETY: see `on_open`.
         HmrSocket::on_close(this, ws, code, message)
     }
-    unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket) {}
-    unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
-    unsafe fn on_pong(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
+    unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_shim::AnyWebSocket) {}
+    unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_shim::AnyWebSocket, _message: &[u8]) {}
+    unsafe fn on_pong(_this: *mut Self, _ws: bun_uws_shim::AnyWebSocket, _message: &[u8]) {}
 }
 
-impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
+impl<const SSL: bool> bun_uws_shim::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut bun_uws_sys::NewAppResponse<SSL>,
+        res: *mut bun_uws_shim::NewAppResponse<SSL>,
         req: &mut Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
@@ -1718,23 +1718,23 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
 
 // `ResponseLike` for the concrete `Response<SSL>` so `HmrSocket::new` can be
 // called from `on_websocket_upgrade`.
-impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
+impl<const SSL: bool> ResponseLike for bun_uws_shim::response::Response<SSL> {
     fn write_status(&mut self, status: &[u8]) {
-        bun_uws_sys::response::Response::<SSL>::write_status(self, status)
+        bun_uws_shim::response::Response::<SSL>::write_status(self, status)
     }
     fn end(&mut self, data: &[u8], close_connection: bool) {
-        bun_uws_sys::response::Response::<SSL>::end(self, data, close_connection)
+        bun_uws_shim::response::Response::<SSL>::end(self, data, close_connection)
     }
-    fn as_any_response(&mut self) -> bun_uws::AnyResponse {
+    fn as_any_response(&mut self) -> bun_uws_shim::AnyResponse {
         if SSL {
-            bun_uws::AnyResponse::SSL(std::ptr::from_mut::<Self>(self).cast())
+            bun_uws_shim::AnyResponse::SSL(std::ptr::from_mut::<Self>(self).cast())
         } else {
-            bun_uws::AnyResponse::TCP(std::ptr::from_mut::<Self>(self).cast())
+            bun_uws_shim::AnyResponse::TCP(std::ptr::from_mut::<Self>(self).cast())
         }
     }
-    fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
-        bun_uws_sys::response::Response::<SSL>::get_remote_socket_info(self).map(|a| {
-            bun_uws::SocketAddress {
+    fn get_remote_socket_info(&mut self) -> Option<bun_uws_shim::SocketAddress> {
+        bun_uws_shim::response::Response::<SSL>::get_remote_socket_info(self).map(|a| {
+            bun_uws_shim::SocketAddress {
                 ip: a.ip().to_vec().into_boxed_slice(),
                 port: a.port,
                 is_ipv6: a.is_ipv6,
@@ -1747,10 +1747,10 @@ impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
         sec_web_socket_key: &[u8],
         sec_web_socket_protocol: &[u8],
         sec_web_socket_extensions: &[u8],
-        ctx: &mut bun_uws::WebSocketUpgradeContext,
+        ctx: &mut bun_uws_shim::WebSocketUpgradeContext,
     ) {
         let boxed = bun_core::heap::into_raw(Box::new(data));
-        let _ = bun_uws_sys::response::Response::<SSL>::upgrade(
+        let _ = bun_uws_shim::response::Response::<SSL>::upgrade(
             self,
             boxed,
             sec_web_socket_key,
@@ -1834,7 +1834,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         // SAFETY: `init_from_any_blob` returns a fresh ref_count=1 box.
         scopeguard::defer! { unsafe { StaticRoute::deref_(response) } };
         // SAFETY: `response` is live until `_deref` runs after this returns.
-        unsafe { StaticRoute::on_request(response, bun_uws::AnyRequest::H1(req), resp) };
+        unsafe { StaticRoute::on_request(response, bun_uws_shim::AnyRequest::H1(req), resp) };
         return;
     }
 
@@ -6619,7 +6619,7 @@ struct UnrefSourceMapRequest {
 }
 
 bun_core::intrusive_field!(UnrefSourceMapRequest, body: uws::BodyReaderMixin<UnrefSourceMapRequest>);
-impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
+impl bun_uws_shim::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
     unsafe fn on_body(
         this: *mut Self,
         body: &[u8],
@@ -6639,7 +6639,7 @@ impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest
 impl UnrefSourceMapRequest {
     fn run<R>(dev: &mut DevServer, _: &mut Request, resp: &mut R)
     where
-        R: bun_uws_sys::body_reader_mixin::BodyResponse,
+        R: bun_uws_shim::body_reader_mixin::BodyResponse,
     {
         dev.server
             .as_mut()

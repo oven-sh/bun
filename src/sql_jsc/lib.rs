@@ -37,6 +37,8 @@ pub mod shared {
     #[path = "SQLDataCell.rs"]
     pub mod sql_data_cell;
 
+    pub mod tls_adopt;
+
     pub use cached_structure::CachedStructure;
     pub use object_iterator::ObjectIterator;
     pub use query_binding_iterator::QueryBindingIterator;

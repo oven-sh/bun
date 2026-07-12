@@ -14,8 +14,19 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::zig_string::ZigString;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult};
 use bun_sys::{self, Fd};
-use bun_uws as uws;
-use bun_uws_sys as uws_sys;
+use bun_usockets as uws;
+
+use super::uws_dispatch::{ensure_registered, hdr};
+
+/// Reborrow a live listen socket. Valid only while the listener is linked
+/// into its group's `head_listen_sockets` list (`ListenerType::Uws` guards
+/// every call site; `do_stop`/`finalize` clear it before close).
+#[inline]
+fn ls_mut<'a>(ls: *mut uws::ListenSocket) -> &'a mut uws::ListenSocket {
+    debug_assert!(!ls.is_null());
+    // SAFETY: per the contract above.
+    unsafe { &mut *ls }
+}
 
 use crate::api::bun_secure_context::SecureContext;
 use crate::socket::{
@@ -97,7 +108,7 @@ pub struct Listener {
 
 #[derive(Clone, Copy, Default)]
 pub enum ListenerType {
-    Uws(*mut uws_sys::ListenSocket),
+    Uws(*mut uws::ListenSocket),
     /// Raw heap pointer (not `Box`) to a `WindowsNamedPipeListeningContext`.
     /// The context's address is registered with libuv (`uv_pipe.data`) for the
     /// lifetime of the handle, so we must never assert `noalias` over it via a
@@ -178,6 +189,7 @@ impl Listener {
         // SAFETY: VirtualMachine::get() returns the per-thread VM; valid for program lifetime.
         let vm = VirtualMachine::get().as_mut();
 
+        ensure_registered();
         let mut socket_config = SocketConfig::from_js(vm, opts, global, SocketMode::Server)?;
         // Teardown handled by Drop on SocketConfig; `handlers` is an `Rc` the
         // `Listener` clones out of it.
@@ -390,7 +402,7 @@ impl Listener {
             .map(|p| p.as_ptr().cast::<uws::SslCtx>());
 
         let mut errno: c_int = 0;
-        let listen_socket: *mut uws_sys::ListenSocket = match &mut connection {
+        let listen_socket: *mut uws::ListenSocket = match &mut connection {
             UnixOrHost::Host { host, port } => {
                 let hostz = bun_core::ZBox::from_bytes(&host[..]);
                 let host_cstr = hostz.as_zstr().as_cstr();
@@ -406,9 +418,7 @@ impl Listener {
                     )
                 });
                 if !ls.is_null() {
-                    // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    *port = u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port())
-                        .expect("int cast");
+                    *port = u16::try_from(ls_mut(ls).get_local_port()).expect("int cast");
                 }
                 ls
             }
@@ -497,10 +507,9 @@ impl Listener {
             if let Some(server_name) = ssl_config.server_name_cstr() {
                 if !server_name.to_bytes().is_empty() {
                     // Registering the default cert under its own server_name is a
-                    // hint for sni_cb, not load-bearing — sni_find() miss falls
+                    // hint for sni_cb, not load-bearing — an SNI-map miss falls
                     // through to the default SSL_CTX anyway.
-                    // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    let _ = bun_opaque::opaque_deref_mut(listen_socket).add_server_name(
+                    let _ = ls_mut(listen_socket).add_server_name(
                         server_name,
                         secure.as_ptr().cast(),
                         core::ptr::null_mut(),
@@ -516,8 +525,7 @@ impl Listener {
             // addContext entries), then the default context; an asynchronous
             // resolution suspends the handshake until resumeSNI.
             if !this_ref.handlers.on_server_name().is_empty() {
-                // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
-                bun_opaque::opaque_deref_mut(listen_socket).on_server_name(us_dispatch_server_name);
+                ls_mut(listen_socket).on_server_name(us_dispatch_server_name);
             }
         }
 
@@ -626,14 +634,11 @@ impl Listener {
             // SAFETY: ext storage is at least pointer-sized; we stash *mut NewSocket<SSL>
             unsafe { *ctx = this_socket.as_ptr().cast::<c_void>() };
         }
-        if let uws::InternalSocket::Connected(s) = socket.socket {
-            // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-            bun_opaque::opaque_deref_mut(s).set_kind(if SSL {
-                uws_sys::SocketKind::BunSocketTls
-            } else {
-                uws_sys::SocketKind::BunSocketTcp
-            });
-        }
+        socket.set_kind(if SSL {
+            uws::SocketKind::BunSocketTls
+        } else {
+            uws::SocketKind::BunSocketTcp
+        });
         socket.set_timeout(120);
         this_socket
     }
@@ -707,9 +712,8 @@ impl Listener {
                 return Ok(JSValue::UNDEFINED);
             };
 
-        // The C SNI tree SSL_CTX_up_ref()s; drop our build/borrow ref once added.
-        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-        let ls_ref = bun_opaque::opaque_deref_mut(ls);
+        // The SNI map SSL_CTX_up_ref()s; drop our build/borrow ref once added.
+        let ls_ref = ls_mut(ls);
         ls_ref.remove_server_name(server_name);
         let ok = ls_ref.add_server_name(server_name, sni_ctx.cast(), core::ptr::null_mut());
         // SAFETY: FFI — drop the +1 ref we took via borrow()/get_or_create(); SNI tree up_ref'd its own
@@ -776,8 +780,7 @@ impl Listener {
         }
 
         match listener {
-            // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-            ListenerType::Uws(socket) => bun_opaque::opaque_deref_mut(socket).close(),
+            ListenerType::Uws(socket) => ls_mut(socket).close(),
             #[cfg(windows)]
             ListenerType::NamedPipe(named_pipe) => {
                 // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit
@@ -798,8 +801,7 @@ impl Listener {
         match listener {
             ListenerType::Uws(socket) => {
                 Self::unlink_unix_socket_path(&self);
-                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(socket).close();
+                ls_mut(socket).close();
             }
             #[cfg(windows)]
             ListenerType::NamedPipe(named_pipe) => {
@@ -897,8 +899,7 @@ impl Listener {
     pub fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
         match this.listener.get() {
             ListenerType::Uws(uws_listener) => {
-                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                let socket = bun_opaque::opaque_deref_mut(uws_listener).socket::<false>();
+                let socket = ls_mut(uws_listener).socket::<false>();
                 // On Windows the listening socket fd is a system-kind SOCKET
                 // handle; routing it through `.uv()` panics for anything but
                 // stdio. The sys_jsc helper branches on kind
@@ -1353,8 +1354,7 @@ impl Listener {
 
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
-        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-        let socket_ref = bun_opaque::opaque_deref_mut(socket);
+        let socket_ref = ls_mut(socket);
         let address_bytes: &[u8] = match socket_ref.get_local_address(&mut buf) {
             Ok(b) => b,
             Err(_) => return Ok(JSValue::UNDEFINED),
@@ -1795,7 +1795,7 @@ impl WindowsNamedPipeListeningContext {
 /// and `hostname` is a NUL-terminated string valid for the call. JS-thread
 /// only.
 pub(crate) extern "C" fn us_dispatch_server_name(
-    ls: *mut uws_sys::ListenSocket,
+    ls: *mut uws::ListenSocket,
     hostname: *const core::ffi::c_char,
     abort_handshake: *mut core::ffi::c_int,
     socket: *mut c_void,
@@ -1805,8 +1805,8 @@ pub(crate) extern "C" fn us_dispatch_server_name(
         return core::ptr::null_mut();
     }
     // The accept group's ext holds the owning `*mut Listener` for the lifetime
-    // of the listen socket. S008: `ListenSocket` is an `opaque_ffi!` ZST.
-    let listener_ptr: *mut Listener = bun_opaque::opaque_deref_mut(ls).group().owner::<Listener>();
+    // of the listen socket.
+    let listener_ptr: *mut Listener = ls_mut(ls).group().owner::<Listener>();
     if listener_ptr.is_null() {
         return core::ptr::null_mut();
     }
@@ -1847,11 +1847,10 @@ pub(crate) extern "C" fn us_dispatch_server_name(
     let socket_handle: JSValue = if socket.is_null() {
         JSValue::UNDEFINED
     } else {
-        // SAFETY: the C caller passes the live us_socket_t processing this
-        // ClientHello; for BunSocketTls sockets the ext slot holds the
-        // TLSSocket wrapper.
-        let s_ref = uws_sys::us_socket_t::opaque_mut(socket.cast());
-        if s_ref.kind() == uws_sys::SocketKind::BunSocketTls {
+        // The core passes the live us_socket_t processing this ClientHello;
+        // for BunSocketTls sockets the ext slot holds the TLSSocket wrapper.
+        let s_ref = hdr(socket.cast::<uws::us_socket_t>());
+        if s_ref.kind() == uws::SocketKind::BunSocketTls {
             match *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() {
                 Some(tls) => tls.get_this_value(&global),
                 None => JSValue::UNDEFINED,

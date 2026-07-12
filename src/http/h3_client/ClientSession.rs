@@ -9,7 +9,7 @@ use core::sync::atomic::Ordering;
 
 use bun_core::err;
 use bun_core::strings;
-use bun_uws::quic;
+use bun_uws_shim::quic;
 
 use super::client_context::ClientContext;
 use super::encode;

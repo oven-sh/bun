@@ -25,7 +25,7 @@ use bun_sys::Fd;
 #[cfg(not(windows))]
 use bun_sys::FdExt as _;
 #[cfg(not(windows))]
-use bun_uws as uws;
+use bun_usockets as uws;
 
 #[cfg(windows)]
 use bun_libuv_sys::{UvHandle as _, UvStream as _};
@@ -127,7 +127,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // this group.
         if g.vtable.is_none() {
             // cannot use `uws::vtable::make::<PosixHandlers<Owner>>()`
-            // because `bun_uws_sys::vtable::Handler` requires `Self: 'static`
+            // because `bun_usockets::dispatch::Handler` requires `Self: 'static`
             // and one owner (`WorkerCommands<'a>`) carries a lifetime. The
             // hand-rolled `PosixHandlers::<Owner>::VTABLE` const below mirrors
             // exactly what `vtable::make` would produce.
@@ -225,18 +225,25 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         #[cfg(not(windows))]
         {
             let g = Self::ensure_posix_group(vm);
-            let Some(sock) = Socket::from_fd(
-                g,
+            let raw = g.from_fd(
                 uws::SocketKind::Dynamic,
-                fd,
-                std::ptr::from_mut(self),
+                None,
+                core::mem::size_of::<PosixExt<Owner>>() as core::ffi::c_int,
+                fd.native(),
                 true,
-            ) else {
+            );
+            let Some(nn) = core::ptr::NonNull::new(raw) else {
                 // us_socket_from_fd does NOT take ownership on failure; leaving
                 // the inherited IPC endpoint open keeps the peer process alive.
                 fd.close();
                 return false;
             };
+            // Dynamic is a group-vtable kind: ext lives in the trailing area,
+            // so stamp through the kind-checked accessor, not the header word.
+            // SAFETY: `raw` is the live socket just created above; its ext
+            // area was sized for `PosixExt<Owner>`.
+            unsafe { *(*raw).ext::<PosixExt<Owner>>() = std::ptr::from_mut(self) };
+            let sock = Socket::from(uws::SocketRef::from_live(nn));
             self.backend.socket = sock;
             sock.set_timeout(0);
             true
@@ -525,9 +532,9 @@ impl<Owner> Drop for Channel<Owner> {
 
 // -- platform callbacks ------------------------------------------------------
 
-/// `vtable.make()` shape: `(ext: **Self, *us_socket_t, …)`. Hand-rolled here
+/// Hand-rolled `us_socket_vtable_t` slots, used
 /// instead of `uws::vtable::make::<PosixHandlers<Owner>>()` because the
-/// upstream `bun_uws_sys::vtable::Handler` trait is `'static`-bounded and one
+/// upstream `bun_usockets::dispatch::Handler` trait is `'static`-bounded and one
 /// owner (`WorkerCommands<'a>`) carries a lifetime. The trampolines below are
 /// the exact shape `vtable::make` would have produced.
 #[cfg(not(windows))]
@@ -601,7 +608,7 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
 
     unsafe extern "C" fn raw_on_end(s: *mut uws::us_socket_t) -> *mut uws::us_socket_t {
         // SAFETY: `s` is a live us_socket_t passed by usockets.
-        unsafe { (*s).close(bun_uws_sys::CloseCode::normal) };
+        unsafe { (*s).close(uws::CloseCode::normal) };
         s
     }
 }

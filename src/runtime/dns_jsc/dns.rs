@@ -29,7 +29,7 @@ use bun_sys::windows::libuv;
 #[cfg(not(windows))]
 use bun_sys::{self as sys};
 use bun_threading::thread_pool;
-use bun_uws::{ConnectingSocket, Loop};
+use bun_usockets::{ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
 use super::cares_jsc::error_to_deferred;
@@ -2521,7 +2521,8 @@ pub mod internal {
     }
 
     // `Request` is passed opaquely to usockets and round-tripped back into
-    // Rust; the C side never dereferences fields, so layout is irrelevant.
+    // this module; the callee (`bun_usockets` cabi.rs) never dereferences it,
+    // so layout is irrelevant.
     #[allow(improper_ctypes)]
     unsafe extern "C" {
         fn us_internal_dns_callback(socket: *mut ConnectingSocket, req: *mut Request);
@@ -3057,7 +3058,6 @@ pub mod internal {
 
         #[cfg(target_os = "macos")]
         {
-            use bun_uws::InternalLoopDataExt as _;
             if !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO
                 .get()
                 .unwrap_or(false)
@@ -3065,7 +3065,7 @@ pub mod internal {
                 // SAFETY: `loop_` is the live uSockets loop; its parent tag/ptr
                 // was set by `EventLoopHandle::set_as_parent_of` at startup.
                 let handle = unsafe {
-                    let (tag, ptr) = (*loop_).internal_loop_data.get_parent();
+                    let (tag, ptr) = (*loop_).internal_loop_data.get_parent_raw();
                     jsc::EventLoopHandle::from_tag_ptr(tag, ptr)
                 };
                 let res = lookup_libinfo(req, handle);
@@ -4852,7 +4852,11 @@ impl Resolver {
                 // SAFETY: `Loop::get()` is the live per-thread uws loop;
                 // `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
                 if unsafe {
-                    uv::uv_poll_init_socket((*Loop::get()).uv_loop, &mut (*new_poll).poll, fd as _)
+                    uv::uv_poll_init_socket(
+                        (*Loop::get()).uv_loop.cast(),
+                        &mut (*new_poll).poll,
+                        fd as _,
+                    )
                 } < 0
                 {
                     UvDnsPoll::destroy(new_poll);

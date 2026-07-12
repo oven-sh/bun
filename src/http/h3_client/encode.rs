@@ -4,9 +4,9 @@
 
 use bun_core::err;
 use bun_core::strings;
-use bun_uws::quic;
-use bun_uws::quic::Qpack;
-use bun_uws::quic::header::Class as QpackClass;
+use bun_uws_shim::quic;
+use bun_uws_shim::quic::Qpack;
+use bun_uws_shim::quic::header::Class as QpackClass;
 
 use super::client_session::ClientSession;
 use super::stream::Stream;

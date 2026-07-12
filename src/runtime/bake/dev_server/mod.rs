@@ -299,21 +299,21 @@ pub use serialized_failure::SerializedFailure;
 pub use source_map_store::SourceMapStore;
 
 /// Local response trait — the response type is a generic bound.
-/// Method shapes mirror `bun_uws_sys::Response<SSL>` so the `R`-generic
-/// bodies type-check. `bun_uws` exposes no equivalent trait; if it ever
+/// Method shapes mirror `bun_uws_shim::Response<SSL>` so the `R`-generic
+/// bodies type-check. `bun_uws_shim` exposes no equivalent trait; if it ever
 /// grows one, this can be replaced by it.
 pub trait ResponseLike {
     fn write_status(&mut self, status: &[u8]);
     fn end(&mut self, data: &[u8], close_connection: bool);
-    fn as_any_response(&mut self) -> bun_uws::AnyResponse;
-    fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress>;
+    fn as_any_response(&mut self) -> bun_uws_shim::AnyResponse;
+    fn get_remote_socket_info(&mut self) -> Option<bun_uws_shim::SocketAddress>;
     fn upgrade<D>(
         &mut self,
         data: D,
         sec_web_socket_key: &[u8],
         sec_web_socket_protocol: &[u8],
         sec_web_socket_extensions: &[u8],
-        ctx: &mut bun_uws::WebSocketUpgradeContext,
+        ctx: &mut bun_uws_shim::WebSocketUpgradeContext,
     );
 }
 
@@ -321,21 +321,21 @@ pub trait ResponseLike {
 // trivially. The trait methods take `&mut self` (matching `Response<SSL>`'s
 // shape); `AnyResponse` is `Copy`, so the inherent by-value methods are called
 // on `*self`.
-impl ResponseLike for bun_uws::AnyResponse {
+impl ResponseLike for bun_uws_shim::AnyResponse {
     fn write_status(&mut self, status: &[u8]) {
         (*self).write_status(status)
     }
     fn end(&mut self, data: &[u8], close_connection: bool) {
         (*self).end(data, close_connection)
     }
-    fn as_any_response(&mut self) -> bun_uws::AnyResponse {
+    fn as_any_response(&mut self) -> bun_uws_shim::AnyResponse {
         *self
     }
-    fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
-        // Re-box into the owned `bun_uws::SocketAddress` shape this trait uses.
+    fn get_remote_socket_info(&mut self) -> Option<bun_uws_shim::SocketAddress> {
+        // Re-box into the owned `bun_uws_shim::SocketAddress` shape this trait uses.
         (*self)
             .get_remote_socket_info()
-            .map(|a| bun_uws::SocketAddress {
+            .map(|a| bun_uws_shim::SocketAddress {
                 ip: a.ip().to_vec().into_boxed_slice(),
                 port: a.port,
                 is_ipv6: a.is_ipv6,
@@ -347,7 +347,7 @@ impl ResponseLike for bun_uws::AnyResponse {
         sec_web_socket_key: &[u8],
         sec_web_socket_protocol: &[u8],
         sec_web_socket_extensions: &[u8],
-        ctx: &mut bun_uws::WebSocketUpgradeContext,
+        ctx: &mut bun_uws_shim::WebSocketUpgradeContext,
     ) {
         let boxed = bun_core::heap::into_raw(Box::new(data));
         let _ = (*self).upgrade(
@@ -366,7 +366,7 @@ pub struct HmrSocket {
     /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
     /// `remove` + `heap::take` in `on_close`.
     pub dev: bun_ptr::BackRef<DevServer>,
-    pub underlying: Option<bun_uws::AnyWebSocket>,
+    pub underlying: Option<bun_uws_shim::AnyWebSocket>,
     pub subscriptions: super::dev_server_body::HmrTopicBits,
     /// Allows actions which inspect or mutate sensitive DevServer state.
     pub is_from_localhost: bool,
@@ -560,7 +560,7 @@ impl HotReloadEvent {
             dev.publish(
                 HmrTopic::TestingWatchSynchronization,
                 &[MessageId::TestingWatchSynchronization.char(), 1],
-                bun_uws::Opcode::BINARY,
+                bun_uws_shim::Opcode::BINARY,
             );
             return;
         }
@@ -710,7 +710,7 @@ impl HotReloadEvent {
                 dev_ref.publish(
                     HmrTopic::TestingWatchSynchronization,
                     &[MessageId::TestingWatchSynchronization.char(), 1],
-                    bun_uws::Opcode::BINARY,
+                    bun_uws_shim::Opcode::BINARY,
                 );
                 return;
             }

@@ -65,10 +65,10 @@ pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
 #[path = "ssl_config.rs"]
 pub mod ssl_config;
 pub use ssl_config::SSLConfig;
-// SSLWrapper was MOVE_DOWN to bun_uws (tier 4); re-export here so
+// SSLWrapper lives in the shim crate (api.md CHANGES 3); re-export here so
 // `crate::ssl_wrapper::SSLWrapper` resolves for ProxyTunnel/HTTPContext.
-pub use bun_uws::ssl_wrapper;
-pub use bun_uws::ssl_wrapper::SSLWrapper;
+pub use bun_uws_shim::ssl_wrapper;
+pub use bun_uws_shim::ssl_wrapper::SSLWrapper;
 
 // ── naming aliases ──
 // Submodules use both `HTTPClient`/`HttpClient` and the older name
@@ -592,7 +592,7 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
 // ───────────────────────────── HTTPClient struct ─────────────────────────────
 // The heavy `impl HTTPClient` (socket dispatch / state machine) remains
 // gated below until the missing
-// `bun_uws::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
+// `bun_usockets::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
 // `shutdown`/`connect_group`/…) land.
 
 use bun_core::ZigStringSlice;
@@ -934,7 +934,7 @@ pub fn http_thread_mut() -> &'static mut HTTPThread {
 // TODO: this needs to be freed when Worker Threads are implemented
 // HTTP-thread-only; `RacyCell` is the alias-safe static cell.
 pub static SOCKET_ASYNC_HTTP_ABORT_TRACKER: bun_core::RacyCell<
-    Option<bun_collections::ArrayHashMap<u32, bun_uws::AnySocket>>,
+    Option<bun_collections::ArrayHashMap<u32, bun_usockets::AnySocket>>,
 > = bun_core::RacyCell::new(None);
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -952,7 +952,7 @@ use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output, err};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
-use bun_uws as uws;
+use bun_usockets as uws;
 // the std Wyhash algorithm, not Wyhash11.
 use bun_wyhash::Wyhash;
 

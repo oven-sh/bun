@@ -71,10 +71,22 @@ pub(crate) fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mys
 // directly).
 // ──────────────────────────────────────────────────────────────────────────
 
-// `uws.us_bun_verify_error_t::toJS` — sunk to `bun_jsc::system_error` so both
-// `bun_runtime` and this crate import the single canonical body (was
-// triplicated across runtime/socket/uws_jsc, here, and PostgresSQLConnection).
-pub use bun_jsc::system_error::verify_error_to_js;
+// `uws.us_bun_verify_error_t::toJS` — canonical body is `bun_jsc::system_error`
+// (bun_uws-typed until the shim cutover re-exports bun_usockets' nominal);
+// rebuilt field-by-field so both pre- and post-cutover states compile.
+pub fn verify_error_to_js(
+    err: &bun_usockets::us_bun_verify_error_t,
+    global: &JSGlobalObject,
+) -> JsResult<JSValue> {
+    bun_jsc::system_error::verify_error_to_js(
+        &bun_uws::us_bun_verify_error_t {
+            error_no: err.error_no,
+            code: err.code,
+            reason: err.reason,
+        },
+        global,
+    )
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // uws.create_bun_socket_error_t::toJS
@@ -120,10 +132,10 @@ fn boringssl_err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
 }
 
 pub(crate) fn create_bun_socket_error_to_js(
-    err: bun_uws::create_bun_socket_error_t,
+    err: bun_usockets::create_bun_socket_error_t,
     global: &JSGlobalObject,
 ) -> JSValue {
-    use bun_uws::create_bun_socket_error_t as E;
+    use bun_usockets::create_bun_socket_error_t as E;
     match err {
         // `us_ssl_ctx_from_options` only sets *err for the CA/cipher cases;
         // bad cert/key/DH return NULL with `.none` and the detail is on the
@@ -219,8 +231,8 @@ pub struct SqlRuntimeHooks {
     /// `SSLContextCache::getOrCreateOpts` — digest-keyed weak `SSL_CTX*` cache.
     pub ssl_ctx_get_or_create: unsafe fn(
         cache: *mut c_void,
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
+        opts: &bun_usockets::BunSocketContextOptions,
+        err: &mut bun_usockets::create_bun_socket_error_t,
     ) -> *mut bun_uws::SslCtx,
     /// `SSLConfig::fromJS` — parse a JS TLS-options object. Returns a boxed
     /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),
@@ -231,7 +243,7 @@ pub struct SqlRuntimeHooks {
     pub ssl_config_free: unsafe fn(*mut c_void),
     /// `SSLConfig::asUSocketsForClientVerification`.
     pub ssl_config_as_usockets_client:
-        unsafe fn(*const c_void) -> bun_uws::us_bun_socket_context_options_t,
+        unsafe fn(*const c_void) -> bun_usockets::BunSocketContextOptions,
     /// `SSLConfig.server_name` — null when unset.
     pub ssl_config_server_name: unsafe fn(*const c_void) -> *const c_char,
     /// `SSLConfig.reject_unauthorized`.
@@ -280,13 +292,13 @@ pub(crate) trait VirtualMachineSqlExt {
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
-    /// Lazy-init `RareData`'s per-protocol uws [`bun_uws::SocketGroup`].
+    /// Lazy-init `RareData`'s per-protocol uws [`bun_usockets::SocketGroup`].
     /// Encapsulates the `rare_data(&mut self)` / `*_group(.., &VirtualMachine)`
     /// borrowck conflict (the two borrows touch field-disjoint state) so the
     /// four call sites need no per-site raw-pointer dance.
-    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
+    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_usockets::SocketGroup;
     /// See [`Self::postgres_socket_group`].
-    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
+    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_usockets::SocketGroup;
     // NOTE: `event_loop_mut` lives on `VirtualMachine` as a safe inherent
     // accessor (single audited deref under the JS-thread-singleton invariant);
     // the former unsafe trait shim here was dead — inherent methods always win
@@ -317,7 +329,7 @@ impl VirtualMachineSqlExt for VirtualMachine {
         bun_io::js_vm_ctx()
     }
     #[inline]
-    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
+    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_usockets::SocketGroup {
         // `rare_data()` returns the boxed `&mut RareData` (disjoint allocation);
         // `*_group` only reads `vm.uws_loop()`. Route the read-only `vm`
         // argument through the JS-thread singleton accessor instead of a
@@ -328,7 +340,7 @@ impl VirtualMachineSqlExt for VirtualMachine {
             .postgres_group::<SSL>(VirtualMachine::get())
     }
     #[inline]
-    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
+    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_usockets::SocketGroup {
         // See `postgres_socket_group` — singleton `&'static` for the read-only
         // `vm` argument avoids the raw-pointer split-borrow.
         self.rare_data().mysql_group::<SSL>(VirtualMachine::get())
@@ -509,9 +521,9 @@ pub mod api {
             /// itself). Returns `Default` for the empty/`tls:true` config.
             pub fn as_usockets_for_client_verification(
                 &self,
-            ) -> bun_uws::us_bun_socket_context_options_t {
+            ) -> bun_usockets::BunSocketContextOptions {
                 match self.0 {
-                    None => bun_uws::us_bun_socket_context_options_t {
+                    None => bun_usockets::BunSocketContextOptions {
                         request_cert: 1,
                         reject_unauthorized: 0,
                         ..Default::default()
@@ -872,8 +884,8 @@ bun_opaque::opaque_ffi! { pub struct SslCtxCache; }
 impl SslCtxCache {
     pub fn get_or_create_opts(
         &mut self,
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
+        opts: &bun_usockets::BunSocketContextOptions,
+        err: &mut bun_usockets::create_bun_socket_error_t,
     ) -> Option<*mut bun_uws::SslCtx> {
         // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
         // are caller stack locals.

@@ -16,7 +16,7 @@ use bun_core::strings;
 use bun_core::{self};
 use bun_io::KeepAlive;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
-use bun_uws as uws;
+use bun_usockets as uws;
 use core::ptr::NonNull;
 
 use crate::jsc::{EventLoopTimerState, EventLoopTimerTag};
@@ -151,7 +151,10 @@ pub struct PostgresSQLConnection {
 
     /// `us_ssl_ctx_t` built from `tls_config` at construct time. Applied via
     /// `us_socket_adopt_tls` when the server replies `S` to the SSLRequest.
-    pub secure: Option<*mut uws::SslCtx>,
+    /// Owned `SSL_CTX*` on the boringssl nominal (matches `ConnectionCtorArgs`
+    /// and the `SSLContextCache`); cast to the bssl-sys nominal only at the
+    /// `adopt_tls` boundary in [`Self::setup_tls`].
+    pub secure: Option<*mut bun_uws::SslCtx>,
     pub tls_config: jsc::api::ServerConfig::SSLConfig,
     pub tls_status: Cell<TLSStatus>,
     pub ssl_mode: SSLMode,
@@ -428,7 +431,7 @@ impl PostgresSQLConnection {
         debug!("setupTLS");
         // `vm_mut()` is `'static`, so `tls_group` borrows the VM singleton —
         // not `*self` — and stays live across the field reads below.
-        let tls_group: &mut bun_uws::SocketGroup = self.vm_mut().postgres_socket_group::<true>();
+        let tls_group: &mut uws::SocketGroup = self.vm_mut().postgres_socket_group::<true>();
 
         // At this point we are
         // a plain TCP socket in the Connected state.
@@ -439,20 +442,15 @@ impl PostgresSQLConnection {
             );
             return;
         };
-        let uws::InternalSocket::Connected(raw) = tcp.socket else {
-            self.fail(
-                b"Failed to upgrade to TLS",
-                AnyPostgresError::TLSUpgradeFailed,
-            );
-            return;
-        };
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before `setup_tls` is
-        // reached.
+        // reached; the cast bridges the boringssl vs bssl-sys nominals of the
+        // same C struct (single cast site — the field stays boringssl-typed).
         let ssl_ctx = unsafe {
             &mut *self
                 .secure
                 .expect("secure SSL_CTX must be set before setupTLS")
+                .cast::<uws::SslCtx>()
         };
         let server_name = self.tls_config.server_name();
         let sni = if server_name.is_null() {
@@ -462,44 +460,22 @@ impl PostgresSQLConnection {
             // `tls_config` for the connection lifetime.
             Some(unsafe { bun_core::ffi::cstr(server_name) })
         };
-        // The ext slot is an 8-byte null-niche
-        // optional pointer, `Option<NonNull<T>>`; using
-        // `Option<*mut T>` here would request 16 bytes (separate discriminant)
-        // and desync with the trampoline reader (uws_handlers.rs) which reads
-        // the slot as `Option<NonNull<_>>`.
-        let ext_size =
-            core::mem::size_of::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() as i32;
 
-        // SAFETY: `raw` is a live connected `us_socket_t*`; adopt_tls may
-        // realloc and return a different ptr.
-        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
+        if !crate::shared::tls_adopt::adopt_socket_into_tls(
+            tcp,
             tls_group,
-            bun_uws::SocketKind::PostgresTls,
+            uws::SocketKind::PostgresTls,
             ssl_ctx,
             sni,
-            true, // is_client
-            ext_size,
-            ext_size,
-        ) else {
+            self.as_ctx_ptr(),
+            |tls| self.socket.set(Socket::SocketTls(tls)),
+        ) {
             self.fail(
                 b"Failed to upgrade to TLS",
                 AnyPostgresError::TLSUpgradeFailed,
             );
             return;
-        };
-        let new_socket = new_socket.as_ptr();
-        // SAFETY: `new_socket` is a live us_socket_t freshly returned by
-        // `adopt_tls`; ext slot is sized for `Option<NonNull<PostgresSQLConnection>>`
-        // above. One `&mut` reborrow drives both safe inherent methods
-        // (`ext` / `start_tls_handshake`).
-        let sock = unsafe { &mut *new_socket };
-        *sock.ext::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() =
-            core::ptr::NonNull::new(self.as_ctx_ptr());
-        self.socket.set(Socket::SocketTls(uws::SocketTLS {
-            socket: uws::InternalSocket::Connected(new_socket),
-        }));
-        // ext is now repointed; safe to kick the handshake (any dispatch lands here).
-        sock.start_tls_handshake();
+        }
         self.start();
     }
 
@@ -1391,13 +1367,10 @@ impl PostgresSQLConnection {
     }
 
     fn close(&self) {
-        // A close while the connect/handshake is still in flight gets no
-        // socket event: uws skips the on_close dispatch for sockets whose
-        // connect never completed, and `disconnect()` only tears down
-        // connected sockets. Fail the connection directly so the JS onclose
-        // callback fires, pending queries are rejected, and the in-flight
-        // socket is torn down instead of completing the handshake after
-        // close.
+        // A TCP-stage in-flight close gets no socket event, but a DNS-stage
+        // close dispatches on_connecting_error synchronously (C4). Fail
+        // directly so the JS onclose callback fires and pending queries are
+        // rejected on both variants.
         if !self.vm().is_shutting_down()
             && matches!(
                 self.status.get(),
@@ -1405,9 +1378,10 @@ impl PostgresSQLConnection {
             )
         {
             self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
-            // closing an in-flight connect dispatches no socket event, so the
-            // poll ref taken at creation is released here rather than in a
-            // socket callback
+            // A TCP-stage close (C1 semi-socket, no event) still holds
+            // poll_ref, so this unref is load-bearing there; after a DNS-stage
+            // close it is a second unref — safe only because KeepAlive::unref
+            // is idempotent (on_connecting_error already unrefed).
             self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
         } else {
             self.disconnect();

@@ -12,7 +12,7 @@ use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
 use bun_core::{self, Error, FeatureFlags};
-use bun_uws as uws;
+use bun_usockets as uws;
 
 bun_core::declare_scope!(HTTPContext, hidden);
 
@@ -346,7 +346,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// holds exactly the `ActiveSocket` tagged-pointer word; uSockets allocates
     /// it as `size_of::<*mut c_void>()` and never reads/writes it itself, so
     /// the raw `*slot = …` write is the sole owner. `ext()` returns `None`
-    /// only for closed sockets, in which case the write is a no-op.
+    /// only for stale (slot recycled, generation mismatch) or detached
+    /// handles, in which case the write is a no-op; closed-but-not-recycled
+    /// sockets still expose their ext through `on_close` dispatch.
     #[inline]
     pub(crate) fn set_socket_ext(socket: HTTPSocket<SSL>, tagged: ActiveSocket<SSL>) {
         if let Some(slot) = socket.ext::<*mut c_void>() {
@@ -480,6 +482,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
         self.secure.unwrap()
     }
 
+    /// `secure` as the connect-time borrow, spelled in the core crate's
+    /// opaque `SslCtx` name (same BoringSSL object, cast at the seam).
+    fn ssl_ctx_for_connect(&self) -> Option<*mut uws::SslCtx> {
+        self.secure.map(|c| c.cast::<uws::SslCtx>())
+    }
+
     pub(crate) fn init_with_client_config(
         &mut self,
         client: &mut HTTPClient,
@@ -498,12 +506,14 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
     fn init_with_opts(
         &mut self,
-        opts: &uws::SocketContext::BunSocketContextOptions,
+        opts: &uws::BunSocketContextOptions,
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
         let mut err = uws::create_bun_socket_error_t::none;
+        // `uws::SslCtx` (bssl-sys) and `SSL_CTX` (bun_boringssl_sys) are two
+        // opaque names for the same BoringSSL object; cast at the crate seam.
         self.secure = match opts.create_ssl_context(&mut err) {
-            Some(ctx) => Some(ctx),
+            Some(ctx) => Some(ctx.cast::<SSL_CTX>()),
             None => {
                 return Err(match err {
                     uws::create_bun_socket_error_t::load_ca_file => InitError::LoadCAFile,
@@ -526,7 +536,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         init_opts: &HTTPThreadInitOpts,
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
-        let opts = uws::SocketContext::BunSocketContextOptions {
+        let opts = uws::BunSocketContextOptions {
             ca: if !init_opts.ca.is_empty() {
                 init_opts.ca.as_ptr().cast()
             } else {
@@ -551,7 +561,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if SSL {
             let mut err = uws::create_bun_socket_error_t::none;
             self.secure = Some(
-                uws::SocketContext::BunSocketContextOptions {
+                uws::BunSocketContextOptions {
                     // we request the cert so we load root certs and can verify it
                     request_cert: 1,
                     // we manually abort the connection if the hostname doesn't match
@@ -559,7 +569,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     ..Default::default()
                 }
                 .create_ssl_context(&mut err)
-                .unwrap(),
+                .unwrap()
+                // Same opaque BoringSSL object; cast at the crate seam.
+                .cast::<SSL_CTX>(),
             );
             // SAFETY: secure was just set to Some.
             unsafe { ssl_ctx_setup(self.ssl_ctx()) };
@@ -843,7 +855,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let socket = HTTPSocket::<SSL>::connect_unix_group(
             &mut self.group,
             Self::KIND,
-            if SSL { self.secure } else { None },
+            if SSL { self.ssl_ctx_for_connect() } else { None },
             socket_path,
             ActiveSocket::<SSL>::init(
                 client
@@ -1025,7 +1037,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let socket = HTTPSocket::<SSL>::connect_group(
             &mut self.group,
             Self::KIND,
-            if SSL { self.secure } else { None },
+            if SSL { self.ssl_ctx_for_connect() } else { None },
             hostname,
             port as c_int,
             ActiveSocket::<SSL>::init(

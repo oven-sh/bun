@@ -17,7 +17,7 @@ use bun_cares_sys::c_ares_draft as c_ares;
 #[cfg(windows)]
 use bun_libuv_sys::sockaddr_storage;
 use bun_sys::{self, SystemErrno};
-use bun_uws as uws;
+use bun_usockets::udp;
 #[cfg(not(windows))]
 use libc::sockaddr_storage;
 #[cfg(not(windows))]
@@ -68,6 +68,35 @@ fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
     }
 }
 
+/// The crate-side address type: `libc::sockaddr_storage` on POSIX; on Windows
+/// `bun_usockets` defines its own ws2_32-layout mirror.
+#[cfg(windows)]
+use bun_usockets::udp::sockaddr_storage as UsSockaddrStorage;
+#[cfg(not(windows))]
+type UsSockaddrStorage = sockaddr_storage;
+
+/// Exclusive reborrow of the udp socket. Invariant: `socket` came from
+/// `udp::Socket::create` and stays readable until the tick-postlude sweep of
+/// `closed_udp_head` (C15); the JS thread is the sole accessor.
+#[inline]
+fn udp_mut<'a>(socket: *mut udp::Socket) -> &'a mut udp::Socket {
+    // SAFETY: fn invariant above; callback-held pointers are provenance
+    // children of the crate's own `&mut` (close derives them before dispatch).
+    unsafe { &mut *socket }
+}
+
+#[cfg(not(windows))]
+#[inline]
+fn to_us_addr(addr: &sockaddr_storage) -> &UsSockaddrStorage {
+    addr
+}
+#[cfg(windows)]
+#[inline]
+fn to_us_addr(addr: &sockaddr_storage) -> &UsSockaddrStorage {
+    // SAFETY: identical layout — 128 bytes, 8-aligned, leading c_ushort ss_family.
+    unsafe { &*std::ptr::from_ref(addr).cast::<UsSockaddrStorage>() }
+}
+
 use bun_core::strings::ares_inet_pton as inet_pton;
 
 unsafe extern "C" {
@@ -77,7 +106,7 @@ unsafe extern "C" {
     safe fn htons(hshort: u16) -> u16;
 }
 
-extern "C" fn on_close(socket: *mut uws::udp::Socket) {
+extern "C" fn on_close(socket: *mut udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     this.closed.set(true);
     this.poll_ref.with_mut(|p| p.disable());
@@ -85,7 +114,7 @@ extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     this.socket.set(None);
 }
 
-extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
+extern "C" fn on_recv_error(socket: *mut udp::Socket, errno: c_int) {
     // Only called on Linux via IP_RECVERR — loop.c guards the recv-on-error
     // path with #if defined(__linux__) to preserve the pre-existing
     // close-on-error behavior on kqueue/Windows (where an error event is a
@@ -99,7 +128,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
     this.call_error_handler(JSValue::ZERO, err_value);
 }
 
-extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
+extern "C" fn on_drain(socket: *mut udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     let Some(this_value) = this.this_value.get().try_get() else {
         return;
@@ -122,8 +151,8 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
 }
 
 extern "C" fn on_data(
-    socket: *mut uws::udp::Socket,
-    buf: *mut uws::udp::PacketBuffer,
+    socket: *mut udp::Socket,
+    buf: *mut udp::PacketBuffer,
     packets: c_int,
 ) {
     let udp_socket: &UDPSocket = UDPSocket::from_uws(socket);
@@ -138,7 +167,7 @@ extern "C" fn on_data(
     }
 
     let global_this = udp_socket.global_this.get();
-    // SAFETY: buf valid for the duration of this callback per uws contract.
+    // SAFETY: buf valid for the duration of this callback per usockets contract.
     let buf = unsafe { &mut *buf };
 
     let mut i: c_int = 0;
@@ -466,8 +495,8 @@ pub mod js {
 pub struct UDPSocket {
     pub config: JsCell<UDPSocketConfig>,
 
-    pub socket: Cell<Option<*mut uws::udp::Socket>>,
-    pub loop_: *mut uws::Loop,
+    pub socket: Cell<Option<*mut udp::Socket>>,
+    pub loop_: *mut bun_usockets::Loop,
 
     // Read-only back-reference to the owning JS global; the VM/global strictly
     // outlives every socket it creates.
@@ -487,17 +516,16 @@ impl UDPSocket {
         bun_core::heap::into_raw(Box::new(init))
     }
 
-    /// Recover `&UDPSocket` from the uws user-data slot. Centralises the
-    /// `unsafe { &*(*socket).user().cast() }` back-ref deref shared by every
-    /// `extern "C"` callback below — the user pointer was set to the
-    /// heap-allocated `UDPSocket` in [`udp_socket`] via
-    /// `uws::udp::Socket::create(.., user_data = this_ptr)` and remains live
-    /// until `on_close` (uws guarantees no callback after close). All mutated
-    /// fields are `Cell`/`JsCell`, so a shared borrow is sufficient (R-2).
+    /// Recover `&UDPSocket` from the usockets user-data slot. Centralises the
+    /// back-ref deref shared by every `extern "C"` callback below — the user
+    /// pointer was set to the heap-allocated `UDPSocket` in [`udp_socket`] via
+    /// `udp::Socket::create(.., user_data = this_ptr)` and remains live
+    /// until `on_close` (usockets dispatches no callback after close, C15).
+    /// All mutated fields are `Cell`/`JsCell`, so a shared borrow is
+    /// sufficient (R-2).
     #[inline]
-    fn from_uws<'a>(socket: *mut uws::udp::Socket) -> &'a UDPSocket {
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let user = uws::udp::Socket::opaque_mut(socket).user();
+    fn from_uws<'a>(socket: *mut udp::Socket) -> &'a UDPSocket {
+        let user = udp_mut(socket).user();
         // SAFETY: `user` was set to `*mut UDPSocket` at creation; non-null and
         // live for the callback's duration (back-ref invariant).
         unsafe { &*user.cast::<UDPSocket>() }
@@ -511,7 +539,7 @@ impl UDPSocket {
             socket: Cell::new(None),
             config: JsCell::new(UDPSocketConfig::default()),
             global_this: BackRef::new(global_this),
-            loop_: uws::Loop::get(),
+            loop_: bun_usockets::Loop::get(),
             vm,
             this_value: JsCell::new(JsRef::empty()),
             jsc_ref: JscRef::init(),
@@ -539,20 +567,19 @@ impl UDPSocket {
             // R-2: shared borrow — mutation through `Cell`/`JsCell`.
             let this = unsafe { &*ptr };
             this.closed.set(true);
-            // Hoist before `(*socket).close()`: that call SYNCHRONOUSLY re-enters
-            // `on_close` (udp.c `s->on_close(s)`), which re-derives `&UDPSocket`
-            // from the uws user pointer. `downgrade()` is idempotent (on_close
-            // repeats it), so ordering is unobservable.
+            // Hoist before `close()`: `udp::Socket::close` SYNCHRONOUSLY
+            // re-enters `on_close`, which re-derives `&UDPSocket` from the
+            // user pointer. `downgrade()` is idempotent (on_close repeats it),
+            // so ordering is unobservable.
             this.this_value.with_mut(|r| r.downgrade());
             if let Some(socket) = this.socket.take() {
-                // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-                uws::udp::Socket::opaque_mut(socket).close();
+                udp_mut(socket).close();
             }
         });
 
         // `JsClass::to_js(self)` boxes by value, but we already own
         // the heap allocation in `this_ptr` and need to keep that exact pointer
-        // (it is stashed as the uws user_data). Route through the
+        // (it is stashed as the usockets user_data). Route through the
         // `#[bun_jsc::JsClass]`-generated `to_js_ptr` inherent method, which
         // binds `UDPSocket__create` with the correct `jsc.conv` ABI
         // (`extern "sysv64"` on Windows-x64, `extern "C"` elsewhere — the C++
@@ -574,7 +601,7 @@ impl UDPSocket {
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
 
-        let created = uws::udp::Socket::create(
+        let created = udp::Socket::create(
             this.loop_,
             on_data,
             on_drain,
@@ -623,8 +650,7 @@ impl UDPSocket {
 
         if let Some(connect) = &this.config.get().connect {
             let address_z = connect.address.to_owned_slice_z();
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            let ret = uws::udp::Socket::opaque_mut(this.socket.get().unwrap())
+            let ret = udp_mut(this.socket.get().unwrap())
                 .connect(address_z.as_ptr(), connect.port as u32);
             if ret != 0 {
                 if let Some(sys_err) = errno_sys(ret, bun_sys::Tag::connect) {
@@ -720,8 +746,7 @@ impl UDPSocket {
                 .to_js(global_this),
             ));
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).set_broadcast(enabled);
+        let res = udp_mut(socket).set_broadcast(enabled);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -768,8 +793,7 @@ impl UDPSocket {
                 .to_js(global_this),
             ));
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).set_multicast_loopback(enabled);
+        let res = udp_mut(socket).set_multicast_loopback(enabled);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -836,10 +860,9 @@ impl UDPSocket {
                     "Family mismatch between address and interface"
                 )));
             }
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, Some(&interface), drop)
+            udp_mut(socket).set_membership(to_us_addr(&addr), Some(to_us_addr(&interface)), drop)
         } else {
-            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, None, drop)
+            udp_mut(socket).set_membership(to_us_addr(&addr), None, drop)
         };
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
@@ -950,17 +973,16 @@ impl UDPSocket {
                     "Family mismatch among source, group and interface addresses"
                 )));
             }
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
-                &source_addr,
-                &group_addr,
-                Some(&interface),
+            udp_mut(socket).set_source_specific_membership(
+                to_us_addr(&source_addr),
+                to_us_addr(&group_addr),
+                Some(to_us_addr(&interface)),
                 drop,
             )
         } else {
-            uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
-                &source_addr,
-                &group_addr,
+            udp_mut(socket).set_source_specific_membership(
+                to_us_addr(&source_addr),
+                to_us_addr(&group_addr),
                 None,
                 drop,
             )
@@ -1037,8 +1059,7 @@ impl UDPSocket {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
 
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).set_multicast_interface(&addr);
+        let res = udp_mut(socket).set_multicast_interface(to_us_addr(&addr));
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1057,7 +1078,7 @@ impl UDPSocket {
             this,
             global_this,
             callframe,
-            uws::udp::Socket::set_unicast_ttl,
+            udp::Socket::set_unicast_ttl,
         )
     }
 
@@ -1071,7 +1092,7 @@ impl UDPSocket {
             this,
             global_this,
             callframe,
-            uws::udp::Socket::set_multicast_ttl,
+            udp::Socket::set_multicast_ttl,
         )
     }
 
@@ -1079,7 +1100,7 @@ impl UDPSocket {
         this: &Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-        function: fn(&mut uws::udp::Socket, i32) -> c_int,
+        function: fn(&mut udp::Socket, i32) -> c_int,
     ) -> JsResult<JSValue> {
         if this.closed.get() {
             return Err(global_this.throw_value(
@@ -1103,8 +1124,7 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = function(uws::udp::Socket::opaque_mut(socket), ttl);
+        let res = function(udp_mut(socket), ttl);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1320,8 +1340,7 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).send(&payloads, &lens, &addr_ptrs);
+        let res = udp_mut(socket).send(&payloads, &lens, &addr_ptrs);
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::send) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
@@ -1417,8 +1436,7 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).send(
+        let res = udp_mut(socket).send(
             &[payload.as_ptr()],
             &[payload.len()],
             &[addr_ptr],
@@ -1582,14 +1600,12 @@ impl UDPSocket {
             let Some(socket) = this.socket.take() else {
                 return Ok(JSValue::UNDEFINED);
             };
-            // `(*socket).close()` SYNCHRONOUSLY invokes `on_close` (udp.c:110
-            // `s->on_close(s)`), which re-derives `&UDPSocket` from the uws
-            // user pointer. R-2: with `&self` + `Cell`/`JsCell` the sibling
-            // shared borrow is sound; the (idempotent) downgrade is hoisted
-            // because `on_close` repeats it.
+            // `udp::Socket::close` SYNCHRONOUSLY invokes `on_close`, which
+            // re-derives `&UDPSocket` from the user pointer. R-2: with `&self`
+            // + `Cell`/`JsCell` the sibling shared borrow is sound; the
+            // (idempotent) downgrade is hoisted because `on_close` repeats it.
             this.this_value.with_mut(|r| r.downgrade());
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).close();
+            udp_mut(socket).close();
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1636,8 +1652,7 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return JSValue::UNDEFINED;
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        JSValue::js_number(uws::udp::Socket::opaque_mut(socket).bound_port() as f64)
+        JSValue::js_number(udp_mut(socket).bound_port() as f64)
     }
 
     fn create_sock_addr(global_this: &JSGlobalObject, address_bytes: &[u8], port: u16) -> JSValue {
@@ -1658,8 +1673,7 @@ impl UDPSocket {
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let socket = uws::udp::Socket::opaque_mut(socket);
+        let socket = udp_mut(socket);
         socket.bound_ip(buf.as_mut_ptr(), &mut length);
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
@@ -1684,8 +1698,7 @@ impl UDPSocket {
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        uws::udp::Socket::opaque_mut(socket).remote_ip(buf.as_mut_ptr(), &mut length);
+        udp_mut(socket).remote_ip(buf.as_mut_ptr(), &mut length);
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
         Self::create_sock_addr(global_this, address_bytes, connect_info.port)
@@ -1715,15 +1728,15 @@ impl UDPSocket {
         debug_assert!(this_ref.closed.get() || VirtualMachine::get().is_shutting_down());
         // VM-shutdown path: `lastChanceToFinalize` can finalize the wrapper
         // while the underlying poll is still open (the Strong in `this_value`
-        // kept it GC-rooted until now). Close it so the `us_udp_socket_t`
-        // lands on `closed_udp_head` for the post-destruct
-        // `drain_closed_sockets()` sweep instead of leaking. `on_close`
-        // re-derives `&UDPSocket` from the uws user pointer (= `this`, still
-        // live) and only touches `Cell`/`JsCell` fields; `this_value` is
-        // already `Finalized` so its `downgrade()` is a no-op.
+        // kept it GC-rooted until now). Close it so the `udp::Socket` lands on
+        // `closed_udp_head` for the post-destruct `drain_closed_sockets()`
+        // sweep instead of leaking. `on_close` re-derives `&UDPSocket` from
+        // the user pointer (= `this`, still live) and only touches
+        // `Cell`/`JsCell` fields; `this_value` is already `Finalized` so its
+        // `downgrade()` is a no-op.
         if let Some(socket) = this_ref.socket.take() {
             this_ref.closed.set(true);
-            uws::udp::Socket::opaque_mut(socket).close();
+            udp_mut(socket).close();
         }
         this_ref.poll_ref.with_mut(|p| p.disable());
         // config drop handled by heap::take below.
@@ -1778,8 +1791,7 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        if uws::udp::Socket::opaque_mut(socket).connect(connect_host.as_ptr(), port as u32) == -1 {
+        if udp_mut(socket).connect(connect_host.as_ptr(), port as u32) == -1 {
             return Err(global_this.throw(format_args!("Failed to connect socket")));
         }
         this.connect_info.set(Some(ConnectInfo { port }));
@@ -1811,8 +1823,7 @@ impl UDPSocket {
             return Err(global_object.throw(format_args!("Socket is closed")));
         }
 
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        if uws::udp::Socket::opaque_mut(this.socket.get().unwrap()).disconnect() == -1 {
+        if udp_mut(this.socket.get().unwrap()).disconnect() == -1 {
             return Err(global_object.throw(format_args!("Failed to disconnect socket")));
         }
         this.connect_info.set(None);

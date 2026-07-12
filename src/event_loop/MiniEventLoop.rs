@@ -28,7 +28,7 @@ use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 use bun_io::file_poll::Store as FilePollStore;
 use bun_sys::{self as sys, Fd, Mode};
 use bun_threading::UnboundedQueue;
-use bun_uws::Loop as UwsLoop;
+use bun_usockets::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New};
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
@@ -367,12 +367,12 @@ impl<'a> MiniEventLoop<'a> {
     #[inline]
     pub fn tick_once(&mut self, context: *mut c_void) {
         if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-            // SAFETY: see `loop_ptr()` invariant.
-            unsafe {
-                (*self.loop_ptr()).inc();
-                (*self.loop_ptr()).tick();
-                (*self.loop_ptr()).dec();
-            }
+            // SAFETY: see `loop_ptr()` invariant. The tick itself takes the raw
+            // pointer (re-entrant callbacks re-fetch the same loop).
+            unsafe { (*self.loop_ptr()).inc() };
+            UwsLoop::tick(self.loop_ptr());
+            // SAFETY: as above.
+            unsafe { (*self.loop_ptr()).dec() };
             self.on_after_event_loop();
         }
 
@@ -390,8 +390,7 @@ impl<'a> MiniEventLoop<'a> {
                 unsafe { (*task).run(context) };
             }
 
-            // SAFETY: see `loop_ptr()` invariant.
-            unsafe { (*self.loop_ptr()).tick_without_idle() };
+            UwsLoop::tick_without_idle(self.loop_ptr());
 
             if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
                 break;
@@ -435,8 +434,8 @@ impl<'a> MiniEventLoop<'a> {
     /// node stays with the caller until the callback runs.
     pub fn enqueue_task_concurrent(&mut self, task: NonNull<AnyTaskWithExtraContext>) {
         self.concurrent_tasks.push(task);
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        // Raw cross-thread wake path — never forms `&mut UwsLoop`.
+        bun_usockets::us_wakeup_loop(self.loop_ptr());
     }
 
     /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
@@ -461,8 +460,8 @@ impl<'a> MiniEventLoop<'a> {
         self.concurrent_tasks
             .push(unsafe { NonNull::new_unchecked(task) });
 
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        // Raw cross-thread wake path — never forms `&mut UwsLoop`.
+        bun_usockets::us_wakeup_loop(self.loop_ptr());
     }
 
     /// Lazy-init helper shared by [`stderr`]/[`stdout`]: `fstat → __bun_stdio_blob_store_new → cache`.

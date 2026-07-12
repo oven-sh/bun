@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_io::FilePoll;
 use bun_ptr::BackRef;
-use bun_uws::Loop as UwsLoop;
+use bun_usockets::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use crate::ConcurrentTask::ConcurrentTask;
@@ -246,8 +246,8 @@ impl AnyEventLoop<'static> {
 
     #[inline]
     pub fn wakeup(&mut self) {
-        // SAFETY: `r#loop()` returns a valid live loop pointer.
-        unsafe { (*self.r#loop()).wakeup() };
+        // Raw cross-thread-safe wake path — never forms `&mut Loop`.
+        bun_usockets::us_wakeup_loop(self.r#loop());
     }
 
     /// Returns the FilePoll store as a raw pointer.
@@ -449,20 +449,10 @@ impl EventLoopHandle {
     }
 }
 
-/// Carrier-trait impl so `bun_uws::InternalLoopDataExt::set_parent_event_loop`
-/// accepts `EventLoopHandle` directly. Kept here (not in `bun_uws`) because
-/// `bun_uws` is a lower tier than `bun_event_loop` and cannot name this enum.
-impl bun_uws::ParentEventLoopHandle for EventLoopHandle {
-    #[inline]
-    fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
-        EventLoopHandle::into_tag_ptr(self)
-    }
-}
-
 impl EventLoopHandle {
-    /// Convenience wrapper so callers don't need both `bun_uws::InternalLoopDataExt`
-    /// (the trait) and the `*mut Loop` deref dance in scope. `uws_loop` is the
-    /// process-global loop returned by `AnyEventLoop::r#loop()` — never null.
+    /// Convenience wrapper around `into_tag_ptr()` + `set_parent_raw`.
+    /// `uws_loop` is the process-global loop returned by
+    /// `AnyEventLoop::r#loop()` — never null.
     #[inline]
     pub fn set_as_parent_of(self, uws_loop: &mut UwsLoop) {
         let (tag, ptr) = self.into_tag_ptr();

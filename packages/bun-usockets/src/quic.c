@@ -1,6 +1,6 @@
 #include "quic.h"
 
-#include "internal/internal.h"
+#include "libusockets_cabi.h"
 #if defined(_WIN32) && !defined(WIN32)
 /* lsquic.h gates on WIN32 (not _WIN32) to pick <vc_compat.h> over <sys/uio.h>. */
 #define WIN32 1
@@ -149,7 +149,7 @@ static void us_quic_on_timer(struct us_timer_t *t) {
 
 void us_quic_loop_process(struct us_loop_t *loop) {
     int min_diff = 0, have_tick = 0;
-    for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
+    for (us_quic_socket_context_t *ctx = us_internal_loop_quic_head(loop); ctx; ctx = ctx->next) {
         if (ctx->processing || !ctx->engine) continue;
         ctx->processing = 1;
         ctx->pending_write_bytes = 0;
@@ -165,13 +165,16 @@ void us_quic_loop_process(struct us_loop_t *loop) {
      * getTimeout() in src/runtime/timer/mod.rs folds this into the epoll_pwait2 timeout —
      * no timerfd. On libuv there's no equivalent hook into the poll
      * timeout, so arm a fallthrough uv_timer instead. */
-    loop->data.quic_next_tick_us = have_tick ? (min_diff < 0 ? 0 : min_diff) : -1;
+    us_internal_loop_quic_next_tick_set(loop, have_tick ? (min_diff < 0 ? 0 : min_diff) : -1);
 #ifdef LIBUS_USE_LIBUV
     if (have_tick) {
-        if (!loop->data.quic_timer)
-            loop->data.quic_timer = us_create_timer(loop, 1, 0);
+        struct us_timer_t *timer = us_internal_loop_quic_timer(loop);
+        if (!timer) {
+            timer = us_create_timer(loop, 1, 0);
+            us_internal_loop_quic_timer_set(loop, timer);
+        }
         int ms = min_diff <= 0 ? 1 : (min_diff + 999) / 1000;
-        us_timer_set(loop->data.quic_timer, us_quic_on_timer, ms, 0);
+        us_timer_set(timer, us_quic_on_timer, ms, 0);
     }
 #endif
 }
@@ -180,7 +183,7 @@ void us_quic_loop_process(struct us_loop_t *loop) {
  * stream wrote since the last process_conns; the common case is one
  * pointer walk and return. */
 void us_quic_loop_flush_if_pending(struct us_loop_t *loop) {
-    for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
+    for (us_quic_socket_context_t *ctx = us_internal_loop_quic_head(loop); ctx; ctx = ctx->next) {
         if (ctx->pending_write_bytes && !ctx->processing) {
             us_quic_loop_process(loop);
             return;
@@ -257,7 +260,7 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
     while (sent < n) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
         if (!ls->udp) { errno = EBADF; break; }
-        int fd = us_poll_fd((struct us_poll_t *) ls->udp);
+        int fd = us_poll_fd(us_udp_socket_poll(ls->udp));
         unsigned k = 0;
         while (k < BATCH && sent + k < n && specs[sent + k].peer_ctx == (void *) ls) {
             const struct lsquic_out_spec *sp = &specs[sent + k];
@@ -285,7 +288,7 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
     for (; sent < n; sent++) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
         if (!ls->udp) { errno = EBADF; break; }
-        if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) break;
+        if (us_quic_send_one(us_poll_fd(us_udp_socket_poll(ls->udp)), &specs[sent]) < 0) break;
     }
 #endif
 
@@ -301,7 +304,7 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
         if (errno != EAGAIN && errno != EWOULDBLOCK) errno = EAGAIN;
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
         if (ls->udp) {
-            us_poll_change((struct us_poll_t *) ls->udp, ls->ctx->loop,
+            us_poll_change(us_udp_socket_poll(ls->udp), ls->ctx->loop,
                 LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
         }
     }
@@ -492,7 +495,7 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
      * the listen socket's uv_poll_t already keeps the loop alive until
      * conn_count drops to 0 and we close it. */
 #ifndef LIBUS_USE_LIBUV
-    ctx->loop->num_polls++;
+    us_loop_poll_count_add(ctx->loop, 1);
 #endif
     ctx->conn_count++;
     qs->next = ctx->conns;
@@ -513,7 +516,7 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     free(qs->hostname);
     free(qs);
 #ifndef LIBUS_USE_LIBUV
-    ctx->loop->num_polls--;
+    us_loop_poll_count_add(ctx->loop, -1);
 #endif
     ctx->conn_count--;
     /* During graceful drain the UDP fd is the only thing left holding the
@@ -719,8 +722,8 @@ us_quic_socket_context_t *us_create_quic_socket_context(
         return NULL;
     }
 
-    ctx->next = loop->data.quic_head;
-    loop->data.quic_head = ctx;
+    ctx->next = us_internal_loop_quic_head(loop);
+    us_internal_loop_quic_head_set(loop, ctx);
 
     return ctx;
 }
@@ -764,10 +767,15 @@ void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     if (!ctx) return;
     ctx->closing = 1;
     struct us_loop_t *loop = ctx->loop;
-    for (us_quic_socket_context_t **pp = &loop->data.quic_head; *pp; pp = &(*pp)->next) {
-        if (*pp == ctx) { *pp = ctx->next; break; }
+    us_quic_socket_context_t *head = us_internal_loop_quic_head(loop);
+    if (head == ctx) {
+        us_internal_loop_quic_head_set(loop, ctx->next);
+    } else {
+        for (us_quic_socket_context_t *prev = head; prev; prev = prev->next) {
+            if (prev->next == ctx) { prev->next = ctx->next; break; }
+        }
     }
-    if (!loop->data.quic_head) loop->data.quic_next_tick_us = -1;
+    if (!us_internal_loop_quic_head(loop)) us_internal_loop_quic_next_tick_set(loop, -1);
     /* Close any UDP fds the caller never closed (graceful drain leaves them
      * open); on_close moves each into closed_listeners for the loop below. */
     while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
@@ -795,7 +803,7 @@ struct us_loop_t *us_quic_socket_context_loop(us_quic_socket_context_t *ctx) { r
  * v6 since the dual-stack client socket carries v4-mapped traffic. Mirrors
  * lsquic's reference setup in bin/test_common.c. */
 static void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
-    LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *) udp);
+    LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd(us_udp_socket_poll(udp));
     int on;
     /* Test _WIN32 first: ws2ipdef.h defines IP_MTU_DISCOVER/IP_PMTUDISC_PROBE
      * so the Linux arm would otherwise be selected, but on Windows that option
@@ -842,7 +850,7 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
 
     /* Record actual bound address — packet_in needs sa_local. */
     socklen_t sl = sizeof(ls->local);
-    getsockname(us_poll_fd((struct us_poll_t *) ls->udp), (struct sockaddr *) &ls->local, &sl);
+    getsockname(us_poll_fd(us_udp_socket_poll(ls->udp)), (struct sockaddr *) &ls->local, &sl);
 
     ls->next = ctx->listeners;
     ctx->listeners = ls;
@@ -1157,8 +1165,8 @@ us_quic_socket_context_t *us_create_quic_client_context(
         return NULL;
     }
 
-    ctx->next = loop->data.quic_head;
-    loop->data.quic_head = ctx;
+    ctx->next = us_internal_loop_quic_head(loop);
+    us_internal_loop_quic_head_set(loop, ctx);
     return ctx;
 }
 
@@ -1204,7 +1212,7 @@ static us_quic_listen_socket_t *us_quic_client_endpoint(us_quic_socket_context_t
     if (!ls->udp) { free(ls); return NULL; }
     us_quic_set_dontfrag(ls->udp);
     socklen_t sl = sizeof(ls->local);
-    getsockname(us_poll_fd((struct us_poll_t *) ls->udp), (struct sockaddr *) &ls->local, &sl);
+    getsockname(us_poll_fd(us_udp_socket_poll(ls->udp)), (struct sockaddr *) &ls->local, &sl);
     ls->next = ctx->listeners;
     ctx->listeners = ls;
     ctx->client_udp = ls;

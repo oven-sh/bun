@@ -107,7 +107,7 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
             // time) so cert/CA errors throw synchronously; the per-VM weak
             // `SSLContextCache` shares one `SSL_CTX*` per distinct config
             // across pooled connections and reconnects.
-            let mut err = uws::create_bun_socket_error_t::none;
+            let mut err = bun_usockets::create_bun_socket_error_t::none;
             secure = vm
                 .ssl_ctx_cache()
                 .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);

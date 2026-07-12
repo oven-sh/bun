@@ -6,7 +6,7 @@ use bun_collections::VecExt;
 use bun_collections::OffsetByteList;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
-use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
+use bun_usockets::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
@@ -643,10 +643,10 @@ impl ValkeyClient {
             return;
         }
         // usockets does not dispatch `on_close`/`on_connect_error` when an
-        // application explicitly closes a `us_socket_t` whose TCP connect
-        // hasn't resolved yet (`POLL_TYPE_SEMI_SOCKET` — DNS resolved
-        // synchronously so `connect()` got a real `us_socket_t*` rather than
-        // a `us_connecting_socket_t*`). See `us_internal_socket_close_raw`.
+        // application explicitly closes a socket whose TCP connect hasn't
+        // resolved yet (SEMI_SOCKET — DNS resolved synchronously so
+        // `connect()` got a real socket handle rather than a `Connecting`
+        // one). Contract C1 in .rewrite-specs/api.md.
         // The valkey client relies on one of those callbacks (via
         // `on_valkey_close`/`on_valkey_reconnect`) to release the `+1`
         // keep-alive ref `connect()` took, so without one the

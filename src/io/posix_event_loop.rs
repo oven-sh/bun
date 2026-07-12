@@ -7,25 +7,9 @@ use core::ptr;
 
 #[cfg(not(windows))]
 use bun_sys::{self as sys, Fd};
-use bun_uws_sys::Loop as UwsLoop;
+use bun_usockets::Loop as UwsLoop;
 
 pub type Loop = UwsLoop;
-
-// Note: `bun_uws_sys::Loop` only exposes `inc`/`dec`/`ref_`/`unref`. The
-// `active` counter is a public field, so inline the saturating math here until
-// `bun_uws_sys` grows `add_active`/`sub_active`. On Windows the uws loop has no
-// such counter (libuv tracks active handles itself); `posix_event_loop` is only
-// reachable from non-Windows `Loop` consumers, so the Windows arm is a no-op.
-#[cfg(not(windows))]
-#[inline]
-fn loop_add_active(loop_: &mut Loop, value: u32) {
-    loop_.active = loop_.active.saturating_add(value);
-}
-#[cfg(not(windows))]
-#[inline]
-fn loop_sub_active(loop_: &mut Loop, value: u32) {
-    loop_.active = loop_.active.saturating_sub(value);
-}
 
 bun_core::declare_scope!(KeepAlive, visible);
 
@@ -527,10 +511,7 @@ impl FilePoll {
         }
         self.flags.remove(Flags::HasIncrementedPollCount);
 
-        loop_sub_active(
-            loop_,
-            self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
-        );
+        loop_.sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
     }
@@ -545,10 +526,7 @@ impl FilePoll {
         self.flags.insert(Flags::HasIncrementedPollCount);
 
         if self.flags.contains(Flags::KeepsEventLoopAlive) {
-            loop_add_active(
-                loop_,
-                (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
-            );
+            loop_.add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
             self.flags.insert(Flags::HasIncrementedActiveCount);
         }
     }

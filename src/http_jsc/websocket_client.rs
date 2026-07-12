@@ -21,8 +21,9 @@ use bun_io::KeepAlive;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
 use bun_ptr::{AsCtxPtr, ThisPtr};
-use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t};
-use bun_uws_sys::us_socket_t;
+use bun_usockets::{
+    self as uws, NewSocketHandler, SocketRef, SslCtx, us_bun_verify_error_t, us_socket_t,
+};
 
 use self::cpp_websocket::{CppWebSocket, CppWebSocketRef};
 use self::websocket_deflate::WebSocketDeflate;
@@ -174,8 +175,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.message_is_compressed.set(false);
         self.deflate.replace(None);
         if let Some(s) = self.secure.take() {
-            // SAFETY: s is a valid SSL_CTX* owned by us per field invariant
-            unsafe { boringssl::c::SSL_CTX_free(s) };
+            // s is a valid SSL_CTX* owned by us per field invariant.
+            bun_usockets::tls::context::ssl_ctx_unref(s);
         }
         // Detach the tunnel first so its shutdown callbacks cannot re-enter this path.
         if let Some(tunnel) = self.proxy_tunnel.take() {
@@ -548,7 +549,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     // allocation through its own raw back-pointer.
     //
     // There is no `socket` parameter: the dispatch thunk wraps the same
-    // `us_socket_t*` that `adopt_group` stored into `self.tcp`, so the parse
+    // socket handle that `adopt_group` stored into `self.tcp`, so the parse
     // loop reads `self.tcp` directly.
     pub fn handle_data(this: ThisPtr<Self>, data_: &[u8]) {
         // after receiving close we should ignore the data
@@ -1610,11 +1611,22 @@ impl<const SSL: bool> WebSocket<SSL> {
         deflate_params: Option<&websocket_deflate::Params>,
         secure_ptr: *mut c_void,
     ) -> *mut c_void {
-        let tcp = input_socket.cast::<us_socket_t>();
+        // Re-derive a generational handle from the raw header pointer that
+        // round-tripped through C++ (`WebSocket__didConnect`); no tick ran in
+        // between, so the generation captured here matches the live slot.
+        let Some(tcp_nn) = NonNull::new(input_socket.cast::<us_socket_t>()) else {
+            // Caller transferred a +1 SSL_CTX ref via `secure_ptr`; release it.
+            if !secure_ptr.is_null() {
+                uws::tls::context::ssl_ctx_unref(secure_ptr.cast::<SslCtx>());
+            }
+            return core::ptr::null_mut();
+        };
+        let tcp = SocketRef::from_live(tcp_nn);
         let secure = (!secure_ptr.is_null()).then(|| secure_ptr.cast::<SslCtx>());
         let ws = Self::new_raw(outgoing, global_this, deflate_params, secure, None);
 
-        // `adopt_group` takes a closure to write the new socket.
+        // `adopt_group` re-stamps kind + ext in place (never relocates) and
+        // takes a closure to write the new socket handle into the owner.
         let group = {
             // reshaped for borrowck — `rare_data()` borrows `vm`
             // mutably and `ws_client_group` also wants a `vm` reference.

@@ -263,11 +263,15 @@ test("MessagePort.postMessage() returns true, or undefined when the port is clos
     port1.close();
     port2.close();
   }
-  // peer closed: still true (the sending port is live)
+  // peer closed: still true synchronously (close hasn't propagated yet),
+  // then undefined once the 'close' event has fired on this side
   {
     const { port1, port2 } = new MessageChannel();
+    const closed = new Promise<void>(resolve => port2.on("close", () => resolve()));
     port1.close();
     expect(port2.postMessage("y")).toBe(true);
+    await closed;
+    expect(port2.postMessage("y2")).toBe(undefined);
     port2.close();
   }
   // own port closed: undefined

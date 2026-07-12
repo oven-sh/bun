@@ -101,13 +101,16 @@ describe.concurrent("Valkey reply torn across socket reads", () => {
     });
   });
 
-  test.each(SHORT_SPLITS)("VerbatimString (=) torn at byte %i decodes instead of failing the connection", async splitAt => {
-    const server = createTornReplyServer(`=15${CRLF}txt:Some string${CRLF}`, splitAt);
-    await withClient(server, async client => {
-      expect(await client.get("k")).toBe("Some string");
-      expect(await client.send("PING", [])).toBe("OK");
-    });
-  });
+  test.each(SHORT_SPLITS)(
+    "VerbatimString (=) torn at byte %i decodes instead of failing the connection",
+    async splitAt => {
+      const server = createTornReplyServer(`=15${CRLF}txt:Some string${CRLF}`, splitAt);
+      await withClient(server, async client => {
+        expect(await client.get("k")).toBe("Some string");
+        expect(await client.send("PING", [])).toBe("OK");
+      });
+    },
+  );
 
   test.each(LONG_SPLITS)("BlobError (!) torn at byte %i decodes instead of failing the connection", async splitAt => {
     const server = createTornReplyServer(`!21${CRLF}SYNTAX invalid syntax${CRLF}`, splitAt);

@@ -159,7 +159,7 @@ foo/
       import { tmpdir } from "node:os";
 
       const base = mkdtempSync(join(tmpdir(), "rm-handoff-"));
-      process.on("beforeExit", () => rmSync(base, { recursive: true, force: true }));
+      process.on("exit", () => rmSync(base, { recursive: true, force: true }));
 
       function tree(n: number): string {
         const d = join(base, "t" + n);

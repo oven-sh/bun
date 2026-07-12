@@ -70,9 +70,9 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             vm->didEnterVM = false;
 
 #if USE(MIMALLOC)
-            // Process this thread's retired mimalloc pages and queue arena
-            // purges for the scavenger. Shares the release-access throttle
-            // above so steady-idle parks stay free of per-park work.
+            // Process this thread's retired mimalloc pages so freed memory
+            // returns promptly. Shares the release-access throttle above so
+            // steady-idle parks stay free of per-park work.
             mi_theap_collect(mi_theap_get_default(), /* force */ false);
 #endif
         }

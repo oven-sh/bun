@@ -400,7 +400,8 @@ impl ConcurrentPromiseTaskContext for IoTaskCtx<'_> {
                         let size = file.get_end_pos()?;
                         let want = n.min(size);
                         let mut buf = Vec::new();
-                        buf.try_reserve_exact(want).map_err(|_| bun_sys::Error::oom())?;
+                        buf.try_reserve_exact(want)
+                            .map_err(|_| bun_sys::Error::oom())?;
                         buf.resize(want, 0);
                         let read = file.pread_all(&mut buf, 0)?;
                         buf.truncate(read);

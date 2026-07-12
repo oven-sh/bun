@@ -41,6 +41,7 @@
 #include "JSEventListener.h"
 #include "JSStructuredSerializeOptions.h"
 #include "ScriptExecutionContext.h"
+#include "WebCoreJSBuiltins.h"
 #include "WebCoreJSClientData.h"
 // #include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -136,6 +137,21 @@ static const HashTableValue JSMessagePortPrototypeTableValues[] = {
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_ref, 0 } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_unref, 0 } },
     { "hasRef"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_hasRef, 0 } },
+    // NodeEventTarget emitter surface: these are self-replacing bootstraps (see
+    // src/js/builtins/MessagePort.ts). The first call loads
+    // internal/worker/messageport_emitter, which installs the real methods on an
+    // intermediate prototype and deletes these own-properties.
+    { "on"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, messagePortOnCodeGenerator, 2 } },
+    { "off"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, messagePortOffCodeGenerator, 2 } },
+    { "once"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, messagePortOnceCodeGenerator, 2 } },
+    { "emit"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, messagePortEmitCodeGenerator, 1 } },
+    { "addListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, messagePortAddListenerCodeGenerator, 2 } },
+    { "removeListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, messagePortRemoveListenerCodeGenerator, 2 } },
+    { "listenerCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, messagePortListenerCountCodeGenerator, 1 } },
+    { "eventNames"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, messagePortEventNamesCodeGenerator, 0 } },
+    { "removeAllListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, messagePortRemoveAllListenersCodeGenerator, 0 } },
+    { "setMaxListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, messagePortSetMaxListenersCodeGenerator, 1 } },
+    { "getMaxListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, messagePortGetMaxListenersCodeGenerator, 0 } },
 };
 
 const ClassInfo JSMessagePortPrototype::s_info = { "MessagePort"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessagePortPrototype) };

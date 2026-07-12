@@ -154,9 +154,9 @@ static void tsfn_abort_blocked_finalize(napi_env env, void *finalize_data,
 }
 
 static void tsfn_abort_blocked_producer() {
+  napi_threadsafe_function tsfn = tsfn_abort_blocked;
   tsfn_abort_blocked_about_to_call.fetch_add(1);
-  napi_call_threadsafe_function(tsfn_abort_blocked, nullptr,
-                                napi_tsfn_blocking);
+  napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_blocking);
 }
 
 // Create a tsfn with max_queue_size=1 and initial_thread_count=3, fill the
@@ -189,7 +189,6 @@ static napi_value test_napi_threadsafe_function_abort_blocked_producers(
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
   NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_blocked,
                                                       napi_tsfn_abort));
-  tsfn_abort_blocked = nullptr;
   return env.Undefined();
 }
 

@@ -634,6 +634,11 @@ function packJSTransferablesForMessage(message: unknown, transferList: unknown[]
             "DataCloneError",
           );
         }
+        // The native untransferable check never sees this entry (it's stripped
+        // from the list that reaches native postMessage), so enforce it here.
+        if (_isMarkedAsUntransferable(item)) {
+          throw new DOMException("Cannot transfer object marked as untransferable", "DataCloneError");
+        }
         const extraTransfers = item[kTransferList]?.();
         // May throw DataCloneError (e.g. FileHandle in use); propagate synchronously like Node.
         const { data, deserializeInfo } = item[kTransfer]();
@@ -790,7 +795,13 @@ function callPostMessageWithJSTransferables(nativePost: Function, self: unknown,
 
 // postMessage wraps a packed message in a top-level envelope so the receive
 // side can tell in O(1) whether to walk the graph, keeping the common path
-// (no JSTransferables) zero-cost for every message.
+// (no JSTransferables) zero-cost for every message. The unwrap only runs in
+// the node-style receive paths (.on('message'), receiveMessageOnPort,
+// Worker 'message'); addEventListener/onmessage deliver the raw envelope
+// because Bun has no native HostObject hook to reconstruct at clone time. A
+// message queued but never delivered (port closed before drain, worker
+// terminated) leaks the transferred fd for the same reason: the cloned
+// marker is a plain object with no finalizer.
 function wrapJSTransferableEnvelope(message: unknown): unknown {
   return { [kJSTransferableMarker]: kJSTransferableEnvelope, m: message };
 }
@@ -799,7 +810,8 @@ function unwrapJSTransferableEnvelope(value: unknown): unknown {
   if (
     value !== null &&
     typeof value === "object" &&
-    (value as Record<string, unknown>)[kJSTransferableMarker] === kJSTransferableEnvelope
+    (value as Record<string, unknown>)[kJSTransferableMarker] === kJSTransferableEnvelope &&
+    Object.prototype.hasOwnProperty.$call(value, kJSTransferableMarker)
   ) {
     return unpackJSTransferables((value as Record<string, unknown>).m);
   }

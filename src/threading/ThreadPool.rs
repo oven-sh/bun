@@ -1399,7 +1399,18 @@ impl Event {
                     Ordering::Relaxed,
                 ) {
                     Ok(_) => return,
-                    Err(cur) => state = cur,
+                    Err(cur) => {
+                        if return_on_broadcast && cur != Self::NOTIFIED && cur != Self::SHUTDOWN {
+                            // A sibling consumed the token between our reload
+                            // and this CAS — the same "broadcast loser" case as
+                            // the post-futex check below, which this thread
+                            // skipped because it still saw NOTIFIED there.
+                            // Without returning here it would fall back into
+                            // the futex with nothing left to wake it.
+                            return;
+                        }
+                        state = cur;
+                    }
                 }
                 continue;
             }

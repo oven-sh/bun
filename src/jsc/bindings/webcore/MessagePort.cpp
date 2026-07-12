@@ -80,7 +80,7 @@ ExceptionOr<JSC::JSValue> MessagePort::postMessage(JSC::JSGlobalObject& state, J
     // node: undefined when already closed/transferred or the peer's close has
     // propagated, true otherwise. Sample at call time; the disentangle/send work
     // below stays gated on m_isDetached so transfer-list ports are still detached.
-    JSC::JSValue returnValue = (m_isDetached || m_closeEventDispatched) ? JSC::jsUndefined() : JSC::jsBoolean(true);
+    JSC::JSValue returnValue = (m_isDetached || m_isClosing || m_closeEventDispatched) ? JSC::jsUndefined() : JSC::jsBoolean(true);
     // Reject a bad port in the transfer list before serialization, so the post
     // aborts before any ArrayBuffer in the list is detached (transfer is atomic).
     // Node checks each entry in order: source port first, then detached.

@@ -577,7 +577,10 @@ pub mod on_unhandled_rejection {
             // use the original state data so the current test is properly advanced
             // rather than skipped. This ensures done-callback tests with delayed
             // exceptions (setTimeout/setImmediate/nextTick) complete correctly.
-            if matches!(&current_state_data, RefDataValue::Start) {
+            // OHOS: hmmac policy may delay async callbacks, causing entry mismatch
+            // for done-callback tests. On other OS the original Start behavior
+            // is correct for hook errors.
+            if cfg!(target_env = "ohos") && matches!(&current_state_data, RefDataValue::Start) {
                 buntest.add_result(original_state_data);
             } else {
                 buntest.add_result(current_state_data);

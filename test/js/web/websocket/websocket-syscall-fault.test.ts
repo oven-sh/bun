@@ -128,9 +128,9 @@ describe.concurrent.skipIf(skip)("WebSocket client (ws://) under injected syscal
     expect(r.signal).toBeNull();
     expect(r.ok).toBe(true);
     expect(r.code).toBe(1006);
-    // Per WHATWG, onerror during the data-exchange phase is optional; Bun
-    // currently does not fire it for a transport reset after open.
-    expect(r.errored).toBe(false);
+    // A transport reset after open is a fail-the-connection case; Bun fires
+    // error before close to match Node/undici and browsers.
+    expect(r.errored).toBe(true);
   });
 
   test("recv → 0 (peer closed) fires onclose", async () => {

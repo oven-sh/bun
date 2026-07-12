@@ -309,7 +309,7 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
+    void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason);
     void didUpdateBufferedAmount(unsigned bufferedAmount);
     void failConnectingWebSocket();
 

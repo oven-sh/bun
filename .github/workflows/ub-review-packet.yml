@@ -2,7 +2,7 @@ name: UB Review Packet
 
 on:
   pull_request:
-    types: [opened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:
       - "**/*.md"
       - "docs/**"
@@ -59,10 +59,12 @@ jobs:
 
       - name: Build UB review packet
         id: ub-review
-        uses: EffortlessMetrics/ub-review@804d198b5a15a0df94bb4f43750dba71165916cd
+        uses: EffortlessMetrics/ub-review@v0.1.0
         with:
           preset: bun-ub
           profile: gh-runner
+          install-mode: release
+          release-version: v0.1.0
           root: .
           base: origin/${{ github.base_ref }}
           head: HEAD
@@ -71,14 +73,17 @@ jobs:
           tool-bundle: core
           posting: review
           mode: review-direct
+          review-mode: gate
+          fail-on-gate: 'true'
           github-token: ${{ github.token }}
           minimax-api-key: ${{ secrets.MINIMAX }}
           minimax-provider-kind: anthropic
+          opencode-api-key: ${{ secrets.OPENCODE }}
           model-mode: auto
-          provider-policy: minimax-only
+          provider-policy: primary-with-fallback
           lane-width: '10'
           model-timeout-sec: '300'
-          max-inline-comments: '8'
+          max-inline-comments: '5'
           model-concurrency: '8'
           max-model-calls: '14'
           fail-on-post-error: 'false'

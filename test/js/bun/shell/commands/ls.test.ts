@@ -243,8 +243,9 @@ describe.concurrent("bunshell ls", () => {
       const sorted = (await $`ls`.cwd(String(dir)).quiet()).stdout.toString();
       const unsorted = (await $`ls -U`.cwd(String(dir)).quiet()).stdout.toString();
       expect(unsorted.trim().split("\n").sort()).toEqual(["a", "b", "k", "m", "z"]);
-      // -U bypasses the sort, so its output differs from the default sorted output.
-      expect(unsorted).not.toBe(sorted);
+      // -U bypasses the sort, so its output differs from the default sorted
+      // output. NTFS enumerates in collated order, so this only holds on POSIX.
+      if (isPosix) expect(unsorted).not.toBe(sorted);
     });
 
     test("-f does not sort and implies -a", async () => {

@@ -529,6 +529,24 @@ describe("customInspect option", () => {
     expect(calls).toBe(0);
   });
 
+  it("Bun.inspect.table skips the custom inspect hook on cell values when customInspect is false", () => {
+    let calls = 0;
+    const cell = {
+      [CUSTOM]() {
+        calls++;
+        return "HOOK-OUTPUT";
+      },
+    };
+    const out = Bun.inspect.table([{ col: cell }], { customInspect: false });
+    expect(calls).toBe(0);
+    expect(out).not.toContain("HOOK-OUTPUT");
+
+    calls = 0;
+    const on = Bun.inspect.table([{ col: cell }], { customInspect: true });
+    expect(calls).toBe(1);
+    expect(on).toContain("HOOK-OUTPUT");
+  });
+
   it("Bun.inspect runs the custom inspect hook by default and when customInspect is true", () => {
     let calls = 0;
     const o = {

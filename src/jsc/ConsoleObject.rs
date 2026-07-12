@@ -749,7 +749,11 @@ impl<'a> TablePrinter<'a> {
     ) -> JsResult<CellRef> {
         let offset = cell_text.len();
         let mut value_formatter = self.value_formatter.shallow_clone();
-        let tag = formatter::Tag::get(value, self.global_object)?;
+        let tag = formatter::Tag::get_advanced(
+            value,
+            self.global_object,
+            value_formatter.top_level_tag_opts(),
+        )?;
         value_formatter.quote_strings = !(matches!(
             tag.tag,
             TagPayload::String | TagPayload::StringPossiblyFormatted

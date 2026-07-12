@@ -249,11 +249,15 @@ void MessagePort::close()
         context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
             protectedThis->dispatchCloseEvent();
             protectedThis->removeAllEventListeners();
+            // close() set m_isDetached, so this is the last possible dispatch;
+            // release the creation snapshot. Kept out of dispatchCloseEvent()
+            // because peerClosed() reaches that without detaching and can still
+            // deliver buffered messages if a listener is added afterwards.
+            protectedThis->m_creationAsyncContext.clear();
             protectedThis->m_closeEventPending.store(false, std::memory_order_release);
         });
     } else {
         removeAllEventListeners();
-        // dispatchCloseEvent() would have released it, but this path can't reach it.
         m_creationAsyncContext.clear();
     }
 }
@@ -276,8 +280,6 @@ void MessagePort::dispatchCloseEvent()
         AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
         EventTarget::dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
     }
-    // The one-shot close event was the last possible dispatch; release the snapshot.
-    m_creationAsyncContext.clear();
 }
 
 void MessagePort::peerClosed()

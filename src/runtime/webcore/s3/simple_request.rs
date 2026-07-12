@@ -420,11 +420,8 @@ impl S3HttpSimpleTask {
                 let status = response.status_code;
                 if !this.fail_if_contains_error(status)? {
                     let committed = this.result.body.as_ref().is_some_and(|b| {
-                        strings::index_of(
-                            b.list.as_slice(),
-                            b"</CompleteMultipartUploadResult>",
-                        )
-                        .is_some()
+                        strings::index_of(b.list.as_slice(), b"</CompleteMultipartUploadResult>")
+                            .is_some()
                     });
                     if committed {
                         callback(S3CommitResult::Success, this.callback_context)?;

@@ -37,19 +37,6 @@ function hideFromStack(...fns: Function[]) {
   }
 }
 
-let warned: Set<string>;
-function warnNotImplementedOnce(feature: string, issue?: number) {
-  if (!warned) {
-    warned = new Set();
-  }
-
-  if (warned.has(feature)) {
-    return;
-  }
-  warned.add(feature);
-  console.warn(new NotImplementedError(feature, issue));
-}
-
 let util: typeof import("node:util");
 class ExceptionWithHostPort extends Error {
   errno: number;
@@ -271,11 +258,34 @@ function makeNodeEntryList(entries) {
 
 //
 
+// Shared by perf_hooks and worker_threads. `getRaw` returns the loop's total
+// { idle, active } time in ms; the two optional arguments are prior ELU
+// snapshots to diff against. Mirrors Node's internal/perf/event_loop_utilization.
+function eventLoopUtilization(getRaw: () => { idle: number; active: number }, util1?, util2?) {
+  if (util2) {
+    const idle = util1.idle - util2.idle;
+    const active = util1.active - util2.active;
+    const total = idle + active;
+    return { idle, active, utilization: total === 0 ? 0 : active / total };
+  }
+
+  const { idle, active } = getRaw();
+  if (!util1) {
+    const total = idle + active;
+    return { idle, active, utilization: total === 0 ? 0 : active / total };
+  }
+
+  const idleDelta = idle - util1.idle;
+  const activeDelta = active - util1.active;
+  const total = idleDelta + activeDelta;
+  return { idle: idleDelta, active: activeDelta, utilization: total === 0 ? 0 : activeDelta / total };
+}
+
 export default {
   NotImplementedError,
   throwNotImplemented,
   hideFromStack,
-  warnNotImplementedOnce,
+  eventLoopUtilization,
   ExceptionWithHostPort,
   NodeAggregateError,
   ConnResetException,

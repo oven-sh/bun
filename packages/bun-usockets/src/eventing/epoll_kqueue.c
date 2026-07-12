@@ -408,6 +408,21 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         }
     }
 
+    /* Measure time blocked in the event provider for
+     * performance.eventLoopUtilization(). Gate on the timeout only (like libuv),
+     * NOT on will_idle_inside_event_loop: a stale pending_wakeups (the wakeup
+     * eventfd is edge-triggered and consumed by the previous tick's dispatch,
+     * but pending_wakeups is only cleared by the exchange above) would make
+     * will_idle false while the provider still blocks, mis-attributing the wait
+     * to active. A zero-timeout poll-through is not idle. Publish the wait's
+     * start so a cross-thread reader can credit the in-progress wait to idle.
+     * Timestamped after the inline sweep above: that sweep is CPU work on this
+     * thread, not time blocked in the provider. */
+    const int will_track_idle = !timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0);
+    const uint64_t idle_start_ns = will_track_idle ? us_loop_monotonic_ns() : 0;
+    if (will_track_idle)
+        __atomic_store_n(&loop->data.idle_entry_ns, idle_start_ns, __ATOMIC_RELEASE);
+
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
@@ -431,6 +446,21 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* Before anything can allocate again. */
     if (handed_off)
         mi_on_thread_idle_end();
+
+    if (will_track_idle) {
+        const uint64_t idle_end_ns = us_loop_monotonic_ns();
+        /* Clear the in-progress marker, then credit the total. The credit is a
+         * release store and the reader loads idle_time_ns with acquire, so a
+         * reader that observes the credited total also observes the cleared
+         * marker (never both, which would double-count the just-finished wait).
+         * A reader landing between the two stores sees a slightly-low idle
+         * instead, which is acceptable. Release on the clear alone would not
+         * order the later credit, so on weak-memory targets the credit could
+         * become visible first without the acquire/release pairing below. */
+        __atomic_store_n(&loop->data.idle_entry_ns, 0, __ATOMIC_RELEASE);
+        if (idle_end_ns > idle_start_ns)
+            __atomic_add_fetch(&loop->data.idle_time_ns, idle_end_ns - idle_start_ns, __ATOMIC_RELEASE);
+    }
 
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);

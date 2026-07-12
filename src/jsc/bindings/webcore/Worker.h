@@ -113,6 +113,9 @@ public:
     // -- Parent-thread API (called from JS on the owning thread) -------------
     void terminate();
     void setKeepAlive(bool);
+    // Sample the worker's event-loop idle/active time (ms). Writes zeros when
+    // the worker is not running.
+    void eventLoopUtilization(double& idleMs, double& activeMs);
     void dispatchEvent(Event&);
     // Returns true if the task was accepted (queued to Pending or posted to
     // Running). Returns false if the worker is Closing/Closed or its context

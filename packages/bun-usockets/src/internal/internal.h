@@ -75,6 +75,11 @@ extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t
  * allocations this library has no way to fail gracefully from. */
 extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 
+/* Monotonic clock (ns) used for event-loop-utilization accounting. */
+uint64_t us_loop_monotonic_ns(void);
+/* Sample the loop's accumulated idle time and active time (both ns). */
+void us_loop_event_loop_utilization(struct us_loop_t *loop, uint64_t *idle_ns_out, uint64_t *active_ns_out);
+
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()

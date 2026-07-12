@@ -67,6 +67,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use bun_core::{String as BunString, WTFStringImpl};
 use bun_io::KeepAlive;
 use bun_threading::{Futex, Mutex};
+use bun_uws as uws;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
 use crate::{self as jsc, JSGlobalObject, JSValue, JsError, LogJsc};
@@ -140,6 +141,16 @@ pub struct WebWorker {
     /// `.replace()` and no `unsafe` at the access sites.
     vm: Cell<*mut VirtualMachine>,
     vm_lock: Mutex,
+
+    /// The worker's own uWS loop pointer, cached once at the `vm` publish point
+    /// so `worker.performance.eventLoopUtilization()` can read it from the
+    /// parent without touching `vm.event_loop_handle` / `vm.event_loop`. Those
+    /// fields are rewritten non-atomically on the worker thread (spawnSync's
+    /// temporary loop swap, `Bun.serve`), so a cross-thread read of them would
+    /// race; this pointer is the worker's real loop and never changes. Null
+    /// until published. Guarded by `vm_lock` like `vm`; valid to dereference
+    /// only while `vm` is non-null (both live in the arena freed at shutdown).
+    uws_loop_ptr: Cell<*mut uws::Loop>,
 
     // ---- Parent-thread only -------------------------------------------------
     /// Keep-alive on the parent's event loop. `Async.KeepAlive` is not
@@ -560,6 +571,7 @@ impl WebWorker {
             requested_terminate: AtomicBool::new(false),
             vm: Cell::new(core::ptr::null_mut()),
             vm_lock: Mutex::new(),
+            uws_loop_ptr: Cell::new(core::ptr::null_mut()),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             status: Cell::new(Status::Start),
             arena: JsCell::new(None),
@@ -667,6 +679,58 @@ impl WebWorker {
                 poll.unref(bun_io::js_vm_ctx());
             }
         });
+    }
+
+    /// Sample the worker's event-loop idle/active time (milliseconds) from the
+    /// parent thread, backing `worker.performance.eventLoopUtilization()`.
+    ///
+    /// Reads `uws_loop_ptr` (the worker's real loop, cached once at publish)
+    /// rather than `vm.event_loop_handle` / `vm.event_loop`, which the worker
+    /// thread rewrites non-atomically during `spawnSync`/`Bun.serve` and would
+    /// race a cross-thread read. `vm_lock` serialises against `shutdown()`
+    /// nulling `vm` before it frees the arena, so while `vm` is non-null the
+    /// cached loop (also in that arena) is alive for the C call. The idle
+    /// counter C reads is atomic and the creation timestamp is immutable, so no
+    /// `&VM` / `&EventLoop` is ever formed. Writes zeros before the loop exists
+    /// or after the worker exits (Node returns zeros until the loop starts).
+    ///
+    /// Takes `*mut` for the same reason as `set_ref`: the worker thread
+    /// concurrently dereferences this struct.
+    // C++-only FFI entry point; the out-params are validated by the C++ caller.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    #[unsafe(export_name = "WebWorker__getEventLoopUtilization")]
+    pub extern "C" fn get_event_loop_utilization(
+        this: *mut WebWorker,
+        idle_ms_out: *mut f64,
+        active_ms_out: *mut f64,
+    ) {
+        // SAFETY: out-params are valid, writable pointers supplied by C++.
+        unsafe {
+            *idle_ms_out = 0.0;
+            *active_ms_out = 0.0;
+        }
+        // `this` is a valid heap allocation owned by C++ `WebCore::Worker`;
+        // parent-thread only.
+        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        this.vm_lock.lock();
+        // `vm` non-null guarantees the arena (and the cached loop within it) is
+        // still alive; both are read under `vm_lock`.
+        let loop_ptr = if this.vm_ptr().is_null() {
+            core::ptr::null_mut()
+        } else {
+            this.uws_loop_ptr.get()
+        };
+        if !loop_ptr.is_null() {
+            // SAFETY: the loop is kept alive by the held vm_lock; the C fn
+            // reads the idle counter atomically and an immutable timestamp.
+            let elu = unsafe { uws::loop_event_loop_utilization(loop_ptr) };
+            // SAFETY: out-params validated above.
+            unsafe {
+                *idle_ms_out = elu.idle_ms;
+                *active_ms_out = elu.active_ms;
+            }
+        }
+        this.vm_lock.unlock();
     }
 
     /// worker.terminate() from JS. Sets `requested_terminate`, interrupts
@@ -964,8 +1028,17 @@ impl WebWorker {
         // non-null vm runs vm.onExit() (JS), which requires holdAPILock.
         // Instead we return; threadMain enters holdAPILock(spin) and spin()'s
         // first check observes requested_terminate.
+        // Capture the worker's own uWS loop pointer while `vm` is still
+        // exclusively ours (pre-publish). `ensure_waker()` ran inside
+        // `init_worker`, so `usockets_loop()` resolves the real loop on both
+        // platforms. Caching it here means the parent never reads the
+        // spawnSync/serve-mutated `event_loop_handle` fields cross-thread.
+        // SAFETY: `vm` is not yet published; this `&*vm` is the only reference.
+        let uws_loop_ptr = unsafe { (*vm).event_loop_shared().usockets_loop() };
+
         self.vm_lock.lock();
         // vm_lock held; this is the publish point.
+        self.uws_loop_ptr.set(uws_loop_ptr);
         self.vm.set(vm);
         self.vm_lock.unlock();
 

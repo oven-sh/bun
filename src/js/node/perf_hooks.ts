@@ -1,5 +1,15 @@
 // Hardcoded module "node:perf_hooks"
-const { throwNotImplemented, kNodeEntryTypes, NodeEntryObserver } = require("internal/shared");
+const {
+  throwNotImplemented,
+  kNodeEntryTypes,
+  NodeEntryObserver,
+  eventLoopUtilization: computeEventLoopUtilization,
+} = require("internal/shared");
+
+const getEventLoopUtilizationRaw = $newRustFunction("event_loop.rs", "jsEventLoopUtilization", 0) as () => {
+  idle: number;
+  active: number;
+};
 
 const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
   min: number,
@@ -97,12 +107,8 @@ function createPerformanceNodeTiming() {
   return object;
 }
 
-function eventLoopUtilization(_utilization1, _utilization2) {
-  return {
-    idle: 0,
-    active: 0,
-    utilization: 0,
-  };
+function eventLoopUtilization(utilization1, utilization2) {
+  return computeEventLoopUtilization(getEventLoopUtilizationRaw, utilization1, utilization2);
 }
 
 // PerformanceEntry is not a valid constructor, so we have to fake it.

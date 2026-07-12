@@ -619,6 +619,32 @@ pub type Loop = WindowsLoop;
 #[cfg(not(windows))]
 pub type Loop = PosixLoop;
 
+/// Event loop idle/active timings (milliseconds) for
+/// `performance.eventLoopUtilization()`.
+#[derive(Clone, Copy, Debug)]
+pub struct EventLoopUtilization {
+    pub idle_ms: f64,
+    pub active_ms: f64,
+}
+
+/// Sample a loop's accumulated idle time and active (non-idle) time.
+///
+/// # Safety
+/// `loop_` must point at a live `Loop`. The C side reads the idle counter
+/// atomically and the creation timestamp is immutable, so this is safe to call
+/// from another thread (the parent sampling a worker's loop) as long as the
+/// loop outlives the call.
+pub unsafe fn loop_event_loop_utilization(loop_: *mut Loop) -> EventLoopUtilization {
+    let mut idle_ns: u64 = 0;
+    let mut active_ns: u64 = 0;
+    // SAFETY: caller guarantees `loop_` is live for the duration of the call.
+    unsafe { c::us_loop_event_loop_utilization(loop_, &raw mut idle_ns, &raw mut active_ns) };
+    EventLoopUtilization {
+        idle_ms: idle_ns as f64 / 1_000_000.0,
+        active_ms: active_ns as f64 / 1_000_000.0,
+    }
+}
+
 // ───────────────────────────── extern "C" ─────────────────────────────
 
 pub(crate) type LoopCb = unsafe extern "C" fn(*mut Loop);
@@ -660,6 +686,11 @@ mod c {
         );
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
+        pub(super) fn us_loop_event_loop_utilization(
+            loop_: *mut Loop,
+            idle_ns_out: *mut u64,
+            active_ns_out: *mut u64,
+        );
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]

@@ -194,9 +194,7 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--smol                            Use less memory, but run garbage collection more often"
     ),
-    parse_param!(
-        "--interactive                     Start a REPL, like `node --interactive`"
-    ),
+    parse_param!("--interactive                     Start a REPL, like `node --interactive`"),
     parse_param!(
         "-r, --preload <STR>...            Import a module before other modules are loaded"
     ),

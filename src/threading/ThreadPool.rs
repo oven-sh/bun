@@ -1400,13 +1400,13 @@ impl Event {
                 ) {
                     Ok(_) => return,
                     Err(cur) => {
-                        if return_on_broadcast && cur != Self::NOTIFIED && cur != Self::SHUTDOWN {
-                            // A sibling consumed the token between our reload
-                            // and this CAS — the same "broadcast loser" case as
-                            // the post-futex check below, which this thread
-                            // skipped because it still saw NOTIFIED there.
-                            // Without returning here it would fall back into
-                            // the futex with nothing left to wake it.
+                        // A sibling consuming the token between our reload and
+                        // this CAS is the same "broadcast loser" case as the
+                        // post-futex check below, which this thread skipped
+                        // because it still saw NOTIFIED there. Without
+                        // returning here it would fall back into the futex
+                        // with nothing left to wake it.
+                        if return_on_broadcast && self.broadcast_loser_may_return(cur) {
                             return;
                         }
                         state = cur;
@@ -1453,21 +1453,49 @@ impl Event {
             }
             state = self.state.load(Ordering::Relaxed);
             acquire_with = Self::WAITING;
-            if return_on_broadcast
-                && !timed_out
-                && state != Self::NOTIFIED
-                && state != Self::SHUTDOWN
-            {
-                // Woken, but a sibling consumed the token (broadcast wake).
-                // Return so the caller drains its idle queue and re-enters.
-                // A still-pending NOTIFIED must instead fall through to the
-                // consume branch above: its NOTIFIED -> WAITING hand-off is
-                // what keeps `wake()`'s prev == WAITING futex-wake fast path
-                // armed for the next single notify(), so returning here with
-                // the token unconsumed would strand the other parked threads.
+            // Woken, but a sibling consumed the token (broadcast wake):
+            // return so the caller drains its idle queue and re-enters. A
+            // still-pending NOTIFIED must instead fall through to the consume
+            // branch above — its NOTIFIED -> WAITING hand-off is what keeps
+            // `wake()`'s prev == WAITING futex-wake fast path armed for the
+            // next single notify(), so returning here with the token
+            // unconsumed would strand the other parked threads.
+            if return_on_broadcast && !timed_out && self.broadcast_loser_may_return(state) {
                 return;
             }
         }
+    }
+
+    /// Whether a woken `wait_broadcastable` thread that did not consume the
+    /// token may return to its caller instead of looping. True only when the
+    /// token is gone *and* `state` is WAITING again, so the next
+    /// `wake(NOTIFIED, 1)` still futex-wakes any threads left parked (its
+    /// fast path fires only when the previous state was WAITING).
+    fn broadcast_loser_may_return(&self, observed: u32) -> bool {
+        if observed == Self::WAITING {
+            // The consumer was a previously-parked thread; it already
+            // restored WAITING via its `acquire_with`.
+            return true;
+        }
+        if observed == Self::EMPTY {
+            // The consumer was a fresh entrant (first-iteration
+            // `acquire_with == EMPTY`). Restore WAITING on its behalf — the
+            // pre-return loop iteration used to do this before re-parking —
+            // so the wake chain stays armed for the threads still parked. On
+            // CAS failure the state changed under us; let the main loop
+            // re-dispatch on a fresh reload.
+            return self
+                .state
+                .compare_exchange(
+                    Self::EMPTY,
+                    Self::WAITING,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok();
+        }
+        // NOTIFIED or SHUTDOWN: the main loop consumes / exits.
+        false
     }
 
     /// Post a notification to the event if it doesn't have one already

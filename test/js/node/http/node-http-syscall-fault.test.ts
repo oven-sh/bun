@@ -10,7 +10,9 @@ afterEach(() => fault.clear());
 
 // In-process http tests share the process-wide fault table between client
 // and server, which makes errno injection ambiguous. Tests that need a
-// one-sided fault run the faulted side in a subprocess.
+// one-sided fault run the faulted side in a subprocess. Each such test
+// spawns a debug/ASAN child (multi-second startup), so they carry explicit
+// 60s timeouts instead of the 5s default.
 
 describe.skipIf(skip)("node:http under injected syscall faults", () => {
   test("upRes.pipe(res) with res.destroy() racing a queued drain (subprocess)", async () => {
@@ -95,7 +97,7 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
     } finally {
       upstream.close();
     }
-  });
+  }, 60_000);
 
   test("Bun.serve streaming response under 1-byte sends with client abort mid-body (subprocess)", async () => {
     // Covers the uWS HttpResponse path (AsyncSocket → us_socket_write →
@@ -143,7 +145,7 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
       stderr: expect.any(String),
     });
     expect(exitCode).toBe(0);
-  });
+  }, 60_000);
 
   test("node:http server: short sends + client destroy at first byte does not leak the response (subprocess)", async () => {
     const fixture = /* js */ `
@@ -189,7 +191,7 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
       stderr: expect.any(String),
     });
     expect(exitCode).toBe(0);
-  });
+  }, 60_000);
 });
 
 describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
@@ -262,5 +264,5 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
       proc.kill("SIGTERM");
       await proc.exited;
     }
-  });
+  }, 60_000);
 });

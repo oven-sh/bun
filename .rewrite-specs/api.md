@@ -159,7 +159,7 @@ Resolved decisions (binding on all writers/reviewers):
    bindings via BINDGEN_RS_FILE + wrapper.c for static-inlines wired into scripts/build/deps/
    boringssl.ts; build.rs link directives neutered (Bun links its own BoringSSL objects).
    bssl-tls NOT used (missing ALPN/server-SNI/client-CA/new-session/PKCS12).
-2. TLS spill + fatal-reason storage: PER-SOCKET (in TlsState), not loop-shared. This is what
+2. [REVERSED by safe-protocol.md P0d — spill returns to loop-shared with generation-checked owner + RAII save/restore] Original text: TLS spill per-socket. This is what
    deletes relocation. Loop keeps one shared plaintext read scratch via Option::take (re-entrant
    nesting allocates fresh). Batch thresholds (16KB records, 128KB flush) ported verbatim.
 3. SSLWrapper (bun_uws ssl_wrapper) survives UNCHANGED this PR (already Rust, targets BoringSSL

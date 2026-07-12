@@ -68,3 +68,58 @@ pub trait Protocol: Sized + 'static {
 Acceptance per shard: zero `unsafe` tokens related to socket lifecycle in the consumer
 (JSC/FFI unsafe unrelated to sockets may remain but must be listed); all subsystem tests
 green; the deleted-discipline list (ref guards, ThisPtr uses, ext pokes) named in the report.
+
+## ADDENDUM — shard P0b (owner-flagged perf item, runs with Phase D)
+uWS/Dynamic ext must return to being CONTIGUOUS with the socket header (C
+parity: us_socket_ext == fixed offset). Implement per-loop slab size classes:
+group-vtable kinds allocate from a size-class slab whose slot = header + ext
+bytes inline (class chosen by family-max ext size registered at listen/context
+creation; ~5 distinct sizes per loop). Rust kinds keep the uniform slab +
+inline 8-byte word. Delete alloc_ext_area/free_ext_area for sockets (listener
+ListenerData box may stay). ext_ptr_raw for group-vtable kinds = header+1
+projection. Generation/deferred-close semantics unchanged. Both reviewer
+lenses mandatory (touches unsafe_core/slab.rs).
+
+## ADDENDUM — shards P0c + P10 (owner directive: unify tagged-pointer polls)
+P0c (core): first-class non-socket poll registrations in bun_usockets. New
+`PollSource` enum: Fd{readable,writable} | cfg(darwin): Proc(pid),
+Machport(port), Memorystatus. Registry = same slab/generation scheme as
+sockets (poll kind byte distinguishes); dispatch via refcounted owner +
+held guard (Protocol v2 trampoline); keep-alive integrated with
+num_polls/active (no external field pokes). Backend trait grows the darwin
+filter arms. DELETES from the public surface: ready_polls/current_ready_poll
+back-channel, Bun__internal_dispatch_ready_poll extern, tagged-pointer udata
+convention (incl. the kqueue ext[0] ad-hoc generation).
+P10 (migration): src/io/posix_event_loop.rs re-implemented over P0c (FilePoll
+becomes a thin typed wrapper or dissolves), src/io/windows_event_loop.rs
+alignment (registration remains vestigial; keep uv-driven readiness),
+EventLoopCtx consumers (process reaping, machport waker, pipes/stdin,
+gc_controller if it registers polls), delete FilePoll deferred-free list +
+after-event-loop free hook in favor of the core closed-drain. Acceptance:
+grep proves no epoll_ctl/kevent outside bun_usockets backend/; both reviewer
+lenses; subsystem tests incl. spawn (SIGCHLD/proc reaping) + macOS DNS paths
+flagged for CI (cannot run on this box).
+
+## ADDENDUM — P0b extension (owner-approved): chunk decommit reclamation
+Chunks allocate via mmap reservation. When a chunk reaches 0 occupied slots,
+decommit its pages (madvise MADV_DONTNEED / VirtualFree MEM_DECOMMIT, range
+stays reserved) — stale handle validation reads then hit zero pages (gen 0,
+never matches). ABA guard: per-chunk epoch in a loop-side table (NOT in
+decommittable memory), bumped on decommit, packed into generation high bits
+(slots + handles). Recommit lazily on next alloc from that chunk. Add unit
+tests: RSS-visible decommit (touch-then-drain), stale-handle-after-decommit
+safety, epoch ABA (handle from cycle N never validates in cycle N+1). Hysteresis:
+keep the most-recently-emptied chunk committed (avoid thrash on connect/close
+oscillation at a chunk boundary).
+
+## ADDENDUM — shard P0d (owner directive, REVERSES api.md CHANGES item 2)
+Per-socket TLS spill is rejected: it was justified by relocation-elimination,
+but the slab already eliminated relocation, leaving an O(congested-sockets)
+memory cost with no benefit. Revert tls/state.rs to the C architecture:
+loop-shared ciphertext BIO buffers + ONE loop-shared spill slot per loop
+(O(1) memory), preserving the ported batch thresholds. Rust-ify the two C
+hazards: spill/fatal-reason OWNER is a generation-checked SocketRef (stale =
+drop, never dangles); the save/restore re-entrancy protocol is an RAII scope
+guard (nested TLS entry from JS re-entrancy restores on drop, enforced by
+type). Verify against tls-semantics.md §re-entrancy rules; both reviewer
+lenses; ws + upgradeTLS + server-SNI suites are the regression gate.

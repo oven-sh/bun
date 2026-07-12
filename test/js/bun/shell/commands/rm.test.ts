@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
@@ -144,6 +144,73 @@ foo/
       expect(await fileExists(`${tempdir}/sub_dir_files`)).toBeTrue();
     }
   });
+
+  // The DirTask parent/child hand-off had a lost-wakeup window between
+  // `subtask_count.load() > 1` and `need_to_wait.store(true)`: the last
+  // child could decrement and read `need_to_wait == false` in between,
+  // stranding the parent DirTask forever. A directory with exactly one
+  // subdirectory is the minimal trigger; the window is a few instructions
+  // so this is a stress probe rather than a deterministic repro.
+  test("recursive rm never hangs on the DirTask hand-off", async () => {
+    const fixture = /* ts */ `
+      import { $ } from "bun";
+      import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+      import { join } from "node:path";
+      import { tmpdir } from "node:os";
+
+      const base = mkdtempSync(join(tmpdir(), "rm-handoff-"));
+      process.on("beforeExit", () => rmSync(base, { recursive: true, force: true }));
+
+      function tree(n: number): string {
+        const d = join(base, "t" + n);
+        mkdirSync(join(d, "foo", "bar"), { recursive: true });
+        writeFileSync(join(d, "foo", "a"), "");
+        writeFileSync(join(d, "foo", "bar", "b"), "");
+        return d;
+      }
+
+      const ITERS = 100;
+      const PAR = 8;
+      for (let it = 0; it < ITERS; it++) {
+        const dirs = Array.from({ length: PAR }, (_, i) => tree(it * PAR + i));
+        const results = await Promise.all(
+          dirs.map(d =>
+            Promise.race([
+              $\`rm -rfv \${d}/foo\`.quiet().then(r => r.exitCode),
+              Bun.sleep(10_000).then(() => "hang" as const),
+            ]),
+          ),
+        );
+        for (const r of results) {
+          if (r === "hang") {
+            console.error("rm -rfv hung at iteration", it);
+            process.exit(1);
+          }
+          if (r !== 0) {
+            console.error("rm -rfv exited", r, "at iteration", it);
+            process.exit(1);
+          }
+        }
+      }
+      console.log("ok", ITERS * PAR);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+      stdout: "ok 800",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  }, 120_000);
 });
 
 function packagejson() {

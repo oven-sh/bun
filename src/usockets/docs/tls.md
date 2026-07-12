@@ -381,18 +381,14 @@ openssl.c contains no ALPN code (only quic.c does for lsquic):
      save/restore (§2.3.2).
    - Buffer full → flush sessions/keylog, `us_dispatch_data(s, out+PADDING, read)`,
      restore window, `read = 0`, `goto restart` (`openssl.c:1971-1989`).
-   - `just_read <= 0` → `SSL_get_error`:
-     - `WANT_READ` / `WANT_WRITE` / `PENDING_CERTIFICATE`:
-       `WANT_WRITE` sets `ssl_read_wants_write = 1`; **leftover ciphertext in the window
-       here means broken TLS framing → `ssl_close`** (`openssl.c:1911-1918`); fire
-       "Finished-alone" handshake if applicable (§2.3.3); if `read > 0`, flush parked
-       sessions/keylog THEN dispatch the plaintext (order is normative — Node's
-       NewSessionCallback precedes data; and the data dispatch may close the socket,
-       dropping a deferred flush) (`openssl.c:1931-1947`); break.
-     - `WANT_RENEGOTIATE` → §2.5; on policy failure treated as `SSL_ERROR_SSL`.
-     - `ZERO_RETURN` (peer close_notify): flush sessions/keylog, dispatch any decrypted
-       `read` bytes, then `ssl_close(s, 0, NULL)` → clean close (`openssl.c:1888-1903`).
-     - `SSL_ERROR_SSL` / `SSL_ERROR_SYSCALL`: park fatal reason (§3.4), `ssl_close(s,0,
+   - `just_read <= 0` → `SSL_get_error`: - `WANT_READ` / `WANT_WRITE` / `PENDING_CERTIFICATE`:
+     `WANT_WRITE` sets `ssl_read_wants_write = 1`; **leftover ciphertext in the window
+     here means broken TLS framing → `ssl_close`** (`openssl.c:1911-1918`); fire
+     "Finished-alone" handshake if applicable (§2.3.3); if `read > 0`, flush parked
+     sessions/keylog THEN dispatch the plaintext (order is normative — Node's
+     NewSessionCallback precedes data; and the data dispatch may close the socket,
+     dropping a deferred flush) (`openssl.c:1931-1947`); break. - `WANT_RENEGOTIATE` → §2.5; on policy failure treated as `SSL_ERROR_SSL`. - `ZERO_RETURN` (peer close_notify): flush sessions/keylog, dispatch any decrypted
+     `read` bytes, then `ssl_close(s, 0, NULL)` → clean close (`openssl.c:1888-1903`). - `SSL_ERROR_SSL` / `SSL_ERROR_SYSCALL`: park fatal reason (§3.4), `ssl_close(s,0,
 NULL)`, clear the scratch (`openssl.c:1905-1910`).
 7. Post-loop: if `ssl_write_wants_read && !ssl_read_wants_write` → clear flag and re-enter
    `us_internal_ssl_on_writable(s)` (a prior SSL_write starved for handshake input can
@@ -593,7 +589,7 @@ relocation support can be dropped entirely.
 | `request_cert` (no CAs)                                                            | `SSL_CTX_set_cert_store(us_get_shared_default_ca_store())` (process-shared bundled-roots store, refcounted); verify mode                                                                                                                                                                                                                                                                                                | 1022-1031                 |
 | `reject_unauthorized`                                                              | only chooses `SSL_VERIFY_PEER \| SSL_VERIFY_FAIL_IF_NO_PEER_CERT` vs `SSL_VERIFY_PEER` in the three branches above; **no CA/request_cert ⇒ CTX verify mode stays NONE** (client-side verification is per-SSL, §2.1)                                                                                                                                                                                                     | 998-1030                  |
 | `dh_params_file_name`                                                              | `PEM_read_DHparams` from file → `SSL_CTX_set_tmp_dh`; then forces `SSL_CTX_set_cipher_list(DEFAULT_CIPHER_LIST)` (default_ciphers.h)                                                                                                                                                                                                                                                                                    | 1033-1057                 |
-| `ssl_ciphers`                                                                      | `SSL_CTX_set_cipher_list`; failure → INVALID_CIPHERS **except** the empty-string+NO_CIPHER_MATCH combo which is tolerated; error is _peeked_ not consumed so the Rust caller can decompose the reason                                                                                                                                                                                                                   | 1059-1071                 |
+| `ssl_ciphers`                                                                      | `SSL_CTX_set_cipher_list`; failure → INVALID*CIPHERS **except** the empty-string+NO_CIPHER_MATCH combo which is tolerated; error is \_peeked* not consumed so the Rust caller can decompose the reason                                                                                                                                                                                                                  | 1059-1071                 |
 | `secure_options`                                                                   | `SSL_CTX_set_options(secure_options)` verbatim (Node secureOptions bitmask)                                                                                                                                                                                                                                                                                                                                             | 1073-1075                 |
 | —                                                                                  | session cache mode + new-session cb + keylog cb (§2.7)                                                                                                                                                                                                                                                                                                                                                                  | 1077-1086                 |
 | `client_renegotiation_limit`/`window`                                              | packed into ctx ex_data (§2.5) — applied by `us_ssl_ctx_from_options`, NOT build_raw                                                                                                                                                                                                                                                                                                                                    | 1250-1254                 |
@@ -819,10 +815,10 @@ Rationale:
 1. Part 1's contract is dominated by things no safe layer expresses: the loop-shared BIO
    routing + save/restore re-entrancy protocol (§1.4), deferred-destruction
    (`ssl_in_use`/`ssl_pending_detach` + alert-swallowing BIO), write batching with the
-   single spill slot and its honesty invariant (§4), the FIN-instead-of-close_notify
+   single spill slot and its honesty invariant (§4), the FIN-instead-of-close*notify
    half-close substitute (§5.1), parked session/keylog queues (§2.7), async-SNI
    suspension via `ssl_select_cert_retry` (§2.6), and per-SSL verify-store overrides
-   (§2.1). The Rust implementation is a port of _this_ state machine; bssl-tls would sit at the
+   (§2.1). The Rust implementation is a port of \_this* state machine; bssl-tls would sit at the
    wrong altitude even if complete.
 2. bssl-tls is WIP and missing ALPN, server SNI dispatch, client-CA-list, the
    new-session callback, and PKCS12 — each a hard requirement. Filling them means

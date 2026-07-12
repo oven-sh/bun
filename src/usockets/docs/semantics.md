@@ -178,7 +178,7 @@ timeout)` retried on EINTR — the IMMEDIATE flag avoids a ~14 µs XNU
 
 ### 1.6 Ready-poll dispatch
 
-- **R1.18** `us_internal_dispatch_ready_polls` (epoll_kqueue.c:184-285).
+- **R1.18** `us_internal_dispatch_ready_polls` (epoll*kqueue.c:184-285).
   **Epoll**: iterate `current_ready_poll` from 0 to `num_ready_polls-1`. For
   each entry read the poll pointer from `data.ptr`; skip NULL. If the pointer
   carries a tag in bits 48-63 (`CLEAR_POINTER_TAG(p) != p`,
@@ -187,7 +187,7 @@ timeout)` retried on EINTR — the IMMEDIATE flag avoids a ~14 µs XNU
   `error = !!(events & EPOLLERR)` (normalized to 0/1 — a raw EPOLLERR value 8
   would be misread as an errno downstream, comment epoll_kqueue.c:194-196),
   `eof = events & EPOLLHUP`, `events &= us_poll_events(poll)` (mask to what
-  the poll is _currently_ registered for), then if `events || error || eof`
+  the poll is \_currently* registered for), then if `events || error || eof`
   call `us_internal_dispatch_ready_poll(poll, error, eof, events)`.
 - **R1.19** **Kqueue** does a two-pass coalesce (epoll_kqueue.c:206-283)
   because each filter arrives as a separate kevent: pass 1 decodes each entry
@@ -207,12 +207,12 @@ timeout)` retried on EINTR — the IMMEDIATE flag avoids a ~14 µs XNU
   `num_ready_polls = 0` and stop. (Mirrors libuv's saturation re-poll.)
 - **R1.21** **Poll mutation during iteration**:
   `us_internal_loop_update_pending_ready_polls(loop, old, new, old_events,
-new_events)` (epoll_kqueue.c:420-441) scans `ready_polls` from
+new_events)` (epoll*kqueue.c:420-441) scans `ready_polls` from
   `current_ready_poll` (inclusive) forward, replacing up to N entries whose
   pointer equals `old` with `new` (N = 1 on epoll, 2 on kqueue). `new` may be
   NULL (removal — e.g. poll_stop/close). It is invoked by `us_poll_change`
   (with new==old, so it is effectively a no-op there but preserved for parity;
-  stale event _bits_ are instead filtered by the `events &= us_poll_events()`
+  stale event \_bits* are instead filtered by the `events &= us_poll_events()`
   mask at dispatch), by `us_poll_stop` (new = NULL), and by `us_poll_resize`
   (old → new). NOTE: entries at indexes < current_ready_poll are never
   rewritten — they were already dispatched.
@@ -278,8 +278,8 @@ poll_type:5}` (epoll_kqueue.h:109-114). fd is limited to 2^26-1. libuv
   `us_internal_poll_set_type` only replaces the kind bits, preserving polling
   bits (epoll_kqueue.c:100-102) — it does not SET from scratch, so the poll
   must be inited first (comment epoll_kqueue.c:99).
-- **R2.6** `us_poll_events(p)` derives R/W from the POLLING_IN/OUT bits
-  (epoll_kqueue.c:86-88). This is the poll's _believed_ registration and is
+- **R2.6** `us_poll_events(p)` derives R/W from the POLLING*IN/OUT bits
+  (epoll_kqueue.c:86-88). This is the poll's \_believed* registration and is
   the source of truth for the dispatch-time event mask (R1.18).
 - **R2.7** `us_poll_start_rc(p, loop, events)` (epoll_kqueue.c:513-539): store
   polling bits; **epoll**: build `epoll_event{events, data.ptr=p}`; if neither
@@ -293,9 +293,9 @@ fd, 0, events, p)` (R2.9). `us_poll_start` is the same ignoring the rc.
   same zero-events → `EPOLLHUP|EPOLLERR` rule; kqueue `kqueue_change(fd,
 old_events, events, p)`; then
   `us_internal_loop_update_pending_ready_polls(loop, p, p, old, new)`.
-- **R2.9** `kqueue_change` (epoll_kqueue.c:447-482): builds ≤2 kevent64
+- **R2.9** `kqueue_change` (epoll*kqueue.c:447-482): builds ≤2 kevent64
   changes: EVFILT_READ EV_ADD/EV_DELETE when the R bit differs. For W:
-  _special zero-events rule_ — if the new events poll for NEITHER R nor W and
+  \_special zero-events rule* — if the new events poll for NEITHER R nor W and
   the old events did not include W, ADD `EVFILT_WRITE EV_ADD|EV_ONESHOT` (a
   half-open socket needs some filter armed to learn about the FIN/EOF;
   epoll relies on implicit EPOLLHUP instead); otherwise if the W bit differs,
@@ -579,16 +579,16 @@ reason)`. A never-opened connect (SEMI_SOCKET) MUST NOT get on_close —
     re-forward adoption. Repeat-read heuristic (POSIX, loop.c:691-713):
     continue the loop only if `s` alive, `length >= LIBUS_RECV_BUFFER_LENGTH
     - 24\*1024`, `length <= LIBUS_RECV_BUFFER_LENGTH`, and (`error`set (hung
-up — macOS delivers EV_EOF with the same event) or`loop->num_ready_polls < 25`), and socket not closed and NOT paused
-(`flags.is_paused`— a pause from inside on_data stops the loop).`repeat_recv_count`increments only when`error == 0`, and when
-`repeat_recv_count > 10 && loop->num_ready_polls > 2` the loop stops
-(starvation guard). Windows (loop.c:715-731): after a successful read,
-probe recv exactly once more (`repeat_recv_count++ == 0`) unless
-      closed/paused, to catch AFD_POLL_ABORT races.
+    up — macOS delivers EV_EOF with the same event) or`loop->num_ready_polls < 25`), and socket not closed and NOT paused
+    (`flags.is_paused`— a pause from inside on_data stops the loop).`repeat_recv_count`increments only when`error == 0`, and when
+    `repeat_recv_count > 10 && loop->num_ready_polls > 2` the loop stops
+    (starvation guard). Windows (loop.c:715-731): after a successful read,
+    probe recv exactly once more (`repeat_recv_count++ == 0`) unless
+    closed/paused, to catch AFD_POLL_ABORT races.
   - `length == 0`: set `eof = 1`, break (handled below).
   - `length == -1 && !bsd_would_block()`: peer-initiated TCP error → bypass
     the SSL-graceful path and `us_internal_socket_close_raw(s, LIBUS_ERR,
-  NULL)`; **return** from dispatch (loop.c:736-748). The close code is the
+NULL)`; **return** from dispatch (loop.c:736-748). The close code is the
     raw errno.
     (d) EOF handling (loop.c:755-784), only if `eof && s`: if socket already
     closed → return (no on_end after close). If `us_socket_is_shut_down(s)`
@@ -1167,13 +1167,10 @@ recv_error_cb, host, port, flags, *err, user)` (udp.c:149-202):
      The socket stays open. Track `recv_error_surfaced`.
   3. If `events & R` and not closed: loop — `bsd_udp_setup_recvbuf` over the
      loop's shared recv_buf (LIBUS_RECV_BUFFER_LENGTH), `npackets =
-bsd_recvmmsg(fd, &recvbuf, MSG_DONTWAIT)`:
-     - `> 0` → `u->on_data(u, &recvbuf, npackets)`; repeat while not closed.
-     - `== LIBUS_SOCKET_ERROR` and not would-block: Linux → surface errno
-       via on_recv_error (socket stays open, `recv_error_surfaced = 1`);
-       non-Linux → set `error = 1` (falls through to close). Would-block on
-       Linux sets `recv_would_block_only`.
-     - `== 0` → done.
+bsd_recvmmsg(fd, &recvbuf, MSG_DONTWAIT)`: - `> 0` → `u->on_data(u, &recvbuf, npackets)`; repeat while not closed. - `== LIBUS_SOCKET_ERROR` and not would-block: Linux → surface errno
+     via on_recv_error (socket stays open, `recv_error_surfaced = 1`);
+     non-Linux → set `error = 1` (falls through to close). Would-block on
+     Linux sets `recv_would_block_only`. - `== 0` → done.
   4. If `events & W` and not closed: `us_poll_change(events & R)` — clear W
      BEFORE `on_drain` so a callback that re-arms W keeps the re-arm; also
      ensures a level-triggered EPOLLOUT+EPOLLERR combo can't spin

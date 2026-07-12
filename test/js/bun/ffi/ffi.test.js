@@ -686,6 +686,35 @@ it("dlopen throws an error instead of returning it", () => {
 // TinyCC, which implements JSCallback and CFunction, is unavailable on Windows ARM64.
 const isFFIUnavailable = isWindows && isArm64;
 
+// The INT64/UINT64_TO_JSVALUE return encoding (#7007 / #33340) through dlopen,
+// which — unlike the cc() variants in cc.test.ts — runs under ASan.
+describe.skipIf(!ok || isFFIUnavailable)("numeric-boundary returns encode consistently", () => {
+  it("u64_fast and i64_fast agree at the int32 and MAX_SAFE_INTEGER boundaries", () => {
+    const { symbols, close } = dlopen(dlopenFixturePath, {
+      ffi_bound_i64_2p31: { args: [], returns: "i64_fast" },
+      ffi_bound_u64_2p31: { args: [], returns: "u64_fast" },
+      ffi_bound_u64_int32_max: { args: [], returns: "u64_fast" },
+      ffi_bound_i64_max_safe: { args: [], returns: "i64_fast" },
+      ffi_bound_u64_max_safe: { args: [], returns: "u64_fast" },
+      ffi_bound_u64_2p53: { args: [], returns: "u64_fast" },
+    });
+    try {
+      // 2^31 must reach JS as the Number 2147483648, not a wrapped -2147483648.
+      expect(symbols.ffi_bound_i64_2p31()).toBe(2147483648);
+      expect(symbols.ffi_bound_u64_2p31()).toBe(2147483648);
+      expect(symbols.ffi_bound_u64_int32_max()).toBe(2147483647);
+      // Exactly MAX_SAFE_INTEGER stays a Number for both signednesses (u64_fast
+      // used a strict `<` and returned a BigInt here while i64_fast did not).
+      expect(symbols.ffi_bound_i64_max_safe()).toBe(9007199254740991);
+      expect(symbols.ffi_bound_u64_max_safe()).toBe(9007199254740991);
+      // Above MAX_SAFE_INTEGER becomes a BigInt.
+      expect(symbols.ffi_bound_u64_2p53()).toBe(9007199254740992n);
+    } finally {
+      close();
+    }
+  });
+});
+
 // Windows: dlopen must accept paths with non-ASCII characters. Previously the
 // path was handed to LoadLibraryA as UTF-8, which the OS decodes as the system
 // ANSI codepage, so any non-ASCII byte mangled the path.

@@ -341,30 +341,59 @@ describe.skipIf(isASAN || isFFIUnavailable)("double arg accepts BigInt with corr
 }); // </double arg accepts BigInt with correct sign>
 
 // The int32 fast-path in INT64_TO_JSVALUE used `val <= MAX_INT32` where
-// MAX_INT32 is 2^31 (not INT32_MAX). So returning the value 2^31 from a
-// 64-bit C function would cast to int32_t and wrap to -2^31 in JS.
-describe.skipIf(isASAN || isFFIUnavailable)("int64_t return at the int32 boundary", () => {
+// A 64-bit return that fits in int32 is int32-tagged; 2^31..MAX_SAFE_INTEGER
+// route to the Number (double) encoding, and only values above MAX_SAFE_INTEGER
+// become BigInt. u64_fast and i64_fast must agree at every boundary.
+describe.skipIf(isASAN || isFFIUnavailable)("int64_t/uint64_t return at the int32 and safe-integer boundaries", () => {
   const library = makeValidCase(
-    "give_2_to_31",
+    "boundary_returns",
     /* c */ `
       long long give_2_to_31(void) { return 2147483648LL; }
       long long give_neg_2_to_31(void) { return -2147483648LL; }
+      unsigned long long give_u_2_to_31(void) { return 2147483648ULL; }
+      unsigned long long give_u_int32_max(void) { return 2147483647ULL; }
+      long long give_i_max_safe(void) { return 9007199254740991LL; }
+      unsigned long long give_u_max_safe(void) { return 9007199254740991ULL; }
+      unsigned long long give_u_2_to_53(void) { return 9007199254740992ULL; }
     `,
     {
       give_2_to_31: { args: [], returns: "i64_fast" },
       give_neg_2_to_31: { args: [], returns: "i64_fast" },
+      give_u_2_to_31: { args: [], returns: "u64_fast" },
+      give_u_int32_max: { args: [], returns: "u64_fast" },
+      give_i_max_safe: { args: [], returns: "i64_fast" },
+      give_u_max_safe: { args: [], returns: "u64_fast" },
+      give_u_2_to_53: { args: [], returns: "u64_fast" },
     },
   );
 
   it("returns 2^31 as the positive Number 2147483648, not -2147483648", () => {
     // Previously: 2147483648 cast to int32 → -2147483648.
     expect(library.symbols.give_2_to_31()).toBe(2147483648);
+    expect(library.symbols.give_u_2_to_31()).toBe(2147483648); // uint64 path too
   });
 
   it("returns -2^31 as -2147483648 (this case was always correct)", () => {
     expect(library.symbols.give_neg_2_to_31()).toBe(-2147483648);
   });
-}); // </int64_t return at the int32 boundary>
+
+  it("returns INT32_MAX (2^31-1) as an int32-encoded Number", () => {
+    expect(library.symbols.give_u_int32_max()).toBe(2147483647);
+  });
+
+  it("u64_fast and i64_fast both return MAX_SAFE_INTEGER as a Number, not BigInt", () => {
+    // Regression: u64_fast used a strict `< MAX_INT52`, so exactly
+    // Number.MAX_SAFE_INTEGER came back as a BigInt while i64_fast returned a
+    // Number. It is exactly representable as a double, so both must be a Number.
+    expect(library.symbols.give_i_max_safe()).toBe(9007199254740991);
+    expect(library.symbols.give_u_max_safe()).toBe(9007199254740991);
+    expect(typeof library.symbols.give_u_max_safe()).toBe("number");
+  });
+
+  it("returns 2^53 (above MAX_SAFE_INTEGER) as a BigInt", () => {
+    expect(library.symbols.give_u_2_to_53()).toBe(9007199254740992n);
+  });
+}); // </int64_t/uint64_t return at the int32 and safe-integer boundaries>
 
 // FFIType.buffer is exposed as the numeric constant 20 but the integer ABI
 // type bound check rejected anything > ABIType::NapiValue (19). Only the

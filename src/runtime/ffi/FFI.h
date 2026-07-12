@@ -89,8 +89,9 @@ BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #define TagValueNull             (OtherTag)
 #define NotCellMask  (int64_t)(NumberTag | OtherTag)
 
-#define MAX_INT32 2147483648
-#define MAX_INT52 9007199254740991
+#define MAX_INT32 2147483647            // INT32_MAX
+#define MIN_INT32 (-2147483647 - 1)     // INT32_MIN (distinct: it is not -MAX_INT32)
+#define MAX_INT52 9007199254740991      // Number.MAX_SAFE_INTEGER (2^53 - 1)
 
 // If all bits in the mask are set, this indicates an integer number,
 // if any but not all are set this value is a double precision number.
@@ -284,10 +285,9 @@ static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
 
 static EncodedJSValue UINT32_TO_JSVALUE(uint32_t val) {
   EncodedJSValue res;
-  // MAX_INT32 is 2^31, not INT32_MAX. Use strict `<` so val == 2^31 (which
-  // doesn't fit in int32_t) routes to the double encoding instead of wrapping
-  // to a negative int32 when JSC reads it back. See issue #7007.
-  if(val < MAX_INT32) {
+  // A uint32_t in 2^31..2^32-1 doesn't fit in int32_t; route it to the double
+  // encoding so JSC doesn't read it back as a negative int32. See issue #7007.
+  if (val <= MAX_INT32) {
     res.asInt64 = NumberTag | val;
     return res;
   } else {
@@ -371,11 +371,13 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
 }
 
 static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
-  if (val < MAX_INT32) {
+  if (val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 
-  if (val < MAX_INT52) {
+  // `<=` so exactly Number.MAX_SAFE_INTEGER stays a JS number, matching
+  // INT64_TO_JSVALUE; only values that lose precision as a double become BigInt.
+  if (val <= MAX_INT52) {
     return DOUBLE_TO_JSVALUE((double)val);
   }
 
@@ -383,10 +385,7 @@ static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
 }
 
 static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
-  // MAX_INT32 is 2^31, not INT32_MAX. Use strict `<` so val == 2^31 (which
-  // overflows when cast to int32_t) routes to the double encoding. The
-  // negative bound is non-strict because INT32_MIN == -2^31 fits in int32_t.
-  if (val >= -MAX_INT32 && val < MAX_INT32) {
+  if (val >= MIN_INT32 && val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 

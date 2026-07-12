@@ -6906,7 +6906,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 }
 
 describe("RedisClient URL parsing", () => {
-  test.each(["/notadb", "/5abc", "/-2", "/5/6", "/99999999999999999999"])(
+  test.each(["/notadb", "/5abc", "/-2", "/5/6", "/4294967296", "/99999999999999999999"])(
     "rejects invalid database segment %j at construction time",
     path => {
       expect(() => new RedisClient(`redis://127.0.0.1:6399${path}`)).toThrow(
@@ -6915,15 +6915,21 @@ describe("RedisClient URL parsing", () => {
     },
   );
 
-  test.each(["", "/", "/0", "/5", "/15"])("accepts valid database segment %j", path => {
+  test.each(["", "/", "/0", "/5", "/15", "/4294967295"])("accepts valid database segment %j", path => {
     const client = new RedisClient(`redis://127.0.0.1:6399${path}`);
-    expect(client.connected).toBe(false);
-    client.close?.();
+    try {
+      expect(client.connected).toBe(false);
+    } finally {
+      client.close();
+    }
   });
 
   test("unix socket path is not treated as a database number", () => {
     const client = new RedisClient("redis+unix:///tmp/not-a-real-redis.sock");
-    expect(client.connected).toBe(false);
-    client.close?.();
+    try {
+      expect(client.connected).toBe(false);
+    } finally {
+      client.close();
+    }
   });
 });

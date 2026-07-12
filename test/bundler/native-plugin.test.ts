@@ -561,6 +561,71 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     }
   });
 
+  it("keeps the onBeforeParse external alive across GC when JS drops its reference", async () => {
+    // The external is passed inline with no other JS reference, and onLoad
+    // forces a full GC after defer(); the NapiExternal must survive the build.
+    const srcDir = path.join(tempdir, "gc_safe_src");
+    const files = Array.from({ length: 40 }, (_, i) => `src${i}.ts`);
+    await Promise.all(files.map(f => Bun.write(path.join(srcDir, f), `export const v = "foo foo foo";\n`)));
+    const imports = files.map((f, i) => `import { v as v${i} } from "./gc_safe_src/${f}";`).join("\n");
+    await Bun.write(
+      path.join(tempdir, "gc_safe_index.ts"),
+      `${imports}\nimport j from "./gc_safe_trigger.json";\nconsole.log(j, ${files.map((_, i) => `v${i}`).join("+")});\n`,
+    );
+    await Bun.write(path.join(tempdir, "gc_safe_trigger.json"), "{}");
+
+    const buildScript = /* ts */ `
+      import * as path from "path";
+      const tempdir = process.env.BUN_TEST_TEMP_DIR!;
+      const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+
+      let finalizedDuringBuild = -1;
+      const result = await Bun.build({
+        outdir: path.join(tempdir, "dist-gc-safe"),
+        entrypoints: [path.join(tempdir, "gc_safe_index.ts")],
+        plugins: [
+          {
+            name: "gc-safe",
+            setup(build) {
+              build.onBeforeParse(
+                { filter: /\\.ts$/ },
+                { napiModule, symbol: "plugin_impl", external: napiModule.createExternal() },
+              );
+              build.onLoad({ filter: /gc_safe_trigger\\.json$/ }, async ({ defer }) => {
+                await defer();
+                Bun.gc(true);
+                await Bun.sleep(0);
+                Bun.gc(true);
+                finalizedDuringBuild = napiModule.getExternalFinalizedCount();
+                return { contents: "{}", loader: "json" };
+              });
+            },
+          },
+        ],
+      });
+      console.log(JSON.stringify({
+        success: result.success,
+        finalizedDuringBuild,
+        finalizedAfterBuild: napiModule.getExternalFinalizedCount(),
+      }));
+    `;
+    await Bun.write(path.join(tempdir, "gc_safe_build.ts"), buildScript);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", path.join(tempdir, "gc_safe_build.ts")],
+      env: { ...bunEnv, BUN_TEST_TEMP_DIR: tempdir },
+      cwd: tempdir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const resultLine = stdout.split("\n").find(line => line.startsWith('{"success"'));
+    const parsed = resultLine ? JSON.parse(resultLine) : { stderr, stdout };
+    expect(parsed).toEqual({ success: true, finalizedDuringBuild: 0, finalizedAfterBuild: 0 });
+    expect(exitCode).toBe(0);
+  });
+
   it("should use result of the first plugin that runs and doesn't execute the others", async () => {
     const filter = /\.ts/;
 

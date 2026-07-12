@@ -2194,6 +2194,87 @@ declare module "bun" {
      *  Provides useful information about the file.
      */
     stat(): Promise<import("node:fs").Stats>;
+
+    /**
+     * Acquire an advisory lock on the file. Resolves once the lock is
+     * acquired. The returned {@link FileLock} releases the lock when awaited
+     * via `await using` or when `unlock()` is called.
+     *
+     * On POSIX this uses `flock(2)`; on Windows, `LockFileEx`.
+     *
+     * @example
+     * ```ts
+     * await using lock = await Bun.file("data.json").lock();
+     * const data = JSON.parse(await lock.text());
+     * data.count++;
+     * await lock.truncate();
+     * await lock.write(JSON.stringify(data));
+     * ```
+     *
+     * @param options.exclusive Acquire an exclusive (write) lock instead of a shared (read) lock. Defaults to `true`.
+     * @param options.nonblocking Fail immediately if the lock cannot be acquired instead of waiting. Defaults to `false`.
+     * @param options.signal An `AbortSignal` that aborts the wait for the lock.
+     */
+    lock(options?: { exclusive?: boolean; nonblocking?: boolean; signal?: AbortSignal }): Promise<FileLock>;
+
+    /**
+     * Release an advisory lock on the underlying file descriptor.
+     *
+     * Only available when this `BunFile` was created from a file descriptor
+     * (`Bun.file(fd)`). For path-backed files, call `unlock()` on the
+     * {@link FileLock} returned by {@link lock} instead.
+     */
+    unlock(): Promise<void>;
+  }
+
+  /**
+   * A held advisory file lock returned by {@link BunFile.lock}.
+   *
+   * Implements `AsyncDisposable`, so it can be used with `await using`.
+   */
+  interface FileLock extends AsyncDisposable {
+    /**
+     * Release the lock (and close the underlying file descriptor if it was
+     * opened by `lock()`). Safe to call more than once.
+     */
+    unlock(): Promise<void>;
+
+    /** Alias for {@link unlock}. */
+    close(): Promise<void>;
+
+    /**
+     * Read the file's contents as a `Uint8Array`.
+     * @param byteCount Maximum number of bytes to read from offset 0. Defaults to the entire file.
+     */
+    bytes(byteCount?: number): Promise<Uint8Array>;
+
+    /** Alias for {@link bytes}. */
+    read(byteCount?: number): Promise<Uint8Array>;
+
+    /**
+     * Read the file's contents as a UTF-8 string.
+     * @param byteCount Maximum number of bytes to read from offset 0. Defaults to the entire file.
+     */
+    text(byteCount?: number): Promise<string>;
+
+    /**
+     * Read the file's contents as an `ArrayBuffer`.
+     * @param byteCount Maximum number of bytes to read from offset 0. Defaults to the entire file.
+     */
+    arrayBuffer(byteCount?: number): Promise<ArrayBuffer>;
+
+    /**
+     * Write `data` at offset 0. Does not truncate; combine with
+     * {@link truncate} to replace the file's contents.
+     * @returns The number of bytes written.
+     */
+    write(data: string | ArrayBuffer | SharedArrayBuffer | NodeJS.ArrayBufferView): Promise<number>;
+
+    /**
+     * Truncate the file to `length` bytes.
+     * @param length Defaults to 0.
+     */
+    truncate(length?: number): Promise<void>;
   }
 
   type CSRFAlgorithm = "blake2b256" | "blake2b512" | "sha256" | "sha384" | "sha512" | "sha512-256";

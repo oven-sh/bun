@@ -39,15 +39,14 @@ pub struct Snapshots<'a> {
     /// Snapshot keys loaded from the `.snap` file but not yet matched this run.
     /// Remaining entries at file close are obsolete (or removed under `-u`).
     pub unchecked_keys: &'a mut StringHashMap<()>,
-    /// Full names of tests that completed without matching all of their keys
-    /// (skipped/todo/filtered/failed). Reconciled against `unchecked_keys` at
-    /// `write_snapshot_file` so ordering relative to the first
-    /// `toMatchSnapshot` call does not matter.
+    /// Full names of every test whose sequence completed in the current file.
+    /// Reconciled against `unchecked_keys` at `write_snapshot_file` so ordering
+    /// relative to the first `toMatchSnapshot` call does not matter.
     pub skipped_test_names: &'a mut Vec<(FileId, Box<[u8]>)>,
-    /// Set when the current file's run was partial: `.only()` drops siblings
-    /// before sequencing, and a failing hook or test can jump past later tests.
-    /// Unchecked keys are then ignored for the obsolete tally.
-    pub file_was_partial: bool,
+    /// File whose run was partial: `.only()` drops siblings before sequencing,
+    /// and a failing hook or test can jump past later tests. Unchecked keys are
+    /// ignored for the obsolete tally when this matches the file being flushed.
+    pub partial_file_id: Option<FileId>,
     pub _current_file: Option<File>,
     /// Read-only backref into `Jest::RUNNER.files[..].source.path` (not owned
     /// here, never freed): the runner is process-global and its files are
@@ -359,7 +358,7 @@ impl<'a> Snapshots<'a> {
                 // Skipped tests' entries are not rewritten into `file_buf`, so
                 // they are physically removed; keep them in the tally.
                 self.removed += self.unchecked_keys.len();
-            } else if !self.file_was_partial {
+            } else if self.partial_file_id != Some(file.id) {
                 for (id, name) in self.skipped_test_names.iter() {
                     if *id == file.id {
                         Self::mark_snapshots_as_checked_for_test(self.unchecked_keys, name);
@@ -367,7 +366,6 @@ impl<'a> Snapshots<'a> {
                 }
                 self.obsolete += self.unchecked_keys.len();
             }
-            self.file_was_partial = false;
 
             file.file
                 .write_all(self.file_buf)

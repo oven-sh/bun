@@ -2117,7 +2117,7 @@ impl TestCommand {
                     skipped_test_names: unsafe {
                         bun_ptr::detach_lifetime_mut(&mut snapshot_skipped_test_names)
                     },
-                    file_was_partial: false,
+                    partial_file_id: None,
                     _current_file: None,
                     snapshot_dir_path: None,
                     // SAFETY: same never-returning-frame invariant as `file_buf` above.

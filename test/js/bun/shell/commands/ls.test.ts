@@ -239,9 +239,19 @@ describe.concurrent("bunshell ls", () => {
     });
 
     test("-U does not sort (directory order)", async () => {
-      using dir = tempDir("ls-no-sort", { m: "", a: "", z: "" });
-      const { stdout, exitCode } = await $`ls -U`.cwd(String(dir)).quiet();
-      expect(stdout.toString().trim().split("\n").sort()).toEqual(["a", "m", "z"]);
+      using dir = tempDir("ls-no-sort", { m: "", a: "", z: "", k: "", b: "" });
+      const sorted = (await $`ls`.cwd(String(dir)).quiet()).stdout.toString();
+      const unsorted = (await $`ls -U`.cwd(String(dir)).quiet()).stdout.toString();
+      expect(unsorted.trim().split("\n").sort()).toEqual(["a", "b", "k", "m", "z"]);
+      // -U bypasses the sort, so its output differs from the default sorted output.
+      expect(unsorted).not.toBe(sorted);
+    });
+
+    test("-f does not sort and implies -a", async () => {
+      using dir = tempDir("ls-dash-f", { m: "", a: "", z: "" });
+      const { stdout, exitCode } = await $`ls -f`.cwd(String(dir)).quiet();
+      const names = stdout.toString().trim().split("\n");
+      expect(names.slice().sort()).toEqual([".", "..", "a", "m", "z"]);
       expect(exitCode).toBe(0);
     });
   });

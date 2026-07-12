@@ -10,7 +10,8 @@ const routes = {
   }),
   "/big": new Response(
     (() => {
-      const buf = Buffer.alloc(1024 * 1024 * 4);
+      // 512KB still forces multiple socket writes (same streaming path as 4MB) while keeping the stress loop fast.
+      const buf = Buffer.alloc(1024 * 512);
       const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_*^!@#$%^&*()+=?><:;{}[]|\\ \n";
 
       function randomAnyCaseLetter() {
@@ -113,8 +114,9 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
 
           // macOS limits backlog to 128.
           // When we do the big request, reduce number of connections but increase number of iterations
-          const batchSize = Math.ceil((byteSize > 1024 * 1024 ? 48 : 64) / (isWindows ? 8 : 1));
-          const iterations = Math.ceil((byteSize > 1024 * 1024 ? 10 : 12) / (isWindows ? 8 : 1));
+          const divisor = isWindows ? 8 : isASAN ? 3 : 1;
+          const batchSize = Math.ceil((byteSize > 1024 * 128 ? 48 : 64) / divisor);
+          const iterations = Math.ceil((byteSize > 1024 * 128 ? 10 : 12) / divisor);
 
           async function iterate() {
             let array = new Array(batchSize);

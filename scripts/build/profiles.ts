@@ -154,16 +154,16 @@ export const profiles = {
     buildDir: "build/btg",
   },
 
-  /** Release with WebKit on mimalloc instead of libpas (Linux glibc only);
-   * JSC and bun share one allocator. Opt-in while the -mimalloc prebuilt is
-   * validated; lto=false for local testing. */
+  /** Release with WebKit on mimalloc instead of libpas; the Linux glibc
+   * release default (see resolveConfig). This profile forces it explicitly;
+   * lto=false for local testing. */
   "release-mimalloc": {
     buildType: "Release",
     webkit: "prebuilt",
     lto: false,
     webkitMimalloc: true,
-    // Own dir so A/B against --profile=release (different WebKit destDir →
-    // different -I on every C++ edge) doesn't force full rebuilds each switch.
+    // Own dir so A/B against `release --webkitMimalloc=off` (different WebKit
+    // destDir → different -I on every C++ edge) doesn't thrash rebuilds.
     buildDir: "build/release-mimalloc",
   },
 

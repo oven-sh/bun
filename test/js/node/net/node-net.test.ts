@@ -919,8 +919,9 @@ it.skipIf(isWindows)(
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
-      // Malloc=1 keeps JSC on the system heap so the mimalloc page count only
-      // tracks native allocations, also on builds where JSC uses mimalloc.
+      // Malloc=1: JSC bypasses its own heap (libpas / the webkitMimalloc
+      // arenas) for plain malloc, so the page count sees only steady-state
+      // malloc traffic. This test is skipped on Windows (no SystemHeap there).
       env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0", Malloc: "1" },
       stdout: "pipe",
       stderr: "pipe",

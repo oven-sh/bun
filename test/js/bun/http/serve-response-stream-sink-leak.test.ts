@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
 // Regression: doRenderStream allocates a ResponseStream.JSSink on the heap
@@ -12,10 +12,7 @@ import { join } from "node:path";
 test("HTTPResponseSink is destroyed after a sync pull() that ends later", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "serve-response-stream-sink-leak-fixture.ts")],
-    // Malloc=1: JSC bypasses its own heap (libpas / the webkitMimalloc arenas)
-    // for plain malloc, keeping currentCommit noise to steady-state malloc
-    // traffic. Not on Windows: bmalloc's SystemHeap would RELEASE_BASSERT.
-    env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -905,13 +905,15 @@ it.skipIf(isWindows)(
       // TCPSocket struct is ~300-400 bytes; 8k of them fill ~25 pages
       // (release) / ~160 pages (debug+ASAN). Unlike RSS this is the
       // allocator's own bookkeeping, so it's independent of OS page
-      // reclamation and JSC heap oscillation — same result on every
-      // platform, every run.
+      // reclamation.
       function pageCount() {
         return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
       }
 
-      await run(2000);
+      // Warm up with the SAME workload as the measured run: on builds where
+      // JSC shares mimalloc, its heap keeps growing until the first full-size
+      // batch, so equal batches make the delta isolate the per-run leak.
+      await run(8000);
       const before = pageCount();
       await run(8000);
       const after = pageCount();
@@ -919,10 +921,7 @@ it.skipIf(isWindows)(
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
-      // Malloc=1: JSC bypasses its own heap (libpas / the webkitMimalloc
-      // arenas) for plain malloc, so the page count sees only steady-state
-      // malloc traffic. This test is skipped on Windows (no SystemHeap there).
-      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0", Malloc: "1" },
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
       stdout: "pipe",
       stderr: "pipe",
     });

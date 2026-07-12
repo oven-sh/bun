@@ -37,14 +37,19 @@ async function once() {
   await res.arrayBuffer();
 }
 
-// Warm up: let JIT, caches, and pools settle before the baseline sample.
-for (let i = 0; i < 500; i++) await once();
+// Warm up with the SAME workload as the measured run: JIT, caches, pools,
+// and (on builds where JSC shares mimalloc) the JS heap all reach steady
+// state, so the measured delta isolates the per-request leak.
+const iterations = 10000;
+for (let i = 0; i < iterations; i++) {
+  await once();
+  if (i % 1000 === 0) Bun.gc(true);
+}
 Bun.gc(true);
 await Bun.sleep(10);
 Bun.gc(true);
 const before = memoryUsage().currentCommit;
 
-const iterations = 10000;
 for (let i = 0; i < iterations; i++) {
   await once();
   if (i % 1000 === 0) Bun.gc(true);

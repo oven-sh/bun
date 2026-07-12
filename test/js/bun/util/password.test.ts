@@ -436,8 +436,17 @@ test("verify accepts argon2 PHC strings with m/t/p in any order", async () => {
   expect(() => password.verifySync("password", reorderedHugeTime)).toThrow("WeakParameters");
 
   // Malformed / duplicate / unknown params are still rejected rather than
-  // being silently dropped by the reorder pass.
-  for (const bad of ["m=16,t=2", "m=16,t=2,p=1,p=1", "m=16,t=2,x=1"]) {
+  // being silently dropped by the reorder pass. A malformed segment that
+  // also carries an oversized value is InvalidEncoding, not WeakParameters,
+  // regardless of where the oversized value sits.
+  for (const bad of [
+    "m=16,t=2",
+    "m=16,t=2,p=1,p=1",
+    "m=16,t=2,x=1",
+    "m=4294967294,t=2",
+    "t=2,m=4294967294",
+    "m=4294967294,x=1,t=2,p=1",
+  ]) {
     const tampered = hashed.replace("m=16,t=2,p=1", bad);
     expect(() => password.verifySync("password", tampered)).toThrow("InvalidEncoding");
   }

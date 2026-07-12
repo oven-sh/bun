@@ -225,10 +225,14 @@ pub mod argon2 {
             let params = &rest[..params_end];
             let tail = &rest[params_end..];
 
-            // Parse m/t/p in any order, applying the verify-time DoS limits.
-            let mut m_pair: Option<&str> = None;
-            let mut t_pair: Option<&str> = None;
-            let mut p_pair: Option<&str> = None;
+            // Parse m/t/p in any order. The verify-time DoS limits are
+            // applied only after the segment is known to be structurally
+            // valid (exactly one of each, no unknowns), so a malformed
+            // segment that also happens to carry an oversized value is
+            // still reported as `InvalidEncoding` regardless of order.
+            let mut m_pair: Option<(&str, u32)> = None;
+            let mut t_pair: Option<(&str, u32)> = None;
+            let mut p_pair: Option<(&str, u32)> = None;
             let mut canonical = true;
             for (idx, pair) in params.split(',').enumerate() {
                 let Some((key, value)) = pair.split_once('=') else {
@@ -237,27 +241,32 @@ pub mod argon2 {
                 let Ok(value) = value.parse::<u32>() else {
                     break 'norm std::borrow::Cow::Borrowed(encoded);
                 };
-                let (slot, limit, expected_idx) = match key {
-                    "m" => (&mut m_pair, MAX_VERIFY_MEMORY_COST, 0),
-                    "t" => (&mut t_pair, MAX_VERIFY_TIME_COST, 1),
-                    "p" => (&mut p_pair, MAX_VERIFY_PARALLELISM, 2),
+                let (slot, expected_idx) = match key {
+                    "m" => (&mut m_pair, 0),
+                    "t" => (&mut t_pair, 1),
+                    "p" => (&mut p_pair, 2),
                     _ => break 'norm std::borrow::Cow::Borrowed(encoded),
                 };
                 if slot.is_some() {
                     break 'norm std::borrow::Cow::Borrowed(encoded);
                 }
-                if value > limit {
-                    return Err(crate::Error::WeakParameters);
-                }
                 if idx != expected_idx {
                     canonical = false;
                 }
-                *slot = Some(pair);
+                *slot = Some((pair, value));
             }
 
-            let (Some(m), Some(t), Some(p)) = (m_pair, t_pair, p_pair) else {
+            let (Some((m, m_value)), Some((t, t_value)), Some((p, p_value))) =
+                (m_pair, t_pair, p_pair)
+            else {
                 break 'norm std::borrow::Cow::Borrowed(encoded);
             };
+            if m_value > MAX_VERIFY_MEMORY_COST
+                || t_value > MAX_VERIFY_TIME_COST
+                || p_value > MAX_VERIFY_PARALLELISM
+            {
+                return Err(crate::Error::WeakParameters);
+            }
 
             if had_version && canonical {
                 std::borrow::Cow::Borrowed(encoded)

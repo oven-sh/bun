@@ -88,7 +88,7 @@ pub struct Listener {
     pub secure_ctx: Option<NonNull<boring_sys::SSL_CTX>>,
     pub ssl: bool,
     pub protos: Option<Box<[u8]>>,
-
+    pub reject_unauthorized: bool,
     pub strong_data: JsCell<Strong>,
     /// Reference to this listener's JS wrapper. Strong while it is listening or
     /// has connections, downgraded to weak once idle so GC can reclaim it.
@@ -225,6 +225,11 @@ impl Listener {
                     ssl: ssl_enabled,
                     listener: Cell::new(ListenerType::None),
                     protos: protos_taken,
+                    reject_unauthorized: crate::socket::resolve_reject_unauthorized(
+                        vm,
+                        ssl_cfg_taken.as_ref(),
+                        true,
+                    ),
                     poll_ref: JsCell::new(KeepAlive::init()),
                     group: JsCell::new(uws::SocketGroup::default()),
                     secure_ctx: None,
@@ -304,6 +309,11 @@ impl Listener {
             connection: UnixOrHost::Fd(Fd::invalid()),
             ssl: ssl_enabled,
             protos: protos_taken,
+            reject_unauthorized: crate::socket::resolve_reject_unauthorized(
+                vm,
+                ssl_cfg_taken.as_ref(),
+                true,
+            ),
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
             group: JsCell::new(uws::SocketGroup::default()),
@@ -528,6 +538,15 @@ impl Listener {
         Ok(this_value)
     }
 
+    // `OWNED_PROTOS` stays unset: accepted sockets clone the listener's `protos`.
+    fn accepted_socket_flags(&self) -> SocketFlags {
+        if self.reject_unauthorized {
+            SocketFlags::REJECT_UNAUTHORIZED
+        } else {
+            SocketFlags::empty()
+        }
+    }
+
     pub fn on_name_pipe_created<const SSL: bool>(
         listener: &Listener,
     ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
@@ -539,7 +558,7 @@ impl Listener {
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             protos: JsCell::new(listener.protos.clone()),
             // `protos` is `Option<Box<[u8]>>` so we clone the listener's slice.
-            flags: Cell::new(SocketFlags::empty()),
+            flags: Cell::new(listener.accepted_socket_flags()),
             owned_ssl_ctx: Cell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -551,6 +570,7 @@ impl Listener {
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
+            verify_error: JsCell::new(None),
         });
         let s = this_socket;
         s.ref_();
@@ -581,7 +601,7 @@ impl Listener {
             protos: JsCell::new(listener.protos.clone()),
             // `protos` is `Option<Box<[u8]>>` so each accepted socket clones
             // the listener's slice; one small allocation per accept.
-            flags: Cell::new(SocketFlags::empty()), // owned_protos = false (cloned above)
+            flags: Cell::new(listener.accepted_socket_flags()),
             owned_ssl_ctx: Cell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -593,6 +613,7 @@ impl Listener {
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
+            verify_error: JsCell::new(None),
         });
         let s = this_socket;
         s.ref_();
@@ -653,8 +674,9 @@ impl Listener {
             return Ok(JSValue::UNDEFINED);
         };
 
-        // node:tls passes the native SecureContext (already-built SSL_CTX*) — no
-        // re-parse. Bun.listen({tls}) callers may still pass a raw options dict.
+        // Both real callers (node:tls addContext, node:net) pass a native
+        // SecureContext; enforcement policy stays server-level, like Node's.
+        // The dict branch is defensive for the internal binding's raw form.
         let sni_ctx: *mut boring_sys::SSL_CTX =
             if let Some(sc) = tls.as_class_ref::<SecureContext>() {
                 sc.borrow()
@@ -1113,9 +1135,15 @@ impl Listener {
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: JsCell::new(None),
+                            verify_error: JsCell::new(None),
                         })
                     };
                     let tls_ref = tls;
+                    tls_ref.reset_client_tls_flags(crate::socket::resolve_reject_unauthorized(
+                        vm,
+                        ssl_taken.as_ref(),
+                        false,
+                    ));
                     TLSSocket::data_set_cached(
                         tls_ref.get_this_value(global),
                         global,
@@ -1193,6 +1221,7 @@ impl Listener {
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: JsCell::new(None),
+                            verify_error: JsCell::new(None),
                         })
                     };
                     let tcp_ref = tcp;
@@ -1382,6 +1411,7 @@ fn connect_finish<const IS_SSL: bool>(
     port: Option<u16>,
     promise_value: JSValue,
 ) -> JsResult<JSValue> {
+    let vm = handlers.vm;
     let socket: bun_ptr::ThisPtr<NewSocket<IS_SSL>> = if let Some(prev_ptr) = maybe_previous {
         // SAFETY: caller passes a live NewSocket<IS_SSL>, owned by its JS wrapper.
         let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
@@ -1430,6 +1460,7 @@ fn connect_finish<const IS_SSL: bool>(
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
+            verify_error: JsCell::new(None),
         })
     };
     // Either the caller's JS-owned socket (reconnect) or the fresh one above.
@@ -1451,6 +1482,9 @@ fn connect_finish<const IS_SSL: bool>(
     if socket_ref.this_value.get().is_not_empty() {
         socket_ref.this_value.with_mut(|r| r.upgrade(global));
     }
+    socket_ref.reset_client_tls_flags(
+        IS_SSL && crate::socket::resolve_reject_unauthorized(vm, ssl.as_deref(), false),
+    );
     {
         let mut f = socket_ref.flags.get();
         f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
@@ -1653,7 +1687,7 @@ impl WindowsNamedPipeListeningContext {
         backlog: i32,
         ssl_config: Option<&SSLConfig>,
         listener: *mut Listener,
-    ) -> Result<*mut WindowsNamedPipeListeningContext, bun_core::Error> {
+    ) -> crate::Result<*mut WindowsNamedPipeListeningContext> {
         // Heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
@@ -1687,13 +1721,13 @@ impl WindowsNamedPipeListeningContext {
             // Create SSL context using uSockets to match behavior of node.js
             match ctx_opts.create_ssl_context(&mut err) {
                 Some(ctx) => this_ref.ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
-                None => return Err(bun_core::err!("InvalidOptions")),
+                None => return Err(crate::Error::InvalidOptions),
             }
         }
 
         let init_result = this_ref.uv_pipe.init(this_ref.vm.uv_loop().cast(), false);
         if init_result.is_err() {
-            return Err(bun_core::err!("FailedToInitPipe"));
+            return Err(crate::Error::FailedToInitPipe);
         }
         cleanup.1 = true;
 
@@ -1719,7 +1753,7 @@ impl WindowsNamedPipeListeningContext {
             )
         };
         if listen_rc.is_err() {
-            return Err(bun_core::err!("FailedToBindPipe"));
+            return Err(crate::Error::FailedToBindPipe);
         }
         //TODO: add readableAll and writableAll support if someone needs it
         // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {

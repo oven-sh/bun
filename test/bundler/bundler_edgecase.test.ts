@@ -2698,6 +2698,79 @@ describe("bundler", () => {
       `);
     },
   });
+  itBundled("edgecase/NonAsciiIdentifierPreserved", {
+    files: {
+      "/entry.js": /* js */ `
+        class Café {}
+        function naïve(x) { return x }
+        class Cafá {}
+        class 模块 {}
+        const aπ = 1;
+        const a𝒜 = 2;
+        const élan = 3;
+        console.log(JSON.stringify([Café.name, naïve.name, Cafá.name, 模块.name, aπ, a𝒜, élan]));
+      `,
+    },
+    target: "node",
+    run: { stdout: '["Café","naïve","Cafá","模块",1,2,3]' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("class Café");
+      expect(out).toContain("function naïve");
+      expect(out).toContain("class Cafá");
+      expect(out).toContain("class 模块");
+      expect(out).toContain("var aπ");
+      expect(out).toContain("var a𝒜");
+      expect(out).toContain("var élan");
+      expect(out).not.toContain("Caf_");
+      expect(out).not.toContain("na_ve");
+      expect(out).not.toContain("模_");
+      expect(out).not.toContain("var a_");
+    },
+  });
+  itBundled("edgecase/NonAsciiIdentifierPreservedBunTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        class Café {}
+        function naïve(x) { return x }
+        console.log(JSON.stringify([Café.name, naïve.name]));
+      `,
+    },
+    target: "bun",
+    run: { stdout: '["Café","naïve"]' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("Caf_");
+      expect(out).not.toContain("na_ve");
+    },
+  });
+  itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
+    files: {
+      "/entry.ts": /* js */ `
+        const a = require("./模块.cjs");
+        const b = require("./foo\u2014bar.cjs");
+        console.log(a.x, b.y);
+      `,
+      "/模块.cjs": /* js */ `
+        module.exports = { x: 42 };
+      `,
+      "/foo\u2014bar.cjs": /* js */ `
+        module.exports = { y: 7 };
+      `,
+    },
+    target: "node",
+    run: { stdout: "42 7" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // ID_Continue code points in the path basename are preserved.
+      expect(out).toContain("require_模块");
+      expect(out).not.toContain("require_模_");
+      expect(out).not.toContain("require___");
+      // Non-ID_Continue code points (U+2014 em dash) are still replaced with _.
+      expect(out).toContain("require_foo_bar");
+      expect(out).not.toContain("require_foo\u2014bar");
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

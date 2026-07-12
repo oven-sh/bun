@@ -29,6 +29,16 @@ function setup() {
   };
 }
 
+// Drop every PATH entry that already provides `name`, so `bunx <name>` cannot
+// short-circuit to a binary that happens to be installed on this machine.
+// Bun.which does the resolving, so Windows' .exe/.cmd lookup matches bunx's.
+function pathWithout(name: string, PATH: string | undefined): string {
+  return (PATH ?? "")
+    .split(delimiter)
+    .filter(dir => dir && !Bun.which(name, { PATH: dir }))
+    .join(delimiter);
+}
+
 beforeAll(async () => {
   // Clean stale bunx cache dirs from previous runs once up front instead of before every test.
   const tmp = isWindows ? tmpdir() : "/tmp";
@@ -500,10 +510,13 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
   expect(exited).toBe(0);
 });
 
+// Pinned to 20: its engines are "^20.19.0 || ^22.12.0 || >=24.0.0", so the node-24
+// requirement this test exercises holds no matter what Node.js version Bun reports.
+// @latest tracks Angular's engines upward and breaks whenever they outrun us.
 it.concurrent("should handle package that requires node 24", async () => {
   const { x_dir, env } = setup();
   const subprocess = spawn({
-    cmd: [bunExe(), "x", "--bun", "@angular/cli@latest", "--help"],
+    cmd: [bunExe(), "x", "--bun", "@angular/cli@20", "--help"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "inherit",
@@ -1064,6 +1077,12 @@ describe("package name aliases", () => {
       stderr: "pipe",
       env: {
         ...env,
+        // An untagged `bunx <name>` runs a matching binary already on PATH
+        // instead of querying the registry, so a machine with `claude`
+        // installed never makes the request this test asserts on. Drop those
+        // entries so the alias is what gets exercised, not the developer's or
+        // the agent's PATH.
+        PATH: pathWithout("claude", env.PATH),
         npm_config_registry: `http://localhost:${port}/`,
       },
     });

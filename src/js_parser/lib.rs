@@ -16,6 +16,10 @@
 
 pub use bun_collections::VecExt as _VecExtReexport;
 
+pub mod error;
+pub use error::Error;
+pub use error::Result as CrateResult;
+
 // ─── module layout (see docs/REFACTOR_BUN_AST.md) ───────────────────────────
 pub mod parser;
 // Re-export parser-helper types at crate root so p.rs can `use crate::{...}`.
@@ -120,7 +124,7 @@ pub mod Macro {
             import_range: bun_ast::Range,
             caller: bun_ast::Expr,
             function_name: &[u8],
-        ) -> Result<bun_ast::Expr, bun_core::Error>;
+        ) -> Result<bun_ast::Expr, crate::Error>;
         // NOT `safe fn`: callee derefs `data` unconditionally as
         // `&MacroContext` — caller must guarantee non-null + produced by
         // `__bun_macro_context_init` + the backing `Transpiler.options` table
@@ -157,7 +161,7 @@ pub mod Macro {
             import_range: bun_ast::Range,
             caller: bun_ast::Expr,
             function_name: &[u8],
-        ) -> Result<bun_ast::Expr, bun_core::Error> {
+        ) -> Result<bun_ast::Expr, crate::Error> {
             __bun_macro_context_call(
                 self,
                 import_record_path,

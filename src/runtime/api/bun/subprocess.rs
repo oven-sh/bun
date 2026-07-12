@@ -50,8 +50,7 @@ pub use readable::Readable;
 pub mod writable;
 pub use writable::Writable;
 
-#[path = "subprocess/StaticPipeWriter.rs"]
-pub mod static_pipe_writer;
+pub use bun_spawn::static_pipe_writer;
 pub use static_pipe_writer::StaticPipeWriter as NewStaticPipeWriter;
 
 pub use bun_io::MaxBuf;
@@ -872,6 +871,17 @@ impl Subprocess<'_> {
                 }
             }
         }
+        // The raw fd numbers are now visible to JS and the caller owns them.
+        // Downgrade so finalize_streams never closes a number JS may have
+        // already closed (whose value the kernel may have since recycled).
+        #[cfg(not(windows))]
+        this.stdio_pipes.with_mut(|pipes| {
+            for slot in pipes.iter_mut() {
+                if let ExtraPipe::OwnedFd(fd) = *slot {
+                    *slot = ExtraPipe::UnownedFd(fd);
+                }
+            }
+        });
         Ok(array)
     }
 
@@ -919,17 +929,19 @@ impl Subprocess<'_> {
         // provenance (no `&Process → *mut` round-trip).
         unsafe { (*jsc_vm).on_subprocess_exit(NonNull::new_unchecked(process)) };
 
-        #[cfg(windows)]
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
-            // POSIX gets EOF on the master when the child (last slave_fd holder)
-            // exits. ConPTY's conhost stays alive after the child exits, so close
-            // the pseudoconsole now to deliver EOF and fire the terminal's exit
-            // callback. Leaves the Terminal itself open to match POSIX.
+            // Deliver EOF to the terminal reader without closing the Terminal:
+            // POSIX drains then releases slave_fd (BSD kernels flush on last
+            // slave close); Windows closes the ConPTY pseudoconsole.
             if let Some(terminal) = self.terminal.get() {
                 // `BackRef` invariant holds: the terminal is owned by (or
                 // borrowed from a JS wrapper kept live by) this subprocess and
                 // outlives this scope; single JS thread.
-                bun_ptr::BackRef::from(terminal).close_pseudoconsole();
+                let term = bun_ptr::BackRef::from(terminal);
+                #[cfg(unix)]
+                term.drain_and_close_slave_fd();
+                #[cfg(windows)]
+                term.close_pseudoconsole();
             }
         }
 

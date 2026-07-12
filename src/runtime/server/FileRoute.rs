@@ -3,7 +3,9 @@ use core::ffi::c_void;
 use core::mem::size_of;
 
 use bun_core::String as BunString;
+use bun_core::strings;
 use bun_http::{Headers, Method};
+use bun_http_types::ETag;
 use bun_http_types::ETag::StringPointer;
 use bun_io::Closer;
 use bun_io::FileType;
@@ -450,13 +452,26 @@ impl FileRoute {
 
         let status_code: u16 = 'brk: {
             // RFC 9110 §13.2.2: conditional preconditions are evaluated before
-            // Range. If-Modified-Since on an unmodified resource yields 304 even
-            // when a Range header is present (without If-Range).
-            // Unlike If-Unmodified-Since, If-Modified-Since can only be used with a
-            // GET or HEAD. When used in combination with If-None-Match, it is
-            // ignored, unless the server doesn't support If-None-Match.
-            if let Some(requested_if_modified_since) = input_if_modified_since_date {
-                if method == Method::HEAD || method == Method::GET {
+            // Range. If-None-Match is evaluated first; when present it suppresses
+            // If-Modified-Since regardless of outcome (step 3 vs step 4). Both
+            // only apply to GET/HEAD for 304 purposes.
+            if method == Method::HEAD || method == Method::GET {
+                if let Some(inm) = req.header(b"if-none-match").filter(|v| !v.is_empty()) {
+                    if this.status_code == 200 {
+                        let matched = match this.headers.get(b"etag").filter(|v| !v.is_empty()) {
+                            Some(etag) => ETag::if_none_match(etag, inm),
+                            // No stored ETag: only `*` can match (RFC 9110
+                            // §13.1.2 — any current representation).
+                            None => strings::trim(inm, b" \t") == b"*",
+                        };
+                        if matched {
+                            break 'brk 304;
+                        }
+                    }
+                    // If-None-Match present but did not match: condition is
+                    // true, fall through to Range/200 without consulting
+                    // If-Modified-Since.
+                } else if let Some(requested_if_modified_since) = input_if_modified_since_date {
                     let Ok(lmd) = this.last_modified_date() else {
                         return;
                     }; // TODO: properly propagate exception upwards

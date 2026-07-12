@@ -423,7 +423,7 @@ impl FSEventsLoop {
         }
     }
 
-    pub fn init() -> Result<&'static FSEventsLoop, bun_core::Error> {
+    pub fn init() -> crate::Result<&'static FSEventsLoop> {
         // Owning raw pointer first, shared view second: the error paths below reclaim
         // through `this_ptr`, which must not be derived from a shared reference.
         let this_ptr: *mut FSEventsLoop = bun_core::heap::into_raw(Box::new(FSEventsLoop {
@@ -468,7 +468,7 @@ impl FSEventsLoop {
         if signal_source.is_null() {
             // SAFETY: nothing else has seen the allocation (published only on Ok).
             drop(unsafe { bun_core::heap::take(this_ptr) });
-            return Err(bun_core::err!("FailedToCreateCoreFoudationSourceLoop"));
+            return Err(crate::Error::FailedToCreateCoreFoudationSourceLoop);
         }
         this.signal_source.store(signal_source, Ordering::Relaxed);
 
@@ -484,7 +484,7 @@ impl FSEventsLoop {
                     (cf.release)(signal_source.cast());
                     drop(bun_core::heap::take(this_ptr));
                 }
-                return Err(bun_core::err!("FailedToSpawnFSEventsThread"));
+                return Err(crate::Error::FailedToSpawnFSEventsThread);
             }
         };
         // SAFETY: `thread` is only touched by `init()`/`shutdown()` on the JS thread; the CF thread never accesses it.
@@ -926,7 +926,7 @@ pub fn watch(
     callback: Callback,
     update_end: UpdateEndCallback,
     ctx: *mut c_void,
-) -> Result<Box<FSEventsWatcher>, bun_core::Error> {
+) -> crate::Result<Box<FSEventsWatcher>> {
     if let Some(&loop_) = FSEVENTS_DEFAULT_LOOP.get() {
         return Ok(FSEventsWatcher::init(
             loop_, path, recursive, callback, update_end, ctx,

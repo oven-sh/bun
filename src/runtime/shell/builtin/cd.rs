@@ -23,8 +23,7 @@ enum State {
 impl Cd {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let args = Builtin::of(interp, cmd).args_slice();
-        let skip =
-            (!args.is_empty() && Builtin::of(interp, cmd).arg_bytes(0) == b"--") as usize;
+        let skip = (!args.is_empty() && Builtin::of(interp, cmd).arg_bytes(0) == b"--") as usize;
         if args.len() - skip > 1 {
             return Self::write_stderr_non_blocking(
                 interp,

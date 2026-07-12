@@ -64,12 +64,7 @@ describe("-- end-of-options delimiter", () => {
   });
 
   describe("mkdir", () => {
-    TestBuilder.command`mkdir -- d; ls`
-      .ensureTempDir()
-      .stdout("d\n")
-      .stderr("")
-      .exitCode(0)
-      .runAsTest("mkdir -- dir");
+    TestBuilder.command`mkdir -- d; ls`.ensureTempDir().stdout("d\n").stderr("").exitCode(0).runAsTest("mkdir -- dir");
 
     TestBuilder.command`mkdir -p -- a/b; ls a`
       .ensureTempDir()
@@ -87,12 +82,7 @@ describe("-- end-of-options delimiter", () => {
   });
 
   describe("touch", () => {
-    TestBuilder.command`touch -- t; ls`
-      .ensureTempDir()
-      .stdout("t\n")
-      .stderr("")
-      .exitCode(0)
-      .runAsTest("touch -- file");
+    TestBuilder.command`touch -- t; ls`.ensureTempDir().stdout("t\n").stderr("").exitCode(0).runAsTest("touch -- file");
 
     TestBuilder.command`touch -- -a; ls`
       .ensureTempDir()

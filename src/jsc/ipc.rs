@@ -34,8 +34,9 @@ use bun_usockets;
 // (tier-6), so the concrete type cannot be named here. Instead of a hand-
 // rolled fn-pointer table, the owner is stored as a raw `*mut dyn` trait
 // object: `IPCInstance` (this crate) and `Subprocess` (`bun_runtime`) both
-// impl [`SendQueueOwner`], and the SendQueue is embedded inline in each, so
-// the pointer is a BACKREF (cleared before the owner drops).
+// impl [`SendQueueOwner`]; each holds an `IpcRef` to the heap `IpcData` owning
+// the SendQueue, and the pointer is a BACKREF kept valid by `IpcRef::drop`'s
+// teardown ordering (socket detach + task cancellation before the owner frees).
 //
 // The JS host fns that need the concrete `Subprocess` / `Listener` types
 // (`do_send`, `emit_handle_ipc_message`, `Bun__Process__send`) live in
@@ -685,10 +686,15 @@ pub struct IpcRef(bun_ptr::RefPtr<IpcData>);
 
 impl IpcRef {
     pub fn new(mode: Mode, owner: *mut dyn SendQueueOwner) -> IpcRef {
-        IpcRef(bun_ptr::RefPtr::new(IpcData {
+        let this = IpcRef(bun_ptr::RefPtr::new(IpcData {
             ref_count: bun_ptr::RefCount::init(),
             q: crate::JsCell::new(SendQueue::init(mode, owner, SocketUnion::Uninitialized)),
-        }))
+        }));
+        // Stamp the root-provenance self pointer for queued-task capture
+        // (see `SendQueue.cell_root` doc).
+        let root = this.queue_ptr();
+        this.with_queue(|q| q.cell_root = root);
+        this
     }
 
     /// A new strong ref (for transfer to the socket core at adoption).
@@ -725,8 +731,9 @@ impl IpcData {
         self.q.with_mut(f)
     }
 
-    /// Single audited `JsCell` projection for the host-fn paths that hold the
-    /// borrow across JS re-entry (same discipline as the old inline storage).
+    /// Single audited `JsCell` projection for the paths (host fns, protocol
+    /// handlers) that hold the borrow across JS re-entry — the pre-migration
+    /// inline-storage aliasing discipline, deliberately kept `unsafe`.
     ///
     /// # Safety
     /// Single JS thread; caller must not hold another live `&mut SendQueue`
@@ -775,12 +782,14 @@ impl bun_usockets::Protocol for SpawnIpcProtocol {
     }
 
     fn on_data(o: &IpcData, _s: bun_usockets::AnySocket, data: &mut [u8]) {
-        o.with_queue(|q| {
-            let global_this = q.get_global_this();
-            // RAII: `enter()` now, `exit()` on drop.
-            let _scope = global_this.bun_vm().enter_event_loop_scope();
-            on_data2(q, data);
-        });
+        // SAFETY: this borrow spans user-JS dispatch, which may re-enter the
+        // cell (`Subprocess::ipc`/`IPCInstance::queue`, nested `on_close` via
+        // close_all) — audited `queue_mut`; safe `with_mut` forbids re-entry.
+        let q = unsafe { o.queue_mut() };
+        let global_this = q.get_global_this();
+        // RAII: `enter()` now, `exit()` on drop.
+        let _scope = global_this.bun_vm().enter_event_loop_scope();
+        on_data2(q, data);
     }
 
     fn on_fd(o: &IpcData, _s: bun_usockets::AnySocket, fd: Fd) {
@@ -796,13 +805,15 @@ impl bun_usockets::Protocol for SpawnIpcProtocol {
 
     fn on_writable(o: &IpcData, _s: bun_usockets::AnySocket) {
         log!("onWritable");
-        o.with_queue(|q| {
-            let global_this = q.get_global_this();
-            // RAII: see `on_data`.
-            let _scope = global_this.bun_vm().enter_event_loop_scope();
-            log!("IPC call continueSend() from onWritable");
-            q.continue_send(&global_this, ContinueSendReason::OnWritable);
-        });
+        // SAFETY: `continue_send` completes messages and can cross into
+        // paths that re-project this cell; same audited `queue_mut`
+        // discipline as `on_data`.
+        let q = unsafe { o.queue_mut() };
+        let global_this = q.get_global_this();
+        // RAII: see `on_data`.
+        let _scope = global_this.bun_vm().enter_event_loop_scope();
+        log!("IPC call continueSend() from onWritable");
+        q.continue_send(&global_this, ContinueSendReason::OnWritable);
     }
 
     fn on_close(
@@ -813,7 +824,10 @@ impl bun_usockets::Protocol for SpawnIpcProtocol {
     ) {
         // uSockets has already freed the underlying socket.
         log!("SpawnIpcProtocol#onClose");
-        o.with_queue(|q| q._socket_closed());
+        // SAFETY: can run nested under a live `on_data`/`on_writable` borrow
+        // (user JS triggering group close_all), so it must use the audited
+        // `queue_mut` projection, not safe `with_mut`.
+        unsafe { o.queue_mut() }._socket_closed();
     }
 
     fn on_end(o: &IpcData, _s: bun_usockets::AnySocket) {
@@ -1009,18 +1023,19 @@ pub struct SendQueue {
     pub incoming_fd: Option<Fd>,
 
     pub socket: SocketUnion,
-    /// BACKREF to the embedding owner (`Subprocess` or `IPCInstance`). The
-    /// SendQueue is stored inline in its owner, so this is a self-referential
-    /// raw pointer; never reborrow as `&mut dyn` while a `&mut SendQueue` is
-    /// live (every access goes through `unsafe { &mut *self.owner }` at the
-    /// call site).
+    /// BACKREF to the embedding owner (`Subprocess` or `IPCInstance`), kept
+    /// valid by `IpcRef::drop` running `owner_teardown` (socket detach + task
+    /// cancellation) before the embedder frees. Deref per use; never stored as `&mut dyn`.
     pub owner: *mut dyn SendQueueOwner,
+    /// Root-provenance pointer to this queue's `JsCell` interior (set once in
+    /// `IpcRef::new`). Queued `ManagedTask`s capture THIS, not `from_mut(self)`,
+    /// whose `&mut`-derived tag later cell projections would pop.
+    cell_root: *mut SendQueue,
 
     pub close_next_tick: Option<Task>,
     /// Set while an `_onAfterIPCClosed` task is queued. Cleared when the task
-    /// runs. Tracked so `deinit` can cancel it; the task captures a raw
-    /// `*SendQueue` into the owner's inline storage, which is freed right
-    /// after `deinit` returns.
+    /// runs. Tracked so `teardown` can cancel it before the heap `IpcData`'s
+    /// last ref (and the `owner` backref target) goes away.
     pub after_close_task: Option<Task>,
     pub write_in_progress: bool,
     pub close_event_sent: bool,
@@ -1061,16 +1076,13 @@ pub enum SocketUnion {
 impl SendQueue {
     /// Safe `&dyn SendQueueOwner` accessor — wraps the per-use raw deref +
     /// autoref for `&self`-taking trait methods (`kind`, `this_jsvalue`,
-    /// `global_this`). The owner embeds this
-    /// `SendQueue` inline, so the formed `&Owner` overlaps `self` — but the
-    /// caller already holds at most `&SendQueue` here (shared/shared), so
-    /// there is no exclusive alias. NOT for `handle_ipc_*` (those take
-    /// `&mut dyn`; see field doc).
+    /// `global_this`). NOT for `handle_ipc_*` (those take `&mut dyn`; see
+    /// field doc).
     #[inline]
     fn owner_ref(&self) -> &dyn SendQueueOwner {
-        // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it;
-        // `owner` is set in `init()` / by the embedder before first use and
-        // never null afterward.
+        // SAFETY: BACKREF — set by the embedder before first use, live here
+        // because `IpcRef::drop` tears this queue down (socket detach + task
+        // cancellation) before the embedder frees (see `owner` field doc).
         unsafe { &*self.owner }
     }
 
@@ -1089,6 +1101,7 @@ impl SendQueue {
             incoming_fd: None,
             socket,
             owner,
+            cell_root: core::ptr::null_mut(),
             close_next_tick: None,
             after_close_task: None,
             write_in_progress: false,
@@ -1175,7 +1188,8 @@ impl SendQueue {
         if was_open && self.after_close_task.is_none() {
             // Note: `bun_event_loop::JsResult` erases the error to `*mut ()`;
             // adapt the jsc-crate `JsResult` via a non-capturing closure (coerces to fn ptr).
-            let task = ManagedTask::new(std::ptr::from_mut::<SendQueue>(self), |p| {
+            debug_assert!(!self.cell_root.is_null());
+            let task = ManagedTask::new(self.cell_root, |p| {
                 let _ = Self::_on_after_ipc_closed(p);
                 Ok(())
             });
@@ -1230,7 +1244,8 @@ impl SendQueue {
             return;
         }
         // Note: see `_socket_closed` — adapt `bun_event_loop::JsResult` via closure.
-        let task = ManagedTask::new(std::ptr::from_mut::<SendQueue>(self), |p| {
+        debug_assert!(!self.cell_root.is_null());
+        let task = ManagedTask::new(self.cell_root, |p| {
             let _ = Self::_close_socket_task(p);
             Ok(())
         });
@@ -1243,8 +1258,8 @@ impl SendQueue {
     }
 
     fn _close_socket_task(this: *mut SendQueue) -> JsResult<()> {
-        // SAFETY: `this` was the live `*mut SendQueue` passed to ManagedTask::new;
-        // the task is cancelled in Drop before the storage is freed.
+        // SAFETY: `this` is the root-provenance `cell_root` captured at
+        // enqueue; `teardown` cancels the task before the storage is freed.
         let this = unsafe { &mut *this };
         log!("SendQueue#closeSocketTask");
         debug_assert!(this.close_next_tick.is_some());
@@ -1262,7 +1277,8 @@ impl SendQueue {
             return Ok(());
         }
         this.close_event_sent = true;
-        // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
+        // SAFETY: BACKREF — live because `owner_teardown` cancels this task
+        // before the embedder frees (see `owner` field doc).
         unsafe { (*this.owner).handle_ipc_close() };
         Ok(())
     }
@@ -1735,10 +1751,10 @@ impl SendQueue {
     }
     fn get_global_this(&self) -> crate::GlobalRef {
         // Note: lifetime detached from `&self` so callers can hold the
-        // global across `&mut self` borrows. The owner (Subprocess / IPCInstance)
-        // outlives this SendQueue and the JSGlobalObject is heap-allocated by
-        // JSC for the VM's lifetime. `opaque_ref` is the safe ZST-handle deref
-        // (panics on null) — see `bun_opaque::opaque_deref`.
+        // global across `&mut self` borrows. The owner backref is live for
+        // every dispatch (teardown ordering; see `owner` field doc) and the
+        // JSGlobalObject is heap-allocated by JSC for the VM's lifetime.
+        // `opaque_ref` is the safe ZST-handle deref (panics on null).
         crate::GlobalRef::from(JSGlobalObject::opaque_ref(self.owner_ref().global_this()))
     }
 
@@ -2058,7 +2074,8 @@ fn handle_ipc_message(
             }
         }
     } else {
-        // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
+        // SAFETY: BACKREF — live during dispatch; `IpcRef::drop` detaches the
+        // socket before the embedder frees (see `owner` field doc).
         unsafe { (*send_queue.owner).handle_ipc_message(message, JSValue::UNDEFINED) };
     }
 }

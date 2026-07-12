@@ -7,25 +7,12 @@
 
 use core::ptr::NonNull;
 
-use bun_ptr::ThisPtr;
 use bun_usockets as uws;
 use bun_usockets::dispatch::{self, TlsSideChannelHooks};
-use bun_usockets::{SocketKind, us_socket_t};
+use bun_usockets::unsafe_core::trampolines::with_socket_owner;
+use bun_usockets::us_socket_t;
 
 use super::uws_handlers as handlers;
-
-/// Reborrow a live socket pointer arriving from a core callback (TLS
-/// side-channel hooks here, the SNI select-cert callback in Listener.rs):
-/// the core only hands out live slab-resident sockets and slots are not
-/// recycled until the tick postlude (C6). The returned `&mut` must NOT span
-/// any call that can dispatch (close/write/handshake/feed) — use the
-/// raw-routed `NewSocketHandler` methods for those (C17).
-#[inline]
-pub(crate) fn hdr<'a>(s: *mut us_socket_t) -> &'a mut us_socket_t {
-    debug_assert!(!s.is_null());
-    // SAFETY: per the contract above.
-    unsafe { &mut *s }
-}
 
 /// Wrap a raw dispatch pointer in a generation-carrying handle.
 #[inline]
@@ -83,23 +70,18 @@ type TLSSocket = super::NewSocket<true>;
 /// `ssl_raw_tap` bit set produce this event; delivery goes to the `twin`
 /// TLSSocket's `on_data`.
 fn ssl_raw_tap_hook(s: *mut us_socket_t, data: &[u8]) {
-    debug_assert!(hdr(s).kind() == SocketKind::BunSocketTls);
-    // The ext word is the core-held Protocol v2 owner (`*mut TLSSocket`,
-    // nullable) — layout-identical to `Option<ThisPtr<..>>`; read-only here.
-    let ext = *hdr(s).ext::<Option<ThisPtr<TLSSocket>>>();
+    let sock = wrap::<true>(s);
     // upgradeTLS sets the tap bit only after the owner-swapping adopt, so an
-    // unstamped slot here is an invariant violation — loud in debug only.
-    debug_assert!(ext.is_some(), "ssl_raw_tap on unstamped ext");
-    let Some(tls) = ext else { return };
-    if let Some(raw) = tls.twin.get().as_ref() {
-        // `twin` is `IntrusiveRc<Self>`; grab the raw `*mut` without consuming
-        // the ref so the +1 stays put.
-        let raw: *mut TLSSocket = raw.as_ptr();
-        // SAFETY: `twin` holds a live +1 ref to the `[raw, _]` half, so `raw`
-        // is live for `ThisPtr::new`; dispatch is single-threaded so no
-        // aliasing `&mut` exists.
-        unsafe { TLSSocket::on_data(ThisPtr::new(raw), wrap::<true>(s), data) };
-    }
+    // unstamped/mistyped owner here is an invariant violation — loud in debug.
+    let twin = with_socket_owner::<true, TLSSocket, _>(&sock, |tls| {
+        tls.twin.get().as_ref().cloned()
+    });
+    debug_assert!(twin.is_some(), "ssl_raw_tap on unstamped ext");
+    // Hold our own +1 on the `[raw, _]` twin across the handler: `on_data`
+    // may re-enter JS and drop the `tls.twin` ref mid-call.
+    let Some(Some(twin)) = twin else { return };
+    TLSSocket::on_data(uws::this_ptr_of(twin.data()), sock, data);
+    twin.deref();
 }
 
 /// A new (resumable) TLS session is ready. The core parks the serialized
@@ -107,17 +89,15 @@ fn ssl_raw_tap_hook(s: *mut us_socket_t, data: &[u8]) {
 /// that stack has unwound (contract C11). Mirrors Node's `NewSessionCallback`
 /// → `onnewsession` flow.
 fn session_hook(s: *mut us_socket_t, session: &[u8]) {
-    let Some(tls) = *hdr(s).ext::<Option<ThisPtr<TLSSocket>>>() else {
-        return;
-    };
-    let _ = TLSSocket::on_session(tls, session);
+    let _ = with_socket_owner::<true, TLSSocket, _>(&wrap::<true>(s), |tls| {
+        let _ = TLSSocket::on_session(uws::this_ptr_of(tls), session);
+    });
 }
 
 /// Hands an NSS key-log line parked by the keylog callback to the JS
 /// `keylog` handler (deferred like sessions — contract C11).
 fn keylog_hook(s: *mut us_socket_t, line: &[u8]) {
-    let Some(tls) = *hdr(s).ext::<Option<ThisPtr<TLSSocket>>>() else {
-        return;
-    };
-    let _ = TLSSocket::on_keylog(tls, line);
+    let _ = with_socket_owner::<true, TLSSocket, _>(&wrap::<true>(s), |tls| {
+        let _ = TLSSocket::on_keylog(uws::this_ptr_of(tls), line);
+    });
 }

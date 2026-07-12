@@ -214,15 +214,18 @@ const NOTE_MEMORYSTATUS_PRESSURE_CRITICAL: u32 = 0x00000004;
 /// One submission per filter (same discipline as `Kqueue::remove`):
 /// FreeBSD's no-ERROR_EVENTS shim can abort a batched changelist at the
 /// first error, which would leave the second filter's knote armed with
-/// soon-stale udata (W2). Returns the first nonzero rc.
+/// soon-stale udata (W2). Returns the first nonzero rc plus the interest
+/// actually reached (a failed filter keeps its old bit), so callers commit
+/// only kernel truth to the slot.
 fn registry_fd_delta(
     kqfd: i32,
     fd: LIBUS_SOCKET_DESCRIPTOR,
     old: Events,
     new: Events,
     udata: u64,
-) -> i32 {
+) -> (i32, Events) {
     let mut rc = 0;
+    let mut achieved = old;
     for (bit, filter) in [
         (Events::READABLE, libc::EVFILT_READ),
         (Events::WRITABLE, libc::EVFILT_WRITE),
@@ -236,12 +239,18 @@ fn registry_fd_delta(
                 udata,
             )];
             let r = poll_access::kevent_error_events(kqfd, &mut ch);
-            if rc == 0 {
+            if r == 0 {
+                achieved = if now {
+                    achieved | bit
+                } else {
+                    Events(achieved.0 & !bit.0)
+                };
+            } else if rc == 0 {
                 rc = r;
             }
         }
     }
-    rc
+    (rc, achieved)
 }
 
 pub(crate) fn registry_arm(
@@ -258,9 +267,12 @@ pub(crate) fn registry_arm(
             readable, writable, ..
         } => {
             let events = backend::fd_interest(readable, writable);
-            st.set_polling(events);
+            // Commit only the achieved interest: on partial-arm failure the
+            // register unwind's purge then deletes exactly the armed filters.
+            let (rc, achieved) = registry_fd_delta(kqfd, st.fd(), Events::NONE, events, udata);
+            st.set_polling(achieved);
             poll_access::write_poll(p, st);
-            registry_fd_delta(kqfd, st.fd(), Events::NONE, events, udata)
+            rc
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         PollSource::Proc { pid } => {
@@ -306,23 +318,28 @@ pub(crate) fn registry_arm(
     }
 }
 
-/// Level-triggered interest update for a registry Fd source.
-pub(crate) fn registry_change(p: *mut PollState, loop_: *mut Loop, events: Events) {
+/// Level-triggered interest update for a registry Fd source. Commits only
+/// the interest the kernel accepted (see [`registry_fd_delta`]): a failed
+/// filter keeps its old bit, so an identical retry re-issues the kevent.
+pub(crate) fn registry_change(p: *mut PollState, loop_: *mut Loop, events: Events) -> i32 {
     let mut st = poll_access::read_poll(p);
     let old_events = st.events();
     if old_events == events {
-        return;
+        return 0;
     }
-    st.set_polling(events);
-    poll_access::write_poll(p, st);
-    registry_fd_delta(
+    let (rc, achieved) = registry_fd_delta(
         poll_access::loop_fd(loop_),
         st.fd(),
         old_events,
         events,
         p as usize as u64,
     );
-    backend::update_pending_ready_polls(loop_, p, p, old_events, events);
+    if achieved != old_events {
+        st.set_polling(achieved);
+        poll_access::write_poll(p, st);
+        backend::update_pending_ready_polls(loop_, p, p, old_events, achieved);
+    }
+    rc
 }
 
 pub(crate) fn registry_disarm(
@@ -337,7 +354,7 @@ pub(crate) fn registry_disarm(
         ArmedSource::Fd => {
             let old = st.events();
             if !old.is_empty() {
-                registry_fd_delta(kqfd, st.fd(), old, Events::NONE, 0);
+                let _ = registry_fd_delta(kqfd, st.fd(), old, Events::NONE, 0);
             }
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]

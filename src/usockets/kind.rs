@@ -12,7 +12,11 @@ pub enum SocketKind {
     Dynamic = 1,
     BunSocketTcp = 2,
     BunSocketTls = 3,
+    /// ABI-reserved (frozen discriminant): nothing stamps this since P6 —
+    /// accepted sockets are born `BunSocket*` and listener headers stay
+    /// `Invalid`. Kept so `from_u8` stays total over the frozen 0..=22 range.
     BunListenerTcp = 4,
+    /// ABI-reserved; see [`SocketKind::BunListenerTcp`].
     BunListenerTls = 5,
     HttpClient = 6,
     HttpClientTls = 7,

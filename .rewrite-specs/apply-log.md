@@ -458,3 +458,236 @@ spawn-ipc: 13/13 pass. websocket rerun (after node_modules install) pending.
     ENV, not-instanciate-error MARGINAL, abort-sendfile PRE-EXISTING)
   * happy-eyeballs stale-timer 2/1skip/0, socket-retention 4/0
 - No new suppressions, no skipped/weakened tests. No git commit (applier rule).
+
+## 2026-07-12 — P10 fix pass (review blockers + minors)
+
+### Code fixes
+- Interest-change kernel failures now propagate: backend `registry_change`
+  (epoll + kqueue) returns the raw rc, `PollRef::change` returns
+  `Result<(), i32>` (stale/non-Fd/empty stay Ok no-ops), and the FilePoll
+  already-armed rearm path in `arm()` surfaces the errno to callers
+  (old EPOLL_CTL_MOD parity — e.g. ENOENT/EBADF after fd close no longer
+  reads as success and hangs the reader). New unit test
+  `change_surfaces_kernel_errno`. epoll `poll_change` returns its rc;
+  socket-path callers ignore it as before.
+- RegistryShim backpointer moved to exposed provenance
+  (`Cell<usize>` + `expose_provenance`/`with_exposed_provenance_mut`):
+  the previous `Cell<*mut FilePoll>` captured a transient `&mut` tag that
+  every later owner-side borrow invalidated under Stacked/Tree Borrows.
+- `prepare_registry_event`: error/EOF-only deliveries (Linux PSI EPOLLERR
+  without EPOLLPRI) no longer set the single-purpose kind flag
+  (Process/Machport/MemoryPressure) — old `from_epoll_event` parity; they
+  surface via the Eof/Hup mapping only. kqueue deliveries are unaffected
+  (believed-READABLE keeps `readable=true` there).
+
+### P10 acceptance scope — EXPLICIT exclusion pending owner adjudication
+The "grep proves no epoll_ctl/kevent outside bun_usockets backend/"
+criterion is met for the EVENT-LOOP path only. Surviving raw kernel-queue
+sites, all PRIVATE per-thread queues that the loop-local P0c registry
+cannot host without cross-thread support:
+- src/io/lib.rs IoRequestLoop watcher thread (epoll_ctl/kevent + its own
+  Pollable/PollableTag udata convention + darwin kevent64 ext[0] generation)
+- src/io/lib.rs KEventWaker kq + src/io/io_darwin.cpp kevent64 (BundleThread
+  machport waker)
+- outside io/: src/watcher/*, path_watcher.rs (FreeBSD), spawn/process.rs
+  spawn-sync reaper
+Owner must either amend the acceptance wording to the event-loop path or
+schedule a follow-up shard for IoRequestLoop (which duplicates the
+tagged-udata pattern P10 deletes elsewhere).
+
+## 2026-07-12 — P10 fix pass 2 (aliasing + rollback blockers)
+
+### Code fixes
+- L1 aliasing (posix_event_loop.rs): FilePoll paths no longer foreign-mutate
+  the Loop while a caller-held `&mut Loop` is protected. `PollRef` gained
+  `change_on(&mut Loop, ..)`/`unregister_on(&mut Loop)` (shared `_via`
+  internals; `debug_assert` the borrow matches the slot's stored loop);
+  `FilePoll::drop_registration_on(&mut Loop)` routes `unregister_with_fd_impl`
+  (now takes the loop), `deinit_possibly_defer`'s belt-and-braces line, and
+  `arm()`'s already-armed rearm through the caller borrow. The one-shot
+  disarm in `prepare_registry_event` keeps the raw-`loop_` path (dispatch
+  holds no protected `&mut Loop`).
+- Interest-change rollback (epoll.rs/kqueue.rs registry paths): slot polling
+  bits now commit only after the kernel accepts the change, so a failed
+  change stays retryable instead of short-circuiting on the equality
+  fast-path. kqueue `registry_fd_delta` returns `(rc, achieved)` and
+  `registry_arm(Fd)`/`registry_change` commit only the achieved interest
+  (partial per-filter failures no longer desync slot vs kernel). Socket-path
+  `poll_change` (both backends) deliberately keeps the verbatim-C
+  write-before-syscall order: all socket callers ignore the rc, and the C
+  parity quirk set is load-bearing there. `change_surfaces_kernel_errno`
+  extended: the identical retry must fail again (fails on pre-fix code).
+- arm() rearm-failure (adjudicated per review suggestion): on `change_on`
+  failure the registration is fully dropped and the Poll* interest flags
+  cleared, so kernel state, registry slot, loop counts (caller deactivates)
+  and flags all agree with the reported failure — no live registration on a
+  loop that thinks it can idle.
+
+### Left as-is (flagged)
+- Machport port recovery `u32::try_from(fd.native()).expect("int cast")`
+  panics for port names >= 2^31 — exact parity with the old code; deleting
+  the latent panic needs a u32-port FilePoll entry point + dns.rs caller
+  change (out of this fix pass's blast radius, darwin-only, untestable here).
+- CI must exercise darwin/freebsd arms before landing: kqueue
+  Proc/Machport/Memorystatus registry arms, one-shot EV_DELETE emulation,
+  dispatch_registered_kevent payload threading, FreeBSD Proc widening —
+  spawn (SIGCHLD reaping), macOS DNS (machport), memoryPressure suites.
+
+### ORCHESTRATOR NOTE for D2 applier (owner-flagged)
+group.rs `on_create: Option<Box<dyn FnMut(AnySocket)>>` is the only dyn in the
+crate — replace with static shape: `Option<(fn(*mut c_void, AnySocket), *mut c_void)>`
+(or monomorphized via the owner registry). No Box, no dyn; accept path must be
+allocation-free. Verify with: grep -rn 'dyn ' src/usockets returns zero code hits.
+
+### ORCHESTRATOR NOTE for D2 applier (owner directive: no OnceLock)
+KIND_TABLES / OWNER_OPS OnceLock arrays are rejected — everything static:
+build ONE `static` table, fully const-initialized, in the crate where all
+handler/owner types are visible (the runtime-side dispatch module, same place
+the pre-rewrite static tables lived), entries = (&'static VTable, OwnerOps)
+per kind, Invalid = None (trap). Core reaches it through the existing
+no_mangle dispatch-fn seam (as the C loop did) or an equivalent single
+link-time boundary — NO lazy init, NO runtime register_kind/register_owner
+calls (delete them). TypeId sanity checks: compile-time if const-usable,
+else debug_assert on first dispatch only, else drop (the const table makes
+mis-registration structurally impossible). Acceptance: grep OnceLock|LazyLock
+in src/usockets + the dispatch module = zero hits; kind coverage is enforced
+by the const array shape (missing kind = compile error).
+
+### ORCHESTRATOR NOTE for D2 applier (extends the no-OnceLock directive)
+Owner directive: ZERO OnceLock/LazyLock/OnceCell across src/usockets AND
+src/uws_shim, not just dispatch. Current hits: dispatch.rs (const-table
+directive above), unsafe_core/ffi.rs x3, unsafe_core/bssl.rs x3. Replacements
+by kind:
+- feature probes / latches (epoll_pwait2 etc.): plain Atomic{I8,U32} latch,
+  exactly the C's `has_epoll_pwait2` shape.
+- process-global cross-thread init (shared default CA store, default
+  ciphers): match the C mechanism from the deleted openssl.c (read git
+  history if needed) — explicit init at a deterministic site (first ssl-ctx
+  creation under its existing lock, or process init) into an AtomicPtr;
+  no std lazy wrappers.
+- anything loop-local: plain field initialized at loop creation (no
+  synchronization needed at all).
+Acceptance: grep -rn 'OnceLock\|LazyLock\|OnceCell\|lazy_static' src/usockets
+src/uws_shim = zero hits.
+
+## 2026-07-12 — Phase D wave D2 applier (consumer shards P1-P8 + P10 integration)
+
+### Compile fixes (integration errors, fixed by applier)
+- src/jsc/virtual_machine_exports.rs:68 — `(**inst).data.is_connected()`
+  stale after P7 moved `is_connected` onto `SendQueue`; now
+  `.data.queue().is_connected()` (matches subprocess.rs / ipc_host.rs).
+- src/usockets/unsafe_core/poll_access.rs — `make_kev_ex` re-export was
+  `cfg(macos)` while kqueue.rs's Proc(NOTE_EXIT) arm is
+  `cfg(any(macos, freebsd))` (P10 FreeBSD Proc widening); widened the
+  re-export. rust:check-all was 9/10 (freebsd) before, 10/10 after.
+- src/runtime/valkey_jsc/js_valkey.rs — P3-flagged sweep item applied:
+  JSValkeyClient::owner_ref now calls the sanctioned safe
+  `uws::owner_ref_of(self)`; last hand-written `RefPtr::init_ref` in any
+  migrated consumer is gone (postgres/mysql already used the helper).
+- Pre-existing main-tree test-target drift (exposed by the first-ever
+  `cargo check --workspace --all-targets` run, NOT Phase-D code):
+  src/router/lib.rs cfg(test) harness (missing `Output` alias, unbound `fs`,
+  `&mut Writer` vs `*mut Writer` in Log::print; harness allowed-dead until
+  the Zig route tests are ported), src/jsc/lib.rs `__macro_smoke`
+  (allow(dead_code) — type-check-only scaffold),
+  src/runtime/test_runner/diff/diff_match_patch.rs tests (`.eql`→`==`,
+  `Dmp::new/DEFAULT`→struct literal/default, deleted unused `rebuildtexts`).
+- NOTE: BUN_CODEGEN_DIR must be THIS worktree's build/debug/codegen; the
+  main-repo copy lacks js_TLSSocket/js_TCPSocket/js_Listener
+  `handlers_set_cached` + js_BuildArtifact `stream_*_cached` and fails the
+  build with misleading E0425s.
+
+### Verification
+- cargo check --workspace: GREEN; --all-targets: GREEN (first time ever).
+- bun run rust:check-all: 10/10 targets GREEN (after the freebsd fix).
+- cargo test -p bun_usockets: 24/24 (incl. P10's extended
+  change_surfaces_kernel_errno retry assertion).
+- bun bd: builds + runs (1.4.0-debug).
+
+### Suite results (box loadavg ~250 throughout; every failure retested solo
+### and/or against the pre-rewrite main debug build of Jul 5)
+- bun/net (whole dir, incl. socket.test.ts 2048-cycle GC+upgradeTLS stress,
+  socket-syscall-fault, tcp-server, retention, dns-error): 95/3skip/0.
+- bun/udp + node/dgram: 228/0 + 3/0.
+- bun/websocket server suite: 123/3todo/1 — only "(benchmark)" (documented
+  wave-B/C LOAD).
+- web/websocket: 224/1/6 — 4 = EXACT wave-B/C set; 2 NEW-to-suite
+  ("websocket in subprocess" pair) pass 6/0 solo → LOAD.
+- fetch.test.ts: 330/22 — EXACT wave-B/C set. serve.test.ts: 251/3 — EXACT
+  wave-B/C set. spawn-ipc: 16/0.
+- node/net: 192/6/3 — 2 = wave-B set; net-syscall-fault short-write NEW in
+  suite, 18/18 solo → LOAD. node/tls: 174/4 — EXACT wave-B set.
+- node/http: 219/9 — same wave-C 5s-timeout shapes (nested-cork solo 10/0 at
+  60s re-proven; uaf fixtures wave-C-proven infeasible-in-debug).
+- valkey: unit 60/0; main+gc+scan 910/2skip/2 — both "high volume pub/sub"
+  5s timeouts, fail IDENTICALLY on the pre-rewrite main debug build
+  (5050ms shape) → PRE-EXISTING.
+- sql (local/no-server set + local-sql docker): 62/1 — "should not segfault
+  under pressure #21351" 30s timeout; manual out-of-harness repro (child
+  survives 20 docker restarts + fetch bombardment, exits clean) PASSES on
+  the new build; the harness test fails IDENTICALLY on the pre-rewrite
+  binary (kill-after-timeout sets failed→"Server crashed") → PRE-EXISTING
+  (30s budget vs 20 docker restarts on a loaded box).
+- spawn (whole dir, 42 files — SIGCHLD/reaping gate for P10): 323/7skip/11
+  in-suite (files run concurrently). Solo: spawn-env 1/0, spawn-signal 4/0,
+  stdin-pipe-fd-leak 2/0 → LOAD. spawn-maxbuf kill-latency (<100ms asserts)
+  and readable-stream-edge-cases 5s timeout and all 3 spawn-pipe-leak 30s
+  RSS tests fail IDENTICALLY on the pre-rewrite binary (its RSS delta is
+  WORSE: 240MB vs our 121-159MB) → PRE-EXISTING. issue #9404 cpuTime<750ms
+  assert at loadavg 250 → ENV.
+- process-memory-pressure (P10 PSI path): 5/0.
+- NO new regressions: every failure is wave-B/C-triaged, passes solo, or
+  fails identically on the pre-rewrite build.
+
+### P9 sweep — unsafe keyword sites (unsafe {/fn/impl/extern, comment lines
+### excluded), pre-Phase-D (HEAD~1) -> post
+| consumer | before | after |
+|---|---|---|
+| runtime/valkey_jsc | 44 | 35 |
+| sql_jsc (pg+mysql+shared) | 102 | 104 |
+| http_jsc/websocket_client | 210 | 111 |
+| http (client) | 192 | 193 |
+| runtime/socket | 295 | 263 |
+| jsc/ipc.rs | 48 | 52 |
+| io/ | 292 | 271 |
+| runtime/cli/test/parallel | 90 | 79 |
+Socket-LIFECYCLE unsafe (ext derefs, ref bracketing, ThisPtr dispatch,
+manual close compensation) is ZERO in all migrated consumers —
+uws_handlers.rs is 0 unsafe total. The flat/slightly-up counts (sql_jsc,
+http, ipc.rs) are the documented audited residues the shards ADDED under
+narrower contracts: `queue_mut` JsCell projections (P7, replacing safe
+with_mut misuse), intrusive-refcount helpers gained by the RefCounted
+migrations (P2/P3), and the AsyncHTTP bitwise-clone cluster (P5, declared
+out of scope). Irreducibles per consumer are enumerated in the shard
+reports: JSC/FFI (boringssl SSL*, JsCell, heap teardown, MarkedArgumentBuffer),
+refcount internals, Windows/libuv paths (spec §14), HiveArray/h2 pool
+internals, and the private per-thread kernel queues below.
+
+### Acceptance greps
+- `RawPtrHandler`: gone (one prose comment in uws_handlers.rs).
+- `ThisPtr` outside core: only the documented residues — NewSocket
+  JS-wrapper paths in socket_body.rs/Listener.rs (P6 justified list),
+  WindowsNamedPipeContext (out of scope §14), MySQL query-queue projection
+  (non-socket), WTFTimer (non-socket bun_ptr use).
+- `epoll_ctl(/kevent(` outside src/usockets/backend/: exactly the
+  P10-documented exclusion set (io/lib.rs IoRequestLoop + KEventWaker,
+  io_darwin.cpp, watcher/*, path_watcher.rs, spawn/process.rs spawn-sync
+  reaper, jsc NoOrphansTracker.cpp) plus the bun_sys syscall-wrapper layer
+  and bun_usockets' own unsafe_core/poll_access.rs + loop_/wakeup.rs
+  (crate-internal raw edges, present since P0c). Owner adjudication of the
+  literal wording still pending (logged in the P10 section above).
+
+### LOC delta (HEAD~1 -> working tree, whole Phase D)
+76 files, +6938 / -5103 (net +1835; consumer dirs alone are
+-846: +2475/-3321; io/ is -671: +316/-987).
+
+### Left for owner
+- P10 acceptance-wording adjudication (above) + darwin/freebsd CI gate
+  (kqueue Proc/Machport/Memorystatus arms, machport DNS, EV_DELETE
+  emulation) — cannot run on this box.
+- P1 behavior delta: close-during-connect no longer rejects the pending
+  valkey connect promise at that instant (C parity); valkey suites green,
+  no test asserts the old behavior.
+- Cross-shard suggestion (P1/P2/P3): all consumers now use owner_ref_of;
+  the per-consumer `owner_ref()` one-liners could fold away entirely if
+  attach sites call `uws::owner_ref_of` directly (cosmetic).

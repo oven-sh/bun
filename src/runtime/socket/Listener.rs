@@ -15,8 +15,9 @@ use bun_jsc::zig_string::ZigString;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult};
 use bun_sys::{self, Fd};
 use bun_usockets as uws;
+use bun_usockets::unsafe_core::trampolines::with_socket_owner;
 
-use super::uws_dispatch::{ensure_registered, hdr};
+use super::uws_dispatch::{ensure_registered, wrap};
 
 /// Reborrow a live listen socket. Valid only while the listener is linked
 /// into its group's `head_listen_sockets` list (`ListenerType::Uws` guards
@@ -1856,16 +1857,13 @@ pub(crate) extern "C" fn us_dispatch_server_name(
         JSValue::UNDEFINED
     } else {
         // The core passes the live us_socket_t processing this ClientHello;
-        // for BunSocketTls sockets the ext slot holds the TLSSocket wrapper.
-        let s_ref = hdr(socket.cast::<uws::us_socket_t>());
-        if s_ref.kind() == uws::SocketKind::BunSocketTls {
-            match *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() {
-                Some(tls) => tls.get_this_value(&global),
-                None => JSValue::UNDEFINED,
-            }
-        } else {
-            JSValue::UNDEFINED
-        }
+        // the typed-owner lookup yields its TLSSocket wrapper (None for
+        // non-BunSocketTls kinds or an unstamped/detached owner word).
+        with_socket_owner::<true, TLSSocket, _>(
+            &wrap::<true>(socket.cast::<uws::us_socket_t>()),
+            |tls| tls.get_this_value(&global),
+        )
+        .unwrap_or(JSValue::UNDEFINED)
     };
     let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
         Ok(v) => v,

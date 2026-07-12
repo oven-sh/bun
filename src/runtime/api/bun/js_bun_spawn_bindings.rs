@@ -1532,51 +1532,54 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
+    #[cfg(not(unix))]
+    if subprocess.ipc_data.get().is_some() {
+        use crate::node::MaybeExt as _;
+        let idx = usize::try_from(ipc_channel).expect("int cast");
+        // The IPC channel is always a `buffer` pipe on Windows.
+        // Ownership of the heap `uv::Pipe` transfers to the queue's socket;
+        // neutralize the slot up front so `finalizeStreams` can't
+        // double-close it (the Box would otherwise drop on reassignment).
+        let ipc_pipe: *mut bun_libuv_sys::Pipe = subprocess.stdio_pipes.with_mut(|pipes| {
+            match core::mem::take(&mut pipes[idx]) {
+                spawn::WindowsStdioResult::Buffer(pipe) => bun_core::heap::into_raw(pipe),
+                other => {
+                    // Restore the slot before panicking so the
+                    // `Subprocess` finalizer still sees the original
+                    // variant. Use
+                    // `unreachable!` (NOT `debug_assert!` — that would
+                    // compile out in release and feed null to
+                    // `windows_configure_server`, which immediately
+                    // dereferences it).
+                    pipes[idx] = other;
+                    unreachable!("IPC channel stdio is not a buffer pipe");
+                }
+            }
+        });
+        // PROVENANCE: `windows_configure_server` STORES this pointer in
+        // `uv_handle_t.data` for the pipe's lifetime; `queue_ptr()` is the heap
+        // `IpcData`'s `JsCell` root, mirroring `windows_configure_client`.
+        let queue_root: *mut IPC::SendQueue = subprocess
+            .ipc_data
+            .get()
+            .as_ref()
+            .expect("checked is_some above")
+            .queue_ptr();
+        // SAFETY: `queue_root` points at the live SendQueue in the heap
+        // `IpcData`; no `&mut SendQueue` is live in this scope.
+        if let Some(err) =
+            unsafe { IPC::SendQueue::windows_configure_server(queue_root, ipc_pipe) }.as_err()
+        {
+            let err_js = err.to_js(global_this);
+            subprocess.deref();
+            return Err(global_this.throw_value(err_js));
+        }
+    }
+
     // `Subprocess::ipc()` centralises the single unsafe `JsCell` deref;
     // `ipc_data` lives in the heap `IpcData` cell and no other borrow
     // is live (single JS thread).
     if let Some(ipc_data) = subprocess.ipc() {
-        #[cfg(not(unix))]
-        {
-            use crate::node::MaybeExt as _;
-            let idx = usize::try_from(ipc_channel).expect("int cast");
-            // The IPC channel is always a `buffer` pipe on Windows.
-            // Ownership of the heap `uv::Pipe` transfers to `ipc_data.socket`;
-            // neutralize the slot up front so `finalizeStreams` can't
-            // double-close it (the Box would otherwise drop on reassignment).
-            let ipc_pipe: *mut bun_libuv_sys::Pipe = subprocess.stdio_pipes.with_mut(|pipes| {
-                match core::mem::take(&mut pipes[idx]) {
-                    spawn::WindowsStdioResult::Buffer(pipe) => bun_core::heap::into_raw(pipe),
-                    other => {
-                        // Restore the slot before panicking so the
-                        // `Subprocess` finalizer still sees the original
-                        // variant. Use
-                        // `unreachable!` (NOT `debug_assert!` — that would
-                        // compile out in release and feed null to
-                        // `windows_configure_server`, which immediately
-                        // dereferences it).
-                        pipes[idx] = other;
-                        unreachable!("IPC channel stdio is not a buffer pipe");
-                    }
-                }
-            });
-            // PROVENANCE: `windows_configure_server` STORES the `*mut SendQueue`
-            // in `uv_handle_t.data` for the pipe's lifetime, so it takes a raw
-            // pointer (not `&mut self`) — see its safety doc. The pointer
-            // derives from the heap `IpcData`'s `UnsafeCell` (JsCell) interior,
-            // which is the sanctioned shared-readwrite root.
-            // SAFETY: `ipc_data` points at the live SendQueue in the heap
-            // `IpcData`; no other `&mut` to it is live in this scope.
-            if let Some(err) = unsafe {
-                IPC::SendQueue::windows_configure_server(core::ptr::from_mut(ipc_data), ipc_pipe)
-            }
-            .as_err()
-            {
-                let err_js = err.to_js(global_this);
-                subprocess.deref();
-                return Err(global_this.throw_value(err_js));
-            }
-        }
         ipc_data.write_version_packet(global_this);
     }
 

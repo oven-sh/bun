@@ -412,13 +412,9 @@ impl JSValkeyClient {
         unsafe { bun_ptr::RefCount::deref(this) };
     }
     /// Take a new strong ref as a transferable [`uws::OwnerRef`].
-    /// Every `JSValkeyClient` is heap-allocated via [`Self::new`], so `&self`
-    /// proves a live refcount-managed allocation.
     #[inline]
     fn owner_ref(&self) -> uws::OwnerRef<Self> {
-        // SAFETY: `&self` is live for the increment (heap-only construction
-        // invariant above); the returned handle owns the new ref.
-        unsafe { bun_ptr::RefPtr::init_ref(std::ptr::from_ref(self).cast_mut()) }
+        uws::owner_ref_of(self)
     }
     #[inline]
     pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {

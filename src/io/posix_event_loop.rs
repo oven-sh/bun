@@ -191,9 +191,10 @@ pub struct FilePoll {
 }
 
 /// One armed registry slot. INVARIANT: released only via
-/// [`FilePoll::drop_registration`] — `poll_ref.unregister()` (kernel disarm +
-/// generation bump; stale same-tick events are dropped core-side), then the
-/// shim backpointer is nulled, then our shim ref is released.
+/// [`FilePoll::drop_registration`]/[`FilePoll::drop_registration_on`] —
+/// `poll_ref.unregister{,_on}()` (kernel disarm + generation bump; stale
+/// same-tick events are dropped core-side), then the shim backpointer is
+/// nulled, then our shim ref is released.
 #[cfg(not(windows))]
 struct Registration {
     poll_ref: bun_usockets::PollRef,
@@ -202,14 +203,16 @@ struct Registration {
     shim: bun_ptr::RefPtr<RegistryShim>,
 }
 
-/// Refcounted dispatch owner handed to the core registry. Holds a raw
-/// backpointer to the hive-resident `FilePoll`; nulled before the slot can be
-/// recycled, so a late-held guard ref can never dispatch into a reused slot.
+/// Refcounted dispatch owner handed to the core registry. Holds the address
+/// of the hive-resident `FilePoll` (exposed provenance — a stored `*mut`
+/// would be invalidated by every later owner-side `&mut FilePoll` under
+/// Stacked/Tree Borrows); zeroed before the slot can be recycled, so a
+/// late-held guard ref can never dispatch into a reused slot.
 #[cfg(not(windows))]
 #[derive(bun_ptr::RefCounted)]
 struct RegistryShim {
     ref_count: bun_ptr::RefCount<RegistryShim>,
-    poll: core::cell::Cell<*mut FilePoll>,
+    poll: core::cell::Cell<usize>,
 }
 
 #[cfg(not(windows))]
@@ -224,12 +227,16 @@ impl bun_usockets::PollProtocol for FilePollProtocol {
         _poll: bun_usockets::PollRef,
         events: bun_usockets::PollEvents,
     ) {
-        let ptr = shim.poll.get();
-        if ptr.is_null() {
+        let addr = shim.poll.get();
+        if addr == 0 {
             return;
         }
-        // SAFETY: `poll` is nulled in `drop_registration` before the hive
-        // slot is recycled, and the loop is single-threaded, so a non-null
+        // Provenance: reconstruct from the address exposed at `arm` — the
+        // transient `&mut`'s tag there is long invalidated by owner-side
+        // borrows, so only the exposed-provenance round-trip is sound.
+        let ptr = ptr::with_exposed_provenance_mut::<FilePoll>(addr);
+        // SAFETY: `poll` is zeroed in `drop_registration` before the hive
+        // slot is recycled, and the loop is single-threaded, so a nonzero
         // backpointer is a live slot. The `&mut` is SCOPED to this statement:
         // it ends before the dispatch below, whose handler may deinit
         // (recycle or free) the slot — a live protected `&mut` across that
@@ -289,9 +296,23 @@ impl FilePoll {
     fn drop_registration(&mut self) {
         if let Some(reg) = self.registration.take() {
             reg.poll_ref.unregister();
-            reg.shim.data().poll.set(ptr::null_mut());
-            reg.shim.deref();
+            Self::release_shim(reg);
         }
+    }
+
+    /// [`Self::drop_registration`] for frames holding a `&mut Loop`: the
+    /// registry disarm routes through that borrow — a write through the
+    /// slot's stored loop pointer would be foreign under its protector.
+    fn drop_registration_on(&mut self, loop_: &mut Loop) {
+        if let Some(reg) = self.registration.take() {
+            reg.poll_ref.unregister_on(loop_);
+            Self::release_shim(reg);
+        }
+    }
+
+    fn release_shim(reg: Registration) {
+        reg.shim.data().poll.set(0);
+        reg.shim.deref();
     }
 
     /// Flag mapping + one-shot disarm for a delivered registry event; returns
@@ -302,19 +323,23 @@ impl FilePoll {
         let mut updated = FlagsSet::empty();
         // Single-purpose sources (proc exit, machport, memory pressure)
         // report which kind fired via the registered-kind flag; Fd sources
-        // report the direction bits.
-        if self.flags.contains(Flags::PollProcess) {
-            updated.insert(Flags::Process);
-        } else if self.flags.contains(Flags::PollMachport) {
-            updated.insert(Flags::Machport);
-        } else if self.flags.contains(Flags::PollMemoryPressure) {
-            updated.insert(Flags::MemoryPressure);
-        } else {
-            if events.readable {
-                updated.insert(Flags::Readable);
-            }
-            if events.writable {
-                updated.insert(Flags::Writable);
+        // report the direction bits. Error/EOF-only deliveries (Linux PSI
+        // EPOLLERR without EPOLLPRI) carry no kind flag — old
+        // from_epoll_event parity: they surface via the Eof/Hup mapping only.
+        if events.readable || events.writable {
+            if self.flags.contains(Flags::PollProcess) {
+                updated.insert(Flags::Process);
+            } else if self.flags.contains(Flags::PollMachport) {
+                updated.insert(Flags::Machport);
+            } else if self.flags.contains(Flags::PollMemoryPressure) {
+                updated.insert(Flags::MemoryPressure);
+            } else {
+                if events.readable {
+                    updated.insert(Flags::Readable);
+                }
+                if events.writable {
+                    updated.insert(Flags::Writable);
+                }
             }
         }
         if events.eof {
@@ -399,7 +424,7 @@ impl FilePoll {
         let _ = self.unregister(vm.loop_mut(), force_unregister);
         // Belt-and-braces: the needs-rearm skip leaves `registration` None,
         // but a leaked slot here would keep a dangling shim backpointer.
-        self.drop_registration();
+        self.drop_registration_on(vm.loop_mut());
 
         self.owner.clear();
         self.flags = FlagsSet::empty();
@@ -694,12 +719,27 @@ impl FilePoll {
             // Already armed. Fd sources take the union of the live directions
             // plus `flag`; single-purpose sources (proc/machport/
             // memorystatus) are level-armed already — nothing to change.
+            let poll_ref = reg.poll_ref;
             if is_fd_direction {
                 let readable = matches!(flag, Flags::Readable | Flags::Process)
                     || self.flags.contains(Flags::PollReadable);
                 let writable =
                     flag == Flags::Writable || self.flags.contains(Flags::PollWritable);
-                reg.poll_ref.change(readable, writable);
+                if let Err(errno) = poll_ref.change_on(loop_, readable, writable) {
+                    // Failed rearm: fully disarm so the kernel, the registry
+                    // slot, and the interest flags all agree with the failure
+                    // the caller is told (register_with_fd_impl deactivates).
+                    self.drop_registration_on(loop_);
+                    self.flags.remove(Flags::PollReadable);
+                    self.flags.remove(Flags::PollWritable);
+                    self.flags.remove(Flags::PollProcess);
+                    self.flags.remove(Flags::PollMachport);
+                    self.flags.remove(Flags::PollMemoryPressure);
+                    return sys::Result::Err(sys::Error::from_code(
+                        sys::SystemErrno::init(i64::from(errno)).unwrap_or(sys::E::EINVAL),
+                        REGISTER_TAG,
+                    ));
+                }
             }
             return sys::Result::Ok(());
         }
@@ -745,7 +785,7 @@ impl FilePoll {
 
         let shim = bun_ptr::RefPtr::new(RegistryShim {
             ref_count: bun_ptr::RefCount::init(),
-            poll: core::cell::Cell::new(std::ptr::from_mut(self)),
+            poll: core::cell::Cell::new(std::ptr::from_mut(self).expose_provenance()),
         });
         // One strong ref transfers to the registry slot; ours lives in
         // `Registration` and is discharged in `drop_registration`.
@@ -755,7 +795,7 @@ impl FilePoll {
                 sys::Result::Ok(())
             }
             Err(errno) => {
-                shim.data().poll.set(ptr::null_mut());
+                shim.data().poll.set(0);
                 shim.deref();
                 sys::Result::Err(sys::Error::from_code(
                     sys::SystemErrno::init(i64::from(errno)).unwrap_or(sys::E::EINVAL),
@@ -783,7 +823,7 @@ impl FilePoll {
             target_os = "macos",
             target_os = "freebsd"
         ))]
-        let result = self.unregister_with_fd_impl(fd, force_unregister);
+        let result = self.unregister_with_fd_impl(loop_, fd, force_unregister);
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
@@ -804,7 +844,12 @@ impl FilePoll {
         target_os = "macos",
         target_os = "freebsd"
     ))]
-    fn unregister_with_fd_impl(&mut self, fd: Fd, force_unregister: bool) -> sys::Result<()> {
+    fn unregister_with_fd_impl(
+        &mut self,
+        loop_: &mut Loop,
+        fd: Fd,
+        force_unregister: bool,
+    ) -> sys::Result<()> {
         #[cfg(debug_assertions)]
         debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
 
@@ -833,7 +878,7 @@ impl FilePoll {
         // Kernel disarm + slot free happen core-side; already-gone
         // registrations (fd closed while registered, pty knotes reaped on
         // EV_EOF|EV_ONESHOT hangup) are tolerated there, matching libuv.
-        self.drop_registration();
+        self.drop_registration_on(loop_);
 
         self.flags.remove(Flags::NeedsRearm);
         self.flags.remove(Flags::OneShot);

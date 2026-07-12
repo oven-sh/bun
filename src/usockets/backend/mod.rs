@@ -318,9 +318,10 @@ pub(crate) fn registry_arm(
 }
 
 /// Update a registry Fd source's interest (level-triggered on both backends
-/// — no oneshot-WRITE socket rule).
+/// — no oneshot-WRITE socket rule). Returns 0 on success, else the raw rc
+/// with errno set (same contract as [`poll_start_rc`]).
 #[cfg(not(windows))]
-pub(crate) fn registry_change(p: *mut PollState, loop_: *mut Loop, events: Events) {
+pub(crate) fn registry_change(p: *mut PollState, loop_: *mut Loop, events: Events) -> i32 {
     platform::registry_change(p, loop_, events)
 }
 

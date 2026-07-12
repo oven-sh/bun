@@ -94,15 +94,15 @@ pub(crate) fn poll_start_rc(p: *mut PollState, loop_: *mut Loop, events: Events)
     )
 }
 
-pub(crate) fn poll_change(p: *mut PollState, loop_: *mut Loop, events: Events) {
+pub(crate) fn poll_change(p: *mut PollState, loop_: *mut Loop, events: Events) -> i32 {
     let mut st = poll_access::read_poll(p);
     let old_events = st.events();
     if old_events == events {
-        return;
+        return 0;
     }
     st.set_polling(events);
     poll_access::write_poll(p, st);
-    poll_access::epoll_ctl(
+    let rc = poll_access::epoll_ctl(
         poll_access::loop_fd(loop_),
         libc::EPOLL_CTL_MOD,
         st.fd(),
@@ -110,6 +110,7 @@ pub(crate) fn poll_change(p: *mut PollState, loop_: *mut Loop, events: Events) {
         p as usize as u64,
     );
     backend::update_pending_ready_polls(loop_, p, p, old_events, events);
+    rc
 }
 
 pub(crate) fn poll_stop(p: *mut PollState, loop_: *mut Loop) {
@@ -163,10 +164,29 @@ pub(crate) fn registry_arm(
     }
 }
 
-/// Interest update — identical mechanics to socket [`poll_change`] (epoll is
-/// level-triggered for both directions already).
-pub(crate) fn registry_change(p: *mut PollState, loop_: *mut Loop, events: Events) {
-    poll_change(p, loop_, events);
+/// Interest update — same EPOLL_CTL_MOD as socket [`poll_change`], but the
+/// slot's bits commit only after the kernel accepts the change: a failed MOD
+/// keeps the old interest, so an identical retry re-issues the syscall.
+pub(crate) fn registry_change(p: *mut PollState, loop_: *mut Loop, events: Events) -> i32 {
+    let mut st = poll_access::read_poll(p);
+    let old_events = st.events();
+    if old_events == events {
+        return 0;
+    }
+    let rc = poll_access::epoll_ctl(
+        poll_access::loop_fd(loop_),
+        libc::EPOLL_CTL_MOD,
+        st.fd(),
+        kernel_bits(events),
+        p as usize as u64,
+    );
+    if rc != 0 {
+        return rc;
+    }
+    st.set_polling(events);
+    poll_access::write_poll(p, st);
+    backend::update_pending_ready_polls(loop_, p, p, old_events, events);
+    rc
 }
 
 pub(crate) fn registry_disarm(

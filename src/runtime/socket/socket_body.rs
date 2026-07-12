@@ -358,8 +358,10 @@ impl Drop for PendingSystemError {
 
 /// `needs_deref` releases the +1 the caller transferred in (the Protocol v2
 /// adapter's bridge ref, or the duplex/named-pipe manual callers' owner pin);
-/// it is false only on the synchronous connect-failure path, where no ref was
-/// ever transferred. The idle teardown is gated on the socket still holding
+/// it is false where no ref was transferred: the synchronous connect-failure
+/// path, and detached dispatch (close()/terminate()/finalize set DETACHED
+/// first; the adapter's `!is_detached()` gate then skips its bridge ref).
+/// The idle teardown is gated on the socket still holding
 /// the `Handlers` we entered with: `onConnectError` can reconnect, and we
 /// must not tear that connection down.
 struct ConnectErrorTeardown<const SSL: bool> {

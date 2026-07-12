@@ -172,27 +172,60 @@ impl PollRef {
         }
     }
 
-    /// Update an `Fd` source's interest set. No-op for stale handles,
-    /// non-Fd sources, and the empty interest set.
-    pub fn change(self, readable: bool, writable: bool) {
+    /// Update an `Fd` source's interest set. `Ok` no-op for stale handles,
+    /// non-Fd sources, and the empty interest set; a kernel failure (e.g.
+    /// ENOENT after the fd was closed while armed) surfaces as `Err(errno)`.
+    pub fn change(self, readable: bool, writable: bool) -> Result<(), i32> {
+        let Some(p) = self.resolve() else {
+            return Ok(());
+        };
+        let loop_ = poll_access::with_registered(p.as_ptr(), |q| q.loop_);
+        Self::change_via(p, loop_, readable, writable)
+    }
+
+    /// [`Self::change`] with loop mutation routed through the caller-held
+    /// borrow — required when a `&mut Loop` is live in the calling frame
+    /// (a write through the slot's stored loop pointer would be a foreign
+    /// mutation under that borrow's protector).
+    pub fn change_on(self, loop_: &mut Loop, readable: bool, writable: bool) -> Result<(), i32> {
+        let Some(p) = self.resolve() else {
+            return Ok(());
+        };
+        debug_assert!(core::ptr::eq(
+            poll_access::with_registered(p.as_ptr(), |q| q.loop_),
+            loop_
+        ));
+        Self::change_via(p, loop_, readable, writable)
+    }
+
+    fn change_via(
+        p: NonNull<RegisteredPoll>,
+        loop_: *mut Loop,
+        readable: bool,
+        writable: bool,
+    ) -> Result<(), i32> {
         if !readable && !writable {
-            return;
+            return Ok(());
         }
-        let Some(p) = self.resolve() else { return };
-        let (loop_, is_fd) = poll_access::with_registered(p.as_ptr(), |q| {
-            (q.loop_, matches!(q.source, ArmedSource::Fd))
-        });
+        let is_fd =
+            poll_access::with_registered(p.as_ptr(), |q| matches!(q.source, ArmedSource::Fd));
         if !is_fd {
-            return;
+            return Ok(());
         }
         #[cfg(not(windows))]
-        crate::backend::registry_change(
-            p.as_ptr().cast::<PollState>(),
-            loop_,
-            crate::backend::fd_interest(readable, writable),
-        );
+        {
+            let rc = crate::backend::registry_change(
+                p.as_ptr().cast::<PollState>(),
+                loop_,
+                crate::backend::fd_interest(readable, writable),
+            );
+            if rc != 0 {
+                return Err(poll_access::last_errno());
+            }
+        }
         #[cfg(windows)]
         let _ = loop_;
+        Ok(())
     }
 
     /// Disarm the kernel registration, drop keep-alive, free the slot
@@ -201,16 +234,32 @@ impl PollRef {
     /// owner's own `on_event` (the dispatch guard keeps the owner alive).
     pub fn unregister(self) {
         let Some(p) = self.resolve() else { return };
-        let (loop_, armed, keep_alive, word, ops) =
-            poll_access::with_registered(p.as_ptr(), |q| {
-                (
-                    q.loop_,
-                    q.source,
-                    q.keep_alive,
-                    core::mem::replace(&mut q.owner, core::ptr::null_mut()),
-                    q.ops,
-                )
-            });
+        let loop_ = poll_access::with_registered(p.as_ptr(), |q| q.loop_);
+        Self::unregister_via(p, loop_);
+    }
+
+    /// [`Self::unregister`] with loop mutation routed through the caller-held
+    /// borrow (same protector rule as [`Self::change_on`]). The transferred
+    /// owner ref is released inside: an owner destructor that touches the
+    /// loop other than via `loop_` would still be a foreign access.
+    pub fn unregister_on(self, loop_: &mut Loop) {
+        let Some(p) = self.resolve() else { return };
+        debug_assert!(core::ptr::eq(
+            poll_access::with_registered(p.as_ptr(), |q| q.loop_),
+            loop_
+        ));
+        Self::unregister_via(p, loop_);
+    }
+
+    fn unregister_via(p: NonNull<RegisteredPoll>, loop_: *mut Loop) {
+        let (armed, keep_alive, word, ops) = poll_access::with_registered(p.as_ptr(), |q| {
+            (
+                q.source,
+                q.keep_alive,
+                core::mem::replace(&mut q.owner, core::ptr::null_mut()),
+                q.ops,
+            )
+        });
         // W2 discipline: kernel disarm (incl. pending ready-list nulling)
         // strictly precedes the slot free.
         #[cfg(not(windows))]
@@ -457,7 +506,7 @@ mod tests {
 
         // Interest change to writable-only: the eventfd counter is nonzero
         // (readable at the fd level), but only WRITABLE may be delivered.
-        r.change(false, true);
+        r.change(false, true).expect("interest change");
         assert!(dispatch_pending(loop_) >= 1);
         {
             let ev = probe.data().events.borrow();
@@ -470,7 +519,7 @@ mod tests {
         assert_eq!(poll_access::num_polls(loop_), 0, "keep-alive dropped");
         assert!(!dropped.get(), "probe ref still holds the owner");
         r.unregister(); // stale handle: silent no-op
-        r.change(true, true); // stale handle: silent no-op
+        assert_eq!(r.change(true, true), Ok(())); // stale handle: silent no-op
         poll_access::eventfd::send(efd);
         assert_eq!(dispatch_pending(loop_), 0, "disarmed source must be silent");
 
@@ -552,6 +601,25 @@ mod tests {
     }
 
     #[test]
+    fn change_surfaces_kernel_errno() {
+        let loop_ = create_test_loop();
+        let efd = poll_access::eventfd::create();
+        let dropped = Rc::new(Cell::new(false));
+        let r = register::<FdProto>(loop_, fd_source(efd, true, false), new_owner(&dropped, false), false)
+            .expect("register");
+        // Closing the fd auto-removes it from epoll; the next interest
+        // update must surface the kernel failure, not report success.
+        io::close(efd, false);
+        assert_eq!(r.change(true, true), Err(libc::EBADF));
+        // A failed change must not cache the requested bits: the identical
+        // retry re-issues the kernel op instead of short-circuiting to Ok.
+        assert_eq!(r.change(true, true), Err(libc::EBADF));
+        r.unregister();
+        assert!(dropped.get());
+        free_test_loop(loop_);
+    }
+
+    #[test]
     fn pri_source_registers_and_ignores_interest_changes() {
         let loop_ = create_test_loop();
         let efd = poll_access::eventfd::create();
@@ -565,7 +633,7 @@ mod tests {
         // Pri watches EPOLLPRI only: ordinary readability must not dispatch,
         // and `change` must be a no-op for a non-Fd source (a real change
         // would arm EPOLLIN and make the eventfd dispatch here).
-        r.change(true, true);
+        assert_eq!(r.change(true, true), Ok(())); // non-Fd source: silent no-op
         poll_access::eventfd::send(efd);
         assert_eq!(dispatch_pending(loop_), 0, "no EPOLLIN interest armed");
 

@@ -1437,10 +1437,10 @@ mod tests {
         let equal_b = d(Operation::Equal, b"b");
         let delete_b = d(Operation::Delete, b"b");
 
-        assert!(equal_a.eql(&equal_a));
-        assert!(!insert_a.eql(&equal_a));
-        assert!(!equal_a.eql(&equal_b));
-        assert!(!equal_a.eql(&delete_b));
+        assert!(equal_a == equal_a);
+        assert!(insert_a != equal_a);
+        assert!(equal_a != equal_b);
+        assert!(equal_a != delete_b);
     }
 
     #[test]
@@ -1475,28 +1475,15 @@ mod tests {
         ); // Unicode
     }
 
-    fn rebuildtexts(diffs: &DiffList<u8>) -> [Box<[u8]>; 2] {
-        let mut text: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
-        for my_diff in diffs.iter() {
-            if my_diff.operation != Operation::Insert {
-                text[0].extend_from_slice(&my_diff.text);
-            }
-            if my_diff.operation != Operation::Delete {
-                text[1].extend_from_slice(&my_diff.text);
-            }
-        }
-        [
-            text[0].clone().into_boxed_slice(),
-            text[1].clone().into_boxed_slice(),
-        ]
-    }
-
     #[test]
     fn test_diff_bisect() {
-        let this = Dmp::new(Config {
-            diff_timeout: 0,
-            ..Config::default()
-        });
+        let this = Dmp {
+            config: Config {
+                diff_timeout: 0,
+                ..Config::default()
+            },
+            ..Dmp::default()
+        };
 
         let a = b"cat";
         let b = b"map";
@@ -1520,7 +1507,7 @@ mod tests {
 
     #[test]
     fn test_diff_half_match_leak_regression() {
-        let dmp = Dmp::DEFAULT;
+        let dmp = Dmp::default();
         let text1 = b"The quick brown fox jumps over the lazy dog.";
         let text2 = b"That quick brown fox jumped over a lazy dog.";
         let _diffs = dmp.diff(text2, text1, true).unwrap();
@@ -1528,10 +1515,13 @@ mod tests {
 
     #[test]
     fn test_diff_basic() {
-        let this = Dmp::new(Config {
-            diff_timeout: 0,
-            ..Config::default()
-        });
+        let this = Dmp {
+            config: Config {
+                diff_timeout: 0,
+                ..Config::default()
+            },
+            ..Dmp::default()
+        };
 
         // Null case.
         let diffs = this.diff(b"", b"", false).unwrap();

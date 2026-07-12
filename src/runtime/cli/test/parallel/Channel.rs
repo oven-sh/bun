@@ -20,6 +20,7 @@
 use core::cell::Cell;
 use core::marker::PhantomData;
 
+#[cfg(not(windows))]
 use bun_collections::VecExt;
 use bun_jsc::JsCell;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -110,40 +111,47 @@ impl<Owner: ChannelOwner> ChannelState<Owner> {
         if self.done.get() {
             return;
         }
-        // Take the buffer out of the cell for the decode loop so no cell
-        // borrow is live across the owner callbacks (which may `send()` or
-        // re-enter `ingest` by pumping the loop).
-        let mut buf = self.incoming.replace(Vec::new());
-        buf.extend_from_slice(data);
-        let mut head: usize = 0;
-        while buf.len() - head >= 5 {
-            let len = u32::from_le_bytes(buf[head..][..4].try_into().unwrap());
-            if len > frame::MAX_PAYLOAD {
-                self.mark_done();
-                break;
+        self.incoming.with_mut(|v| v.extend_from_slice(data));
+        // One frame per iteration, split out of the cell BEFORE delivery: the
+        // undecoded tail stays in the cell, so a re-entrant ingest (owner
+        // callback pumping the loop) decodes from a frame boundary, in order.
+        loop {
+            enum Step {
+                Incomplete,
+                Corrupt,
+                Frame(Vec<u8>),
             }
-            if buf.len() - head < 5usize + len as usize {
-                break;
+            let step = self.incoming.with_mut(|v| {
+                if v.len() < 5 {
+                    return Step::Incomplete;
+                }
+                let len = u32::from_le_bytes(v[..4].try_into().unwrap());
+                if len > frame::MAX_PAYLOAD {
+                    return Step::Corrupt;
+                }
+                let total = 5usize + len as usize;
+                if v.len() < total {
+                    return Step::Incomplete;
+                }
+                let rest = v.split_off(total);
+                Step::Frame(core::mem::replace(v, rest))
+            });
+            match step {
+                Step::Incomplete => return,
+                Step::Corrupt => {
+                    self.mark_done();
+                    return;
+                }
+                Step::Frame(frame_bytes) => {
+                    if let Ok(kind) = frame::Kind::try_from(frame_bytes[4]) {
+                        let mut rd = frame::Reader {
+                            p: &frame_bytes[5..],
+                        };
+                        self.deliver_frame(kind, &mut rd);
+                    }
+                }
             }
-            if let Ok(kind) = frame::Kind::try_from(buf[head + 4]) {
-                let mut rd = frame::Reader {
-                    p: &buf[head + 5..][..len as usize],
-                };
-                self.deliver_frame(kind, &mut rd);
-            }
-            head += 5usize + len as usize;
         }
-        buf.drain_front(head);
-        // Merge back: bytes a re-entrant ingest appended to the (empty) cell
-        // stay ordered after the undecoded remainder.
-        self.incoming.with_mut(|v| {
-            if v.is_empty() {
-                *v = buf;
-            } else {
-                buf.extend_from_slice(v);
-                *v = buf;
-            }
-        });
     }
 
     // -- POSIX write path --------------------------------------------------
@@ -602,6 +610,9 @@ impl<Owner> Drop for Channel<Owner> {
         self.state.owner.set(core::ptr::null_mut());
         #[cfg(windows)]
         {
+            // Drop assumes no uv_write is in flight: `submit_windows_write`
+            // stored a raw `*mut Channel` in the write req, and a post-free
+            // ECANCELED callback would dereference it dangling.
             if let Some(p) = self.backend.pipe.take() {
                 // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
                 unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(p)) };

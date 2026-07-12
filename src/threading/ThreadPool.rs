@@ -1481,18 +1481,19 @@ impl Event {
             // The consumer was a fresh entrant (first-iteration
             // `acquire_with == EMPTY`). Restore WAITING on its behalf — the
             // pre-return loop iteration used to do this before re-parking —
-            // so the wake chain stays armed for the threads still parked. On
-            // CAS failure the state changed under us; let the main loop
-            // re-dispatch on a fresh reload.
-            return self
-                .state
-                .compare_exchange(
+            // so the wake chain stays armed for the threads still parked.
+            // Err(WAITING) means a sibling loser restored it first, which
+            // satisfies the same postcondition. Err(NOTIFIED)/Err(SHUTDOWN)
+            // defer to the main loop, which consumes / exits.
+            return matches!(
+                self.state.compare_exchange(
                     Self::EMPTY,
                     Self::WAITING,
                     Ordering::Relaxed,
                     Ordering::Relaxed,
-                )
-                .is_ok();
+                ),
+                Ok(_) | Err(Self::WAITING)
+            );
         }
         // NOTIFIED or SHUTDOWN: the main loop consumes / exits.
         false

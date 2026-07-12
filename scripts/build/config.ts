@@ -762,10 +762,18 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // -baseline WebKit prebuilt has no -lto variant).
   const baseline = partial.baseline ?? false;
 
-  // WebKit-uses-mimalloc variant: on by default for Linux glibc release so JSC
-  // and bun share one allocator. Gated to the exact combinations oven-sh/WebKit
-  // ships -mimalloc prebuilts for (amd64/arm64 glibc, release + release-lto).
-  const webkitMimalloc = partial.webkitMimalloc ?? (linux && abi === "gnu" && release && !asan && !baseline);
+  // WebKit-uses-mimalloc variant: on by default for Linux glibc release on the
+  // pinned prebuilt (the only combination with -mimalloc artifacts). Local
+  // WebKit and explicit --webkit-version overrides stay on libpas.
+  const webkitMimalloc =
+    partial.webkitMimalloc ??
+    (linux &&
+      abi === "gnu" &&
+      release &&
+      !asan &&
+      !baseline &&
+      (partial.webkit ?? "prebuilt") === "prebuilt" &&
+      partial.webkitVersion === undefined);
 
   // LTO: default on for CI release non-asan non-assertions builds on Linux
   // and on darwin cross-compiles. Windows is NOT in the default even though
@@ -1049,11 +1057,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
-  // The -mimalloc prebuilts only exist in the oven-sh/WebKit#283 preview
-  // release; drop this override once that PR merges and WEBKIT_VERSION is
-  // bumped to an autobuild that carries the -mimalloc artifacts.
+  // -mimalloc prebuilts only exist at the oven-sh/WebKit#283 preview head (a
+  // sha so process.versions.webkit stays a commit hash; deps/webkit.ts maps it
+  // to the release tag). Drop once #283 merges and WEBKIT_VERSION is bumped.
   const webkitVersion =
-    partial.webkitVersion ?? (webkitMimalloc ? "autobuild-preview-pr-283-22b4f7cd" : versionDefaults.webkitVersion);
+    partial.webkitVersion ??
+    (webkitMimalloc ? "22b4f7cd40c0dce65973b3dcc54689fa58c5a213" : versionDefaults.webkitVersion);
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.

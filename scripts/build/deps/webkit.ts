@@ -82,7 +82,14 @@ function prebuiltUrl(cfg: Config): string {
   const arch = cfg.arm64 ? "arm64" : "amd64";
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
   const version = cfg.webkitVersion;
-  const tag = version.startsWith("autobuild-") ? version : `autobuild-${version}`;
+  // The oven-sh/WebKit#283 preview is tagged by PR, not commit; drop this
+  // mapping with the webkitVersion pin in config.ts once the PR merges.
+  const tag =
+    version === "22b4f7cd40c0dce65973b3dcc54689fa58c5a213"
+      ? "autobuild-preview-pr-283-22b4f7cd"
+      : version.startsWith("autobuild-")
+        ? version
+        : `autobuild-${version}`;
   return `https://github.com/oven-sh/WebKit/releases/download/${tag}/${name}.tar.gz`;
 }
 

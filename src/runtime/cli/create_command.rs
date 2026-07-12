@@ -2327,7 +2327,11 @@ impl Example {
             _ => return Err(crate::Error::HTTPError),
         }
 
-        let content_type: &[u8] = response.response().headers.get(b"content-type").unwrap_or(b"");
+        let content_type: &[u8] = response
+            .response()
+            .headers
+            .get(b"content-type")
+            .unwrap_or(b"");
         let is_expected_content_type = content_type == b"application/x-gzip";
 
         if !is_expected_content_type {

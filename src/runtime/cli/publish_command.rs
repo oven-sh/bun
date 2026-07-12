@@ -992,7 +992,8 @@ impl PublishCommand {
                         break 'prompt_for_otp false;
                     }
 
-                    if let Some(www_authenticate) = res.response().headers.get(b"www-authenticate") {
+                    if let Some(www_authenticate) = res.response().headers.get(b"www-authenticate")
+                    {
                         let mut iter = strings::split(www_authenticate, b",");
                         while let Some(part) = iter.next() {
                             let trimmed = strings::trim(part, &strings::WHITESPACE_CHARS);

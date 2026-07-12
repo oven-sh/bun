@@ -142,7 +142,12 @@ pub(crate) fn view(
     };
 
     if res.response().status_code >= 400 {
-        npm::response_error::<false>(&req, res.response(), Some((name, version)), &mut response_buf)?;
+        npm::response_error::<false>(
+            &req,
+            res.response(),
+            Some((name, version)),
+            &mut response_buf,
+        )?;
     }
 
     let mut log = bun_ast::Log::init();

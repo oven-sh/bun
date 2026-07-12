@@ -642,6 +642,42 @@ impl Execution {
 
     fn on_entry_completed(_entry: NonNull<ExecutionEntry>) {}
 
+    /// Build `{describe...} {testName}` identical to `Expect::get_snapshot_name`
+    /// with an empty hint, so skipped tests can mark their snapshot keys checked.
+    fn snapshot_name_for_entry(entry: &ExecutionEntry) -> Vec<u8> {
+        let test_name: &[u8] = entry.base.name.as_deref().unwrap_or(b"(unnamed)");
+        let mut length = test_name.len();
+        let mut curr = entry.base.parent;
+        while let Some(scope) = curr {
+            // SAFETY: `parent` is a live backref into the BunTest-owned describe tree.
+            let scope = unsafe { &*scope };
+            if let Some(name) = scope.base.name.as_deref() {
+                if !name.is_empty() {
+                    length += name.len() + 1;
+                }
+            }
+            curr = scope.base.parent;
+        }
+        let mut buf = vec![0u8; length];
+        let mut index = buf.len();
+        index -= test_name.len();
+        buf[index..].copy_from_slice(test_name);
+        curr = entry.base.parent;
+        while let Some(scope) = curr {
+            // SAFETY: `parent` is a live backref into the BunTest-owned describe tree.
+            let scope = unsafe { &*scope };
+            if let Some(name) = scope.base.name.as_deref() {
+                if !name.is_empty() {
+                    index -= name.len() + 1;
+                    buf[index..index + name.len()].copy_from_slice(name);
+                    buf[index + name.len()] = b' ';
+                }
+            }
+            curr = scope.base.parent;
+        }
+        buf
+    }
+
     fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
             0
@@ -671,6 +707,18 @@ impl Execution {
                 ScopeMode::Todo => Result::FailBecauseTodoPassed,
                 _ => Result::Pass,
             };
+        }
+        if matches!(
+            sequence.result,
+            Result::Skip | Result::Todo | Result::SkippedBecauseLabel
+        ) {
+            if let Some(entry_ptr) = sequence.test_entry {
+                if let Some(runner) = super::jest::Jest::runner() {
+                    // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+                    let name = Self::snapshot_name_for_entry(unsafe { entry_ptr.as_ref() });
+                    runner.snapshots.mark_snapshots_as_checked_for_test(&name);
+                }
+            }
         }
         if let Some(first_entry) = sequence.first_entry {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {

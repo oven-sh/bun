@@ -472,6 +472,16 @@ describe("lex shell", () => {
       ]);
     }
 
+    // https://github.com/oven-sh/bun/issues/12602
+    expect(JSON.parse(lex`./script1<file`)).toEqual([
+      { "Text": "./script1" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdin: true }) },
+      { "Text": "file" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
     // After quoted text, a digit is still part of the same word.
     expect(JSON.parse(lex`${{ raw: 'echo "z"1>f' }}`)).toEqual([
       { "Text": "echo" },

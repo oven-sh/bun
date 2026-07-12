@@ -1496,6 +1496,12 @@ describe("deno_task", () => {
       TestBuilder.command`echo ${{ raw: '"z"1>test.txt' }}`
         .fileEquals("test.txt", "z1\n")
         .runAsTest("digit after quoted text is not an fd");
+      // https://github.com/oven-sh/bun/issues/12602
+      TestBuilder.command`echo hi > file && cat ./file1<file`
+        .ensureTempDir()
+        .stderr("cat: ./file1: No such file or directory\n")
+        .exitCode(1)
+        .runAsTest("./file1<file keeps the trailing 1 in the word");
       TestBuilder.command`echo ${{ raw: "$(echo z)1" }}>test.txt`
         .fileEquals("test.txt", "z1\n")
         .runAsTest("digit after command substitution is not an fd");

@@ -91,14 +91,28 @@ impl FileLock {
     pub(crate) fn do_bytes(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let held = self.held_ref(global, "bytes")?;
         let len = optional_byte_count(global, frame)?;
-        Ok(schedule_io(global, held, IoOp::Read { len, kind: ReadKind::Uint8Array }))
+        Ok(schedule_io(
+            global,
+            held,
+            IoOp::Read {
+                len,
+                kind: ReadKind::Uint8Array,
+            },
+        ))
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_text(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let held = self.held_ref(global, "text")?;
         let len = optional_byte_count(global, frame)?;
-        Ok(schedule_io(global, held, IoOp::Read { len, kind: ReadKind::Text }))
+        Ok(schedule_io(
+            global,
+            held,
+            IoOp::Read {
+                len,
+                kind: ReadKind::Text,
+            },
+        ))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -109,7 +123,14 @@ impl FileLock {
     ) -> JsResult<JSValue> {
         let held = self.held_ref(global, "arrayBuffer")?;
         let len = optional_byte_count(global, frame)?;
-        Ok(schedule_io(global, held, IoOp::Read { len, kind: ReadKind::ArrayBuffer }))
+        Ok(schedule_io(
+            global,
+            held,
+            IoOp::Read {
+                len,
+                kind: ReadKind::ArrayBuffer,
+            },
+        ))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -335,9 +356,16 @@ pub struct IoTaskCtx<'a> {
 }
 
 enum IoOp {
-    Read { len: Option<usize>, kind: ReadKind },
-    Write { data: jsc::ThreadSafe<StringOrBuffer> },
-    Truncate { len: i64 },
+    Read {
+        len: Option<usize>,
+        kind: ReadKind,
+    },
+    Write {
+        data: jsc::ThreadSafe<StringOrBuffer>,
+    },
+    Truncate {
+        len: i64,
+    },
 }
 
 #[derive(Clone, Copy)]

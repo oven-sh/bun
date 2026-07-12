@@ -2,7 +2,7 @@ import { RedisClient, type TCPSocketListener } from "bun";
 import { describe, expect, test } from "bun:test";
 import net from "node:net";
 
-describe("Valkey reply torn across socket reads", () => {
+describe.concurrent("Valkey reply torn across socket reads", () => {
   const CRLF = "\r\n";
   const bulk = (s: string) => `$${Buffer.byteLength(s)}${CRLF}${s}${CRLF}`;
   // Minimal RESP3 HELLO map so the client enters the Connected state.
@@ -87,27 +87,30 @@ describe("Valkey reply torn across socket reads", () => {
     }
   }
 
-  // Split offset 10 lands inside the blob body for all three frames below.
-  const SPLIT = 10;
+  // `$15`/`=15` frames: 5-byte header, 15-byte body at [5,20), trailing CRLF at [20,22).
+  // `!21` frame: 5-byte header, 21-byte body at [5,26), trailing CRLF at [26,28).
+  // Offsets cover: body start, mid-body, last body byte, and mid-CRLF.
+  const SHORT_SPLITS = [5, 10, 19, 21] as const;
+  const LONG_SPLITS = [5, 10, 25, 27] as const;
 
-  test("BulkString ($) with body torn mid-payload decodes (baseline)", async () => {
-    const server = createTornReplyServer(`$15${CRLF}xxx:Some string${CRLF}`, SPLIT);
+  test.each(SHORT_SPLITS)("BulkString ($) torn at byte %i decodes (baseline)", async splitAt => {
+    const server = createTornReplyServer(`$15${CRLF}xxx:Some string${CRLF}`, splitAt);
     await withClient(server, async client => {
       expect(await client.get("k")).toBe("xxx:Some string");
       expect(await client.send("PING", [])).toBe("OK");
     });
   });
 
-  test("VerbatimString (=) with body torn mid-payload decodes instead of failing the connection", async () => {
-    const server = createTornReplyServer(`=15${CRLF}txt:Some string${CRLF}`, SPLIT);
+  test.each(SHORT_SPLITS)("VerbatimString (=) torn at byte %i decodes instead of failing the connection", async splitAt => {
+    const server = createTornReplyServer(`=15${CRLF}txt:Some string${CRLF}`, splitAt);
     await withClient(server, async client => {
       expect(await client.get("k")).toBe("Some string");
       expect(await client.send("PING", [])).toBe("OK");
     });
   });
 
-  test("BlobError (!) with body torn mid-payload decodes instead of failing the connection", async () => {
-    const server = createTornReplyServer(`!21${CRLF}SYNTAX invalid syntax${CRLF}`, SPLIT);
+  test.each(LONG_SPLITS)("BlobError (!) torn at byte %i decodes instead of failing the connection", async splitAt => {
+    const server = createTornReplyServer(`!21${CRLF}SYNTAX invalid syntax${CRLF}`, splitAt);
     await withClient(server, async client => {
       // A parsed BlobError resolves (not rejects) with an Error carrying the
       // server's message. Before the fix this rejected with

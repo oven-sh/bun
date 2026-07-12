@@ -1308,7 +1308,24 @@ impl<'a> Parser<'a> {
 /// `Dotenv::ParseContent` from node's `src/node_dotenv.cc`. Used only by
 /// `node:util.parseEnv`; Bun's own `.env` loading uses Bun's [`Parser`]
 /// above, which intentionally accepts a richer grammar.
-pub fn parse_node_compat(src: &[u8], map: &mut Map) -> Result<(), AllocError> {
+///
+/// Writes into a plain `StringArrayHashMap` (case-sensitive on every
+/// platform) rather than [`Map`], because Node's `Dotenv` stores into a
+/// case-sensitive `std::map` regardless of OS, whereas [`Map`] is
+/// case-insensitive on Windows to match `process.env` semantics.
+pub fn parse_node_compat(
+    src: &[u8],
+    map: &mut StringArrayHashMap<Box<[u8]>>,
+) -> Result<(), AllocError> {
+    #[inline]
+    fn put(
+        map: &mut StringArrayHashMap<Box<[u8]>>,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), AllocError> {
+        map.put(key, Box::from(value))
+    }
+
     // Node strips every '\r' byte unconditionally before parsing, so
     // '\r\n' → '\n' and lone '\r' is deleted (not a line break).
     let mut lines: Vec<u8> = Vec::with_capacity(src.len());
@@ -1355,7 +1372,7 @@ pub fn parse_node_compat(src: &[u8], map: &mut Map) -> Result<(), AllocError> {
                 content = &content[i + 1..];
 
                 if content.is_empty() || content[0] == b'\n' {
-                    map.put(key, b"")?;
+                    put(map, key, b"")?;
                     continue;
                 }
 
@@ -1370,7 +1387,7 @@ pub fn parse_node_compat(src: &[u8], map: &mut Map) -> Result<(), AllocError> {
                 }
 
                 if content.is_empty() {
-                    map.put(key, b"")?;
+                    put(map, key, b"")?;
                     break;
                 }
 
@@ -1390,7 +1407,7 @@ pub fn parse_node_compat(src: &[u8], map: &mut Map) -> Result<(), AllocError> {
                                 j += 1;
                             }
                         }
-                        map.put(key, &multi)?;
+                        put(map, key, &multi)?;
                         match strings::index_of_char(&content[closing + 1..], b'\n') {
                             Some(n) => content = &content[closing + 1 + n as usize + 1..],
                             None => content = b"",
@@ -1405,17 +1422,17 @@ pub fn parse_node_compat(src: &[u8], map: &mut Map) -> Result<(), AllocError> {
                     match strings::index_of_char(&content[1..], c0) {
                         None => match strings::index_of_char(content, b'\n') {
                             Some(n) => {
-                                map.put(key, &content[..n as usize])?;
+                                put(map, key, &content[..n as usize])?;
                                 content = &content[n as usize + 1..];
                             }
                             None => {
-                                map.put(key, content)?;
+                                put(map, key, content)?;
                                 break;
                             }
                         },
                         Some(closing) => {
                             let closing = closing as usize + 1;
-                            map.put(key, &content[1..closing])?;
+                            put(map, key, &content[1..closing])?;
                             match strings::index_of_char(&content[closing + 1..], b'\n') {
                                 Some(n) => content = &content[closing + 1 + n as usize + 1..],
                                 None => content = b"",
@@ -1433,7 +1450,7 @@ pub fn parse_node_compat(src: &[u8], map: &mut Map) -> Result<(), AllocError> {
                     if let Some(h) = strings::index_of_char(value, b'#') {
                         value = &value[..h as usize];
                     }
-                    map.put(key, trim_spaces(value))?;
+                    put(map, key, trim_spaces(value))?;
                     content = rest;
                 }
 

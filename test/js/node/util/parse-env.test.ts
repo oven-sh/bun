@@ -94,6 +94,10 @@ describe("util.parseEnv node-parity grammar", () => {
     expect(parseEnv("FOO=bar\nFOO=baz\n")).toEqual({ FOO: "baz" });
   });
 
+  test("keys are case-sensitive on every platform", () => {
+    expect(parseEnv("FOO=1\nfoo=2\n")).toEqual({ FOO: "1", foo: "2" });
+  });
+
   test("empty and whitespace-only input", () => {
     expect(parseEnv("")).toEqual({});
     expect(parseEnv("   \n\t\n")).toEqual({});

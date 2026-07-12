@@ -360,6 +360,12 @@ impl InterpreterFlags {
     pub fn set_quiet(&mut self, v: bool) {
         if v { self.0 |= 0b10 } else { self.0 &= !0b10 }
     }
+    pub const fn rejected(self) -> bool {
+        self.0 & 0b100 != 0
+    }
+    pub fn set_rejected(&mut self, v: bool) {
+        if v { self.0 |= 0b100 } else { self.0 &= !0b100 }
+    }
 }
 
 #[repr(u8)]
@@ -1266,9 +1272,14 @@ impl Interpreter {
         let Some(global) = self.global_this_ref() else {
             return;
         };
+        if self.flags.get().rejected() {
+            let _ = global.try_take_exception();
+            return;
+        }
         let Some(exc) = global.try_take_exception() else {
             return;
         };
+        self.update_flags(|f| f.set_rejected(true));
         let err = exc.to_error().unwrap_or(exc);
         self.keep_alive.with_mut(|k| k.disable());
         let this_jsvalue = self.this_jsvalue.get();
@@ -1388,8 +1399,6 @@ impl Interpreter {
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
         self.started.store(true, Ordering::SeqCst);
         Script::start(self, root).run(self);
-        // `Yield::run` rejects the promise and releases keepalive on
-        // `Yield::Failed`, so no post-run exception check is needed here.
 
         Ok(crate::jsc::JSValue::UNDEFINED)
     }

@@ -3,7 +3,7 @@ import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 const snapFixture = (body: string) => ({
-  "snap.test.ts": `import { describe, test, expect } from "bun:test";\n${body}\n`,
+  "snap.test.ts": `import { describe, test, expect, afterAll } from "bun:test";\n${body}\n`,
   "__snapshots__/snap.test.ts.snap":
     "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\n" +
     'exports[`keeps 1`] = `\n{\n  "a": 1,\n}\n`;\n\n' +
@@ -91,6 +91,25 @@ describe("obsolete snapshot detection", () => {
     const { stderr, exitCode } = await run(dir, ["-u"]);
     expect(stderr).toContain("1 added");
     expect(stderr).toContain("2 removed");
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/12114
+  test("-u does not truncate the .snap file before afterAll runs", async () => {
+    const dir = tempDirWithFiles(
+      "obsolete-afterall",
+      snapFixture(
+        `const fs = require("node:fs");\n` +
+          `test("keeps", () => expect({ a: 1 }).toMatchSnapshot());\n` +
+          `afterAll(() => {\n` +
+          `  console.log("SNAP_SIZE:" + fs.statSync("./__snapshots__/snap.test.ts.snap").size);\n` +
+          `});`,
+      ),
+    );
+    const { stdout, exitCode } = await run(dir, ["-u"]);
+    const m = stdout.match(/SNAP_SIZE:(\d+)/);
+    expect(m?.[1]).toBeDefined();
+    expect(Number(m![1])).toBeGreaterThan(0);
     expect(exitCode).toBe(0);
   });
 });

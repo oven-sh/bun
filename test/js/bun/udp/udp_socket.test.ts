@@ -98,8 +98,11 @@ describe("udpSocket()", () => {
   test("connect with valid port at range boundaries is accepted", async () => {
     for (const port of [1, 65535]) {
       const socket = await udpSocket({ connect: { hostname: "127.0.0.1", port } });
-      expect(socket.remoteAddress).toEqual({ address: "127.0.0.1", family: "IPv4", port });
-      socket.close();
+      try {
+        expect(socket.remoteAddress).toEqual({ address: "127.0.0.1", family: "IPv4", port });
+      } finally {
+        socket.close();
+      }
     }
   });
 

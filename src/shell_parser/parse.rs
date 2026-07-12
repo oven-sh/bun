@@ -2422,6 +2422,7 @@ pub(crate) enum FdRedirect {
     Redirect(ast::RedirectFlags),
     NotRedirect,
     UnsupportedFd,
+    UnsupportedInputFd,
 }
 
 #[derive(Clone, Copy)]
@@ -3018,6 +3019,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     self.add_error(b"Redirecting to file descriptors other than 0, 1, and 2 is not supported yet.");
                                     return Ok(());
                                 }
+                                FdRedirect::UnsupportedInputFd => {
+                                    self.add_error(b"Redirecting input to file descriptors other than 0 is not supported yet.");
+                                    return Ok(());
+                                }
                             }
                         }
                         // Operators
@@ -3276,7 +3281,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 | TokenTag::Comma
                 | TokenTag::BraceEnd
                 | TokenTag::CmdSubstEnd
-                | TokenTag::Asterisk => true,
+                | TokenTag::Asterisk
+                | TokenTag::DoubleAsterisk => true,
 
                 TokenTag::Pipe
                 | TokenTag::DoublePipe
@@ -3284,7 +3290,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 | TokenTag::DoubleAmpersand
                 | TokenTag::Redirect
                 | TokenTag::Dollar
-                | TokenTag::DoubleAsterisk
                 | TokenTag::Eq
                 | TokenTag::Semicolon
                 | TokenTag::Newline
@@ -3422,6 +3427,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     if flags.is_empty() {
                         return FdRedirect::UnsupportedFd;
                     }
+                    // RedirectFlags cannot represent "open fd 1/2 for reading",
+                    // so `1<`/`2<` are rejected rather than silently opening
+                    // the file for writing.
+                    if !flags.stdin() {
+                        return FdRedirect::UnsupportedInputFd;
+                    }
+                    let _ = self.eat();
                     let is_double = self.eat_simple_redirect_operator(RedirectDirection::In);
                     if is_double {
                         flags |= ast::RedirectFlags::APPEND;

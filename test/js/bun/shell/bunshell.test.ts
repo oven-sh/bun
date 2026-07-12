@@ -1521,18 +1521,22 @@ describe("deno_task", () => {
 
       // fd numbers outside 0/1/2 aren't supported yet but must be recognized
       // as redirects, not silently treated as arguments.
-      test.each(["echo z 3> test.txt", "echo z 10> test.txt", "echo z 3< test.txt", "echo z 3>> test.txt"])(
-        "`%s` is a redirect (unsupported fd)",
-        async script => {
-          let message = "";
-          try {
-            await $`${{ raw: script }}`.cwd(TestBuilder.tmpdir()).quiet();
-          } catch (e) {
-            message = (e as Error).message;
-          }
-          expect(message).toBe("Redirecting to file descriptors other than 0, 1, and 2 is not supported yet.");
-        },
-      );
+      test.each([
+        ["echo z 3> test.txt", "Redirecting to file descriptors other than 0, 1, and 2 is not supported yet."],
+        ["echo z 10> test.txt", "Redirecting to file descriptors other than 0, 1, and 2 is not supported yet."],
+        ["echo z 3< test.txt", "Redirecting to file descriptors other than 0, 1, and 2 is not supported yet."],
+        ["echo z 3>> test.txt", "Redirecting to file descriptors other than 0, 1, and 2 is not supported yet."],
+        ["echo z 1< test.txt", "Redirecting input to file descriptors other than 0 is not supported yet."],
+        ["echo z 2< test.txt", "Redirecting input to file descriptors other than 0 is not supported yet."],
+      ])("`%s` is a redirect (unsupported fd)", async (script, expected) => {
+        let message = "";
+        try {
+          await $`${{ raw: script }}`.cwd(TestBuilder.tmpdir()).quiet();
+        } catch (e) {
+          message = (e as Error).message;
+        }
+        expect(message).toBe(expected);
+      });
 
       // A digit word not followed by a redirect operator is a plain argument.
       TestBuilder.command`echo 42 >test.txt`.fileEquals("test.txt", "42\n").runAsTest("echo 42 >f writes 42");

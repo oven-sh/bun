@@ -515,6 +515,38 @@ describe("lex shell", () => {
       ]);
     }
 
+    // A space between a glob atom and a digit starts a new word.
+    expect(JSON.parse(lex`echo ** 2>f`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "DoubleAsterisk": {} },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stderr: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+    expect(JSON.parse(lex`echo * 2>f`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Asterisk": {} },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stderr: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // `0<` is an stdin redirect without a spurious APPEND flag.
+    expect(JSON.parse(lex`cat 0<f`)).toEqual([
+      { "Text": "cat" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdin: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
     // Leading zeros on an fd number still resolve to the decimal value.
     expect(JSON.parse(lex`echo z 01>f`)).toEqual([
       { "Text": "echo" },

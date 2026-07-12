@@ -267,6 +267,50 @@ describe.skipIf(isASAN || isFFIUnavailable)("int8_t arg clamping", () => {
   });
 }); // </int8_t arg clamping>
 
+// uint8_t is the third clamp sibling: without the [0, 255] clamp the C
+// `(unsigned char)` cast wraps (256 -> 0, -1 -> 255).
+describe.skipIf(isASAN || isFFIUnavailable)("uint8_t arg clamping", () => {
+  const library = makeValidCase(
+    "identity_uint8",
+    /* c */ `
+      unsigned char identity_uint8(unsigned char v) { return v; }
+    `,
+    {
+      identity_uint8: { args: ["uint8_t"], returns: "uint8_t" },
+    },
+  );
+
+  it("clamps to [0, 255] instead of wrapping", () => {
+    expect(library.symbols.identity_uint8(255)).toBe(255);
+    expect(library.symbols.identity_uint8(256)).toBe(255); // would wrap to 0
+    expect(library.symbols.identity_uint8(1000)).toBe(255);
+    expect(library.symbols.identity_uint8(0)).toBe(0);
+    expect(library.symbols.identity_uint8(-1)).toBe(0); // would wrap to 255
+  });
+}); // </uint8_t arg clamping>
+
+// uint16_t is the fourth clamp sibling: without the [0, 65535] clamp the C
+// `(unsigned short)` cast wraps (65536 -> 0, -1 -> 65535).
+describe.skipIf(isASAN || isFFIUnavailable)("uint16_t arg clamping", () => {
+  const library = makeValidCase(
+    "identity_uint16",
+    /* c */ `
+      unsigned short identity_uint16(unsigned short v) { return v; }
+    `,
+    {
+      identity_uint16: { args: ["uint16_t"], returns: "uint16_t" },
+    },
+  );
+
+  it("clamps to [0, 65535] instead of wrapping", () => {
+    expect(library.symbols.identity_uint16(65535)).toBe(65535);
+    expect(library.symbols.identity_uint16(65536)).toBe(65535); // would wrap to 0
+    expect(library.symbols.identity_uint16(1000000)).toBe(65535);
+    expect(library.symbols.identity_uint16(0)).toBe(0);
+    expect(library.symbols.identity_uint16(-1)).toBe(0); // would wrap to 65535
+  });
+}); // </uint16_t arg clamping>
+
 // The double arg wrapper (before #33122) used Math.abs() when converting a
 // BigInt to double, silently flipping the sign of negative BigInts, and threw
 // a TypeError for any BigInt with |val| >= Number.MAX_VALUE. Current main

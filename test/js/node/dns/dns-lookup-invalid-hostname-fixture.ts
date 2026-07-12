@@ -96,6 +96,17 @@ const underscore = await lookup("ok_name.invalid");
 const v4 = await lookup("127.0.0.1");
 const v6 = await lookup("::1");
 
+// Scoped IPv6 via the system getaddrinfo backend: `:` and `%` fail the charset
+// check and `ares_inet_pton` cannot parse the zone suffix, so the guard must
+// strip `%zone` before the IP-literal exemption or this regresses.
+let v6scopedErr: string | null;
+try {
+  await Bun.dns.lookup("fe80::1%lo", { backend: "system" });
+  v6scopedErr = null;
+} catch (e: any) {
+  v6scopedErr = e.code ?? e.message;
+}
+
 const qnamesAfter = qnames.slice();
 
 console.log(
@@ -106,6 +117,7 @@ console.log(
     underscore: { err: underscore.err ? underscore.err.code : null, address: underscore.address },
     v4: { err: v4.err ? v4.err.code : null, address: v4.address },
     v6: { err: v6.err ? v6.err.code : null, address: v6.address },
+    v6scopedErr,
     qnames: qnamesAfter,
     originHits,
   }),

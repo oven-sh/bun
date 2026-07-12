@@ -45,6 +45,8 @@ test.skipIf(!isLinux)(
     // Numeric literals still resolve (IPv6 contains ':' and must be exempted).
     expect(out.v4).toEqual({ err: null, address: "127.0.0.1" });
     expect(out.v6).toEqual({ err: null, address: "::1" });
+    // Scoped IPv6 (`fe80::1%lo`) via the system backend still resolves.
+    expect(out.v6scopedErr).toBeNull();
 
     // The stub saw only the valid underscore query (A + optional AAAA); none of
     // the invalid names appear.

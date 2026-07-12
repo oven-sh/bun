@@ -5200,10 +5200,18 @@ impl Resolver {
         // The charset check matches glibc `getaddrinfo`: ASCII outside
         // `[A-Za-z0-9._-]` is refused locally so `/`, `*`, etc. never become a
         // wire QNAME or `Host` header. c-ares on its own accepts `/` and `*`
-        // (record-name charset). IPv6 literals contain `:` so are exempted.
+        // (record-name charset). IP literals are exempted; the RFC 4007 zone
+        // suffix (`fe80::1%eth0`) is stripped first since `ares_inet_pton`
+        // does not parse it but system `getaddrinfo` does.
         if name.len() >= MAX_PATH_BYTES
             || name.contains(&0)
-            || (!bun_dns::is_valid_lookup_name(name) && !strings::is_ip_address(name))
+            || (!bun_dns::is_valid_lookup_name(name) && {
+                let addr = match name.iter().position(|&b| b == b'%') {
+                    Some(i) => &name[..i],
+                    None => name,
+                };
+                !strings::is_ip_address(addr)
+            })
         {
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();

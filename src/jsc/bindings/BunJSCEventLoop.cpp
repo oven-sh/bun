@@ -3,18 +3,9 @@
 
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
-#include <wtf/MonotonicTime.h>
 
 #if USE(MIMALLOC)
 #include <bmalloc/mimalloc.h>
-
-// Lower the page purge delay (default 1000ms, arena mult 10 = 10s) so
-// freed pages reach the OS within a typical idle window. The env var
-// MIMALLOC_PURGE_DELAY still overrides.
-static const int s_setMimallocDefaults = [] {
-    mi_option_set_default(mi_option_purge_delay, 100);
-    return 0;
-}();
 #endif
 
 extern "C" int Bun__defaultRemainingRunsUntilSkipReleaseAccess;
@@ -67,26 +58,12 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
 
         // Note: usage of `didEnterVM` in JSC::VM conflicts with Options::validateDFGClobberize
         // We don't need to use that option, so it should be fine.
-        const bool justRanJS = vm->didEnterVM;
-        if (justRanJS) {
+        if (vm->didEnterVM) {
             vm->didEnterVM = false;
             remainingRunsUntilSkipReleaseAccess = defaultRemainingRunsUntilSkipReleaseAccess;
         }
 
         if (remainingRunsUntilSkipReleaseAccess-- > 0) {
-#if USE(MIMALLOC)
-            // Advance the Full GC timer when JS just ran and the heap is
-            // non-trivial, so freed extra memory reaches mimalloc's purger.
-            // Rate-limited; stopIfNecessary() below handles the handshake.
-            if (justRanJS) {
-                static thread_local MonotonicTime lastAbandonHint;
-                const MonotonicTime now = MonotonicTime::now();
-                if (now - lastAbandonHint > 500_ms && vm->heap.extraMemorySize() > 1024 * 1024) {
-                    lastAbandonHint = now;
-                    vm->heap.reportAbandonedObjectGraph();
-                }
-            }
-#endif
             // Constellation:
             // > If you are not moving a VM to the different thread, then you can aquire the access and do not need to release
             vm->heap.stopIfNecessary();

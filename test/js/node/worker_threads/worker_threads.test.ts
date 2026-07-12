@@ -837,6 +837,174 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   expect(message).toEqual({ sameInstance: true, text: "hello" });
 });
 
+test("MessagePort.postMessage transfers a FileHandle", async () => {
+  const dir = tmpdirSync("port-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh = await fs.promises.open(file, "r");
+  const origFd = fh.fd;
+  const { port1, port2 } = new MessageChannel();
+  let rx: any;
+  try {
+    const received = new Promise<any>(resolve => port1.on("message", resolve));
+    port2.postMessage(fh, [fh as any]);
+    rx = await received;
+    expect(fh.fd).toBe(-1);
+    expect(rx.fd).toBe(origFd);
+    expect(typeof rx.read).toBe("function");
+    const buf = Buffer.alloc(5);
+    const { bytesRead } = await rx.read(buf, 0, 5, 0);
+    expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
+  } finally {
+    if (rx?.fd >= 0) await rx.close();
+    if (fh.fd !== -1) await fh.close();
+    port1.close();
+    port2.close();
+  }
+});
+
+test("MessagePort.postMessage transfers a FileHandle with the {transfer} form", async () => {
+  const dir = tmpdirSync("port-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh = await fs.promises.open(file, "r");
+  const { port1, port2 } = new MessageChannel();
+  let rx: any;
+  try {
+    const received = new Promise<any>(resolve => port1.on("message", resolve));
+    port2.postMessage({ handle: fh }, { transfer: [fh as any] } as any);
+    rx = await received;
+    expect(fh.fd).toBe(-1);
+    expect(typeof rx.handle.read).toBe("function");
+  } finally {
+    if (rx?.handle?.fd >= 0) await rx.handle.close();
+    if (fh.fd !== -1) await fh.close();
+    port1.close();
+    port2.close();
+  }
+});
+
+test("receiveMessageOnPort reconstructs a transferred FileHandle", async () => {
+  const dir = tmpdirSync("port-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh = await fs.promises.open(file, "r");
+  const { port1, port2 } = new MessageChannel();
+  let res: any;
+  try {
+    port2.postMessage({ handle: fh, n: 1 }, [fh as any]);
+    res = receiveMessageOnPort(port1) as any;
+    expect(res.message.n).toBe(1);
+    expect(typeof res.message.handle.read).toBe("function");
+    expect(res.message.handle.fd).toBeGreaterThanOrEqual(0);
+  } finally {
+    if (res?.message?.handle?.fd >= 0) await res.message.handle.close();
+    if (fh.fd !== -1) await fh.close();
+    port1.close();
+    port2.close();
+  }
+});
+
+test("MessagePort.postMessage on an in-use FileHandle throws DataCloneError and leaves it usable", async () => {
+  const dir = tmpdirSync("port-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh = await fs.promises.open(file, "r");
+  const pending = fh.read(Buffer.alloc(5), 0, 5, 0);
+  const { port1, port2 } = new MessageChannel();
+  try {
+    expect(() => port2.postMessage(fh, [fh as any])).toThrow(expect.objectContaining({ name: "DataCloneError" }));
+    await pending;
+    expect(fh.fd).toBeGreaterThanOrEqual(0);
+    const buf = Buffer.alloc(5);
+    const { bytesRead } = await fh.read(buf, 0, 5, 0);
+    expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
+    await fh.close();
+  } finally {
+    port1.close();
+    port2.close();
+  }
+});
+
+test("MessagePort.postMessage restores a transferred FileHandle when serialization fails", async () => {
+  const dir = tmpdirSync("port-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh = await fs.promises.open(file, "r");
+  const { port1, port2 } = new MessageChannel();
+  try {
+    // The function is non-cloneable, so native postMessage throws after the
+    // handle was already neutered; the rollback must restore it.
+    expect(() => port2.postMessage({ fh, bad: () => {} }, [fh as any])).toThrow();
+    expect(fh.fd).toBeGreaterThanOrEqual(0);
+    const buf = Buffer.alloc(5);
+    const { bytesRead } = await fh.read(buf, 0, 5, 0);
+    expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
+    await fh.close();
+  } finally {
+    port1.close();
+    port2.close();
+  }
+});
+
+test("a FileHandle referenced twice in a posted message deserializes to one instance", async () => {
+  const dir = tmpdirSync("port-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh = await fs.promises.open(file, "r");
+  const { port1, port2 } = new MessageChannel();
+  let rx: any;
+  try {
+    const received = new Promise<any>(resolve => port1.on("message", resolve));
+    port2.postMessage({ a: fh, b: fh }, [fh as any]);
+    rx = await received;
+    expect(rx.a).toBe(rx.b);
+    await rx.a.close();
+    expect(rx.b.fd).toBe(-1);
+  } finally {
+    if (rx?.a?.fd >= 0) await rx.a.close();
+    if (fh.fd !== -1) await fh.close();
+    port1.close();
+    port2.close();
+  }
+});
+
+test("Worker.postMessage and parentPort.postMessage transfer FileHandles", async () => {
+  const dir = tmpdirSync("worker-fh-post");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const script = join(dir, "w.mjs");
+  fs.writeFileSync(
+    script,
+    `import { parentPort } from "node:worker_threads";
+     import { open } from "node:fs/promises";
+     parentPort.on("message", async (fh) => {
+       const buf = Buffer.alloc(5);
+       const { bytesRead } = await fh.read(buf, 0, 5, 0);
+       await fh.close();
+       const out = await open(${JSON.stringify(file)}, "r");
+       parentPort.postMessage({ text: buf.toString("utf8", 0, bytesRead), back: out }, [out]);
+     });`,
+  );
+  const fh = await fs.promises.open(file, "r");
+  const worker = new Worker(script);
+  let reply: any;
+  try {
+    worker.postMessage(fh, [fh as any]);
+    expect(fh.fd).toBe(-1);
+    [reply] = await once(worker, "message");
+    expect(reply.text).toBe("hello");
+    expect(typeof reply.back.read).toBe("function");
+    const buf = Buffer.alloc(5);
+    const { bytesRead } = await reply.back.read(buf, 0, 5, 0);
+    expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
+  } finally {
+    if (reply?.back?.fd >= 0) await reply.back.close();
+    if (fh.fd !== -1) await fh.close();
+    await worker.terminate();
+  }
+});
+
 test("MessagePort.hasRef() reports actual loop-ref state", () => {
   const { port1 } = new MessageChannel();
   expect(port1.hasRef()).toBe(false);

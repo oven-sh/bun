@@ -174,9 +174,7 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     let str = bun_jsc::JSString::opaque_ref(content.as_string()).to_slice(global);
 
     let mut map = envloader::Map::init();
-    let mut p = envloader::Loader::init(&mut map);
-    p.load_from_string::<true, false>(str.slice())?;
-    drop(p);
+    envloader::parse_node_compat(str.slice(), &mut map)?;
 
     let obj = JSValue::create_empty_object(global, map.count());
     for (k, v) in map.iter() {

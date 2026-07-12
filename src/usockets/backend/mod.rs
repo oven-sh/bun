@@ -66,10 +66,7 @@ pub(crate) const KIND_REGISTERED: u8 = PollType::Registered as u8;
 /// udata is an aligned pointer with zero low bits.
 pub(crate) const UDP_TAG_MASK: u64 = 0xF;
 
-#[cfg(not(windows))]
-const ECONNRESET_ERRNO: i32 = libc::ECONNRESET;
-#[cfg(windows)]
-const ECONNRESET_ERRNO: i32 = 10054; // WSAECONNRESET
+use crate::socket::ECONNRESET_ERRNO;
 
 /// Platform readiness bits (`LIBUS_SOCKET_READABLE`/`WRITABLE` differ per
 /// platform and cross the ABI — docs/cabi.md §8).

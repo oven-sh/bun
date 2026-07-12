@@ -27,8 +27,8 @@ use crate::{LIBUS_RECV_BUFFER_LENGTH, LIBUS_RECV_BUFFER_PADDING};
 const TLS_RECORD_CHUNK: usize = 16384;
 /// Flush the batched ciphertext to the wire every this many bytes.
 const TLS_BATCH_FLUSH: usize = 131072;
-/// `ERR_error_string_n` scratch — US_SSL_FATAL_ERROR_REASON_MAX.
-const TLS_FATAL_REASON_MAX: usize = 256;
+/// `ERR_error_string_n` scratch.
+use crate::tls::context::US_SSL_FATAL_ERROR_REASON_MAX as TLS_FATAL_REASON_MAX;
 /// C7: the C surface took `int` lengths; clamp so the return can never wrap.
 const MAX_WRITE_LEN: usize = i32::MAX as usize;
 
@@ -653,11 +653,7 @@ impl TlsState {
             if let Some(reason) = ffi::with_ctl(t(this).ctl, |c| c.take_fatal_reason()) {
                 // Fatal protocol error recorded just before this failure:
                 // report it instead of the X509 verdict (Node tlsClientError).
-                let err = us_bun_verify_error_t {
-                    error_no: -71,
-                    code: c"EPROTO".as_ptr(),
-                    reason: reason.as_ptr().cast(),
-                };
+                let err = us_bun_verify_error_t::eproto(reason.as_ptr().cast());
                 dispatch_handshake(s, false, err);
                 return;
             }
@@ -672,22 +668,11 @@ impl TlsState {
         t(this).handshake_state = HandshakeState::Completed;
         t(this).handshake_callback_fired = true;
         if let Some(reason) = ffi::with_ctl(t(this).ctl, |c| c.take_fatal_reason()) {
-            let err = us_bun_verify_error_t {
-                error_no: -71,
-                code: c"EPROTO".as_ptr(),
-                reason: reason.as_ptr().cast(),
-            };
+            let err = us_bun_verify_error_t::eproto(reason.as_ptr().cast());
             dispatch_handshake(s, false, err);
             return;
         }
-        let err = us_bun_verify_error_t {
-            error_no: -46,
-            code: c"ECONNRESET".as_ptr(),
-            reason:
-                c"Client network socket disconnected before secure TLS connection was established"
-                    .as_ptr(),
-        };
-        dispatch_handshake(s, false, err);
+        dispatch_handshake(s, false, us_bun_verify_error_t::econnreset());
     }
 
     // ── handshake driver (§2.2) ─────────────────────────────────────────────
@@ -1235,20 +1220,7 @@ impl TlsState {
         if self.ssl.is_null() {
             return us_bun_verify_error_t::default();
         }
-        // Default without a peer cert: UNABLE_TO_GET_ISSUER_CERT, exempting
-        // PSK-auth ciphers and TLS1.3 resumed sessions (§2.4).
-        let err = bssl::verify_peer_certificate(
-            self.ssl.cast_const(),
-            bssl::X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT,
-        );
-        if err == bssl::X509_V_OK {
-            return us_bun_verify_error_t::default();
-        }
-        us_bun_verify_error_t {
-            error_no: err as core::ffi::c_int,
-            code: x509_error_code(err),
-            reason: bssl::verify_error_string(err),
-        }
+        us_bun_verify_error_t::from_ssl(self.ssl.cast_const())
     }
 
     /// Session/keylog events are parked by the CTX callbacks while the SSL
@@ -1274,48 +1246,6 @@ impl TlsState {
             dispatch_keylog(s, &item);
         }
     }
-}
-
-/// Symbolic name table for X509 verify results (ports `us_X509_error_code`
-/// verbatim — 28 cases, else "UNSPECIFIED"). Values from vendor
-/// boringssl/include/openssl/x509.h.
-fn x509_error_code(err: core::ffi::c_long) -> *const core::ffi::c_char {
-    const TABLE: &[(core::ffi::c_long, &core::ffi::CStr)] = &[
-        (2, c"UNABLE_TO_GET_ISSUER_CERT"),
-        (3, c"UNABLE_TO_GET_CRL"),
-        (4, c"UNABLE_TO_DECRYPT_CERT_SIGNATURE"),
-        (5, c"UNABLE_TO_DECRYPT_CRL_SIGNATURE"),
-        (6, c"UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY"),
-        (7, c"CERT_SIGNATURE_FAILURE"),
-        (8, c"CRL_SIGNATURE_FAILURE"),
-        (9, c"CERT_NOT_YET_VALID"),
-        (10, c"CERT_HAS_EXPIRED"),
-        (11, c"CRL_NOT_YET_VALID"),
-        (12, c"CRL_HAS_EXPIRED"),
-        (13, c"ERROR_IN_CERT_NOT_BEFORE_FIELD"),
-        (14, c"ERROR_IN_CERT_NOT_AFTER_FIELD"),
-        (15, c"ERROR_IN_CRL_LAST_UPDATE_FIELD"),
-        (16, c"ERROR_IN_CRL_NEXT_UPDATE_FIELD"),
-        (17, c"OUT_OF_MEM"),
-        (18, c"DEPTH_ZERO_SELF_SIGNED_CERT"),
-        (19, c"SELF_SIGNED_CERT_IN_CHAIN"),
-        (20, c"UNABLE_TO_GET_ISSUER_CERT_LOCALLY"),
-        (21, c"UNABLE_TO_VERIFY_LEAF_SIGNATURE"),
-        (22, c"CERT_CHAIN_TOO_LONG"),
-        (23, c"CERT_REVOKED"),
-        (24, c"INVALID_CA"),
-        (25, c"PATH_LENGTH_EXCEEDED"),
-        (26, c"INVALID_PURPOSE"),
-        (27, c"CERT_UNTRUSTED"),
-        (28, c"CERT_REJECTED"),
-        (62, c"HOSTNAME_MISMATCH"),
-    ];
-    for (code, name) in TABLE {
-        if *code == err {
-            return name.as_ptr();
-        }
-    }
-    c"UNSPECIFIED".as_ptr()
 }
 
 // ── loop plaintext scratch ────────────────────────────────────────────────────

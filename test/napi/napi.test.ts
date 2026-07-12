@@ -927,8 +927,7 @@ describe.skipIf(!canBuildNodeAddons())("napi_threadsafe_function", () => {
   it("can be released after the Worker that created it exited", async () => {
     // next-swc shape: an addon creates an unref'd TSFN on a Worker's env, the
     // Worker exits (freeing its VM and event loop), and only then does another
-    // thread release the TSFN. The release must not touch the dead loop
-    // (heap-use-after-free under ASAN).
+    // thread release the TSFN — the release must not touch the dead loop.
     const fixture = /* js */ `
       const path = ${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))};
       const { Worker } = require("node:worker_threads");

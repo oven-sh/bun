@@ -9,9 +9,9 @@
 //! the handful of `unsafe fn` API items the surface requires carry
 //! item-level allows.
 #![deny(unsafe_code)]
-// The unfinished Windows port keeps `todo!` stubs whose parameters and
-// fields are unread; these two allows cover them until it lands.
-#![allow(dead_code, unused_variables)]
+// dead_code stays allowed: some items are reachable only on other target_os
+// cfgs, others are kept for C-API surface parity (docs/cabi.md).
+#![allow(dead_code)]
 #![allow(non_camel_case_types)]
 
 pub mod backend;

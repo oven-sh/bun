@@ -503,10 +503,7 @@ impl Listener {
         // on_open dispatch, attaching the owner. The listener strictly
         // outlives its listen socket (`do_stop`/`finalize` close it first),
         // so the context pointer stays valid for the hook's lifetime.
-        ls_mut(listen_socket).on_create(
-            Listener::accept_hook_body,
-            core::ptr::from_ref(&*this_ref).cast_mut().cast(),
-        );
+        ls_mut(listen_socket).on_create(Listener::accept_hook_body, this.cast::<c_void>());
         if !default_data.is_empty() {
             this_ref
                 .strong_data

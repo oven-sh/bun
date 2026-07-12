@@ -89,7 +89,7 @@ This is called when the event loop is active and needs to wait for I/O:
                ▼
 ┌─────────────────────────────────────┐
 │  4. Poll I/O via uSockets            │ ← epoll_wait/kevent with timeout
-│     (epoll_kqueue.c:251-320)        │
+│     (src/usockets/loop_/tick.rs)    │
 │     - Dispatch ready polls          │
 │     - Each I/O event treated as task│
 └──────────────┬──────────────────────┘
@@ -101,12 +101,7 @@ This is called when the event loop is active and needs to wait for I/O:
                │
                ▼
 ┌─────────────────────────────────────┐
-│  6. Call VM.onAfterEventLoop()      │
-└──────────────┬──────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────┐
-│  7. Handle rejected promises        │
+│  6. Handle rejected promises        │
 └─────────────────────────────────────┘
 ```
 
@@ -230,7 +225,7 @@ The queue maintains a map of `(pointer, task_fn)` pairs and runs each task. If a
 
 ## I/O Polling Integration
 
-### uSockets Event Loop (`epoll_kqueue.c:251-320`)
+### uSockets Event Loop (`src/usockets/loop_/tick.rs`)
 
 The I/O poll is integrated into the event loop via `us_loop_run_bun_tick()`:
 

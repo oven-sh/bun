@@ -1757,7 +1757,10 @@ mod imp {
         written
     }
 
+    const MSG_PUSH_IMMEDIATE: c_int = 0x20; // ws2def.h (0x8 is MSG_WAITALL)
+
     /// recv via winsock into the loop's shared buffer, WSAEINTR-retried.
+    /// MSG_PUSH_IMMEDIATE per the C read path (loop.c:636-640).
     pub(crate) fn recv(fd: LIBUS_SOCKET_DESCRIPTOR, buf: &mut [u8]) -> isize {
         #[cfg_attr(not(feature = "socket_fault_injection"), allow(unused_mut))]
         let mut len = buf.len();
@@ -1765,7 +1768,7 @@ mod imp {
         let len = len.min(c_int::MAX as usize) as c_int;
         let r = loop {
             // SAFETY: `buf[..len]` is a valid write of `len` bytes (len ≤ buf.len()).
-            let r = unsafe { ws2::recv(fd, buf.as_mut_ptr().cast(), len, 0) };
+            let r = unsafe { ws2::recv(fd, buf.as_mut_ptr().cast(), len, MSG_PUSH_IMMEDIATE) };
             if r == win::SOCKET_ERROR && win::wsa_errno() == win::WSAEINTR {
                 continue;
             }
@@ -1782,7 +1785,6 @@ mod imp {
     /// exposes a connect that completed-then-reset in the AFD race window.
     /// Returns 0 (still good) or the WSA error to treat as a connect error.
     pub(crate) fn connect_probe(fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int {
-        const MSG_PUSH_IMMEDIATE: c_int = 0x20; // ws2def.h (0x8 is MSG_WAITALL)
         // SAFETY: zero-length recv reads no buffer memory.
         if unsafe { ws2::recv(fd, core::ptr::null_mut(), 0, MSG_PUSH_IMMEDIATE) }
             != win::SOCKET_ERROR

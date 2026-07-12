@@ -688,8 +688,9 @@ pub(crate) mod mach {
     const MACH_PORT_LIMITS_INFO_COUNT: u32 = 1;
     const MACH_SEND_MSG: i32 = 0x1;
     const MACH_SEND_TIMEOUT: i32 = 0x10;
+    // MACH_RCV_OVERWRITE is 0 since xnu-3789 (0x1000 became
+    // MACH_RCV_GUARDED_DESC), so MACH_RCV_MSG alone matches the C build.
     const MACH_RCV_MSG: u32 = 0x2;
-    const MACH_RCV_OVERWRITE: u32 = 0x1000;
     const KERN_SUCCESS: i32 = 0;
 
     #[repr(C)]
@@ -797,7 +798,7 @@ pub(crate) mod mach {
         }
     }
 
-    /// EV_ADD|EV_ENABLE EVFILT_MACHPORT with MACH_RCV_MSG|OVERWRITE into the
+    /// EV_ADD|EV_ENABLE EVFILT_MACHPORT with MACH_RCV_MSG into the
     /// async's buffer — the kernel performs the receive itself, so dispatch
     /// never syscalls. Returns the kevent64 rc.
     pub(crate) fn kev_add(kqfd: i32, port: u32, buf: *mut core::ffi::c_void, udata: u64) -> i32 {
@@ -805,7 +806,7 @@ pub(crate) mod mach {
         e.ident = port as u64;
         e.filter = libc::EVFILT_MACHPORT;
         e.flags = libc::EV_ADD | libc::EV_ENABLE;
-        e.fflags = MACH_RCV_MSG | MACH_RCV_OVERWRITE;
+        e.fflags = MACH_RCV_MSG;
         e.ext = [buf as usize as u64, MACHPORT_BUF_LEN as u64];
         e.udata = udata;
         let mut ch = [e];

@@ -249,6 +249,12 @@ impl<T> ChunkedSlab<T> {
             (*meta).generation = bump_counter(generation);
             let cid = (*meta).chunk_id;
             let e = &mut self.chunks[cid as usize];
+            // Chunks are LSAN root regions: zero the vacant payload so stale
+            // pointer-shaped bytes can't keep dead allocations "reachable".
+            #[cfg(bun_asan)]
+            ptr.as_ptr()
+                .cast::<u8>()
+                .write_bytes(0, e.slot_size as usize - SLOT_META_BYTES);
             let slot = ptr.as_ptr().cast::<u8>().sub(SLOT_META_BYTES);
             let idx = (slot.offset_from(e.base.as_ptr()) as usize / e.slot_size as usize) as u16;
             debug_assert!((idx as u32) < e.slots);

@@ -126,13 +126,13 @@ impl us_bun_verify_error_t {
     }
 
     /// Parked fatal-reason variant (openssl.c:1489-1491). `reason` borrows
-    /// `parked` — the caller copies the reason to its stack and dispatches
+    /// the caller's stack copy of the parked reason; the caller dispatches
     /// before releasing it (§3.4).
-    pub fn eproto(parked: &FatalReason) -> Self {
+    pub fn eproto(reason: *const c_char) -> Self {
         Self {
             error_no: -71,
             code: c"EPROTO".as_ptr(),
-            reason: parked.as_cstr().as_ptr(),
+            reason,
         }
     }
 }
@@ -170,35 +170,6 @@ pub fn x509_error_code(err: c_long) -> &'static CStr {
         28 => c"CERT_REJECTED",
         62 => c"HOSTNAME_MISMATCH",
         _ => c"UNSPECIFIED",
-    }
-}
-
-/// Fatal OpenSSL reason parked for the handshake-failure dispatch — parked in
-/// the loop-shared slot whose owner is a generation-checked `SocketRef`
-/// (docs/design.md §TLS buffer ownership; stale owner = drop, never dangles).
-pub struct FatalReason {
-    /// NUL-terminated `ERR_error_string_n` output.
-    buf: [u8; US_SSL_FATAL_ERROR_REASON_MAX],
-}
-
-impl FatalReason {
-    /// `ssl_park_fatal_reason`'s formatting half (openssl.c:1456-1466):
-    /// format `ERR_peek_last_error()`; `None` when the queue is empty. The
-    /// caller (state.rs) still clears the queue and sets the fatal flag, and only
-    /// parks while the handshake is unfinished.
-    pub fn capture() -> Option<FatalReason> {
-        let err = bssl::err_peek_last_error();
-        if err == 0 {
-            return None;
-        }
-        let mut buf = [0u8; US_SSL_FATAL_ERROR_REASON_MAX];
-        bssl::err_error_string(err, &mut buf);
-        buf[US_SSL_FATAL_ERROR_REASON_MAX - 1] = 0;
-        Some(FatalReason { buf })
-    }
-
-    pub fn as_cstr(&self) -> &CStr {
-        CStr::from_bytes_until_nul(&self.buf).unwrap_or(c"")
     }
 }
 

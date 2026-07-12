@@ -2378,11 +2378,9 @@ pub struct ThreadSafeFunction {
     pub blocking_condvar: Condvar,
     pub closing: AtomicU8, // ClosingState
     pub aborted: AtomicBool,
-    /// Cleared (under `lock`) by the VM-exit cleanup hook: a worker frees its
-    /// VM — and thus `event_loop` — at shutdown, and next-swc-style addon
-    /// threads may still call release() afterwards. Once false, dispatch is
-    /// dropped instead of touching the dead loop (the TSF leaks, matching
-    /// Node's best-effort post-teardown semantics).
+    /// Cleared (under `lock`) by the VM-exit hook: addon threads may call in
+    /// after a worker frees its VM/`event_loop`. Once false, dispatch is
+    /// dropped and the TSF leaks (Node's best-effort post-teardown semantics).
     pub event_loop_alive: AtomicBool,
 }
 
@@ -2624,6 +2622,14 @@ impl ThreadSafeFunction {
         let _g = self.lock.lock_guard();
         if block {
             while self.queue.is_blocked() {
+                // Teardown may kill the drainer while we wait: bail with
+                // `closing` instead of blocking forever on a dead loop.
+                if !self.event_loop_alive.load(Ordering::SeqCst) {
+                    return NapiStatus::closing as napi_status;
+                }
+                if self.is_closing() {
+                    break;
+                }
                 self.blocking_condvar.wait(&self.lock);
             }
         } else {
@@ -2676,16 +2682,16 @@ impl ThreadSafeFunction {
     /// runs BEFORE freeing the VM). `destroy()` unregisters it, so `ctx` is
     /// always a live TSF here.
     extern "C" fn mark_event_loop_dead(ctx: *mut c_void) {
-        // SAFETY: registered in `napi_create_threadsafe_function` with a live
-        // TSF pointer; removed in `destroy()` before the TSF is freed. Shared
-        // ref: addon threads hold &self concurrently; lock + atomic store
-        // need no &mut.
+        // SAFETY: registered with a live TSF pointer, removed in `destroy()`
+        // before the TSF is freed; shared ref since addon threads hold &self.
         let self_ = unsafe { &*ctx.cast::<ThreadSafeFunction>() };
         // The lock orders this store against a foreign thread mid-release():
-        // any release that already holds the lock finishes against the
-        // still-alive VM first; later ones observe the store and bail.
+        // in-flight releases finish against the still-alive VM first.
         let _g = self_.lock.lock_guard();
         self_.event_loop_alive.store(false, Ordering::SeqCst);
+        // No drainer remains: wake every producer blocked on a full queue so
+        // it can observe the dead loop and return `napi_closing`.
+        self_.blocking_condvar.broadcast();
     }
 
     /// Consumes and frees a heap-allocated ThreadSafeFunction (allocated by `new`).

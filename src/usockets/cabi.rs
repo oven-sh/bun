@@ -8,12 +8,6 @@
 //! `us_raw_root_certs` / `us_get_root_{extra,system}_cert_instances` /
 //! `us_get_default_ca_store` are NOT exported here: root_certs*.cpp survive
 //! as C++ TUs and keep those symbols (docs/cabi.md §1.7).
-//!
-//! Feature-gated OFF by default: with the C core still compiled in this
-//! tree, these `#[no_mangle]` symbols would collide at link time. The
-//! change that deletes the C flips the `cabi` feature on — and
-//! must delete the identically-named `BUN_SOCKET_KIND_*` statics in
-//! `src/uws_sys/SocketKind.rs` in the same change (duplicate Rust symbols).
 
 use core::ffi::{CStr, c_char, c_int, c_uchar, c_uint, c_ushort, c_void};
 use core::ptr;
@@ -501,11 +495,11 @@ pub extern "C" fn us_get_remote_address_info(
     // SAFETY: nonnull socket contract; buf valid for >= 16 bytes (C contract).
     unsafe {
         let out = core::slice::from_raw_parts_mut(buf.cast::<u8>(), 16);
-        match (*s).remote_address(out) {
-            // Empty view = getpeername failed/unix: return 0 with *port
-            // untouched, matching the C early-return (socket.c:651-687).
-            Ok(view) if !view.is_empty() => {
-                *port = (*s).remote_port();
+        // Empty view = getpeername failed/unix: return 0 with *port
+        // untouched, matching the C early-return (socket.c:651-687).
+        match (*s).remote_ip_port(out) {
+            (view, p) if !view.is_empty() => {
+                *port = p;
                 view.len() as c_uint
             }
             _ => 0,
@@ -529,9 +523,9 @@ pub extern "C" fn us_get_local_address_info(
     // SAFETY: nonnull socket contract; buf valid for >= 16 bytes (C contract).
     unsafe {
         let out = core::slice::from_raw_parts_mut(buf.cast::<u8>(), 16);
-        match (*s).local_address(out) {
-            Ok(view) if !view.is_empty() => {
-                *port = (*s).local_port();
+        match (*s).local_ip_port(out) {
+            (view, p) if !view.is_empty() => {
+                *port = p;
                 view.len() as c_uint
             }
             _ => 0,

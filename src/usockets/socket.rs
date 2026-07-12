@@ -165,10 +165,10 @@ fn is_would_block(neg_errno: isize) -> bool {
 }
 
 #[cfg(not(windows))]
-const ECONNRESET_ERRNO: c_int = libc::ECONNRESET;
-/// MSVC CRT ECONNRESET: the loop.c:797 clamp used errno.h, not WSA codes.
+pub(crate) const ECONNRESET_ERRNO: c_int = libc::ECONNRESET;
+/// MSVC CRT ECONNRESET: the C (loop.c:466, loop.c:797) used errno.h, not WSA codes.
 #[cfg(windows)]
-const ECONNRESET_ERRNO: c_int = 108;
+pub(crate) const ECONNRESET_ERRNO: c_int = 108;
 
 /// socket.c:705 `#ifndef EBADF #define EBADF 9` — same value on all targets.
 const NEG_EBADF: i32 = -9;
@@ -1051,6 +1051,21 @@ impl SocketHeader {
     /// Returned slice is a view into `buf`.
     pub fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
         Ok(copy_addr(io::remote_addr(self.fd), buf))
+    }
+
+    /// One getpeername for both ip and port (Bun.serve().requestIP path);
+    /// empty slice + port -1 on failure/unix socket.
+    pub(crate) fn remote_ip_port<'a>(&self, buf: &'a mut [u8]) -> (&'a [u8], i32) {
+        let addr = io::remote_addr(self.fd);
+        let port = addr.as_ref().map_or(-1, |a| a.port());
+        (copy_addr(addr, buf), port)
+    }
+
+    /// One getsockname for both ip and port.
+    pub(crate) fn local_ip_port<'a>(&self, buf: &'a mut [u8]) -> (&'a [u8], i32) {
+        let addr = io::local_addr(self.fd);
+        let port = addr.as_ref().map_or(-1, |a| a.port());
+        (copy_addr(addr, buf), port)
     }
 
     pub fn get_fd(&self) -> Fd {

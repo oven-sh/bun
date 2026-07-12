@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isCI } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN } from "harness";
 
 describe("spawn stdin ReadableStream", () => {
   test("basic ReadableStream as stdin", async () => {
@@ -280,6 +280,191 @@ describe("spawn stdin ReadableStream", () => {
     expect(await proc.exited).toBe(0);
   });
 
+  test("erroring the stdin ReadableStream does not surface an unhandled rejection", async () => {
+    // Regression: once ReadableStream locked-state detection works, the FileSink
+    // teardown's stream.cancel() reaches readableStreamCancel, which returns a
+    // rejected promise for an already-errored stream. That promise must be marked
+    // handled, otherwise the stored error surfaces as an uncaught rejection in the
+    // parent process. Run it in a child so a stray rejection lands on its stderr.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let uncaught = 0;
+        process.on("unhandledRejection", () => { uncaught++; });
+        const stream = new ReadableStream({
+          async start(controller) {
+            controller.enqueue("hi\\n");
+            await Bun.sleep(10);
+            controller.error(new Error("stdin stream boom"));
+          },
+        });
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
+          stdin: stream,
+          stdout: "ignore",
+        });
+        await child.exited;
+        await Bun.sleep(50);
+        console.log("uncaught=" + uncaught);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("stdin stream boom");
+    expect(stdout.trim()).toBe("uncaught=0");
+    expect(exitCode).toBe(0);
+  });
+
+  // The ReadableStream -> stdin FileSink pump intentionally does not await the
+  // Promise FileSink.write() returns for writes it cannot complete synchronously
+  // (a full pipe on POSIX, every pipe write on Windows). When the child dies
+  // while one is in flight, the sink rejects that Promise with EPIPE; the pump
+  // must mark it handled or it surfaces as an unhandled rejection in the parent.
+  // Run in a child process so a stray rejection lands on its counter.
+  async function expectNoUnhandledRejectionWhenChildDies(useIterator: boolean) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let uncaught = 0;
+        process.on("unhandledRejection", () => { uncaught++; });
+        process.on("exit", () => console.log("uncaught=" + uncaught));
+
+        const chunk = Buffer.alloc(256 * 1024, "x");
+        async function* iterate(producedOne) {
+          while (true) {
+            await Bun.sleep(0);
+            producedOne();
+            yield chunk;
+          }
+        }
+        function readable(producedOne) {
+          return new ReadableStream({
+            async pull(controller) {
+              await Bun.sleep(0);
+              producedOne();
+              controller.enqueue(chunk);
+            },
+          });
+        }
+
+        // The child never reads its stdin, so a 256 KiB write can never finish
+        // and the sink always holds an in-flight write. Once a few chunks have
+        // been handed to the sink, kill the child. How far the pump gets before
+        // the parent notices the death varies, so run several rounds.
+        function round() {
+          let produced = 0;
+          const child = Bun.spawn({
+            cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
+            stdin: (${useIterator} ? iterate : readable)(() => {
+              if (++produced === 4) child.kill();
+            }),
+            stdout: "ignore",
+            stderr: "ignore",
+          });
+          return child.exited;
+        }
+        await Promise.all(Array.from({ length: 8 }, round));
+
+        // Unhandled rejections are only reported after a microtask drain; give
+        // the tracker a turn so rejections from the last exits are counted.
+        await Bun.sleep(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("EPIPE");
+    expect(stdout.trim()).toBe("uncaught=0");
+    expect(exitCode).toBe(0);
+  }
+
+  test("in-flight write when the child dies does not surface an unhandled rejection", async () => {
+    await expectNoUnhandledRejectionWhenChildDies(false);
+  });
+
+  test("in-flight write from an async iterator stdin when the child dies does not surface an unhandled rejection", async () => {
+    await expectNoUnhandledRejectionWhenChildDies(true);
+  });
+
+  // When the child dies mid-write the sink's close path must tear down the
+  // ReadableStream feeding it (for an async iterable, return the generator),
+  // or the still-running pull keeps the parent's event loop alive forever.
+  // On Windows the libuv write-error path skipped that close notification.
+  // https://github.com/oven-sh/bun/issues/33020
+  async function expectParentExitsAfterChildDies(useIterator: boolean) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const chunk = Buffer.alloc(256 * 1024, "x");
+        let produced = 0;
+        function producedOne() {
+          if (++produced === 4) child.kill();
+        }
+        async function* iterate() {
+          while (true) {
+            await Bun.sleep(1);
+            producedOne();
+            yield chunk;
+          }
+        }
+        function readable() {
+          return new ReadableStream({
+            async pull(controller) {
+              await Bun.sleep(1);
+              producedOne();
+              controller.enqueue(chunk);
+            },
+          });
+        }
+
+        // The child never reads its stdin, so a 256 KiB write can never finish
+        // and the sink holds an in-flight write when the child is killed.
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
+          stdin: (${useIterator} ? iterate : readable)(),
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+
+        await child.exited;
+        console.log("child exited");
+        // No process.exit(): the point is that the event loop drains on its own.
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("EPIPE");
+    expect(stdout.trim()).toBe("child exited");
+    // The parent reached the natural end of its event loop; it was not killed.
+    expect(proc.signalCode).toBe(null);
+    expect(exitCode).toBe(0);
+  }
+
+  test("parent exits after the child dies when stdin is an async iterable", async () => {
+    await expectParentExitsAfterChildDies(true);
+  });
+
+  test("parent exits after the child dies when stdin is a ReadableStream", async () => {
+    await expectParentExitsAfterChildDies(false);
+  });
+
   test("ReadableStream with process that exits immediately", async () => {
     const stream = new ReadableStream({
       start(controller) {
@@ -556,12 +741,59 @@ describe("spawn stdin ReadableStream", () => {
     expect(await proc.exited).toBe(0);
   });
 
+  // The native-sink pump's finally step clears the consumed tee branch's controller slot;
+  // a tee reaction queued for the source's later error/close must skip that branch instead
+  // of RELEASE_ASSERT'ing on the mismatched controller kind.
+  test.each([
+    { streamType: "bytes", finish: "error", result: "rejected upstream failed" },
+    { streamType: "bytes", finish: "close", result: "resolved done=true" },
+    { streamType: "default", finish: "error", result: "rejected upstream failed" },
+  ] as const)(
+    "tee()d $streamType stream: source $finish after stdin consumer exits does not crash",
+    async ({ streamType, finish, result }) => {
+      const script = `
+        let ctrl;
+        const src = new ReadableStream({
+          ${streamType === "bytes" ? 'type: "bytes",' : ""}
+          start(c) { ctrl = c; },
+        });
+        const [a, b] = src.tee();
+        const bRead = b.getReader().read();
+        bRead.catch(() => {});
+        const child = Bun.spawn({ cmd: [process.execPath, "-e", ""], stdin: a, stdout: "ignore", stderr: "ignore" });
+        await child.exited;
+        ${finish === "error" ? 'ctrl.error(new Error("upstream failed"));' : "ctrl.close();"}
+        const settled = await bRead.then(
+          v => "resolved done=" + v.done,
+          e => "rejected " + e.message,
+        );
+        console.log("SURVIVED", ${JSON.stringify(streamType)}, ${JSON.stringify(finish)}, settled);
+      `;
+
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: `SURVIVED ${streamType} ${finish} ${result}`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
+
   test("ReadableStream object type count", async () => {
-    const iterations =
-      isASAN && isCI
-        ? // With ASAN, entire process gets killed, including the test runner in CI. Likely an OOM or out of file descriptors.
-          10
-        : 50;
+    const iterations = isASAN
+      ? // With ASAN, entire process gets killed. Likely an OOM or out of file
+        // descriptors. 50 concurrent ASAN subprocesses also overrun the
+        // per-test timeout.
+        10
+      : 50;
 
     async function main() {
       async function iterate(i: number) {

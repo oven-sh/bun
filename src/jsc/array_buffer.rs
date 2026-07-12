@@ -3,12 +3,15 @@ use core::ptr;
 
 use crate as jsc;
 use crate::SysErrorJsc;
-use crate::c as jsc_c; // jsc.C.* (JSTypedArrayType, JSTypedArrayBytesDeallocator, JSObjectMakeTypedArrayWithArrayBuffer)
 use crate::{ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult};
 use bun_alloc::mimalloc;
 use bun_sys::{self, Fd, FdExt};
 
 bun_core::declare_scope!(ArrayBuffer, visible);
+
+/// `void (*)(void* bytes, void* deallocatorContext)` called on the JS thread
+/// when a zero-copy ArrayBuffer/typed array backing store is collected.
+pub type JSTypedArrayBytesDeallocator = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ArrayBuffer
@@ -54,9 +57,10 @@ unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `addr`/`len` are an opaque mmap region
     // C++ stores into the Buffer's `ArrayBufferContents` (adopted, freed via
-    // munmap by JSC) — same round-trip-pointer contract as
-    // `Bun__makeArrayBufferWithBytesNoCopy` below. The public wrapper that
-    // produces `addr` already discharges the validity proof.
+    // munmap by JSC). Unlike `Bun__makeArrayBufferWithBytesNoCopy` below this
+    // is not reachable with caller-chosen pointers: the only caller
+    // (`to_js_buffer_from_memfd`) maps `addr` itself via `bun_sys::mmap`, so
+    // the validity proof is discharged at that single call site.
     safe fn JSBuffer__fromMmap(global: &JSGlobalObject, addr: *mut c_void, len: usize) -> JSValue;
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); remaining args are by-value scalars.
@@ -97,28 +101,31 @@ unsafe extern "C" {
         ptr: *mut u8,
         len: usize,
     ) -> JSValue;
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `ptr`/`len`/`ctx` are opaque
-    // round-trip pointers C++ stores into the new `ArrayBufferContents` and
-    // forwards to `dealloc` on GC (never dereferenced as Rust data on this
-    // path) — same contract as `Zig__GlobalObject__create`'s `console`/`worker_ptr`.
-    // The public wrappers (`make_*_with_bytes_no_copy`) are already safe and
-    // forward these raw pointers verbatim, so the validity obligation lives at
-    // that layer.
-    safe fn Bun__makeArrayBufferWithBytesNoCopy(
+    // NOT `safe`: C++ adopts `ptr..ptr+len` as the backing store of a
+    // JS-visible ArrayBuffer (every JS read/write dereferences it) and calls
+    // `dealloc(ptr, ctx)` on GC, so these are unsafe to call with arbitrary
+    // values. The validity obligation is the documented `# Safety` contract
+    // of the `unsafe` public wrappers (`make_*_with_bytes_no_copy`) below.
+    fn Bun__makeArrayBufferWithBytesNoCopy(
         global: &JSGlobalObject,
         ptr: *mut c_void,
         len: usize,
-        dealloc: jsc_c::JSTypedArrayBytesDeallocator,
+        dealloc: JSTypedArrayBytesDeallocator,
         ctx: *mut c_void,
     ) -> JSValue;
-    safe fn Bun__makeTypedArrayWithBytesNoCopy(
+    fn Bun__makeTypedArrayWithBytesNoCopy(
         global: &JSGlobalObject,
         ty: TypedArrayType,
         ptr: *mut c_void,
         len: usize,
-        dealloc: jsc_c::JSTypedArrayBytesDeallocator,
+        dealloc: JSTypedArrayBytesDeallocator,
         ctx: *mut c_void,
+    ) -> JSValue;
+    fn Bun__createTypedArrayForCopy(
+        global: *const JSGlobalObject,
+        ty: TypedArrayType,
+        ptr: *const c_void,
+        len: usize,
     ) -> JSValue;
     fn JSC__ArrayBuffer__asBunArrayBuffer(self_: *mut JSCArrayBuffer, out: *mut ArrayBuffer);
     // safe: `JSCArrayBuffer` is an `opaque_ffi!` ZST handle (`!Freeze` via
@@ -466,26 +473,36 @@ impl ArrayBuffer {
         }
 
         if self.typed_array_type == JSType::ArrayBuffer {
-            return make_array_buffer_with_bytes_no_copy(
+            // SAFETY: this method's contract (see `from_owned_bytes`): the
+            // descriptor's `ptr` is the live backing allocation of `byte_len`
+            // bytes, mimalloc-owned and transferable; ownership moves to JSC,
+            // which frees it exactly once via `MarkedArrayBuffer_deallocator`
+            // (`mi_free`; tolerates null).
+            return unsafe {
+                make_array_buffer_with_bytes_no_copy(
+                    ctx,
+                    self.ptr.cast(),
+                    self.byte_len,
+                    Some(MarkedArrayBuffer_deallocator),
+                    // The deallocator ignores its ctx (mi_free needs no ctx). Any non-null
+                    // sentinel would do; pass the data ptr itself for symmetry with
+                    // `MarkedArrayBuffer::to_js`.
+                    self.ptr.cast(),
+                )
+            };
+        }
+
+        // SAFETY: same as the ArrayBuffer arm above.
+        unsafe {
+            make_typed_array_with_bytes_no_copy(
                 ctx,
+                self.typed_array_type.to_typed_array_type(),
                 self.ptr.cast(),
                 self.byte_len,
                 Some(MarkedArrayBuffer_deallocator),
-                // The deallocator ignores its ctx (mi_free needs no ctx). Any non-null
-                // sentinel would do; pass the data ptr itself for symmetry with
-                // `MarkedArrayBuffer::to_js`.
                 self.ptr.cast(),
-            );
+            )
         }
-
-        make_typed_array_with_bytes_no_copy(
-            ctx,
-            self.typed_array_type.to_typed_array_type(),
-            self.ptr.cast(),
-            self.byte_len,
-            Some(MarkedArrayBuffer_deallocator),
-            self.ptr.cast(),
-        )
     }
 
     pub fn to_js(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
@@ -504,56 +521,85 @@ impl ArrayBuffer {
             bun_core::scoped_log!(ArrayBuffer, "toJS but will never free: {} bytes", self.len);
 
             if self.typed_array_type == JSType::ArrayBuffer {
-                return make_array_buffer_with_bytes_no_copy(
+                // SAFETY: the descriptor's `ptr` is the live backing
+                // allocation of `byte_len` bytes. It is not mimalloc-owned
+                // (probe above), so no deallocator is installed: JSC never
+                // frees it and the bytes stay live for the object's lifetime
+                // (static/extern-owned data, per the log line above).
+                return unsafe {
+                    make_array_buffer_with_bytes_no_copy(
+                        ctx,
+                        self.ptr.cast(),
+                        self.byte_len,
+                        None,
+                        ptr::null_mut(),
+                    )
+                };
+            }
+
+            // SAFETY: same as the ArrayBuffer arm above.
+            return unsafe {
+                make_typed_array_with_bytes_no_copy(
                     ctx,
+                    self.typed_array_type.to_typed_array_type(),
                     self.ptr.cast(),
                     self.byte_len,
                     None,
                     ptr::null_mut(),
-                );
-            }
-
-            return make_typed_array_with_bytes_no_copy(
-                ctx,
-                self.typed_array_type.to_typed_array_type(),
-                self.ptr.cast(),
-                self.byte_len,
-                None,
-                ptr::null_mut(),
-            );
+                )
+            };
         }
 
         self.to_js_unchecked(ctx)
     }
 
-    pub fn to_js_with_context(
+    /// Hand this descriptor's bytes to JSC with a caller-supplied finalizer:
+    /// `callback(self.ptr, deallocator)` runs on the JS thread when the
+    /// returned object is collected (never, if `callback` is `None`).
+    ///
+    /// # Safety
+    ///
+    /// `self.ptr` must be the live backing allocation of `self.byte_len`
+    /// bytes and stay valid (including for writes) for the returned object's
+    /// entire lifetime: until `callback` runs, or indefinitely when
+    /// `callback` is `None`. `callback`, if `Some`, must be sound to invoke
+    /// exactly once with `(self.ptr, deallocator)` at GC time, and
+    /// `deallocator` must remain valid until then.
+    pub unsafe fn to_js_with_context(
         self,
         ctx: &JSGlobalObject,
         deallocator: *mut c_void,
-        callback: jsc_c::JSTypedArrayBytesDeallocator,
+        callback: JSTypedArrayBytesDeallocator,
     ) -> JsResult<JSValue> {
         if !self.value.is_empty() {
             return Ok(self.value);
         }
 
         if self.typed_array_type == JSType::ArrayBuffer {
-            return make_array_buffer_with_bytes_no_copy(
+            // SAFETY: forwarded verbatim; the caller upholds this method's
+            // contract, which matches the callee's.
+            return unsafe {
+                make_array_buffer_with_bytes_no_copy(
+                    ctx,
+                    self.ptr.cast(),
+                    self.byte_len,
+                    callback,
+                    deallocator,
+                )
+            };
+        }
+
+        // SAFETY: same as the ArrayBuffer arm above.
+        unsafe {
+            make_typed_array_with_bytes_no_copy(
                 ctx,
+                self.typed_array_type.to_typed_array_type(),
                 self.ptr.cast(),
                 self.byte_len,
                 callback,
                 deallocator,
-            );
+            )
         }
-
-        make_typed_array_with_bytes_no_copy(
-            ctx,
-            self.typed_array_type.to_typed_array_type(),
-            self.ptr.cast(),
-            self.byte_len,
-            callback,
-            deallocator,
-        )
     }
 
     #[inline]
@@ -810,21 +856,18 @@ impl BinaryType {
             | BinaryType::Float64Array
             | BinaryType::BigInt64Array
             | BinaryType::BigUint64Array => {
-                let buffer = ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, bytes)?;
-                // SAFETY: FFI — `global` is a live opaque ZST handle; `JSGlobalObject` is
-                // a ZST on the Rust side so the `*const` → `*mut` cast launders no
-                // provenance (see the aliasing note on the extern block above). `buffer` is a
-                // fresh ArrayBuffer JSValue (cell pointer), so `as_object_ref` yields a
-                // valid `JSObjectRef`.
-                let obj = unsafe {
-                    jsc_c::JSObjectMakeTypedArrayWithArrayBuffer(
-                        std::ptr::from_ref::<JSGlobalObject>(global).cast_mut(),
-                        self.to_typed_array_type().to_c(),
-                        buffer.as_object_ref(),
-                        ptr::null_mut(),
-                    )
-                };
-                Ok(JSValue::c(obj))
+                crate::host_fn::from_js_host_call(global, || {
+                    // SAFETY: `global` is a live opaque ZST handle; `bytes` is a
+                    // valid slice whose pointer/len are only read (copied) by C++.
+                    unsafe {
+                        Bun__createTypedArrayForCopy(
+                            global,
+                            self.to_typed_array_type(),
+                            bytes.as_ptr().cast(),
+                            bytes.len(),
+                        )
+                    }
+                })
             }
         }
     }
@@ -855,29 +898,6 @@ pub enum TypedArrayType {
 }
 
 impl TypedArrayType {
-    /// Maps to JSC's C-API `JSTypedArrayType` enum (declared in
-    /// `<JavaScriptCore/JSTypedArray.h>` and re-exported as
-    /// [`jsc_c::JSTypedArrayType`]).
-    pub fn to_c(self) -> jsc_c::JSTypedArrayType {
-        use jsc_c::JSTypedArrayType as C;
-        match self {
-            TypedArrayType::TypeNone => C::kJSTypedArrayTypeNone,
-            TypedArrayType::TypeInt8 => C::kJSTypedArrayTypeInt8Array,
-            TypedArrayType::TypeInt16 => C::kJSTypedArrayTypeInt16Array,
-            TypedArrayType::TypeInt32 => C::kJSTypedArrayTypeInt32Array,
-            TypedArrayType::TypeUint8 => C::kJSTypedArrayTypeUint8Array,
-            TypedArrayType::TypeUint8Clamped => C::kJSTypedArrayTypeUint8ClampedArray,
-            TypedArrayType::TypeUint16 => C::kJSTypedArrayTypeUint16Array,
-            TypedArrayType::TypeUint32 => C::kJSTypedArrayTypeUint32Array,
-            TypedArrayType::TypeFloat16 => C::kJSTypedArrayTypeNone,
-            TypedArrayType::TypeFloat32 => C::kJSTypedArrayTypeFloat32Array,
-            TypedArrayType::TypeFloat64 => C::kJSTypedArrayTypeFloat64Array,
-            TypedArrayType::TypeBigInt64 => C::kJSTypedArrayTypeBigInt64Array,
-            TypedArrayType::TypeBigUint64 => C::kJSTypedArrayTypeBigUint64Array,
-            TypedArrayType::TypeDataView => C::kJSTypedArrayTypeNone,
-        }
-    }
-
     // LAYERING: `napi_typedarray_type` is defined in `bun_runtime` (a higher-tier
     // crate that depends on `bun_jsc`). The conversion lives next to its target
     // type as `napi_typedarray_type::from_typed_array_type` in
@@ -1000,23 +1020,33 @@ impl MarkedArrayBuffer {
             return Ok(self.buffer.value);
         }
         if self.buffer.byte_len == 0 {
-            return make_typed_array_with_bytes_no_copy(
+            // SAFETY: null `ptr` with `len == 0` and no deallocator — every
+            // obligation of the callee's contract holds trivially.
+            return unsafe {
+                make_typed_array_with_bytes_no_copy(
+                    global,
+                    self.buffer.typed_array_type.to_typed_array_type(),
+                    ptr::null_mut(),
+                    0,
+                    None,
+                    ptr::null_mut(),
+                )
+            };
+        }
+        // SAFETY: this type's contract: `buffer.ptr` is the live backing
+        // allocation of `byte_len` bytes, mimalloc-owned (`from_string`/
+        // `from_bytes`); ownership moves to JSC, which frees it exactly once
+        // via `MarkedArrayBuffer_deallocator` (`mi_free`, ctx ignored).
+        unsafe {
+            make_typed_array_with_bytes_no_copy(
                 global,
                 self.buffer.typed_array_type.to_typed_array_type(),
-                ptr::null_mut(),
-                0,
-                None,
-                ptr::null_mut(),
-            );
+                self.buffer.ptr.cast(),
+                self.buffer.byte_len,
+                Some(MarkedArrayBuffer_deallocator),
+                self.buffer.ptr.cast(),
+            )
         }
-        make_typed_array_with_bytes_no_copy(
-            global,
-            self.buffer.typed_array_type.to_typed_array_type(),
-            self.buffer.ptr.cast(),
-            self.buffer.byte_len,
-            Some(MarkedArrayBuffer_deallocator),
-            self.buffer.ptr.cast(),
-        )
     }
 }
 
@@ -1036,37 +1066,65 @@ pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 // Free functions
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn make_array_buffer_with_bytes_no_copy(
+/// Wrap caller-provided bytes in a JS `ArrayBuffer` without copying. JSC
+/// adopts `ptr..ptr+len` as the backing store of the returned object and
+/// calls `deallocator(ptr, deallocator_context)` on the JS thread when it is
+/// collected (never, if `deallocator` is `None`).
+///
+/// # Safety
+///
+/// - `ptr` must be valid for reads and writes of `len` bytes (JS code can do
+///   both through the returned object) for the returned object's entire
+///   lifetime: until the deallocator runs, or indefinitely when `deallocator`
+///   is `None`. `ptr` may be null only when `len == 0`.
+/// - `deallocator`, if `Some`, must be sound to call exactly once with
+///   `(ptr, deallocator_context)` on the JS thread at GC time, and
+///   `deallocator_context` must remain valid until then.
+pub unsafe fn make_array_buffer_with_bytes_no_copy(
     global: &JSGlobalObject,
     ptr: *mut c_void,
     len: usize,
-    deallocator: jsc_c::JSTypedArrayBytesDeallocator,
+    deallocator: JSTypedArrayBytesDeallocator,
     deallocator_context: *mut c_void,
 ) -> JsResult<JSValue> {
-    // ptr/len/deallocator are forwarded as-is to JSC which adopts ownership.
     crate::host_fn::from_js_host_call(global, || {
-        Bun__makeArrayBufferWithBytesNoCopy(global, ptr, len, deallocator, deallocator_context)
+        // SAFETY: forwarded verbatim; the caller upholds this function's
+        // contract (`ptr` valid for `len` bytes until `deallocator` runs).
+        unsafe {
+            Bun__makeArrayBufferWithBytesNoCopy(global, ptr, len, deallocator, deallocator_context)
+        }
     })
 }
 
-pub fn make_typed_array_with_bytes_no_copy(
+/// Wrap caller-provided bytes in a JS typed array of `array_type` without
+/// copying. JSC adopts `ptr..ptr+len` as the backing store of the returned
+/// object and calls `deallocator(ptr, deallocator_context)` on the JS thread
+/// when it is collected (never, if `deallocator` is `None`).
+///
+/// # Safety
+///
+/// Same contract as [`make_array_buffer_with_bytes_no_copy`].
+pub unsafe fn make_typed_array_with_bytes_no_copy(
     global: &JSGlobalObject,
     array_type: TypedArrayType,
     ptr: *mut c_void,
     len: usize,
-    deallocator: jsc_c::JSTypedArrayBytesDeallocator,
+    deallocator: JSTypedArrayBytesDeallocator,
     deallocator_context: *mut c_void,
 ) -> JsResult<JSValue> {
-    // ptr/len/deallocator are forwarded as-is to JSC which adopts ownership.
     crate::host_fn::from_js_host_call(global, || {
-        Bun__makeTypedArrayWithBytesNoCopy(
-            global,
-            array_type,
-            ptr,
-            len,
-            deallocator,
-            deallocator_context,
-        )
+        // SAFETY: forwarded verbatim; the caller upholds this function's
+        // contract (`ptr` valid for `len` bytes until `deallocator` runs).
+        unsafe {
+            Bun__makeTypedArrayWithBytesNoCopy(
+                global,
+                array_type,
+                ptr,
+                len,
+                deallocator,
+                deallocator_context,
+            )
+        }
     })
 }
 

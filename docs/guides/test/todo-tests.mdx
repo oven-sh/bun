@@ -4,7 +4,7 @@ sidebarTitle: Todo tests
 mode: center
 ---
 
-To remind yourself to write a test later, use the `test.todo` function. There's no need to provide a test implementation.
+To remind yourself to write a test later, use the `test.todo` function. An implementation isn't required.
 
 ```ts test.ts icon="/icons/typescript.svg"
 import { test, expect } from "bun:test";
@@ -15,7 +15,7 @@ test.todo("unimplemented feature");
 
 ---
 
-The output of `bun test` indicates how many `todo` tests were encountered.
+The `bun test` output reports the number of `todo` tests.
 
 ```sh terminal icon="terminal"
 bun test
@@ -31,12 +31,12 @@ test.test.ts:
  1 todo
  0 fail
  2 expect() calls
-Ran 3 tests across 1 files. [74.00ms]
+Ran 3 tests across 1 file. [74.00ms]
 ```
 
 ---
 
-Optionally, you can provide a test implementation.
+You can provide a test implementation.
 
 ```ts
 import { test, expect } from "bun:test";
@@ -48,7 +48,7 @@ test.todo("unimplemented feature", () => {
 
 ---
 
-If an implementation is provided, it will not be run unless the `--todo` flag is passed. If the `--todo` flag is passed, the test will be executed and _expected to fail_ by test runner! If a todo test passes, the `bun test` run will return a non-zero exit code to signal the failure.
+Bun doesn't run the implementation unless you pass the `--todo` flag. With `--todo`, the test runs and is _expected to fail_. If a todo test passes, `bun test` returns a non-zero exit code.
 
 ```sh terminal icon="terminal"
 bun test --todo
@@ -57,7 +57,7 @@ bun test --todo
 ```txt
 my.test.ts:
 ✗ unimplemented feature
-  ^ this test is marked as todo but passes. Remove `.todo` or check that test is correct.
+  ^ this test is marked as todo but passes. Remove `.todo` if tested behavior now works
 
  0 pass
  1 fail
@@ -71,4 +71,4 @@ $ echo $?
 See also:
 
 - [Skip a test](/guides/test/skip-tests)
-- [Docs > Test runner > Writing tests](/test/writing-tests)
+- [Writing tests](/test/writing-tests)

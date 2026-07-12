@@ -149,6 +149,29 @@ describe.concurrent("fetch() with streaming", () => {
     await promise;
   });
 
+  it("throws a TypeError when the request body stream is already locked", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(await req.text());
+      },
+    });
+
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("payload"));
+        controller.close();
+      },
+    });
+    // A locked (or disturbed) body init is rejected at Request construction with a
+    // TypeError (fetch spec; Node agrees on the error), surfaced as a rejected promise.
+    stream.getReader();
+
+    await expect(fetch(server.url, { method: "POST", body: stream })).rejects.toThrow(
+      expect.objectContaining({ name: "TypeError", message: "Body object should not be disturbed or locked" }),
+    );
+  });
+
   it("can deflate with and without headers #4478", async () => {
     {
       using server = Bun.serve({

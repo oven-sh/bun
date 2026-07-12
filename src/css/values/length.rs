@@ -637,9 +637,7 @@ impl Length {
 // ─── protocol-trait impls for the calc lattice ────────────────────────────
 // These wire `LengthValue`/`Angle` into `DimensionPercentage<D>`'s bound set
 // (`protocol::{Zero,MulF32,TryAdd,TrySign,TryMap,TryOp,PartialCmp,Parse,
-// ToCss,IsCompatible}`). All forward to the inherent methods above; once
-// `crate::generics::parse_tocss_numeric_gated` un-gates these collapse into
-// blanket impls there.
+// ToCss,IsCompatible}`). All forward to the inherent methods above.
 impl protocol::Zero for LengthValue {
     #[inline]
     fn zero() -> Self {

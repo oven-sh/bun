@@ -36,11 +36,13 @@ unsafe extern "Rust" {
     /// reborrows `&mut *log` / `&mut *env` and reads `*install` if non-null.
     /// All three must point at process-lifetime Transpiler-owned storage; the
     /// returned `NonNull` names the `'static` `PackageManager` singleton.
+    /// Errs when the one-time init fails (e.g. the top-level directory is
+    /// unreadable); the failure is sticky across calls.
     fn __bun_resolver_init_package_manager(
         log: NonNull<bun_ast::Log>,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
         env: NonNull<bun_dotenv::Loader<'static>>,
-    ) -> NonNull<dyn AutoInstaller>;
+    ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_errno::SystemErrno>;
 }
 use crate::cache::Set as CacheSet;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
@@ -179,10 +181,6 @@ mod strings {
         without_trailing_slash_windows_path,
     };
     pub(super) use bun_paths::strings::*;
-    #[inline]
-    pub(super) fn index_of_any(slice: &[u8], chars: &'static [u8]) -> Option<usize> {
-        bun_core::strings::index_of_any(slice, chars)
-    }
 }
 // bun_sys shim — adds the `std.fs`-shaped dir-open surface the resolver names
 // (`openDirAbsoluteZ` / `Dir.openDirZ`) on top of the real `::bun_sys` crate.
@@ -197,7 +195,7 @@ mod bun_sys {
     pub(super) fn open_dir_absolute_z(
         path: &::bun_core::ZStr,
         opts: OpenDirOptions,
-    ) -> core::result::Result<Fd, ::bun_core::Error> {
+    ) -> crate::CrateResult<Fd> {
         #[cfg(unix)]
         let nofollow = if opts.no_follow { libc::O_NOFOLLOW } else { 0 };
         #[cfg(not(unix))]
@@ -213,7 +211,7 @@ mod bun_sys {
         dir: Fd,
         path: &[u8],
         _opts: OpenDirOptions,
-    ) -> core::result::Result<Fd, ::bun_core::Error> {
+    ) -> crate::CrateResult<Fd> {
         // NOTE: callers pass either a `&'static [u8]` literal or a NUL-terminated
         // slice; `open_dir_at` builds its own ZStr internally so we strip the sentinel.
         let path = if path.last() == Some(&0) {
@@ -233,10 +231,7 @@ mod bun_sys {
 /// resolver body can spell `fd.close()` / `fd.get_fd_path(buf)`.
 trait FdExt: Sized {
     fn close(self);
-    fn get_fd_path<'b>(
-        self,
-        buf: &'b mut ::bun_paths::PathBuffer,
-    ) -> core::result::Result<&'b [u8], ::bun_core::Error>;
+    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]>;
 }
 impl FdExt for ::bun_sys::Fd {
     #[inline]
@@ -244,10 +239,7 @@ impl FdExt for ::bun_sys::Fd {
         let _ = ::bun_sys::close(self);
     }
     #[inline]
-    fn get_fd_path<'b>(
-        self,
-        buf: &'b mut ::bun_paths::PathBuffer,
-    ) -> core::result::Result<&'b [u8], ::bun_core::Error> {
+    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]> {
         ::bun_sys::get_fd_path(self, buf)
             .map(|s| &*s)
             .map_err(Into::into)
@@ -543,13 +535,11 @@ pub struct Resolver<'a> {
 
     /// Auto-install backend. `bun_install::PackageManager` implements
     /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
-    /// below `bun_install` in the dep graph. The runtime/bundler that enables
-    /// auto-install (`opts.global_cache != .disable`) is responsible for
-    /// constructing the `PackageManager`
-    /// and assigning it here BEFORE resolution; the resolver does not
-    /// construct it lazily — that would require depending on `bun_install`,
-    /// which depends on us. When `None`, [`get_package_manager`] panics if the
-    /// auto-install path is reached.
+    /// below `bun_install` in the dep graph. `None` until the auto-install
+    /// path is first reached: [`get_package_manager`] then initializes the
+    /// singleton through the link-time `__bun_resolver_init_package_manager`
+    /// factory and caches the pointer here. A failed init (e.g. unreadable
+    /// top-level directory) is returned as an error and leaves this `None`.
     pub package_manager: Option<NonNull<dyn AutoInstaller>>,
     pub on_wake_package_manager: Install::WakeHandler,
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
@@ -877,10 +867,13 @@ impl<'a> Resolver<'a> {
     /// process-static singleton as a `dyn AutoInstaller`. We then wire
     /// `on_wake` and cache the pointer. Reached from
     /// the auto-install path (`load_node_modules` global-cache block) when
-    /// [`use_package_manager`] is `true`.
-    pub fn get_package_manager(&mut self) -> *mut dyn AutoInstaller {
+    /// [`use_package_manager`] is `true`. Errs (without caching, but sticky
+    /// inside the factory) when the one-time init fails, e.g. the top-level
+    /// directory was deleted or is unreadable — callers surface that as a
+    /// resolve failure rather than panicking.
+    pub fn get_package_manager(&mut self) -> crate::CrateResult<*mut dyn AutoInstaller> {
         if let Some(pm) = self.package_manager {
-            return pm.as_ptr();
+            return Ok(pm.as_ptr());
         }
         // SAFETY: `DotEnv::Loader<'a>` is layout-identical across `'a`;
         // `init_with_runtime` only borrows it for the synchronous init (the
@@ -895,11 +888,11 @@ impl<'a> Resolver<'a> {
         // process-lifetime storage (Transpiler-owned). The returned pointer
         // names the `PackageManager` singleton (`'static`).
         let pm: NonNull<dyn AutoInstaller> =
-            unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) };
+            unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) }?;
         // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
         unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
         self.package_manager = Some(pm);
-        pm.as_ptr()
+        Ok(pm.as_ptr())
     }
 
     /// Safe accessor for the optional [`AutoInstaller`] back-reference.
@@ -1052,10 +1045,7 @@ impl<'a> Resolver<'a> {
         self.match_tsconfig_paths(tsconfig, import_path, kind, out)
     }
 
-    pub fn flush_debug_logs(
-        &mut self,
-        flush_mode: FlushMode,
-    ) -> core::result::Result<(), bun_core::Error> {
+    pub fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
         // NOTE: capture `log` before partially borrowing `self.debug_logs`
         // so the method call doesn't conflict with the field borrow (`log()`
         // derefs the raw `*mut Log` and is lifetime-decoupled from `&self`).
@@ -1301,7 +1291,7 @@ impl<'a> Resolver<'a> {
         match DataURL::parse(import_path) {
             Err(_) => {
                 self.extension_order = original_order;
-                return ResultUnion::Failure(bun_core::err!("InvalidDataURL"));
+                return ResultUnion::Failure(crate::Error::InvalidDataURL);
             }
             Ok(Some(data_url)) => {
                 // "import 'data:text/javascript,console.log(123)';"
@@ -1420,7 +1410,7 @@ impl<'a> Resolver<'a> {
                 //     debug.add_note(b"Cannot resolve this path without a directory".to_vec());
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
-                // return ResultUnion::Failure(bun_core::err!("MissingResolveDir"));
+                // return ResultUnion::Failure(crate::Error::MissingResolveDir);
                 break 'brk Fs::FileSystem::instance().top_level_dir;
             }
 
@@ -1432,7 +1422,7 @@ impl<'a> Resolver<'a> {
                 //     debug.add_note(b"Cannot resolve this path without an absolute directory".to_vec());
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
-                // return ResultUnion::Failure(bun_core::err!("InvalidResolveDir"));
+                // return ResultUnion::Failure(crate::Error::InvalidResolveDir);
                 break 'brk Fs::FileSystem::instance().top_level_dir;
             }
 
@@ -1551,12 +1541,10 @@ impl<'a> Resolver<'a> {
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
-    ) -> core::result::Result<Result, bun_core::Error> {
+    ) -> crate::CrateResult<Result> {
         match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::disable) {
             ResultUnion::Success(result) => Ok(result),
-            ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                Err(bun_core::err!("ModuleNotFound"))
-            }
+            ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
             ResultUnion::Failure(e) => Err(e),
         }
     }
@@ -1568,7 +1556,7 @@ impl<'a> Resolver<'a> {
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
-    ) -> core::result::Result<Result, bun_core::Error> {
+    ) -> crate::CrateResult<Result> {
         // SAFETY: `import_path` is caller-interned (source text / DirnameStore)
         // and outlives the returned Result. TODO: thread an explicit lifetime.
         let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
@@ -1609,7 +1597,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         result: &mut Result,
         kind: ast::ImportKind,
-    ) -> core::result::Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         if result.flags.is_external() {
             return Ok(());
         }
@@ -1760,8 +1748,12 @@ impl<'a> Resolver<'a> {
                             // return them as `Result.Union.failure` — never
                             // panic on EACCES/EMFILE/ELOOP here.
                             let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
-                                .map_err(Into::<bun_core::Error>::into)?;
-                            query.entry().set_cache_fd(file);
+                                .map_err(Into::<crate::Error>::into)?;
+                            {
+                                // Every cached-`Entry` rewrite takes the per-entry mutex.
+                                let _entry_guard = query.entry().mutex.lock_guard();
+                                query.entry().set_cache_fd(file);
+                            }
                             Fs::FileSystem::set_max_fd(file.native());
                         }
 
@@ -1779,6 +1771,8 @@ impl<'a> Resolver<'a> {
                         scopeguard::defer! {
                             if need_close {
                                 let e = entry_ref.get();
+                                // Every cached-`Entry` rewrite takes the per-entry mutex.
+                                let _entry_guard = e.mutex.lock_guard();
                                 let fd = e.cache().fd;
                                 if fd.is_valid() {
                                     fd.close();
@@ -1796,9 +1790,13 @@ impl<'a> Resolver<'a> {
                                 bstr::BStr::new(path.text())
                             ));
                         }
-                        query
-                            .entry()
-                            .set_cache_symlink(Interned::from_static(symlink));
+                        {
+                            // Every cached-`Entry` rewrite takes the per-entry mutex.
+                            let _entry_guard = query.entry().mutex.lock_guard();
+                            query
+                                .entry()
+                                .set_cache_symlink(Interned::from_static(symlink));
+                        }
                         if !result.file_fd.is_valid() && store_fd {
                             result.file_fd = query.entry().cache().fd;
                         }
@@ -3001,7 +2999,34 @@ impl<'a> Resolver<'a> {
                 // `log()`. The PackageManager lives in a separate allocation, so
                 // derive a raw pointer once and re-borrow per use — disjoint
                 // from `self`'s storage.
-                let manager_ptr: *mut dyn AutoInstaller = self.get_package_manager();
+                let manager_ptr: *mut dyn AutoInstaller = match self.get_package_manager() {
+                    Ok(pm) => pm,
+                    Err(err) => {
+                        // One-time init reads the top-level directory, which
+                        // can fail at runtime (cwd deleted, EACCES, a dropped
+                        // network drive). Report it as a catchable resolve
+                        // error; the `Metadata::Resolve` msg carries the text
+                        // for `import.meta.resolveSync` & co.
+                        let top_level_dir = self.fs_ref().top_level_dir;
+                        self.log_mut().add_resolve_error(
+                            None,
+                            bun_ast::Range::NONE,
+                            format_args!(
+                                "Cannot read directory \"{}\": {} while resolving \"{}\"",
+                                bstr::BStr::new(top_level_dir),
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(import_path)
+                            ),
+                            import_path,
+                            kind,
+                            bun_ast::Error::ModuleNotFound,
+                        );
+                        if let Some(d) = self.debug_logs.as_mut() {
+                            d.decrease_indent();
+                        }
+                        return MatchStatus::Failure(err);
+                    }
+                };
                 macro_rules! manager {
                     () => {
                         // SAFETY: re-borrowed narrowly per use; PackageManager outlives resolver.
@@ -3090,9 +3115,9 @@ impl<'a> Resolver<'a> {
                                 if let Some(d) = self.debug_logs.as_mut() {
                                     d.decrease_indent();
                                 }
-                                return MatchStatus::Failure(bun_core::err!(
-                                    "VersionSpecifierNotAllowedHere"
-                                ));
+                                return MatchStatus::Failure(
+                                    crate::Error::VersionSpecifierNotAllowedHere,
+                                );
                             }
                             string_buf = esm.version;
                             dependency_version = match manager!().parse_dependency(
@@ -3162,7 +3187,7 @@ impl<'a> Resolver<'a> {
                     Ok(p) => p,
                     Err(err) => {
                         // if it's missing, we need to install it
-                        if err == bun_core::err!("FileNotFound") {
+                        if err == bun_core::Error::FileNotFound {
                             match manager!().get_preinstall_state(resolved_package_id) {
                                 Install::PreinstallState::Done => {
                                     // NOTE: `MatchResult.path_pair` is `Path<'static>`;
@@ -3217,7 +3242,9 @@ impl<'a> Resolver<'a> {
                                             if let Some(d) = self.debug_logs.as_mut() {
                                                 d.decrease_indent();
                                             }
-                                            return MatchStatus::Failure(enqueue_download_err);
+                                            return MatchStatus::Failure(
+                                                enqueue_download_err.into(),
+                                            );
                                         }
                                     }
 
@@ -3240,7 +3267,7 @@ impl<'a> Resolver<'a> {
                         if let Some(d) = self.debug_logs.as_mut() {
                             d.decrease_indent();
                         }
-                        return MatchStatus::Failure(err);
+                        return MatchStatus::Failure(err.into());
                     }
                 };
 
@@ -3414,7 +3441,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         dir_path_maybe_trail_slash: &[u8],
         package_id: Install::PackageID,
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
         debug_assert!(self.package_manager.is_some());
 
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
@@ -3615,7 +3642,13 @@ impl<'a> Resolver<'a> {
         let input_package_id = *input_package_id_;
         // NOTE: see `manager_ptr` note in `load_node_modules` — split the
         // `&mut self` borrow by holding the PackageManager via raw pointer.
-        let pm_ptr: *mut dyn AutoInstaller = self.get_package_manager();
+        // Init failure is unreachable in practice (`load_node_modules`
+        // initialized the manager before calling here), but propagate rather
+        // than unwrap so the invariant isn't load-bearing for safety.
+        let pm_ptr: *mut dyn AutoInstaller = match self.get_package_manager() {
+            Ok(pm) => pm,
+            Err(err) => return DependencyToResolve::Failure(err),
+        };
         macro_rules! pm {
             () => {
                 // SAFETY: PackageManager lives in a separate allocation; disjoint from `self`.
@@ -3650,14 +3683,14 @@ impl<'a> Resolver<'a> {
                     },
                 ) {
                     Ok(id) => id,
-                    Err(err) => return DependencyToResolve::Failure(err),
+                    Err(err) => return DependencyToResolve::Failure(err.into()),
                 };
                 package_json.package_manager_package_id = id;
             } else {
                 // we're resolving an unknown package
                 // the unknown package is the root package
                 if let Err(err) = pm!().lockfile_append_root_stub() {
-                    return DependencyToResolve::Failure(err);
+                    return DependencyToResolve::Failure(err.into());
                 }
             }
         }
@@ -3698,7 +3731,7 @@ impl<'a> Resolver<'a> {
                     return DependencyToResolve::NotFound;
                 }
                 Install::EnqueueResult::Failure(err) => {
-                    return DependencyToResolve::Failure(err);
+                    return DependencyToResolve::Failure(err.into());
                 }
             }
         }
@@ -3947,7 +3980,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         file: &[u8],
         dirname_fd: FD,
-    ) -> core::result::Result<Option<Box<TSConfigJSON>>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
@@ -4042,7 +4075,7 @@ impl<'a> Resolver<'a> {
         file: &[u8],
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
-    ) -> core::result::Result<Option<core::ptr::NonNull<PackageJSON>>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<core::ptr::NonNull<PackageJSON>>> {
         use crate::package_json::{IncludeDependencies, IncludeScripts};
         // NOTE: `IncludeDependencies` is a
         // const generic on `PackageJSON::parse`, `IncludeScripts` is runtime (it only
@@ -4077,17 +4110,11 @@ impl<'a> Resolver<'a> {
         Ok(Some(intern_package_json(pkg)))
     }
 
-    fn dir_info_cached(
-        &mut self,
-        path: &[u8],
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
+    fn dir_info_cached(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
         self.dir_info_cached_maybe_log(true, path)
     }
 
-    pub fn read_dir_info(
-        &mut self,
-        path: &[u8],
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
+    pub fn read_dir_info(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
         self.dir_info_cached_maybe_log(false, path)
     }
 
@@ -4104,7 +4131,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         enable_logging: bool,
         raw_input_path: &[u8],
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
         // `self.mutex` is `&'static Mutex` (Copy) — bind it first so the guard
         // doesn't keep `self` borrowed across the body.
         let _unlock = self.mutex.lock_guard();
@@ -4186,7 +4213,7 @@ impl<'a> Resolver<'a> {
         enable_logging: bool,
         input_path: &[u8],
         top_result: allocators::Result,
-    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
         let dir_info_uncached_path_buf = bufs!(dir_info_uncached_path);
 
         let mut i: usize = 1;
@@ -4389,7 +4416,7 @@ impl<'a> Resolver<'a> {
                     let sentinel = bun_core::ZStr::from_buf(path, nul_at);
 
                     #[cfg(unix)]
-                    let open_req: core::result::Result<FD, bun_core::Error> = {
+                    let open_req: crate::CrateResult<FD> = {
                         bun_sys::open_dir_absolute_z(
                             sentinel,
                             bun_sys::OpenDirOptions {
@@ -4399,7 +4426,7 @@ impl<'a> Resolver<'a> {
                         )
                     };
                     #[cfg(windows)]
-                    let open_req: core::result::Result<FD, bun_core::Error> = {
+                    let open_req: crate::CrateResult<FD> = {
                         bun_sys::open_dir_at_windows_a(
                             FD::INVALID,
                             sentinel.as_bytes(),
@@ -4432,9 +4459,8 @@ impl<'a> Resolver<'a> {
                             // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
                             // list which contains such paths and treating them as missing means we just
                             // ignore them during path resolution.
-                            if err == bun_core::err!("ENOTDIR")
-                                || err == bun_core::err!("IsDir")
-                                || err == bun_core::err!("NotDir")
+                            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
+                                || err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                             {
                                 return Ok(None);
                             }
@@ -4449,9 +4475,7 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
-                            if !(err == bun_core::err!("ENOENT")
-                                || err == bun_core::err!("FileNotFound"))
-                            {
+                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
@@ -5696,10 +5720,8 @@ impl<'a> Resolver<'a> {
 
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
-                e if e == bun_core::err!("ENOENT")
-                    || e == bun_core::err!("FileNotFound")
-                    || e == bun_core::err!("ENOTDIR")
-                    || e == bun_core::err!("NotDir") => {}
+                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,
@@ -5994,7 +6016,7 @@ impl<'a> Resolver<'a> {
         parent_index: allocators::IndexType,
         fd: FD,
         package_id: Option<Install::PackageID>,
-    ) -> core::result::Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         let result = _result;
 
         // SAFETY: RealFS is the process-global ARENA singleton. `Entry::kind` /
@@ -6186,13 +6208,16 @@ impl<'a> Resolver<'a> {
                             && !lookup.entry().cache().fd.is_valid()
                             && self.store_fd
                         {
+                            // Every cached-`Entry` rewrite takes the per-entry mutex.
+                            let _entry_guard = lookup.entry().mutex.lock_guard();
                             lookup.entry().set_cache_fd(entries_fd);
                         }
-                        // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
+                        // SAFETY: EntryStore-owned slot — read-only borrow,
                         // dies (NLL) before any later `&mut` to this slot.
                         let entry = lookup.entry();
 
-                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                        // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
+                        // rewrite inside `symlink()` is serialized on `Entry.mutex`.
                         let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
@@ -6232,9 +6257,13 @@ impl<'a> Resolver<'a> {
                                 .ok();
                                 logs.add_note(buf);
                             }
-                            lookup
-                                .entry()
-                                .set_cache_symlink(Interned::from_static(symlink));
+                            {
+                                // Every cached-`Entry` rewrite takes the per-entry mutex.
+                                let _entry_guard = lookup.entry().mutex.lock_guard();
+                                lookup
+                                    .entry()
+                                    .set_cache_symlink(Interned::from_static(symlink));
+                            }
                             info.abs_real_path = symlink;
                         }
                     }
@@ -6376,8 +6405,7 @@ impl<'a> Resolver<'a> {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
                         let pretty = tsconfigpath;
-                        if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound")
-                        {
+                        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             let _ = self.log_mut().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
@@ -6386,9 +6414,8 @@ impl<'a> Resolver<'a> {
                                     bun_core::fmt::quote(pretty)
                                 ),
                             );
-                        } else if err != bun_core::err!("ParseErrorAlreadyLogged")
-                            && err != bun_core::err!("IsDir")
-                            && err != bun_core::err!("EISDIR")
+                        } else if err != crate::Error::ParseErrorAlreadyLogged
+                            && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                         {
                             let _ = self.log_mut().add_error_fmt(
                                 None,
@@ -6546,7 +6573,7 @@ impl<'a> Resolver<'a> {
 enum DependencyToResolve {
     NotFound,
     Pending(Box<PendingResolution>),
-    Failure(bun_core::Error),
+    Failure(crate::Error),
     Resolution(Resolution),
 }
 

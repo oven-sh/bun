@@ -285,7 +285,6 @@ pub enum ParseRequestError {
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseRequestError);
-bun_core::named_error_set!(ParseRequestError);
 
 pub struct Request<'a> {
     pub method: &'a [u8],
@@ -515,14 +514,13 @@ impl fmt::Display for StatusCodeFormatter {
 // Response
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParseResponseError {
     #[strum(serialize = "Malformed_HTTP_Response")]
     MalformedHttpResponse,
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseResponseError);
-bun_core::named_error_set!(ParseResponseError);
 
 #[derive(Clone, Copy)]
 pub struct Response<'a> {
@@ -627,16 +625,31 @@ impl<'a> Response<'a> {
                 *offset += buf.len();
                 Err(ParseResponseError::ShortRead)
             }
-            _ => Ok(Response {
-                minor_version: usize::try_from(minor_version).expect("int cast"),
-                status_code: u32::try_from(status_code).expect("int cast"),
-                // SAFETY: on success, ptr/len point into `buf`.
-                status: unsafe { bun_core::ffi::slice(status_ptr, status_len) },
-                headers: HeaderList {
-                    list: &src[0..num_headers.min(src.len())],
-                },
-                bytes_read: rc,
-            }),
+            _ => {
+                // RFC 9112 section 5.2: picohttpparser surfaces an obs-fold
+                // continuation line as a separate entry with an empty name.
+                // `Response` has no way to splice it back into the preceding
+                // field value, and silently dropping it corrupts the value
+                // (and, for Transfer-Encoding / Content-Length, the message
+                // framing). Treat the fold as malformed; Node does the same.
+                if src[0..num_headers.min(src.len())]
+                    .iter()
+                    .any(Header::is_multiline)
+                {
+                    bun_core::debug!("obs-fold in HTTP response:\n{}", BStr::new(buf));
+                    return Err(ParseResponseError::MalformedHttpResponse);
+                }
+                Ok(Response {
+                    minor_version: usize::try_from(minor_version).expect("int cast"),
+                    status_code: u32::try_from(status_code).expect("int cast"),
+                    // SAFETY: on success, ptr/len point into `buf`.
+                    status: unsafe { bun_core::ffi::slice(status_ptr, status_len) },
+                    headers: HeaderList {
+                        list: &src[0..num_headers.min(src.len())],
+                    },
+                    bytes_read: rc,
+                })
+            }
         }
     }
 
@@ -683,7 +696,6 @@ pub enum ParseHeadersError {
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseHeadersError);
-bun_core::named_error_set!(ParseHeadersError);
 
 pub struct Headers<'a> {
     pub headers: &'a [Header],

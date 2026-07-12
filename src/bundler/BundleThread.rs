@@ -19,9 +19,7 @@ pub(crate) extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) 
 pub use bun_threading::ResetEvent;
 
 /// Result of a `Bun.build` invocation handed back to the JS thread.
-// Defined here (not re-exported from `bundle_v2`) because the un-gated
-// `bundle_v2` module keeps the draft body private; T6 (`bundler_jsc`) consumes
-// this via the `CompletionStruct` trait.
+/// Consumed by `bundler_jsc` via the `CompletionStruct` trait.
 pub struct BuildResult {
     pub output_files: Vec<crate::options::OutputFile>,
     pub metafile: Option<Box<[u8]>>,
@@ -30,7 +28,7 @@ pub struct BuildResult {
 
 pub enum BundleV2Result {
     Pending,
-    Err(bun_core::Error),
+    Err(crate::Error),
     Value(BuildResult),
 }
 
@@ -66,7 +64,7 @@ pub trait CompletionStruct: Node + Send + 'static {
         &mut self,
         transpiler: &mut Transpiler<'a>,
         bump: &'a Arena,
-    ) -> Result<(), bun_core::Error>;
+    ) -> Result<(), crate::Error>;
     fn complete_on_bundle_thread(&mut self);
     fn set_result(&mut self, result: BundleV2Result);
     fn set_log(&mut self, log: bun_ast::Log);
@@ -92,7 +90,7 @@ pub trait CompletionStruct: Node + Send + 'static {
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
-    ) -> Result<&'a mut Transpiler<'a>, bun_core::Error>;
+    ) -> Result<&'a mut Transpiler<'a>, crate::Error>;
 
     /// Constructs the `BundleV2`, wires `plugins`/`completion`/`file_map`,
     /// and runs the bundle.
@@ -110,7 +108,7 @@ pub trait CompletionStruct: Node + Send + 'static {
         // stores it as `worker_pool: *mut ThreadPool` and `WorkPool::get()`
         // hands out `&'static`; materializing `&mut` from that would be UB.
         thread_pool: *mut bun_threading::ThreadPool,
-    ) -> Result<(), bun_core::Error>;
+    ) -> Result<(), crate::Error>;
 }
 
 impl<C: CompletionStruct> BundleThread<C> {
@@ -257,7 +255,7 @@ impl<C: CompletionStruct> BundleThread<C> {
     fn generate_in_new_thread(
         completion: &mut C,
         generation: bun_core::Generation,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let heap = Arena::new();
 
         let bump = &heap;

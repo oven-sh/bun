@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
+import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
 import { bunEnv, bunExe } from "harness";
 
 describe("randomInt args validation", () => {
@@ -186,5 +186,44 @@ describe("randomFill default size with multi-byte typed arrays", () => {
       if (bytes.subarray(744, 800).some(b => b !== 0)) tailFilled = true;
     }
     expect(tailFilled).toBe(true);
+  });
+});
+
+describe("checkPrime candidate handling", () => {
+  it("checkPrimeSync uses the candidate bytes provided at call time", () => {
+    expect(checkPrimeSync(Buffer.from([7]), { checks: 1 })).toBe(true);
+    expect(checkPrimeSync(Buffer.from([9]), { checks: 1 })).toBe(false);
+
+    const candidate = Buffer.from([7]);
+    let checksReads = 0;
+    const result = checkPrimeSync(candidate, {
+      get checks() {
+        checksReads++;
+        candidate[0] = 9;
+        return 1;
+      },
+    });
+    expect(checksReads).toBe(1);
+    expect(result).toBe(true);
+  });
+
+  it("checkPrime uses the candidate bytes provided at call time", async () => {
+    const candidate = Buffer.from([7]);
+    let checksReads = 0;
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    checkPrime(
+      candidate,
+      {
+        get checks() {
+          checksReads++;
+          candidate[0] = 9;
+          return 1;
+        },
+      },
+      (err, result) => (err ? reject(err) : resolve(result)),
+    );
+    const result = await promise;
+    expect(checksReads).toBe(1);
+    expect(result).toBe(true);
   });
 });

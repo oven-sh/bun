@@ -1,6 +1,6 @@
 import { $ as Shell, fileURLToPath } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, makeTree } from "harness";
+import { bunEnv, bunExe, isDebug, makeTree } from "harness";
 import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -50,9 +50,9 @@ beforeAll(async () => {
 
     await $`
       cd ${BUN_TYPES_PACKAGE_ROOT}
-      bun run build
+      BUN_VERSION=${BUN_VERSION} bun run build
       bun pm pack --destination ${BASE_FIXTURE_DIR}
-      rm CLAUDE.md
+      rm -f CLAUDE.md
       mv package.json.backup package.json
 
       cd ${BASE_FIXTURE_DIR}
@@ -113,7 +113,10 @@ async function createIsolatedFixture(packages?: string[]): Promise<string> {
 }
 
 function typeTest(name: string, config: TypeTestConfig) {
-  test(name, async () => {
+  // This file only tests the bun-types .d.ts, not bun's own code. Driving the
+  // TypeScript LanguageService in-process under a debug build is ~40x slower,
+  // so run the type-checking cases on release builds only.
+  test.skipIf(isDebug)(name, async () => {
     const fixtureDir = await createIsolatedFixture(config.packages);
     const { diagnostics, emptyInterfaces } = await diagnose(fixtureDir, {
       options: config.options,
@@ -183,10 +186,10 @@ async function diagnose(
     },
     getCurrentDirectory: () => fixtureDir,
     getCompilationSettings: () => options,
-    getDefaultLibFileName: options => {
-      const defaultLibFileName = ts.getDefaultLibFileName(options);
-      return join(fixtureDir, "node_modules", "typescript", "lib", defaultLibFileName);
-    },
+    // Resolve lib.*.d.ts from the same TypeScript install that provides this compiler API.
+    // typescript@7 (native) no longer ships lib/lib.*.d.ts in its npm package, so the
+    // fixture's `typescript` dep cannot be used as the lib source.
+    getDefaultLibFileName: options => ts.getDefaultLibFilePath(options),
     fileExists: ts.sys.fileExists,
     readFile: ts.sys.readFile,
     readDirectory: ts.sys.readDirectory,
@@ -308,6 +311,12 @@ afterAll(async () => {
 });
 
 describe("@types/bun integration test", () => {
+  test("packed bun-types includes CLAUDE.md", async () => {
+    const claude = Bun.file(join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "CLAUDE.md"));
+    expect(await claude.exists()).toBe(true);
+    expect((await claude.text()).length).toBeGreaterThan(0);
+  });
+
   describe("basic type checks", () => {
     typeTest("checks without lib.dom.d.ts", {
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
@@ -319,7 +328,7 @@ describe("@types/bun integration test", () => {
   // so unlike the tests above we have to write a real tsconfig and spawn the CLI.
   // https://devblogs.microsoft.com/typescript/announcing-typescript-7-0-beta/
   describe("tsgo (TypeScript 7 native preview)", () => {
-    test("checks without lib.dom.d.ts", async () => {
+    test.skipIf(isDebug)("checks without lib.dom.d.ts", async () => {
       const fixtureDir = await createIsolatedFixture(["@typescript/native-preview"]);
 
       const tsconfig = structuredClone(sourceTsconfig);
@@ -327,7 +336,11 @@ describe("@types/bun integration test", () => {
       tsconfig.include = ["*.ts", "*.tsx"];
       await Bun.write(join(fixtureDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 
-      const tsgo = join(fixtureDir, "node_modules", "@typescript", "native-preview", "bin", "tsgo.js");
+      // Resolve the entrypoint from the package's own bin field; the nightly
+      // has renamed it before (bin/tsgo.js -> bin/tsgo).
+      const tsgoPkgDir = join(fixtureDir, "node_modules", "@typescript", "native-preview");
+      const tsgoPkg = await Bun.file(join(tsgoPkgDir, "package.json")).json();
+      const tsgo = join(tsgoPkgDir, typeof tsgoPkg.bin === "string" ? tsgoPkg.bin : tsgoPkg.bin.tsgo);
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), tsgo, "-p", "."],

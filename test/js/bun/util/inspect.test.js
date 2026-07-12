@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 
@@ -588,6 +588,37 @@ it("Bun.inspect array with non-indexed properties", () => {
   expect(Bun.inspect(a)).toBe(`[
   1, 2, 3, 15 x empty items, 24, 23 x empty items, potato: "hello"
 ]`);
+});
+
+// Printing a sparse array must never iterate index-by-index over the holes:
+// `length` can be up to 2^32 - 1 with no elements in the array at all.
+// Run it in a child so a regression times this test out instead of hanging the runner.
+it("Bun.inspect huge sparse array summarizes holes without iterating them", async () => {
+  const code = `
+    const a = new Array(4_294_967_294);
+    console.log(Bun.inspect(a));
+    const b = [];
+    b[4_294_967_292] = "x";
+    console.log(Bun.inspect(b));
+    const c = [1, 2, 3];
+    c.length = 4_294_967_294;
+    console.log(c);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout:
+      "[\n  4294967294 x empty items\n]\n" +
+      '[\n  4294967292 x empty items, "x"\n]\n' +
+      "[\n  1, 2, 3, 4294967291 x empty items\n]\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 describe("console.logging function displays async and generator names", async () => {

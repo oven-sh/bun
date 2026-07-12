@@ -292,7 +292,7 @@ pub trait TargetExt: Copy {
             Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
             Target::Bun => DEFAULT_MAIN_FIELDS_BUN,
             Target::BunMacro => DEFAULT_MAIN_FIELDS_BUN,
-            Target::BakeServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
+            Target::ServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
         })
     }
 
@@ -301,7 +301,7 @@ pub trait TargetExt: Copy {
             Target::Node => &[b"node" as &[u8]][..],
             Target::Browser => &[b"browser" as &[u8], b"module"][..],
             Target::Bun => &[b"bun" as &[u8], b"node"][..],
-            Target::BakeServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
+            Target::ServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
             Target::BunMacro => &[b"macro" as &[u8], b"bun", b"node"][..],
         })
     }
@@ -311,7 +311,7 @@ impl TargetExt for Target {
     fn bake_graph(self) -> crate::bake_types::Graph {
         match self {
             Target::Browser => crate::bake_types::Graph::Client,
-            Target::BakeServerComponentsSsr => crate::bake_types::Graph::Ssr,
+            Target::ServerComponentsSsr => crate::bake_types::Graph::Ssr,
             Target::BunMacro | Target::Bun | Target::Node => crate::bake_types::Graph::Server,
         }
     }
@@ -900,7 +900,7 @@ pub fn defines_from_transform_options(
     drop: &[&[u8]],
     omit_unused_global_calls: bool,
     bump: &bun_alloc::Arena,
-) -> Result<Box<defines::Define>, bun_core::Error> {
+) -> Result<Box<defines::Define>, crate::Error> {
     let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
         Some(m) => (&m.keys, &m.values),
         None => (&[], &[]),
@@ -1260,6 +1260,8 @@ pub struct BundleOptions<'a> {
     pub server_components: bool,
     pub hot_module_reloading: bool,
     pub react_fast_refresh: bool,
+    pub react_compiler: bun_ast::runtime::ReactCompilerMode,
+    pub react_compiler_parse_test_pragmas: bool,
     pub inject: Option<Box<[Box<[u8]>]>>,
     // `bun_url::URL<'a>` borrows its input string; the owned variant keeps the
     // struct self-contained.
@@ -1325,6 +1327,7 @@ pub struct BundleOptions<'a> {
 
     pub conditions: ESMConditions,
     pub tree_shaking: bool,
+    pub tree_shaking_override: Option<bool>,
     pub code_splitting: bool,
     pub source_map: SourceMapOption,
     pub packages: PackagesOption,
@@ -1475,6 +1478,8 @@ impl<'a> BundleOptions<'a> {
             server_components: self.server_components,
             hot_module_reloading: self.hot_module_reloading,
             react_fast_refresh: self.react_fast_refresh,
+            react_compiler: self.react_compiler,
+            react_compiler_parse_test_pragmas: self.react_compiler_parse_test_pragmas,
             inject: self.inject.clone(),
             origin: self.origin.clone(),
             // The owning handle stays with the parent; copying it here would
@@ -1532,6 +1537,7 @@ impl<'a> BundleOptions<'a> {
                 style: bun_core::handle_oom(self.conditions.style.clone()),
             },
             tree_shaking: self.tree_shaking,
+            tree_shaking_override: self.tree_shaking_override,
             code_splitting: self.code_splitting,
             source_map: self.source_map,
             packages: self.packages,
@@ -1649,7 +1655,7 @@ impl<'a> BundleOptions<'a> {
         &mut self,
         arena: &bun_alloc::Arena,
         loader_: Option<&mut DotEnv::Loader>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // Forwarding the env as an `Option<&Env>` parameter forced the
         // caller into an aliased-`&mut` UB
         // raw-pointer dance under Stacked Borrows. Dropped the param and read
@@ -1713,7 +1719,7 @@ impl<'a> BundleOptions<'a> {
         fs: &mut Fs::FileSystem,
         log: *mut bun_ast::Log,
         transform: api::TransformOptions,
-    ) -> Result<BundleOptions<'a>, bun_core::Error> {
+    ) -> Result<BundleOptions<'a>, crate::Error> {
         use core::sync::atomic::Ordering;
 
         // Keep `transform` behind an `Arc` so stashing it in `transform_options`
@@ -1767,6 +1773,8 @@ impl<'a> BundleOptions<'a> {
             server_components: false,
             hot_module_reloading: false,
             react_fast_refresh: false,
+            react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
+            react_compiler_parse_test_pragmas: false,
             inject: None,
             origin: bun_url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
@@ -1804,6 +1812,7 @@ impl<'a> BundleOptions<'a> {
                 style: Default::default(),
             }, // filled below
             tree_shaking: false,
+            tree_shaking_override: None,
             code_splitting: false,
             source_map: SourceMapOption::None,
             packages: PackagesOption::Bundle,
@@ -1973,7 +1982,7 @@ impl<'a> BundleOptions<'a> {
             // The inline `bun_resolver::fs::FileSystem` does
             // not yet expose `get_fd_path`, so resolve via `bun_sys` and box.
             let mut buf = bun_paths::PathBuffer::uninit();
-            let dir = bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(bun_core::Error::from)?;
+            let dir = bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(crate::Error::from)?;
             opts.output_dir = Box::from(&dir[..]);
             opts.output_dir_handle = Some(handle);
         }
@@ -2041,7 +2050,7 @@ pub mod bundle_options_defaults {
     }
 }
 
-pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
+pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
     // Routed through `bun_sys` per CLAUDE.md (never `std::fs`).
     match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
         Ok(d) => Ok(Dir::from_fd(d)),
@@ -2056,7 +2065,7 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
             // SAFETY: NUL-terminated above; `buf` outlives the `mkdirat` call.
             let z = bun_core::ZStr::from_buf(&buf.0[..], len);
             if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), z, 0o755) {
-                let err: bun_core::Error = err.into();
+                let err: crate::Error = err.into();
                 Output::print_errorln(format_args!(
                     "error: Unable to mkdir \"{}\": \"{}\"",
                     bstr::BStr::new(output_dir),
@@ -2096,6 +2105,7 @@ pub struct TransformOptions {
     pub resolve_dir: Box<[u8]>,
     pub jsx: Option<jsx::Pragma>,
     pub react_fast_refresh: bool,
+    pub react_compiler: bun_ast::runtime::ReactCompilerMode,
     pub inject: Option<Box<[Box<[u8]>]>>,
     pub origin: &'static [u8],
     pub preserve_symlinks: bool,
@@ -2111,7 +2121,7 @@ impl TransformOptions {
     pub fn init_uncached(
         entry_point_name: &'static [u8],
         code: &[u8],
-    ) -> Result<TransformOptions, bun_core::Error> {
+    ) -> Result<TransformOptions, crate::Error> {
         debug_assert!(!entry_point_name.is_empty());
 
         let entry_point = EntryPointFile {
@@ -2156,6 +2166,7 @@ impl TransformOptions {
                 None
             },
             react_fast_refresh: false,
+            react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
             inject: None,
             origin: b"",
             preserve_symlinks: false,
@@ -2183,7 +2194,7 @@ impl TransformResult {
         outbase: Box<[u8]>,
         output_files: Box<[OutputFile]>,
         log: &mut bun_ast::Log,
-    ) -> Result<TransformResult, bun_core::Error> {
+    ) -> Result<TransformResult, crate::Error> {
         let mut errors: Vec<bun_ast::Msg> = Vec::with_capacity(log.errors as usize);
         let mut warnings: Vec<bun_ast::Msg> = Vec::with_capacity(log.warnings as usize);
         for msg in log.msgs.iter() {
@@ -2384,7 +2395,7 @@ impl EntryPoint {
         &self,
         toplevel_path: &[u8],
         kind: EntryPointKind,
-    ) -> Result<Option<api::FrameworkEntryPoint>, bun_core::Error> {
+    ) -> Result<Option<api::FrameworkEntryPoint>, crate::Error> {
         if self.kind == EntryPointKind::Disabled {
             return Ok(None);
         }
@@ -2396,7 +2407,7 @@ impl EntryPoint {
         }))
     }
 
-    fn normalized_path(&self, toplevel_path: &[u8]) -> Result<Box<[u8]>, bun_core::Error> {
+    fn normalized_path(&self, toplevel_path: &[u8]) -> Result<Box<[u8]>, crate::Error> {
         debug_assert!(bun_paths::is_absolute(&self.path));
         let mut str: &[u8] = &self.path;
         if let Some(top) = strings::index_of(str, toplevel_path) {
@@ -2422,7 +2433,7 @@ impl EntryPoint {
         &mut self,
         framework_entry_point: api::FrameworkEntryPoint,
         kind: EntryPointKind,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.path = framework_entry_point.path;
         self.kind = kind;
         let _ = self.env.set_from_loaded(framework_entry_point.env);
@@ -2433,7 +2444,7 @@ impl EntryPoint {
         &mut self,
         framework_entry_point: api::FrameworkEntryPointMessage,
         kind: EntryPointKind,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.path = framework_entry_point.path.unwrap_or_default();
         self.kind = kind;
 
@@ -2492,6 +2503,7 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
     ext: &[u8],
     hash: Option<u64>,
     target: &[u8],
+    sanitize_parent_dirs: bool,
 ) -> bun_io::Result<()> {
     let mut remain: &[u8] = data;
     while let Some(j) = strings::index_of_char(remain, b'[') {
@@ -2532,18 +2544,13 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
             PlaceholderField::Dir => {
                 if dir.is_empty() {
                     writer.write_all(b".")?;
+                } else if sanitize_parent_dirs {
+                    // Rewrite `..` segments so `[dir]` can't escape outdir for an
+                    // out-of-root source. `--compile` skips this: bunfs entries keep
+                    // `..` so runtime references to them resolve.
+                    write_sanitized_parent_dirs(writer, dir)?;
                 } else {
-                    // Sanitize leading `..` segments so `[dir]` cannot place output
-                    // above outdir when a source resolves outside `root`.
-                    let mut d: &[u8] = dir;
-                    while matches!(d, [b'.', b'.', b'/' | b'\\', ..]) {
-                        PathTemplate::write_replacing_slashes_on_windows(writer, b"_.._/")?;
-                        d = &d[3..];
-                    }
-                    PathTemplate::write_replacing_slashes_on_windows(
-                        writer,
-                        if d == b".." { b"_.._" } else { d },
-                    )?;
+                    PathTemplate::write_replacing_slashes_on_windows(writer, dir)?;
                 }
             }
             PlaceholderField::Name => {
@@ -2563,6 +2570,52 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
     }
 
     PathTemplate::write_replacing_slashes_on_windows(writer, remain)
+}
+
+/// Rewrite every `..` path segment to `_.._` so the path cannot traverse above
+/// its base directory on disk. Separators become native on Windows, matching
+/// the rest of the path template output.
+pub fn write_sanitized_parent_dirs<W: bun_io::Write>(
+    writer: &mut W,
+    dir: &[u8],
+) -> bun_io::Result<()> {
+    let mut rest: &[u8] = dir;
+    loop {
+        // On POSIX `\` is a legal filename byte, not a separator, so only split
+        // on it under Windows (matches `write_replacing_slashes_on_windows`).
+        let sep = rest
+            .iter()
+            .position(|&b| b == b'/' || (cfg!(windows) && b == b'\\'));
+        let seg = sep.map_or(rest, |i| &rest[..i]);
+        PathTemplate::write_replacing_slashes_on_windows(
+            writer,
+            if seg == b".." { b"_.._" } else { seg },
+        )?;
+        let Some(i) = sep else { return Ok(()) };
+        PathTemplate::write_replacing_slashes_on_windows(writer, b"/")?;
+        rest = &rest[i + 1..];
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn write_sanitized_parent_dirs_rewrites_every_dotdot_segment() {
+    fn run(dir: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_sanitized_parent_dirs(&mut out, dir).unwrap();
+        out
+    }
+    // Leading `..` (the `[dir]` placeholder shape).
+    assert_eq!(run(b".."), b"_.._");
+    assert_eq!(run(b"../../worker.js"), b"_.._/_.._/worker.js");
+    // Non-leading `..` from a custom `--entry-naming` prefix before `[dir]`.
+    assert_eq!(run(b"out/../../worker.js"), b"out/_.._/_.._/worker.js");
+    // No traversal passes through; `..foo` is a filename, not a parent segment.
+    assert_eq!(run(b"a/b/c.js"), b"a/b/c.js");
+    assert_eq!(run(b"..foo/x.js"), b"..foo/x.js");
+    // POSIX: `\` is an ordinary filename byte, not a separator.
+    #[cfg(not(windows))]
+    assert_eq!(run(br"weird\dir/x.js"), br"weird\dir/x.js");
 }
 
 impl PathTemplate {
@@ -2634,7 +2687,11 @@ impl PathTemplate {
         placeholder: PlaceholderConst::DEFAULT,
     };
 
-    pub fn print<W: bun_io::Write>(&self, writer: &mut W) -> bun_io::Result<()> {
+    pub fn print<W: bun_io::Write>(
+        &self,
+        writer: &mut W,
+        sanitize_parent_dirs: bool,
+    ) -> bun_io::Result<()> {
         path_template_print(
             writer,
             &self.data,
@@ -2643,6 +2700,7 @@ impl PathTemplate {
             &self.placeholder.ext,
             self.placeholder.hash,
             &self.placeholder.target,
+            sanitize_parent_dirs,
         )
     }
 }
@@ -2698,7 +2756,11 @@ impl PathTemplateConst {
     /// Kept as an inherent method so callers writing
     /// to `Vec<u8>` via `write!(.., "{}", template)` resolve through the
     /// blanket [`core::fmt::Display`] impl below.
-    pub fn print<W: bun_io::Write>(&self, writer: &mut W) -> bun_io::Result<()> {
+    pub fn print<W: bun_io::Write>(
+        &self,
+        writer: &mut W,
+        sanitize_parent_dirs: bool,
+    ) -> bun_io::Result<()> {
         path_template_print(
             writer,
             self.data,
@@ -2707,6 +2769,7 @@ impl PathTemplateConst {
             self.placeholder.ext,
             self.placeholder.hash,
             self.placeholder.target,
+            sanitize_parent_dirs,
         )
     }
 
@@ -2718,7 +2781,7 @@ impl PathTemplateConst {
 impl core::fmt::Display for PathTemplateConst {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut buf = Vec::<u8>::new();
-        self.print(&mut buf).map_err(|_| core::fmt::Error)?;
+        self.print(&mut buf, true).map_err(|_| core::fmt::Error)?;
         write!(f, "{}", bstr::BStr::new(&buf))
     }
 }
@@ -2726,7 +2789,7 @@ impl core::fmt::Display for PathTemplateConst {
 impl core::fmt::Display for PathTemplate {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut buf = Vec::<u8>::new();
-        self.print(&mut buf).map_err(|_| core::fmt::Error)?;
+        self.print(&mut buf, true).map_err(|_| core::fmt::Error)?;
         write!(f, "{}", bstr::BStr::new(&buf))
     }
 }

@@ -1079,6 +1079,102 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       await waitFor("99");
     });
   });
+
+  // Regression for #31871: the line editor read input one byte at a time and
+  // dropped every byte >= 0x80, so multi-byte UTF-8 (Korean, emoji, etc.) was
+  // silently discarded and the evaluated expression differed from what was typed.
+  test("keeps multi-byte UTF-8 characters typed into the line editor", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      send('"a한b".length\n');
+      // "a한b".length is 3; before the fix the 한 was dropped and it was 2.
+      await waitFor(/\n\s*3\b/);
+      // The echoed input line must still contain the Korean character.
+      expect(allOutput()).toContain("한");
+    });
+  });
+
+  test("keeps a full Korean string typed into the line editor", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      send('"안녕하세요 영재님".length\n');
+      // 9 characters; before the fix only the ASCII space survived -> 1.
+      await waitFor(/\n\s*9\b/);
+      expect(allOutput()).toContain("안녕하세요 영재님");
+    });
+  });
+
+  test("backspace deletes a whole multi-byte character", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      // Type a Korean char then backspace over it; byte-wise stepping would
+      // leave a truncated UTF-8 sequence behind.
+      send("한");
+      await waitFor("한");
+      send("\x7f"); // Backspace
+      send('"ok".length\n');
+      await waitFor(/\n\s*2\b/);
+      // The dangling Korean char must be gone, leaving a clean expression.
+      expect(allOutput()).toContain('"ok".length');
+    });
+  });
+
+  test("left-arrow navigation steps over a whole multi-byte character", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      // Type `"한"`, then left-arrow twice to land between the opening quote
+      // and 한 (the second move must skip all 3 bytes of 한, not land mid-char),
+      // and insert `b`. The buffer becomes `"b한"`, whose length is 2.
+      send('"한"');
+      await waitFor("한");
+      send("\x1b[D"); // left: between 한 and the closing quote
+      send("\x1b[D"); // left: between the opening quote and 한 (skips 3 bytes)
+      send("b");
+      send("\x05"); // Ctrl+E: move to end of line
+      send(".length\n");
+      await waitFor(/\n\s*2\b/);
+      expect(allOutput()).toContain('"b한"');
+    });
+  });
+
+  test("Ctrl+T transposes whole multi-byte characters", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      // Type `"한b"`, move the cursor between 한 and b, then Ctrl+T. Byte-wise
+      // transposition would split 한; it must swap the two whole codepoints so
+      // the buffer becomes `"b한"` (length 2), not corrupted UTF-8.
+      send('"한b"');
+      await waitFor("한b");
+      send("\x1b[D"); // left: between b and the closing quote
+      send("\x1b[D"); // left: between 한 and b
+      send("\x14"); // Ctrl+T: transpose 한 and b -> "b한"
+      send("\x05"); // Ctrl+E: move to end of line
+      send(".length\n");
+      await waitFor(/\n\s*2\b/);
+      expect(allOutput()).toContain('"b한"');
+    });
+  });
+
+  test("drops a malformed UTF-8 sequence instead of corrupting the buffer", async () => {
+    await withTerminalRepl(async ({ terminal, send, waitFor }) => {
+      // ED A0 80 encodes the lone surrogate U+D800: it has a valid lead byte
+      // and continuation-byte shape but is not valid UTF-8. It must be dropped,
+      // leaving a clean "ab" (length 2), not fed into the buffer.
+      send('"a');
+      await waitFor("a");
+      terminal.write(new Uint8Array([0xed, 0xa0, 0x80]));
+      send('b".length\n');
+      await waitFor(/\n\s*2\b/);
+    });
+  });
+
+  test("a stray lead byte does not swallow the next keystroke", async () => {
+    await withTerminalRepl(async ({ terminal, send, waitFor }) => {
+      // 0xC2 is a 2-byte lead; the following byte (0x62 'b') is not a
+      // continuation byte, so the lead is dropped. The 'b' must still be
+      // processed, giving a clean "ab" (length 2), not "a" (length 1).
+      send('"a');
+      await waitFor("a");
+      terminal.write(new Uint8Array([0xc2, 0x62])); // stray lead + 'b'
+      send('".length\n');
+      await waitFor(/\n\s*2\b/);
+    });
+  });
 });
 
 // History file written on REPL exit must be owner-only (0600), since it can

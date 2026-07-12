@@ -14,8 +14,8 @@ use bun_collections::VecExt;
 
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
+use crate::Error;
 use bun_core::strings;
-use bun_core::{Error, err};
 
 use bun_ast::LexerLog as _;
 
@@ -69,7 +69,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         expr: &mut Expr,
     ) -> Result<(), Error> {
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(err!("StackOverflow"));
+            return Err(crate::Error::StackOverflow);
         }
 
         let had_pure_comment_before =
@@ -107,7 +107,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if is_star {
             if p.lexer.has_newline_before {
                 p.lexer.unexpected()?;
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
             p.lexer.next()?;
         }
@@ -417,7 +417,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut arrow_arg_errors = DeferredArrowArgErrors::default();
         let mut spread_range = bun_ast::Range::default();
         let mut type_colon_range = bun_ast::Range::default();
-        let mut comma_after_spread: Option<bun_ast::Loc> = None;
+        let mut comma_after_spread = bun_ast::Loc::EMPTY;
 
         // Push a scope assuming this is an arrow function. It may not be, in which
         // case we'll need to roll this change back. This has to be done ahead of
@@ -482,7 +482,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Spread arguments must come last. If there's a spread argument followed
             if is_spread {
-                comma_after_spread = Some(p.lexer.loc());
+                comma_after_spread = p.lexer.loc();
             }
 
             // Eat the comma token
@@ -507,7 +507,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
                 p.lexer.unexpected()?;
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
 
             let mut invalid_log = LocList::new_in(p.arena);
@@ -590,7 +590,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if type_colon_range.len > 0 {
             p.log()
                 .add_range_error(Some(p.source), type_colon_range, b"Unexpected \":\"");
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         // Are these arguments for a call to a function named "async"?
@@ -620,7 +620,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if spread_range.len > 0 {
                 p.log()
                     .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"");
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
 
             let mut value = Expr::join_all_with_comma(items);
@@ -630,7 +630,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Indicate that we expected an arrow function
         p.lexer.expected(T::TEqualsGreaterThan)?;
-        Err(err!("SyntaxError"))
+        Err(crate::Error::SyntaxError)
     }
 
     pub fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {
@@ -641,7 +641,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let name = LocRef {
             loc: p.lexer.loc(),
-            ref_: Some(p.store_name_in_ref(p.lexer.identifier)?),
+            ref_: p.store_name_in_ref(p.lexer.identifier)?,
         };
         p.lexer.next()?;
         Ok(Some(name))
@@ -677,7 +677,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // example:
             // export class {}
             if !is_identifier {
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
 
             if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
@@ -692,13 +692,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             name = Some(LocRef {
                 loc: name_loc,
-                ref_: None,
+                ref_: js_ast::Ref::NONE,
             });
             if !opts.is_typescript_declare {
-                name.as_mut().unwrap().ref_ = Some(
-                    p.declare_symbol(js_ast::symbol::Kind::Class, name_loc, name_text)
-                        .expect("unreachable"),
-                );
+                name.as_mut().unwrap().ref_ = p
+                    .declare_symbol(js_ast::symbol::Kind::Class, name_loc, name_text)
+                    .expect("unreachable");
             }
         }
 
@@ -973,7 +972,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
         let p = self;
         if !p.stack_check.is_safe_to_recurse() {
-            return Err(err!("StackOverflow"));
+            return Err(crate::Error::StackOverflow);
         }
         let loc = p.lexer.loc();
 
@@ -1048,7 +1047,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     p.lexer.range(),
                                     b"Unexpected \",\" after rest pattern",
                                 );
-                                return Err(err!("SyntaxError"));
+                                return Err(crate::Error::SyntaxError);
                             }
                         }
 
@@ -1105,7 +1104,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.lexer.range(),
                                 b"Unexpected \",\" after rest pattern",
                             );
-                            return Err(err!("SyntaxError"));
+                            return Err(crate::Error::SyntaxError);
                         }
 
                         if p.lexer.token != T::TComma {
@@ -1171,12 +1170,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
             }
             T::TNumericLiteral => {
-                key = p.new_expr(
-                    E::Number {
-                        value: p.lexer.number,
-                    },
-                    p.lexer.loc(),
-                );
+                key = p.new_expr(E::Number::new(p.lexer.number), p.lexer.loc());
                 // check for legacy octal literal
                 p.lexer.next()?;
             }

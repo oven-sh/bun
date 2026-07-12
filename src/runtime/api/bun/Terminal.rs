@@ -173,10 +173,9 @@ bitflags::bitflags! {
         const CONNECTED      = 1 << 4;
         const READER_DONE    = 1 << 5;
         const WRITER_DONE    = 1 << 6;
-        /// Set when an inline-created terminal has been attached to a subprocess
-        /// via spawn; prevents reusing the same inline terminal for a second
-        /// spawn (which on Windows would be silently killed by ClosePseudoConsole
-        /// when the first subprocess exits, and on POSIX has no slave_fd left).
+        /// Set once an inline-created terminal is attached to a spawn; blocks
+        /// reuse. Windows: first exit's ClosePseudoConsole would kill a second
+        /// child. POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
         const INLINE_SPAWNED = 1 << 7;
     }
 }
@@ -332,9 +331,9 @@ impl From<CreatePtyError> for InitError {
     }
 }
 
-impl From<InitError> for bun_core::Error {
+impl From<InitError> for crate::Error {
     fn from(e: InitError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
+        crate::Error::TerminalInit(e)
     }
 }
 
@@ -662,16 +661,43 @@ impl Terminal {
         self.hpcon.get()
     }
 
-    /// Close the parent's copy of slave_fd after fork
-    /// The child process has its own copy - closing the parent's ensures
-    /// EOF is received on the master side when the child exits
-    pub(crate) fn close_slave_fd(&self) {
+    /// Mark a terminal created inline by `Bun.spawn` so it cannot be reused
+    /// for a later spawn. See the `INLINE_SPAWNED` flag docs.
+    pub(crate) fn mark_inline_spawned(&self) {
         self.update_flags(|f| f.insert(Flags::INLINE_SPAWNED));
+    }
+
+    /// Close the parent's copy of slave_fd and mark the terminal inline
+    /// spawned (cannot be reused). The child holds its own slave; once every
+    /// slave fd is gone the master reader observes EOF.
+    pub(crate) fn close_slave_fd(&self) {
+        self.mark_inline_spawned();
         let fd = self.slave_fd.get();
         if fd != Fd::INVALID {
             fd.close();
             self.slave_fd.set(Fd::INVALID);
         }
+    }
+
+    /// Drain buffered pty output, then close our slave_fd so the reader sees
+    /// EOF. BSD kernels flush the output queue on last slave close; holding
+    /// ours until Subprocess::on_process_exit keeps a fast child's writes.
+    #[cfg(unix)]
+    pub(crate) fn drain_and_close_slave_fd(&self) {
+        let flags = self.flags.get();
+        if flags.contains(Flags::CLOSED) {
+            return;
+        }
+        if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+            // SAFETY: single JS thread; re-entrant user JS (data callback may
+            // call `terminal.close()`) is handled via the raw-pointer dispatch
+            // convention used by `__bun_run_file_poll` for BUFFERED_READER.
+            unsafe { (*self.reader.as_ptr()).read() };
+            if self.flags.get().contains(Flags::CLOSED) {
+                return;
+            }
+        }
+        self.close_slave_fd();
     }
 
     /// Windows: close only the ConPTY handle so conhost releases its pipe ends and
@@ -742,9 +768,9 @@ pub enum CreatePtyError {
     NotSupported,
 }
 
-impl From<CreatePtyError> for bun_core::Error {
+impl From<CreatePtyError> for crate::Error {
     fn from(e: CreatePtyError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
+        crate::Error::TerminalInit(e.into())
     }
 }
 
@@ -1282,7 +1308,9 @@ impl Terminal {
                 return Ok(());
             };
             let max_val: f64 = libc::tcflag_t::MAX as f64;
-            let clamped = num.max(0.0).min(max_val);
+            // Match Zig's `@max(0, @min(num, max_val))`: apply min first so NaN
+            // resolves to max_val (f64::min returns the non-NaN operand), not 0.
+            let clamped = num.min(max_val).max(0.0);
             let bits = clamped as libc::tcflag_t;
             match FIELD {
                 TermiosField::Iflag => termios_data.c_iflag = bits,

@@ -11,7 +11,7 @@ use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_core::{String as BunString, immutable as strings};
+use bun_core::{String as BunString, strings};
 
 // `strings::Cursor` aliased as `CodepointCursor` for readability.
 type CodepointCursor = strings::Cursor;
@@ -42,14 +42,14 @@ pub enum ParseError {
     Lex,
 }
 
-impl From<ParseError> for bun_core::Error {
+impl From<ParseError> for crate::Error {
     fn from(e: ParseError) -> Self {
         match e {
-            ParseError::Unsupported => bun_core::err!("Unsupported"),
-            ParseError::Expected => bun_core::err!("Expected"),
-            ParseError::Unexpected => bun_core::err!("Unexpected"),
-            ParseError::Unknown => bun_core::err!("Unknown"),
-            ParseError::Lex => bun_core::err!("Lex"),
+            ParseError::Unsupported => crate::Error::Unsupported,
+            ParseError::Expected => crate::Error::Expected,
+            ParseError::Unexpected => crate::Error::Unexpected,
+            ParseError::Unknown => crate::Error::Unknown,
+            ParseError::Lex => crate::Error::Lex,
         }
     }
 }
@@ -961,7 +961,7 @@ pub struct ParserError<'bump> {
     pub msg: &'bump [u8],
 }
 
-type ParseResult<T> = Result<T, bun_core::Error>;
+type ParseResult<T> = crate::Result<T>;
 
 impl<'bump> Parser<'bump> {
     pub fn new(
@@ -1181,8 +1181,7 @@ impl<'bump> Parser<'bump> {
     }
 
     fn is_if_clause_text_token_impl(&self, range: TextRange, if_clause_token: IfClauseTok) -> bool {
-        let tagname = Self::extract_if_clause_text_token(if_clause_token);
-        self.text(range) == tagname
+        self.if_clause_tok_at(range) == Some(if_clause_token)
     }
 
     fn skip_newlines(&mut self) {
@@ -1913,6 +1912,13 @@ impl<'bump> Parser<'bump> {
             .any(|r| pos >= r.start && pos < r.end)
     }
 
+    fn if_clause_tok_at(&self, range: TextRange) -> Option<IfClauseTok> {
+        if self.is_interpolated_position(range.start) {
+            return None;
+        }
+        IfClauseTok::from_text(self.text(range))
+    }
+
     fn advance(&mut self) -> Token {
         if !self.is_at_end() {
             self.current += 1;
@@ -1983,9 +1989,7 @@ impl<'bump> Parser<'bump> {
 
     fn match_if_clausetok(&mut self, toktag: IfClauseTok) -> bool {
         if let Token::Text(range) = self.peek() {
-            if self.delimits(self.peek_n(1))
-                && self.text(range) == <&'static str>::from(toktag).as_bytes()
-            {
+            if self.delimits(self.peek_n(1)) && self.if_clause_tok_at(range) == Some(toktag) {
                 let _ = self.advance();
                 let _ = self.expect_delimit();
                 return true;
@@ -2037,13 +2041,10 @@ impl<'bump> Parser<'bump> {
         if !self.delimits(self.peek_n(1)) {
             return false;
         }
-        let txt = self.text(range);
-        for &tag in toktags {
-            if txt == <&'static str>::from(tag).as_bytes() {
-                return true;
-            }
-        }
-        false
+        let Some(tok) = self.if_clause_tok_at(range) else {
+            return false;
+        };
+        toktags.contains(&tok)
     }
 
     fn peek_any_comptime_ifclausetok(&self, toktags: &[IfClauseTok]) -> bool {
@@ -2092,24 +2093,7 @@ impl<'bump> Parser<'bump> {
     }
 
     pub fn combine_errors(&self) -> &'bump [u8] {
-        let errors = &self.errors[..];
-
-        ({
-            let size = {
-                let mut i = 0usize;
-                for e in errors {
-                    i += e.msg.len();
-                }
-                i
-            };
-            let buf = self.alloc.alloc_slice_fill_copy(size, 0u8);
-            let mut i = 0usize;
-            for e in errors {
-                buf[i..i + e.msg.len()].copy_from_slice(e.msg);
-                i += e.msg.len();
-            }
-            buf
-        }) as _
+        join_error_msgs(self.alloc, self.errors[..].iter().map(|e| e.msg))
     }
 
     fn add_error(&mut self, args: fmt::Arguments<'_>) -> ParseResult<()> {
@@ -2128,6 +2112,26 @@ impl<'bump> Parser<'bump> {
             <&'static str>::from(kind)
         ))
     }
+}
+
+/// Join error messages with a newline so each one renders on its own line in
+/// `ShellError.message` and in the CLI error output.
+fn join_error_msgs<'bump>(
+    bump: &'bump Bump,
+    msgs: impl ExactSizeIterator<Item = &'bump [u8]> + Clone,
+) -> &'bump [u8] {
+    let size = msgs.clone().map(|m| m.len()).sum::<usize>() + msgs.len().saturating_sub(1);
+    let buf = bump.alloc_slice_fill_copy(size, 0u8);
+    let mut i = 0usize;
+    for (n, msg) in msgs.enumerate() {
+        if n > 0 {
+            buf[i] = b'\n';
+            i += 1;
+        }
+        buf[i..i + msg.len()].copy_from_slice(msg);
+        i += msg.len();
+    }
+    buf
 }
 
 #[derive(Default)]
@@ -2164,7 +2168,7 @@ impl IfClauseTok {
     /// `expect_if_clause_text_token`.
     pub fn from_tok(p: &Parser<'_>, tok: Token) -> Option<IfClauseTok> {
         match tok {
-            Token::Text(range) if p.delimits(p.peek_n(1)) => Self::from_text(p.text(range)),
+            Token::Text(range) if p.delimits(p.peek_n(1)) => p.if_clause_tok_at(range),
             _ => None,
         }
     }
@@ -2356,25 +2360,8 @@ pub struct LexResult<'bump> {
 
 impl<'bump> LexResult<'bump> {
     pub fn combine_errors(&self, bump: &'bump Bump) -> &'bump [u8] {
-        let errors = self.errors;
-
-        ({
-            let size = {
-                let mut i = 0usize;
-                for e in errors {
-                    i += e.msg.len() as usize;
-                }
-                i
-            };
-            let buf = bump.alloc_slice_fill_copy(size, 0u8);
-            let mut i = 0usize;
-            for e in errors {
-                let s = e.msg.slice(self.strpool);
-                buf[i..i + s.len()].copy_from_slice(s);
-                i += s.len();
-            }
-            buf
-        }) as _
+        let strpool = self.strpool;
+        join_error_msgs(bump, self.errors.iter().map(move |e| e.msg.slice(strpool)))
     }
 }
 
@@ -3440,7 +3427,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             if is_all_ascii(bytes) {
                 self.strpool.extend_from_slice(bytes);
             } else {
-                let non_ascii_idx = bun_core::first_non_ascii(bytes).unwrap_or(0) as usize;
+                let non_ascii_idx = bun_core::strings::first_non_ascii(bytes).unwrap_or(0) as usize;
                 if non_ascii_idx > 0 {
                     self.strpool.extend_from_slice(&bytes[..non_ascii_idx]);
                 }
@@ -4160,14 +4147,17 @@ fn is_all_ascii(s: &[u8]) -> bool {
 // ───────────────────────────── escaping ─────────────────────────────
 
 /// Characters that need to be escaped
-pub const SPECIAL_CHARS: [u8; 34] = [
+pub const SPECIAL_CHARS: [u8; 37] = [
     b'~',
     b'[',
     b']',
     b'#',
     b';',
     b'\n',
+    b'\t',
+    b'\r',
     b'*',
+    b'?',
     b'{',
     b',',
     b'}',
@@ -4280,7 +4270,7 @@ pub fn escape_utf16<const ADD_QUOTES: bool>(
         outbuf.push(b'"');
     }
 
-    let non_ascii = bun_core::first_non_ascii16(str).unwrap_or(0);
+    let non_ascii = bun_core::strings::first_non_ascii16(str).unwrap_or(0);
     let mut cp_buf = [0u8; 4];
 
     let mut i: usize = 0;
@@ -4347,6 +4337,13 @@ pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
         }
     }
     false
+}
+
+pub fn is_if_clause_keyword_bunstr(bunstr: BunString) -> bool {
+    use IfClauseTok::{Elif, Else, Fi, If, Then};
+    [If, Else, Elif, Then, Fi]
+        .iter()
+        .any(|&kw| bunstr.eql_comptime(<&'static str>::from(kw)))
 }
 
 // ───────────────────────────── SmolList ─────────────────────────────

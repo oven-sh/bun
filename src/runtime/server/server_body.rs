@@ -222,8 +222,9 @@ where
     }
     #[inline]
     fn set_request_weakref(&mut self, req: *mut Request) {
-        // SAFETY: req is a freshly-boxed Request; live for the request duration.
-        self.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(unsafe { &mut *req });
+        // SAFETY: `req` is a freshly-boxed Request (live for the request
+        // duration) still carrying its `heap::into_raw` provenance.
+        self.request_weakref = unsafe { bun_ptr::WeakPtr::<Request>::init_ref(req) };
     }
     #[inline]
     fn clear_req(&mut self) {
@@ -407,10 +408,8 @@ pub(super) type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, true>;
 
 // ─── BunInfo (moved from bun_core::Global) ───────────────────────────────────
-// `generate()` builds the JSON AST by hand instead of reflecting over a
-// struct's fields (cf.
-// `bun_parsers::json::ToAst` derive sketch, json.rs:808-824): an `E.Object`
-// with `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
+// `generate()` builds the JSON AST by hand: an `E.Object` with
+// `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
 // `version`, enums emitted as `@tagName` strings).
 pub mod BunInfo {
     use bun_analytics::generate_header::generate_platform;
@@ -461,7 +460,7 @@ pub mod BunInfo {
 
     /// `_transpiler` is an unused witness; expressions allocate from the
     /// global expr `Store` used by `Expr::init`.
-    pub fn generate<B>(_transpiler: B) -> Result<Expr, bun_core::Error> {
+    pub fn generate<B>(_transpiler: B) -> Result<Expr, crate::Error> {
         let info = BunInfo {
             bun_version: Global::package_json_version.as_bytes(),
             platform: generate_platform::for_os(),
@@ -1649,7 +1648,7 @@ where
         path: &[u8],
         route: super::AnyRoute,
         method: server_config::MethodOptional,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.config.append_static_route(path, route, method)
     }
 
@@ -1681,19 +1680,20 @@ where
         let compress = compress_js.to_boolean();
 
         if let Some(buffer) = message_value.as_array_buffer(global) {
-            return Ok(JSValue::js_number(f64::from(
-                // if 0, return 0
-                // else return number of bytes sent
-                (AnyWebSocket::publish_with_options(
-                    SSL,
-                    app,
-                    topic_slice.slice(),
-                    buffer.slice(),
-                    uws_sys::Opcode::Binary,
-                    compress,
-                ) as i32)
-                    * ((buffer.len as u32 & 0x7FFF_FFFF) as i32), // length truncated to a non-negative i32
-            )));
+            let status = AnyWebSocket::publish_with_options(
+                SSL,
+                app,
+                topic_slice.slice(),
+                buffer.slice(),
+                uws_sys::Opcode::Binary,
+                compress,
+            );
+            return Ok(super::server_web_socket::send_status_to_js(
+                status,
+                buffer.slice().len(),
+                "publish",
+                "bytes",
+            ));
         }
 
         {
@@ -1706,19 +1706,22 @@ where
             // GC during `publish_with_options` could otherwise reclaim the bytes
             // `slice` borrows.
             let buffer = slice.slice();
-            let result = (AnyWebSocket::publish_with_options(
+            let status = AnyWebSocket::publish_with_options(
                 SSL,
                 app,
                 topic_slice.slice(),
                 buffer,
                 uws_sys::Opcode::Text,
                 compress,
-            ) as i32)
-                * ((buffer.len() as u32 & 0x7FFF_FFFF) as i32);
+            );
+            let result = super::server_web_socket::send_status_to_js(
+                status,
+                buffer.len(),
+                "publish",
+                "bytes",
+            );
             js_string.ensure_still_alive();
-            // if 0, return 0
-            // else return number of bytes sent
-            return Ok(JSValue::js_number(f64::from(result)));
+            return Ok(result);
         }
     }
 
@@ -2240,7 +2243,7 @@ where
         }
     }
 
-    pub fn reload_static_routes(&mut self) -> Result<bool, bun_core::Error> {
+    pub fn reload_static_routes(&mut self) -> Result<bool, crate::Error> {
         if self.app.is_none() {
             // Static routes will get cleaned up when the server is stopped
             return Ok(false);
@@ -2419,14 +2422,7 @@ where
             // sentinel and calls `clone_into(.., preserve_url=false)`.
             unsafe { (*request_).clone(ctx)? }
         } else {
-            // SAFETY: FFI call into JSC C API; `ctx` is a live JSGlobalObject and
-            // `first_arg.as_ref()` produces a valid `JSValueRef`.
-            let js_type =
-                unsafe { jsc::c_api::JSValueGetType(ctx.as_ptr(), first_arg.as_ref()) } as usize;
-            let fetch_error = Fetch::FETCH_TYPE_ERROR_STRINGS
-                .get(js_type)
-                .copied()
-                .unwrap_or(Fetch::FETCH_TYPE_ERROR_STRINGS[0]);
+            let fetch_error = Fetch::fetch_type_error_string(first_arg);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err),
@@ -2758,9 +2754,10 @@ where
     ) {
         jsc::mark_binding!();
         if !matches!(self.config.address, server_config::Address::Unix(_))
-            && !resp
-                .get_remote_socket_info()
-                .is_some_and(|address| address.is_loopback())
+            && (!bake::is_allowed_host_header(req, Some(&self.config.address))
+                || !resp
+                    .get_remote_socket_info()
+                    .is_some_and(|address| address.is_loopback()))
         {
             req.set_yield(true);
             return;
@@ -2978,12 +2975,6 @@ where
 
         self.on_pending_request();
 
-        // SAFETY: vm.event_loop() returns the live VM-owned `*mut EventLoop`.
-        let _dbg_guard = unsafe {
-            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!(
-                (*self.vm_ref().event_loop()).debug
-            ))
-        };
         ReqLike::set_yield(req, false);
         RespLike::timeout(resp, self.config.idle_timeout);
 
@@ -3074,11 +3065,15 @@ where
             Some(signal_for_req),
             body_hive,
         ));
-        let request_object: &mut Request =
-            // SAFETY: leak so the ctx (which outlives this stack frame) can
-            // hold the borrow; Request is freed via ctx.deinit's request_weakref.
-            unsafe { &mut *bun_core::heap::into_raw(request_object_box) };
-        ctx.set_request_weakref(request_object);
+        // Leak so the ctx (which outlives this stack frame) can hold the
+        // pointer; Request is freed via ctx.deinit's request_weakref. The weak
+        // handle takes the raw pointer, not a reborrow of `request_object`:
+        // writes through `request_object` below would otherwise invalidate it.
+        let request_object_ptr: *mut Request = bun_core::heap::into_raw(request_object_box);
+        ctx.set_request_weakref(request_object_ptr);
+        // SAFETY: freshly leaked; no other borrow of the Request is live, and
+        // the weak handle only reborrows when `get()` is called.
+        let request_object: &mut Request = unsafe { &mut *request_object_ptr };
 
         // The lazy `getRequest()` path that backs Request.url / .headers
         // is `*uws.Request`-typed; for HTTP/3 we populate both eagerly so
@@ -3320,15 +3315,21 @@ where
             body_hive,
         ));
         ctx.upgrade_context = Some(upgrade_ctx);
-        let request_object: &mut Request =
-            // SAFETY: leaked so the ctx (which outlives this stack frame) can
-            // hold the borrow; freed via ctx.deinit's request_weakref.
-            unsafe { &mut *bun_core::heap::into_raw(request_object_box) };
-        ctx.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(request_object);
+        // Leaked so the ctx (which outlives this stack frame) can hold the
+        // pointer; freed via ctx.deinit's request_weakref. Everything below
+        // goes through this raw pointer rather than a `&mut Request` reborrow:
+        // the weak handle and the deferred `detach_request` both alias it.
+        let request_object_ptr: *mut Request = bun_core::heap::into_raw(request_object_box);
+        // SAFETY: freshly leaked, so it carries the allocation's provenance.
+        ctx.request_weakref = unsafe { bun_ptr::WeakPtr::<Request>::init_ref(request_object_ptr) };
 
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = this.global();
-        let args = [request_object.to_js(&global), this.js_value_assert_alive()];
+        // SAFETY: `request_object_ptr` is live; no other borrow is outstanding.
+        let args = [
+            unsafe { (*request_object_ptr).to_js(&global) },
+            this.js_value_assert_alive(),
+        ];
         let request_value = args[0];
         request_value.ensure_still_alive();
 
@@ -3340,11 +3341,12 @@ where
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };
-        let request_object_ptr: *mut Request = request_object;
+        // Its own copy, so the closure's capture does not pin `request_object_ptr`.
+        let detach_ptr = request_object_ptr;
         scopeguard::defer! {
             // uWS request will not live longer than this function
-            // SAFETY: see request_object above.
-            unsafe { (*request_object_ptr).request_context.detach_request() };
+            // SAFETY: see request_object_ptr above.
+            unsafe { (*detach_ptr).request_context.detach_request() };
         }
 
         // SAFETY: self_ptr is live for the request's duration; the &mut held
@@ -3365,7 +3367,9 @@ where
 
         ctx.to_async(
             std::ptr::from_mut::<uws::Request>(req).cast::<c_void>(),
-            request_object,
+            // SAFETY: `request_object_ptr` is live (the ctx's weakref owns it)
+            // and no other borrow of the Request is outstanding here.
+            unsafe { &mut *request_object_ptr },
         );
     }
 

@@ -100,10 +100,8 @@ pub mod s3_stub {
     pub use crate::webcore::s3::MultiPartUploadOptions;
 }
 
-// `crate::node::types` is now un-gated; forward the real enums so
-// `webcore::node_types::X` and `crate::node::types::X` are the *same* type.
-// The previous local stub definitions caused `expected node_types::PathLike,
-// found node::types::PathLike` mismatches across modules.
+// Forward the real enums so `webcore::node_types::X` and
+// `crate::node::types::X` are the same type.
 pub mod node_types {
     pub use crate::node::types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 }
@@ -239,10 +237,6 @@ impl HasAutoFlusher for file_sink::FileSink {
     }
 }
 
-// Gated alongside the `HTTPServerWritable` method bodies (see
-// `webcore/streams.rs` ` impl<...> HTTPServerWritable` block) —
-// the inherent `on_auto_flush` lives there. Un-gate together.
-
 impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
     for streams::HTTPServerWritable<SSL, HTTP3>
 {
@@ -261,7 +255,6 @@ impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
 #[path = "webcore/headers_ref.rs"]
 pub mod headers_ref;
 
-// ─── un-gated core types (cycle-5: Body/Blob/Response/Request real) ──────────
 #[path = "webcore/Blob.rs"]
 pub mod blob;
 pub use blob::Any as AnyBlob;
@@ -348,8 +341,9 @@ pub use form_data::{AsyncFormData, FormData};
 pub mod script_execution_context;
 
 #[doc(hidden)]
-#[path = "webcore/s3/multipart_options.rs"]
-pub mod multipart_options_impl;
+pub mod multipart_options_impl {
+    pub use bun_s3_signing::MultiPartUploadOptions;
+}
 // Note: inner `#[path]` inside an inline `mod s3 { }` resolves relative to
 // `<this-file's-dir>/s3/`, which would point at `src/runtime/s3/...` (does not
 // exist). Declare the file mods at this level (where `#[path]` is relative to

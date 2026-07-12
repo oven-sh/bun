@@ -71,6 +71,10 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 
+/* Reports "Bun ran out of memory" through the crash handler and aborts. For
+ * allocations this library has no way to fail gracefully from. */
+extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
+
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
@@ -113,9 +117,9 @@ struct addrinfo_result {
     int error;
 };
 
-/* Dispatch — defined out-of-library (Zig: src/deps/uws/dispatch.zig). loop.c
+/* Dispatch — defined out-of-library (src/runtime/socket/uws_dispatch.rs). loop.c
  * never reads s->group->vtable directly; it calls these and the closed-world
- * switch on s->kind decides whether to direct-call into Zig/C++ or fall back
+ * switch on s->kind decides whether to direct-call into Rust/C++ or fall back
  * to the vtable. Signatures track the vtable entries (us_dispatch_handshake
  * drops the trailing custom_data — dispatch always passes NULL). */
 extern struct us_socket_t *us_dispatch_open(us_socket_r s, int is_client, char *ip, int ip_length);
@@ -129,6 +133,8 @@ extern struct us_socket_t *us_dispatch_end(us_socket_r s);
 extern struct us_socket_t *us_dispatch_connect_error(us_socket_r s, int code);
 extern struct us_connecting_socket_t *us_dispatch_connecting_error(struct us_connecting_socket_t *c, int code);
 extern void us_dispatch_handshake(us_socket_r s, int success, struct us_bun_verify_error_t err);
+extern void us_dispatch_session(us_socket_r s, const unsigned char *data, int length);
+extern void us_dispatch_keylog(us_socket_r s, const unsigned char *data, int length);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
@@ -143,6 +149,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
+#ifndef LIBUS_USE_LIBUV
+long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
+void us_internal_sweep_if_due(struct us_loop_t *loop);
+#endif
 void us_internal_free_closed_sockets(us_loop_r loop);
 void us_internal_loop_link_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_group_t *group);
@@ -195,6 +205,7 @@ void us_internal_socket_after_open(us_socket_r s, int error);
 void us_internal_ssl_attach(us_socket_r s, struct ssl_ctx_st *ssl_ctx, int is_client, const char *sni, struct us_listen_socket_t *listener);
 /* SSL_free(s->ssl); s->ssl = NULL. Idempotent. */
 void us_internal_ssl_detach(us_socket_r s);
+void us_internal_ssl_socket_relocated(us_loop_r loop, us_socket_r old_s, us_socket_r new_s);
 
 /* TLS-layer event hooks. loop.c calls these instead of us_dispatch_* when
  * s->ssl != NULL; they decrypt/encrypt and re-dispatch the plaintext. */
@@ -265,6 +276,23 @@ struct us_socket_t {
    * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's
    * `raw` half can observe ciphertext (node:net Duplex.ondata semantics). */
   unsigned char ssl_raw_tap : 1;
+  /* A graceful TLS shutdown arrived while batched ciphertext was still
+   * spilled (see ssl_flush_write_batch); the shutdown re-runs once the
+   * spill drains so those records are not cut off by our FIN/close_notify. */
+  unsigned char ssl_shutdown_after_spill : 1;
+  /* Same as ssl_shutdown_after_spill but for us_internal_ssl_close: the
+   * close re-runs from the writable event once the spill drains. */
+  unsigned char ssl_close_after_spill : 1;
+  /* Set while SSL_do_handshake/SSL_read is on the stack: JS run from inside
+   * those calls (ALPN/SNI/keylog callbacks) may destroy the socket, and the
+   * SSL must not be freed under BoringSSL's feet - the detach is deferred to
+   * the driver's epilogue via ssl_pending_detach. */
+  unsigned char ssl_in_use : 1;
+  unsigned char ssl_pending_detach : 1;
+  /* The close code passed to the deferred close (e.g. a reset requested from
+   * inside a handshake callback must still RST, not FIN, when it is finally
+   * performed). */
+  unsigned char ssl_pending_close_code;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach
@@ -293,7 +321,11 @@ struct us_connecting_socket_t {
     struct us_socket_t *connecting_head;
     int options;
     int socket_ext_size;
-    unsigned int closed : 1, shutdown : 1, shutdown_read : 1, pending_resolve_callback : 1;
+    /* error_is_dns: `error` holds the raw getaddrinfo(3) return code for a
+     * failed name lookup rather than an errno. The two constant sets are
+     * different namespaces that overlap numerically, so consumers of `error`
+     * must check this bit first. */
+    unsigned int closed : 1, shutdown : 1, shutdown_read : 1, pending_resolve_callback : 1, error_is_dns : 1;
     unsigned char timeout;
     unsigned char long_timeout;
     unsigned char kind;
@@ -345,7 +377,9 @@ struct us_internal_callback_t {
   int cb_expects_the_loop;
   int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
+#ifdef LIBUS_USE_LIBUV
   unsigned has_added_timer_to_event_loop;
+#endif
 };
 
 #endif
@@ -378,7 +412,10 @@ struct us_listen_socket_t {
   struct ssl_ctx_st *ssl_ctx;
   /* SNI hostname → {SSL_CTX*, user*} tree. Owned. */
   void *sni;
-  void (*on_server_name)(struct us_listen_socket_t *, const char *hostname);
+  /* Dynamic SNI resolver: returns the SSL_CTX to serve for `hostname` on the
+   * in-flight handshake only (the caller does not cache it), or NULL to fall
+   * through to the default context. */
+  struct ssl_ctx_st *(*on_server_name)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket);
   unsigned int socket_ext_size;
   /* kind to stamp on accepted sockets. */
   unsigned char accept_kind;
@@ -390,5 +427,10 @@ void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, st
 void us_internal_socket_group_unlink_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);
 
 int us_raw_root_certs(struct us_cert_string_t **out);
+
+/* Save/restore the per-loop BIO routing state around in-handshake JS
+ * callbacks (SNI / ALPN). Defined in crypto/openssl.c. */
+void us_internal_ssl_loop_state_save(void *ssl, void **out5);
+void us_internal_ssl_loop_state_restore(void **saved5);
 
 #endif // INTERNAL_H

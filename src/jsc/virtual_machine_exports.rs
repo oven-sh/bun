@@ -9,7 +9,8 @@ use crate::{
 use bun_bundler::transpiler::PluginResolver;
 use bun_core::String as BunString;
 use bun_event_loop::ManagedTask::ManagedTask;
-use bun_sourcemap::{BakeSourceProvider, DevServerSourceProvider};
+use bun_sourcemap::SourceProviderMap;
+use bun_sourcemap::parsed_source_map::AnySourceProvider;
 
 // `Bun__ZigGlobalObject__uvLoop` is Windows-only: `#[cfg(windows)]` on the fn
 // definition itself.
@@ -23,6 +24,11 @@ use bun_sourcemap::{BakeSourceProvider, DevServerSourceProvider};
 // HOST_EXPORT(Bun__VirtualMachine__isShuttingDown, c)
 pub fn is_shutting_down(this: &VirtualMachine) -> bool {
     this.is_shutting_down()
+}
+
+// HOST_EXPORT(Bun__VM__scriptExecutionStatus, c)
+pub fn script_execution_status(this: &VirtualMachine) -> i32 {
+    this.script_execution_status() as i32
 }
 
 // HOST_EXPORT(Bun__getVM, c)
@@ -279,42 +285,10 @@ pub fn get_verbose_fetch_value() -> i32 {
     }
 }
 
-// HOST_EXPORT(Bun__addBakeSourceProviderSourceMap, c)
-pub fn add_bake_source_provider_source_map(
-    vm: &mut VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
-) {
-    let slice = specifier.to_utf8();
-    vm.source_mappings.put_bake_source_provider(
-        opaque_source_provider.cast::<BakeSourceProvider>(),
-        slice.slice(),
-    );
-}
-
-// HOST_EXPORT(Bun__addDevServerSourceProvider, c)
-pub fn add_dev_server_source_provider(
-    vm: &mut VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
-) {
-    let slice = specifier.to_utf8();
-    vm.source_mappings.put_dev_server_source_provider(
-        opaque_source_provider.cast::<DevServerSourceProvider>(),
-        slice.slice(),
-    );
-}
-
-// HOST_EXPORT(Bun__removeDevServerSourceProvider, c)
-pub fn remove_dev_server_source_provider(
-    vm: &mut VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
-) {
-    let slice = specifier.to_utf8();
-    vm.source_mappings
-        .remove_dev_server_source_provider(opaque_source_provider, slice.slice());
-}
+// `Bun__addBakeSourceProviderSourceMap` / `Bun__addDevServerSourceProvider` /
+// `Bun__removeDevServerSourceProvider` live in
+// `bun_runtime::bake::source_provider_exports` (their callers are bake's C++
+// source providers; LAYERING).
 
 // HOST_EXPORT(Bun__addSourceProviderSourceMap, c)
 pub fn add_source_provider_source_map(
@@ -323,8 +297,14 @@ pub fn add_source_provider_source_map(
     specifier: &BunString,
 ) {
     let slice = specifier.to_utf8();
-    vm.source_mappings
-        .put_zig_source_provider(opaque_source_provider, slice.slice());
+    vm.source_mappings.put_source_provider(
+        AnySourceProvider::new(
+            opaque_source_provider
+                .cast::<SourceProviderMap>()
+                .cast_const(),
+        ),
+        slice.slice(),
+    );
 }
 
 // HOST_EXPORT(Bun__removeSourceProviderSourceMap, c)
@@ -335,7 +315,7 @@ pub fn remove_source_provider_source_map(
 ) {
     let slice = specifier.to_utf8();
     vm.source_mappings
-        .remove_zig_source_provider(opaque_source_provider, slice.slice());
+        .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
 #[crate::host_fn(export = "Bun__setSyntheticAllocationLimitForTesting")]

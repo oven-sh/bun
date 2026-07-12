@@ -1,5 +1,6 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import defaultMacro, {
   addStrings,
   addStringsUTF16,
@@ -128,4 +129,30 @@ test("namespace import", () => {
 
 test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
+});
+
+// A numeric key >= 100000 (JSC's MIN_SPARSE_ARRAY_INDEX) makes the property put inside
+// JSC__JSValue__putToPropertyKey take a path that can throw, so the binding must check for
+// an exception. BUN_JSC_validateExceptionChecks=1 aborts the child if the check is missing.
+test("object argument with a sparse numeric key", async () => {
+  using dir = tempDir("macro-sparse-key", {
+    "take.ts": `export function take(o: any) {\n  return Object.keys(o).join(",");\n}\n`,
+    "index.ts": `import { take } from "./take.ts" with { type: "macro" };\nconsole.log(take({ 200000: 1 }));\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // One combined assertion so stderr (where JSC prints the exception check failure) shows up in
+  // the diff if the child aborts. Debug builds print "[macro] call take" to stdout before the
+  // script's own output, so only the tail of stdout is matched.
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+    stdout: expect.stringMatching(/200000\n$/),
+    exitCode: 0,
+    signalCode: null,
+  });
 });

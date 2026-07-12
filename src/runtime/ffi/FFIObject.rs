@@ -14,26 +14,25 @@ use bun_jsc::{
 /// `addr` must be either `0` or the address of a function with signature
 /// `extern "C" fn(*mut c_void, *mut c_void)`. This is user-supplied via
 /// `bun:ffi`; a bad value will crash when JSC invokes it.
-#[allow(deprecated)] // jsc::c::JSTypedArrayBytesDeallocator
 #[inline(always)]
-unsafe fn deallocator_from_addr(addr: usize) -> jsc::c::JSTypedArrayBytesDeallocator {
+unsafe fn deallocator_from_addr(addr: usize) -> jsc::JSTypedArrayBytesDeallocator {
     // SAFETY: `JSTypedArrayBytesDeallocator` is
     // `Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>`, which under
     // the null-pointer optimisation is layout-compatible with a single
     // pointer-sized word — exactly `usize` here. `0` round-trips to `None`.
-    unsafe { core::mem::transmute::<usize, jsc::c::JSTypedArrayBytesDeallocator>(addr) }
+    unsafe { core::mem::transmute::<usize, jsc::JSTypedArrayBytesDeallocator>(addr) }
 }
 
 /// Unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
 /// this variant passes the caller's (possibly null) deallocator through, so FFI-owned
 /// memory is only freed by the user-supplied callback.
-#[allow(deprecated, non_snake_case)]
+#[allow(non_snake_case)]
 #[inline]
 fn create_buffer_with_ctx(
     global: &JSGlobalObject,
     slice: &mut [u8],
     ctx: *mut c_void,
-    callback: jsc::c::JSTypedArrayBytesDeallocator,
+    callback: jsc::JSTypedArrayBytesDeallocator,
 ) -> JSValue {
     unsafe extern "C" {
         fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
@@ -41,7 +40,7 @@ fn create_buffer_with_ctx(
             ptr: *mut u8,
             len: usize,
             ctx: *mut c_void,
-            deallocator: jsc::c::JSTypedArrayBytesDeallocator,
+            deallocator: jsc::JSTypedArrayBytesDeallocator,
         ) -> JSValue;
     }
     // SAFETY: `global` is live; slice describes FFI-owned memory whose
@@ -373,7 +372,9 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<f32>(addr) };
-        Ok(JSValue::js_number(value as f64))
+        // The bytes at `addr` are arbitrary; a crafted NaN payload must not
+        // reach the NaN-boxed encoding (see `JSValue::purify_nan`).
+        Ok(JSValue::js_number(JSValue::purify_nan(value as f64)))
     }
     pub(crate) fn f64(
         global_object: &JSGlobalObject,
@@ -383,7 +384,9 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<f64>(addr) };
-        Ok(JSValue::js_number(value))
+        // The bytes at `addr` are arbitrary; a crafted NaN payload must not
+        // reach the NaN-boxed encoding (see `JSValue::purify_nan`).
+        Ok(JSValue::js_number(JSValue::purify_nan(value)))
     }
     pub(crate) fn i64(
         global_object: &JSGlobalObject,
@@ -608,7 +611,6 @@ fn get_cptr(value: JSValue) -> Option<usize> {
     None
 }
 
-#[allow(deprecated)] // jsc::c::JSTypedArrayBytesDeallocator — bun_jsc gates the c_api module as deprecated; no replacement path yet.
 pub(crate) fn to_array_buffer(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -620,7 +622,7 @@ pub(crate) fn to_array_buffer(
     match get_ptr_slice(global_this, value, byte_offset, value_length) {
         ValueOrError::Err(erro) => Ok(erro),
         ValueOrError::Slice(ptr, len) => {
-            let mut callback: jsc::c::JSTypedArrayBytesDeallocator = None;
+            let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
             let mut ctx: Option<*mut c_void> = None;
             if let Some(callback_value) = finalization_callback {
                 if let Some(callback_ptr) = get_cptr(callback_value) {
@@ -652,18 +654,23 @@ pub(crate) fn to_array_buffer(
                 }
             }
 
-            // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory.
-            let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
-            ArrayBuffer::from_bytes(slice, jsc::JSType::ArrayBuffer).to_js_with_context(
-                global_this,
-                ctx.unwrap_or(core::ptr::null_mut()),
-                callback,
-            )
+            // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory. The
+            // `bun:ffi` user asserts the pointer stays valid for the object's
+            // lifetime and that their finalization callback/ctx pair, if
+            // provided, is sound to invoke once at GC — `toArrayBuffer(ptr,
+            // ...)` is an inherently trusting FFI API.
+            unsafe {
+                let slice = core::slice::from_raw_parts_mut(ptr, len);
+                ArrayBuffer::from_bytes(slice, jsc::JSType::ArrayBuffer).to_js_with_context(
+                    global_this,
+                    ctx.unwrap_or(core::ptr::null_mut()),
+                    callback,
+                )
+            }
         }
     }
 }
 
-#[allow(deprecated)] // jsc::c::JSTypedArrayBytesDeallocator — bun_jsc gates the c_api module as deprecated; no replacement path yet.
 pub(crate) fn to_buffer(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -675,7 +682,7 @@ pub(crate) fn to_buffer(
     match get_ptr_slice(global_this, value, byte_offset, value_length) {
         ValueOrError::Err(err) => Ok(err),
         ValueOrError::Slice(ptr, len) => {
-            let mut callback: jsc::c::JSTypedArrayBytesDeallocator = None;
+            let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
             let mut ctx: Option<*mut c_void> = None;
             if let Some(callback_value) = finalization_callback {
                 if let Some(callback_ptr) = get_cptr(callback_value) {

@@ -25,6 +25,7 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 #include "headers.h"
 #include "BunObject.h"
+#include "webcore/streams/BunStreamConsumers.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/JSObject.h>
 #include "DOMJITIDLConvert.h"
@@ -109,7 +110,7 @@ static JSValue constructEnvObject(VM& vm, JSObject* object)
     return uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->processEnvObject();
 }
 
-static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue, size_t maxLength, bool asUint8Array)
+JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue, size_t maxLength, bool asUint8Array)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
 
@@ -1001,6 +1002,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     inflateSync                                    BunObject_callback_inflateSync                                      DontDelete|Function 1
     inspect                                        BunObject_lazyPropCb_wrap_inspect                                   DontDelete|PropertyCallback
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
+    isStandaloneExecutable                         BunObject_lazyPropCb_wrap_isStandaloneExecutable                    ReadOnly|DontDelete|PropertyCallback
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
     udpSocket                                      BunObject_callback_udpSocket                                        DontDelete|Function 1
@@ -1016,13 +1018,13 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
     randomUUIDv5                                   Bun__randomUUIDv5                                                   DontDelete|Function 3
-    readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
-    readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
-    readableStreamToBytes                          JSBuiltin                                                           Builtin|Function 1
-    readableStreamToBlob                           JSBuiltin                                                           Builtin|Function 1
-    readableStreamToFormData                       JSBuiltin                                                           Builtin|Function 1
-    readableStreamToJSON                           JSBuiltin                                                           Builtin|Function 1
-    readableStreamToText                           JSBuiltin                                                           Builtin|Function 1
+    readableStreamToArray                          WebCore::jsFunctionReadableStreamToArray           DontDelete|Function 1
+    readableStreamToArrayBuffer                    WebCore::jsFunctionReadableStreamToArrayBuffer     DontDelete|Function 1
+    readableStreamToBytes                          WebCore::jsFunctionReadableStreamToBytes           DontDelete|Function 1
+    readableStreamToBlob                           WebCore::jsFunctionReadableStreamToBlob            DontDelete|Function 1
+    readableStreamToFormData                       WebCore::jsFunctionReadableStreamToFormData        DontDelete|Function 1
+    readableStreamToJSON                           WebCore::jsFunctionReadableStreamToJSON            DontDelete|Function 1
+    readableStreamToText                           WebCore::jsFunctionReadableStreamToText            DontDelete|Function 1
     registerMacro                                  BunObject_callback_registerMacro                                    DontEnum|DontDelete|Function 1
     resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
@@ -1118,14 +1120,6 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
     return BunObject_setter_main(globalObject, encodedValue);
 }
 
-#define bunObjectReadableStreamToArrayCodeGenerator WebCore::readableStreamReadableStreamToArrayCodeGenerator
-#define bunObjectReadableStreamToArrayBufferCodeGenerator WebCore::readableStreamReadableStreamToArrayBufferCodeGenerator
-#define bunObjectReadableStreamToBytesCodeGenerator WebCore::readableStreamReadableStreamToBytesCodeGenerator
-#define bunObjectReadableStreamToBlobCodeGenerator WebCore::readableStreamReadableStreamToBlobCodeGenerator
-#define bunObjectReadableStreamToFormDataCodeGenerator WebCore::readableStreamReadableStreamToFormDataCodeGenerator
-#define bunObjectReadableStreamToJSONCodeGenerator WebCore::readableStreamReadableStreamToJSONCodeGenerator
-#define bunObjectReadableStreamToTextCodeGenerator WebCore::readableStreamReadableStreamToTextCodeGenerator
-
 // LazyProperty wrappers for stdin/stderr/stdout
 static JSValue BunObject_lazyPropCb_wrap_stdin(VM& vm, JSObject* bunObject)
 {
@@ -1146,14 +1140,6 @@ static JSValue BunObject_lazyPropCb_wrap_stdout(VM& vm, JSObject* bunObject)
 }
 
 #include "BunObject.lut.h"
-
-#undef bunObjectReadableStreamToArrayCodeGenerator
-#undef bunObjectReadableStreamToArrayBufferCodeGenerator
-#undef bunObjectReadableStreamToBytesCodeGenerator
-#undef bunObjectReadableStreamToBlobCodeGenerator
-#undef bunObjectReadableStreamToFormDataCodeGenerator
-#undef bunObjectReadableStreamToJSONCodeGenerator
-#undef bunObjectReadableStreamToTextCodeGenerator
 
 const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &Base::s_info, &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
 

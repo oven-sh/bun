@@ -81,7 +81,16 @@ function isZeroWidth(cp) {
   if (cp === 0xad) return true;
   if (cp >= 0x300 && cp <= 0x36f) return true;
   if (cp >= 0x200b && cp <= 0x200f) return true;
-  if (cp >= 0x2060 && cp <= 0x2064) return true;
+  // The bidi embedding/override controls (LRE..RLO) and the rest of the
+  // U+2060-U+206F block (word joiner, invisible operators, the LRI..PDI bidi
+  // isolates, deprecated format characters): invisible format characters,
+  // exactly like U+200B-U+200F above.
+  if (cp >= 0x202a && cp <= 0x202e) return true;
+  if (cp >= 0x2060 && cp <= 0x206f) return true;
+  // U+061C ARABIC LETTER MARK, the remaining bidi control character.
+  if (cp === 0x61c) return true;
+  // Mongolian free variation selectors and vowel separator.
+  if (cp >= 0x180b && cp <= 0x180f) return true;
   if (cp >= 0x20d0 && cp <= 0x20ff) return true;
   if (cp >= 0xfe00 && cp <= 0xfe0f) return true;
   if (cp >= 0xfe20 && cp <= 0xfe2f) return true;

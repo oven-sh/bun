@@ -194,7 +194,7 @@ impl KnownGlobal {
                             }
                             js_ast::expr::PrimitiveType::Number => {
                                 let val = match arg.data {
-                                    js_ast::ExprData::ENumber(num) => num.value,
+                                    js_ast::ExprData::ENumber(num) => num.value(),
                                     _ => return Some(Self::call_from_new(e, loc)),
                                 };
                                 if

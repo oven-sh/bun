@@ -16,6 +16,10 @@
 
 pub use bun_collections::VecExt as _VecExtReexport;
 
+pub mod error;
+pub use error::Error;
+pub use error::Result as CrateResult;
+
 // ─── module layout (see docs/REFACTOR_BUN_AST.md) ───────────────────────────
 pub mod parser;
 // Re-export parser-helper types at crate root so p.rs can `use crate::{...}`.
@@ -26,6 +30,7 @@ pub mod fold;
 pub mod lower;
 pub mod p;
 pub mod parse;
+pub mod react_compiler_host;
 pub mod repl_transforms;
 pub mod scan;
 pub mod typescript;
@@ -119,7 +124,7 @@ pub mod Macro {
             import_range: bun_ast::Range,
             caller: bun_ast::Expr,
             function_name: &[u8],
-        ) -> Result<bun_ast::Expr, bun_core::Error>;
+        ) -> Result<bun_ast::Expr, crate::Error>;
         // NOT `safe fn`: callee derefs `data` unconditionally as
         // `&MacroContext` — caller must guarantee non-null + produced by
         // `__bun_macro_context_init` + the backing `Transpiler.options` table
@@ -156,7 +161,7 @@ pub mod Macro {
             import_range: bun_ast::Range,
             caller: bun_ast::Expr,
             function_name: &[u8],
-        ) -> Result<bun_ast::Expr, bun_core::Error> {
+        ) -> Result<bun_ast::Expr, crate::Error> {
             __bun_macro_context_call(
                 self,
                 import_record_path,
@@ -670,7 +675,7 @@ pub mod renamer {
         }
 
         // Labels are always declared in a nested scope, so we don't need to check.
-        if let Some(ref_) = scope.label_ref {
+        if let Some(ref_) = scope.label_ref.to_nullable() {
             let symbol = &mut symbols[ref_.inner_index() as usize];
             let ns = SlotNamespace::Label;
             symbol.nested_scope_slot = slot.slots[ns];

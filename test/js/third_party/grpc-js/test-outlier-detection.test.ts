@@ -56,12 +56,12 @@ const successRateOutlierDetectionServiceConfig = {
     {
       outlier_detection: {
         interval: {
-          seconds: 1,
-          nanos: 0,
+          seconds: 0,
+          nanos: 500_000_000,
         },
         base_ejection_time: {
-          seconds: 3,
-          nanos: 0,
+          seconds: 1,
+          nanos: 500_000_000,
         },
         success_rate_ejection: {
           request_volume: 5,
@@ -80,12 +80,12 @@ const failurePercentageOutlierDetectionServiceConfig = {
     {
       outlier_detection: {
         interval: {
-          seconds: 1,
-          nanos: 0,
+          seconds: 0,
+          nanos: 500_000_000,
         },
         base_ejection_time: {
-          seconds: 3,
-          nanos: 0,
+          seconds: 1,
+          nanos: 500_000_000,
         },
         failure_percentage_ejection: {
           request_volume: 5,
@@ -431,6 +431,23 @@ describe("Outlier detection", () => {
     });
   }
 
+  /* Outlier detection only changes state at interval ticks, so instead of sleeping for a
+   * fixed multiple of the interval, poll batches of 10 round-robined requests (enough to
+   * hit every backend) until a whole batch has the expected outcome, then report it. */
+  function waitForBatchResult(
+    makeOneRequest: (callback: (error?: Error) => void) => void,
+    expectError: boolean,
+    callback: (error?: Error) => void,
+  ) {
+    makeManyRequests(makeOneRequest, 10, error => {
+      if (!!error === expectError) {
+        callback(error);
+        return;
+      }
+      setTimeout(() => waitForBatchResult(makeOneRequest, expectError, callback), 50);
+    });
+  }
+
   it("Should allow normal operation with one server", done => {
     const client = new EchoService(`localhost:${goodPorts[0]}`, grpc.credentials.createInsecure(), {
       "grpc.service_config": defaultOutlierDetectionServiceConfigString,
@@ -463,29 +480,21 @@ describe("Outlier detection", () => {
     it("Should eject a server if it is failing requests", done => {
       // Make a large volume of requests
       makeManyRequests(makeUncheckedRequest, 50, () => {
-        // Give outlier detection time to run ejection checks
-        setTimeout(() => {
-          // Make enough requests to go around all servers
-          makeManyRequests(makeCheckedRequest, 10, done);
-        }, 1000);
+        // Wait until outlier detection ejects the failing server: a full batch of
+        // checked requests only succeeds once it is out of the rotation
+        waitForBatchResult(makeCheckedRequest, false, done);
       });
     });
     it("Should uneject a server after the ejection period", function (done) {
       makeManyRequests(makeUncheckedRequest, 50, () => {
-        setTimeout(() => {
-          makeManyRequests(makeCheckedRequest, 10, error => {
-            if (error) {
-              done(error);
-              return;
-            }
-            setTimeout(() => {
-              makeManyRequests(makeCheckedRequest, 10, error => {
-                assert(error);
-                done();
-              });
-            }, 3000);
+        // Wait until the failing server is ejected...
+        waitForBatchResult(makeCheckedRequest, false, () => {
+          // ...then until the ejection period expires and requests reach it again
+          waitForBatchResult(makeCheckedRequest, true, error => {
+            assert(error);
+            done();
           });
-        }, 1000);
+        });
       });
     });
   });
@@ -511,29 +520,21 @@ describe("Outlier detection", () => {
     it("Should eject a server if it is failing requests", done => {
       // Make a large volume of requests
       makeManyRequests(makeUncheckedRequest, 50, () => {
-        // Give outlier detection time to run ejection checks
-        setTimeout(() => {
-          // Make enough requests to go around all servers
-          makeManyRequests(makeCheckedRequest, 10, done);
-        }, 1000);
+        // Wait until outlier detection ejects the failing server: a full batch of
+        // checked requests only succeeds once it is out of the rotation
+        waitForBatchResult(makeCheckedRequest, false, done);
       });
     });
     it("Should uneject a server after the ejection period", function (done) {
       makeManyRequests(makeUncheckedRequest, 50, () => {
-        setTimeout(() => {
-          makeManyRequests(makeCheckedRequest, 10, error => {
-            if (error) {
-              done(error);
-              return;
-            }
-            setTimeout(() => {
-              makeManyRequests(makeCheckedRequest, 10, error => {
-                assert(error);
-                done();
-              });
-            }, 3000);
+        // Wait until the failing server is ejected...
+        waitForBatchResult(makeCheckedRequest, false, () => {
+          // ...then until the ejection period expires and requests reach it again
+          waitForBatchResult(makeCheckedRequest, true, error => {
+            assert(error);
+            done();
           });
-        }, 1000);
+        });
       });
     });
   });

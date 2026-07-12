@@ -170,7 +170,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             tag: ImportRecordTag::None,
                             loader: None,
                             source_index: AstIndex::default(),
-                            module_id: 0,
                             original_path: b"",
                             flags: ImportRecordFlags::default(),
                         });
@@ -301,7 +300,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         tag: ImportRecordTag::None,
                         loader: None,
                         source_index: AstIndex::default(),
-                        module_id: 0,
                         original_path: b"",
                         flags: ImportRecordFlags::default(),
                     });

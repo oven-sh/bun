@@ -1,7 +1,7 @@
 // maybe rename to `PackageJSONCache` if we cache more than workspaces
 
+use crate::Error;
 use bun_collections::StringHashMap;
-use bun_core::Error;
 // `Expr` here is the JSON parser's AST node (`bun_ast::Expr`, re-
 // exported via `crate::bun_json`). It is intentionally NOT `bun_ast::Expr`
 // — that lives in a higher-tier crate and is a distinct type. Consumers of
@@ -73,40 +73,22 @@ impl MapEntry {
 
 pub type Map = StringHashMap<MapEntry>;
 
-// `bun_parsers::json` spells the JSON options
-// out as 8 const-generic bools. The only field this module varies at runtime
-// is `guess_indentation`, so dispatch on that one bool here and keep the rest
-// fixed (is_json/allow_comments/allow_trailing_commas
-// = true, others default false).
 fn parse_package_json(
     source: &Source,
     log: &mut Log,
     bump: &bun_alloc::Arena,
     guess_indentation: bool,
-) -> Result<json::JsonResult, bun_core::Error> {
-    if guess_indentation {
-        json::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            true,  // GUESS_INDENTATION
-        >(source, log, bump)
-    } else {
-        json::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            false, // GUESS_INDENTATION
-        >(source, log, bump)
-    }
+) -> Result<json::JsonResult, crate::Error> {
+    Ok(json::parse_package_json_utf8_with_opts(
+        json::JSONOptions {
+            json_warn_duplicate_keys: false,
+            guess_indentation,
+            ..json::PACKAGE_JSON_OPTS
+        },
+        source,
+        log,
+        bump,
+    )?)
 }
 
 #[derive(Clone, Copy)]

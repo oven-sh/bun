@@ -2,6 +2,7 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 
@@ -62,6 +63,9 @@ pub struct Parser<'a> {
     // Scratch storage recycled by compute_bracket_matches (links.rs) so inline
     // processing does not allocate a bracket-pair map per block.
     pub bracket_pairs: Vec<(OFF, OFF)>,
+    // Label-frame stack recycled by process_inline_content (inlines.rs) so
+    // blocks with links do not allocate a frame stack per block.
+    pub label_frames: Vec<crate::inlines::LabelFrame>,
     // Memo of failed closing-delimiter searches in find_html_tag (inlines.rs).
     // Cell because find_html_tag is a &self query reached from both &self and
     // &mut self scanners.
@@ -126,8 +130,8 @@ impl Default for BlockHeader {
     }
 }
 
-/// `Parser`'s error type: the union
-/// of `{ OutOfMemory, JSError, JSTerminated }` with `{ StackOverflow }`.
+/// `Parser`'s error type: the union of `{ OutOfMemory, JSError, JSTerminated }`
+/// with the parser-specific `{ StackOverflow, InputTooLarge, TooManyBlocks }`.
 // (`bun_jsc::JsError` covers the first three, but the md crate sits below
 // `bun_jsc` in the layering, so the variants stay flat here.)
 pub type Error = ParserError;
@@ -138,14 +142,87 @@ pub enum ParserError {
     JSError,
     JSTerminated,
     StackOverflow,
+    /// The input is longer than [`MAX_INPUT_LEN`], so the parser's `u32`
+    /// offset arithmetic cannot address it.
+    InputTooLarge,
+    /// The document needs more than [`MAX_BLOCK_BYTES`] of block metadata,
+    /// so the parser's `u32` block offsets cannot address it.
+    TooManyBlocks,
 }
 
 bun_core::oom_from_alloc!(ParserError);
 
-impl From<ParserError> for bun_core::Error {
-    fn from(e: ParserError) -> Self {
-        bun_core::err!(from e)
+impl core::fmt::Display for ParserError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(*self))
     }
+}
+
+impl core::error::Error for ParserError {}
+
+/// The longest `OFF`-typed fixed lookahead the parser performs from an
+/// in-bounds offset: the `<![CDATA[` probe in `is_html_block_start_condition`
+/// checks `off + MAX_LOOKAHEAD <= size`. (Probes that add in `usize`, like
+/// `match_html_tag`, cannot wrap and do not bound this.)
+pub(crate) const MAX_LOOKAHEAD: OFF = 1 + crate::line_analysis::CDATA_OPEN.len() as OFF;
+
+/// The largest input `input_size` accepts. Every offset, mark and span
+/// boundary in the parser is an `OFF` (u32), and bounds checks are written as
+/// `off + k <= size` for fixed lookaheads `k`, so the input must leave
+/// [`MAX_LOOKAHEAD`] bytes of headroom below `OFF::MAX` for that arithmetic
+/// never to wrap.
+pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
+
+/// The most bytes `block_bytes` may hold: a block's offset into the buffer
+/// is stored as a `u32` (`Container.block_byte_off` and the casts that feed
+/// it), and each new header is written at the end of `block_bytes` rounded
+/// up to its alignment, so the buffer must stop one aligned header short of
+/// `OFF::MAX`.
+pub(crate) const MAX_BLOCK_BYTES: usize =
+    OFF::MAX as usize - (size_of::<BlockHeader>() + align_of::<BlockHeader>());
+
+// The headroom proof: a buffer filled to the cap can still be aligned up and
+// take one more header without leaving `OFF` range.
+const _: () = assert!(
+    ((MAX_BLOCK_BYTES + (align_of::<BlockHeader>() - 1)) & !(align_of::<BlockHeader>() - 1))
+        + size_of::<BlockHeader>()
+        <= OFF::MAX as usize
+);
+
+/// The runtime block-metadata cap checked by [`check_block_bytes_len`]:
+/// always [`MAX_BLOCK_BYTES`] outside of tests, shrinkable only through
+/// [`set_max_block_bytes_for_testing`].
+static BLOCK_BYTES_LIMIT: AtomicUsize = AtomicUsize::new(MAX_BLOCK_BYTES);
+
+/// `bun:internal-for-testing` (`setMaxMarkdownBlockBytesForTesting`): shrink
+/// the block-metadata cap so the `TooManyBlocks` path is reachable without
+/// allocating 4 GiB of headers. The cap can only be lowered, never raised
+/// past [`MAX_BLOCK_BYTES`]. Returns the previous value so callers can
+/// restore it.
+pub fn set_max_block_bytes_for_testing(limit: usize) -> usize {
+    BLOCK_BYTES_LIMIT.swap(limit.min(MAX_BLOCK_BYTES), Ordering::Relaxed)
+}
+
+/// Rejects growing `block_bytes` to `needed` bytes once the parser's u32
+/// block offsets could no longer address it. Every site that grows the
+/// buffer (`append_block_header`, `end_current_block`) checks this before
+/// appending.
+#[inline]
+pub(crate) fn check_block_bytes_len(needed: usize) -> Result<(), ParserError> {
+    if needed > BLOCK_BYTES_LIMIT.load(Ordering::Relaxed) {
+        return Err(ParserError::TooManyBlocks);
+    }
+    Ok(())
+}
+
+/// Callers that size anything from the input length must reject oversized
+/// inputs with this before allocating.
+#[inline]
+pub(crate) fn input_size(text: &[u8]) -> Result<OFF, ParserError> {
+    if text.len() > MAX_INPUT_LEN {
+        return Err(ParserError::InputTooLarge);
+    }
+    Ok(text.len() as OFF)
 }
 
 impl<'a> Parser<'a> {
@@ -171,8 +248,42 @@ impl<'a> Parser<'a> {
         self.get_block_header_at(off)
     }
 
-    fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Parser<'a> {
-        let size: OFF = OFF::try_from(text.len()).expect("int cast");
+    /// Appends one aligned `BlockHeader` to `block_bytes` and returns its
+    /// byte offset. This is the only way a header is added, so the
+    /// block-metadata cap cannot be forgotten by a new caller.
+    pub(crate) fn append_block_header(
+        &mut self,
+        header: BlockHeader,
+    ) -> Result<usize, ParserError> {
+        let align_mask: usize = align_of::<BlockHeader>() - 1;
+        let aligned = (self.block_bytes.len() + align_mask) & !align_mask;
+        let needed = aligned + size_of::<BlockHeader>();
+        check_block_bytes_len(needed)?;
+        self.block_bytes
+            .reserve(needed.saturating_sub(self.block_bytes.len()));
+        // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
+        // overwritten by the header write below.
+        self.block_bytes.resize(needed, 0);
+        *self.get_block_header_at(aligned) = header;
+        Ok(aligned)
+    }
+
+    /// Charge one resolved reference link/image against the reference-definition
+    /// output budget (`max_ref_def_output`). On exhaustion the budget is zeroed, so
+    /// this and every later reference degrade to literal text (md4c, mity/md4c#238).
+    pub(crate) fn charge_ref_def_output(&mut self, dest_len: usize, title_len: usize) -> bool {
+        let n = dest_len as u64 + title_len as u64;
+        if n < self.max_ref_def_output {
+            self.max_ref_def_output -= n;
+            true
+        } else {
+            self.max_ref_def_output = 0;
+            false
+        }
+    }
+
+    fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
+        let size = input_size(text)?;
         let mut p = Parser {
             text,
             size,
@@ -193,6 +304,7 @@ impl<'a> Parser<'a> {
             buffer: Vec::new(),
             emph_delims: Vec::new(),
             bracket_pairs: Vec::new(),
+            label_frames: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
             n_containers: 0,
             current_block: None,
@@ -210,11 +322,11 @@ impl<'a> Parser<'a> {
             ref_def_labels: bun_collections::StringSet::new(),
             last_line_has_list_loosening_effect: false,
             last_list_item_starts_with_two_blank_lines: false,
-            max_ref_def_output: (16 * (size as u64)).min(1024 * 1024).min(u32::MAX as u64),
+            max_ref_def_output: 16 * (size as u64).min(1024 * 1024 / 16),
             stack_check: StackCheck::init(),
         };
         p.build_mark_char_map();
-        p
+        Ok(p)
     }
 
     // All owned buffers are `Vec<_>`, so `Drop` is automatic — no explicit impl.
@@ -296,8 +408,10 @@ impl<'a> Parser<'a> {
     //   find_html_tag
     //
     // links.rs — impl Parser:
-    //   process_link, try_match_bracket_link, label_contains_link,
-    //   process_wiki_link, render_ref_link, find_autolink, render_autolink
+    //   compute_bracket_matches, match_bracket, scan_bracket_close,
+    //   enter_label_span, process_link, try_match_bracket_link,
+    //   label_contains_link, process_wiki_link, find_autolink,
+    //   render_autolink
     //
     // line_analysis.rs — impl Parser:
     //   is_setext_underline, is_hr_line, is_atx_header_line,
@@ -329,15 +443,9 @@ pub fn render_to_html(
 
     let mut html_renderer = HtmlRenderer::init(input, render_opts);
 
-    let mut parser = Parser::init(input, flags, html_renderer.renderer());
+    let mut parser = Parser::init(input, flags, html_renderer.renderer())?;
 
-    // HtmlRenderer never returns JSError/JSTerminated, so OutOfMemory is the only possible error.
-    match parser.process_doc() {
-        Ok(()) => {}
-        Err(ParserError::OutOfMemory) => return Err(ParserError::OutOfMemory),
-        Err(ParserError::JSError) | Err(ParserError::JSTerminated) => unreachable!(),
-        Err(ParserError::StackOverflow) => return Err(ParserError::StackOverflow),
-    }
+    parser.process_doc()?;
     drop(parser);
 
     Ok(html_renderer.to_owned_slice()?)
@@ -356,7 +464,7 @@ pub fn render_with_renderer<'a>(
     let _ = render_options; // Available for renderer implementations; parse layer does not use these.
     let input = helpers::skip_utf8_bom(text);
 
-    let mut p = Parser::init(input, flags, rend);
+    let mut p = Parser::init(input, flags, rend)?;
 
     p.process_doc()
 }

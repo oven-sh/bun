@@ -143,10 +143,7 @@ mod bun_test {
     }
 }
 
-pub(crate) fn escape_xml(
-    str_: &[u8],
-    writer: &mut impl bun_io::Write,
-) -> Result<(), bun_core::Error> {
+pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate::Result<()> {
     let mut last: usize = 0;
     let mut i: usize = 0;
     let len = str_.len();
@@ -304,7 +301,7 @@ impl JunitReporter {
 
     // `pub const new = bun.TrivialNew(JunitReporter);` → Box::new
 
-    fn generate_properties_list(&mut self) -> Result<(), bun_core::Error> {
+    fn generate_properties_list(&mut self) -> crate::Result<()> {
         struct PropertiesList<'a> {
             ci: &'a [u8],
             commit: &'a [u8],
@@ -403,7 +400,7 @@ impl JunitReporter {
         &SPACES[0..(total_spaces as usize).min(SPACES.len())]
     }
 
-    pub fn begin_test_suite(&mut self, name: &[u8]) -> Result<(), bun_core::Error> {
+    pub fn begin_test_suite(&mut self, name: &[u8]) -> crate::Result<()> {
         self.begin_test_suite_with_line(name, 0, true)
     }
 
@@ -412,7 +409,7 @@ impl JunitReporter {
         name: &[u8],
         line_number: u32,
         is_file_suite: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if self.contents.is_empty() {
             self.contents
                 .extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -476,7 +473,7 @@ impl JunitReporter {
         Ok(())
     }
 
-    pub fn end_test_suite(&mut self) -> Result<(), bun_core::Error> {
+    pub fn end_test_suite(&mut self) -> crate::Result<()> {
         if self.suite_stack.is_empty() {
             return Ok(());
         }
@@ -534,7 +531,7 @@ impl JunitReporter {
         assertions: u32,
         elapsed_ns: u64,
         line_number: u32,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
         let elapsed_ns_f64: f64 = elapsed_ns as f64;
         let elapsed_ms = elapsed_ns_f64 / bun::time::NS_PER_MS as f64;
@@ -699,7 +696,7 @@ impl JunitReporter {
         Ok(())
     }
 
-    pub fn write_to_file(&mut self, path: &[u8]) -> Result<(), bun_core::Error> {
+    pub fn write_to_file(&mut self, path: &[u8]) -> crate::Result<()> {
         if self.contents.is_empty() {
             return Ok(());
         }
@@ -747,7 +744,7 @@ impl JunitReporter {
         ) {
             bun_sys::Result::Err(err) => {
                 Output::err(
-                    bun_core::err!("JUnitReportFailed"),
+                    crate::Error::JUnitReportFailed,
                     "Failed to write JUnit report to {}\n{}",
                     (bstr::BStr::new(path), err),
                 );
@@ -756,7 +753,7 @@ impl JunitReporter {
                 bun_sys::Result::Ok(()) => {}
                 bun_sys::Result::Err(err) => {
                     Output::err(
-                        bun_core::err!("JUnitReportFailed"),
+                        crate::Error::JUnitReportFailed,
                         "Failed to write JUnit report to {}\n{}",
                         (bstr::BStr::new(path), err),
                     );
@@ -846,7 +843,7 @@ impl CommandLineReporter {
                             12345
                         };
                     Output::err(
-                        bun_core::err!("AssertionError"),
+                        crate::Error::AssertionError,
                         "expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n",
                         (
                             expected_count,
@@ -863,7 +860,7 @@ impl CommandLineReporter {
                 }
                 bun_test::Execution::Result::FailBecauseExpectedHasAssertions => {
                     Output::err(
-                        bun_core::err!("AssertionError"),
+                        crate::Error::AssertionError,
                         "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n",
                         (),
                     );
@@ -1428,7 +1425,7 @@ impl CommandLineReporter {
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if !REPORTERS_TEXT && !REPORTERS_LCOV {
             return Ok(());
         }
@@ -1467,7 +1464,7 @@ impl CommandLineReporter {
         vm: &mut VirtualMachine,
         opts: &CodeCoverageOptions,
         out_path: &bun_core::ZStr,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let Some(map) = ByteRangeMapping::map() else {
             return Ok(());
         };
@@ -1493,11 +1490,11 @@ impl CommandLineReporter {
         ) {
             bun_sys::Result::Err(e) => {
                 Output::err(
-                    bun_core::err!("lcovCoverageError"),
+                    crate::Error::lcovCoverageError,
                     "failed to open coverage fragment {}\n{}",
                     (bstr::BStr::new(out_path.as_bytes()), e),
                 );
-                return Err(bun_core::err!("OpenFailed"));
+                return Err(crate::Error::OpenFailed);
             }
             bun_sys::Result::Ok(f) => f,
         };
@@ -1532,7 +1529,7 @@ impl CommandLineReporter {
         }
         match file.write_all(&buffered) {
             bun_sys::Result::Ok(()) => {}
-            bun_sys::Result::Err(e) => return Err(bun_core::Error::from(e)),
+            bun_sys::Result::Err(e) => return Err(crate::Error::from(e)),
         }
         Ok(())
     }
@@ -1546,7 +1543,7 @@ impl CommandLineReporter {
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
         byte_ranges: &mut [&mut ByteRangeMapping],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // `perf::Ctx` ends its span on Drop.
         let _trace = if REPORTERS_TEXT && REPORTERS_LCOV {
             bun::perf::trace("TestCommand.printCodeCoverageLCovAndText")
@@ -1724,7 +1721,7 @@ impl CommandLineReporter {
                     match file {
                         bun_sys::Result::Err(err) => {
                             Output::err(
-                                bun_core::err!("lcovCoverageError"),
+                                crate::Error::lcovCoverageError,
                                 "Failed to create lcov file",
                                 (),
                             );
@@ -1885,7 +1882,7 @@ impl CommandLineReporter {
             if let Some((lcov_file, _, buffered)) = &mut **lcov_guard {
                 if let bun_sys::Result::Err(e) = lcov_file.write_all(buffered) {
                     // `lcov_guard` drops on this early return → close + unlink.
-                    return Err(bun_core::Error::from(e));
+                    return Err(crate::Error::from(e));
                 }
             }
             // Flush succeeded — disarm the errdefer cleanup.
@@ -1962,7 +1959,7 @@ impl TestCommand {
     // pub use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
     // Re-exports moved to top-level `use` per crate map.
 
-    pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         Output::IS_GITHUB_ACTION.store(
             Output::is_github_action(),
             core::sync::atomic::Ordering::Relaxed,
@@ -2377,14 +2374,14 @@ impl TestCommand {
             let dir_to_scan: &[u8] = 'brk: {
                 if !ctx.debug.test_directory.is_empty() {
                     dir_to_scan_owned = resolve_path::join_abs::<bun_path::platform::Auto>(
-                        scanner.fs.top_level_dir,
+                        scanner.fs().top_level_dir,
                         &ctx.debug.test_directory,
                     )
                     .into();
                     break 'brk &dir_to_scan_owned;
                 }
 
-                break 'brk scanner.fs.top_level_dir;
+                break 'brk scanner.fs().top_level_dir;
             };
 
             match scanner.scan(dir_to_scan) {
@@ -3005,7 +3002,7 @@ impl TestCommand {
                                 last: isolate,
                             },
                         ) {
-                            handle_top_level_test_error_before_javascript_start(err);
+                            handle_top_level_test_error_before_javascript_start(&err);
                         }
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
@@ -3029,7 +3026,7 @@ impl TestCommand {
                         last: true,
                     },
                 ) {
-                    handle_top_level_test_error_before_javascript_start(err);
+                    handle_top_level_test_error_before_javascript_start(&err);
                 }
             }
         }
@@ -3056,7 +3053,7 @@ impl TestCommand {
         vm: &mut VirtualMachine,
         file_name: &[u8],
         first_last: bun_test::FirstLast,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Capture the raw log pointer (Copy) so the guard does not borrow `vm`.
         let vm_log = vm.log;
         scopeguard::defer! {
@@ -3276,9 +3273,9 @@ impl TestCommand {
     }
 }
 
-pub(crate) fn handle_top_level_test_error_before_javascript_start(err: bun_core::Error) -> ! {
+pub(crate) fn handle_top_level_test_error_before_javascript_start(err: &crate::Error) -> ! {
     if cfg!(debug_assertions) {
-        if err != bun_core::err!("ModuleNotFound") {
+        if !matches!(err, crate::Error::ModuleNotFound) {
             bun_core::debug_warn!("Unhandled error: {}", err.name());
         }
     }

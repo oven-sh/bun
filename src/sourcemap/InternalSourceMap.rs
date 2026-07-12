@@ -1287,9 +1287,9 @@ pub enum FromVlqError {
     InvalidSourceMap,
 }
 
-impl From<FromVlqError> for bun_core::Error {
+impl From<FromVlqError> for crate::Error {
     fn from(_e: FromVlqError) -> Self {
-        bun_core::err!("InvalidSourceMap")
+        crate::Error::InvalidSourceMap
     }
 }
 

@@ -100,6 +100,20 @@ describe("Bun.Terminal", () => {
       expect(() => new Bun.Terminal(1n as any)).toThrow();
       expect(() => new Bun.Terminal(Symbol() as any)).toThrow();
     });
+
+    test("throws ERR_INVALID_ARG_TYPE with 'property' wording when name is not a string", () => {
+      let caught: any;
+      try {
+        new Bun.Terminal({ name: 12345 as any });
+      } catch (e) {
+        caught = e;
+      }
+      expect({ code: caught?.code, name: caught?.name, message: caught?.message }).toEqual({
+        code: "ERR_INVALID_ARG_TYPE",
+        name: "TypeError",
+        message: 'The "name" property must be of type string, got number',
+      });
+    });
   });
 
   describe("write", () => {
@@ -366,6 +380,23 @@ describe("Bun.Terminal", () => {
 
       // Still 0
       expect(terminal.inputFlags).toBe(0);
+    });
+
+    test.skipIf(isWindows)("NaN clamps to tcflag_t max, same as Infinity", async () => {
+      // Assigning NaN must clamp to the same value as Infinity (tcflag_t::MAX),
+      // matching the reference `@max(0, @min(num, max))` semantics. The kernel
+      // may mask some bits per field, so compare NaN against Infinity rather
+      // than a hard-coded constant.
+      await using terminal = new Bun.Terminal({ cols: 80, rows: 24 });
+
+      for (const prop of ["inputFlags", "outputFlags", "localFlags", "controlFlags"] as const) {
+        terminal[prop] = Infinity;
+        const fromInfinity = terminal[prop];
+        terminal[prop] = NaN;
+        const fromNaN = terminal[prop];
+        expect({ prop, fromNaN }).toEqual({ prop, fromNaN: fromInfinity });
+        expect(fromNaN).toBeGreaterThan(0);
+      }
     });
   });
 
@@ -1195,5 +1226,32 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     await gotData;
     const output = Buffer.concat(dataChunks).toString();
     expect(output).toContain("hello");
+  });
+
+  // https://github.com/oven-sh/bun/issues/33187
+  // Not `test.concurrent`: spawns run concurrently inside the body; the serial
+  // `Bun.spawn` loop must be the only contention to reproduce the race.
+  test("many fast-exiting subprocesses all deliver pty output", async () => {
+    const N = isWindows ? 8 : 20;
+    const outcomes: string[] = [];
+    const one = async () => {
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let got = "";
+      const proc = Bun.spawn([bunExe(), "-e", "console.log('hello from terminal')"], {
+        env: bunEnv,
+        terminal: {
+          data: (_t, d) => {
+            got += Buffer.from(d).toString();
+            if (got.includes("hello from terminal")) resolve("data");
+          },
+          exit: () => resolve(got.includes("hello from terminal") ? "data" : "exit-no-data"),
+        },
+      });
+      outcomes.push(await promise);
+      proc.terminal?.close();
+      await proc.exited;
+    };
+    await Promise.all(Array.from({ length: N }, one));
+    expect(outcomes).toEqual(Array.from({ length: N }, () => "data"));
   });
 });

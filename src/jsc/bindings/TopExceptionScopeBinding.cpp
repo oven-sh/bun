@@ -10,8 +10,8 @@ using JSC::TopExceptionScope;
 #define ExpectedTopExceptionScopeAlignment 8
 #endif
 
-static_assert(sizeof(TopExceptionScope) == ExpectedTopExceptionScopeSize, "TopExceptionScope.zig assumes TopExceptionScope is 56 bytes");
-static_assert(alignof(TopExceptionScope) == ExpectedTopExceptionScopeAlignment, "TopExceptionScope.zig assumes TopExceptionScope is 8-byte aligned");
+static_assert(sizeof(TopExceptionScope) == ExpectedTopExceptionScopeSize, "src/jsc/TopExceptionScope.rs assumes TopExceptionScope is 56 bytes");
+static_assert(alignof(TopExceptionScope) == ExpectedTopExceptionScopeAlignment, "src/jsc/TopExceptionScope.rs assumes TopExceptionScope is 8-byte aligned");
 
 extern "C" void TopExceptionScope__construct(
     void* ptr,

@@ -1,10 +1,11 @@
 use crate::mal_prelude::*;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::Error as BunError;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{Data, Loc, Log, Range, Source};
 use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt};
-use bun_core::{self as bun, Error as BunError, FeatureFlags, Output};
+use bun_core::{self as bun, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_sourcemap::{
     self as SourceMap, DebugIDFormatter, LineOffsetTable, SourceMapPieces, SourceMapState,
@@ -114,10 +115,7 @@ pub(crate) use debug;
 bun_core::define_scoped_log!(debug_tree_shake, crate::linker_context_mod::TreeShake);
 
 // Re-exports from sibling modules in `linker_context/`.
-// `LinkerGraph` SoA accessors are real now (`` on
-// `JSAst`/`JSMeta`/`File`); the submodule bodies un-gate against those. Module
-// declarations live in `lib.rs::linker_context` — each re-export below is
-// gated alongside its module declaration so partial un-gates compile.
+// Module declarations live in `lib.rs::linker_context`.
 pub use crate::linker_context::scan_imports_and_exports::scan_imports_and_exports;
 
 pub use crate::linker_context::compute_chunks::compute_chunks;
@@ -839,7 +837,7 @@ impl<'a> LinkerContext<'a> {
             self.graph.propagate_async_dependencies()?;
         }
 
-        scan_imports_and_exports(self).map_err(BunError::from)?;
+        scan_imports_and_exports(self)?;
 
         // Stop now if there were errors
         if self.log().has_errors() {
@@ -1078,6 +1076,18 @@ impl<'a> LinkerContext<'a> {
             .expect("TODO: handle error");
     }
 
+    /// The relative path from the chunk directory to a file source, as written
+    /// into the source map's `sources` array. `sources` entries are URLs, so the
+    /// host separator is normalized to `/` (the invariant `Path::pretty` holds).
+    fn source_map_relative_path(
+        chunk_abs_dir: &[u8],
+        source_abs_path: &[u8],
+    ) -> Result<Box<[u8]>, AllocError> {
+        let mut rel = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, source_abs_path)?;
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
+        Ok(rel)
+    }
+
     pub fn generate_source_map_for_chunk(
         &mut self,
         isolated_hash: u64,
@@ -1117,8 +1127,7 @@ impl<'a> LinkerContext<'a> {
                 // (drops at scope exit).
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage =
-                        bun_paths::resolve_path::relative_alloc(chunk_abs_dir, path.text)?;
+                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
                     &rel_path_storage
                 } else {
                     path.pretty
@@ -1145,8 +1154,7 @@ impl<'a> LinkerContext<'a> {
 
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage =
-                        bun_paths::resolve_path::relative_alloc(chunk_abs_dir, path.text)?;
+                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
                     &rel_path_storage
                 } else {
                     path.pretty
@@ -1280,18 +1288,17 @@ bun_core::oom_from_alloc!(LinkError);
 impl From<BunError> for LinkError {
     fn from(e: BunError) -> Self {
         // OOM keeps its identity through
-        // `load()`, so OOMs travelling as `bun_core::Error` must not be
+        // `load()`, so OOMs travelling as `crate::Error` must not be
         // misreported as build failures. Everything else collapses to
         // `BuildFailed`; user-facing diagnostics flow through the bundler `Log`,
         // not this variant.
-        if e == BunError::OUT_OF_MEMORY {
+        if matches!(e, BunError::Alloc(_)) {
             LinkError::OutOfMemory
         } else {
             LinkError::BuildFailed
         }
     }
 }
-bun_core::named_error_set!(LinkError);
 
 pub struct LinkerOptions {
     pub generate_bytecode_cache: bool,
@@ -2160,9 +2167,6 @@ impl<'a> LinkerContext<'a> {
 
         Ok(true)
     }
-
-    // runtime_function: moved to the un-gated forward-decl impl block
-    // (see "Forward-decl shims for scanImportsAndExports.rs callees" below).
 
     pub fn print_code_for_file_in_chunk_js(
         &mut self,
@@ -3559,17 +3563,15 @@ impl<'a> LinkerContext<'a> {
                         .get(&tracker.import_ref)
                         .unwrap();
 
-                    if let Some(namespace_ref) = named_import.namespace_ref
-                        && namespace_ref.is_valid()
-                    {
+                    if named_import.namespace_ref.is_valid() {
                         if result.kind == MatchImportKind::Normal {
                             result.kind = MatchImportKind::NormalAndNamespace;
-                            result.namespace_ref = namespace_ref;
+                            result.namespace_ref = named_import.namespace_ref;
                             result.alias = named_import.alias.expect("infallible: alias present");
                         } else {
                             result = MatchImport {
                                 kind: MatchImportKind::Namespace,
-                                namespace_ref,
+                                namespace_ref: named_import.namespace_ref,
                                 alias: named_import.alias.expect("infallible: alias present"),
                                 ..Default::default()
                             };
@@ -3588,7 +3590,7 @@ impl<'a> LinkerContext<'a> {
                         // `log_disjoint` returns the disjoint `Transpiler.log` backref.
                         self.log_disjoint().add_range_warning_fmt(
                             Some(source),
-                            source.range_of_identifier(named_import.alias_loc.expect("infallible: alias present")),
+                            source.range_of_identifier(named_import.alias_loc),
                             format_args!(
                                 "Import \"{}\" will always be undefined because the file \"{}\" has no exports",
                                 bstr::BStr::new(alias),
@@ -3607,12 +3609,7 @@ impl<'a> LinkerContext<'a> {
                         .get(&tracker.import_ref)
                         .unwrap();
 
-                    if named_import.namespace_ref.is_some()
-                        && named_import
-                            .namespace_ref
-                            .expect("infallible: checked is_some")
-                            .is_valid()
-                    {
+                    if named_import.namespace_ref.is_valid() {
                         // SAFETY: `named_import` borrows `graph.ast`; the symbol slot is a
                         // disjoint allocation, so no aliasing with this `&mut`.
                         let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
@@ -3620,7 +3617,7 @@ impl<'a> LinkerContext<'a> {
                         result.kind = MatchImportKind::NormalAndNamespace;
                         result.namespace_ref = tracker.import_ref;
                         result.alias = named_import.alias.expect("infallible: alias present");
-                        result.name_loc = named_import.alias_loc.unwrap_or(Loc::EMPTY);
+                        result.name_loc = named_import.alias_loc;
                     }
                 }
 
@@ -3630,12 +3627,7 @@ impl<'a> LinkerContext<'a> {
                         [prev_source_index as usize]
                         .get(&tracker.import_ref)
                         .unwrap();
-                    if named_import.namespace_ref.is_some()
-                        && named_import
-                            .namespace_ref
-                            .expect("infallible: checked is_some")
-                            .is_valid()
-                    {
+                    if named_import.namespace_ref.is_valid() {
                         if result.kind == MatchImportKind::Normal {
                             result.kind = MatchImportKind::NormalAndNamespace;
                             result.namespace_ref = next_tracker.import_ref;
@@ -3663,9 +3655,7 @@ impl<'a> LinkerContext<'a> {
                     let source = self.get_source(prev_source_index);
 
                     let next_source = self.get_source(next_tracker.source_index.get());
-                    let r = source.range_of_identifier(
-                        named_import.alias_loc.expect("infallible: alias present"),
-                    );
+                    let r = source.range_of_identifier(named_import.alias_loc);
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import
                         .alias
@@ -3914,11 +3904,11 @@ impl<'a> LinkerContext<'a> {
                     // SAFETY: the mutated symbol slot is disjoint from `named_import`
                     // (graph.ast SoA) and `result` (stack local).
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
-                        Some(G::NamespaceAlias {
+                        Some(bun_alloc::ast_box(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
                             ..Default::default()
-                        });
+                        }));
                 }
                 MatchImportKind::NormalAndNamespace => {
                     imports_to_bind
@@ -3938,18 +3928,15 @@ impl<'a> LinkerContext<'a> {
                     // SAFETY: one-shot field store after `imports_to_bind.put` (disjoint
                     // map) has fully returned; no other live borrow aliases this symbol slot.
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
-                        Some(G::NamespaceAlias {
+                        Some(bun_alloc::ast_box(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
                             ..Default::default()
-                        });
+                        }));
                 }
                 MatchImportKind::Cycle => {
                     let source = self.get_source(source_index);
-                    let r = lex::range_of_identifier(
-                        source,
-                        named_import.alias_loc.unwrap_or_default(),
-                    );
+                    let r = lex::range_of_identifier(source, named_import.alias_loc);
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import
                         .alias
@@ -3973,10 +3960,7 @@ impl<'a> LinkerContext<'a> {
                 }
                 MatchImportKind::Ambiguous => {
                     let source = self.get_source(source_index);
-                    let r = lex::range_of_identifier(
-                        source,
-                        named_import.alias_loc.unwrap_or_default(),
-                    );
+                    let r = lex::range_of_identifier(source, named_import.alias_loc);
 
                     // TODO: log locations of the ambiguous exports
 

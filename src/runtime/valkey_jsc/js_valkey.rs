@@ -1546,12 +1546,11 @@ impl JSValkeyClient {
         this.this_value.with_mut(|t| t.finalize());
         this.client_mut().flags.finalized = true;
         this.close_socket_next_tick();
-        // We do not need to free the subscription context here because we're
-        // guaranteed to have freed it by virtue of the fact that we are
-        // garbage collected now and the subscription context holds a reference
-        // to us. If we still had a subscription context, we would never be
-        // garbage collected.
-        debug_assert!(!this._subscription_ctx.get().is_subscriber);
+        // `_subscription_ctx` is three inline bools (no allocation, no GC
+        // ref); `is_subscriber` can legitimately still be set here if the
+        // server never confirmed UNSUBSCRIBE before disconnect, since
+        // `update_poll_ref()` gates on the JS handler map, not this flag.
+        // Nothing to release.
     }
 
     pub fn stop_timers(&self) {
@@ -1564,7 +1563,7 @@ impl JSValkeyClient {
         }
     }
 
-    fn connect(&self) -> Result<(), bun_core::Error> {
+    fn connect(&self) -> Result<(), crate::Error> {
         self.client_mut().flags.needs_to_open_socket = false;
 
         self.ref_();
@@ -1677,7 +1676,7 @@ impl JSValkeyClient {
         global_this: &JSGlobalObject,
         _this_value: JSValue,
         command: &Command,
-    ) -> Result<*mut JSPromise, bun_core::Error> {
+    ) -> Result<*mut JSPromise, crate::Error> {
         if self.client.get().flags.needs_to_open_socket {
             bun_core::hint::cold();
 

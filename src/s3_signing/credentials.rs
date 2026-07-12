@@ -397,6 +397,9 @@ impl S3Credentials {
                 // only the host part is needed here
                 break 'brk_host Box::<[u8]>::from(host);
             } else {
+                if !is_valid_host_component(region) {
+                    return Err(SignError::InvalidEndpoint);
+                }
                 if self.virtual_hosted_style {
                     // virtual hosted style requires a bucket name if an endpoint is not provided
                     if bucket.is_empty() {
@@ -1113,7 +1116,11 @@ pub fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
             let Some(start) = strings::index_of(endpoint, b"/") else {
                 return Some(&endpoint[0..end]);
             };
-            return Some(&endpoint[start + 1..end]);
+            return Some(
+                endpoint
+                    .get(start + 1..end)
+                    .unwrap_or_else(|| &endpoint[0..end]),
+            );
         }
     } else if let Some(r2_start) = strings::index_of(endpoint, b".r2.cloudflarestorage.com") {
         // check if is <BUCKET>.<ACCOUNT_ID>.r2.cloudflarestorage.com
@@ -1126,7 +1133,11 @@ pub fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
         let Some(start) = strings::index_of(endpoint, b"/") else {
             return Some(&endpoint[0..end]);
         };
-        return Some(&endpoint[start + 1..end]);
+        return Some(
+            endpoint
+                .get(start + 1..end)
+                .unwrap_or_else(|| &endpoint[0..end]),
+        );
     }
     None
 }
@@ -1138,7 +1149,7 @@ pub fn guess_region(endpoint: &[u8]) -> &[u8] {
         }
         if let Some(end) = strings::index_of(endpoint, b".amazonaws.com") {
             if let Some(start) = strings::index_of(endpoint, b"s3.") {
-                return &endpoint[start + 3..end];
+                return endpoint.get(start + 3..end).unwrap_or(b"us-east-1");
             }
         }
         // endpoint is informed but is not s3 so auto detect
@@ -1231,8 +1242,6 @@ pub enum SignError {
     #[error("NoSpaceLeft")]
     NoSpaceLeft,
 }
-
-bun_core::named_error_set!(SignError);
 
 impl<'a> Default for SignOptions<'a> {
     fn default() -> Self {
@@ -1437,4 +1446,11 @@ impl CanonicalRequest {
 /// which would allow HTTP header injection if used in a header value.
 fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
+}
+
+fn is_valid_host_component(value: &[u8]) -> bool {
+    !value.is_empty()
+        && value
+            .iter()
+            .all(|&c| c.is_ascii_alphanumeric() || c == b'-' || c == b'.' || c == b'_')
 }

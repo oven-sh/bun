@@ -1754,8 +1754,13 @@ impl<'a> PipelineTask<'a> {
                                 out_slice.len(),
                             )
                         };
-                        let v = ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
-                            .to_js_with_context(global, core::ptr::null_mut(), Some(out.free));
+                        // SAFETY: `out.bytes` is the codec-owned allocation
+                        // whose ownership transfers to JSC; `out.free` frees
+                        // it exactly once at GC and ignores the null ctx.
+                        let v = unsafe {
+                            ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
+                                .to_js_with_context(global, core::ptr::null_mut(), Some(out.free))
+                        };
                         match v {
                             Ok(v) => promise.resolve(global, v)?,
                             Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
@@ -1785,7 +1790,9 @@ impl<'a> PipelineTask<'a> {
                         unsafe { (out.free)(out.bytes.as_ptr().cast(), core::ptr::null_mut()) };
                         let blob = Blob::init(owned, global);
                         blob.content_type
-                            .set(std::ptr::from_ref::<[u8]>(format.mime().as_bytes()));
+                            .set(crate::webcore::blob::BlobContentType::Static(
+                                format.mime().as_bytes(),
+                            ));
                         blob.content_type_was_set.set(true);
                         // UFCS to pick the consuming `JsClass::to_js(self, _)`
                         // (heap-promotes via `Blob::new`) over the inherent

@@ -71,5 +71,3 @@ impl FieldDescription {
         })
     }
 }
-
-pub use self::FieldDescription as _DecoderWrapTarget;

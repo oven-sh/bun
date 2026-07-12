@@ -558,21 +558,28 @@ fn message_with_type_and_level_(
         }
     }
 
-    if message_type == MessageType::Dir && len >= 2 {
-        print_length = 1;
-        let opts = vals_slice[1];
-        if opts.is_object() {
-            if let Some(depth_prop) = opts.get(global, b"depth")? {
-                if depth_prop.is_int32() || depth_prop.is_number() || depth_prop.is_big_int() {
-                    // Clamp negatives to 0, then truncate (not saturate) to u16.
-                    print_options.max_depth = depth_prop.to_int32().max(0) as u32 as u16;
-                } else if depth_prop.is_null() {
-                    print_options.max_depth = u16::MAX;
+    if message_type == MessageType::Dir {
+        // Node's `console.dir` defaults `customInspect` to `false`.
+        print_options.disable_inspect_custom = true;
+        if len >= 2 {
+            print_length = 1;
+            let opts = vals_slice[1];
+            if opts.is_object() {
+                if let Some(depth_prop) = opts.get(global, b"depth")? {
+                    if depth_prop.is_int32() || depth_prop.is_number() || depth_prop.is_big_int() {
+                        // Clamp negatives to 0, then truncate (not saturate) to u16.
+                        print_options.max_depth = depth_prop.to_int32().max(0) as u32 as u16;
+                    } else if depth_prop.is_null() {
+                        print_options.max_depth = u16::MAX;
+                    }
                 }
-            }
-            if let Some(colors_prop) = opts.get(global, b"colors")? {
-                if colors_prop.is_boolean() {
-                    print_options.enable_colors = colors_prop.to_boolean();
+                if let Some(colors_prop) = opts.get(global, b"colors")? {
+                    if colors_prop.is_boolean() {
+                        print_options.enable_colors = colors_prop.to_boolean();
+                    }
+                }
+                if let Some(ci_prop) = opts.get_boolean_loose(global, "customInspect")? {
+                    print_options.disable_inspect_custom = !ci_prop;
                 }
             }
         }
@@ -1257,6 +1264,7 @@ pub struct FormatOptions {
     pub single_line: bool,
     pub default_indent: u16,
     pub error_display_level: ErrorDisplayLevel,
+    pub disable_inspect_custom: bool,
 }
 
 impl Default for FormatOptions {
@@ -1271,6 +1279,7 @@ impl Default for FormatOptions {
             single_line: false,
             default_indent: 0,
             error_display_level: ErrorDisplayLevel::Full,
+            disable_inspect_custom: false,
         }
     }
 }
@@ -1379,6 +1388,9 @@ impl FormatOptions {
             if let Some(opt) = arg1.get_boolean_loose(global_this, "compact")? {
                 self.single_line = opt;
             }
+            if let Some(opt) = arg1.get_boolean_loose(global_this, "customInspect")? {
+                self.disable_inspect_custom = !opt;
+            }
         } else {
             // formatOptions.show_hidden = arg1.toBoolean();
             if !arguments.is_empty() {
@@ -1439,7 +1451,8 @@ pub fn format2(
         fmt.stack_check = StackCheck::init();
         fmt.can_throw_stack_overflow = true;
         fmt.error_display_level = options.error_display_level;
-        let tag = formatter::Tag::get(vals[0], global)?;
+        fmt.disable_inspect_custom = options.disable_inspect_custom;
+        let tag = formatter::Tag::get_advanced(vals[0], global, fmt.top_level_tag_opts())?;
         if fmt.write_indent(writer).is_err() {
             return Ok(());
         }
@@ -1502,6 +1515,8 @@ pub fn format2(
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
     fmt.error_display_level = options.error_display_level;
+    fmt.disable_inspect_custom = options.disable_inspect_custom;
+    let top_level_tag_opts = fmt.top_level_tag_opts();
     let mut tag: formatter::TagResult;
 
     if fmt.write_indent(writer).is_err() {
@@ -1519,7 +1534,7 @@ pub fn format2(
             }
             any = true;
 
-            tag = formatter::Tag::get(this_value, global)?;
+            tag = formatter::Tag::get_advanced(this_value, global, top_level_tag_opts)?;
             if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
                 tag.tag = TagPayload::StringPossiblyFormatted;
             }
@@ -1541,7 +1556,7 @@ pub fn format2(
                 let _ = writer.write_all(b" ");
             }
             any = true;
-            tag = formatter::Tag::get(this_value, global)?;
+            tag = formatter::Tag::get_advanced(this_value, global, top_level_tag_opts)?;
             if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
                 tag.tag = TagPayload::StringPossiblyFormatted;
             }
@@ -1870,8 +1885,12 @@ pub mod formatter {
             formatter.remaining_values = bun_ptr::RawSlice::new(&one);
 
             let result = (|| {
-                let tag =
-                    Tag::get(self.value, formatter.global_this).map_err(|_| core::fmt::Error)?;
+                let tag = Tag::get_advanced(
+                    self.value,
+                    formatter.global_this,
+                    formatter.top_level_tag_opts(),
+                )
+                .map_err(|_| core::fmt::Error)?;
                 let mut sink = bun_io::FmtAdapter::new(f);
                 let global = formatter.global_this;
                 formatter
@@ -3536,6 +3555,14 @@ pub mod formatter {
                 opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
             }
             opts
+        }
+
+        pub(super) fn top_level_tag_opts(&self) -> TagOptions {
+            if self.disable_inspect_custom {
+                TagOptions::DISABLE_INSPECT_CUSTOM
+            } else {
+                TagOptions::empty()
+            }
         }
 
         #[inline(never)]

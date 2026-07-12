@@ -127,6 +127,6 @@ describe("webkitMimalloc local-mode CMake options", () => {
     const cfg = resolveLinuxRelease({ webkit: "local" });
     const build = webkit.build(cfg);
     if (build.kind !== "nested-cmake") throw new Error(`expected nested-cmake build, got ${build.kind}`);
-    expect(build.args).not.toContainKeys(["USE_MIMALLOC", "USE_EXTERNAL_MIMALLOC"]);
+    expect(build.args).not.toContainAnyKeys(["USE_MIMALLOC", "USE_EXTERNAL_MIMALLOC"]);
   });
 });

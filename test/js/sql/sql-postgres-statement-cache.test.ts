@@ -14,8 +14,8 @@
 // and sends Close('S', name) for what it evicts.
 import { SQL } from "bun";
 import { heapStats } from "bun:jsc";
-import { afterAll, describe, expect, test } from "bun:test";
-import * as dockerCompose from "../../docker/index.ts";
+import { expect, test } from "bun:test";
+import { describeWithContainer } from "harness";
 import {
   listeningServer,
   pgAuthenticationOk,
@@ -58,7 +58,7 @@ async function statementCountingServer() {
   };
   const { server, port } = await listeningServer(socket => {
     let buffered = Buffer.alloc(0);
-    const sawStartup = { value: false };
+    let sawStartup = false;
     /** named statements currently live in this session */
     const live = new Set<string>();
     /** first parameter of the last Bind, echoed back by the next Execute */
@@ -66,105 +66,108 @@ async function statementCountingServer() {
     // After an ErrorResponse the backend discards messages until Sync.
     let skipUntilSync = false;
     socket.on("data", chunk => {
-      buffered = pgReadFrontendMessages(
-        Buffer.concat([buffered, chunk]),
-        sawStartup,
-        () => socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()])),
-        (tag, body) => {
-          if (skipUntilSync && tag !== 0x53 /* Sync */) return;
-          switch (tag) {
-            // Parse: String(name) String(query) Int16(nparams) Int32[nparams]
-            case 0x50: {
-              const name = pgReadCString(body, 0);
-              counters.parses++;
-              if (live.has(name.value)) {
-                socket.write(
-                  pgErrorResponse({
-                    S: "ERROR",
-                    C: "42P05",
-                    M: `prepared statement "${name.value}" already exists`,
-                  }),
-                );
-                skipUntilSync = true;
-                break;
-              }
-              live.add(name.value);
-              counters.prepared.add(name.value);
-              socket.write(pgParseComplete());
-              break;
-            }
-            // Describe: Byte1('S' | 'P') String(name)
-            case 0x44: {
+      buffered = Buffer.concat([buffered, chunk]);
+      if (!sawStartup) {
+        // StartupMessage is the one untagged frontend message: Int32(length
+        // including itself) then the body.
+        if (buffered.length < 4) return;
+        const len = buffered.readInt32BE(0);
+        if (buffered.length < len) return;
+        buffered = buffered.subarray(len);
+        sawStartup = true;
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+      }
+      buffered = pgReadFrontendMessages(buffered, (tag, body) => {
+        if (skipUntilSync && tag !== 0x53 /* Sync */) return;
+        switch (tag) {
+          // Parse: String(name) String(query) Int16(nparams) Int32[nparams]
+          case 0x50: {
+            const name = pgReadCString(body, 0);
+            counters.parses++;
+            if (live.has(name.value)) {
               socket.write(
-                Buffer.concat([
-                  pgParameterDescription([OID_TEXT]),
-                  pgRowDescription([{ name: "c", typeOid: OID_TEXT }]),
-                ]),
+                pgErrorResponse({
+                  S: "ERROR",
+                  C: "42P05",
+                  M: `prepared statement "${name.value}" already exists`,
+                }),
               );
+              skipUntilSync = true;
               break;
             }
-            // Bind: String(portal) String(statement) Int16(nformats) Int16[nformats]
-            //       Int16(nparams) (Int32(len) Byte[len])[nparams] ...
-            case 0x42: {
-              const portal = pgReadCString(body, 0);
-              const statement = pgReadCString(body, portal.end);
-              if (!live.has(statement.value)) {
-                socket.write(
-                  pgErrorResponse({
-                    S: "ERROR",
-                    C: "26000",
-                    M: `prepared statement "${statement.value}" does not exist`,
-                  }),
-                );
-                skipUntilSync = true;
-                break;
-              }
-              let offset = statement.end;
-              const formats = body.readInt16BE(offset);
-              offset += 2 + 2 * formats;
-              const params = body.readInt16BE(offset);
-              offset += 2;
-              lastBoundParam = null;
-              if (params > 0) {
-                const length = body.readInt32BE(offset);
-                offset += 4;
-                if (length >= 0) lastBoundParam = Buffer.from(body.subarray(offset, offset + length));
-              }
-              socket.write(pgBindComplete());
-              break;
-            }
-            // Execute: String(portal) Int32(maxrows)
-            case 0x45: {
-              counters.executes++;
-              socket.write(Buffer.concat([pgDataRow([lastBoundParam]), pgCommandComplete("SELECT 1")]));
-              break;
-            }
-            // Close: Byte1('S' | 'P') String(name). Closing a nonexistent name
-            // is not an error, but only names the client prepared should ever
-            // show up here (asserted by the tests through `counters.closed`).
-            case 0x43: {
-              if (body[0] === 0x53 /* 'S' */) {
-                const name = pgReadCString(body, 1);
-                live.delete(name.value);
-                counters.closed.add(name.value);
-              }
-              socket.write(pgCloseComplete());
-              break;
-            }
-            // Sync
-            case 0x53: {
-              skipUntilSync = false;
-              socket.write(pgReadyForQuery());
-              break;
-            }
-            // Terminate
-            case 0x58: {
-              socket.end();
-              break;
-            }
+            live.add(name.value);
+            counters.prepared.add(name.value);
+            socket.write(pgParseComplete());
+            break;
           }
-        },
-      );
+          // Describe: Byte1('S' | 'P') String(name)
+          case 0x44: {
+            socket.write(
+              Buffer.concat([pgParameterDescription([OID_TEXT]), pgRowDescription([{ name: "c", typeOid: OID_TEXT }])]),
+            );
+            break;
+          }
+          // Bind: String(portal) String(statement) Int16(nformats) Int16[nformats]
+          //       Int16(nparams) (Int32(len) Byte[len])[nparams] ...
+          case 0x42: {
+            const portal = pgReadCString(body, 0);
+            const statement = pgReadCString(body, portal.end);
+            if (!live.has(statement.value)) {
+              socket.write(
+                pgErrorResponse({
+                  S: "ERROR",
+                  C: "26000",
+                  M: `prepared statement "${statement.value}" does not exist`,
+                }),
+              );
+              skipUntilSync = true;
+              break;
+            }
+            let offset = statement.end;
+            const formats = body.readInt16BE(offset);
+            offset += 2 + 2 * formats;
+            const params = body.readInt16BE(offset);
+            offset += 2;
+            lastBoundParam = null;
+            if (params > 0) {
+              const length = body.readInt32BE(offset);
+              offset += 4;
+              if (length >= 0) lastBoundParam = Buffer.from(body.subarray(offset, offset + length));
+            }
+            socket.write(pgBindComplete());
+            break;
+          }
+          // Execute: String(portal) Int32(maxrows)
+          case 0x45: {
+            counters.executes++;
+            socket.write(Buffer.concat([pgDataRow([lastBoundParam]), pgCommandComplete("SELECT 1")]));
+            break;
+          }
+          // Close: Byte1('S' | 'P') String(name). Closing a nonexistent name
+          // is not an error, but only names the client prepared should ever
+          // show up here (asserted by the tests through `counters.closed`).
+          case 0x43: {
+            if (body[0] === 0x53 /* 'S' */) {
+              const name = pgReadCString(body, 1);
+              live.delete(name.value);
+              counters.closed.add(name.value);
+            }
+            socket.write(pgCloseComplete());
+            break;
+          }
+          // Sync
+          case 0x53: {
+            skipUntilSync = false;
+            socket.write(pgReadyForQuery());
+            break;
+          }
+          // Terminate
+          case 0x58: {
+            socket.end();
+            break;
+          }
+        }
+      });
     });
     socket.on("error", () => {});
   });
@@ -269,23 +272,9 @@ test("postgres: evicting cached statements releases their rooted row Structures 
 // proves the Close is accepted where the client writes it (between two
 // extended-query sequences) and that pg_prepared_statements, the session's
 // source of truth, stays bounded.
-describe("postgres: statement cache against a real server", async () => {
-  let container: { port: number; host: string };
-  try {
-    const info = await dockerCompose.ensure("postgres_plain");
-    container = { port: info.ports[5432], host: info.host };
-  } catch (e) {
-    test.skip(`Docker not available: ${e}`);
-    return;
-  }
-
-  afterAll(async () => {
-    if (!process.env.BUN_KEEP_DOCKER) {
-      await dockerCompose.down();
-    }
-  });
-
+describeWithContainer("postgres: statement cache against a real server", { image: "postgres_plain" }, container => {
   test("pg_prepared_statements stays within the cache cap", async () => {
+    await container.ready;
     await using sql = new SQL({
       db: "bun_sql_test",
       username: "bun_sql_test",

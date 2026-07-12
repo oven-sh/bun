@@ -168,7 +168,7 @@ export const profiles = {
     webkit: "prebuilt",
     lto: false,
     webkitMimalloc: true,
-    webkitVersion: "autobuild-preview-pr-283-1d65722d",
+    webkitVersion: "autobuild-preview-pr-283-22b4f7cd",
   },
 
   /** Release with local WebKit. */

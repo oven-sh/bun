@@ -304,6 +304,15 @@ describe("HTTP server CONNECT", () => {
   });
 
   test("should handle partial writes and buffering", async () => {
+    // Write each chunk, wait for its write callback, then yield one I/O poll so
+    // the peer sees a fragmented stream without any fixed-delay timers.
+    async function writeChunked(sock: net.Socket, chunks: string[]) {
+      for (const chunk of chunks) {
+        await new Promise<void>((res, rej) => sock.write(chunk, e => (e ? rej(e) : res())));
+        await new Promise<void>(res => setImmediate(res));
+      }
+    }
+
     await using proxyServer = http.createServer();
     const { promise, resolve, reject } = Promise.withResolvers<string>();
     let bufferReceived = "";
@@ -321,22 +330,14 @@ describe("HTTP server CONNECT", () => {
         }
       });
 
-      // Send response in small chunks, each after the previous is flushed.
-      socket.write("HTTP/1.1 ", () =>
-        socket.write("200 ", () =>
-          socket.write("Connection ", () => socket.write("established\r\n\r\n")),
-        ),
-      );
+      writeChunked(socket, ["HTTP/1.1 ", "200 ", "Connection ", "established\r\n\r\n"]).catch(reject);
     });
 
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");
     const proxyAddress = proxyServer.address() as AddressInfo;
 
     const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      // Send request in chunks, each after the previous is flushed.
-      client.write("CONNECT example.com:80 ", () =>
-        client.write("HTTP/1.1\r\n", () => client.write("Host: example.com\r\n\r\n")),
-      );
+      writeChunked(client, ["CONNECT example.com:80 ", "HTTP/1.1\r\n", "Host: example.com\r\n\r\n"]).catch(reject);
     });
 
     const received: string[] = [];

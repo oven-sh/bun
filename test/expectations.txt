@@ -47,6 +47,12 @@ test/js/node/test/parallel/test-stream-wrap.js [ FAIL ] # needs internal/test/bi
 test/js/node/test/parallel/test-stream-wrap-drain.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)
 test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)
 
+# Advanced-serialization IPC round-trips Buffer back as a plain Uint8Array, so
+# assert.deepStrictEqual's prototype check (issue #29030) now correctly rejects
+# the { buffer: Buffer.from('Hello!') } message. Unmodifiable upstream script;
+# unquarantine once IPC preserves the Buffer prototype.
+test/js/node/test/parallel/test-child-process-advanced-serialization.js [ FAIL ] # Buffer prototype not preserved through advanced-serialization IPC (returns Uint8Array)
+
 # Pre-existing fs.watch leak unmasked by this PR's eval-entry exception fix:
 # the child's thrown leak error ("fs.watch(dir) leaked N MB") used to be
 # swallowed by the silent-exit-0 eval bug (uncaught throw in a CJS -e script

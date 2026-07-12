@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { closeSync, constants, openSync, writeSync } from "node:fs";
+import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
 import { bunEnv, bunExe } from "harness";
 
 // process.on("memoryPressure") is a Bun extension. These tests drive the
@@ -97,10 +97,9 @@ describe.concurrent("process.on('memoryPressure')", () => {
 
   // PSI trigger writes must include the trailing NUL: the kernel's psi_write()
   // NUL-terminates in place over the last byte of the write before parsing.
-  const canCreatePsiTrigger = (() => {
-    if (process.platform !== "linux") return false;
+  function canCreatePsiTriggerAt(path: string) {
     try {
-      const fd = openSync("/proc/pressure/memory", constants.O_RDWR | constants.O_NONBLOCK);
+      const fd = openSync(path, constants.O_RDWR | constants.O_NONBLOCK);
       try {
         writeSync(fd, Buffer.from("some 150000 2000000\0"));
         return true;
@@ -110,6 +109,24 @@ describe.concurrent("process.on('memoryPressure')", () => {
     } catch {
       return false;
     }
+  }
+
+  // Probe the same fallback order as open_psi_fd(): the system-wide file,
+  // then the current cgroup's memory.pressure.
+  const canCreatePsiTrigger = (() => {
+    if (process.platform !== "linux") return false;
+    if (canCreatePsiTriggerAt("/proc/pressure/memory")) return true;
+    let cgroup: string | undefined;
+    try {
+      cgroup = readFileSync("/proc/self/cgroup", "utf8")
+        .split("\n")
+        .find(line => line.startsWith("0::"));
+    } catch {
+      return false;
+    }
+    if (!cgroup) return false;
+    const rest = cgroup.slice("0::".length).replace(/^\/+/, "");
+    return canCreatePsiTriggerAt(`/sys/fs/cgroup/${rest}${rest ? "/" : ""}memory.pressure`);
   })();
 
   // Skipped where PSI trigger creation is unavailable: non-Linux, CONFIG_PSI=n,

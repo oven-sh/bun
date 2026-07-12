@@ -334,8 +334,13 @@ impl<T> ChunkedSlab<T> {
     fn grow(&mut self, ci: usize) {
         let class = &self.classes[ci];
         let cid = u32::try_from(self.chunks.len()).expect("chunk table overflow");
+        let base = os::map(class.chunk_bytes);
+        // LSAN scans only malloc-tracked heap + globals/stacks; malloc'd objects
+        // owned by slot fields (e.g. Transport::Tls Box) are otherwise reported
+        // as leaks when live at exit. Chunks stay readable until unmap.
+        bun_core::asan::register_root_region(base.as_ptr().cast(), class.chunk_bytes);
         let mut e = ChunkEntry {
-            base: os::map(class.chunk_bytes),
+            base,
             chunk_bytes: class.chunk_bytes,
             slot_size: class.slot_size,
             slots: class.slots_per_chunk,
@@ -421,6 +426,7 @@ impl<T> Drop for ChunkedSlab<T> {
                     }
                 }
             }
+            bun_core::asan::unregister_root_region(e.base.as_ptr().cast(), e.chunk_bytes);
             os::unmap(e.base, e.chunk_bytes);
         }
     }

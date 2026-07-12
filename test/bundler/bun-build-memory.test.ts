@@ -22,7 +22,7 @@ test.skipIf(!isDebug && !isASAN)(
         const root = process.argv[2];
         const src = join(root, "src");
         mkdirSync(src, { recursive: true });
-        const MODULES = 400;
+        const MODULES = 800;
         for (let i = 0; i < MODULES; i++) {
           let body = \`export const v\${i} = (x: number): number => {\\n\`;
           for (let k = 0; k < 20; k++) body += \`  x = (x + \${k}) * 1.0001;\\n\`;
@@ -74,8 +74,8 @@ test.skipIf(!isDebug && !isASAN)(
     }
     const { growth } = JSON.parse(stdout.trim());
     // Observed (2 warmup + 8 measured builds, settled, quarantine_size_mb=1):
-    // ~8-10MB with the forced purge, ~30-34MB without it.
-    expect(growth).toBeLessThan(20 * 1024 * 1024);
+    // ~11-14MB with the forced purge, ~34-37MB without it.
+    expect(growth).toBeLessThan(22 * 1024 * 1024);
     expect(exitCode).toBe(0);
   },
   120_000,

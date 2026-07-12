@@ -98,6 +98,15 @@ console.log(JSON.stringify({ m: typeof module, e: typeof exports, sep: typeof pa
     expect(await run(String(dir), "entry.js")).toEqual({ out: [esmGuard], exitCode: 0 });
   });
 
+  test('.js under node_modules with no package.json does not inherit outer "type":"module"', async () => {
+    using dir = tempDir("nm-no-pkg", {
+      "package.json": `{"name":"proj","type":"module"}`,
+      "node_modules/foo/index.js": `module.exports = { m: typeof module, e: typeof exports, thisIsCjs: true };\n`,
+      "entry.mjs": `import x from "foo"; console.log(JSON.stringify(x));\n`,
+    });
+    expect(await run(String(dir), "entry.mjs")).toEqual({ out: [cjsBare], exitCode: 0 });
+  });
+
   test('nameless nested {"type":"commonjs"} overrides an outer {"type":"module"}', async () => {
     using dir = tempDir("nested-cjs", {
       "package.json": `{"name":"outer","type":"module"}`,

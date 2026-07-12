@@ -3986,13 +3986,20 @@ unsafe fn get_loader_and_virtual_source<'a>(
                 // `enclosing_package_json` skips nameless package.json files, but
                 // Node's "type" determination uses the nearest one regardless of
                 // name (e.g. `parse5/dist/cjs/package.json` = {"type":"commonjs"}).
+                // Per Node's LOOKUP_PACKAGE_SCOPE the walk stops at a directory
+                // named "node_modules" (format defaults to commonjs).
                 let mut walk = Some(dir_info);
                 let nearest_module_type = loop {
                     match walk {
-                        Some(di) => match di.package_json() {
-                            Some(pj) => break pj.module_type,
-                            None => walk = di.get_parent(),
-                        },
+                        Some(di) => {
+                            if di.is_node_modules() {
+                                break ModuleType::Unknown;
+                            }
+                            match di.package_json() {
+                                Some(pj) => break pj.module_type,
+                                None => walk = di.get_parent(),
+                            }
+                        }
                         None => break ModuleType::Unknown,
                     }
                 };

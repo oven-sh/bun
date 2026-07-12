@@ -269,7 +269,9 @@ impl Source {
     pub(crate) fn first(&self) -> &ZStr {
         match self {
             Source::File(f) => f,
-            Source::Files(files) => &files[0],
+            // Defensive: callers reject an empty `source: []` before compile, but
+            // never index blindly here (a panic would abort the process).
+            Source::Files(files) => files.first().map(|f| &**f).unwrap_or(zstr!("")),
         }
     }
 
@@ -1143,6 +1145,13 @@ impl FFI {
                     if let Source::Files(files) = &mut compile_c.source {
                         files.push(value.get_zig_string(global_this)?.to_owned_slice_z());
                     }
+                }
+                // An empty `source: []` has nothing to compile; `Source::first()`
+                // would index `[0]` and panic (a process abort). Reject it here.
+                if matches!(&compile_c.source, Source::Files(files) if files.is_empty()) {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected \"source\" to contain at least one file path"
+                    )));
                 }
             } else if !source_value.is_string() {
                 return Err(global_this.throw_invalid_argument_type_value(

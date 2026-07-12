@@ -1,9 +1,9 @@
 //! `Bun.FFI` / `bun:ffi`.
 //!
-//! `ABIType`, the DOM-call slowpath shims, the dlopen error helper, and the JSC
-//! offsets live here. The `FFI`/`Function`/`Step`/`Compiled` structs and the
-//! full TinyCC compile bodies (`CompileC`, `cc`/`linkSymbols`/`callback`, the
-//! symbol-spec parsers) live in `ffi_body`.
+//! `ABIType`, the DOM-call slowpath shims, and the dlopen error helper live here.
+//! The `FFI`/`Function`/`Step`/`Compiled` structs and the full TinyCC compile
+//! bodies (`CompileC`, `cc`/`linkSymbols`/`callback`, the symbol-spec parsers,
+//! the JSC offsets) live in `ffi_body`.
 
 // ─── implementation modules ──────────────────────────────────────────────────
 

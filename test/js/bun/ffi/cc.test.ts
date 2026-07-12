@@ -1091,3 +1091,30 @@ describe.skipIf(isASAN || isFFIUnavailable)("DataView is accepted as ptr and buf
     expect(library.symbols.first(dv0)).toBe(0); // reads ab[0]
   });
 });
+
+// An empty `source: []` used to reach Source::first() -> files[0] -> index panic
+// -> process abort. Spawned so a regression is a child abort, not a runner abort.
+describe.skipIf(isASAN || isFFIUnavailable)("cc() rejects an empty source array", () => {
+  it("throws instead of panicking on cc({ source: [] })", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { cc } = require("bun:ffi");
+        let threw = false;
+        try { cc({ source: [], symbols: { add: { args: ["int", "int"], returns: "int" } } }); }
+        catch (e) { threw = /at least one file/.test(e.message); }
+        process.stdout.write(threw ? "THREW" : "NO_THROW");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toMatchObject({
+      stdout: "THREW",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});

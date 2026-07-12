@@ -743,6 +743,35 @@ describe.skipIf(isFFIUnavailable)("JSCallback validation", () => {
     }
   });
 
+  // The scopeguard in compile_callback must free the FFICallbackFunctionWrapper
+  // (a Strong<JSFunction> + Strong<GlobalObject> realm root) when compilation
+  // fails after the wrapper is created. `args:["void"]` is NOT rejected early, so
+  // it reaches compile_callback and fails to compile (`void arg0` is invalid C),
+  // exercising the free-on-failure path — the ASAN leak checker catches a regression.
+  it("does not leak the callback wrapper when compilation fails", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { JSCallback } = require("bun:ffi");
+        for (let i = 0; i < 500; i++) {
+          try { new JSCallback(() => {}, { returns: "void", args: ["void"] }); } catch {}
+        }
+        Bun.gc(true);
+        process.stdout.write("OK");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toMatchObject({
+      stdout: "OK",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   // The threadsafe-vs-non-void-return guard in the native helper used to read
   // a freshly-defaulted `function.threadsafe` (which was always false), making
   // the check dead code. Combined with the constructor swallowing errors,
@@ -907,7 +936,7 @@ describe.skipIf(isFFIUnavailable)("read.* / toArrayBuffer reject bad size args g
         "-e",
         `const { read, toArrayBuffer, toBuffer, ptr } = require("bun:ffi");
         const p = ptr(new Uint8Array(8));
-        for (const bad of [{}, "x", true]) { try { read.u8(p, bad); } catch {} }
+        for (const bad of [{}, "x", true, -1, -1e300]) { try { read.u8(p, bad); } catch {} }
         for (const f of [() => toArrayBuffer(p, 0, 2 ** 33), () => toBuffer(p, 0, 2 ** 33)]) { try { f(); } catch {} }
         process.stdout.write("OK");`,
       ],

@@ -512,12 +512,10 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
 /// `union(enum)` → Rust enum.
 /// `Slice` carries a raw (ptr, len) because it points at caller-owned FFI memory
 /// of unknown lifetime.
-// Consumer audit: `new_cstring` copies the bytes into a JS string;
-// `to_array_buffer` wraps the pointer with the caller's optional finalizer and
-// never frees it from Rust; `to_buffer` does the same when a finalizer is
-// given, but WITHOUT one it falls back to `JSValue::create_buffer`, which
-// installs `MarkedArrayBuffer_deallocator` and `mi_free`s the caller-owned
-// slice on GC — free-foreign-memory footgun, see PR #31753.
+// Consumer audit: `new_cstring` copies the bytes into a JS string; both
+// `to_array_buffer` and `to_buffer` wrap the pointer non-owningly — the caller's
+// finalizer when one is given, otherwise a no-op deallocator (`to_buffer`) or a
+// null deallocator (`to_array_buffer`) — so Rust never frees caller-owned memory.
 enum ValueOrError {
     Err(JSValue),
     Slice(*mut u8, usize),
@@ -630,6 +628,13 @@ fn get_ptr_slice(
     let len = unsafe { bun_core::ffi::cstr(addr as *const core::ffi::c_char) }
         .to_bytes()
         .len();
+    // Same u32 ceiling as the explicit-length branch: `to_array_buffer` feeds
+    // this into `ArrayBuffer::from_bytes`, which does `u32::try_from(len).expect(...)`.
+    if len > u32::MAX as usize {
+        return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
+            "length exceeds the maximum ArrayBuffer size (2^32-1). This usually means a bug in your code."
+        )));
+    }
     ValueOrError::Slice(addr as *mut u8, len)
 }
 

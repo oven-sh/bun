@@ -337,6 +337,7 @@ describe("Bun.serve HTTP/3", () => {
       });
       console.error("PORT=" + server.port);
       process.stdin.on("data", () => {});
+      process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 50); });
     `;
     await withCustomServer(script, async port => {
       // 256 KB body via ReadableStream → no Content-Length on the wire.
@@ -395,6 +396,7 @@ describe("Bun.serve HTTP/3", () => {
       });
       console.error("PORT=" + server.port);
       process.stdin.on("data", () => {});
+      process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 50); });
     `;
     await withCustomServer(script, async port => {
       expect(await fetchH3(port, "/anything").then(r => r.text())).toBe("from-route");
@@ -838,7 +840,11 @@ async function withCustomServer(
   try {
     await fn(port, send, waitForStderr);
   } finally {
+    // Give the script a chance to server.stop(true) (CONNECTION_CLOSE) on
+    // stdin end before SIGKILL, so the client's pooled session is released
+    // and can't collide with a later test that reuses the same port.
     proc.stdin?.end();
+    await Promise.race([proc.exited, Bun.sleep(1000)]);
     proc.kill();
     await proc.exited;
     await drain.catch(() => {});
@@ -867,6 +873,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
           console.error("RELOADED");
         }
       });
+      process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 50); });
     `;
     await withCustomServer(script, async (port, send, waitForStderr) => {
       expect(await fetchH3(port, "/old").then(r => r.text())).toBe("old-route");
@@ -876,6 +883,75 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       expect(oldAfter.status).toBe(404);
       expect(await oldAfter.text()).toBe("fallback");
       expect(await fetchH3(port, "/new").then(r => r.text())).toBe("new-route");
+    });
+  });
+
+  // server.stop(true) must send CONNECTION_CLOSE on every live H3 connection
+  // before the UDP fd is closed. Without it the client keeps the pooled
+  // session until the negotiated idle timeout, and if another listener later
+  // binds the same port, a fetch with a ReadableStream body (which can't
+  // retry) is placed on the dead session and fails with HTTP3StreamReset
+  // once the idle alarm fires. This is the root cause of the intermittent
+  // `POST body without Content-Length` failure across the adversarial suite.
+  //
+  // lsquic's ietf_full_conn_ci_close path only packs CONNECTION_CLOSE for a
+  // server conn if there are already-scheduled packets or IFC_GOAWAY_CLOSE;
+  // an idle conn satisfies neither, so abrupt stop used lsquic_conn_abort.
+  test("server.stop(true) sends CONNECTION_CLOSE on an idle H3 connection", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      let server;
+      const start = port => {
+        server = Bun.serve({
+          port, tls, http3: true,
+          async fetch(req) {
+            const body = await req.arrayBuffer();
+            return new Response(body, { headers: { "x-len": String(body.byteLength) } });
+          },
+        });
+        console.error("PORT=" + server.port);
+      };
+      start(0);
+      process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 50); });
+      for await (const line of console) {
+        if (line === "stop") {
+          // Let the delayed-ACK timer fire so send_ctl has nothing scheduled
+          // when listen_socket_close runs; that's the state in which the old
+          // lsquic_conn_close() path went silent.
+          await Bun.sleep(100);
+          const port = server.port;
+          server.stop(true);
+          console.error("STOPPED");
+          start(port);
+        }
+      }
+    `;
+    await withCustomServer(script, async (port, send, waitForStderr) => {
+      // Warm the pooled client session.
+      expect((await fetchH3(port, "/").then(r => r.headers.get("x-len"))) ?? "").toBe("0");
+      send("stop");
+      await waitForStderr(/STOPPED/);
+      // Same process now listens again on the same port. A fresh handshake
+      // should complete because the client dropped the old session on
+      // CONNECTION_CLOSE; if it reused the dead one the POST below stalls
+      // until idle-timeout and then rejects with HTTP3StreamReset.
+      await waitForStderr(/PORT=(\d+)/);
+      const body = Buffer.alloc(40_000, "noCL");
+      const res = await fetchH3(port, "/", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new ReadableStream({
+          start(c) {
+            c.enqueue(body);
+            c.close();
+          },
+        }),
+        // Fail fast instead of waiting out the ~10s idle alarm; the debug
+        // lane's handshake is well under this on a fresh session.
+        signal: AbortSignal.timeout(3000),
+      });
+      expect(res.headers.get("x-len")).toBe(String(body.length));
+      expect((await res.bytes()).length).toBe(body.length);
     });
   });
 
@@ -1016,6 +1092,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       });
       console.error("PORT=" + server.port);
       process.stdin.on("data", () => {});
+      process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 50); });
     `;
     await withCustomServer(script, async port => {
       // Warm the QUIC connection so the /hang stream is actually bound
@@ -1074,6 +1151,7 @@ describe("Bun.serve HTTP/3 production", () => {
       });
       console.error("PORT=" + server.port);
       process.stdin.on("data", () => {});
+      process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 50); });
     `;
     await withCustomServer(script, async port => {
       const res = await fetchH3(port, "/");

@@ -1995,7 +1995,7 @@ impl VirtualMachine {
         // null. Check before allocating anything so the worker's null-vm
         // `shutdown()` path has nothing to reclaim.
         if uws::Loop::get().is_null() {
-            return Err(bun_core::err!("EMFILE"));
+            return Err(bun_errno::SystemErrno::EMFILE.into());
         }
 
         let log: *mut bun_ast::Log = match opts.log {

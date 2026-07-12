@@ -1283,7 +1283,7 @@ mod _event_loop_draft {
                 // live until its `result_callback` runs (the owner holds a
                 // ref for the in-flight callback).
                 unsafe {
-                    AsyncHttp::fail_before_start(http, bun_core::err!("FailedToOpenSocket"));
+                    AsyncHttp::fail_before_start(http, crate::Error::FailedToOpenSocket);
                 }
             }
             std::thread::sleep(core::time::Duration::from_millis(50));

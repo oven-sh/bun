@@ -604,7 +604,7 @@ impl AsyncHTTP<'static> {
     /// # Safety
     /// `http` must be a live JS-thread-owned `AsyncHTTP` popped from
     /// `HttpThread::queued_tasks`.
-    pub unsafe fn fail_before_start(http: NonNull<AsyncHTTP<'static>>, err: bun_core::Error) {
+    pub unsafe fn fail_before_start(http: NonNull<AsyncHTTP<'static>>, err: crate::Error) {
         // Callbacks (e.g. `FetchTasklet::callback`) borrow both the JS-side
         // `AsyncHTTP` and the `async_http` arg. Mirror `start_queued_task`: a
         // bitwise stack copy supplies the arg; it is forgotten afterwards as

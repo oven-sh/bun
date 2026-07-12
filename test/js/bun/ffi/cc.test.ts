@@ -1138,3 +1138,39 @@ describe.skipIf(isASAN || isFFIUnavailable)("cc() binds a napi_value return with
     expect(typeof library.symbols.get_val).toBe("function");
   });
 }); // </cc() binds a napi_value return with no napi args>
+
+// TCC::State has no Drop; CompileC::compile must destroy it on failure. Without
+// the scopeguard, every failed cc() compile (here: a missing exported symbol)
+// leaked a whole TinyCC context, growing RSS unbounded. Spawned so a regression
+// is visible as RSS growth / an ASAN leak report in the child, not the runner.
+describe.skipIf(isASAN || isFFIUnavailable)("cc() does not leak the TCC state on failed compilation", () => {
+  it("keeps RSS bounded across many failed compiles", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { cc } = require("bun:ffi");
+        const { writeFileSync } = require("node:fs");
+        const src = require("node:os").tmpdir() + "/bun-ffi-leak-" + process.pid + ".c";
+        writeFileSync(src, "int present(void){return 1;}");
+        const start = process.memoryUsage().rss;
+        for (let i = 0; i < 300; i++) {
+          try { cc({ source: src, symbols: { absent: { args: [], returns: "int" } } }); } catch {}
+        }
+        Bun.gc(true);
+        const grewMB = (process.memoryUsage().rss - start) / (1024 * 1024);
+        // Fixed: a couple MB. Leaking 300 TCC contexts is tens of MB.
+        process.stdout.write(grewMB < 15 ? "OK" : "LEAK:" + grewMB.toFixed(1));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toMatchObject({
+      stdout: "OK",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+}); // </cc() does not leak the TCC state on failed compilation>

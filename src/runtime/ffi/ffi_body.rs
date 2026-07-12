@@ -637,9 +637,18 @@ impl CompileC {
                 return Err(crate::Error::DeferredErrors);
             }
         };
-        // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`;
-        // we hold the only reference for the rest of this function.
-        let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
+        // `TCC::State` has no `Drop`; ownership of the handle is now ours and it
+        // must be `destroy`ed. Guard it so every error return below frees it
+        // (mirrors `Function::compile`); disarmed on the success path where
+        // ownership transfers to the caller. Otherwise a failed cc() compile
+        // (invalid C, missing symbol, bad include path) leaks a full TCC context.
+        let state_guard = scopeguard::guard(state_ptr, |p| {
+            // SAFETY: `p` came from `TCC::State::init` and is not yet destroyed.
+            unsafe { TCC::State::destroy(p.as_ptr()) };
+        });
+        // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`; the
+        // raw-pointer deref does not borrow the guard, so it can still be moved out.
+        let state: &mut TCC::State = unsafe { &mut *state_guard.as_ptr() };
 
         if let Some(compiler_rt_dir) = CompilerRT::dir() {
             if state.add_sys_include_path(compiler_rt_dir).is_err() {
@@ -880,7 +889,8 @@ impl CompileC {
         self.error_check()
             .map_err(|_| crate::Error::DeferredErrors)?;
 
-        Ok(state_ptr)
+        // Success: hand the (now-compiled) state to the caller; don't destroy it.
+        Ok(scopeguard::ScopeGuard::into_inner(state_guard))
     }
 }
 

@@ -1801,3 +1801,87 @@ describe("s3 multipart upload id validation", () => {
     expect(exitCode).toBe(0);
   }, 60_000);
 });
+
+describe("s3 multipart CompleteMultipartUpload body validation", () => {
+  // AWS documents that CompleteMultipartUpload can return 200 and still have failed; the
+  // response body must contain a CompleteMultipartUploadResult element. A 200 with a
+  // truncated, empty, HTML, or otherwise unparsable body (proxy/gateway hiccup) must reject.
+  it("rejects a 200 CompleteMultipartUpload response whose body lacks a CompleteMultipartUploadResult element", async () => {
+    const fixture = `
+        const completeBodies = {
+          ok: '<CompleteMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><ETag>"e"</ETag></CompleteMultipartUploadResult>',
+          truncated: "<CompleteMultipartUploadResult><Buck",
+          empty: "",
+          html: "<html><body>502 Bad Gateway</body></html>",
+          binary: new Uint8Array([0, 1, 254, 255]),
+          error: '<Error><Code>InternalError</Code><Message>We encountered an internal error.</Message></Error>',
+        };
+
+        const results = {};
+        for (const [mode, completeBody] of Object.entries(completeBodies)) {
+          const server = Bun.serve({
+            port: 0,
+            async fetch(req) {
+              const url = new URL(req.url);
+              if (req.method === "POST" && url.search.includes("uploads=")) {
+                return new Response(
+                  "<InitiateMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><UploadId>UP1</UploadId></InitiateMultipartUploadResult>",
+                  { status: 200, headers: { "Content-Type": "text/xml" } },
+                );
+              }
+              if (req.method === "POST" && url.search.includes("uploadId=")) {
+                return new Response(completeBody, { status: 200, headers: { "Content-Type": "text/xml" } });
+              }
+              return new Response(undefined, { status: 200, headers: { ETag: '"abc"' } });
+            },
+          });
+
+          const client = new Bun.S3Client({
+            endpoint: server.url.href,
+            bucket: "b",
+            region: "us-east-1",
+            accessKeyId: "AK",
+            secretAccessKey: "SK",
+          });
+
+          const writer = client.file("k-" + mode).writer({ partSize: 5 * 1024 * 1024, retry: 0 });
+          writer.write(Buffer.alloc(6 * 1024 * 1024, "a"));
+          try {
+            await writer.end();
+            results[mode] = "resolved";
+          } catch (e) {
+            results[mode] = "rejected:" + (e?.code ?? e?.name);
+          }
+          server.stop(true);
+        }
+        console.log(JSON.stringify(results));
+      `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      // The S3 client does not honor NO_PROXY, so an inherited proxy would
+      // hijack the request to the stub server.
+      env: {
+        ...bunEnv,
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(JSON.parse(stdout.trim())).toEqual({
+      ok: "resolved",
+      truncated: "rejected:InternalError",
+      empty: "rejected:InternalError",
+      html: "rejected:InternalError",
+      binary: "rejected:InternalError",
+      error: "rejected:InternalError",
+    });
+    expect(exitCode).toBe(0);
+  }, 60_000);
+});

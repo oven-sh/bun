@@ -414,10 +414,27 @@ impl S3HttpSimpleTask {
                 }
             },
             Callback::Commit(callback) => {
-                // commit multipart upload can fail with status 200
+                // CompleteMultipartUpload can return 200 with an <Error> body, and AWS
+                // documents that a 200 without a well-formed CompleteMultipartUploadResult
+                // (truncated/proxy body) must also be treated as a failure.
                 let status = response.status_code;
                 if !this.fail_if_contains_error(status)? {
-                    callback(S3CommitResult::Success, this.callback_context)?;
+                    let committed = this.result.body.as_ref().is_some_and(|b| {
+                        strings::index_of(
+                            b.list.as_slice(),
+                            b"</CompleteMultipartUploadResult>",
+                        )
+                        .is_some()
+                    });
+                    if committed {
+                        callback(S3CommitResult::Success, this.callback_context)?;
+                    } else {
+                        this.callback.fail(
+                            b"InternalError",
+                            b"CompleteMultipartUpload returned 200 without a CompleteMultipartUploadResult body; the upload was not committed",
+                            this.callback_context,
+                        )?;
+                    }
                 }
             }
             Callback::Part(callback) => {

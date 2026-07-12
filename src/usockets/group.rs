@@ -1208,8 +1208,9 @@ pub(crate) fn unlink_connecting_socket(group: *mut SocketGroup, c: *mut Connecti
             ffi::conn_set_prev_pending(next, prev);
         }
     }
-    ffi::conn_set_prev_pending(c, ptr::null_mut());
-    ffi::conn_set_next_pending(c, ptr::null_mut());
+    // C parity (context.c:247-261): links stay intact after unlink so
+    // close_all's cached-next walk survives a re-entrant close of the
+    // cached sibling (its next_pending must remain readable).
     timeouts::sweep_disable(deref_mut(group).loop_, group);
     group_maybe_unlink(group);
 }

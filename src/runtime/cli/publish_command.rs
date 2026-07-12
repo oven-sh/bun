@@ -852,7 +852,7 @@ impl PublishCommand {
         let Ok(res) = req.send_sync() else {
             return false;
         };
-        if res.status_code != 200 {
+        if res.response().status_code != 200 {
             return false;
         }
 
@@ -985,14 +985,14 @@ impl PublishCommand {
             }
         };
 
-        match res.status_code {
+        match res.response().status_code {
             400..=u32::MAX => {
                 let prompt_for_otp = 'prompt_for_otp: {
-                    if res.status_code != 401 {
+                    if res.response().status_code != 401 {
                         break 'prompt_for_otp false;
                     }
 
-                    if let Some(www_authenticate) = res.headers.get(b"www-authenticate") {
+                    if let Some(www_authenticate) = res.response().headers.get(b"www-authenticate") {
                         let mut iter = strings::split(www_authenticate, b",");
                         while let Some(part) = iter.next() {
                             let trimmed = strings::trim(part, &strings::WHITESPACE_CHARS);
@@ -1024,7 +1024,7 @@ impl PublishCommand {
                     // general error
                     Npm::response_error::<false>(
                         &req,
-                        &res,
+                        res.response(),
                         Some((&ctx.package_name, &ctx.package_version)),
                         &mut response_buf,
                     )?;
@@ -1033,6 +1033,7 @@ impl PublishCommand {
                 // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
                 // ignore if x-local-cache exists
                 if let Some(notice) = res
+                    .response()
                     .headers
                     .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
                 {
@@ -1082,11 +1083,11 @@ impl PublishCommand {
                     }
                 };
 
-                match otp_res.status_code {
+                match otp_res.response().status_code {
                     400..=u32::MAX => {
                         Npm::response_error::<true>(
                             &otp_req,
-                            &otp_res,
+                            otp_res.response(),
                             Some((&ctx.package_name, &ctx.package_version)),
                             &mut response_buf,
                         )?;
@@ -1095,6 +1096,7 @@ impl PublishCommand {
                         // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
                         // ignore if x-local-cache exists
                         if let Some(notice) = otp_res
+                            .response()
                             .headers
                             .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
                         {
@@ -1301,11 +1303,11 @@ impl PublishCommand {
                         }
                     };
 
-                    match res.status_code {
+                    match res.response().status_code {
                         202 => {
                             // retry
                             let nanoseconds: u64 = 'nanoseconds: {
-                                if let Some(retry) = res.headers.get(b"retry-after") {
+                                if let Some(retry) = res.response().headers.get(b"retry-after") {
                                     'default: {
                                         let trimmed =
                                             strings::trim(retry, &strings::WHITESPACE_CHARS);
@@ -1360,6 +1362,7 @@ impl PublishCommand {
                             // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
                             // ignore if x-local-cache exists
                             if let Some(notice) = res
+                                .response()
                                 .headers
                                 .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
                             {
@@ -1373,7 +1376,7 @@ impl PublishCommand {
                         _ => {
                             Npm::response_error::<false>(
                                 &req,
-                                &res,
+                                res.response(),
                                 Some((&ctx.package_name, &ctx.package_version)),
                                 response_buf,
                             )?;

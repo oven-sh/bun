@@ -2150,7 +2150,13 @@ pub(crate) unsafe extern "C" fn select_cert_cb(
             CERT_SUCCESS
         }
         _ => {
-            static_tree_select(ssl, ls, &host);
+            // Re-read: the resolver's JS may have closed the listener
+            // (backref wiped at close; the C's deferred-freed ls->sni read
+            // safely saw NULL — openssl.c:2333-2352 fallthrough parity).
+            let ls = crate::tls::context::listener_backref(ssl).cast::<ListenSocket>();
+            if !ls.is_null() {
+                static_tree_select(ssl, ls, &host);
+            }
             CERT_SUCCESS
         }
     }

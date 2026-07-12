@@ -671,8 +671,25 @@ fn send_sync_callback(
     }
 }
 
+/// Owns the response metadata backing the `Response` returned by
+/// [`AsyncHTTP::send_sync`]; the header/status slices point into
+/// `metadata.owned_buf`, freed when this value drops. `response()` ties the
+/// borrow to `&self` so those slices cannot outlive the buffer.
+pub struct SyncHTTPResponse {
+    metadata: crate::HTTPResponseMetadata,
+}
+
+impl SyncHTTPResponse {
+    pub fn response<'s>(&'s self) -> &'s picohttp::Response<'s> {
+        // Covariant reborrow: the stored `Response<'static>` is only 'static
+        // because `clone_metadata` erased the borrow of `owned_buf`; narrow it
+        // back to `&self`'s lifetime.
+        &self.metadata.response
+    }
+}
+
 impl<'a> AsyncHTTP<'a> {
-    pub fn send_sync(&mut self) -> crate::Result<picohttp::Response<'static>> {
+    pub fn send_sync(&mut self) -> crate::Result<SyncHTTPResponse> {
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
@@ -699,10 +716,11 @@ impl<'a> AsyncHTTP<'a> {
         }
         debug_assert!(result.metadata.is_some());
         // The returned `Response` borrows `metadata.owned_buf` (status text +
-        // header slices); suppress Drop so the borrowed buffer outlives the
-        // call. `send_sync` is one-shot CLI.
-        let metadata = core::mem::ManuallyDrop::new(result.metadata.unwrap());
-        Ok(metadata.response)
+        // header slices); hand the metadata to the caller so the buffers stay
+        // live while the response is read and are freed on drop.
+        Ok(SyncHTTPResponse {
+            metadata: result.metadata.unwrap(),
+        })
     }
 
     // ──────────────────────────────────────────────────────────────────────

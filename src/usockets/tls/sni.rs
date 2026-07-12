@@ -79,15 +79,18 @@ fn split_labels(hostname: &[u8]) -> Labels<'_> {
 }
 
 /// `None` when the hostname exceeds MAX_LABELS (find/remove reject it).
-fn collect_labels(hostname: &[u8]) -> Option<Vec<&[u8]>> {
-    let mut labels = Vec::new();
+/// Stack buffer, no allocation: runs in the per-handshake SNI callback
+/// (parity with sni_tree.cpp's `string_view labels[10]`).
+fn collect_labels<'a>(hostname: &'a [u8], buf: &mut [&'a [u8]; MAX_LABELS]) -> Option<usize> {
+    let mut n = 0;
     for label in split_labels(hostname) {
-        if labels.len() == MAX_LABELS {
+        if n == MAX_LABELS {
             return None;
         }
-        labels.push(label);
+        buf[n] = label;
+        n += 1;
     }
-    Some(labels)
+    Some(n)
 }
 
 /// getUser: exact label first; if that subtree yields nothing, fall back to
@@ -145,14 +148,17 @@ impl SniMap {
 
     /// Releases the entry's ctx ref.
     pub(crate) fn remove(&mut self, pattern: &CStr) {
-        let Some(labels) = collect_labels(pattern.to_bytes()) else {
+        let mut buf: [&[u8]; MAX_LABELS] = [b""; MAX_LABELS];
+        let Some(n) = collect_labels(pattern.to_bytes(), &mut buf) else {
             return;
         };
-        drop(remove_rec(&mut self.root, &labels));
+        drop(remove_rec(&mut self.root, &buf[..n]));
     }
 
     fn lookup(&self, hostname: &CStr) -> Option<&Entry> {
-        get(&self.root, &collect_labels(hostname.to_bytes())?)
+        let mut buf: [&[u8]; MAX_LABELS] = [b""; MAX_LABELS];
+        let n = collect_labels(hostname.to_bytes(), &mut buf)?;
+        get(&self.root, &buf[..n])
     }
 
     /// Exact-pattern lookup; returns an OWNED reference (caller unrefs) —

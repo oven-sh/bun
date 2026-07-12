@@ -63,17 +63,18 @@ int main(int argc, char *argv[]) {
     exit(EXIT_FAILURE);
   }
 
+  // Listen BEFORE publishing the port: the test connects as soon as it reads
+  // stdout, and a SYN arriving pre-listen() gets RST -> ConnectionRefused.
+  if (listen(server_fd, 1) < 0) {
+    perror("listen");
+    exit(EXIT_FAILURE);
+  }
+
   // Print port to stdout so test can read it
   printf("%d\n", ntohs(address.sin_port));
   fflush(stdout);
   // Close stdout so we can simply read it.
   close(1);
-
-  // Listen
-  if (listen(server_fd, 1) < 0) {
-    perror("listen");
-    exit(EXIT_FAILURE);
-  }
 
   // Accept connection
   if ((client_fd = accept(server_fd, (struct sockaddr *)&address,

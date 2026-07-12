@@ -453,7 +453,13 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     `;
 
     await Bun.$`echo ${build_code} > build.ts`;
-    const { stdout, stderr } = await Bun.$`BUN_TEST_TEMP_DIR=${tempdir} ${bunExe()} run build.ts`.throws(false);
+    // This child segfaults on purpose; keep its crash report away from the CI
+    // crash-report server, where it gets attributed to whatever unrelated test
+    // is running when the (async) upload lands.
+    const { stdout, stderr } =
+      await Bun.$`BUN_TEST_TEMP_DIR=${tempdir} BUN_CRASH_REPORT_URL= BUN_ENABLE_CRASH_REPORTING=0 ${bunExe()} run build.ts`.throws(
+        false,
+      );
     const errorString = stderr.toString();
     expect(errorString).toContain('\x1b[31m\x1b[2m"native_plugin_test"\x1b[0m');
   });

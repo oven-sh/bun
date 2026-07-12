@@ -37,7 +37,7 @@ pub mod unsafe_core;
 
 // extern "C" surface for surviving C/C++ (uWS, quic.c, NodeTLS, JSHS, webview).
 // `#[no_mangle]` is an unsafe attribute in edition 2024, hence the allow; the
-// module is feature-gated OFF by default (symbol collision with the live C).
+// feature gate (default-on) lets unit tests build without the symbol exports.
 #[cfg(feature = "cabi")]
 #[allow(unsafe_code)]
 pub mod cabi;

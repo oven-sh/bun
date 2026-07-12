@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { parseEnv } from "node:util";
 
 // Node.js parity: these are the grammar rules where Bun's own dotenv parser
@@ -114,9 +114,7 @@ describe("util.parseEnv node-parity grammar", () => {
 
   test("throws ERR_INVALID_ARG_TYPE for non-string input", () => {
     for (const value of [null, undefined, {}, [], 42, true]) {
-      expect(() => parseEnv(value as any)).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-      );
+      expect(() => parseEnv(value as any)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     }
   });
 });

@@ -235,8 +235,16 @@ impl ConcurrentPromiseTaskContext for LockTaskCtx<'_> {
             LockSource::Fd(fd) => (*fd, false),
             LockSource::Path(bytes) => {
                 let mut buf = bun_paths::path_buffer_pool::get();
-                let n = bytes.len().min(buf.len() - 1);
-                buf[..n].copy_from_slice(&bytes[..n]);
+                if bytes.len() >= buf.len() {
+                    self.result = Some(Err(bun_sys::Error::new(
+                        bun_sys::E::ENAMETOOLONG,
+                        bun_sys::Tag::open,
+                    )
+                    .with_path(bytes)));
+                    return;
+                }
+                let n = bytes.len();
+                buf[..n].copy_from_slice(bytes);
                 buf[n] = 0;
                 let path = bun_core::ZStr::from_buf(&buf[..], n);
                 let opened = match bun_sys::open(path, O::RDWR | O::CREAT | O::CLOEXEC, 0o666) {

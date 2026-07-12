@@ -1535,6 +1535,7 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, reason = WTF::move(reason)] {
     if (m_state == CLOSED)
         return;
+    const bool wasClosing = m_state == CLOSING;
     m_state = CLOSED;
 
     // Native callback: state transitioned, hand off the close code.
@@ -1554,8 +1555,10 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
         // connection ... fire an event named error". Every NotClean caller
         // here is a fail-the-connection path (handshake reject, transport
         // reset, protocol violation), so fire error before close for all
-        // of them, matching Node/undici and browsers.
-        if (wasClean == CleanStatus::NotClean) {
+        // of them, matching Node/undici and browsers. CLOSING means the
+        // user already called close()/terminate(); that is not a
+        // fail-the-connection case, so skip error for it (matches npm ws).
+        if (wasClean == CleanStatus::NotClean && !wasClosing) {
             auto eventInit = createErrorEventInit(*this, reason, context->jsGlobalObject());
             dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
         }

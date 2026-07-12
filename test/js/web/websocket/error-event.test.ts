@@ -157,6 +157,12 @@ describe("fires error before close on post-establishment failure", () => {
     expect(events).toEqual(["open", "close{1000,wasClean:true}"]);
   });
 
+  test.concurrent("ws.terminate() after open does NOT fire error (user-initiated, matches npm ws)", async () => {
+    const server = await rawWsServer(() => {});
+    const { events } = await connectAndTrace(server, { onOpen: ws => ws.terminate() });
+    expect(events).toEqual(["open", "close{1006,wasClean:false}"]);
+  });
+
   test.concurrent("handshake failure fires error then close (control, pre-establishment)", async () => {
     const { promise, resolve, reject } = Promise.withResolvers<net.Server>();
     const server = net.createServer(sock => {

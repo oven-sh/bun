@@ -969,9 +969,10 @@ impl<'a> Loader<'a> {
     #[cold]
     fn warn_expansion_capped(file_path: &[u8]) {
         bun_core::pretty_errorln!(
-            "<r><yellow>warn<r><d>:<r> {} variable expansion exceeds {} bytes; oversized values set to empty",
+            "<r><yellow>warn<r><d>:<r> {} variable expansion exceeds size limit ({} bytes per value, {} total); oversized values set to empty",
             bun_core::fmt::quote(file_path),
             MAX_EXPANDED_VALUE_LEN,
+            MAX_EXPANDED_TOTAL_LEN,
         );
     }
 }
@@ -1367,8 +1368,9 @@ impl<'a> Parser<'a> {
     /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
     /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
     ///
-    /// Returns `true` when at least one `${}` expansion was capped at
-    /// [`MAX_EXPANDED_VALUE_LEN`] and the affected value was set to empty.
+    /// Returns `true` when at least one `${}` expansion was capped (per-value at
+    /// [`MAX_EXPANDED_VALUE_LEN`] or per-file aggregate at [`MAX_EXPANDED_TOTAL_LEN`])
+    /// and the affected value was set to empty.
     pub(crate) fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
         map: &mut Map,

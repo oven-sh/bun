@@ -1420,9 +1420,23 @@ impl BlobExt for Blob {
         if let Some(options) = callframe.arguments().first().copied() {
             if options.is_object() {
                 if let Some(v) = options.get_truthy(global_this, "exclusive")? {
+                    if !v.is_boolean() {
+                        return Err(global_this.throw_invalid_argument_type(
+                            "lock",
+                            "options.exclusive",
+                            "boolean",
+                        ));
+                    }
                     exclusive = v.to_boolean();
                 }
                 if let Some(v) = options.get_truthy(global_this, "nonblocking")? {
+                    if !v.is_boolean() {
+                        return Err(global_this.throw_invalid_argument_type(
+                            "lock",
+                            "options.nonblocking",
+                            "boolean",
+                        ));
+                    }
                     nonblocking = v.to_boolean();
                 }
                 if let Some(v) = options.get_truthy(global_this, "signal")? {

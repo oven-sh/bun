@@ -1,7 +1,43 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
+
+async function readLine(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (value) buf += decoder.decode(value, { stream: true });
+    const nl = buf.indexOf("\n");
+    if (nl !== -1) return buf.slice(0, nl + 1);
+    if (done) return buf;
+  }
+}
+
+function spawnHolder(path: string) {
+  const holder = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const lock = await Bun.file(process.argv[1]).lock();
+        process.stdout.write("locked\\n");
+        await new Promise(r => process.stdin.once("data", r));
+        await lock.unlock();
+        process.stdout.write("unlocked\\n");
+      `,
+      path,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  // Start draining stderr immediately so a chatty debug build can't block.
+  const stderr = holder.stderr.text();
+  return { holder, stderr };
+}
 
 describe("Bun.file().lock()", () => {
   test("returns a FileLock with unlock() and Symbol.asyncDispose", async () => {
@@ -21,6 +57,15 @@ describe("Bun.file().lock()", () => {
       await using _lock = await Bun.file(path).lock();
     }
     // If the lock was released, a nonblocking lock now succeeds.
+    const lock2 = await Bun.file(path).lock({ nonblocking: true });
+    await lock2.unlock();
+  });
+
+  test("close() releases the lock", async () => {
+    using dir = tempDir("bun-file-lock", { "a.txt": "hello" });
+    const path = join(String(dir), "a.txt");
+    const lock = await Bun.file(path).lock();
+    await lock.close();
     const lock2 = await Bun.file(path).lock({ nonblocking: true });
     await lock2.unlock();
   });
@@ -47,27 +92,10 @@ describe("Bun.file().lock()", () => {
     using dir = tempDir("bun-file-lock", { "a.txt": "hello" });
     const path = join(String(dir), "a.txt");
 
-    const holder = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          const lock = await Bun.file(process.argv[1]).lock();
-          process.stdout.write("locked\\n");
-          await new Promise(r => process.stdin.once("data", r));
-          await lock.unlock();
-          process.stdout.write("unlocked\\n");
-        `,
-        path,
-      ],
-      env: bunEnv,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const { holder, stderr } = spawnHolder(path);
+    await using _holder = holder;
     const reader = holder.stdout.getReader();
-    const first = await reader.read();
-    expect(new TextDecoder().decode(first.value)).toBe("locked\n");
+    expect(await readLine(reader)).toBe("locked\n");
 
     // Contend for the lock from this process. Must not resolve until the
     // holder releases.
@@ -90,8 +118,8 @@ describe("Bun.file().lock()", () => {
     expect(acquired).toBe(true);
     await lock.unlock();
 
-    const [, exitCode] = await Promise.all([holder.stderr.text(), holder.exited]);
     reader.releaseLock();
+    const [, exitCode] = await Promise.all([stderr, holder.exited]);
     expect(exitCode).toBe(0);
   });
 
@@ -99,26 +127,10 @@ describe("Bun.file().lock()", () => {
     using dir = tempDir("bun-file-lock", { "a.txt": "hello" });
     const path = join(String(dir), "a.txt");
 
-    const holder = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          const lock = await Bun.file(process.argv[1]).lock();
-          process.stdout.write("locked\\n");
-          await new Promise(r => process.stdin.once("data", r));
-          await lock.unlock();
-        `,
-        path,
-      ],
-      env: bunEnv,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const { holder, stderr } = spawnHolder(path);
+    await using _holder = holder;
     const reader = holder.stdout.getReader();
-    const first = await reader.read();
-    expect(new TextDecoder().decode(first.value)).toBe("locked\n");
+    expect(await readLine(reader)).toBe("locked\n");
 
     const controller = new AbortController();
     const pending = Bun.file(path).lock({ signal: controller.signal });
@@ -133,7 +145,7 @@ describe("Bun.file().lock()", () => {
     holder.stdin.write("go\n");
     holder.stdin.end();
     reader.releaseLock();
-    await Promise.all([holder.stderr.text(), holder.exited]);
+    await Promise.all([stderr, holder.exited]);
   });
 
   test("lock({ signal }) rejects immediately if already aborted", async () => {
@@ -147,10 +159,7 @@ describe("Bun.file().lock()", () => {
     expect(err?.code).toBe("ABORT_ERR");
   });
 
-  // On Windows, LockFileEx semantics differ enough from flock (per-handle byte
-  // ranges) that same-process shared→exclusive contention on separate handles
-  // is not a reliable test; covered by the cross-process test above.
-  test.skipIf(isWindows)("nonblocking exclusive lock fails when shared lock is held on another fd", async () => {
+  test("nonblocking exclusive lock fails when shared lock is held on another fd", async () => {
     using dir = tempDir("bun-file-lock", { "a.txt": "hello" });
     const path = join(String(dir), "a.txt");
     await using _shared = await Bun.file(path).lock({ exclusive: false });
@@ -197,6 +206,13 @@ describe("Bun.file().lock()", () => {
     const path = join(String(dir), "new.txt");
     await using _lock = await Bun.file(path).lock();
     expect(await Bun.file(path).exists()).toBe(true);
+  });
+
+  test("lock() rejects non-boolean option values", async () => {
+    using dir = tempDir("bun-file-lock", { "a.txt": "hello" });
+    const file = Bun.file(join(String(dir), "a.txt"));
+    expect(() => file.lock({ exclusive: "false" as any })).toThrow(/boolean/);
+    expect(() => file.lock({ nonblocking: 1 as any })).toThrow(/boolean/);
   });
 });
 
@@ -246,6 +262,14 @@ describe("FileLock I/O", () => {
     expect(() => lock.write("x")).toThrow(/already released/);
     expect(() => lock.bytes()).toThrow(/already released/);
     expect(() => lock.truncate()).toThrow(/already released/);
+  });
+
+  test("pending I/O survives unlock()", async () => {
+    using dir = tempDir("bun-file-lock", { "a.txt": "hello" });
+    const lock = await Bun.file(join(String(dir), "a.txt")).lock();
+    const pending = lock.bytes();
+    await lock.unlock();
+    expect(new TextDecoder().decode(await pending)).toBe("hello");
   });
 
   test("truncate rejects negative length", async () => {

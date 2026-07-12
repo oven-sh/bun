@@ -8,6 +8,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use crate::node::types::{PathLikeExt as _, StringOrBuffer};
 use crate::webcore::node_types::PathLike;
@@ -22,13 +23,28 @@ use bun_threading::Futex;
 
 // ───────────────────────────── FileLock (JS class) ──────────────────────────
 
+/// The fd held by a `FileLock`, shared via `Arc` with in-flight I/O tasks so
+/// `unlock()` cannot close it out from under a pending `pread`/`pwrite`.
+/// `Drop` closes the fd when the last owner releases.
+struct HeldFd {
+    fd: Fd,
+    owns_fd: bool,
+}
+
+impl Drop for HeldFd {
+    fn drop(&mut self) {
+        if self.owns_fd && self.fd != Fd::INVALID {
+            self.fd.close();
+        }
+    }
+}
+
 /// Returned from `Bun.file().lock()`. Owns (or borrows) the locked fd and
 /// exposes I/O on it while held. `unlock()` / `close()` / `[Symbol.asyncDispose]`
-/// release the lock and, if we opened it, close the fd.
+/// release the lock; the underlying fd closes once all pending I/O settles.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct FileLock {
-    fd: Cell<Fd>,
-    owns_fd: bool,
+    held: Cell<Option<Arc<HeldFd>>>,
     unlocked: Cell<bool>,
 }
 
@@ -37,21 +53,22 @@ impl FileLock {
         if self.unlocked.replace(true) {
             return Ok(());
         }
-        let fd = self.fd.replace(Fd::INVALID);
-        let result = bun_sys::funlock(fd);
-        if self.owns_fd {
-            fd.close();
-        }
-        result
+        // Drop our ref; in-flight I/O tasks keep theirs until they finish.
+        let Some(held) = self.held.take() else {
+            return Ok(());
+        };
+        bun_sys::funlock(held.fd)
     }
 
-    fn live_fd(&self, global: &JSGlobalObject, op: &str) -> JsResult<Fd> {
+    fn held_ref(&self, global: &JSGlobalObject, op: &str) -> JsResult<Arc<HeldFd>> {
         if self.unlocked.get() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "FileLock is already released; cannot {op}()"
             )));
         }
-        Ok(self.fd.get())
+        // SAFETY: JS-thread interior mutability; no concurrent mutation.
+        let held = unsafe { &*self.held.as_ptr() };
+        Ok(Arc::clone(held.as_ref().expect("live FileLock has fd")))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -72,30 +89,16 @@ impl FileLock {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_bytes(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let fd = self.live_fd(global, "bytes")?;
+        let held = self.held_ref(global, "bytes")?;
         let len = optional_byte_count(global, frame)?;
-        Ok(schedule_io(
-            global,
-            IoOp::Read {
-                fd,
-                len,
-                kind: ReadKind::Uint8Array,
-            },
-        ))
+        Ok(schedule_io(global, held, IoOp::Read { len, kind: ReadKind::Uint8Array }))
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_text(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let fd = self.live_fd(global, "text")?;
+        let held = self.held_ref(global, "text")?;
         let len = optional_byte_count(global, frame)?;
-        Ok(schedule_io(
-            global,
-            IoOp::Read {
-                fd,
-                len,
-                kind: ReadKind::Text,
-            },
-        ))
+        Ok(schedule_io(global, held, IoOp::Read { len, kind: ReadKind::Text }))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -104,21 +107,14 @@ impl FileLock {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let fd = self.live_fd(global, "arrayBuffer")?;
+        let held = self.held_ref(global, "arrayBuffer")?;
         let len = optional_byte_count(global, frame)?;
-        Ok(schedule_io(
-            global,
-            IoOp::Read {
-                fd,
-                len,
-                kind: ReadKind::ArrayBuffer,
-            },
-        ))
+        Ok(schedule_io(global, held, IoOp::Read { len, kind: ReadKind::ArrayBuffer }))
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_write(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let fd = self.live_fd(global, "write")?;
+        let held = self.held_ref(global, "write")?;
         let Some(arg) = frame.arguments().first().copied() else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "FileLock.write(data) requires a string, ArrayBuffer, or ArrayBufferView"
@@ -128,7 +124,7 @@ impl FileLock {
             return Err(global.throw_invalid_argument_type("write", "data", "string or buffer"));
         };
         let data = data.into_thread_safe();
-        Ok(schedule_io(global, IoOp::Write { fd, data }))
+        Ok(schedule_io(global, held, IoOp::Write { data }))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -137,7 +133,7 @@ impl FileLock {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let fd = self.live_fd(global, "truncate")?;
+        let held = self.held_ref(global, "truncate")?;
         let len = match frame.arguments().first().copied() {
             Some(v) if !v.is_undefined_or_null() => {
                 let n = v.coerce_to_int64(global)?;
@@ -150,19 +146,7 @@ impl FileLock {
             }
             _ => 0,
         };
-        Ok(schedule_io(global, IoOp::Truncate { fd, len }))
-    }
-}
-
-impl Drop for FileLock {
-    fn drop(&mut self) {
-        // Closing the fd releases the OS lock; no separate funlock needed.
-        if !self.unlocked.get() && self.owns_fd {
-            let fd = self.fd.get();
-            if fd != Fd::INVALID {
-                fd.close();
-            }
-        }
+        Ok(schedule_io(global, held, IoOp::Truncate { len }))
     }
 }
 
@@ -194,17 +178,12 @@ pub struct LockTaskCtx<'a> {
     aborted: AtomicU32,
     /// +1 ref held via `AbortSignal::ref_()`; released in `then()`.
     signal: Option<*mut AbortSignal>,
-    result: Option<Result<LockedFd, bun_sys::Error>>,
+    result: Option<Result<HeldFd, bun_sys::Error>>,
 }
 
 pub(crate) enum LockSource {
     Fd(Fd),
     Path(PathLike),
-}
-
-struct LockedFd {
-    fd: Fd,
-    owns_fd: bool,
 }
 
 extern "C" fn lock_abort_cb(ctx: *mut c_void, _reason: JSValue) {
@@ -235,7 +214,7 @@ impl ConcurrentPromiseTaskContext for LockTaskCtx<'_> {
         };
         if self.nonblocking {
             self.result =
-                Some(bun_sys::flock(fd, self.exclusive, true).map(|()| LockedFd { fd, owns_fd }));
+                Some(bun_sys::flock(fd, self.exclusive, true).map(|()| HeldFd { fd, owns_fd }));
         } else {
             // Abortable wait: poll LOCK_NB, sleeping on the `aborted` futex
             // between attempts so an abort wakes us immediately.
@@ -245,7 +224,7 @@ impl ConcurrentPromiseTaskContext for LockTaskCtx<'_> {
                 }
                 match bun_sys::flock(fd, self.exclusive, true) {
                     Ok(()) => {
-                        self.result = Some(Ok(LockedFd { fd, owns_fd }));
+                        self.result = Some(Ok(HeldFd { fd, owns_fd }));
                         return;
                     }
                     // POSIX flock → EWOULDBLOCK (== EAGAIN); Win32
@@ -272,11 +251,9 @@ impl ConcurrentPromiseTaskContext for LockTaskCtx<'_> {
             unsafe { (*signal).detach(core::ptr::from_mut(self).cast::<c_void>()) };
         }
         if self.aborted.load(Ordering::SeqCst) != 0 {
-            if let Some(Ok(locked)) = self.result.take() {
-                let _ = bun_sys::funlock(locked.fd);
-                if locked.owns_fd {
-                    locked.fd.close();
-                }
+            if let Some(Ok(held)) = self.result.take() {
+                let _ = bun_sys::funlock(held.fd);
+                drop(held);
             }
             let err = global.create_dom_exception_instance(
                 jsc::DOMExceptionCode::AbortError,
@@ -288,10 +265,9 @@ impl ConcurrentPromiseTaskContext for LockTaskCtx<'_> {
             };
         }
         match self.result.take() {
-            Some(Ok(locked)) => {
+            Some(Ok(held)) => {
                 let lock = FileLock {
-                    fd: Cell::new(locked.fd),
-                    owns_fd: locked.owns_fd,
+                    held: Cell::new(Some(Arc::new(held))),
                     unlocked: Cell::new(false),
                 };
                 promise.resolve(global, lock.to_js(global))
@@ -353,24 +329,15 @@ pub type FileLockIOTask<'a> = ConcurrentPromiseTask<'a, IoTaskCtx<'a>>;
 
 pub struct IoTaskCtx<'a> {
     global_this: &'a JSGlobalObject,
+    held: Arc<HeldFd>,
     op: IoOp,
     result: Option<Result<IoResult, bun_sys::Error>>,
 }
 
 enum IoOp {
-    Read {
-        fd: Fd,
-        len: Option<usize>,
-        kind: ReadKind,
-    },
-    Write {
-        fd: Fd,
-        data: jsc::ThreadSafe<StringOrBuffer>,
-    },
-    Truncate {
-        fd: Fd,
-        len: i64,
-    },
+    Read { len: Option<usize>, kind: ReadKind },
+    Write { data: jsc::ThreadSafe<StringOrBuffer> },
+    Truncate { len: i64 },
 }
 
 #[derive(Clone, Copy)]
@@ -390,9 +357,10 @@ impl ConcurrentPromiseTaskContext for IoTaskCtx<'_> {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FileLockIOTask;
 
     fn run(&mut self) {
+        let fd = self.held.fd;
         self.result = Some(match &self.op {
-            IoOp::Read { fd, len, kind } => {
-                let file = File::borrow(fd);
+            IoOp::Read { len, kind } => {
+                let file = File::borrow(&fd);
                 match *len {
                     Some(n) => {
                         let mut buf = vec![0u8; n];
@@ -404,15 +372,13 @@ impl ConcurrentPromiseTaskContext for IoTaskCtx<'_> {
                     None => file.read_to_end().map(|v| IoResult::Read(v, *kind)),
                 }
             }
-            IoOp::Write { fd, data } => {
+            IoOp::Write { data } => {
                 let bytes = data.slice();
-                File::borrow(fd)
+                File::borrow(&fd)
                     .pwrite_all(bytes, 0)
                     .map(|()| IoResult::Wrote(bytes.len()))
             }
-            IoOp::Truncate { fd, len } => {
-                bun_sys::ftruncate(*fd, *len).map(|()| IoResult::Truncated)
-            }
+            IoOp::Truncate { len } => bun_sys::ftruncate(fd, *len).map(|()| IoResult::Truncated),
         });
     }
 
@@ -445,9 +411,10 @@ impl ConcurrentPromiseTaskContext for IoTaskCtx<'_> {
     }
 }
 
-fn schedule_io<'a>(global_this: &'a JSGlobalObject, op: IoOp) -> JSValue {
+fn schedule_io<'a>(global_this: &'a JSGlobalObject, held: Arc<HeldFd>, op: IoOp) -> JSValue {
     let ctx = Box::new(IoTaskCtx {
         global_this,
+        held,
         op,
         result: None,
     });

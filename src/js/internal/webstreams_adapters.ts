@@ -80,10 +80,9 @@ class ReadableFromWeb extends Readable {
     this.destroy(error);
   }
 
-  // One reader.read() per _read(). Pulling the whole queue in a single call
-  // (readMany) would flip a start()-enqueued source to "closed" before the
-  // consumer can abort, and a cancel() on a closed stream is a spec no-op, so
-  // the source's cancel hook would never run.
+  // One reader.read() per _read(). readMany() would drain a start()-enqueued
+  // source to "closed" before the consumer can abort, and cancel() on a closed
+  // stream is a spec no-op, so the source's cancel hook would never run.
   _read() {
     $debug("ReadableFromWeb _read()", this.__id);
     if (this.#closed) return;

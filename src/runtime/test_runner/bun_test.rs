@@ -818,14 +818,19 @@ impl BunTest {
         // SAFETY: `this` is the live `*mut DoneCallback` returned by `from_js`;
         // single-threaded JS VM, GC keeps the wrapper alive for the call frame.
         if unsafe { (*this).called } {
-            // in Bun 1.2.20, this is a no-op
-            // in Jest, this is "Expected done to be called once, but it was called multiple times."
-            // Vitest does not support done callbacks
-        } else {
-            // error is only reported for the first done() call
+            // Jest / node:test: a second settle is a test failure (otherwise a late
+            // `done(err)` after a successful `done()` is silently dropped).
+            let err = global_this.create_error_instance(format_args!(
+                "Expected done to be called once, but it was called multiple times."
+            ));
             if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+                err.put(global_this, b"cause", value);
             }
+            let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, err, false);
+            return Ok(JSValue::UNDEFINED);
+        }
+        if was_error {
+            let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
         }
         // SAFETY: see above — `this` is a live `*mut DoneCallback`.
         let ref_in = unsafe {

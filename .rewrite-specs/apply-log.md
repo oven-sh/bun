@@ -691,3 +691,13 @@ internals, and the private per-thread kernel queues below.
 - Cross-shard suggestion (P1/P2/P3): all consumers now use owner_ref_of;
   the per-consumer `owner_ref()` one-liners could fold away entirely if
   attach sites call `uws::owner_ref_of` directly (cosmetic).
+
+### ORCHESTRATOR ADJUDICATIONS (D2 "FOR OWNER" items)
+(a) P10 acceptance wording: ACCEPTED as satisfied. The remaining epoll/kevent
+sites outside backend/ are separate per-thread kernel queues by design
+(IoRequestLoop, KEventWaker, io_darwin, watcher/path_watcher, spawn process
+tracker, NoOrphansTracker) + the bun_sys wrapper layer — the directive's
+target was the MAIN loop's poll universe, which is unified. darwin/freebsd
+arms gate on CI (kqueue Proc/Machport/Memorystatus, machport DNS).
+(b) P1 valkey close-during-connect promise delta: ACCEPTED (C parity; suites
+green; nothing asserts the old behavior).

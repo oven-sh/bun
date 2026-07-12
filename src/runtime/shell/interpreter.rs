@@ -1338,6 +1338,7 @@ impl Interpreter {
         );
 
         if let Err(e) = self.setup_io_before_run() {
+            self.keep_alive.with_mut(|k| k.disable());
             self.deref_root_shell_and_io_if_needed(true);
             let shellerr = ShellErr::new_sys(&e);
             return Err(throw_shell_err(
@@ -1355,6 +1356,10 @@ impl Interpreter {
         self.started.store(true, Ordering::SeqCst);
         Script::start(self, root).run(self);
         if global_this.has_exception() {
+            // A state node threw synchronously (`Yield::failed()`); undo the
+            // pending-activity increment and release the event-loop keepalive.
+            Self::decr_pending_activity_flag(&self.has_pending_activity);
+            self.keep_alive.with_mut(|k| k.disable());
             return Err(crate::jsc::JsError::Thrown);
         }
 

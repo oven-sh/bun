@@ -126,6 +126,7 @@ pub fn load_config_path(
 /// user-facing presentation of a malformed `bunfig.toml`.
 #[cold]
 pub fn report_bunfig_load_failure(ctx: Context<'_>, err: crate::Error) -> ! {
+    debug_assert!(!ctx.log.is_null());
     // SAFETY: process-global Log; see `load_bunfig` note.
     let log = unsafe { &mut *ctx.log };
     if log.has_any() {

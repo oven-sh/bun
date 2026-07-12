@@ -2074,6 +2074,21 @@ console.log(<div {...obj} key="after" />);`),
       expect(imports.filter(({ path }) => path === "react")).toHaveLength(1);
       expect(imports).toHaveLength(2);
     });
+
+    it("preserves non-ASCII import specifiers as UTF-8", () => {
+      const spec = "./café-\u{1F600}-中文";
+      const src = `import a from ${JSON.stringify(spec)}; import(${JSON.stringify(spec)}); require(${JSON.stringify(spec)}); a;`;
+
+      expect(transpiler.scanImports(src, "ts")).toEqual([
+        { kind: "import-statement", path: spec },
+        { kind: "require-call", path: spec },
+      ]);
+
+      expect(transpiler.scan(src).imports).toEqual([
+        { kind: "import-statement", path: spec },
+        { kind: "dynamic-import", path: spec },
+      ]);
+    });
   });
 
   const parsed = (code, trim = true, autoExport = false, transpiler_ = transpiler) => {

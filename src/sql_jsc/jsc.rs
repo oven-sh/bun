@@ -80,7 +80,7 @@ pub use bun_jsc::system_error::verify_error_to_js;
 // Same layering note as `verify_error_to_js` above: canonical impl lives in
 // `bun_runtime::socket::uws_jsc::create_bun_socket_error_to_js`, but importing
 // it would cycle (`bun_runtime` depends on this crate). The body only needs
-// `bun_uws` + `bun_boringssl_sys` + `bun_jsc` (all lower-tier), so it is hosted
+// `bun_uws_shim` + `bun_boringssl_sys` + `bun_jsc` (all lower-tier), so it is hosted
 // here for the SQL connection `createInstance` paths.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -219,7 +219,7 @@ pub struct SqlRuntimeHooks {
         cache: *mut c_void,
         opts: &bun_usockets::BunSocketContextOptions,
         err: &mut bun_usockets::create_bun_socket_error_t,
-    ) -> *mut bun_uws::SslCtx,
+    ) -> *mut bun_uws_shim::SslCtx,
     /// `SSLConfig::fromJS` — parse a JS TLS-options object. Returns a boxed
     /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),
     /// or null when the value contained no TLS config / threw (caller checks
@@ -872,7 +872,7 @@ impl SslCtxCache {
         &mut self,
         opts: &bun_usockets::BunSocketContextOptions,
         err: &mut bun_usockets::create_bun_socket_error_t,
-    ) -> Option<*mut bun_uws::SslCtx> {
+    ) -> Option<*mut bun_uws_shim::SslCtx> {
         // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
         // are caller stack locals.
         let p =

@@ -3,7 +3,7 @@ use bun_collections::{OffsetByteList, StringHashMap, VecExt};
 use bun_usockets::{self as uws, AnySocket as Socket};
 // `secure` stays on the boringssl nominal (matches `ConnectionCtorArgs` and
 // the `SSLContextCache`); cast to bssl-sys only at the `adopt_tls` boundary.
-use bun_uws::SslCtx;
+use bun_uws_shim::SslCtx;
 
 use bun_sql::mysql::Capabilities;
 use bun_sql::mysql::MySQLQueryResult;

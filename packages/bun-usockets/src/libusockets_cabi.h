@@ -76,9 +76,7 @@ struct us_poll_t *us_udp_socket_poll(struct us_udp_socket_t *s);
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err);
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 
-/* Bun DNS glue used by quic.c (Rust exports; formerly internal/internal.h).
- * The guard keeps this the single definition when a TU also sees internal.h
- * (which carries the matching guard until D1 deletes it). */
+/* Bun DNS glue used by quic.c (Rust exports; formerly internal/internal.h). */
 struct addrinfo_request;
 #ifndef LIBUS_ADDRINFO_RESULT_DEFINED
 #define LIBUS_ADDRINFO_RESULT_DEFINED

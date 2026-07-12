@@ -6,7 +6,7 @@ use crate::jsc::{
     JSGlobalObject, JSValue, JsResult, VirtualMachine, VirtualMachineSqlExt as _,
     api::server_config::SSLConfig,
 };
-use bun_uws as uws;
+use bun_uws_shim as uws;
 
 pub(crate) trait SslModeArg: Copy + PartialEq {
     /// Wire order of the JS-side enum; index 0 is `Disable`.

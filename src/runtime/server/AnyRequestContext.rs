@@ -179,18 +179,13 @@ impl AnyRequestContext {
         })
     }
 
-    /// Returns the OLD crate's `bun_uws::Request` handle: all consumers live in
-    /// unmigrated webcore (`Request.rs`). Both ZSTs alias the same C `uws_req_t`.
-    /// TODO(M11 bun_uws repoint): when webcore `Request.rs` migrates, flip this
-    /// return type to `bun_uws_shim::Request` in the same change, or this
-    /// bridge silently keeps the old crate alive.
-    pub fn get_request(self) -> Option<*mut bun_uws::Request> {
+    pub fn get_request(self) -> Option<*mut bun_uws_shim::Request> {
         dispatch!(self, None, |T, ctx| {
             if T::IS_H3 {
                 // url/headers already on the Request
                 return None;
             }
-            ctx.req.map(|p| p.cast::<bun_uws::Request>())
+            ctx.req.map(|p| p.cast::<bun_uws_shim::Request>())
         })
     }
 

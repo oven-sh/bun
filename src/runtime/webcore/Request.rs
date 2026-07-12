@@ -32,7 +32,7 @@ use bun_jsc::AbortSignalRef;
 use bun_jsc::StringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
 use bun_ptr::weak_ptr::WeakPtrData;
-use bun_uws as uws;
+use bun_uws_shim as uws;
 use core::mem::ManuallyDrop;
 
 impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
@@ -376,21 +376,21 @@ impl Request {
             + self.body_value().memory_cost()
     }
 
-    #[bun_uws::uws_callback(export = "Request__setCookiesOnRequestContext")]
+    #[bun_uws_shim::uws_callback(export = "Request__setCookiesOnRequestContext")]
     pub fn ffi_set_cookies_on_request_context(&self, cookie_map: Option<&CookieMap>) {
         self.request_context
             .set_cookies(cookie_map.map(|c| std::ptr::from_ref::<CookieMap>(c).cast_mut()));
     }
 
     /// C++ treats the returned pointer as borrowed for the request handler's lifetime.
-    #[bun_uws::uws_callback(export = "Request__getUWSRequest", no_catch)]
+    #[bun_uws_shim::uws_callback(export = "Request__getUWSRequest", no_catch)]
     pub fn ffi_get_uws_request(&self) -> *mut uws::Request {
         self.request_context
             .get_request()
             .unwrap_or(core::ptr::null_mut())
     }
 
-    #[bun_uws::uws_callback(export = "Request__setInternalEventCallback")]
+    #[bun_uws_shim::uws_callback(export = "Request__setInternalEventCallback")]
     pub fn ffi_set_internal_event_callback(&self, callback: JSValue, global_this: &JSGlobalObject) {
         self.internal_event_callback
             .set(InternalJSEventCallback::init(callback, global_this));
@@ -398,7 +398,7 @@ impl Request {
         self.request_context.enable_timeout_events();
     }
 
-    #[bun_uws::uws_callback(export = "Request__setTimeout")]
+    #[bun_uws_shim::uws_callback(export = "Request__setTimeout")]
     pub fn ffi_set_timeout(&self, seconds: JSValue, global_this: &JSGlobalObject) {
         if !seconds.is_number() {
             let _ = global_this.throw(format_args!(
@@ -415,7 +415,7 @@ impl Request {
     /// `BunRequest.prototype.clone` (the `Bun.serve` `routes:` subclass) goes
     /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`],
     /// so it needs the same fetch-spec step-1 usability check.
-    #[bun_uws::uws_callback(export = "Request__clone")]
+    #[bun_uws_shim::uws_callback(export = "Request__clone")]
     pub fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
         self.throw_if_body_unusable(global_this).ok()?;
         self.clone(global_this).ok()
@@ -424,7 +424,7 @@ impl Request {
     /// `JSBunRequest::clone` tail: mirror [`Self::do_clone`]'s cache sync so a
     /// `routes:` handler that observed `.body` before cloning gets a fresh tee
     /// branch from the next `.body` read instead of the locked tee source.
-    #[bun_uws::uws_callback(export = "Request__syncClonedBodyStreamCaches")]
+    #[bun_uws_shim::uws_callback(export = "Request__syncClonedBodyStreamCaches")]
     pub fn ffi_sync_cloned_body_stream_caches(
         &self,
         global_this: &JSGlobalObject,
@@ -508,7 +508,7 @@ impl Request {
         .map(Some)
     }
 
-    #[bun_uws::uws_callback(export = "Bun__JSRequest__calculateEstimatedByteSize")]
+    #[bun_uws_shim::uws_callback(export = "Bun__JSRequest__calculateEstimatedByteSize")]
     pub fn calculate_estimated_byte_size(&self) {
         self.reported_estimated_size.set(
             self.body_value().estimated_size()

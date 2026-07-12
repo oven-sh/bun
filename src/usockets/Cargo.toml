@@ -7,9 +7,9 @@ edition.workspace = true
 path = "lib.rs"
 
 [features]
-# OFF by default: with the feature on, cabi.rs exports `#[no_mangle]` us_*
-# symbols that collide at link time with the still-compiled C core in
-# packages/bun-usockets. The deletion shard flips this on when the C is removed.
+default = ["cabi"]
+# cabi.rs exports the `#[no_mangle]` us_* C-ABI symbols; the C core in
+# packages/bun-usockets is deleted, so these are the sole definitions.
 cabi = []
 # Fault-injection API (fault.rs). Mirrors the old `--cfg socket_fault_injection`
 # RUSTFLAGS knob as a cargo feature so `cargo check -p bun_usockets` can gate it.

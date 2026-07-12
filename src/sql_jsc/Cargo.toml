@@ -37,4 +37,4 @@ bun_sha_hmac.workspace = true
 # bun_runtime.workspace = true
 bun_sql.workspace = true
 bun_usockets.workspace = true
-bun_uws.workspace = true
+bun_uws_shim.workspace = true

@@ -36,7 +36,7 @@ use bun_sys as sys;
 use bun_url::URL;
 // ResponseKind stays bun_uws-typed: its only consumers here are unmigrated
 // bun_uws FFI (`FetchHeaders::to_uws_response`, `CookieMap::write`).
-use bun_uws::ResponseKind;
+use bun_uws_shim::ResponseKind;
 use bun_uws_shim::{self as uws, AnyWebSocket, WebSocketUpgradeContext};
 use bun_wyhash::hash;
 

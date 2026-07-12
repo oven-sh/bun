@@ -1,9 +1,159 @@
+import type { Socket } from "bun";
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
-import { expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
 
 const skip = !fault.available() || isWindows;
+
+afterEach(() => fault.clear());
+
+async function bunConnectedPair(handlers: {
+  serverData?: (s: Socket, chunk: Buffer) => void;
+  clientData?: (s: Socket, chunk: Buffer) => void;
+  clientError?: (s: Socket, err: Error) => void;
+  clientClose?: (s: Socket, err?: Error) => void;
+  clientDrain?: (s: Socket) => void;
+}) {
+  const serverSock = Promise.withResolvers<Socket>();
+  const listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(s) {
+        serverSock.resolve(s);
+      },
+      data(s, chunk) {
+        handlers.serverData?.(s, chunk as Buffer);
+      },
+      error() {},
+      close() {},
+    },
+  });
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    socket: {
+      open() {},
+      data(s, chunk) {
+        handlers.clientData?.(s, chunk as Buffer);
+      },
+      error(s, err) {
+        handlers.clientError?.(s, err);
+      },
+      close(s, err) {
+        handlers.clientClose?.(s, err);
+      },
+      drain(s) {
+        handlers.clientDrain?.(s);
+      },
+      connectError() {},
+    },
+  });
+  const server = await serverSock.promise;
+  return {
+    listener,
+    client,
+    server,
+    [Symbol.dispose]() {
+      client.end();
+      server.end();
+      listener.stop(true);
+    },
+  };
+}
+
+describe.skipIf(skip)("Bun.connect/Bun.listen under injected syscall faults", () => {
+  test("recv → ECONNRESET surfaces via close(socket, error)", async () => {
+    // Bun-native sockets deliver read errors as the close() error argument
+    // (same contract as a real peer RST), not via the error() handler.
+    const closed = Promise.withResolvers<Error | undefined>();
+    using p = await bunConnectedPair({
+      clientClose: (_s, err) => closed.resolve(err),
+    });
+    fault.set({ syscall: "recv", action: "errno", errno: "ECONNRESET", repeat: 1 });
+    // Trigger a recv() on the client by writing from the server.
+    p.server.write("hello");
+    const err = (await closed.promise) as NodeJS.ErrnoException;
+    expect(err?.code).toBe("ECONNRESET");
+  });
+
+  test("recv → 1-byte short reads still deliver the complete payload", async () => {
+    const payload = Buffer.from(Array.from({ length: 256 }, (_, i) => i & 0xff));
+    const chunks: Buffer[] = [];
+    const done = Promise.withResolvers<void>();
+    using p = await bunConnectedPair({
+      clientData: (_s, chunk) => {
+        chunks.push(Buffer.from(chunk));
+        if (Buffer.concat(chunks).length >= payload.length) done.resolve();
+      },
+      clientError: (_s, err) => done.reject(err),
+    });
+    fault.set({ syscall: "recv", action: "short", bytes: 1, repeat: -1 });
+    p.server.write(payload);
+    await done.promise;
+    expect(Buffer.concat(chunks).equals(payload)).toBe(true);
+  });
+
+  test("send → 16-byte short writes still deliver the complete payload to the peer", async () => {
+    const payload = Buffer.alloc(512, "b");
+    let received = Buffer.alloc(0);
+    const done = Promise.withResolvers<void>();
+    let offset = 0;
+    // Bun-native sockets report partial writes; the app resumes on drain().
+    const pump = (s: Socket) => {
+      while (offset < payload.length) {
+        const n = s.write(payload.subarray(offset));
+        if (n <= 0) break;
+        offset += n;
+      }
+    };
+    using p = await bunConnectedPair({
+      serverData: (_s, chunk) => {
+        received = Buffer.concat([received, chunk]);
+        if (received.length >= payload.length) done.resolve();
+      },
+      clientError: (_s, err) => done.reject(err),
+      clientDrain: s => pump(s),
+    });
+    fault.set({ syscall: "send", action: "short", bytes: 16, repeat: -1 });
+    pump(p.client);
+    await done.promise;
+    expect(received.equals(payload)).toBe(true);
+  });
+
+  test("connect → ECONNREFUSED rejects Bun.connect and fires connectError", async () => {
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open() {}, data() {}, close() {} },
+    });
+    try {
+      fault.set({ syscall: "connect", action: "errno", errno: "ECONNREFUSED", repeat: 1 });
+      const connectErr = Promise.withResolvers<Error>();
+      const rejection = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        socket: {
+          open() {},
+          data() {},
+          close() {},
+          connectError(_s, err) {
+            connectErr.resolve(err);
+          },
+        },
+      }).then(
+        () => null,
+        err => err,
+      );
+      expect(rejection).not.toBeNull();
+      const err = (await connectErr.promise) as NodeJS.ErrnoException;
+      expect(["ECONNREFUSED", "ConnectionRefused", "FailedToOpenSocket"]).toContain(err.code);
+    } finally {
+      listener.stop(true);
+    }
+  });
+});
 
 // uSockets' TLS low-priority handshake queue (loop->data.low_prio_head)
 // shares its prev/next links with group->head_sockets. A socket already

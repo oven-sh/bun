@@ -900,6 +900,88 @@ console.log("completed", done, "cycles without crashing");
     expect(stdout.trim()).toBe("completed 64 cycles without crashing");
     expect(exitCode).toBe(0);
   }, 30_000); // subprocess + debug/ASAN startup is slow
+
+  it("survives thousands of connect/upgradeTLS/close cycles interleaved with GC", async () => {
+    // Stresses the raw-socket adopt path (upgradeTLS transfers the native
+    // socket onto a fresh TLS context) both inside the open dispatch and
+    // after it, with Bun.gc(true) finalizing dead twins mid-flight.
+    const fixture = /* js */ `
+      const TLS = {
+        socket: { open() {}, data() {}, error() {}, close() {}, handshake() {}, end() {}, timeout() {}, drain() {} },
+        tls: { rejectUnauthorized: false, servername: "localhost" },
+      };
+      const listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { open() {}, data() {}, error() {}, close() {}, drain() {} },
+      });
+      const TOTAL = 2048, CONCURRENCY = 32;
+      let started = 0, completed = 0;
+
+      function upgradeAndClose(sock) {
+        try {
+          const pair = sock.upgradeTLS(TLS);
+          if (pair) {
+            const [raw, tls] = pair;
+            try { tls.end(); } catch {}
+            try { raw.end(); } catch {}
+          }
+        } catch {}
+        try { sock.end(); } catch {}
+      }
+
+      function oneCycle(insideOpen) {
+        return new Promise(resolve => {
+          let settled = false;
+          const fin = () => { if (!settled) { settled = true; resolve(); } };
+          const p = Bun.connect({
+            hostname: "127.0.0.1",
+            port: listener.port,
+            socket: {
+              open(sock) {
+                if (insideOpen) { upgradeAndClose(sock); fin(); }
+              },
+              data() {}, drain() {},
+              connectError() { fin(); }, error() { fin(); }, close() { fin(); },
+            },
+          });
+          if (!insideOpen) {
+            p.then(sock => { upgradeAndClose(sock); fin(); }, fin);
+          } else {
+            p.catch(fin);
+          }
+        });
+      }
+
+      async function worker() {
+        while (started < TOTAL) {
+          const i = started++;
+          await oneCycle(i % 2 === 0);
+          completed++;
+          if (completed % 64 === 0) Bun.gc(true);
+        }
+      }
+      await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+      Bun.gc(true);
+      listener.stop(true);
+      Bun.gc(true);
+      console.log("completed", completed, "cycles");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout: stdout.trim(),
+      signalCode: proc.signalCode,
+      exitCode,
+      stderrTail: exitCode === 0 ? "" : stderr.slice(-2000),
+    }).toEqual({ stdout: "completed 2048 cycles", signalCode: null, exitCode: 0, stderrTail: "" });
+    // 2048 TLS context creations on a debug+ASAN build take a while.
+  }, 120_000);
 });
 
 it.skipIf(isWindows)("should not crash when a socket from a file descriptor is closed after opening", async () => {

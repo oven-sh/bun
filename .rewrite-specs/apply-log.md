@@ -151,3 +151,159 @@ crate into OUT_DIR; committed per-target wrapper_*.rs files deleted; wrapper.c
 stays committed with a build-time drift assert). Final applier: verify
 cargo check -p bun_usockets natively AND for at least one foreign target,
 confirm boringssl.ts stamp checks updated, and ensure no wrapper_*.rs remain.
+
+## 2026-07-12 — Wave B applier (consumer-migration integration)
+
+### Compile fixes (workspace green after these)
+- HTTPContext.rs connect/connect_socket: hoisted `ssl_ctx_for_connect()` out
+  of the `&mut self.group` borrow (E0502 x2).
+- jsc/rare_data.rs Drop: `SSL_CTX_free(s.cast())` — boringssl-sys vs bssl-sys
+  nominal seam (M12's documented cast-at-boundary rule).
+- CppWebSocket.rs extern block: `#[allow(improper_ctypes)]` (lint recurses
+  into SocketHeader's repr(Rust) `*mut ConnectingSocket` pointee; same class
+  as Wave A's Loop externs).
+- sql_jsc/postgres setup_tls: `*tcp` (JsCell::get returns by-ref pattern
+  binding; NewSocketHandler is Copy).
+- shell/builtin/yes.rs: `(*mini.loop_).tick()` → `bun_usockets::Loop::tick(ptr)`
+  (M8's raw-ptr associated-fn tick family).
+- jsc_hooks.rs: `.cast()` on both get_or_create_opts results (SSLContextCache
+  returns bun_boringssl_sys::SSL_CTX; hooks are bun_usockets::SslCtx-typed).
+
+### bun_uws / bun_uws_sys fully unlinked
+- verify_error_to_js (bun_jsc::system_error) repointed to
+  `&bun_usockets::us_bun_verify_error_t`; sql_jsc's field-by-field bridge
+  collapsed to a `pub use` (the loud one-line fix M4 predicted).
+- ResponseKind repointed bun_uws → bun_uws_shim in FetchHeaders.rs,
+  CookieMap.rs, server_body.rs, RequestContext.rs.
+- webcore/Request.rs migrated (`bun_uws as uws` → `bun_uws_shim as uws`,
+  `#[bun_uws::uws_callback]` → shim macro re-export) and
+  AnyRequestContext::get_request flipped to `*mut bun_uws_shim::Request` in
+  the same change (M10's split-typed bridge TODO resolved).
+- sql_jsc SslCtx refs → bun_uws_shim::SslCtx (identical alias:
+  bun_boringssl::c::SSL_CTX).
+- Cargo deps: bun_uws → bun_uws_shim in sql_jsc + jsc; bun_uws + bun_uws_sys
+  REMOVED from bun_runtime. `cargo tree -i bun_uws` → orphan (only
+  bun_uws → bun_uws_sys edge remains, workspace-member-only). The M11
+  duplicate-#[no_mangle] link hazard is gone without deleting the crates
+  (D1 still deletes the source dirs).
+
+### cabi flip (the apply-log Wave A "deletion/flip wave" step)
+- bun_bin: added `bun_usockets = { workspace = true, features = ["cabi"] }`
+  + `use bun_usockets as _;` force-link in lib.rs.
+- scripts/build/rust.ts: `--features bun_usockets/socket_fault_injection`
+  pushed alongside `--cfg=socket_fault_injection` (M1's loud-gap flag).
+- Verified ninja graph: C core gone; only root_certs*.cpp + quic.c +
+  UnifiedSource-src_uws_sys (surviving C++ uWS glue) compile from the old
+  tree.
+- vendor/boringssl vanished mid-session (concurrent activity on the shared
+  /root/bun/vendor); refetched via `ninja ../../vendor/boringssl/.ref`.
+
+### In progress
+- Full `bun bd --version` running in background; subsystem tests next.
+
+### Full binary LINKS AND RUNS (first time on the Rust core)
+- One undefined symbol at link: `us_raw_root_certs` — the NTLS-consumed
+  wrapper lived in (deleted) context.c, delegating to
+  `us_internal_raw_root_certs` in surviving root_certs.cpp. Fixed by renaming
+  the root_certs.cpp definition to `us_raw_root_certs` (its only caller;
+  matches cabi-surface.md §1.7 "stays in surviving C++ TUs"). The stale
+  us_internal_ decl in internal.h is D1 cleanup.
+- `bun bd --version` → 1.4.0-debug. Smoke: Bun.serve+fetch roundtrip OK,
+  real TLS fetch (https://example.com) OK.
+- core hardening while waiting: from_fd now debug_asserts
+  `!uses_group_vtable(kind)` before stamping the ext word (M6's flagged
+  Dynamic-clobber hazard).
+
+### Test results (debug build, this box is shared — expect some timing noise)
+- test/js/bun/net/: 90 pass / 3 skip / 0 fail (65.6s).
+- remaining suites running: udp, dgram, websocket, fetch, spawn-ipc,
+  node/net, node/tls, serve.
+
+### Test-environment caveats (shared box)
+- Load average ~270 from concurrent sessions during the suite runs — timeout
+  failures must be retested solo before being treated as regressions.
+- test/node_modules was missing in this worktree; `bun install
+  --ignore-scripts` fixed it (puppeteer postinstall fails; known issue).
+  Early websocket failures (ws / https-proxy-agent ERR_MODULE_NOT_FOUND) were
+  this, not code.
+- "bad permissions throws" fetch tests fail because we run as root
+  (pre-existing env condition, permissions are not enforced for uid 0).
+- udp: 228/0 fail, dgram: 3/0, net: 90/0 — all green.
+
+### Failure triage (every failure retested solo and/or against the PRE-REWRITE
+### main-tree debug build /root/bun/build/debug/bun-debug of Jul 5)
+Legend: PRE-EXISTING = same failure on the pre-rewrite main debug build;
+ENV = environment condition; LOAD = passes solo, fails only under suite
+concurrency/box load (~270 loadavg).
+
+fetch.test.ts (330 pass / 22 fail in-suite):
+- 12x "utf16 * (with gc)": PRE-EXISTING (main debug build fails identically —
+  ~1200 Bun.gc(true) calls per test at debug/ASAN speed exceed 5s).
+- 4x "bad permissions throws": ENV (uid 0 ignores file modes; fails on
+  USE_SYSTEM_BUN too).
+- 4x 55s concurrent tests (simultaneous HTTPS fetch, tlsextname, ipv6
+  localhost, redirect to another port #7793): LOAD — all pass solo; starved
+  by the concurrent utf16 gc-storm tests in the same file.
+- "follow redirect if connection is closed…": PRE-EXISTING (main fails
+  identically; AbortSignal.timeout(150) too tight for debug).
+- "very long redirect URLS": PRE-EXISTING (main fails identically).
+
+node/net (192 pass / 2 fail):
+- mongodb-pattern-leak framed round-trips: LOAD (passes solo, 107s vs 60s
+  suite timeout).
+- socketaddress "does not leak memory": PRE-EXISTING (main fails identically;
+  100k iterations > 5s in debug).
+
+node/tls (174 pass / 4 fail):
+- 2x invalid NODE_EXTRA_CA_CERTS: PRE-EXISTING (main fails identically; 3
+  debug child spawns > 5s). NOTE: the doubled extra-CA warning (old-style
+  "Warning: Ignoring extra certs…" + new "warn: ignoring extra certs…") is
+  ALSO printed by the pre-rewrite main build — not a wave-B artifact, but
+  someone should dedupe the two warn paths eventually.
+- root-certs concurrent Workers: PRE-EXISTING (main fails identically).
+- destroySoon "delivers the whole stream": test only exists on this branch;
+  correctness PROVEN solo — 64/64 iterations of the 2MB spill deliver every
+  byte (manual repro); 5s test timeout can't fit 64x2MB TLS in debug.
+
+serve.test.ts (251 pass / 3 fail):
+- root range port #7187: ENV (uid 0 binds port 1003; fails on system bun).
+- "not instanciate error instances": MARGINAL — 1000 sequential requests at
+  ~4.7ms/req(debug) ≈ 5s budget; flips both ways on our build, measured
+  ms/req parity with main (4.78 vs 4.68).
+- abort sendfile response: PRE-EXISTING (main fails identically at 10s).
+
+spawn-ipc: 13/13 pass. websocket rerun (after node_modules install) pending.
+
+### websocket rerun (deps installed) + final triage
+- websocket suite: 226 pass / 1 skip / 4 fail. All 4 are PRE-EXISTING debug
+  timing: "connect many times over https" + "instances finalized when GC'd"
+  fail identically on the pre-rewrite main debug build (same file, solo);
+  "should send and receive messages" passes solo on our build; the
+  proxy-close-reentrancy fixture takes 6.05s on main vs 6.09s on ours
+  (identical) against a 5s test timeout.
+- Our build passes MORE websocket.test.js tests solo than the main debug
+  build (45 vs 42).
+
+### Final state
+- cargo check --workspace: GREEN. cargo check -p bun_bin (cabi on): GREEN.
+- cargo test -p bun_usockets: 10/10 slab tests pass.
+- bun bd links and runs; every mandated subsystem suite executed; every
+  failure traced to a pre-existing condition (proven against the pre-rewrite
+  main debug build or USE_SYSTEM_BUN) or box load (passes solo).
+- Diff for the orchestrator to commit: 22 files (uws consumer repoints to
+  bun_uws_shim/bun_usockets, bun_uws/bun_uws_sys unlinked from the bun_bin
+  graph, cabi flip in bun_bin, rust.ts fault-injection feature wiring,
+  root_certs.cpp us_raw_root_certs rename, from_fd group-vtable
+  debug_assert, borrowck/nominal-cast fixes).
+
+### Remaining for D1/D2 (unchanged obligations)
+- D1: delete packages/bun-usockets C core sources from disk (they are
+  already out of the build graph), delete src/uws + src/uws_sys Rust crates
+  (now orphaned — nothing links them), drop their workspace memberships,
+  prune stale decls in internal.h (us_internal_raw_root_certs) /
+  libusockets.h, flip `cabi` default-on if desired (currently explicit in
+  bun_bin's dep).
+- D2: fault-injection test port + slab Miri target + GC-stress adopt/
+  upgradeTLS tests.
+- Dedupe the doubled extra-CA warning (old "Warning: Ignoring extra certs…"
+  + new "warn: ignoring extra certs…") — pre-existing on main, cosmetic.

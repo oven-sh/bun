@@ -509,6 +509,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   rustflags.push("--check-cfg=cfg(socket_fault_injection)");
   if (cfg.socketFaultInjection) {
     rustflags.push("--cfg=socket_fault_injection");
+    // The runtime's cfg-gated callers route into `bun_usockets::fault`,
+    // which is behind this Cargo feature — enable both together.
+    args.push("--features", "bun_usockets/socket_fault_injection");
   }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a

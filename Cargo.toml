@@ -76,7 +76,6 @@ members = [
   "src/mimalloc_sys",
   "src/semver_jsc",
   "src/standalone_graph",
-  "src/uws",
   "src/wyhash",
   "src/hash",
   "src/boringssl_sys",
@@ -89,7 +88,6 @@ members = [
   "src/tcc_sys",
   "src/usockets",
   "src/uws_shim",
-  "src/uws_sys",
   "src/zstd",
   "src/options_types",
   "src/output",
@@ -425,7 +423,6 @@ bun_alloc = { path = "src/bun_alloc" }
 bun_mimalloc_sys = { path = "src/mimalloc_sys" }
 bun_semver_jsc = { path = "src/semver_jsc" }
 bun_standalone_graph = { path = "src/standalone_graph" }
-bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
@@ -440,7 +437,6 @@ bun_spawn_sys = { path = "src/spawn_sys" }
 bun_tcc_sys = { path = "src/tcc_sys" }
 bun_usockets = { path = "src/usockets" }
 bun_uws_shim = { path = "src/uws_shim" }
-bun_uws_sys = { path = "src/uws_sys" }
 bun_zstd = { path = "src/zstd" }
 bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }

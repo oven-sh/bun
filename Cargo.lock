@@ -310,6 +310,7 @@ dependencies = [
  "bun_platform",
  "bun_runtime",
  "bun_sys",
+ "bun_usockets",
  "libc",
 ]
 
@@ -1238,7 +1239,7 @@ dependencies = [
  "bun_transpiler",
  "bun_url",
  "bun_usockets",
- "bun_uws",
+ "bun_uws_shim",
  "bun_watcher",
  "bun_wyhash",
  "bytemuck",
@@ -1720,9 +1721,7 @@ dependencies = [
  "bun_transpiler",
  "bun_url",
  "bun_usockets",
- "bun_uws",
  "bun_uws_shim",
- "bun_uws_sys",
  "bun_valkey",
  "bun_watcher",
  "bun_which",
@@ -2017,7 +2016,7 @@ dependencies = [
  "bun_sha_hmac",
  "bun_sql",
  "bun_usockets",
- "bun_uws",
+ "bun_uws_shim",
  "const_format",
  "enum-map",
  "enumset",
@@ -2185,26 +2184,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_uws"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_boringssl",
- "bun_core",
- "bun_jsc_macros",
- "bun_opaque",
- "bun_ptr",
- "bun_uws_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_uws_shim"
 version = "0.0.0"
 dependencies = [
@@ -2219,29 +2198,6 @@ dependencies = [
  "bun_usockets",
  "scopeguard",
  "strum",
-]
-
-[[package]]
-name = "bun_uws_sys"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_boringssl_sys",
- "bun_core",
- "bun_errno",
- "bun_http_types",
- "bun_libuv_sys",
- "bun_opaque",
- "bun_paths",
- "bun_windows_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "thiserror",
 ]
 
 [[package]]

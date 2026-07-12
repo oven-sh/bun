@@ -154,7 +154,7 @@ pub struct PostgresSQLConnection {
     /// Owned `SSL_CTX*` on the boringssl nominal (matches `ConnectionCtorArgs`
     /// and the `SSLContextCache`); cast to the bssl-sys nominal only at the
     /// `adopt_tls` boundary in [`Self::setup_tls`].
-    pub secure: Option<*mut bun_uws::SslCtx>,
+    pub secure: Option<*mut bun_uws_shim::SslCtx>,
     pub tls_config: jsc::api::ServerConfig::SSLConfig,
     pub tls_status: Cell<TLSStatus>,
     pub ssl_mode: SSLMode,

@@ -934,6 +934,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         );
         let nn = NonNull::new(raw)?;
         // Rust kinds: the ext word IS the storage (null-niche pointer bits).
+        // Group-vtable (Dynamic) kinds keep a trailing-area pointer there
+        // instead — stamping would clobber it and free_socket_ext would later
+        // free the caller's pointer as an ExtBlock. They must not come here.
+        debug_assert!(!crate::dispatch::uses_group_vtable(k));
         uext::header_mut(raw).ext = this.cast::<c_void>();
         Some(Self {
             socket: InternalSocket::Connected(SocketRef::from_live(nn)),

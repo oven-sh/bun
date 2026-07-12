@@ -4313,8 +4313,6 @@ declare module "bun" {
      * permessage-deflate output) exceeds this, the connection is closed with
      * code `1009` before the message is delivered. `0` disables the limit.
      *
-     * Matches the `ws` package's client `maxPayload` option.
-     *
      * @default 134217728 (128 MiB)
      */
     maxPayload?: number;

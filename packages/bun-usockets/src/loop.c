@@ -758,7 +758,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     // Do not call on_end after the socket has been closed
                     return;
                 }
-                if (s->flags.is_paused && !error) {
+                /* Only defer for allow_half_open callers (node:net sockets,
+                 * which resume to drain the kernel buffer). The
+                 * !allow_half_open arm below closes the socket outright, which
+                 * is what uws HTTP expects: its handle.pause() is internal and
+                 * may never resume once the response ended, so deferring eof
+                 * there leaked the connection. */
+                if (s->flags.is_paused && s->flags.allow_half_open && !error) {
                     #ifdef LIBUS_USE_EPOLL
                     /* EPOLLHUP is level-triggered and unmaskable, so take the
                      * fd out of the set entirely; us_socket_resume re-ADDs it.

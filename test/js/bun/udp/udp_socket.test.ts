@@ -86,6 +86,26 @@ describe("udpSocket()", () => {
     ).toThrow();
   });
 
+  // Out-of-range connect.port used to be silently rewritten to 0, so send()
+  // returned true while every datagram was dropped. The bind path already
+  // rejected the same values; connect must too.
+  test.each([-1, 0, 65536, 99999, NaN, Infinity, "abc"] as const)(
+    "connect with out-of-range port %p rejects",
+    port => {
+      expect(() => udpSocket({ connect: { hostname: "127.0.0.1", port: port as number } })).toThrow(
+        'Expected "connect.port" to be an integer between 1 and 65535',
+      );
+    },
+  );
+
+  test("connect with valid port at range boundaries is accepted", async () => {
+    for (const port of [1, 65535]) {
+      const socket = await udpSocket({ connect: { hostname: "127.0.0.1", port } });
+      expect(socket.remoteAddress).toEqual({ address: "127.0.0.1", family: "IPv4", port });
+      socket.close();
+    }
+  });
+
   // The Strong ref on the JS wrapper used to be left in place when udpSocket()
   // threw before the underlying uws socket was created (invalid options, bind
   // failure), pinning the wrapper forever and leaking the Zig struct.

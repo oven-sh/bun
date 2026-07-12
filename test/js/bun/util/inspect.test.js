@@ -518,6 +518,15 @@ describe("customInspect option", () => {
     const nested = Bun.inspect({ inner: o }, { customInspect: false });
     expect(calls).toBe(0);
     expect(nested).not.toContain("HOOK-OUTPUT");
+
+    // Proxy wrapper must not bypass the flag (top-level and nested)
+    calls = 0;
+    const proxied = Bun.inspect(new Proxy(o, {}), { customInspect: false });
+    expect({ calls, proxied }).toEqual({ calls: 0, proxied: out });
+
+    calls = 0;
+    Bun.inspect({ inner: new Proxy(o, {}) }, { customInspect: false });
+    expect(calls).toBe(0);
   });
 
   it("Bun.inspect runs the custom inspect hook by default and when customInspect is true", () => {
@@ -555,6 +564,9 @@ describe("customInspect option", () => {
 
       calls = 0; console.dir({ inner: o }, { customInspect: false });
       process.stdout.write("calls-nested=" + calls + "\\n");
+
+      calls = 0; console.dir(new Proxy(o, {}));
+      process.stdout.write("calls-proxy=" + calls + "\\n");
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
@@ -566,7 +578,7 @@ describe("customInspect option", () => {
     const lines = stdout.split("\n").filter(l => l.startsWith("calls-"));
     expect({ stderr, lines }).toEqual({
       stderr: "",
-      lines: ["calls-default=0", "calls-false=0", "calls-true=1", "calls-nested=0"],
+      lines: ["calls-default=0", "calls-false=0", "calls-true=1", "calls-nested=0", "calls-proxy=0"],
     });
     expect(stdout.match(/HOOK-OUTPUT/g)?.length).toBe(1);
     expect(exitCode).toBe(0);

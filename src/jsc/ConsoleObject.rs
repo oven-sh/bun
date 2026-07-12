@@ -2322,7 +2322,7 @@ pub mod formatter {
 
             if js_type == jsc::JSType::GlobalProxy {
                 if !opts.contains(TagOptions::HIDE_GLOBAL) {
-                    return Tag::get(value.get_proxy_target(), global_this);
+                    return Tag::get_advanced(value.get_proxy_target(), global_this, opts);
                 }
                 return Ok(TagResult {
                     tag: TagPayload::GlobalObject,
@@ -3686,7 +3686,7 @@ pub mod formatter {
             // `Proxy { target: ..., handlers: ... }` — this is default off so
             // it is not used.
             self.format::<C>(
-                Tag::get(target, self.global_this)?,
+                Tag::get_advanced(target, self.global_this, self.top_level_tag_opts())?,
                 writer_,
                 target,
                 self.global_this,

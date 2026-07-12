@@ -1,7 +1,7 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { chmodSync, statSync } from "node:fs";
+import { chmodSync, statSync, symlinkSync } from "node:fs";
 import path from "path";
 
 // Helper to run REPL with piped stdin (non-TTY mode) and capture output
@@ -974,11 +974,13 @@ describe.concurrent("bun --interactive", () => {
   test("handles `await null;` then .exit without an uncaught error (test-repl-close)", async () => {
     const { stdout, stderr, exitCode } = await runInteractive("await null;\n.exit\n");
     expect(stdout + stderr).not.toMatch(/Uncaught Error/);
-    expect(stdout).toContain("null");
+    // The evaluated result is printed as `null` on its own line; match that
+    // rather than the echoed input (which also contains the substring "null").
+    expect(stdout).toMatch(/\nnull\r?\n/);
     expect(exitCode).toBe(0);
   });
 
-  test("a script positional still wins over --interactive", async () => {
+  test("-e still wins over --interactive", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--interactive", "-e", "console.log('from eval')"],
       stdout: "pipe",
@@ -989,6 +991,41 @@ describe.concurrent("bun --interactive", () => {
     expect(stripAnsi(stdout)).toBe("from eval\n");
     expect(stripAnsi(stdout)).not.toContain("Welcome to Bun");
     expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a script positional still wins over --interactive", async () => {
+    using dir = tempDir("interactive-positional", {
+      "script.js": `console.log("from script");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--interactive", "script.js"],
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stripAnsi(stdout)).toBe("from script\n");
+    expect(stripAnsi(stdout)).not.toContain("Welcome to Bun");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("node shim: --interactive starts the REPL instead of erroring", async () => {
+    using dir = tempDir("interactive-node-shim", {});
+    const link = path.join(String(dir), "node");
+    symlinkSync(bunExe(), link);
+    await using proc = Bun.spawn({
+      cmd: [link, "--interactive"],
+      stdin: Buffer.from(".exit\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1" },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stripAnsi(stderr)).not.toContain("does not support a repl");
+    expect(stripAnsi(stdout)).toContain("Welcome to Bun");
     expect(exitCode).toBe(0);
   });
 });

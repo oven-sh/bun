@@ -12,8 +12,8 @@ import {
   isWindows,
   tempDirWithFiles,
 } from "harness";
-import path from "path";
 import { parseEnv } from "node:util";
+import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
   const result = Bun.spawnSync([bunExe(), file], {

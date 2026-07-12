@@ -1,4 +1,4 @@
-//! First-class non-socket poll registrations (safe-protocol.md ADDENDUM P0c).
+//! First-class non-socket poll registrations (docs/design.md §Non-socket poll registrations).
 //! Consumers register a [`PollSource`] with a refcounted owner; readiness
 //! dispatches through the Protocol-v2 guard (a strong owner ref is held
 //! across the handler, so an owner dropping to zero refs mid-callback stays
@@ -7,7 +7,7 @@
 //! never a dangling deref. Keep-alive is integrated with `num_polls`/`active`
 //! (`Loop::ref_`/`unref`) — consumers never poke loop fields.
 //!
-//! P10 moved `src/io/`'s FilePoll onto this registry; the
+//! `src/io/`'s FilePoll moved onto this registry; the
 //! `Bun__internal_dispatch_ready_poll` extern, the `ready_polls`/
 //! `current_ready_poll` back-channel, and the tagged-pointer udata
 //! convention are gone.
@@ -260,7 +260,7 @@ impl PollRef {
                 q.ops,
             )
         });
-        // W2 discipline: kernel disarm (incl. pending ready-list nulling)
+        // Disarm discipline: kernel disarm (incl. pending ready-list nulling)
         // strictly precedes the slot free.
         #[cfg(not(windows))]
         crate::backend::registry_disarm(p.as_ptr().cast::<PollState>(), loop_, armed);
@@ -281,7 +281,7 @@ impl PollRef {
 /// the poll in `num_polls`/`active`; `false` = fallthrough (like the wakeup
 /// async). On kernel-registration failure the ref is released and the errno
 /// returned. Windows: the slot and keep-alive accounting exist but no kernel
-/// registration happens (uv-driven readiness stays outside until P10).
+/// registration happens (uv-driven readiness stays outside for now).
 ///
 /// A source already registered on `loop_` must not be registered again: the
 /// backends diverge (epoll fails with EEXIST; kqueue's EV_ADD silently
@@ -336,7 +336,7 @@ pub(crate) fn register<P: PollProtocol>(
             let err = poll_access::last_errno();
             // Purge any partially-armed filter (kqueue arms ≤2 separate
             // submissions) — kernel-held udata must never outlive the slot
-            // (W2). NOT on epoll: its single EPOLL_CTL_ADD is atomic, and a
+            // (disarm-before-free). NOT on epoll: its single EPOLL_CTL_ADD is atomic, and a
             // DEL here would disarm a sibling registration on EEXIST.
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             crate::backend::registry_disarm(p.cast::<PollState>(), loop_, armed);
@@ -363,7 +363,7 @@ pub(crate) fn register<P: PollProtocol>(
 }
 
 impl Loop {
-    /// Safe registration entry (P10): see [`register`] for the ownership and
+    /// Safe registration entry: see [`register`] for the ownership and
     /// duplicate-source contract. `&mut self` proves the loop is live and
     /// that the caller runs on the loop thread.
     pub fn register_poll<P: PollProtocol>(

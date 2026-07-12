@@ -1,6 +1,6 @@
 //! Slab-slot socket header + internal open/close/read/write paths.
-//! Implements core-semantics.md §3 (SOCKET LIFECYCLE); handle-facing method
-//! surface per consumers/01-api-surface.md §1. TLS close/open orchestration
+//! Implements docs/semantics.md §3 (SOCKET LIFECYCLE); handle-facing method
+//! surface preserved from the replaced crates. TLS close/open orchestration
 //! (us_internal_ssl_{on_open,close,on_end} composition over `TlsState`
 //! pieces) lives here because socket.c owned those call sites. Group
 //! linkage, adoption bookkeeping and ext allocation live in group.rs.
@@ -28,7 +28,7 @@ use crate::write::UsIoVec;
 use crate::LIBUS_RECV_BUFFER_LENGTH;
 use crate::LIBUS_SOCKET_DESCRIPTOR;
 
-/// Packed 1-byte socket flags (bit assignments per cabi-surface.md §3.7:
+/// Packed 1-byte socket flags (bit assignments per docs/cabi.md §3.7:
 /// `last_write_failed` is bit 7 — frozen while the SHIM pokes it).
 #[derive(Copy, Clone, Default)]
 #[repr(transparent)]
@@ -68,11 +68,11 @@ pub struct SocketHeader {
     pub(crate) p: PollState,
     pub(crate) flags: SocketFlags,
     pub(crate) kind: SocketKind,
-    /// 4-second wheel bucket; 255 = off (core-semantics.md §5).
+    /// 4-second wheel bucket; 255 = off (docs/semantics.md §5).
     pub(crate) timeout: u8,
     /// Minute wheel bucket; 255 = off.
     pub(crate) long_timeout: u8,
-    /// Low-prio queue state 0/1/2 (core-semantics.md §1, C8).
+    /// Low-prio queue state 0/1/2 (docs/semantics.md §1, C8).
     pub(crate) low_prio_state: u8,
     pub(crate) fd: LIBUS_SOCKET_DESCRIPTOR,
     /// libuv poll handle (Windows only; owned until poll_stop_close).
@@ -87,7 +87,7 @@ pub struct SocketHeader {
     /// Rust kinds: one 8-byte owner word (`Option<NonNull<Owner>>` niche
     /// layout — the word IS the storage). uWS/Dynamic kinds: pointer to the
     /// slot's INLINE ext area, contiguous after this header and sized at
-    /// creation for the adoption family (P0b; freed with the slab slot).
+    /// creation for the adoption family (freed with the slab slot).
     /// Listener (kind == Invalid): `Box<ListenerData>` (group.rs).
     pub(crate) ext: *mut c_void,
 }
@@ -102,7 +102,7 @@ pub type us_socket_t = SocketHeader;
 /// accept / connect / from_fd / listen). Timeouts start disarmed; every flag
 /// beyond the caller-provided ones is zero; transport is Plain. `ext_size`
 /// picks the slab size class for group-vtable kinds (family-max ext bytes,
-/// inline after the header — P0b); Rust kinds always use the word (class 0).
+/// inline after the header); Rust kinds always use the word (class 0).
 pub(crate) fn alloc(
     loop_: *mut Loop,
     poll_kind: PollType,
@@ -348,7 +348,7 @@ pub(crate) fn close_raw_errno(s: *mut SocketHeader, code: c_int, reason: *mut c_
         dispatch::dispatch_close(s, code, reason);
     } else {
         // Silent SEMI_SOCKET close: no callback, but core's owner ext ref is
-        // still released exactly once (safe-protocol.md terminal contract).
+        // still released exactly once (Protocol v2 terminal contract).
         dispatch::release_owner_on_silent_terminal(s);
     }
     // Step 8: idempotent SSL free (no-op for plain / already detached).
@@ -402,7 +402,7 @@ pub(crate) fn socket_close(s: *mut SocketHeader, code: CloseCode, reason: *mut c
     }
 }
 
-/// `us_internal_ssl_close` (tls-semantics §5.2) composed over TlsState.
+/// `us_internal_ssl_close` (docs/tls.md §5.2) composed over TlsState.
 fn tls_close(s: *mut SocketHeader, code: CloseCode, reason: *mut c_void) {
     let Some(t) = tls_state(s) else {
         close_raw(s, code, reason);
@@ -450,6 +450,27 @@ fn tls_close(s: *mut SocketHeader, code: CloseCode, reason: *mut c_void) {
     }
     // else: close_notify sent, fd close deferred until the peer replies —
     // on_end / ZERO_RETURN re-enters with SENT_SHUTDOWN set (§5.2).
+}
+
+/// `us_socket_close` with an errno-style code (>2) — uWS forceClose passes
+/// the close reason's byte length as the code. The C ran the SSL close for
+/// every code: best-effort close_notify, then raw close preserving the code.
+pub(crate) fn tls_close_errno(s: *mut SocketHeader, code: c_int, reason: *mut c_void) {
+    let Some(t) = tls_state(s) else {
+        close_raw_errno(s, code, reason);
+        return;
+    };
+    if deref_mut(t).request_defer_close(CloseCode::from_c(code)) {
+        debug_assert!(false, "errno close code {code} deferred");
+        return;
+    }
+    ffi::with_ctl(deref_mut(t).ctl, |c| c.release_pending());
+    if !tls_gone(s) && with_socket(s, |h| h.p.kind_bits()) != PollType::SemiSocket as u8 {
+        let _ = deref_mut(t).handle_shutdown(s, true);
+    }
+    if !with_socket(s, |h| h.is_closed()) {
+        close_raw_errno(s, code, reason);
+    }
 }
 
 // ── open / shutdown ───────────────────────────────────────────────────────────
@@ -901,7 +922,7 @@ impl SocketHeader {
         }
     }
 
-    // ── io (delegates to write.rs — core-semantics §4 / C7) ─────────────────
+    // ── io (delegates to write.rs — docs/semantics.md §4 / C7) ─────────────────
 
     /// Write that also reports a fatal non-EWOULDBLOCK send error (node:net).
     pub fn write_check_error(&mut self, data: &[u8]) -> (i32, bool) {
@@ -966,7 +987,8 @@ impl SocketHeader {
             return;
         }
         let ts = with_group(self.group, |g| g.long_timestamp);
-        self.long_timeout = ((u32::from(ts) + minutes) % 240) as u8;
+        // wrapping: C parity for minutes near u32::MAX (matches set_timeout).
+        self.long_timeout = ((u32::from(ts).wrapping_add(minutes)) % 240) as u8;
     }
 
     /// Gated on the TLS-aware shutdown state (socket.c:697-701).
@@ -1091,10 +1113,10 @@ impl SocketHeader {
 
     // ── adoption / TLS attach ───────────────────────────────────────────────
 
-    /// Move this socket to a new group/kind. In-place (api.md §Strategy 3):
+    /// Move this socket to a new group/kind. In-place (docs/design.md §Strategy 3):
     /// `Some` is always `self`; `None` = refused (closed/shut-down, R3.5).
     /// Ext capacity was fixed at creation — never realloc'd; `new_ext` is
-    /// release-checked against the slot's inline capacity (P0b family max).
+    /// release-checked against the slot's inline capacity (adoption-family max).
     pub fn adopt(
         &mut self,
         g: &mut SocketGroup,
@@ -1125,7 +1147,7 @@ impl SocketHeader {
 
     /// `adopt` + attach a fresh `SSL*` from `ssl_ctx`. Does NOT kick the
     /// handshake — caller repoints ext then calls `start_tls_handshake`
-    /// (C10, tls-semantics §6.1). Refuses closed sockets, and already-TLS
+    /// (C10, docs/tls.md §6.1). Refuses closed sockets, and already-TLS
     /// ones: replacing the transport would SSL_free a `TlsState` whose
     /// `&mut` frames may still be on the stack (§1.4 deferral bypass).
     pub fn adopt_tls(
@@ -1165,7 +1187,7 @@ impl SocketHeader {
     }
 }
 
-/// P0b family-max enforcement: inline ext capacity is fixed at creation, so
+/// Family-max enforcement: inline ext capacity is fixed at creation, so
 /// an adopt declaring more ext bytes than the slot carries would overwrite
 /// the ADJACENT slab slot — fail loudly instead of corrupting cross-socket.
 fn assert_adopt_ext_fits(s: *mut us_socket_t, k: SocketKind, new_ext: i32) {

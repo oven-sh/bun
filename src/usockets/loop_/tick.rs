@@ -1,5 +1,5 @@
 //! Tick pipeline: pre → wakeups → poll → dispatch → drain → sweep → post.
-//! Implements core-semantics.md §1 (LOOP TICK): iteration_nr++, DNS-ready
+//! Implements docs/semantics.md §1 (LOOP TICK): iteration_nr++, DNS-ready
 //! drain, low-prio budget (5/tick, R1.22), `pre_cb`, quic pre/post hooks,
 //! QUIC→sweep timeout folding (R1.10/R1.16), the will_idle GC-safepoint gate
 //! (C16), and the closed drain in the outermost postlude only (`tick_depth`
@@ -148,7 +148,7 @@ pub(crate) fn pump(loop_: *mut Loop) {
     crate::backend::libuv::pump(loop_);
 }
 
-/// Loop prelude (R1.13) — order frozen (cabi-surface.md §4.2):
+/// Loop prelude (R1.13) — order frozen (docs/cabi.md §4.2):
 /// iteration_nr++, DNS results, low-prio handling, `pre_cb(loop)`, quic
 /// process when `quic_head != null` (flushes JS-task stream writes before
 /// the poll blocks).
@@ -187,7 +187,7 @@ pub(crate) fn loop_post(loop_: *mut Loop) {
 /// `us_internal_free_closed_sockets` (R1.15): release, in order, every
 /// socket on `closed_head` (zero prev/next, free the detached ext area,
 /// `us_poll_free` parity `num_polls--`, slab slot back with a generation
-/// bump — the ONLY socket death path, api.md §Strategy 4 / C6), every UDP
+/// bump — the ONLY socket death path, docs/design.md §Strategy 4 / C6), every UDP
 /// socket on `closed_udp_head`, every connecting socket on
 /// `closed_connecting_head`. No user callbacks run here.
 pub(crate) fn drain_closed_sockets(loop_: *mut Loop) {

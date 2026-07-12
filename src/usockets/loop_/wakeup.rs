@@ -1,4 +1,4 @@
-//! Cross-thread wakeup. Implements core-semantics.md §10 (WAKEUP / DEFER):
+//! Cross-thread wakeup. Implements docs/semantics.md §10 (WAKEUP / DEFER):
 //! `pending_wakeups` atomic increment/swap semantics and the wakeup-async
 //! CALLBACK poll (eventfd / EVFILT_MACHPORT / EVFILT_USER / uv_async), the
 //! only documented cross-thread entry points. Deferral stays in the surviving
@@ -18,7 +18,7 @@ use crate::unsafe_core::poll_access;
 
 /// The ONLY thread-safe wakeup entry point. Takes a raw `*mut Loop` because
 /// the loop thread may be parked inside [`us_loop_run`] concurrently —
-/// forming `&mut Loop` here would alias (consumers/10-event-loop.md §8).
+/// forming `&mut Loop` here would alias (cross-thread `*mut Loop` contract).
 /// Callers own the liveness contract: the loop must not be freed while a
 /// wake can race (worker teardown unpublishes the pointer under its lock
 /// before `on_thread_exit`) — document it at every call site.

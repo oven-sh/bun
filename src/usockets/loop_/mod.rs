@@ -1,6 +1,6 @@
 //! The event loop — native struct (no longer a C mirror). Field set and
-//! method surface per consumers/10-event-loop.md §8; tick semantics per
-//! core-semantics.md §1. Cross-thread/re-entrancy contract: `wakeup`/`defer`/
+//! method surface preserved from the replaced crates; tick semantics per
+//! docs/semantics.md §1. Cross-thread/re-entrancy contract: `wakeup`/`defer`/
 //! the tick family/`run` take `*mut Loop`, never `&mut` (ticks re-enter Rust
 //! callbacks that re-fetch the same loop — a nested tick through a `&mut`
 //! receiver would alias the outer frame's exclusive borrow, C17/R1.12).
@@ -46,7 +46,7 @@ pub struct WakeupAsync {
 
 /// `us_internal_loop_data_t` — now the canonical definition (the C mirror in
 /// `src/uws_sys/InternalLoopData.rs` is deleted with the C core; quic.c gets
-/// a checked C header or accessors per cabi-surface.md §9.2.5).
+/// a checked C header or accessors per docs/cabi.md §9.2.5).
 #[repr(C)]
 pub struct InternalLoopData {
     #[cfg(windows)]
@@ -63,7 +63,7 @@ pub struct InternalLoopData {
     pub iterator: *mut SocketGroup,
     pub recv_buf: *mut u8,
     pub send_buf: *mut u8,
-    /// Lazily-created `tls::state::LoopTlsShared` (C `loop_ssl_data`, P0d):
+    /// Lazily-created `tls::state::LoopTlsShared` (C `loop_ssl_data`):
     /// loop-shared ciphertext batch + single spill slot + fatal-reason
     /// scratch + plaintext read scratch. Freed by `free_loop_raw`.
     pub ssl_data: *mut c_void,
@@ -158,16 +158,16 @@ pub struct PosixLoop {
 
     _ready_polls_align: ReadyPollsAlign,
 
-    /// Kernel ready-event buffer (crate-internal; the P10 back-channel
+    /// Kernel ready-event buffer (crate-internal; the old ready-poll back-channel
     /// exposure is gone, but the C-visible prefix layout is preserved).
     pub(crate) ready_polls: [EventType; 1024],
 
-    /// Per-loop socket slab (api.md §Strategy 1) — slot addresses are stable
+    /// Per-loop socket slab (docs/design.md §Strategy 1) — slot addresses are stable
     /// and generation-bumped; released only by the tick postlude drain.
     pub(crate) sockets: ChunkedSlab<us_socket_t>,
     /// Per-loop connecting-socket slab (same rules; R6.11 deferred free).
     pub(crate) connectings: ChunkedSlab<ConnectingSocket>,
-    /// Per-loop registered-poll slab (P0c non-socket registrations).
+    /// Per-loop registered-poll slab (non-socket registrations).
     pub(crate) polls: ChunkedSlab<poll_registry::RegisteredPoll>,
 }
 
@@ -184,8 +184,8 @@ pub struct WindowsLoop {
     pub check: *mut c_void,
     pub(crate) sockets: ChunkedSlab<us_socket_t>,
     pub(crate) connectings: ChunkedSlab<ConnectingSocket>,
-    /// P0c registered-poll slab. Registration is vestigial on Windows
-    /// (uv-driven readiness stays outside the registry until P10).
+    /// Registered-poll slab. Registration is vestigial on Windows
+    /// (uv-driven readiness stays outside the registry for now).
     pub(crate) polls: ChunkedSlab<poll_registry::RegisteredPoll>,
 }
 
@@ -194,10 +194,10 @@ pub type Loop = WindowsLoop;
 #[cfg(not(windows))]
 pub type Loop = PosixLoop;
 
-// ── slab access (the loop OWNS all socket storage — api.md §Strategy 1) ──────
+// ── slab access (the loop OWNS all socket storage — docs/design.md §Strategy 1) ──────
 
 /// Allocate a socket slot with `ext_capacity` inline ext bytes (size-class
-/// pick, P0b; 0 for Rust kinds). The returned address is stable until the
+/// pick; 0 for Rust kinds). The returned address is stable until the
 /// loop is freed; the slot itself recycles with a generation bump at the
 /// drain. Raw field projection only — waker threads fetch_add
 /// `pending_wakeups` concurrently, so no `&mut Loop` may span the call
@@ -244,8 +244,8 @@ impl Handler {
         ffi::loop_remove_post_handler(self.loop_, self.ctx);
     }
 
-    /// Intentionally removes from the POST list (preserved upstream bug —
-    /// consumers/10-event-loop.md §0: the shim never exported a pre-removal).
+    /// Intentionally removes from the POST list (preserved upstream bug:
+    /// the shim never exported a pre-removal).
     pub fn remove_pre(&self) {
         ffi::loop_remove_post_handler(self.loop_, self.ctx);
     }
@@ -303,7 +303,7 @@ impl PosixLoop {
     ///
     /// # Safety
     /// `this` must have been returned by `get`/`create` and not yet freed.
-    // SKELETON: item-level allow — frozen surface keeps this `unsafe fn`.
+    // Item-level allow — the public surface keeps this `unsafe fn`.
     #[allow(unsafe_code)]
     pub unsafe fn destroy(this: *mut PosixLoop) {
         // SAFETY: caller contract — a live loop from get/create, freed once.
@@ -338,7 +338,7 @@ impl PosixLoop {
 
     /// LOOP-THREAD convenience only. Other threads must call the raw
     /// [`wakeup::us_wakeup_loop`] — a cross-thread `&mut Loop` here would
-    /// alias the parked tick's access (consumers/10-event-loop.md §8).
+    /// alias the parked tick's access (cross-thread `*mut Loop` contract).
     pub fn wakeup(&mut self) {
         wakeup::us_wakeup_loop(self)
     }
@@ -363,7 +363,7 @@ impl PosixLoop {
     /// `this` must be the live loop pointer from `get`/`create` (not derived
     /// from a `&mut` reborrow) — the stored `Handler.loop_` inherits its
     /// provenance.
-    // SKELETON: item-level allow — frozen surface keeps this `unsafe fn`.
+    // Item-level allow — the public surface keeps this `unsafe fn`.
     #[allow(unsafe_code)]
     pub unsafe fn add_post_handler(
         this: *mut Self,
@@ -380,7 +380,7 @@ impl PosixLoop {
 
     /// # Safety
     /// Same contract as [`Self::add_post_handler`].
-    // SKELETON: item-level allow — frozen surface keeps this `unsafe fn`.
+    // Item-level allow — the public surface keeps this `unsafe fn`.
     #[allow(unsafe_code)]
     pub unsafe fn add_pre_handler(
         this: *mut Self,
@@ -625,7 +625,7 @@ impl WindowsLoop {
     }
 
     // Poll/keep-alive accounting proxies (uv active handles keep the loop
-    // alive on Windows — consumers/10-event-loop.md §5).
+    // alive on Windows).
 
     pub fn inc(&mut self) {
         crate::backend::libuv::inc_active(self);

@@ -1,6 +1,6 @@
-//! JS stream buffer relocated from `bun_uws_sys::us_socket` (D1-deleted).
+//! JS stream buffer relocated from the deleted `bun_uws_sys::us_socket`.
 //! Lives above the core: `bun_usockets::write` deliberately does NOT define
-//! it (api.md CHANGES 7). Module path mirrors the old crate for consumers.
+//! it (src/usockets/docs/design.md). Module path mirrors the old crate for consumers.
 
 use core::ptr;
 

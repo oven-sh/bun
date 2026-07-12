@@ -12,7 +12,7 @@
 //! (libuwsockets.cpp / libuwsockets_h3.cpp / quic.c) plus SSLWrapper.
 //!
 //! This crate is the relocation target for the old `bun_uws` + `bun_uws_sys`
-//! C++-shim surface (api.md §Crate layout): everything here points INTO C++
+//! C++-shim surface (src/usockets/docs/design.md §Crate layout): everything here points INTO C++
 //! or BoringSSL, never into the deleted uSockets C core. Socket/loop/group
 //! types come from `bun_usockets`; module paths mirror the old `bun_uws`
 //! layout so consumer imports are a mechanical `bun_uws::` → `bun_uws_shim::`.
@@ -118,7 +118,7 @@ pub type us_bun_socket_context_options_t = BunSocketContextOptions;
 /// `ssl_ctx_from_options`, so there's no wrapper struct. `Option<*mut SslCtx>`
 /// is what listen/connect/adopt take. Same C type as
 /// `bun_usockets::tls::context::SslCtx` (distinct Rust nominal; cast at the
-/// boundary — shards.md TLS-pointer rule).
+/// boundary; TLS pointers cross as opaque pointers, no type unification).
 pub type SslCtx = bun_boringssl::c::SSL_CTX;
 
 // ───────────────────── shim-local FFI enums / constants ─────────────────────
@@ -260,7 +260,7 @@ pub mod ssl_wrapper {
     use crate::us_bun_verify_error_t;
     use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for SSLWrapper
     // The five former `us_ssl_*` C helpers now live in bun_usockets
-    // (api.md CHANGES 3). `SSL*`/`X509_STORE*` cross as raw pointers between
+    // (tls/context.rs). `SSL*`/`X509_STORE*` cross as raw pointers between
     // the two BoringSSL binding crates — same C type, distinct Rust nominals.
     use bun_usockets::tls::context as us_tls;
 

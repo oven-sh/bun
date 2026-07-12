@@ -46,7 +46,7 @@ pub(crate) fn invoke_callback(cb: CallbackFn, arg: *mut core::ffi::c_void) {
     unsafe { cb(arg) }
 }
 
-/// Closure-scoped access to an OCCUPIED registered-poll slot (P0c registry).
+/// Closure-scoped access to an OCCUPIED registered-poll slot (poll registry).
 /// Contract: caller validated generation parity; loop thread only; `f` must
 /// not re-enter the registry or dispatch (the exclusive borrow ends with `f`).
 #[inline]
@@ -55,7 +55,7 @@ pub(crate) fn with_registered<R>(
     f: impl FnOnce(&mut crate::loop_::poll_registry::RegisteredPoll) -> R,
 ) -> R {
     // SAFETY: per fn contract; slab slots never move or unmap while the loop
-    // lives (api.md §Strategy 1).
+    // lives (docs/design.md §Strategy 1).
     unsafe { f(&mut *p) }
 }
 
@@ -358,8 +358,8 @@ mod kqueue_sys {
         unsafe { core::mem::zeroed() }
     }
 
-    /// [`make_kev`] with a full-width ident and an fflags payload (P0c
-    /// registry sources: EVFILT_PROC/NOTE_EXIT, EVFILT_MEMORYSTATUS levels).
+    /// [`make_kev`] with a full-width ident and an fflags payload (registry
+    /// sources: EVFILT_PROC/NOTE_EXIT, EVFILT_MEMORYSTATUS levels).
     pub(crate) fn make_kev_ex(
         ident: u64,
         filter: i16,
@@ -535,7 +535,7 @@ pub(crate) use kqueue_sys::{kevent_error_events, kevent_wait_ready, kqueue_creat
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 pub(crate) use kqueue_sys::make_kev_ex;
 
-// ── W4 additions: pending_wakeups + wakeup-async platform primitives ─────────
+// ── pending_wakeups + wakeup-async platform primitives ─────────
 // (loop_/wakeup.rs is `deny(unsafe_code)`; everything below is its raw edge.)
 
 /// RELEASE increment of `loop.pending_wakeups` — pairs with the ACQUIRE swap

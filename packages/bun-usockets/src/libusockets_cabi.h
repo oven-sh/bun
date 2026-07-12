@@ -17,7 +17,7 @@
 #endif
 
 /* Poll-event flags handed to us_poll_change (quic.c backpressure). ABI: the
- * values are per-backend (cabi-surface.md §9.3.7) — mirror the eventing
+ * values are per-backend (src/usockets/docs/cabi.md §9.3.7) — mirror the eventing
  * headers exactly; never hardcode. */
 #ifndef LIBUS_SOCKET_READABLE
 #if defined(LIBUS_USE_LIBUV)

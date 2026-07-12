@@ -1,7 +1,7 @@
 //! Server-name (SNI) map with wildcard matching — replaces sni_tree.cpp with
-//! verbatim matching semantics incl. case behavior (tls-semantics.md A.5,
-//! api.md CHANGES 4). Also the dynamic on_server_name callback and the
-//! sni_resolve suspend/resume path (cabi-surface.md §4.3).
+//! verbatim matching semantics incl. case behavior (docs/tls.md A.5). Also
+//! the dynamic on_server_name callback and the sni_resolve suspend/resume
+//! path (docs/cabi.md §4.3).
 
 use core::ffi::{c_char, c_int, c_void, CStr};
 use std::collections::BTreeMap;
@@ -156,7 +156,7 @@ impl SniMap {
     }
 
     /// Exact-pattern lookup; returns an OWNED reference (caller unrefs) —
-    /// cabi-surface.md §1.6.
+    /// docs/cabi.md §1.6.
     pub(crate) fn find_ctx(&self, pattern: &CStr) -> *mut SslCtx {
         match self.lookup(pattern) {
             Some(entry) if !entry.ctx.is_null() => {

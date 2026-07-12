@@ -1,10 +1,10 @@
 //! Kind-tag-checked ext downcast — the single funnel (`downcast_raw`, plus
 //! the reference-forming `downcast` wrapper) for typed `us_socket_t::ext<T>()`
-//! / handler trampoline access (api.md crate layout). Storage class is
+//! / handler trampoline access (docs/design.md §Crate layout). Storage class is
 //! decided by `dispatch::uses_group_vtable`:
 //! group-vtable kinds (uWS/Dynamic) use the slab slot's INLINE ext area,
 //! contiguous after the header and sized by the family-max ext size at
-//! creation (P0b); static-kind Rust sockets store ext IN the 8-byte word.
+//! creation; static-kind Rust sockets store ext IN the 8-byte word.
 
 use core::marker::PhantomData;
 use core::ptr::NonNull;
@@ -119,7 +119,7 @@ pub unsafe fn downcast<'a, T>(s: *mut SocketHeader) -> &'a mut T {
 /// Deref an owner-word snapshot; `None` (created-but-not-yet-stamped window)
 /// is a no-op. Funnel for `handle::ExtSlot::owner_mut` — the invariant that
 /// the stamped owner is live and unaliased is ExtSlot's non-re-entrancy
-/// contract (consumers/01-api-surface.md §5 thunk.rs).
+/// contract.
 pub(crate) fn owner_mut<'a, T>(slot: Option<NonNull<T>>) -> Option<&'a mut T> {
     // SAFETY: the consumer stamped a live owner into the slot and ExtSlot's
     // contract forbids an overlapping `&mut T` while the borrow lives.
@@ -127,7 +127,7 @@ pub(crate) fn owner_mut<'a, T>(slot: Option<NonNull<T>>) -> Option<&'a mut T> {
 }
 
 /// Reborrow a live slab-resident header (slab memory never unmapped while
-/// the loop lives, api.md §Strategy 2); the borrow ends before any re-entrant
+/// the loop lives, docs/design.md §Strategy 2); the borrow ends before any re-entrant
 /// `&mut` to the same slot (C17). The reborrow covers the `ext` word — sound
 /// because trampolines never hold an ext borrow across a handler call: every
 /// ext deref is a per-use `ExtMut::with` scope over `downcast_raw`'s pointer.
@@ -149,7 +149,7 @@ pub(crate) fn deref_mut<'a, T>(p: *mut T) -> &'a mut T {
 
 /// Inline ext pointer for a freshly allocated group-vtable socket slot, or
 /// null when the slot's class carries no ext bytes. `socket::alloc` stamps
-/// this into the header's `ext` word (api.md §Strategy 3, inline form).
+/// this into the header's `ext` word (docs/design.md §Strategy 3, inline form).
 pub(crate) fn inline_ext_ptr(s: *mut SocketHeader) -> *mut core::ffi::c_void {
     debug_assert!(!s.is_null());
     // SAFETY: `s` is a live slab slot (only called on just-allocated slots).

@@ -1,8 +1,8 @@
 //! Per-socket TLS engine: SSL* + a per-socket custom BIO pair; the growable
 //! ciphertext buffers (batch + the single spill slot) and the fatal-reason
-//! scratch are loop-shared, O(1) per loop (safe-protocol.md P0d), owned by a
+//! scratch are loop-shared, O(1) per loop (docs/design.md §TLS buffer ownership), owned by a
 //! generation-checked `SocketRef` (stale ⇒ dropped, never dangles).
-//! Handshake / read / write / shutdown machines per tls-semantics.md §2-§5.
+//! Handshake / read / write / shutdown machines per docs/tls.md §2-§5.
 //! Batch thresholds ported verbatim: 16 KiB records, 128 KiB flush.
 
 use core::ptr::NonNull;
@@ -23,7 +23,7 @@ use crate::unsafe_core::ext::deref_mut;
 use crate::unsafe_core::ffi::{self, SslErr};
 use crate::{LIBUS_RECV_BUFFER_LENGTH, LIBUS_RECV_BUFFER_PADDING};
 
-/// One TLS record of plaintext per SSL_write call (tls-semantics.md §4).
+/// One TLS record of plaintext per SSL_write call (docs/tls.md §4).
 const TLS_RECORD_CHUNK: usize = 16384;
 /// Flush the batched ciphertext to the wire every this many bytes.
 const TLS_BATCH_FLUSH: usize = 131072;
@@ -32,7 +32,7 @@ const TLS_FATAL_REASON_MAX: usize = 256;
 /// C7: the C surface took `int` lengths; clamp so the return can never wrap.
 const MAX_WRITE_LEN: usize = i32::MAX as usize;
 
-/// Handshake progression (tls-semantics.md §2). `on_handshake(success,
+/// Handshake progression (docs/tls.md §2). `on_handshake(success,
 /// verify_error)` is ALWAYS delivered — verify decisions belong to the
 /// consumer (contract C11).
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -257,14 +257,14 @@ enum FlushOutcome {
     Oom,
 }
 
-/// Loop-shared TLS engine state (C `loop_ssl_data`, tls-semantics §1.2):
+/// Loop-shared TLS engine state (C `loop_ssl_data`, docs/tls.md §1.2):
 /// the ciphertext batch buffer, the SINGLE spill slot, the parked
 /// fatal-reason scratch and the plaintext read scratch — O(1) memory per
-/// loop (safe-protocol.md P0d). Owned by the loop via `ssl_data`.
+/// loop (docs/design.md §TLS buffer ownership). Owned by the loop via `ssl_data`.
 pub(crate) struct LoopTlsShared {
     /// Plaintext read scratch slot; `Option::take` semantics via LoopScratch.
     pub(crate) scratch: *mut core::ffi::c_void,
-    /// True only inside `TlsState::write`'s record loop (tls-semantics §4).
+    /// True only inside `TlsState::write`'s record loop (docs/tls.md §4).
     pub(crate) batching: bool,
     /// Sealed records batched this write call; already counted written.
     pub(crate) batch: Vec<u8>,
@@ -429,7 +429,7 @@ fn t<'a>(this: *mut TlsState) -> &'a mut TlsState {
     deref_mut(this)
 }
 
-/// `us_socket_sni_resolve` (tls-semantics §2.6, openssl.c:2186-2219): resume
+/// `us_socket_sni_resolve` (docs/tls.md §2.6, openssl.c:2186-2219): resume
 /// a handshake suspended by an async SNI callback. Consumes the owned `ctx`
 /// ref; no-op when the socket died or the handshake is not suspended.
 pub(crate) fn sni_resolve(this: *mut TlsState, s: *mut SocketHeader, ctx: *mut SslCtx, error: bool) {
@@ -504,7 +504,7 @@ impl TlsState {
                 ffi::ssl_set_tlsext_host_name(ssl, name);
             }
             // Verification is per-SSL, never per-CTX: a SecureContext is
-            // mode-neutral (tls-semantics §2.1).
+            // mode-neutral (docs/tls.md §2.1).
             if bssl::ctx_get_verify_mode(ssl_ctx) == bssl::SSL_VERIFY_NONE {
                 ffi::ssl_set_verify_permissive(ssl);
                 let user_ca =
@@ -551,7 +551,7 @@ impl TlsState {
         ffi::ssl_get_shutdown(self.ssl).0
     }
 
-    /// Mid-handshake sockets are throttled by the loop (tls-semantics §3.5).
+    /// Mid-handshake sockets are throttled by the loop (docs/tls.md §3.5).
     pub(crate) fn is_low_prio(&self) -> bool {
         !self.ssl.is_null() && ffi::ssl_in_init(self.ssl)
     }
@@ -572,7 +572,7 @@ impl TlsState {
     }
 
     /// FAST_SHUTDOWN close with spilled ciphertext still pending: defer the
-    /// close (at most once) until the spill drains (tls-semantics §5.2).
+    /// close (at most once) until the spill drains (docs/tls.md §5.2).
     pub(crate) fn close_deferred_by_spill(&mut self, s: *mut SocketHeader) -> bool {
         if self.close_after_spill
             || ffi::with_ctl(self.ctl, |c| c.fatal)
@@ -662,7 +662,7 @@ impl TlsState {
     }
 
     /// Firing site 4: close on a socket whose handshake never completed
-    /// (tls-semantics §2.4). Called by the socket close path.
+    /// (docs/tls.md §2.4). Called by the socket close path.
     pub(crate) fn trigger_handshake_econnreset(this: *mut TlsState, s: *mut SocketHeader) {
         t(this).handshake_state = HandshakeState::Completed;
         t(this).handshake_callback_fired = true;
@@ -1128,7 +1128,7 @@ impl TlsState {
 
     // ── shutdown & close (§5) ───────────────────────────────────────────────
 
-    /// `us_socket_shutdown` TLS arm (tls-semantics.md §5, C12): always the
+    /// `us_socket_shutdown` TLS arm (docs/tls.md §5, C12): always the
     /// graceful path — forceful closes route through `handle_shutdown` directly.
     pub(crate) fn shutdown(&mut self, s: *mut SocketHeader, code: CloseCode) {
         debug_assert!(matches!(code, CloseCode::normal));

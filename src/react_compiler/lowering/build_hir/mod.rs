@@ -1,7 +1,7 @@
 //! Port of `react_compiler_lowering/build_hir.rs` reading `bun_ast` directly.
 //!
 //! Upstream is one 7.4k-line file; here it is split by function group so the
-//! port can be sharded and reviewed independently. The split is purely
+//! port can be split up and reviewed independently. The split is purely
 //! organisational — function bodies, names, and call graph stay 1:1 with
 //! upstream so `/sync-react-compiler` can re-port hunk by hunk.
 //!

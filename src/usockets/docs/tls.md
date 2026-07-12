@@ -1,6 +1,10 @@
-# TLS layer semantics — behavioral spec of `packages/bun-usockets/src/crypto/` + bindings migration assessment
+# bun_usockets TLS layer semantics
 
-All file:line citations are against the current worktree
+Part 1 specifies the behavioral contract preserved from the replaced C TLS
+layer (`packages/bun-usockets/src/crypto/`); Part 2 records the BoringSSL
+bindings approach (bssl-sys) and its rationale.
+
+All file:line citations refer to the replaced C sources
 (`packages/bun-usockets/src/crypto/openssl.c` @ 2572 lines unless another file is named).
 Abbreviations: `openssl.c` = `packages/bun-usockets/src/crypto/openssl.c`,
 `internal.h` = `packages/bun-usockets/src/internal/internal.h`,
@@ -20,7 +24,7 @@ Abbreviations: `openssl.c` = `packages/bun-usockets/src/crypto/openssl.c`,
   `ssl_handshake_state:2`, `ssl_write_wants_read:1`, `ssl_read_wants_write:1`,
   `ssl_fatal_error:1`, `ssl_is_server:1`, `ssl_raw_tap:1`, `ssl_shutdown_after_spill:1`,
   `ssl_close_after_spill:1`, `ssl_in_use:1`, `ssl_pending_detach:1`, and a full byte
-  `ssl_pending_close_code`. A Rust rewrite MUST preserve equivalents of every one of these.
+  `ssl_pending_close_code`. The Rust implementation MUST preserve equivalents of every one of these.
 - **MUST**: `SSL_CTX` is owned externally (SecureContext / listener / HTTPContext); openssl.c
   only borrows it. `SSL_new(ctx)` takes its own internal ref so a socket outlives its
   SecureContext with no extra bookkeeping (`openssl.c:1259-1267`,
@@ -29,7 +33,7 @@ Abbreviations: `openssl.c` = `packages/bun-usockets/src/crypto/openssl.c`,
   (`openssl.c:52-64` header comment; `loop.c:685`); same split for writable (`loop.c:565`),
   open, close, end. The `us_dispatch_*` functions are Rust exports
   (`src/runtime/socket/uws_dispatch.rs:150-173`) that switch on socket kind and call typed
-  Rust handlers — this is the callback surface the rewrite plugs into.
+  Rust handlers — this is the callback surface the implementation plugs into.
 
 ### 1.2 Per-loop shared state (`struct loop_ssl_data`, openssl.c:71-113)
 
@@ -112,7 +116,7 @@ which repoints `ssl_socket` and clobbers the read window. Rules:
   outer call unwinds. The BIO-write swallow (§1.3.1) is part of the same protocol.
 - After ANY dispatch, callers MUST re-check `ssl_gone(s)` (= closed or `s->ssl == NULL`,
   `openssl.c:1523-1527`) before touching the SSL again. This check appears after every
-  single dispatch in the file; the rewrite must be equally paranoid.
+  single dispatch in the file; the implementation must be equally paranoid.
 
 ## 2. Handshake
 
@@ -350,7 +354,7 @@ openssl.c contains no ALPN code (only quic.c does for lsquic):
   (`socket_body.rs:1398-1420`); the callback handles dynamic per-connection ALPN (Node
   ALPNCallback contract) and falls back to the static list (`socket_body.rs:70-215`);
 - read-back: `SSL_get0_alpn_selected` (`src/runtime/socket/tls_socket_functions.rs:1085-1102`).
-A rewrite that keeps the Rust side intact only needs to keep exposing the `SSL*`
+An implementation that keeps the Rust side intact only needs to keep exposing the `SSL*`
 (or equivalent hooks) — but note the ALPN callback runs inside the handshake and is a §1.4
 nesting trigger.
 
@@ -560,10 +564,10 @@ could subsume both engines, but the normative contract above is openssl.c's.
 (`context.c:265-303`). The ONLY TLS state that must chase the new address is
 **loop-level ownership pointers**: `ssl_spill_owner` and `ssl_last_fatal_error_owner`.
 Everything else lives inside the moved struct (bitfields) or hangs off the SSL (ex_data),
-which moves by value/pointer. ⇒ For the rewrite's goal of **eliminating relocation**, the
+which moves by value/pointer. ⇒ For the goal of **eliminating relocation**, the
 state that today transfers implicitly by memcpy of `us_socket_t` is: the `SSL*` and the 11
 bitfield bits + close-code byte (§1.1); plus these two loop-level owner pointers. If the
-rewrite keys loop-level state by stable socket identity (or stores spill per-socket),
+implementation keys loop-level state by stable socket identity (or stores spill per-socket),
 relocation support can be dropped entirely.
 
 ## 7. Context/options
@@ -624,7 +628,7 @@ normative points:
   `resolve_reject_unauthorized` (§2.4).
 - `src/uws_sys/SocketContext.rs` caches built `SSL_CTX*` keyed by an mtime-digest of
   file-based inputs (`stat_for_digest`) + the value-based options; a false cache hit is a
-  security bug — the rewrite must keep every input that shapes the CTX in the key.
+  security bug — the implementation must keep every input that shapes the CTX in the key.
 - `src/http/HTTPContext.rs` keeps refcounted per-custom-TLS socket contexts on the HTTP
   client thread (each distinct SSLConfig gets its own context; the default context is
   shared).
@@ -636,9 +640,9 @@ normative points:
   Mozilla table + `NODE_EXTRA_CA_CERTS` (+ platform stores per
   `root_certs_{linux,darwin,windows}.cpp` when `--use-system-ca`). These are
   self-contained data/C++ providers behind a tiny C API — **they can and should remain
-  untouched** by a Rust rewrite of openssl.c (Appendix A §A.6).
+  untouched** by the Rust implementation (Appendix A §A.6).
 
-## 8. OpenSSL-API quirks relied upon (checklist for the rewrite)
+## 8. OpenSSL-API quirks relied upon (implementation checklist)
 
 1. **Error-queue discipline**: the queue is per-thread and shared across sockets.
    `ERR_clear_error()` at the top of on_data and update_handshake; clear after parking;
@@ -667,7 +671,7 @@ normative points:
    it: `SSL_set_verify`, `SSL_set0_verify_cert_store` (set0 = ownership transfer).
 8. **ex_data with free_funcs** for: live counter, reneg policy (pointer-packed), reneg
    counter, SNI pending state, listener backref, is-socket marker, pending
-   session/keylog queues, cache tombstone. A Rust rewrite can move most of these into its
+   session/keylog queues, cache tombstone. The Rust implementation can move most of these into its
    per-socket struct; the two that must stay CTX-associated are the reneg policy and the
    cache tombstone hook.
 9. **`SSL_early_callback_ctx_extension_get`** (BoringSSL-only) for raw SNI parse (§2.6).
@@ -679,7 +683,7 @@ normative points:
 
 ---
 
-# PART 2 — Bindings migration assessment
+# PART 2 — BoringSSL bindings: bssl-sys rationale
 
 Crates present at `/root/bun/vendor/boringssl/rust/` (the worktree has no private vendor
 copy; the shared repo checkout is authoritative; workspace `rust/Cargo.toml:1-11`,
@@ -813,7 +817,7 @@ Rationale:
    single spill slot and its honesty invariant (§4), the FIN-instead-of-close_notify
    half-close substitute (§5.1), parked session/keylog queues (§2.7), async-SNI
    suspension via `ssl_select_cert_retry` (§2.6), and per-SSL verify-store overrides
-   (§2.1). A Rust rewrite is a port of *this* state machine; bssl-tls would sit at the
+   (§2.1). The Rust implementation is a port of *this* state machine; bssl-tls would sit at the
    wrong altitude even if complete.
 2. bssl-tls is WIP and missing ALPN, server SNI dispatch, client-CA-list, the
    new-session callback, and PKCS12 — each a hard requirement. Filling them means
@@ -962,7 +966,7 @@ comparison (no normalization — callers must lowercase).
   ROOT/CA/TrustedPeople across machine+user(+GP,+Enterprise) stores, EKU
   server-auth-filtered like Node.
 - **Verdict**: all self-contained behind a narrow `extern "C"` surface exchanging
-  opaque `X509_STORE*`/DER; a Rust rewrite of openssl.c keeps calling them unchanged.
+  opaque `X509_STORE*`/DER; the Rust implementation keeps calling them unchanged.
 
 ## A.7 `bun_boringssl_sys` consumers (blast radius of replacing the bindings crate)
 
@@ -978,10 +982,10 @@ WindowsNamedPipe*,socket_body,tls_socket_functions,uws_jsc}.rs`,
 `src/runtime/webcore/Crypto.rs`, `src/sql_jsc/{jsc,mysql/MySQLConnection,
 postgres/SASL,shared/ConnectionCtorArgs}.rs`, `src/uws_sys/{SocketContext,lib,socket,
 us_socket_t}.rs`, `src/http/{HTTPContext,ProxyTunnel}.rs`, `src/csrf/lib.rs`,
-`src/sha_hmac/sha.rs`. Most are crypto-primitive users unaffected by a TLS-layer
-rewrite; the socket/uws_sys/http files are the ones the rewrite touches anyway.
+`src/sha_hmac/sha.rs`. Most are crypto-primitive users unaffected by the TLS-layer
+replacement; the socket/uws_sys/http files are the ones it touches anyway.
 
-## A.8 Callback surface the rewrite must preserve
+## A.8 Callback surface the implementation must preserve
 
 - C vtable `us_socket_vtable_t` (`libusockets.h:253-266`) incl. SSL-specific
   `on_handshake(s, success, us_bun_verify_error_t, custom_data=NULL)`.
@@ -997,46 +1001,39 @@ rewrite; the socket/uws_sys/http files are the ones the rewrite touches anyway.
 
 ---
 
-# Open questions
+# Resolved design notes
 
-1. **Unification with SSLWrapper**: `src/uws/lib.rs::ssl_wrapper` is a second,
-   near-parallel TLS state machine (memory `BIO_s_mem` pair, own 3/600 reneg policy,
-   own shutdown logic) serving UpgradedDuplex / WindowsNamedPipe / HTTP proxy tunnels /
-   WebSocket tunnels. Should the Rust rewrite's `TlsState` subsume it (one engine,
-   ciphertext-in/ciphertext-out, with the us_socket path as one transport), or port
-   openssl.c only? Recommended: design `TlsState` transport-agnostic so SSLWrapper can
-   be folded in later, but scope the first PR to openssl.c parity.
-2. **Loop-shared vs per-socket buffers**: the C design shares one 512 KiB plaintext
-   buffer, one batch buffer, and ONE spill slot per loop (other sockets degrade to
-   per-record writes while a spill is pending, §4). A Rust rewrite could give each
-   socket its own bounded spill and remove the cross-socket degradation + the
-   relocation hooks (§6.3). This changes observable backpressure timing slightly — is
-   behavioral drift here acceptable? (I believe yes; the honesty invariant §4.4 is the
-   contract, not the sharing.)
-3. **`sessionTimeout` / `ticketKeys`**: not plumbed anywhere in the current layer
-   (A.1). Node supports both on tls.Server. Out of scope for the rewrite, or the
-   opportunity to add (`SSL_CTX_set_timeout`, `SSL_CTX_set_tlsext_ticket_keys`)?
-4. **bssl-sys binding generation ownership**: pre-generate `wrapper_<target>.rs` per
-   target and vendor them, or run bindgen from Bun's codegen at build time (adds a
-   bindgen build dependency)? Both are supported via `BINDGEN_RS_FILE`; vendored
-   outputs match how Bun handles other generated artifacts but must be regenerated on
-   every BoringSSL bump (should be folded into the `upgrade-boringssl` skill).
-5. **`--wrap-static-fns` shims**: some BoringSSL accessors are static-inline; the
-   bindgen flow emits a `wrapper.c` that must be compiled into the deps build
-   (`boringssl.ts`). Alternative: configure bindgen without `--wrap-static-fns` and
-   hand-bind the few static-inline functions we actually need (BoringSSL has far fewer
-   static-inlines than OpenSSL). Needs a concrete list before deciding.
-6. **wolfSSL**: openssl.c has `LIBUS_USE_WOLFSSL` include paths (`openssl.c:41-46`).
-   No Bun build configuration uses it; assume the rewrite drops wolfSSL support?
-7. **quic.c**: shares `us_ssl_ctx_build_raw` (`openssl.c:891-893`). The rewrite must
-   keep exporting an equivalent CTX builder for lsquic, or quic.c must move to the new
-   Rust constructor. Which?
-8. **SNI case sensitivity**: sni_tree matching is byte-wise case-sensitive (A.5);
-   RFC 6066 hostnames are case-insensitive. Today correctness depends on callers
-   normalizing on both add and lookup — verify Listener.rs lowercases both paths, and
-   decide whether the Rust port should normalize internally (recommended).
-9. **`us_socket_raw_writev` exists** (`socket.c:519`) but the batch flush uses a
-   single copy + `raw_write`; a rewrite could batch via iovecs and skip the batch
-   buffer copy entirely (node does memory-BIO + writev). Perf follow-up, not required
-   for parity.
-
+1. **SSLWrapper**: `ssl_wrapper` (memory `BIO_s_mem` pair, own 3/600 reneg
+   policy, own shutdown logic) remains a separate engine serving
+   UpgradedDuplex / WindowsNamedPipe / HTTP proxy tunnels / WebSocket tunnels.
+   `TlsState` is designed transport-agnostic so SSLWrapper can be folded in
+   later; unification is a follow-up.
+2. **Loop-shared vs per-socket buffers**: the loop-shared design is kept — one
+   plaintext scratch, one batch buffer, ONE spill slot per loop (other sockets
+   degrade to per-record writes while a spill is pending, §4). The stable slab
+   already eliminated relocation, so per-socket spill would cost
+   O(congested sockets) memory with no benefit. The two C hazards are made
+   safe: the spill/fatal-reason OWNER is a generation-checked `SocketRef`
+   (stale = drop, never dangles), and the save/restore re-entrancy protocol
+   around JS re-entry is an RAII scope guard (restores on drop, enforced by
+   type). Batch thresholds are preserved verbatim; the honesty invariant §4.4
+   is the contract, not the sharing.
+3. **`sessionTimeout` / `ticketKeys`**: stay unplumbed, matching the replaced
+   layer (Node supports both on tls.Server; adding them is a follow-up, not
+   parity).
+4. **bssl-sys binding generation**: bindings are pre-generated per target and
+   consumed via `BINDGEN_RS_FILE`; they must be regenerated on every BoringSSL
+   bump (folded into the BoringSSL upgrade procedure).
+5. **`--wrap-static-fns` shims**: the bindgen-emitted `wrapper.c` for
+   static-inline accessors is compiled into the deps build
+   (`scripts/build/deps/boringssl.ts`).
+6. **wolfSSL**: support is dropped — no Bun build configuration used the
+   `LIBUS_USE_WOLFSSL` paths.
+7. **quic.c**: keeps linking against `us_ssl_ctx_build_raw`; this crate
+   exports an equivalent CTX builder for lsquic.
+8. **SNI case sensitivity**: matching stays byte-wise case-sensitive (A.5);
+   RFC 6066 hostnames are case-insensitive, so correctness depends on callers
+   normalizing on both add and lookup (Listener.rs lowercases both paths).
+9. **`us_socket_raw_writev`** exists but the batch flush keeps the single copy
+   + `raw_write`; iovec batching (memory-BIO + writev, as Node does) is a
+   possible perf follow-up, not required for parity.

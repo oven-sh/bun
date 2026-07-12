@@ -1,6 +1,6 @@
 //! Closed-world socket dispatch tag. Discriminants FROZEN — identical to
-//! `src/uws_sys/SocketKind.rs` (cabi-surface.md §3.8). Adoption families per
-//! api.md §Strategy 3.
+//! `src/uws_sys/SocketKind.rs` (docs/cabi.md §3.8). Adoption families per
+//! docs/design.md §Strategy 3.
 
 /// Stamped on the socket at creation; dispatch switches on it.
 #[repr(u8)]
@@ -12,7 +12,7 @@ pub enum SocketKind {
     Dynamic = 1,
     BunSocketTcp = 2,
     BunSocketTls = 3,
-    /// ABI-reserved (frozen discriminant): nothing stamps this since P6 —
+    /// ABI-reserved (frozen discriminant): nothing stamps this anymore —
     /// accepted sockets are born `BunSocket*` and listener headers stay
     /// `Invalid`. Kept so `from_u8` stays total over the frozen 0..=22 range.
     BunListenerTcp = 4,

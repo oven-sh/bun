@@ -22,7 +22,7 @@ use bun_paths::PathBuffer;
 use bun_resolver::fs as Fs;
 use bun_sys;
 
-// ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
+// ─── Local shims for upstream surfaces not yet wired ───────────────
 
 /// `bun.sys.directoryExistsAt(FD.cwd(), path).isTrue()` — local helper while
 /// `bun_core::Fd` lacks an inherent forwarder.

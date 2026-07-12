@@ -1,7 +1,7 @@
-//! UDP sockets + per-loop packet buffer. Contract per consumers/05-udp.md
-//! §13 / C15: sync on_close, `closed_udp_head` lifetime, one-shot drain,
+//! UDP sockets + per-loop packet buffer. Contract per C15 (docs/design.md):
+//! sync on_close, `closed_udp_head` lifetime, one-shot drain,
 //! Linux MSG_ERRQUEUE vs non-Linux close-on-error, batch recv loop close
-//! recheck. Surface per consumers/01-api-surface.md §8; rules R9.1–R9.9.
+//! recheck. Rules R9.1–R9.9 (docs/semantics.md §9).
 
 use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
 use core::ptr;
@@ -56,7 +56,7 @@ pub(crate) struct Mmsghdr {
 
 /// `us_udp_socket_t`. Heap-stable address (self-linked into `closed_udp_head`,
 /// used as the poll's tagged udata word — hence the 16-byte alignment).
-/// quic.c's poll-first cast survives via cabi accessors (cabi-surface.md §3.6).
+/// quic.c's poll-first cast survives via cabi accessors (docs/cabi.md §3.6).
 #[repr(C, align(16))]
 pub struct Socket {
     pub(crate) fd: LIBUS_SOCKET_DESCRIPTOR,
@@ -70,6 +70,10 @@ pub struct Socket {
     /// Believed kernel registration (R2.6 equivalent for the UDP poll).
     pub(crate) poll_events: u32,
     pub(crate) next_closed: *mut Socket,
+    /// Windows: owning uv_poll wrapper (io.rs udp arm), null until first arm
+    /// and after stop; freed by its uv_close callback (deferred, R2.4).
+    #[cfg(windows)]
+    pub(crate) uv_p: *mut c_void,
     pub(crate) data_cb: Option<extern "C" fn(*mut Socket, *mut PacketBuffer, c_int)>,
     pub(crate) drain_cb: Option<extern "C" fn(*mut Socket)>,
     pub(crate) close_cb: Option<extern "C" fn(*mut Socket)>,
@@ -102,7 +106,7 @@ fn would_block(errno: c_int) -> bool {
 }
 
 /// Map the io layer's `0 / -errno` convention back to the raw setsockopt rc
-/// contract consumers key on (`-1` + errno set — consumers/05 §13.3).
+/// contract consumers key on (`-1` + errno set).
 fn raw_rc(rc: i32) -> c_int {
     if rc == 0 {
         0
@@ -148,6 +152,8 @@ impl Socket {
             port: io::udp_local_port(fd),
             poll_events: 0,
             next_closed: ptr::null_mut(),
+            #[cfg(windows)]
+            uv_p: ptr::null_mut(),
             data_cb: Some(data_cb),
             drain_cb: Some(drain_cb),
             close_cb: Some(close_cb),
@@ -250,6 +256,11 @@ impl Socket {
     /// the free to the tick postlude via `closed_udp_head` (R9.3, C15). Safe
     /// while iterating and re-entrant from any callback.
     pub fn close(&mut self) {
+        // Idempotent: a second close would self-link closed_udp_head (cycle
+        // in the postlude drain) and double-free the Box.
+        if self.closed {
+            return;
+        }
         let loop_ = self.loop_;
         let fd = self.fd;
         let cb = self.close_cb;

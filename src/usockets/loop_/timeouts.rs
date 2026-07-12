@@ -1,6 +1,6 @@
 //! Timeout wheels: 4-second short sweep + minute long sweep over the group
 //! lists, folded into the poll deadline (no timerfd); sweep enable is
-//! refcounted (`sweep_timer_count`). Implements core-semantics.md §5
+//! refcounted (`sweep_timer_count`). Implements docs/semantics.md §5
 //! (contract C9).
 
 use bun_core::{Timespec, TimespecMockMode};

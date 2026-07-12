@@ -1,7 +1,6 @@
 //! Connecting state machine: DNS bridge + happy-eyeballs (4 concurrent,
-//! interleaved families) + cancel/tombstone. Implements core-semantics.md §6
-//! and consumers/04-dns-bridge.md (contract C13); handle surface per
-//! consumers/01-api-surface.md §6.
+//! interleaved families) + cancel/tombstone. Implements docs/semantics.md §6
+//! and the DNS-bridge contract C13 (docs/design.md).
 
 use core::ffi::{c_int, c_void};
 
@@ -85,7 +84,7 @@ pub struct ConnectingSocket {
 impl ConnectingSocket {
     /// Cancellation: dispatches on_connecting_error synchronously; ext-null
     /// means silent no-op (C4). Cancel is linearized against DNS completion
-    /// per consumers/04-dns-bridge.md. Frozen `&mut self` surface — every
+    /// (C13); `&mut self` surface — every
     /// in-crate caller uses [`close_raw`] (C17 re-entry + pending window).
     pub fn close(&mut self) {
         close_raw(self);
@@ -291,7 +290,7 @@ pub(crate) fn create(
 
 /// Same-thread completion enqueue: push onto `dns_ready_head` under the loop
 /// mutex; does NOT wake the loop (loop.c:324-331). Exported to the resolver as
-/// `us_internal_dns_callback` via cabi.rs (consumers/04-dns-bridge.md §1.3).
+/// `us_internal_dns_callback` via cabi.rs (DNS-bridge contract C13).
 pub(crate) fn dns_callback(c: *mut ConnectingSocket) {
     let loop_ = ffi::connecting_loop(c);
     ffi::dns_ready_push(loop_, c);
@@ -307,7 +306,7 @@ pub(crate) fn dns_callback_threadsafe(c: *mut ConnectingSocket) {
 
 /// Drain `loop.data.dns_ready_head` (resolved connects queued off-thread):
 /// start the happy-eyeballs attempt fan-out. Runs in loop pre AND post per
-/// core-semantics.md §1; non-wakeup vs threadsafe enqueue rules per C13.
+/// docs/semantics.md §1; non-wakeup vs threadsafe enqueue rules per C13.
 pub(crate) fn drain_dns_ready(loop_: *mut Loop) {
     let mut c = ffi::dns_ready_take(loop_);
     while !c.is_null() {

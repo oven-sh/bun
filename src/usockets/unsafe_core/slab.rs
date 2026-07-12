@@ -1,10 +1,10 @@
 //! Chunked slab with generation counters — the keystone of the ownership
-//! model (api.md §Ownership): slot addresses are stable for the slab's
+//! model (docs/design.md §Strategy 1): slot addresses are stable for the slab's
 //! lifetime (chunk mappings never move or unmap until Drop), freed slots are
 //! reused with a generation bump so stale `SocketRef`s resolve to a failed
 //! lookup, never a dangling deref. Size classes give group-vtable kinds
-//! header-contiguous inline ext bytes (safe-protocol.md ADDENDUM P0b); empty
-//! chunks are decommitted with an epoch ABA guard (P0b extension).
+//! header-contiguous inline ext bytes (docs/design.md §Ext storage); empty
+//! chunks are decommitted with an epoch ABA guard (docs/design.md §Slab reclamation).
 
 use core::marker::PhantomData;
 use core::mem::{align_of, size_of};
@@ -19,10 +19,10 @@ pub(crate) const SLOT_META_BYTES: usize = crate::LIBUS_EXT_ALIGNMENT;
 /// Windows allocation granularity).
 const CHUNK_BYTES_MIN: usize = 64 * 1024;
 
-/// Slots per chunk (P0b FINAL). Fits `next_free`/`free_head` in u16.
+/// Slots per chunk (docs/design.md §Slab reclamation). Fits `next_free`/`free_head` in u16.
 const SLOTS_PER_CHUNK: usize = 256;
 
-/// Generation split (u64, P0b FINAL): low 32 bits alloc/free counter (bit 0
+/// Generation split (u64; docs/design.md §Slab reclamation): low 32 bits alloc/free counter (bit 0
 /// = parity, odd = occupied), high 32 bits per-chunk decommit epoch. The
 /// epoch lives authoritatively in the loop-side `ChunkEntry` (never in
 /// decommittable memory) and is packed into every generation stamped after
@@ -41,7 +41,7 @@ const fn bump_counter(g: u64) -> u64 {
 const NONE_SLOT: u16 = u16::MAX;
 
 /// Fixed 16-byte slot prelude, immediately BEFORE the value in every size
-/// class (W2: the value keeps `PollState` first; the generation probe reads
+/// class (layout contract: the value keeps `PollState` first; the generation probe reads
 /// this prelude adjacent to the value at a class-independent offset).
 #[repr(C)]
 struct SlotMeta {
@@ -117,7 +117,7 @@ const fn value_stride<T>() -> usize {
 
 /// Slot prelude of the slot holding `value` — a raw place, no reference
 /// formed; class-independent (meta is always exactly 16 bytes before the
-/// value, W2 layout contract).
+/// value — layout contract).
 fn meta_of<T>(value: NonNull<T>) -> *mut SlotMeta {
     value.as_ptr().cast::<u8>().wrapping_sub(SLOT_META_BYTES).cast()
 }
@@ -414,7 +414,7 @@ impl<T> Drop for ChunkedSlab<T> {
 /// Current generation of a slab-allocated pointer (occupied, vacant, or
 /// decommitted). Safe wrapper: every `SocketRef`/`ConnectingRef` pointer
 /// originates from a live per-loop slab whose chunk mappings stay readable
-/// while the loop lives (api.md §Strategy 1-2) — the crate handle invariant.
+/// while the loop lives (docs/design.md §Strategy 1-2) — the crate handle invariant.
 pub(crate) fn generation_of<T>(ptr: NonNull<T>) -> u64 {
     // SAFETY: slab chunk mappings outlive every handle (see doc above).
     unsafe { ChunkedSlab::generation(ptr) }
@@ -486,7 +486,7 @@ mod os {
 
     #[cfg(all(windows, not(miri)))]
     mod win {
-        // Deliberate deviation from P0b FINAL's MEM_DECOMMIT: stale handle
+        // Windows deliberately uses MEM_RESET, not MEM_DECOMMIT: stale handle
         // probes must stay a plain slot deref and MEM_DECOMMIT pages AV;
         // MEM_RESET stays committed+readable while the OS discards the pages.
         pub(super) const MEM_COMMIT: u32 = 0x1000;
@@ -907,7 +907,7 @@ mod tests {
 
     #[test]
     fn teardown_releases_every_chunk_mapping() {
-        // Full-release-at-teardown (P0b FINAL): create/destroy cycles must not
+        // Full-release-at-teardown (docs/design.md §Slab reclamation): create/destroy cycles must not
         // accumulate reservations — Miri's leak check is the oracle for any
         // chunk (committed, decommitted, or holding a live value) not unmapped.
         for _ in 0..8 {

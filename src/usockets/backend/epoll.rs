@@ -1,7 +1,7 @@
-//! epoll backend (Linux/Android). Implements core-semantics.md §1-2 poll
+//! epoll backend (Linux/Android). Implements docs/semantics.md §1-2 poll
 //! mechanics: epoll_pwait2 with an ENOSYS fallback latch, level-triggered
 //! R/W with implicit EPOLLHUP|EPOLLERR. All udata are untagged slot pointers
-//! (P10 removed the tagged-pointer FilePoll back-channel).
+//! (the poll registry removed the tagged-pointer FilePoll back-channel).
 
 use core::ptr;
 
@@ -136,7 +136,7 @@ pub(crate) fn accept_poll_event(p: *mut PollState) -> u64 {
     poll_access::read_eventfd8(poll_access::read_poll(p).fd())
 }
 
-// ── P0c registry sources (Fd + Pri on epoll) ────────────────────────────────
+// ── poll registry sources (Fd + Pri on epoll) ────────────────────────────────
 
 pub(crate) fn registry_arm(
     p: *mut PollState,

@@ -2182,6 +2182,7 @@ dependencies = [
  "bun_dns",
  "bun_libuv_sys",
  "bun_ptr",
+ "bun_windows_sys",
  "libc",
 ]
 

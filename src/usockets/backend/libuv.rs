@@ -1,8 +1,8 @@
 //! libuv backend (Windows): one uv_poll per armed socket (owned via
 //! `SocketHeader.uv_p`), uv_prepare/uv_check driving loop_pre/loop_post
 //! around each uv_run iteration, us_timer_t, and active-handle proxying into
-//! `uv_loop.active_handles`. Implements core-semantics.md §1-2 (libuv arm) +
-//! consumers/10-event-loop.md §5.
+//! `uv_loop.active_handles`. Implements docs/semantics.md §1-2 (libuv arm) +
+//! the active-handle keep-alive contract.
 //! All uv unsafety lives in `unsafe_core::ffi::uv`; this file is safe glue.
 
 use core::ffi::c_void;
@@ -14,7 +14,7 @@ use crate::unsafe_core::ffi::uv;
 use crate::unsafe_core::poll_access;
 
 // ── loop lifecycle (libuv.c:154-212) ─────────────────────────────────────────
-// The loop shard's `create_loop_raw`/`free_loop_raw` windows arms call these
+// The loop module's `create_loop_raw`/`free_loop_raw` windows arms call these
 // around loop-data init/free, mirroring the C order.
 
 /// `us_create_loop` libuv head (libuv.c:162-175): adopt `hint` when given
@@ -103,7 +103,7 @@ fn set_polling_bits(s: *mut us_socket_t, events: Events) {
     poll_access::write_poll(p, st);
 }
 
-// ── active-handle proxying (consumers/10-event-loop.md §5) ───────────────────
+// ── active-handle proxying (uv active handles keep the loop alive) ───────────────────
 // WindowsLoop keep-alive accounting goes into `uv_loop.active_handles` (a
 // Bun-private counter libuv reads in `uv__loop_alive`), not `num_polls`.
 

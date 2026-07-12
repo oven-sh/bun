@@ -1,5 +1,5 @@
 //! FFI boundary helpers: bssl-sys / libuv / lsquic edges, plus the reverse
-//! hooks the deleted C used to import (cabi-surface.md §2 — Bun__lock/unlock
+//! hooks the deleted C used to import (docs/cabi.md §2 — Bun__lock/unlock
 //! on the loop mutex, Bun__addrinfo_* DNS bridge, quic pre/post hooks).
 //! Everything crossing OUT of the crate lives here or in cabi.rs.
 
@@ -44,18 +44,18 @@ pub(crate) fn assert_mutex_abi() {
 
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    /// quic.c (survives; this crate is its platform layer — cabi-surface §6).
+    /// quic.c (survives; this crate is its platform layer — docs/cabi.md §6).
     fn us_quic_loop_process(loop_: *mut Loop);
 }
 
 /// quic.c hook: `us_quic_loop_process(loop)` when `quic_head != null`, from
-/// both loop pre and post (cabi-surface.md §2.2/§6).
+/// both loop pre and post (docs/cabi.md §2.2/§6).
 pub(crate) fn quic_loop_process(loop_: *mut Loop) {
     // SAFETY: loop-thread call; quic.c walks only its own quic_head state.
     unsafe { us_quic_loop_process(loop_) }
 }
 
-/// Sweep refcount 0→1 hook (core-semantics.md R12.9/R5.5): keeps Bun.serve's
+/// Sweep refcount 0→1 hook (docs/semantics.md R12.9/R5.5): keeps Bun.serve's
 /// Date-header timer running while sockets exist.
 pub(crate) fn ensure_date_header_timer_is_enabled(loop_: *mut Loop) {
     #[allow(improper_ctypes)]
@@ -83,8 +83,7 @@ pub(crate) fn arm_libuv_sweep_timer(loop_: *mut Loop) {
 }
 
 // ── cabi delegation seams ────────────────────────────────────────────────────
-// Only caller: cabi.rs. Bodies belong to the shards named per fn; contracts
-// mirror the deleted C (cabi-surface.md §1).
+// Only caller: cabi.rs. Contracts mirror the deleted C (docs/cabi.md §1).
 
 use core::ffi::{c_char, c_int};
 
@@ -92,7 +91,7 @@ use crate::handle::ListenSocket;
 use crate::socket::us_socket_t;
 use crate::tls::context::SslCtx;
 
-// ── loop allocation block (W4) ───────────────────────────────────────────────
+// ── loop allocation block ───────────────────────────────────────────────
 // Layout: [16-byte prefix holding the total block size][Loop][ext bytes].
 // The prefix keeps `us_loop_ext(loop) == loop + 1` (cabi contract) while
 // letting `free_loop_block` rebuild the dealloc Layout without a size arg.
@@ -314,7 +313,7 @@ pub(crate) unsafe fn free_loop_raw(loop_: *mut Loop) {
     #[cfg(windows)]
     crate::backend::libuv::loop_teardown(loop_);
 
-    // P0c two-phase teardown (W2): take every registered poll's owner word
+    // Poll-registry two-phase teardown: take every registered poll's owner word
     // and free its slot while the slab is intact; release the refs only
     // after the slab borrow ends — an owner destructor may re-enter PollRef
     // methods (all stale no-ops now) or even `register` anew (the arm fails
@@ -357,7 +356,7 @@ pub(crate) unsafe fn free_loop_raw(loop_: *mut Loop) {
 /// Allocate a socket slot straight off the raw slab place — never forms
 /// `&mut Loop`, so the span excludes `pending_wakeups`, which other threads
 /// `fetch_add` concurrently (R10.1, C17). `ext_capacity` picks the size
-/// class carrying that many inline ext bytes after the header (P0b).
+/// class carrying that many inline ext bytes after the header (docs/design.md §Ext storage).
 pub(crate) fn slab_alloc_socket(
     loop_: *mut Loop,
     value: us_socket_t,
@@ -378,7 +377,7 @@ pub(crate) fn slab_alloc_connecting(
 }
 
 /// Return a socket slot to the loop's slab, bumping its generation (the ONLY
-/// socket death path — api.md §Strategy 4, C6).
+/// socket death path — docs/design.md §Strategy 4, C6).
 pub(crate) fn slab_free_socket(loop_: *mut Loop, s: *mut us_socket_t) {
     let nn = core::ptr::NonNull::new(s).expect("null socket slot");
     // SAFETY: `s` was allocated from THIS loop's socket slab and is freed
@@ -394,7 +393,7 @@ pub(crate) fn slab_free_connecting(loop_: *mut Loop, c: *mut crate::connecting::
     unsafe { (*loop_).connectings.free(nn) }
 }
 
-/// Registered-poll twin of [`slab_alloc_socket`] (P0c; same aliasing
+/// Registered-poll twin of [`slab_alloc_socket`] (poll registry; same aliasing
 /// rationale — never forms `&mut Loop`).
 pub(crate) fn slab_alloc_poll(
     loop_: *mut Loop,
@@ -405,7 +404,7 @@ pub(crate) fn slab_alloc_poll(
 }
 
 /// Return a registered-poll slot (generation bump; kernel disarm precedes
-/// this per W2). Callers must take the owner word out FIRST — the ref
+/// this — disarm-before-free). Callers must take the owner word out FIRST — the ref
 /// release runs outside the slab borrow (RegisteredPoll has no Drop).
 pub(crate) fn slab_free_poll(
     loop_: *mut Loop,
@@ -417,7 +416,7 @@ pub(crate) fn slab_free_poll(
     unsafe { (*loop_).polls.free(nn) }
 }
 
-// ── loop-thread callback invocation + cross-thread wakeup reads (W4) ─────────
+// ── loop-thread callback invocation + cross-thread wakeup reads ─────────
 
 /// Invoke a loop-shaped callback (`pre_cb`/`post_cb`/wakeup). May re-enter
 /// the loop (C17) — callers must hold no loop borrows.
@@ -518,9 +517,9 @@ pub(crate) fn ld_take_closed_connecting_head(
     }
 }
 
-// ── surviving uWS C++ / quic.c shim entry points (W4) ────────────────────────
+// ── surviving uWS C++ / quic.c shim entry points ────────────────────────
 // These symbols live in libuwsockets.cpp / bun-uws Loop.h / quic.c, all of
-// which SURVIVE the rewrite (cabi-surface.md §7). The C++ defer queues and
+// which SURVIVE the rewrite (docs/cabi.md §7). The C++ defer queues and
 // pre/post handler maps stay C++-owned in the loop ext (LoopData).
 
 #[allow(improper_ctypes)]
@@ -594,8 +593,7 @@ pub(crate) fn loop_add_pre_handler(
 }
 
 /// Keyed removal. NOTE: `Handler::remove_pre` also routes here — the shim
-/// only exports removePostHandler (preserved upstream bug,
-/// consumers/10-event-loop.md §0).
+/// only exports removePostHandler (preserved upstream bug).
 pub(crate) fn loop_remove_post_handler(loop_: *mut Loop, key: *mut c_void) {
     // SAFETY: loop-thread removal by key.
     unsafe { uws_loop_removePostHandler(loop_, key) }
@@ -628,7 +626,7 @@ pub(crate) fn clear_loop_at_thread_exit() {
 
 /// `us_poll_change` on a poll-first handle: only UDP handles qualify
 /// (cabi::us_poll_fd contract; QUIC send backpressure is the surviving
-/// caller — cabi-surface.md §1.2). Preserves the low-bits udata tag and is
+/// caller — docs/cabi.md §1.2). Preserves the low-bits udata tag and is
 /// callable from inside poll dispatch (no borrows formed).
 ///
 /// # Safety
@@ -639,7 +637,7 @@ pub(crate) unsafe fn poll_change_raw(p: *mut c_void, loop_: *mut Loop, events: u
 
 /// `us_socket_close` with the reason-pointer passthrough to on_close (C3);
 /// `code` passed verbatim. Idempotent on already-closed; returns the input
-/// pointer (in-place design, api.md §Strategy 3).
+/// pointer (in-place design, docs/design.md §Strategy 3).
 ///
 /// # Safety
 /// `s` must be a live (possibly mid-dispatch) socket header.
@@ -649,11 +647,12 @@ pub(crate) unsafe fn socket_close_raw(
     reason: *mut c_void,
 ) -> *mut us_socket_t {
     // us_socket_close (R3.16): enum-coded closes route through the TLS-aware
-    // path; errno-coded closes (>2) go straight to close_raw verbatim (C3).
+    // path. Errno-coded closes (>2, incl. uWS forceClose's reason-length
+    // codes) still send close_notify on TLS sockets, like the C did.
     if (0..=2).contains(&code) {
         crate::socket::socket_close(s, crate::handle::CloseCode::from_c(code), reason);
     } else {
-        crate::socket::close_raw_errno(s, code, reason);
+        crate::socket::tls_close_errno(s, code, reason);
     }
     s
 }
@@ -668,7 +667,7 @@ pub(crate) unsafe fn socket_server_name_userdata(s: *mut us_socket_t) -> *mut c_
 }
 
 /// `us_listen_socket_find_server_name_ctx`: exact-pattern SNI lookup
-/// returning an OWNED SSL_CTX ref — the caller unrefs (cabi-surface.md §1.6).
+/// returning an OWNED SSL_CTX ref — the caller unrefs (docs/cabi.md §1.6).
 ///
 /// # Safety
 /// `ls` live and linked; `pattern` NUL-terminated.
@@ -969,7 +968,7 @@ pub(crate) fn closed_connecting_push(loop_: *mut Loop, c: *mut ConnectingSocket)
     }
 }
 
-// ── libuv edge (Windows backend, core-semantics.md §2 libuv arm) ─────────────
+// ── libuv edge (Windows backend, docs/semantics.md §2 libuv arm) ─────────────
 
 /// Ownership contract: every heap block created here is freed ONLY by the
 /// uv_close callback registered at close time (deferred-free protocol, R2.4).
@@ -1071,7 +1070,7 @@ pub(crate) mod uv {
         }
     }
 
-    // ── active-handle proxying (consumers/10-event-loop.md §5) ───────────────
+    // ── active-handle proxying ───────────────
     // `uv_loop.active_handles` is the Bun-private keep-alive counter libuv
     // reads in `uv__loop_alive`; saturating like the old uws_sys wrapper.
 
@@ -1478,7 +1477,7 @@ pub(crate) mod uv {
 // CTX construction, the ex_data registry, verify plumbing and session/keylog
 // parking live in unsafe_core/bssl.rs; this section adds only the per-socket
 // engine primitives that file lacks: SSL lifecycle, the custom BIO pair, and
-// the read/write/handshake/shutdown calls (tls-semantics.md §1-§5).
+// the read/write/handshake/shutdown calls (docs/tls.md §1-§5).
 
 use core::ffi::{CStr, c_long};
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
@@ -1600,7 +1599,7 @@ pub(crate) fn with_tls_shared<R>(loop_: *mut Loop, f: impl FnOnce(&mut LoopTlsSh
     with_shared(tls_shared_ptr(loop_), f)
 }
 
-/// Close entry for the TLS deferred-close epilogue (tls-semantics §1.4): the
+/// Close entry for the TLS deferred-close epilogue (docs/tls.md §1.4): the
 /// caller's `&mut TlsState` must not be touched again after this returns.
 pub(crate) fn socket_close(s: *mut us_socket_t, code: CloseCode) {
     // SAFETY: `s` is a live slab-resident header (deref::with_socket contract).
@@ -1614,7 +1613,7 @@ pub(crate) fn ctl_free(ctl: *mut BioCtl) {
     drop(unsafe { Box::from_raw(ctl) });
 }
 
-// ── custom BIO pair (per socket; tls-semantics §1.3) ─────────────────────────
+// ── custom BIO pair (per socket; docs/tls.md §1.3) ─────────────────────────
 
 // One-time BIO method registration at first SSL creation (pthread_once
 // shape, like the C's ex-index init): `BIO_INIT` orders the two plain-latch
@@ -1642,7 +1641,7 @@ fn bio_init() {
 }
 
 /// Unique BIO type index: identifies OUR BIOs (data == BioCtl) vs foreign
-/// ones (SSLWrapper's BIO_s_mem stores a BUF_MEM*, tls-semantics §6.2).
+/// ones (SSLWrapper's BIO_s_mem stores a BUF_MEM*, docs/tls.md §6.2).
 fn bio_type() -> c_int {
     bio_init();
     BIO_METHOD_TYPE.load(Ordering::Relaxed)
@@ -1808,7 +1807,7 @@ pub(crate) fn ssl_set_tlsext_host_name(ssl: *mut SSL, name: &CStr) {
 
 unsafe extern "C" fn verify_always_ok(_preverify_ok: c_int, _ctx: *mut X509_STORE_CTX) -> c_int {
     // Never abort mid-handshake: the verdict travels in us_bun_verify_error_t
-    // and fail-closed lives in the consumer (tls-semantics §2.4).
+    // and fail-closed lives in the consumer (docs/tls.md §2.4).
     1
 }
 
@@ -1852,7 +1851,7 @@ pub(crate) fn ssl_write(ssl: *mut SSL, data: &[u8]) -> c_int {
 }
 
 /// Zero-length SSL_write: seals no record but flushes deferred post-handshake
-/// data (TLS1.3 NewSessionTickets) through the BIO (tls-semantics §2.7).
+/// data (TLS1.3 NewSessionTickets) through the BIO (docs/tls.md §2.7).
 pub(crate) fn ssl_write_zero(ssl: *mut SSL) {
     let zero: u8 = 0;
     // SAFETY: live SSL; pointer valid (unused for len 0 but non-null like C).
@@ -1900,7 +1899,7 @@ pub(crate) fn ssl_get_shutdown(ssl: *mut SSL) -> (bool, bool) {
 }
 
 /// Must be called immediately after the failing SSL_* call, before any other
-/// SSL/queue operation (tls-semantics §8.4).
+/// SSL/queue operation (docs/tls.md §8.4).
 pub(crate) fn ssl_get_error(ssl: *mut SSL, ret: c_int) -> SslErr {
     // SAFETY: live SSL.
     let e = unsafe { SSL_get_error(ssl, ret) };
@@ -1917,7 +1916,7 @@ pub(crate) fn ssl_get_error(ssl: *mut SSL, ret: c_int) -> SslErr {
     }
 }
 
-// ── loop plaintext scratch (loop-shared per safe-protocol.md P0d) ─────────────
+// ── loop plaintext scratch (loop-shared — docs/design.md) ─────────────
 
 const SCRATCH_BYTES: usize = LIBUS_RECV_BUFFER_LENGTH + 2 * LIBUS_RECV_BUFFER_PADDING;
 
@@ -1949,7 +1948,7 @@ pub(crate) fn scratch_slice<'a>(buf: *mut c_void) -> &'a mut [u8] {
     unsafe { core::slice::from_raw_parts_mut(buf.cast::<u8>(), SCRATCH_BYTES) }
 }
 
-// ── loop shared recv buffer view (socket shard; R3.22c) ──────────────────────
+// ── loop shared recv buffer view (R3.22c) ──────────────────────
 
 /// Fresh `&mut` view of the loop's shared 512 KiB recv area (padding offset
 /// applied). Aliasing contract (C17, inherited from the C design): the slice
@@ -1968,7 +1967,7 @@ pub(crate) fn loop_recv_area<'a>(loop_: *mut Loop) -> &'a mut [u8] {
     }
 }
 
-// ── SNI certificate selection (tls-semantics §2.6; openssl.c:2317-2454) ──────
+// ── SNI certificate selection (docs/tls.md §2.6; openssl.c:2317-2454) ──────
 // Registered on listener default contexts: `sni_cb` when the first server
 // name is added (us_listen_socket_add_server_name), `select_cert_cb` when a
 // dynamic resolver is set (us_listen_socket_on_server_name). A same-socket
@@ -1994,7 +1993,7 @@ impl HostName {
 }
 
 /// Raw server_name extension parse — NOT `SSL_get_servername`; only the
-/// early-callback contract guarantees the raw hello (tls-semantics §2.6.2).
+/// early-callback contract guarantees the raw hello (docs/tls.md §2.6.2).
 fn hello_servername(hello: *const bssl_sys::SSL_CLIENT_HELLO) -> Option<HostName> {
     let mut data: *const u8 = core::ptr::null();
     let mut len: usize = 0;
@@ -2193,7 +2192,7 @@ pub(crate) fn register_select_cert_cb(ctx: *mut SslCtx) {
     unsafe { bssl_sys::SSL_CTX_set_select_certificate_cb(ctx, Some(select_cert_cb)) };
 }
 
-// ── UpgradedDuplex / WindowsNamedPipe cycle-break shims (handle shard) ───────
+// ── UpgradedDuplex / WindowsNamedPipe cycle-break shims ───────
 // The real implementations live in `bun_runtime::socket` and are exported
 // with #[no_mangle]; link-time dispatch avoids an upward dep (same pattern as
 // the old uws_sys/lib.rs:175-348). Signatures must stay in sync with
@@ -2341,7 +2340,7 @@ pub(crate) mod named_pipe {
     }
 }
 
-// ── handle-shard raw lowering helpers ─────────────────────────────────────────
+// ── raw lowering helpers ─────────────────────────────────────────
 
 /// Borrow one `UsIoVec` as a byte slice (duplex/pipe raw_writev lowering).
 /// Contract: base/len reference caller-owned memory for the call's duration.
@@ -2355,7 +2354,7 @@ pub(crate) fn iovec_as_slice<'a>(v: &crate::write::UsIoVec) -> &'a [u8] {
 
 /// Frozen erased `on_server_name` registration shape → the typed
 /// `sni::OnServerName` (pointer-for-pointer, ABI-identical; the cabi side
-/// performs the inverse transmute — cabi-surface.md §4.3).
+/// performs the inverse transmute — docs/cabi.md §4.3).
 pub(crate) fn server_name_cb_from_erased(
     cb: extern "C" fn(
         *mut ListenSocket,

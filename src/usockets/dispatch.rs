@@ -1,8 +1,7 @@
 //! kind → static vtable dispatch over the link-time const kind table
 //! (`BUN_UWS_KIND_TABLE`, defined in the runtime dispatch module) + the
-//! compile-time vtable generator moved unchanged from `src/uws_sys/vtable.rs`
-//! (consumers/01-api-surface.md §5). The extern "C" trampolines live in
-//! `unsafe_core::trampolines`. Dispatch rules per core-semantics.md §12 and
+//! compile-time vtable generator moved unchanged from `src/uws_sys/vtable.rs`. The extern "C" trampolines live in
+//! `unsafe_core::trampolines`. Dispatch rules per docs/semantics.md §12 and
 //! contract C17 (every callback may synchronously re-enter; never touch ext
 //! after a terminal callback).
 
@@ -130,7 +129,7 @@ struct Make<H>(core::marker::PhantomData<H>);
 
 impl<H: Handler> Make<H> {
     const VT: VTable = {
-        // Rust-handled kinds store ext IN the header's 8-byte word (api.md
+        // Rust-handled kinds store ext IN the header's 8-byte word (docs/design.md
         // §Strategy 3); unsafe_core::ext::downcast_raw relies on this fitting.
         assert!(
             !H::HAS_EXT
@@ -201,7 +200,7 @@ impl<H: Handler> Make<H> {
 // ── kind → handler dispatch (loop-driven) ────────────────────────────────────
 // The loop NEVER reads `group->vtable` itself except through here: dispatch
 // switches on `s.kind` and falls back to the group vtable for UwsHttp{,Tls},
-// UwsWs{,Tls} and Dynamic (cabi-surface.md §2.1).
+// UwsWs{,Tls} and Dynamic (docs/cabi.md §2.1).
 
 pub const SOCKET_KIND_COUNT: usize = SocketKind::TestChannel as usize + 1;
 
@@ -280,12 +279,12 @@ pub(crate) fn owner_ops(kind: SocketKind) -> Option<&'static OwnerOps> {
 
 /// Silent-terminal owner release (C1: SEMI_SOCKET closes and detach dispatch
 /// NO callback, but core's ext-held owner ref is still released exactly once
-/// — documented deviation from C parity, safe-protocol.md terminal contract).
+/// — documented deviation from C parity, Protocol v2 terminal contract).
 pub(crate) fn release_owner_on_silent_terminal(s: *mut us_socket_t) {
     trampolines::release_owner_ext(s);
 }
 
-/// Debug ext-type check backing `Trampolines::ext` (api.md kind registry):
+/// Debug ext-type check backing `Trampolines::ext` (docs/design.md kind registry):
 /// a static kind's trampoline belongs to the handler in its table entry.
 /// Kinds without an entry (group-vtable) are vacuously true.
 pub(crate) fn kind_dispatches_to<H: Handler>(kind: SocketKind) -> bool {
@@ -293,8 +292,8 @@ pub(crate) fn kind_dispatches_to<H: Handler>(kind: SocketKind) -> bool {
 }
 
 /// TLS side-channel hooks (raw ciphertext tap / new-session / keylog). These
-/// are not vtable slots (the 11-slot layout is FROZEN, cabi-surface §3.7);
-/// only `BunSocketTls` sockets consume them (tls-semantics §2.7, §3.3) and
+/// are not vtable slots (the 11-slot layout is FROZEN, docs/cabi.md §3.7);
+/// only `BunSocketTls` sockets consume them (docs/tls.md §2.7, §3.3) and
 /// the ext-null / unstamped window is the consumer's silent no-op.
 pub struct TlsSideChannelHooks {
     pub ssl_raw_tap: fn(s: *mut us_socket_t, data: &[u8]),
@@ -304,7 +303,7 @@ pub struct TlsSideChannelHooks {
 
 /// The link-time hooks (`BUN_UWS_TLS_SIDE_CHANNEL`, defined next to the kind
 /// table in the runtime dispatch module) — always present, so raw-tap
-/// ciphertext can never be silently dropped (tls-semantics §2.7).
+/// ciphertext can never be silently dropped (docs/tls.md §2.7).
 fn tls_hooks() -> &'static TlsSideChannelHooks {
     crate::unsafe_core::trampolines::tls_side_channel()
 }
@@ -381,7 +380,7 @@ pub(crate) fn dispatch_close(s: *mut us_socket_t, code: c_int, reason: *mut c_vo
     if let Some(vt) = vt(s) {
         trampolines::invoke_close(vt, s, code, reason);
         // Terminal contract: core's ext-held owner ref is released exactly
-        // once after on_close returns (safe-protocol.md; no-op for v1 kinds).
+        // once after on_close returns (Protocol v2 terminal contract; no-op for v1 kinds).
         trampolines::release_owner_ext(s);
     }
 }
@@ -433,7 +432,7 @@ pub(crate) fn dispatch_handshake(s: *mut us_socket_t, ok: bool, err: us_bun_veri
     }
 }
 
-// Only bun_socket_tls ever produces side-channel events (tls-semantics §6.1);
+// Only bun_socket_tls ever produces side-channel events (docs/tls.md §6.1);
 // the kind gate below only differs from the old C in unreachable states.
 
 pub(crate) fn dispatch_ssl_raw_tap(s: *mut us_socket_t, data: &[u8]) {
@@ -466,8 +465,8 @@ pub(crate) fn dispatch_keylog(s: *mut us_socket_t, line: &[u8]) {
 /// True when `kind` routes through the group vtable instead of a static
 /// per-kind Rust handler. Also the single source of the ext storage class:
 /// these kinds get an inline slab ext area contiguous after the header
-/// (`socket::alloc` / `unsafe_core::ext::downcast_raw`, P0b); all others
-/// store ext in the header word. Invariant (api.md adoption families): adoption never crosses this
+/// (`socket::alloc` / `unsafe_core::ext::downcast_raw`); all others
+/// store ext in the header word. Invariant (docs/design.md §Strategy 3): adoption never crosses this
 /// predicate — `group::adopt_socket` re-stamps kind without touching ext, so
 /// `uses_group_vtable(old) == uses_group_vtable(new)` must hold at adopt.
 pub(crate) fn uses_group_vtable(kind: SocketKind) -> bool {

@@ -1,4 +1,4 @@
-//! THE ONLY MODULE ALLOWED `unsafe` (api.md §Strategy 5). Contents: chunked
+//! THE ONLY MODULE ALLOWED `unsafe` (docs/design.md §Strategy 5). Contents: chunked
 //! slab + generations, kind-checked ext downcast, extern "C" trampolines,
 //! syscall/FFI edges. Everything here is small, audited, and Miri-testable.
 

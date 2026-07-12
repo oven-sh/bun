@@ -1,5 +1,5 @@
-//! Protocol v2 — the safe consumer socket interface (safe-protocol.md main
-//! body). Owners are `bun_ptr::RefCounted` objects; the dispatch trampoline
+//! Protocol v2 — the safe consumer socket interface (docs/design.md,
+//! Consumer protocol). Owners are `bun_ptr::RefCounted` objects; the dispatch trampoline
 //! holds a strong ref across every handler call, so an owner dropping to zero
 //! refs mid-callback stays alive until dispatch returns. The v1 raw
 //! [`crate::dispatch::Handler`] stays for Dynamic/UwsHttp*/UwsWs* kinds.

@@ -1,7 +1,7 @@
 //! cfg-selected eventing backend (static dispatch; the future io_uring seam).
-//! Poll semantics per core-semantics.md §2 (POLL LAYER), including the
-//! SEMI_SOCKET / CALLBACK / UDP / REGISTERED (P0c registry) poll types.
-//! Every udata is an untagged pointer owned by this crate (P10 deleted the
+//! Poll semantics per docs/semantics.md §2 (POLL LAYER), including the
+//! SEMI_SOCKET / CALLBACK / UDP / REGISTERED (poll registry) poll types.
+//! Every udata is an untagged pointer owned by this crate (the poll registry deleted the
 //! tagged-pointer FilePoll back-channel).
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -31,9 +31,9 @@ use crate::LIBUS_SOCKET_DESCRIPTOR;
 #[cfg(not(windows))]
 pub(crate) const MAX_READY_POLLS: usize = 1024;
 
-/// `POLL_TYPE_*` — low bits of the poll state (core-semantics.md §2).
+/// `POLL_TYPE_*` — low bits of the poll state (docs/semantics.md §2).
 /// Deliberately renumbered vs internal.h (C: SOCKET=0..UDP=4); legal because
-/// POLL_TYPE_* is crate-internal (cabi-surface.md §8) — do NOT "fix" to C.
+/// POLL_TYPE_* is crate-internal (docs/cabi.md §8) — do NOT "fix" to C.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum PollType {
@@ -49,7 +49,7 @@ pub enum PollType {
     /// unsafe_core/io.rs packs `Udp as usize` into udata LOW bits (see
     /// [`UDP_TAG_MASK`]); the value must stay nonzero, odd, and ≤ 0xF.
     Udp = 5,
-    /// First-class non-socket registration (loop_/poll_registry.rs, P0c).
+    /// First-class non-socket registration (loop_/poll_registry.rs).
     /// Slab-backed like sockets: dispatch generation-guards the slot, so a
     /// vacant slot retaining kind 6 drops the event.
     Registered = 6,
@@ -72,7 +72,7 @@ const ECONNRESET_ERRNO: i32 = libc::ECONNRESET;
 const ECONNRESET_ERRNO: i32 = 10054; // WSAECONNRESET
 
 /// Platform readiness bits (`LIBUS_SOCKET_READABLE`/`WRITABLE` differ per
-/// platform and cross the ABI — cabi-surface.md §8).
+/// platform and cross the ABI — docs/cabi.md §8).
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct Events(pub u32);
 
@@ -192,7 +192,7 @@ impl PollState {
 pub(crate) type CallbackFn = unsafe extern "C" fn(*mut c_void);
 
 /// `us_internal_callback_t` — the CALLBACK-kind poll body (wakeup async;
-/// timers exist only on libuv). W4 (loop_/wakeup.rs) owns creation/teardown.
+/// timers exist only on libuv). loop_/wakeup.rs owns creation/teardown.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub(crate) struct CallbackPoll {
@@ -230,7 +230,7 @@ pub(crate) trait Backend {
     /// wakeups) — kqueue maps that to KEVENT_FLAG_IMMEDIATE (R1.10 step 8).
     fn wait(&mut self, loop_: *mut Loop, timeout_ns: i64) -> i32;
 
-    /// P0c registry arm. Kqueue implements the darwin filter arms
+    /// poll registry arm. Kqueue implements the darwin filter arms
     /// (EVFILT_PROC/MACHPORT/MEMORYSTATUS); epoll implements Fd + Pri
     /// (EPOLLPRI, Linux PSI trigger fds).
     fn arm_source(
@@ -240,7 +240,7 @@ pub(crate) trait Backend {
         source: crate::loop_::poll_registry::PollSource,
     ) -> i32;
 
-    /// P0c registry disarm (also nulls pending ready-list entries for `p`).
+    /// poll registry disarm (also nulls pending ready-list entries for `p`).
     fn disarm_source(
         &mut self,
         p: *mut PollState,
@@ -292,7 +292,7 @@ pub(crate) fn accept_poll_event(p: *mut PollState) -> u64 {
     platform::accept_poll_event(p)
 }
 
-// ── P0c registry registration (per-source kernel mechanics) ─────────────────
+// ── poll registry registration (per-source kernel mechanics) ─────────────────
 
 /// Interest-set → platform readiness bits for registry Fd sources.
 pub(crate) fn fd_interest(readable: bool, writable: bool) -> Events {
@@ -326,7 +326,7 @@ pub(crate) fn registry_change(p: *mut PollState, loop_: *mut Loop, events: Event
 }
 
 /// Disarm a registry source and null its pending ready-list entries. Must
-/// strictly precede the slot free (W2).
+/// strictly precede the slot free.
 #[cfg(not(windows))]
 pub(crate) fn registry_disarm(
     p: *mut PollState,
@@ -418,7 +418,7 @@ pub(crate) fn dispatch_untagged(udata: u64, error: bool, eof: bool, raw: Events)
 }
 
 /// `us_internal_dispatch_ready_poll`: switch on the poll kind. Slab-backed
-/// kinds probe the slot's generation PARITY (OQ-4, api.md CHANGES 6): vacant
+/// kinds probe the slot's generation PARITY (quirk OQ-4 — docs/semantics.md): vacant
 /// drops the event; recycled slots are unreachable (deferred free + close DEL).
 pub(crate) fn dispatch_ready_poll(p: *mut PollState, error: bool, eof: bool, events: Events) {
     let st = poll_access::read_poll(p);
@@ -457,7 +457,7 @@ pub(crate) fn dispatch_ready_poll(p: *mut PollState, error: bool, eof: bool, eve
                 crate::socket::on_socket_poll_ready(p.cast(), error, eof, events);
             }
         }
-        // P0c registry polls; epoll/libuv route here. Unreachable on kqueue:
+        // poll registry polls; epoll/libuv route here. Unreachable on kqueue:
         // pass 1 tags registered udata FL_REGISTERED (per-kevent payload
         // dispatch) and pass 2 drops zero-flag nested-tick appends before
         // dispatch_untagged. Generation guard lives in dispatch_ready.

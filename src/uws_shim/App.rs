@@ -452,7 +452,7 @@ pub struct ListenSocket<const SSL: bool> {
 
 impl<const SSL: bool> ListenSocket<SSL> {
     /// A uWS listen socket IS a live slab-resident `bun_usockets::ListenSocket`
-    /// (header-first, cabi-surface.md §1.5); this ZST view is only ever
+    /// (header-first, src/usockets/docs/cabi.md §1.5); this ZST view is only ever
     /// materialised from pointers C++ received from `us_socket_group_listen`.
     #[inline]
     fn as_core(&mut self) -> &mut UwsListenSocket {

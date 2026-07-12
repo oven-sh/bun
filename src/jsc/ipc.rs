@@ -667,7 +667,7 @@ pub fn get_nack_packet(mode: Mode) -> &'static [u8] {
 // `<false>` is the non-SSL handler.
 pub type Socket = bun_usockets::SocketHandler<false>;
 
-/// Protocol v2 owner for `SocketKind::SpawnIpc` (safe-protocol.md): a
+/// Protocol v2 owner for `SocketKind::SpawnIpc` (Protocol v2 — src/usockets/docs/design.md): a
 /// refcounted heap cell owning the [`SendQueue`]. Refs: the embedder
 /// (`Subprocess` / `IPCInstance`) holds one, released after
 /// [`IpcData::owner_teardown`]; the socket core holds one from

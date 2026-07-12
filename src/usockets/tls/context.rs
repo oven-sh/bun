@@ -1,8 +1,8 @@
 //! SSL_CTX construction from options, verify errors, default CA store,
 //! pending session/keylog queues, raw tap, tls_feed plumbing, adopt_tls.
-//! Implements tls-semantics.md §7 (Context/options) + Appendix A.1-A.4.
+//! Implements docs/tls.md §7 (Context/options) + Appendix A.1-A.4.
 //! `BunSocketContextOptions` layout FROZEN (memcpy-shared with
-//! `uWS::SocketContextOptions` — cabi-surface.md §3.7).
+//! `uWS::SocketContextOptions` — docs/cabi.md §3.7).
 
 use core::ffi::{CStr, c_char, c_int, c_long, c_void};
 use core::ptr;
@@ -11,15 +11,15 @@ use crate::tls::SSL;
 use crate::unsafe_core::bssl;
 
 pub use crate::unsafe_core::bssl::{Pkcs12Pem, parse_pkcs12};
-// Consumed by W11 (state.rs) / W13 (sni.rs); unused until those land.
+// Consumed by state.rs / sni.rs.
 #[allow(unused_imports)]
 pub(crate) use crate::unsafe_core::bssl::{
     RenegState, SniSuspension, reneg_policy, reneg_state_ptr, set_reneg_policy, sni_is_waiting,
     sni_set, sni_take,
 };
 
-/// BoringSSL `SSL_CTX`, from the pre-generated bssl-sys bindings (api.md
-/// CHANGES 1; see ../bssl_bindings/README.md). Kept under the frozen
+/// BoringSSL `SSL_CTX`, from the pre-generated bssl-sys bindings (see
+/// ../bssl_bindings/README.md and docs/tls.md PART 2). Kept under the frozen
 /// `SslCtx` name; all access goes through `unsafe_core::bssl`.
 pub type SslCtx = bssl_sys::SSL_CTX;
 
@@ -55,7 +55,7 @@ impl create_bun_socket_error_t {
 
 /// `struct us_bun_verify_error_t` — TLS handshake verification result, BY
 /// VALUE across the ABI. Only `code` is static; `reason` may point into the
-/// parked `FatalReason` (tls-semantics §3.4) — copy it before the callback returns.
+/// parked `FatalReason` (docs/tls.md §3.4) — copy it before the callback returns.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct us_bun_verify_error_t {
@@ -176,7 +176,7 @@ pub fn x509_error_code(err: c_long) -> &'static CStr {
 
 /// Fatal OpenSSL reason parked for the handshake-failure dispatch — parked in
 /// the loop-shared slot whose owner is a generation-checked `SocketRef`
-/// (safe-protocol.md P0d; stale owner = drop, never dangles).
+/// (docs/design.md §TLS buffer ownership; stale owner = drop, never dangles).
 pub struct FatalReason {
     /// NUL-terminated `ERR_error_string_n` output.
     buf: [u8; US_SSL_FATAL_ERROR_REASON_MAX],
@@ -185,7 +185,7 @@ pub struct FatalReason {
 impl FatalReason {
     /// `ssl_park_fatal_reason`'s formatting half (openssl.c:1456-1466):
     /// format `ERR_peek_last_error()`; `None` when the queue is empty. The
-    /// caller (W11) still clears the queue and sets the fatal flag, and only
+    /// caller (state.rs) still clears the queue and sets the fatal flag, and only
     /// parks while the handshake is unfinished.
     pub fn capture() -> Option<FatalReason> {
         let err = bssl::err_peek_last_error();
@@ -205,7 +205,7 @@ impl FatalReason {
 
 /// `us_bun_socket_context_options_t` — 20 fields, layout FROZEN (passed BY
 /// VALUE to ctx builders; memcpy'd onto `uWS::SocketContextOptions`).
-/// sessionTimeout/ticketKeys stay unplumbed (api.md CHANGES 8).
+/// sessionTimeout/ticketKeys stay unplumbed (C parity — docs/tls.md §Resolved design notes).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct BunSocketContextOptions {
@@ -262,8 +262,8 @@ impl BunSocketContextOptions {
     /// Build a BoringSSL `SSL_CTX*`. Caller owns one ref (release with
     /// `SSL_CTX_free`); the passphrase is freed inside once key load
     /// completes. Mode-neutral: client verify override is applied per-SSL at
-    /// attach (tls-semantics.md §7).
-    // Options pass BY VALUE across the frozen ABI (cabi-surface.md §3.7).
+    /// attach (docs/tls.md §7).
+    // Options pass BY VALUE across the frozen ABI (docs/cabi.md §3.7).
     #[allow(clippy::large_types_passed_by_value)]
     pub fn create_ssl_context(
         self,
@@ -274,7 +274,7 @@ impl BunSocketContextOptions {
     }
 
     /// Content-addressed SHA-256 over all fields (file-backed fields fed
-    /// path + mtime/size) — the SSLContextCache key (tls-semantics.md A.2).
+    /// path + mtime/size) — the SSLContextCache key (docs/tls.md A.2).
     pub fn digest(&self) -> [u8; 32] {
         let mut h = bssl::Sha256::init();
 
@@ -380,7 +380,7 @@ pub fn ssl_ctx_from_options(
 
 /// `us_ssl_ctx_build_raw` (openssl.c:893-1088) — also exported for quic.c
 /// (lsquic sets ALPN/transport params itself). Application order is
-/// normative (tls-semantics.md §7.1). Failures beyond the four `err` codes
+/// normative (docs/tls.md §7.1). Failures beyond the four `err` codes
 /// return null with the reason left on the OpenSSL error queue.
 #[allow(clippy::large_types_passed_by_value)]
 pub fn ssl_ctx_build_raw(
@@ -586,7 +586,7 @@ pub fn ssl_ctx_add_ca_cert(ctx: *mut SslCtx, pem: &core::ffi::CStr) -> i32 {
     bssl::add_ca_cert_to_store(ctx, pem, store) as i32
 }
 
-/// Bun's default trust store (root_certs.cpp stays C++ — cabi-surface §1.7).
+/// Bun's default trust store (root_certs.cpp stays C++ — docs/cabi.md §1.7).
 /// Fresh full store (bundled + NODE_EXTRA_CA_CERTS + system CAs when
 /// enabled); caller owns the returned ref.
 pub fn default_ca_store() -> *mut core::ffi::c_void {
@@ -622,7 +622,7 @@ pub(crate) fn ctx_has_user_ca(ctx: *const SslCtx) -> bool {
 }
 
 /// SSLContextCache tombstone back-pointer; its `CRYPTO_EX_free` is the Rust
-/// `bun_ssl_ctx_cache_on_free` (tls-semantics.md A.2).
+/// `bun_ssl_ctx_cache_on_free` (docs/tls.md A.2).
 pub fn ctx_cache_set_entry(ctx: *mut SslCtx, entry: *mut c_void) {
     bssl::ctx_set_ex_data(ctx, bssl::ex_indices().ctx_cache, entry);
 }
@@ -644,7 +644,7 @@ pub(crate) fn ctx_sni_user(ctx: *const SslCtx) -> *mut c_void {
 /// Accepting-listener backref, stored per-SSL (never as CTX servername arg —
 /// the shared CTX can outlive a listener; documented UAF, openssl.c:147-150).
 /// Listener teardown MUST wipe this on every accepted socket, including ones
-/// parked on the low-prio queue (tls-semantics.md §2.6).
+/// parked on the low-prio queue (docs/tls.md §2.6).
 pub(crate) fn set_listener_backref(ssl: *mut SSL, listener: *mut c_void) {
     bssl::ssl_set_ex_data(ssl, bssl::ex_indices().listener, listener);
 }
@@ -671,7 +671,7 @@ pub(crate) fn session_events_enabled(ssl: *const SSL) -> bool {
 // ── Pending session/keylog park-then-flush queues (openssl.c:226-439) ───────
 // Both callbacks fire from INSIDE SSL_read/SSL_do_handshake; they only
 // serialize + park (caps above, wire-order preserved). Flushes happen after
-// the SSL stack unwinds (C11) — W11 dispatches the drained entries at its
+// the SSL stack unwinds (C11) — state.rs dispatches the drained entries at its
 // flush points, before delivering data.
 
 /// `us_ssl_enable_pending_events` — non-us_socket owners (SSLWrapper for

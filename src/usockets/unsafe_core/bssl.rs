@@ -1,7 +1,7 @@
 //! BoringSSL FFI edge for `tls/{context,state,sni}.rs`. Hand-declared externs
 //! (same linkage model as `bun_boringssl_sys`: no build.rs, symbols resolve
-//! against Bun's linked BoringSSL objects + root_certs.cpp). W17 may swap the
-//! extern block for pre-generated bssl-sys bindings behind these helpers.
+//! against Bun's linked BoringSSL objects + root_certs.cpp). A follow-up may swap the
+//! extern block for the pre-generated bssl-sys bindings behind these helpers.
 
 use core::ffi::{CStr, c_char, c_int, c_long, c_uint, c_void};
 use core::ptr;
@@ -213,11 +213,11 @@ unsafe extern "C" {
     fn SHA256_Init(ctx: *mut SHA256_CTX) -> c_int;
     fn SHA256_Update(ctx: *mut SHA256_CTX, data: *const c_void, len: usize) -> c_int;
     fn SHA256_Final(out: *mut u8, ctx: *mut SHA256_CTX) -> c_int;
-    // root_certs.cpp (surviving C++ — tls-semantics.md A.6).
+    // root_certs.cpp (surviving C++ — docs/tls.md A.6).
     fn us_get_default_ca_store() -> *mut X509_STORE;
     fn us_get_shared_default_ca_store() -> *mut X509_STORE;
     fn us_get_default_ciphers() -> *const c_char;
-    // SSLContextCache.rs tombstone hook (tls-semantics.md A.2).
+    // SSLContextCache.rs tombstone hook (docs/tls.md A.2).
     fn bun_ssl_ctx_cache_on_free(
         parent: *mut c_void,
         ptr: *mut c_void,
@@ -333,7 +333,7 @@ impl Sha256 {
     }
 }
 
-// ── stat for the digest cache key (tls-semantics.md A.2) ────────────────────
+// ── stat for the digest cache key (docs/tls.md A.2) ────────────────────
 
 /// `[mtime_sec, mtime_nsec, size]`; `None` on stat failure (digest feeds
 /// zeros — ctx construction then fails on the same path, entry never caches).
@@ -731,7 +731,7 @@ fn pending_pop(ssl: *mut SSL, idx: c_int, out: &mut [u8]) -> usize {
     entry.len()
 }
 
-/// Drain ALL parked sessions in arrival order (W11 dispatches at its flush
+/// Drain ALL parked sessions in arrival order (state.rs dispatches at its flush
 /// points — before data, before ZERO_RETURN close, buffer cycle, loop end).
 pub fn drain_pending_sessions(ssl: *mut SSL) -> Vec<Box<[u8]>> {
     pending_take(ssl, ex_indices().pending_session)
@@ -809,7 +809,7 @@ unsafe extern "C" fn keylog_cb(ssl: *const SSL, line: *const c_char) {
 // ── Verify plumbing (openssl.c:865-870, 1413-1440) ──────────────────────────
 
 /// Always continue: the verdict is carried in verify_error and the
-/// fail-closed decision is made by the consumer (tls-semantics.md §2.4).
+/// fail-closed decision is made by the consumer (docs/tls.md §2.4).
 unsafe extern "C" fn verify_cb(_preverify_ok: c_int, _ctx: *mut X509_STORE_CTX) -> c_int {
     1
 }
@@ -864,7 +864,7 @@ pub fn ssl_ctx_free(ctx: *mut SslCtx) {
 
 /// `SSL_CTX_new(TLS_method())` + live counter + required modes
 /// (read_ahead(1) + ACCEPT_MOVING_WRITE_BUFFER — load-bearing for the BIO
-/// design, tls-semantics.md §8.2). Returns null on allocation failure.
+/// design, docs/tls.md §8.2). Returns null on allocation failure.
 pub fn ssl_ctx_new_base() -> *mut SslCtx {
     // SAFETY: creation-only FFI.
     unsafe {

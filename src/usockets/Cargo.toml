@@ -34,3 +34,6 @@ bssl-sys = { path = "../../vendor/boringssl/rust/bssl-sys" }
 
 [target.'cfg(windows)'.dependencies]
 bun_libuv_sys.workspace = true
+# Winsock2 surface (sockaddr types, WSAE* codes, getaddrinfo) + kernel32
+# SetHandleInformation for the no-inherit (FD_CLOEXEC parity) path.
+bun_windows_sys.workspace = true

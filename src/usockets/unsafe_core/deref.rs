@@ -27,7 +27,7 @@ pub(crate) fn with_group<R>(group: *mut SocketGroup, f: impl FnOnce(&mut SocketG
 #[inline]
 pub(crate) fn with_socket<R>(s: *mut us_socket_t, f: impl FnOnce(&mut us_socket_t) -> R) -> R {
     // SAFETY: per fn contract; slab slots never move or free while the loop
-    // lives (api.md §Strategy 1); the exclusive borrow ends when `f` returns.
+    // lives (docs/design.md §Strategy 1); the exclusive borrow ends when `f` returns.
     unsafe { f(&mut *s) }
 }
 

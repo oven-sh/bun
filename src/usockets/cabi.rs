@@ -1,17 +1,17 @@
 //! extern "C" surface for surviving C/C++ consumers (uWS headers, the
 //! libuwsockets shims, quic.c, NodeTLS.cpp, JSNodeHTTPServerSocket, webview
-//! backends). Signatures per cabi-surface.md §1 + §9.1 ("minimal surface");
+//! backends). Signatures per docs/cabi.md §1 + §9.1 ("minimal surface");
 //! includes the 3 helpers moved out of the SHIM (§9.3) and the 5 accessor
 //! patches from §9.2 (us_socket_t / us_listen_socket_t / us_loop_t are opaque
 //! to all surviving C/C++; only us_socket_group_t stays public repr(C)).
 //!
 //! `us_raw_root_certs` / `us_get_root_{extra,system}_cert_instances` /
 //! `us_get_default_ca_store` are NOT exported here: root_certs*.cpp survive
-//! as C++ TUs and keep those symbols (api.md CHANGES 4, cabi-surface.md §1.7).
+//! as C++ TUs and keep those symbols (docs/cabi.md §1.7).
 //!
 //! Feature-gated OFF by default: with the C core still compiled in this
 //! tree, these `#[no_mangle]` symbols would collide at link time. The
-//! deletion shard flips the `cabi` feature on when the C is removed — and
+//! change that deletes the C flips the `cabi` feature on — and
 //! must delete the identically-named `BUN_SOCKET_KIND_*` statics in
 //! `src/uws_sys/SocketKind.rs` in the same change (duplicate Rust symbols).
 
@@ -33,7 +33,7 @@ use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketKind};
 
 /// `us_poll_t` — opaque here; the only surviving callers are quic.c's
 /// `us_poll_fd`/`us_poll_change` on `us_udp_socket_poll` handles
-/// (cabi-surface.md §3.4). Layout contract: `udp::Socket` (repr(C)) stores
+/// (docs/cabi.md §3.4). Layout contract: `udp::Socket` (repr(C)) stores
 /// the fd at offset 0 — asserted at [`us_poll_fd`].
 #[repr(C)]
 pub struct us_poll_t {
@@ -107,7 +107,7 @@ pub extern "C" fn us_loop_run(loop_: *mut Loop) {
     crate::loop_::wakeup::us_loop_run(loop_)
 }
 
-/// The ONLY thread-safe entry point (cabi-surface.md §9.3.4).
+/// The ONLY thread-safe entry point (docs/cabi.md §9.3.4).
 #[unsafe(no_mangle)]
 pub extern "C" fn us_wakeup_loop(loop_: *mut Loop) {
     crate::loop_::wakeup::us_wakeup_loop(loop_)
@@ -172,9 +172,9 @@ pub extern "C" fn us_internal_loop_quic_timer_set(
 
 /// Poll-first-member contract: the fd is at offset 0 of the handle. Only UDP
 /// handles from [`us_udp_socket_poll`] qualify (quic.c is the sole surviving
-/// caller — cabi-surface.md §3.4); `SocketHeader`'s fd offset is NOT part of
-/// this contract and must not be passed here (use `us_socket_get_fd`). P0c
-/// registry polls (`loop_::poll_registry`) are never C-visible — out of
+/// caller — docs/cabi.md §3.4); `SocketHeader`'s fd offset is NOT part of
+/// this contract and must not be passed here (use `us_socket_get_fd`). Registry
+/// polls (`loop_::poll_registry`) are never C-visible — out of
 /// contract for both `us_poll_*` fns.
 #[unsafe(no_mangle)]
 pub extern "C" fn us_poll_fd(p: *mut us_poll_t) -> LIBUS_SOCKET_DESCRIPTOR {
@@ -186,7 +186,7 @@ pub extern "C" fn us_poll_fd(p: *mut us_poll_t) -> LIBUS_SOCKET_DESCRIPTOR {
 }
 
 /// Must be callable from inside poll dispatch. `events` are the per-platform
-/// LIBUS_SOCKET_READABLE/WRITABLE values (cabi-surface.md §9.3.7).
+/// LIBUS_SOCKET_READABLE/WRITABLE values (docs/cabi.md §9.3.7).
 #[unsafe(no_mangle)]
 pub extern "C" fn us_poll_change(p: *mut us_poll_t, loop_: *mut Loop, events: c_int) {
     // SAFETY: caller passes a live poll-first handle registered with `loop_`.
@@ -304,7 +304,7 @@ pub extern "C" fn us_socket_is_shut_down(s: *mut us_socket_t) -> c_int {
 }
 
 /// Ext address is stable for the socket's lifetime — adoption is in-place
-/// (api.md §Strategy 3), so the "except across adopt" caveat is gone.
+/// (docs/design.md §Strategy 3), so the "except across adopt" caveat is gone.
 #[unsafe(no_mangle)]
 pub extern "C" fn us_socket_ext(s: *mut us_socket_t) -> *mut c_void {
     // SAFETY: nonnull socket contract.
@@ -406,7 +406,7 @@ pub extern "C" fn us_socket_unref(s: *mut us_socket_t) {
 }
 
 /// In-place re-stamp (no realloc); the return is ALWAYS the input pointer —
-/// kept in the signature for ABI stability (api.md §Strategy 3). Legal
+/// kept in the signature for ABI stability (docs/design.md §Strategy 3). Legal
 /// mid-on_data; dispatch continues with the returned pointer.
 #[unsafe(no_mangle)]
 pub extern "C" fn us_socket_adopt(
@@ -534,7 +534,7 @@ pub extern "C" fn us_get_local_address_info(
     }
 }
 
-// Moved from the SHIM (cabi-surface.md §9.3): the last C++ users of
+// Moved from the SHIM (docs/cabi.md §9.3): the last C++ users of
 // internal.h layout, now native.
 
 #[unsafe(no_mangle)]
@@ -770,7 +770,7 @@ pub extern "C" fn us_listen_socket_find_server_name_ctx(
     unsafe { ffi::listen_socket_find_server_name_ctx(ls, hostname_pattern) }
 }
 
-/// Dynamic SNI resolver; callback contract per cabi-surface.md §4.3. A null
+/// Dynamic SNI resolver; callback contract per docs/cabi.md §4.3. A null
 /// cb is a no-op (the native surface takes a non-optional resolver).
 #[unsafe(no_mangle)]
 pub extern "C" fn us_listen_socket_on_server_name(
@@ -971,7 +971,7 @@ pub extern "C" fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR) {
     io::close(fd, false)
 }
 
-// ── DNS bridge completion (loop.c:324-340; consumers/04-dns-bridge.md §1.3) ──
+// ── DNS bridge completion (loop.c:324-340; DNS-bridge contract C13) ──
 // Consumed link-time by bun_runtime::dns_jsc (dns.rs declares both as two-arg
 // extern "C"). The request pointer is unused: it was already stored on the
 // socket by the connect path (loop.c:325 parity).

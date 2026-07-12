@@ -1,4 +1,4 @@
-//! Syscall fault injection for tests. Implements core-semantics.md §11
+//! Syscall fault injection for tests. Implements docs/semantics.md §11
 //! (FAULT INJECTION) — same `us_fault_*` API and rule shape as
 //! fault_inject.c. Whole module gated on the `socket_fault_injection`
 //! feature (never in release builds).

@@ -73,7 +73,7 @@ pub fn js_vm_ctx() -> EventLoopCtx {
 // `windows_event_loop.rs`; both copies now live in `crate::keep_alive`.
 
 // ──────────────────────────────────────────────────────────────────────────
-// FilePoll — registered through the bun_usockets P0c poll registry. No raw
+// FilePoll — registered through the bun_usockets poll registry. No raw
 // epoll_ctl/kevent here: kernel mechanics live in src/usockets/backend/.
 // ──────────────────────────────────────────────────────────────────────────
 

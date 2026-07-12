@@ -1,5 +1,5 @@
-//! Consumer-facing handles. Method surface preserved verbatim from
-//! consumers/01-api-surface.md §2/§7; internals per api.md §Handle surface
+//! Consumer-facing handles. Method surface preserved verbatim from the
+//! replaced crates; internals per docs/design.md §Handle surface
 //! (`SocketRef` generational handles replace raw `*mut us_socket_t`).
 //! Stale-generation behavior == Detached behavior for every method.
 
@@ -58,7 +58,7 @@ impl CloseCode {
 /// Every operation validates the generation against the slab slot; a
 /// mismatch behaves exactly like `Detached` (no-op / 0 / None). Reading a
 /// stale slot is safe: slab memory is never returned to the OS while the
-/// loop lives (api.md §Strategy 1-2).
+/// loop lives (docs/design.md §Strategy 1-2).
 // `gen` is a reserved keyword in edition 2024, hence `generation`.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct SocketRef {
@@ -120,8 +120,7 @@ fn conn_ptr(r: ConnectingRef) -> Option<*mut ConnectingSocket> {
 // Opaque non-socket transports
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Opaque handle implemented in `bun_runtime::socket` (cycle-break shim,
-/// consumers/01-api-surface.md §10).
+/// Opaque handle implemented in `bun_runtime::socket` (cycle-break shim).
 #[repr(C)]
 pub struct UpgradedDuplex {
     _opaque: [u8; 0],
@@ -953,7 +952,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         let nn = NonNull::new(raw)?;
         // Rust kinds: the ext word IS the storage (null-niche pointer bits).
         // Group-vtable (Dynamic) kinds keep the slot's inline-ext-area pointer
-        // there instead (P0b) — stamping would clobber it. Not for them.
+        // there instead (inline ext) — stamping would clobber it. Not for them.
         debug_assert!(!crate::dispatch::uses_group_vtable(k));
         uext::header_mut(raw).ext = this.cast::<c_void>();
         Some(Self {
@@ -1122,7 +1121,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         true
     }
 
-    // ── Protocol v2 owner surface (safe-protocol.md) ─────────────────────────
+    // ── Protocol v2 owner surface (docs/design.md) ─────────────────────────
     // Attach methods TRANSFER the passed strong ref to core; core releases it
     // exactly once at the terminal (on_close / on_connect_error / silent
     // SEMI_SOCKET close). On failure the ref is released here instead.
@@ -1361,7 +1360,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             return None;
         }
         let (old_word, old_kind) = (h.ext, h.kind());
-        // api.md adoption-families invariant, release-checked: a group-vtable
+        // Adoption-family invariant (docs/design.md §Strategy 3), release-checked: a group-vtable
         // source's ext word is an inline-area pointer, not an owner ref.
         if crate::dispatch::uses_group_vtable(old_kind) {
             debug_assert!(false, "adopt_owned from a group-vtable kind {old_kind:?}");
@@ -1397,6 +1396,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             owner.deref();
             return None;
         };
+        // Shut-down sockets refuse adoption (C parity): the kind would not be
+        // restamped, so stamping the new owner would dispatch it under the
+        // old kind's ops — type confusion. Fail closed here, not per caller.
+        if uext::header_mut(p.as_ptr()).is_shutdown() {
+            owner.deref();
+            return None;
+        }
         if !crate::dispatch::owner_registered_as::<O>(kind) {
             debug_assert!(false, "adopt_tls_owned: {kind:?} not registered for this owner type");
             owner.deref();
@@ -1545,7 +1551,7 @@ impl AnySocket {
 /// Accept state (`group::ListenerData`) hangs off the header's ext word.
 /// Live only while linked into its group's `head_listen_sockets` list —
 /// caching a `*mut ListenSocket` across ticks is a documented UAF
-/// (cabi-surface.md §1.5).
+/// (docs/cabi.md §1.5).
 #[repr(C)]
 pub struct ListenSocket {
     s: SocketHeader,
@@ -1644,7 +1650,7 @@ impl ListenSocket {
         NonNull::new(sni.find_userdata(hostname).cast::<T>())
     }
 
-    /// Protocol v2 accept hook (safe-protocol.md `Listener::on_create`): runs
+    /// Protocol v2 accept hook (`Listener::on_create`, docs/design.md): runs
     /// once per accepted socket BEFORE its on_open dispatch — attach the
     /// owner via [`AnySocket::attach_owner`] inside. Replaces any prior hook;
     /// closing the listener from inside the hook drops it. Static fn + raw
@@ -1655,7 +1661,7 @@ impl ListenSocket {
         crate::group::listener_data(ls).on_create = Some((hook, ctx));
     }
 
-    /// Missing-SNI dynamic resolver registration (cabi-surface.md §4.3).
+    /// Missing-SNI dynamic resolver registration (docs/cabi.md §4.3).
     pub fn on_server_name(
         &mut self,
         cb: extern "C" fn(*mut ListenSocket, *const core::ffi::c_char, *mut c_int, *mut c_void) -> *mut c_void,

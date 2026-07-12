@@ -70,7 +70,7 @@ pub(crate) type PooledSocketHiveAllocator<const SSL: bool> =
 pub type HTTPSocket<const SSL: bool> = uws::SocketHandler<SSL>;
 
 /// What a socket's [`SocketOwner`] currently dispatches to — the safe enum
-/// replacement for the old ext tagged-pointer union (safe-protocol.md P5).
+/// replacement for the old ext tagged-pointer union (Protocol v2 — src/usockets/docs/design.md).
 #[derive(Copy, Clone)]
 pub(crate) enum ActiveSocket<const SSL: bool> {
     /// Terminal/no-op: whoever owned the socket already ran its teardown.
@@ -176,7 +176,7 @@ pub struct PooledSocket<const SSL: bool> {
     /// this socket negotiated "h2". Owned by the pool while parked.
     pub h2_session: Option<NonNull<h2::ClientSession>>,
     /// The pool's strong ref on the socket's dispatch owner while parked
-    /// (safe-protocol.md P5: pool slots hold OwnerRef). Taken in
+    /// (Protocol v2: pool slots hold OwnerRef). Taken in
     /// `release_socket`; released in `release_parked_refs`, or moved out by
     /// `existing_socket` and released after the reuse retag in `connect`.
     pub(crate) owner_ref: Option<bun_ptr::RefPtr<SocketOwner<SSL>>>,

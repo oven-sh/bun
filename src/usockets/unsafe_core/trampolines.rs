@@ -69,7 +69,7 @@ impl<H: Handler> Trampolines<H> {
         // Generation validation before the ext read: parity odd = occupied
         // (deferred-close slots stay occupied until the tick postlude, C6).
         debug_assert!(socket_slot_live(s), "ext read on a dead slab slot");
-        // Kind-registry type check (api.md handle surface): the invoked
+        // Kind-registry type check (docs/design.md §Handle surface): the invoked
         // handler is the one registered for this static kind.
         debug_assert!(
             crate::dispatch::kind_dispatches_to::<H>(socket_kind(s)),
@@ -213,7 +213,7 @@ impl<H: Handler> Trampolines<H> {
 // alias re-entrant callback state (C17).
 
 /// Slot occupancy via generation parity (odd = occupied). Vacant ⇒ the event
-/// is stale (OQ-4 structural fix, api.md CHANGES 6) and must be dropped.
+/// is stale (quirk OQ-4 structural fix — docs/semantics.md) and must be dropped.
 /// Parity cannot detect slot REUSE: stale kernel udata for a slot freed in a
 /// prior tick postlude and re-allocated has odd parity again. Safe only
 /// because deferred free (C6) covers intra-batch staleness and the backend
@@ -264,9 +264,9 @@ pub(crate) fn connecting_group_vtable(cs: *mut ConnectingSocket) -> Option<&'sta
     unsafe { (*(*cs).group).vtable }
 }
 
-// ── vtable slot invocation (NULL slot ⇒ skipped no-op, cabi-surface §4.1) ───
+// ── vtable slot invocation (NULL slot ⇒ skipped no-op, docs/cabi.md §4.1) ───
 // The `-> *mut us_socket_t` return is always the input with in-place adoption
-// (api.md §Strategy 3) and is deliberately discarded.
+// (docs/design.md §Strategy 3) and is deliberately discarded.
 
 fn c_len(len: usize) -> c_int {
     c_int::try_from(len).expect("dispatch buffer length exceeds c_int")
@@ -325,7 +325,7 @@ pub(crate) fn invoke_handshake(
 ) {
     if let Some(f) = vt.on_handshake {
         // SAFETY: slot signature matches; custom_data is always NULL
-        // (cabi-surface §2.1).
+        // (docs/cabi.md §2.1).
         unsafe { f(s, ok as c_int, err, core::ptr::null_mut()) };
     }
 }
@@ -349,7 +349,7 @@ invoke_unary! {
     invoke_end => on_end,
 }
 
-// ── Protocol v2 (safe-protocol.md): owner-guarded trampolines ───────────────
+// ── Protocol v2 (docs/design.md): owner-guarded trampolines ───────────────
 // Owner storage: the 8-byte ext word of a static (non-group-vtable) kind
 // holds a `*mut P::Owner` carrying ONE strong ref transferred by the attach
 // APIs (handle.rs). Attempt sockets of an in-flight connect carry a BORROWED
@@ -505,7 +505,7 @@ pub fn this_ptr_of<O>(o: &O) -> bun_ptr::ThisPtr<O> {
     unsafe { bun_ptr::ThisPtr::new(core::ptr::from_ref(o).cast_mut()) }
 }
 
-/// Consumer-facing SAFE owner access (Protocol v2, safe-protocol.md P5):
+/// Consumer-facing SAFE owner access (Protocol v2, docs/design.md):
 /// take a transient strong ref on the typed owner of a live socket handle.
 /// `None` for stale/detached handles, v1 kinds, owner-type mismatches, and
 /// the detached/pre-stamp (null-word) window. The caller must `deref()` (or
@@ -681,7 +681,7 @@ impl<P: Protocol> Trampolines2<P> {
     }
 }
 
-// ── P0c registry: owner-guarded poll dispatch ────────────────────────────────
+// ── poll registry: owner-guarded poll dispatch ────────────────────────────────
 
 use crate::loop_::poll_registry::{PollEvents, PollOwnerOps, PollProtocol, PollRef};
 

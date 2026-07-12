@@ -2982,7 +2982,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // DETACHED. Resetting a SEMI_SOCKET (Connected arm, handshake not yet
         // established) dispatches no terminal callback in us_socket_close —
         // core still releases its owner ref exactly once on that silent close
-        // (safe-protocol.md terminal contract) — so on_close/mark_inactive
+        // (Protocol v2 terminal contract) — so on_close/mark_inactive
         // never runs: downgrade the Strong this_value and release the
         // event-loop ref here, exactly as close() does.
         let socket = this.socket.get();

@@ -1,6 +1,9 @@
-# uSockets non-TLS core — authoritative behavioral spec
+# bun_usockets core semantics (non-TLS)
 
-Source of truth: `packages/bun-usockets/src/{loop.c, socket.c, context.c, bsd.c,
+This document specifies the behavioral contract of the non-TLS core of the
+`bun_usockets` crate (`src/usockets`), which preserves the semantics of the C
+implementation it replaced. Source of truth for the contract: the replaced C
+sources `packages/bun-usockets/src/{loop.c, socket.c, context.c, bsd.c,
 udp.c, fault_inject.c}`, `src/internal/{internal.h, loop_data.h,
 eventing/epoll_kqueue.h, eventing/libuv.h, networking/bsd.h}`,
 `src/eventing/{epoll_kqueue.c, libuv.c}`, `src/libusockets.h`.
@@ -9,8 +12,8 @@ All citations are `file:line` in `packages/bun-usockets/src/` unless prefixed.
 This fork has diverged heavily from upstream uSockets. There is **no
 `us_socket_context_t`**: its replacement is `us_socket_group_t` (embedded in the
 owner, lazily linked to the loop) plus per-socket `kind` dispatch through the
-`us_dispatch_*` externs (implemented in `src/runtime/socket/uws_dispatch.rs`).
-TLS is per-socket (`s->ssl != NULL`), not per-context. This spec covers the
+`us_dispatch_*` dispatch tables (now `src/usockets/dispatch.rs`).
+TLS is per-socket (`s->ssl != NULL`), not per-context. This document covers the
 non-TLS core; every `us_internal_ssl_*` symbol is an extern boundary into
 `crypto/openssl.c` and out of scope here, but the exact call sites and gating
 conditions where the core routes into it ARE in scope and specified.
@@ -265,7 +268,7 @@ Constants (libusockets.h:58-82):
   polls — callers must keep create/free fallthrough-symmetric (the wakeup
   async is closed via `us_internal_async_close`, which does call
   `us_poll_free`; the balance works out because the async was fallthrough=1
-  and its close also decrements — see Open Question OQ-13). On libuv
+  and its close also decrements — see quirk OQ-13). On libuv
   (libuv.c:73-91): if `p->uv_p == NULL` (poll lost ownership after resize)
   just free p; if the uv handle is mid-close, re-point `uv_p->data = p` so
   `close_cb_free_poll` frees both; else free both immediately.
@@ -329,7 +332,7 @@ Constants (libusockets.h:58-82):
   - SEMI_SOCKET: connect-completion vs accept — §6/§7.
   - SOCKET / SOCKET_SHUT_DOWN: §3.6/§4.
   - UDP: §9.
-- **R2.13** Epoll vs kqueue eventing summary (normative for the Rust rewrite):
+- **R2.13** Epoll vs kqueue eventing summary (normative for the Rust implementation):
   - epoll: level-triggered for both R and W; EPOLLERR/EPOLLHUP always
     delivered regardless of interest set; error := EPOLLERR, eof := EPOLLHUP.
     EPOLLRDHUP is never requested.
@@ -786,7 +789,7 @@ Constants (libusockets.h:58-82):
   the first enable; with all groups empty the sweep is a cheap no-op walk.
   The timer was created with fallthrough=1 → uv_unref'd (loop.c:124,
   libuv.c:265-267), so it does not keep the loop alive. Preserve this; do
-  not "fix" by actually stopping it without a decision (see OQ-16).
+  not "fix" by actually stopping it (see quirk OQ-16).
 - **R5.6** Listen sockets do NOT participate in the sweep refcount
   (init_listen_socket links into head_listen_sockets without
   enable_sweep_timer, context.c:363-366) and are never swept (they live in
@@ -1276,7 +1279,7 @@ Constants (libusockets.h:58-82):
   upstream deferring mechanism was removed. Cross-thread deferral is built
   in Bun on top of `us_wakeup_loop` + the wakeup_cb (which drains Bun's own
   concurrent task queue). The only C-side deferred queues are dns_ready
-  (R6.5) and the three closed lists (R1.15). A Rust rewrite MUST NOT invent
+  (R6.5) and the three closed lists (R1.15). The implementation MUST NOT invent
   one.
 - **R10.6** `us_internal_dns_callback[_threadsafe]` locking uses
   `Bun__lock/Bun__unlock` on `loop->data.mutex` (a Zig-implemented mutex
@@ -1326,7 +1329,7 @@ Constants (libusockets.h:58-82):
 
 ## 12. EXTERN HOOKS INTO BUN (become direct Rust calls)
 
-All are declared in internal.h / at use sites; the Rust rewrite calls the
+All are declared in internal.h / at use sites; the Rust implementation calls the
 same symbols (or their Rust homes) directly:
 
 - **R12.1** `Bun__panic(msg, len)` — noreturn; via `BUN_PANIC(lit)` macro
@@ -1376,7 +1379,11 @@ same symbols (or their Rust homes) directly:
 
 ---
 
-## OPEN QUESTIONS / APPARENT BUGS (do not silently "fix" — decide explicitly)
+## Documented C-parity quirks (OQ-1 … OQ-16)
+
+The replaced C implementation contained the following apparent bugs. Each is
+preserved deliberately as a documented quirk (callers already compensate),
+except where an entry states an explicit fix.
 
 - **OQ-1: `us_udp_socket_send` batching arithmetic is broken**
   (udp.c:54-70). `num` is decremented by `count` per batch, yet both the
@@ -1389,8 +1396,8 @@ same symbols (or their Rust homes) directly:
   arms writable; (c) the loop exits once `total_sent >= remaining`, which
   can strand later batches unsent while still returning a short count.
   Callers see the short return and handle retry themselves, which is why
-  this is latent. The Rust port must decide: bit-for-bit preserve, or fix
-  with tests — do not silently choose.
+  this is latent. The arithmetic is preserved
+  bit-for-bit: callers see the short return and retry.
 - **OQ-2: `us_socket_write` / `raw_write*` / `write2` / `ipc_write_fd`
   re-arm READABLE on paused sockets.** They all issue `us_poll_change(R|W)`
   as an absolute set on short write (socket.c:406,478,503,514,531,550,587),
@@ -1412,20 +1419,21 @@ same symbols (or their Rust homes) directly:
   A subsequent EPOLLHUP/EPOLLERR (always delivered) would surface the OLD
   (freed-after-adopt) pointer. Reachable only by adopting+resizing a socket
   that polls for nothing (fully paused half-open). kqueue re-registers both
-  filters unconditionally and doesn't have this hole.
+  filters unconditionally and doesn't have this hole. Structurally fixed here:
+  dispatch validates the slot generation, so a stale kernel pointer resolves
+  to a dead slot and the event is dropped.
 - **OQ-5: `us_connecting_socket_t` timeouts never fire during DNS
   resolution.** The sweep only walks `head_sockets`;
   `head_connecting_sockets` is never swept, so `c->timeout` is only a
   template copied onto attempt sockets (context.c:688). A hostname whose
   resolution hangs is bounded only by the resolver, not by
-  `us_connecting_socket_timeout`. Confirm this is the intended contract
-  before porting.
+  `us_connecting_socket_timeout`. This is the intended contract: the resolver bounds the DNS phase.
 - **OQ-6: low-prio parking `break`s out of the whole dispatch case**
   (loop.c:611,632), discarding a simultaneous eof/error flag for that
   event. The socket is re-dispatched later from the queue with fabricated
   `(0, 0, R)`-style events only via poll re-arm, so a coincident EOF is
-  re-learned from recv() returning 0 — behavior is preserved end-to-end but
-  the Rust port must not "helpfully" handle eof before parking.
+  re-learned from recv() returning 0 — behavior is preserved end-to-end and
+  the implementation must not "helpfully" handle eof before parking.
 - **OQ-7: adopt of a happy-eyeballs attempt assumes it is
   `connecting_head`.** context.c:307 sets `c->connecting_head = new_s`
   unconditionally; if the adopted attempt were not the list head, the other
@@ -1435,19 +1443,18 @@ same symbols (or their Rust homes) directly:
 - **OQ-8: `us_internal_bind_and_listen` writes `*error = LIBUS_ERR` even on
   success** (bsd.c:1039), i.e. `*error` may hold a stale errno from an
   unrelated earlier syscall when listen succeeds. Callers only read it on
-  failure, but the Rust port should define the out-param as
-  failure-only.
+  failure; the out-param is defined as failure-only.
 - **OQ-9: `bsd_would_block` ignores EAGAIN** (bsd.c:1009 — `|| errno ==
   EAGAIN` commented out). Identical to EWOULDBLOCK on Linux/macOS/FreeBSD/
-  Windows targets Bun supports, so no observable difference today; the Rust
-  port should decide whether to preserve the literal check or match both.
+  Windows targets Bun supports, so no observable difference today; the
+  literal check is preserved.
 - **OQ-10: SEMI_SOCKET skip test in close_raw uses a bitmask, not
   equality** (socket.c:317: `!(poll_type & POLL_TYPE_SEMI_SOCKET)`). Since
   SEMI_SOCKET == 2 and the other socket kinds are 0/1, this is equivalent
   today, but UDP (4) and CALLBACK (3=0b011!) would also test true for bit
   2... CALLBACK (3) has bit 1 set (0b11): `3 & 2 = 2` → a CALLBACK poll
   would be treated as SEMI_SOCKET here. close_raw is never called on
-  CALLBACK polls, so latent-only. Port as `kind == SEMI_SOCKET`.
+  CALLBACK polls, so latent-only. Implemented as `kind == SEMI_SOCKET` (equality).
 - **OQ-11: `us_socket_write` on fatal errors polls writable forever.** By
   design (R4.1) fatal send errors look like would-block until the error
   event arrives; on kqueue the EVFILT_WRITE re-add generally reports
@@ -1467,12 +1474,12 @@ same symbols (or their Rust homes) directly:
   On macOS/FreeBSD the async is `us_calloc`'d directly (not via
   us_create_poll) yet still honors `fallthrough` for the increment
   (epoll_kqueue.c:683-685, 815-817) and frees via us_poll_free — same
-  asymmetry. Port the exact arithmetic, not the ideal.
+  asymmetry. The exact arithmetic is preserved, not the ideal.
 - **OQ-14: DNS keep-alive uses `num_polls++` on POSIX**
   (context.c:625-629) — a pending resolution keeps `us_loop_run` alive by
   faking a poll. `us_loop_run_bun_tick`'s `num_polls == 0` early-return
-  interacts with this too. The Rust loop must reproduce this counter
-  semantics, not replace it with a separate pending count.
+  interacts with this too. The loop reproduces this counter
+  semantics rather than a separate pending count.
 - **OQ-15: `us_socket_group_connect`'s header comment names the out-param
   `is_connecting`** (libusockets.h:378-386) with the opposite polarity of
   the implementation's `has_dns_resolved` (context.c:570): the value is 1

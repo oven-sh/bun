@@ -535,7 +535,7 @@ impl UDPSocket {
     /// (C15: no callback after `on_close`); JS-running callbacks then extend
     /// liveness across user JS via [`dispatch_guard`]. The raw deref is the
     /// residue: core UDP keeps the C-shape surface (`user()` = `*mut c_void`,
-    /// no Protocol-v2 owner registry — safe-protocol.md covers TCP kinds
+    /// no Protocol-v2 owner registry — the owner registry covers TCP kinds
     /// only). Mutated fields are `Cell`/`JsCell`, so `&self` suffices (R-2).
     #[inline]
     fn from_uws<'a>(socket: *mut udp::Socket) -> &'a UDPSocket {

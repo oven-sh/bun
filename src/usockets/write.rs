@@ -1,9 +1,9 @@
 //! Write path: write/write2/raw_write(v)/write_check_error/flush, sendfile
-//! marker, IPC fd write (SCM_RIGHTS). Implements core-semantics.md §4:
+//! marker, IPC fd write (SCM_RIGHTS). Implements docs/semantics.md §4:
 //! ENOBUFS/ENOMEM are would-block (return 0), <0 is fatal, no MSG_MORE;
 //! on_writable fires after kernel drain; the paused bit resets on pool reuse
 //! (contract C7). The JS stream buffer (`us_socket_stream_buffer_t`) is NOT
-//! here — it lives above the core and survives unchanged (api.md CHANGES 7).
+//! here — it lives above the core (docs/design.md §Resolved design decisions).
 
 use core::ffi::c_void;
 

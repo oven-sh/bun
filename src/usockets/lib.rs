@@ -1,18 +1,16 @@
-//! `bun_usockets` — Rust rewrite of the uSockets C core. FROZEN API SKELETON.
+//! `bun_usockets` — native Rust implementation of the uSockets core.
 //!
-//! Architecture: .rewrite-specs/api.md (binding). Behavioral rules:
-//! .rewrite-specs/core-semantics.md + tls-semantics.md. C boundary:
-//! .rewrite-specs/cabi-surface.md. Consumer surface:
-//! .rewrite-specs/consumers/*.md.
+//! Architecture: docs/design.md. Behavioral rules: docs/semantics.md +
+//! docs/tls.md. C boundary: docs/cabi.md.
 //!
-//! Unsafe policy (api.md §Strategy 5): `unsafe` is confined to `unsafe_core/`
+//! Unsafe policy (docs/design.md §Strategy 5): `unsafe` is confined to `unsafe_core/`
 //! (slab, ext downcast, syscall/FFI edges, trampolines) plus the `cabi`
 //! extern "C" export module. Everything else compiles under `deny(unsafe_code)`;
-//! the handful of `unsafe fn` API items the frozen surface requires carry
-//! item-level allows with a `SKELETON` note.
+//! the handful of `unsafe fn` API items the surface requires carry
+//! item-level allows.
 #![deny(unsafe_code)]
-// FROZEN SKELETON: stub bodies (`todo!`) leave parameters and internal fields
-// unread. Writers remove these two allows as modules gain real bodies.
+// The unfinished Windows port keeps `todo!` stubs whose parameters and
+// fields are unread; these two allows cover them until it lands.
 #![allow(dead_code, unused_variables)]
 #![allow(non_camel_case_types)]
 
@@ -31,7 +29,7 @@ pub mod tls;
 pub mod udp;
 pub mod write;
 
-// The ONLY modules allowed to contain `unsafe` (api.md crate layout).
+// The ONLY modules allowed to contain `unsafe` (docs/design.md §Strategy 5).
 #[allow(unsafe_code)]
 pub mod unsafe_core;
 
@@ -56,9 +54,9 @@ pub const LIBUS_SOCKET_ERROR: LIBUS_SOCKET_DESCRIPTOR = -1;
 #[cfg(windows)]
 pub const LIBUS_SOCKET_ERROR: LIBUS_SOCKET_DESCRIPTOR = usize::MAX; // INVALID_SOCKET
 
-/// Ext regions (loop ext, socket ext) are aligned to this (cabi-surface.md §8).
+/// Ext regions (loop ext, socket ext) are aligned to this (docs/cabi.md §8).
 pub const LIBUS_EXT_ALIGNMENT: usize = 16;
-/// Shared per-loop receive buffer length (cabi-surface.md §8).
+/// Shared per-loop receive buffer length (docs/cabi.md §8).
 pub const LIBUS_RECV_BUFFER_LENGTH: usize = 524288;
 /// Over-read guard on both ends of `recv_buf` for SIMD unmasking.
 pub const LIBUS_RECV_BUFFER_PADDING: usize = 32;
@@ -112,7 +110,7 @@ pub use tls::context::{
 };
 pub use write::UsIoVec;
 
-/// Legacy aliases preserved from `bun_uws` (consumers/01-api-surface.md §13).
+/// Legacy aliases preserved from `bun_uws`.
 pub type CloseKind = CloseCode;
 pub type DispatchKind = SocketKind;
 pub type Socket = us_socket_t;

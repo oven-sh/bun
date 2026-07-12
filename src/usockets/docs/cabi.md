@@ -1,6 +1,7 @@
-# uSockets → Rust rewrite: frozen C-ABI surface contract
+# bun_usockets: frozen C-ABI surface contract
 
-Scope: `packages/bun-usockets/src/**` C is deleted and replaced by a native Rust crate.
+Scope: the C under `packages/bun-usockets/src/**` was deleted and replaced by the
+native Rust crate (`src/usockets`).
 Surviving native consumers that must keep linking against the crate's `extern "C"` surface:
 
 | Tag | Consumer | Files |
@@ -155,13 +156,11 @@ its owners — see §3.1.
 | `SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t, enum create_bun_socket_error_t *)` | QUIC (extern-declared locally) | Same as from_options but without socket-layer callbacks attached (QUIC installs lsquic's own). |
 | `X509_STORE *us_get_default_ca_store()` | QUIC | Bun's default trust store (root_certs.cpp). |
 
-**Decision flag:** `crypto/root_certs*.cpp`, `crypto/sni_tree.cpp` are C++ TUs inside
-bun-usockets. If they survive the rewrite as C++ (recommended for the PR), the NTLS +
-`us_get_default_ca_store` rows come from them unchanged and only `crypto/openssl.c` (C)
-moves to Rust — which must then export `us_ssl_ctx_from_options`, `us_ssl_ctx_build_raw`,
+**Crypto TU split:** `crypto/root_certs*.cpp` stays a C++ TU inside bun-usockets —
+the NTLS + `us_get_default_ca_store` rows come from it unchanged. `crypto/sni_tree.cpp`
+was replaced by `tls/sni.rs`, and `crypto/openssl.c` by the Rust TLS layer, which
+exports `us_ssl_ctx_from_options`, `us_ssl_ctx_build_raw`,
 `us_internal_ssl_ctx_{up_ref,unref}`, and the internal SSL surface the socket layer uses.
-If they are rewritten too, the `STACK_OF(X509)*` returns become part of the Rust ABI
-(raw `stack_st_X509*`).
 
 ### 1.8 UDP + packet buffer (QUIC is the only surviving C consumer)
 
@@ -181,7 +180,7 @@ All other UDP functions (`bind`, `send`, `receive`, `set_broadcast`, `connect`,
 `disconnect`, memberships, TTL, `bound_port`, `bound_ip`, `remote_ip`,
 `us_create_udp_packet_buffer`, `us_udp_buffer_set_packet_payload`,
 `us_udp_packet_buffer_truncated`, `us_udp_packet_buffer_local_ip`) are consumed **only by
-Rust** (`src/uws_sys/udp.rs` → node:dgram) — native after the rewrite.
+Rust** (`src/uws_sys/udp.rs` → node:dgram) — now native calls.
 
 ### 1.9 QUIC layer (quic.c EXPORTS — for completeness, NOT part of the Rust crate)
 
@@ -209,8 +208,8 @@ identical semantics:
    (custom_data always NULL), `us_dispatch_session`, `us_dispatch_keylog`,
    `us_dispatch_ssl_raw_tap`. The loop NEVER reads `group->vtable` itself — dispatch
    switches on `s->kind` and falls back to the group vtable for `UwsHttp{,Tls}`,
-   `UwsWs{,Tls}`, and `Dynamic`. After the rewrite these can become direct Rust calls,
-   but the vtable-for-C++-kinds path must survive unchanged.
+   `UwsWs{,Tls}`, and `Dynamic`. For Rust-handled kinds these are direct Rust calls,
+   but the vtable-for-C++-kinds path survives unchanged.
 2. **quic.c hooks** — from `us_internal_loop_pre` AND `us_internal_loop_post`:
    `if (loop->data.quic_head) us_quic_loop_process(loop);`. On libuv loop teardown:
    `us_timer_close(loop->data.quic_timer, 0)` if set.
@@ -287,8 +286,8 @@ TU seeing the full internal.h definition. (Shrink candidate, §9.)
   loop alive per live QUIC connection).
 - `us_internal_loop_data_t` is already mirrored field-for-field in
   `src/uws_sys/InternalLoopData.rs` (comment at `internal/loop_data.h:35`); the Rust
-  runtime reads `quic_next_tick_us` through that mirror. **After the rewrite the Rust
-  definition becomes the source of truth; quic.c needs a C header that matches it
+  runtime reads `quic_next_tick_us` through that mirror. **The Rust
+  definition is the source of truth; quic.c needs a C header that matches it
   exactly** (fields incl. `sweep_next_tick_ns`/`sweep_timer`, `sweep_timer_count`,
   `wakeup_async`, `head`, `quic_head`, `quic_next_tick_us`, `[quic_timer]`, `iterator`,
   `recv_buf`, `send_buf`, `ssl_data`, `pre_cb`, `post_cb`, `closed_udp_head`,
@@ -336,7 +335,7 @@ references `BUN_SOCKET_KIND_BUN_SOCKET_TLS`.
 
 ### 4.1 Group vtable (installed by C++: httpVTable, wsVTable, webview vtables)
 
-Invocation path after rewrite: Rust loop → `us_dispatch_*` (uws_dispatch.rs) → for kinds
+Invocation path: Rust loop → `us_dispatch_*` (`dispatch.rs`) → for kinds
 UwsHttp/UwsHttpTls/UwsWs/UwsWsTls/Dynamic → `s->group->vtable` slot. Contracts the C++
 handlers assume:
 
@@ -419,7 +418,7 @@ must be a no-op on a closed socket.
 Functions: `us_create_udp_socket`, `us_udp_socket_close`, `us_udp_socket_user`,
 `us_udp_packet_buffer_{payload,payload_length,peer}`, `us_poll_fd`, `us_poll_change`,
 `us_create_timer`/`us_timer_set`/`us_timer_loop` (libuv only), `us_ssl_ctx_build_raw`,
-`us_get_default_ca_store` (§1.7 decision flag).
+`us_get_default_ca_store` (§1.7).
 
 Loop integration:
 - Fields (§3.5): `loop->data.quic_head`, `loop->data.quic_next_tick_us`,
@@ -434,7 +433,7 @@ Loop integration:
 - Constants: `LIBUS_SOCKET_READABLE/WRITABLE` (platform values! EPOLLIN/EPOLLOUT vs 1/2
   kqueue vs UV_READABLE/UV_WRITABLE), `LIBUS_SOCKET_DESCRIPTOR`, `LIBUS_SOCKET_ERROR`
   (-1 / INVALID_SOCKET), `LIBUS_RECV_BUFFER_LENGTH`.
-- Headers: quic.c includes `internal/internal.h` — after the rewrite it needs a C header
+- Headers: quic.c used to include `internal/internal.h` — it now needs a C header
   delivering: the `us_internal_loop_data_t` + `us_loop_t` + `us_poll_t` layouts (or §9
   accessors), the function decls above, and `zig_mutex_t`.
 - quic.c also calls libc directly (`getsockname`, `setsockopt` DF bits) on
@@ -516,7 +515,7 @@ Listen/SNI (7): `us_listen_socket_close`, `us_listen_socket_next`,
 SSL/certs (7): `us_ssl_ctx_from_options`, `us_internal_ssl_ctx_unref`,
 `us_ssl_ctx_build_raw`, `us_get_default_ca_store`, `us_raw_root_certs`,
 `us_get_root_extra_cert_instances`, `us_get_root_system_cert_instances`
-(last 4 stay in surviving C++ TUs if crypto/*.cpp is kept — §1.7 decision).
+(last 4 come from the surviving C++ crypto TUs — §1.7).
 UDP (6): `us_create_udp_socket`, `us_udp_socket_close`, `us_udp_socket_user`,
 `us_udp_packet_buffer_payload`, `us_udp_packet_buffer_payload_length`,
 `us_udp_packet_buffer_peer`.
@@ -524,12 +523,12 @@ Data statics (5): `BUN_SOCKET_KIND_*` (already Rust).
 
 **≈ 62 functions + 8 repr(C) types** (`us_socket_group_t`, `us_socket_vtable_t`,
 `us_bun_socket_context_options_t`, `us_bun_verify_error_t`, `us_cert_string_t`,
-`us_iovec_t`, `enum create_bun_socket_error_t`, and — only until 9.2/9.4 land —
+`us_iovec_t`, `enum create_bun_socket_error_t`, and — only where the §9.2 accessors are not applied —
 `us_socket_t`/`us_listen_socket_t`/`us_poll_t`/`us_loop_t`/`us_internal_loop_data_t`
-partial layouts). Everything else in libusockets.h/internal.h is Rust-internal after the
-rewrite (the ~115 `us_*` fns declared in `src/uws_sys/*.rs` become native calls).
+partial layouts). Everything else in libusockets.h/internal.h is Rust-internal
+(the ~115 `us_*` fns declared in `src/uws_sys/*.rs` are native calls).
 
-### 9.2 Shrink: kill the C++ field pokes (recommended, tiny C++ patches)
+### 9.2 Eliminating the C++ field pokes (tiny C++ accessor patches)
 
 1. **`App.h::closeIdle`** (`group->head_sockets`, `s->next`): add
    `struct us_socket_t *us_socket_group_head_socket(us_socket_group_r)` and

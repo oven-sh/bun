@@ -1,8 +1,8 @@
-//! kqueue backend (macOS/FreeBSD). Implements core-semantics.md §1-2 poll
+//! kqueue backend (macOS/FreeBSD). Implements docs/semantics.md §1-2 poll
 //! mechanics: kevent64 changelists with KEVENT_FLAG_ERROR_EVENTS errno
 //! mirroring, level-triggered EVFILT_READ + one-shot EVFILT_WRITE (incl. the
 //! zero-events add-oneshot-WRITE-for-FIN rule), two-pass per-poll coalesce.
-//! All udata are untagged slot pointers (P10 removed the tagged-pointer
+//! All udata are untagged slot pointers (the poll registry removed the tagged-pointer
 //! FilePoll back-channel).
 
 use core::ptr;
@@ -173,6 +173,16 @@ pub(crate) fn poll_stop(p: *mut PollState, loop_: *mut Loop) {
     let old_events = st.events();
     if !old_events.is_empty() {
         kqueue_change(poll_access::loop_fd(loop_), st.fd(), old_events, Events::NONE, 0);
+    } else {
+        // believed-NONE can still have an armed one-shot EVFILT_WRITE with
+        // real slot udata (pause -> raw_shutdown). Detach paths keep the fd
+        // open, so no close-DEL destroys the knote: delete both filters.
+        let kqfd = poll_access::loop_fd(loop_);
+        let fd = st.fd();
+        let mut rd = [poll_access::make_kev(fd, libc::EVFILT_READ, libc::EV_DELETE, 0)];
+        poll_access::kevent_error_events(kqfd, &mut rd);
+        let mut wr = [poll_access::make_kev(fd, libc::EVFILT_WRITE, libc::EV_DELETE, 0)];
+        poll_access::kevent_error_events(kqfd, &mut wr);
     }
     backend::update_pending_ready_polls(loop_, p, ptr::null_mut(), old_events, Events::NONE);
 }
@@ -197,7 +207,7 @@ pub(crate) fn accept_poll_event(_p: *mut PollState) -> u64 {
     0
 }
 
-// ── P0c registry sources ─────────────────────────────────────────────────────
+// ── poll registry sources ─────────────────────────────────────────────────────
 // Registry Fd polls are LEVEL-triggered in both directions — the socket
 // oneshot-WRITE / zero-events-FIN rules above do not apply to them.
 
@@ -214,7 +224,7 @@ const NOTE_MEMORYSTATUS_PRESSURE_CRITICAL: u32 = 0x00000004;
 /// One submission per filter (same discipline as `Kqueue::remove`):
 /// FreeBSD's no-ERROR_EVENTS shim can abort a batched changelist at the
 /// first error, which would leave the second filter's knote armed with
-/// soon-stale udata (W2). Returns the first nonzero rc plus the interest
+/// soon-stale udata (disarm-before-free). Returns the first nonzero rc plus the interest
 /// actually reached (a failed filter keeps its old bit), so callers commit
 /// only kernel truth to the slot.
 fn registry_fd_delta(
@@ -404,7 +414,7 @@ const FL_WRITABLE: u8 = 1 << 1;
 const FL_ERROR: u8 = 1 << 2;
 const FL_EOF: u8 = 1 << 3;
 const FL_SKIP: u8 = 1 << 4;
-/// P0c registry poll: dispatched per-kevent in pass 2 (no coalesce) so the
+/// poll registry poll: dispatched per-kevent in pass 2 (no coalesce) so the
 /// filter payload (fflags/data) survives to the handler.
 const FL_REGISTERED: u8 = 1 << 5;
 
@@ -493,7 +503,7 @@ pub(crate) fn dispatch_ready_polls(loop_: *mut Loop) {
             coalesced[i as usize] = FL_SKIP;
             continue;
         }
-        // P0c registry entries skip the coalesce entirely — pass 2 dispatches
+        // poll registry entries skip the coalesce entirely — pass 2 dispatches
         // each kevent with its filter payload intact.
         if is_registered_udata(udata) {
             coalesced[i as usize] = FL_REGISTERED;

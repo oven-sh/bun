@@ -1,8 +1,8 @@
 //! `us_socket_group_t` — PUBLIC repr(C), embedded by value in its owner
 //! (Listener, VirtualMachine RareData, uWS App, HTTPThread). Layout FROZEN
-//! (cabi-surface.md §3.1: uWS C++ embeds it and static_asserts offset/size).
+//! (docs/cabi.md §3.1: uWS C++ embeds it and static_asserts offset/size).
 //! Zero-initialization must remain a valid pre-init state. Semantics per
-//! core-semantics.md §3 (group lifecycle, linkage, adopt, close_all),
+//! docs/semantics.md §3 (group lifecycle, linkage, adopt, close_all),
 //! §6 (connect entry), §7 (listen/accept). Socket close/dispatch paths live
 //! in socket.rs and call back into the linkage helpers here.
 
@@ -46,9 +46,9 @@ pub struct SocketGroup {
 }
 
 /// Per-group C vtable (`us_socket_vtable_t`) — 11 slots, order FROZEN
-/// (cabi-surface.md §3.7). NULL slots are skipped by dispatch. The C ABI keeps
+/// (docs/cabi.md §3.7). NULL slots are skipped by dispatch. The C ABI keeps
 /// the `-> *mut us_socket_t` return for stability, but with in-place adoption
-/// it is always the input pointer (api.md §Strategy 3).
+/// it is always the input pointer (docs/design.md §Strategy 3).
 #[repr(C)]
 pub struct VTable {
     pub on_open:
@@ -141,7 +141,7 @@ pub(crate) struct ListenerData {
     pub(crate) ssl_ctx: *mut SslCtx,
     /// Server-name tree; lazily created by `add_server_name`.
     pub(crate) sni: Option<Box<SniMap>>,
-    /// Dynamic missing-SNI resolver (cabi-surface.md §4.3).
+    /// Dynamic missing-SNI resolver (docs/cabi.md §4.3).
     pub(crate) on_server_name: Option<OnServerName>,
     /// Ext size stamped onto every accepted socket.
     pub(crate) socket_ext_size: c_int,
@@ -151,7 +151,7 @@ pub(crate) struct ListenerData {
     pub(crate) deferred_accept: bool,
     /// Owner word backing `ListenSocket::ext<T>()` (8-byte slot).
     pub(crate) owner_ext: *mut c_void,
-    /// Protocol v2 accept hook (safe-protocol.md `Listener::on_create`): runs
+    /// Protocol v2 accept hook (`Listener::on_create`, docs/design.md): runs
     /// per accepted socket BEFORE its on_open so the handler sees the owner.
     /// Static fn + context word — the accept path stays allocation-free.
     pub(crate) on_create: Option<(fn(*mut c_void, crate::handle::AnySocket), *mut c_void)>,
@@ -228,7 +228,7 @@ impl SocketGroup {
     }
 
     /// Raw `ext` word for the C accessor surface — nullable, unlike `owner`
-    /// (per-kind VM groups init with null; cabi-surface.md §1.5).
+    /// (per-kind VM groups init with null; docs/cabi.md §1.5).
     pub(crate) fn ext_raw(&self) -> *mut c_void {
         self.ext
     }
@@ -243,7 +243,7 @@ impl SocketGroup {
     /// Listener owns embedded accept state; accepted sockets get `kind`
     /// stamped, `socket_ext_size` ext, link into THIS group. `*err` receives
     /// an errno-ish code on null return (failure-only write, OQ-8 resolved).
-    /// core-semantics.md §7 (R7.2). CONTRACT (P0b): `socket_ext_size` is the
+    /// docs/semantics.md §7 (R7.2). CONTRACT: `socket_ext_size` is the
     /// adoption FAMILY's max — capacity is fixed here; larger adopts panic.
     pub fn listen(
         &mut self,
@@ -311,7 +311,7 @@ impl SocketGroup {
 
     /// May return a synchronous `Socket` (DNS already resolved), a
     /// `Connecting` placeholder, or `Failed`. May dispatch connect_error
-    /// synchronously before returning (C5). core-semantics.md §6 (R6.2).
+    /// synchronously before returning (C5). docs/semantics.md §6 (R6.2).
     pub fn connect(
         &mut self,
         kind: SocketKind,
@@ -566,7 +566,7 @@ pub(crate) fn close_all_ex(group: *mut SocketGroup, also_listeners: bool) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Listen / accept (core-semantics.md §7)
+// Listen / accept (docs/semantics.md §7)
 // ──────────────────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -710,7 +710,7 @@ pub(crate) fn on_accept_poll_ready(ls: *mut ListenSocket) {
         // drops the ListenerData box (no borrow may span the call).
         if let Some((hook, ctx)) = listener_data(ls).on_create {
             hook(ctx, crate::unsafe_core::trampolines::any_socket(s));
-            // Spec-shape deviation (safe-protocol.md has on_create RETURN the
+            // Design-shape deviation (docs/design.md has on_create SUPPLY the
             // owner): the hook attaches manually — surface a forgotten attach.
             debug_assert!(
                 header_mut(s).is_closed()
@@ -722,7 +722,7 @@ pub(crate) fn on_accept_poll_ready(ls: *mut ListenSocket) {
         if !header_mut(s).is_closed() {
             socket::socket_open(s, false, addr.ip());
         }
-        // In-place adoption (api.md §Strategy 3): `s` stays the live pointer
+        // In-place adoption (docs/design.md §Strategy 3): `s` stays the live pointer
         // even if a callback adopted it — no forwarding needed (vs R3.6).
 
         if deferred && !header_mut(s).is_closed() {
@@ -789,7 +789,7 @@ pub(crate) fn close_listen_socket(ls: *mut ListenSocket) {
 /// Clear the per-SSL listener backref (== `ls`) on every accepted socket
 /// still alive: `head_sockets` AND the low-prio-parked population, which is
 /// unlinked from `head_sockets` and is exactly the mid-handshake set that
-/// runs SNI resolution next tick (openssl.c:2537-2570, tls-semantics §2.6).
+/// runs SNI resolution next tick (openssl.c:2537-2570, docs/tls.md §2.6).
 fn wipe_listener_backrefs(group: *mut SocketGroup, loop_: *mut Loop, ls: *mut ListenSocket) {
     let target = ls.cast::<c_void>();
     let mut s = deref_mut(group).head_sockets;
@@ -933,7 +933,7 @@ pub(crate) fn connect_attempt(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Adopt (R3.5, in-place — api.md §Strategy 3; contract C10). The
+// Adopt (R3.5, in-place — docs/design.md §Strategy 3; contract C10). The
 // connect_state fixup half of R3.5 lives in `SocketHeader::adopt`.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -945,7 +945,7 @@ pub(crate) fn adopt_socket(s: *mut us_socket_t, group: *mut SocketGroup, kind: S
         return;
     }
     // Adoption stays within one ext-storage family (word vs inline area);
-    // crossing families would reinterpret the ext word (api.md Strategy 3).
+    // crossing families would reinterpret the ext word (docs/design.md §Strategy 3).
     debug_assert!(
         dispatch::uses_group_vtable(header_mut(s).kind) == dispatch::uses_group_vtable(kind)
     );
@@ -1003,7 +1003,7 @@ pub(crate) fn adopt_tls_socket(
 /// Release whatever the header's `ext` word owns; called from the
 /// closed-socket drain right before the slab slot is returned. Rust kinds
 /// own nothing (the word is the consumer's back-pointer); group-vtable ext
-/// is inline in the slab slot (P0b) and dies with it; listeners normally
+/// is inline in the slab slot and dies with it; listeners normally
 /// dropped their `ListenerData` in `close_listen_socket` already (null here).
 pub(crate) fn free_socket_ext(s: *mut us_socket_t) {
     let (kind, ext) = {

@@ -2235,7 +2235,7 @@ pub mod cache {
                 // `ptr` is non-null, aligned, and `ptr[..len]` is initialized
                 // and valid for shared reads for at least `'_`. Cannot be a
                 // `bun_ptr::RawSlice` field without breaking `src/bundler/`
-                // struct-literal constructors (out-of-shard).
+                // struct-literal constructors.
                 Contents::SharedBuffer { ptr, len } | Contents::External { ptr, len } => unsafe {
                     core::slice::from_raw_parts(*ptr, *len)
                 },

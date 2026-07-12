@@ -65,7 +65,7 @@ pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
 #[path = "ssl_config.rs"]
 pub mod ssl_config;
 pub use ssl_config::SSLConfig;
-// SSLWrapper lives in the shim crate (api.md CHANGES 3); re-export here so
+// SSLWrapper lives in the shim crate; re-export here so
 // `crate::ssl_wrapper::SSLWrapper` resolves for ProxyTunnel/HTTPContext.
 pub use bun_uws_shim::ssl_wrapper;
 pub use bun_uws_shim::ssl_wrapper::SSLWrapper;

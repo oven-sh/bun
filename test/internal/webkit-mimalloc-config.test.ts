@@ -1,12 +1,6 @@
-/**
- * Build-config regression tests for WebKit -mimalloc prebuilt selection
- * (scripts/build/config.ts + deps/webkit.ts): the Linux glibc release
- * default, its gating, the preview version pin with its commit→tag release
- * mapping, and the local-mode CMake options.
- *
- * These exercise configure-time logic only — no compiler or download is
- * involved — so they run on every platform.
- */
+/** Build-config regression tests for WebKit -mimalloc prebuilt selection:
+ * the Linux glibc release default and its gating, the preview pin's
+ * commit-to-tag mapping, and local-mode CMake options. Configure-time only. */
 import { describe, expect, test } from "bun:test";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";

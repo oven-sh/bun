@@ -1243,7 +1243,7 @@ impl FFI {
             }
             match &function.step {
                 Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global_this);
+                    let res = failed_step_error(global_this, msg);
                     return Err(global_this.throw_value(res));
                 }
                 Step::Pending => {
@@ -1339,13 +1339,7 @@ impl FFI {
             return Ok(ZigString::init(b"Out of memory").to_error_instance(global_this));
         }
         match &func.step {
-            Step::Failed { msg, .. } => {
-                // `create_error_instance` copies `msg` into the error synchronously;
-                // `ZigString::init` only borrows the heap `msg`, which is freed with
-                // `func` before JS reads the message (yielding garbage bytes).
-                let message = global_this.create_error_instance(format_args!("{}", BStr::new(msg)));
-                Ok(message)
-            }
+            Step::Failed { msg, .. } => Ok(failed_step_error(global_this, msg)),
             Step::Pending => Ok(ZigString::init(
                 b"Failed to compile, but not sure why. Please report this bug",
             )
@@ -1467,6 +1461,13 @@ impl FFI {
 /// The exception is not thrown on the VM.
 fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
     global.to_invalid_arguments(format_args!("Expected an options object with symbol names"))
+}
+
+/// Error instance for a `Step::Failed` compile message. `create_error_instance`
+/// copies `msg` into an owned buffer; `ZigString::init` would only borrow it, and
+/// `msg` is freed with its `Function` before JS reads `.message` (a UAF).
+fn failed_step_error(global: &JSGlobalObject, msg: &[u8]) -> JSValue {
+    global.create_error_instance(format_args!("{}", BStr::new(msg)))
 }
 
 impl FFI {
@@ -1617,7 +1618,7 @@ impl FFI {
             }
             match &function.step {
                 Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global);
+                    let res = failed_step_error(global, msg);
                     dylib.close();
                     return res;
                 }
@@ -1713,10 +1714,7 @@ impl FFI {
                 return ret;
             }
             match &function.step {
-                Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global);
-                    return res;
-                }
+                Step::Failed { msg, .. } => return failed_step_error(global, msg),
                 Step::Pending => {
                     return ZigString::static_(b"Failed to compile (nothing happend!)")
                         .to_error_instance(global);

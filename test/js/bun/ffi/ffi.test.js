@@ -20,7 +20,11 @@ const dlopen = (...args) => {
   try {
     return _dlopen(...args);
   } catch (err) {
-    console.error(`Failed to dlopen the ffi test fixture (${dlopenFixturePath}).`);
+    // Only a fixture load failing is noteworthy; several tests intentionally
+    // dlopen a bad path (e.g. "nonexistent"), and those must not log this.
+    if (args[0] === dlopenFixturePath) {
+      console.error(`Failed to dlopen the ffi test fixture (${dlopenFixturePath}).`);
+    }
     throw err;
   }
 };

@@ -463,7 +463,6 @@ impl UploadPart {
             MultiPartUpload::deref_(this.ctx.as_ptr());
             return;
         }
-        // TODO: properly propagate exception upwards
         let _ = this.perform();
     }
 
@@ -607,7 +606,6 @@ impl MultiPartUpload {
         let this = unsafe { &mut *this };
         this.retry_timer.state = EventLoopTimerState::FIRED;
         let action = core::mem::replace(&mut this.pending_retry, PendingRetry::None);
-        // TODO: properly propagate exception upwards
         let _ = match action {
             PendingRetry::SingleFile => this.send_single_file_request(),
             PendingRetry::Commit => this.commit_multi_part_request(),
@@ -1173,7 +1171,7 @@ impl MultiPartUpload {
             );
             self.state = State::SinglefileStarted;
             // we can do only 1 request
-            let _ = self.send_single_file_request(); // TODO: properly propagate exception upwards
+            let _ = self.send_single_file_request();
         } else {
             // we need to split
             let _ = self.process_multi_part(part_size); // TODO: properly propagate exception upwards

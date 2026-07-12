@@ -19,14 +19,6 @@
 
 # Tests that are broken
 
-# bun has no --interactive flag; the spawned child prints help and exits
-# immediately, so the test's two stdin.write() calls race against the pipe
-# closing. On Windows that race loses ~60% of the time (18/30 runs) and the
-# unhandled EPIPE fails the file. The test is vacuous until PR #31827 lands a
-# real --interactive REPL; quarantined on all Windows lanes (was aarch64-only
-# before, but x64/x64-baseline flake just as hard, see build 72075).
-[ WINDOWS ] test/js/node/test/parallel/test-repl-close.js [ FAIL ] # EPIPE race: --interactive is unimplemented so child exits before stdin.write
-
 # The whole file's beforeAll builds a napi addon with node-gyp, and the Windows
 # agents have no ClangCL toolset ("MSB8020: The build tools for ClangCL cannot
 # be found"), so nothing in the file can run there. Remove once the agent image

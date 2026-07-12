@@ -939,6 +939,60 @@ describe.concurrent("Bun REPL", () => {
   });
 });
 
+// `bun --interactive` is Node.js compat for `node --interactive`: it forces
+// the REPL even when stdin is not a TTY. Before this was wired up, bun printed
+// the help text and exited immediately, so the parent's stdin writes in
+// test/js/node/test/parallel/test-repl-close.js raced the closing pipe and hit
+// EPIPE on Windows.
+describe.concurrent("bun --interactive", () => {
+  async function runInteractive(input: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--interactive"],
+      stdin: Buffer.from(input),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1" },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stripAnsi(stdout), stderr: stripAnsi(stderr), exitCode };
+  }
+
+  test("starts the REPL instead of printing help", async () => {
+    const { stdout, stderr, exitCode } = await runInteractive(".exit\n");
+    expect(stdout).toContain("Welcome to Bun");
+    expect(stdout).not.toContain("Usage: bun <command>");
+    expect(stderr).not.toMatch(/unrecognized|unknown/i);
+    expect(exitCode).toBe(0);
+  });
+
+  test("reads piped stdin and evaluates an expression", async () => {
+    const { stdout, exitCode } = await runInteractive("6133 * 7\n.exit\n");
+    expect(stdout).toContain("42931");
+    expect(exitCode).toBe(0);
+  });
+
+  test("handles `await null;` then .exit without an uncaught error (test-repl-close)", async () => {
+    const { stdout, stderr, exitCode } = await runInteractive("await null;\n.exit\n");
+    expect(stdout + stderr).not.toMatch(/Uncaught Error/);
+    expect(stdout).toContain("null");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a script positional still wins over --interactive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--interactive", "-e", "console.log('from eval')"],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, NO_COLOR: "1" },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stripAnsi(stdout)).toBe("from eval\n");
+    expect(stripAnsi(stdout)).not.toContain("Welcome to Bun");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Interactive terminal-based REPL tests
 describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
   test("shows welcome message and prompt", async () => {

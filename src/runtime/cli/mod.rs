@@ -1455,6 +1455,17 @@ pub mod command {
             Global::exit(1);
         }
 
+        // `node --interactive` forces the REPL even when stdin is not a TTY.
+        // A script positional or -e/-p still win; bare `--interactive` enters
+        // the REPL instead of printing help.
+        if tag == Tag::AutoCommand
+            && ctx.runtime_options.interactive
+            && ctx.positionals.is_empty()
+            && ctx.runtime_options.eval.script.is_empty()
+        {
+            return super::repl_command::ReplCommand::exec(ctx);
+        }
+
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
             return run_command::RunCommand::exec_eval(ctx);
         }

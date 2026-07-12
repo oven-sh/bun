@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { closeSync, openSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync, closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 
 async function readLine(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
@@ -210,6 +210,19 @@ describe("Bun.file().lock()", () => {
     const path = join(String(dir), "new.txt");
     await using _lock = await Bun.file(path).lock();
     expect(await Bun.file(path).exists()).toBe(true);
+  });
+
+  // chmod 0o444 is a no-op on Windows; the O_RDONLY fallback is POSIX-relevant.
+  test.skipIf(isWindows)("shared lock works on a read-only file", async () => {
+    using dir = tempDir("bun-file-lock", { "ro.txt": "hello" });
+    const path = join(String(dir), "ro.txt");
+    chmodSync(path, 0o444);
+    try {
+      await using lock = await Bun.file(path).lock({ exclusive: false });
+      expect(await lock.text()).toBe("hello");
+    } finally {
+      chmodSync(path, 0o644);
+    }
   });
 
   test("lock() rejects non-boolean option values", async () => {

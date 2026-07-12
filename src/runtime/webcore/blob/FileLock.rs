@@ -17,7 +17,6 @@ use bun_jsc::{
     self as jsc, AbortSignal, CallFrame, JSGlobalObject, JSPromise, JSValue, JsClass as _,
     JsResult, StringJsc as _, SysErrorJsc as _,
 };
-use bun_paths::PathBuffer;
 use bun_sys::{self, Fd, FdExt as _, File, O};
 use bun_threading::Futex;
 
@@ -209,10 +208,12 @@ pub(crate) enum LockSource {
 
 extern "C" fn lock_abort_cb(ctx: *mut c_void, _reason: JSValue) {
     // SAFETY: `ctx` is the `LockTaskCtx` inside the heap `FileLockTask`; the
-    // listener is detached before the task is destroyed.
-    let ctx = unsafe { &*(ctx.cast::<LockTaskCtx<'_>>()) };
-    ctx.aborted.store(1, Ordering::SeqCst);
-    Futex::wake(&ctx.aborted, 1);
+    // listener is detached before the task is destroyed. `run()` may hold
+    // `&mut LockTaskCtx` on a WorkPool thread, so project directly to the
+    // `UnsafeCell`-backed atomic instead of forming `&LockTaskCtx`.
+    let aborted = unsafe { &*core::ptr::addr_of!((*ctx.cast::<LockTaskCtx<'_>>()).aborted) };
+    aborted.store(1, Ordering::SeqCst);
+    Futex::wake(aborted, 1);
 }
 
 impl ConcurrentPromiseTaskContext for LockTaskCtx<'_> {
@@ -222,9 +223,23 @@ impl ConcurrentPromiseTaskContext for LockTaskCtx<'_> {
         let (fd, owns_fd) = match &self.source {
             LockSource::Fd(fd) => (*fd, false),
             LockSource::Path(path_like) => {
-                let mut buf = PathBuffer::uninit();
+                let mut buf = bun_paths::path_buffer_pool::get();
                 let path = path_like.slice_z(&mut buf);
-                match bun_sys::open(path, O::RDWR | O::CREAT | O::CLOEXEC, 0o666) {
+                let opened = match bun_sys::open(path, O::RDWR | O::CREAT | O::CLOEXEC, 0o666) {
+                    Ok(fd) => Ok(fd),
+                    // flock(2) permits shared locks regardless of open mode;
+                    // fall back so read-only files can still be shared-locked.
+                    Err(e)
+                        if matches!(
+                            e.get_errno(),
+                            bun_sys::E::EACCES | bun_sys::E::EROFS | bun_sys::E::EISDIR
+                        ) =>
+                    {
+                        bun_sys::open(path, O::RDONLY | O::CLOEXEC, 0)
+                    }
+                    Err(e) => Err(e),
+                };
+                match opened {
                     Ok(fd) => (fd, true),
                     Err(err) => {
                         self.result = Some(Err(err));

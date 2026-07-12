@@ -1,40 +1,52 @@
-# Pre-generated bssl-sys bindings
+# bssl-sys bindings
 
 `bun_usockets` depends on the vendored `bssl-sys` crate
 (`vendor/boringssl/rust/bssl-sys`) as its raw BoringSSL layer
 (.rewrite-specs/tls-semantics.md Part 2d; api.md CHANGES 1). Upstream generates
 its bindings with bindgen at CMake time and links its own BoringSSL build —
-neither exists in Bun's build. Instead:
+neither exists in Bun's build. Instead,
+`patches/boringssl/bssl-sys-prebuilt-bindings.patch` replaces the crate's
+`build.rs` with one that runs bindgen (the crate, pinned `=0.72.1` as a
+build-dependency) at build time:
 
-- **`wrapper_<target>.rs`** — bindgen output per Rust target triple, committed
-  here and consumed through the crate's `BINDGEN_RS_FILE` escape hatch
-  (`bssl-sys/src/lib.rs`, `--cfg bindgen_rs_file`). The escape-hatch plumbing
-  lives in `patches/boringssl/bssl-sys-prebuilt-bindings.patch`, which replaces
-  the crate's `build.rs` with one that sets the cfg + env var and emits **no
-  link directives** — BoringSSL objects are compiled by
-  `scripts/build/deps/boringssl.ts` and resolve at final-binary link, exactly
-  like the hand-written `bun_boringssl_sys` externs (both binding crates
-  coexist against the same objects; signatures agree because headers and
-  `rust/` tree come from the same pinned commit).
-- **`wrapper.c`** — the bindgen `--wrap-static-fns` shims (`*__extern` symbols
-  for BoringSSL's static-inline functions). Byte-identical across targets
-  (`regenerate.sh` enforces this); compiled once as part of the boringssl dep
-  in `scripts/build/deps/boringssl.ts`. The header list from
-  `bssl-sys/wrapper.h` is inlined so it builds with only
-  `-I vendor/boringssl/include`; `extern "C"` guards keep the symbol names
-  unmangled under the dep's `lang: "cxx"` compile.
-- **`regenerate.sh`** — regenerates everything above. **Must be re-run on
-  every BoringSSL commit bump** (`BORINGSSL_COMMIT` in
-  `scripts/build/deps/boringssl.ts`); fold into the upgrade-boringssl flow.
-  Staleness is enforced mechanically: the script stamps `BORINGSSL_COMMIT`
-  into the first line of every generated file, and `boringssl.ts` verifies
-  the stamps at configure time — a bump that skips regeneration fails
-  `bun run build` with a re-run instruction instead of silently compiling
-  bindings from the old headers.
-  Requires `bindgen` (cargo install bindgen-cli; generated with 0.72.1) and
-  hermetic libc headers: vendor/zig's bundled set (linux gnu/musl), a macOS
-  SDK, and an MSVC/UCRT splat (see the script header for env overrides).
+- The Rust bindings are written to cargo's `OUT_DIR/bindgen.rs` and consumed
+  through the crate's `BINDGEN_RS_FILE` escape hatch (`bssl-sys/src/lib.rs`,
+  `--cfg bindgen_rs_file`). Nothing is committed; each `--target` gets its own
+  bindings, generated from the vendored headers. No link directives are
+  emitted — BoringSSL objects are compiled by `scripts/build/deps/boringssl.ts`
+  and resolve at final-binary link, exactly like the hand-written
+  `bun_boringssl_sys` externs (both binding crates coexist against the same
+  objects).
+- Cross-target `cargo check` (`bun run rust:check-all`) parses against
+  hermetic headers keyed off the cargo `TARGET`: vendor/zig's bundled libc set
+  (linux gnu/musl/android, freebsd), a macOS SDK (`MACOS_SDK` or
+  `MACOS_SDK_PATH`, default newest `$HOME/.bun/build-cache/MacOSX*.sdk`, or
+  `xcrun` on a macOS host), or an MSVC/UCRT xwin splat (`WINSYSROOT`, default
+  `/opt/winsysroot`). A missing sysroot fails with a message naming the env
+  var to set. bindgen loads libclang at runtime (clang-sys); if it isn't
+  found automatically, set `LIBCLANG_PATH` to your LLVM lib dir.
 
-Decision (tls-semantics.md OQ-4/OQ-5): bindings are vendored outputs rather
-than a build-time bindgen step — no bindgen/libclang toolchain dependency in
-the build, and the committed diff makes fork drift reviewable on bumps.
+## `wrapper.c` — the one committed artifact
+
+The bindgen `--wrap-static-fns` shim (`*__extern` symbols for BoringSSL's
+static-inline functions) must be **compiled into the BoringSSL objects**, so
+`scripts/build/deps/boringssl.ts` needs it as a real file, not an `OUT_DIR`
+artifact: this one file stays committed. That choice (over having build.rs
+`cc`-compile it into a shim lib) keeps the C build path unchanged and the
+bssl-sys crate link-directive-free.
+
+It is byte-identical across targets and changes only on BoringSSL or bindgen
+bumps. Staleness is enforced twice:
+
+- `boringssl.ts` verifies at configure time that the `BORINGSSL_COMMIT` stamp
+  in its first line matches the pinned commit.
+- `build.rs` regenerates the shim on every build and fails if it differs from
+  the committed copy (this also enforces cross-target byte-identity in CI).
+
+## Regenerating
+
+Re-run **`regenerate.sh`** on every BoringSSL commit bump (`BORINGSSL_COMMIT`
+in `scripts/build/deps/boringssl.ts`) or bindgen version bump (pinned in the
+patch). It refetches the vendored sources at the new pin and runs
+`BSSL_SYS_UPDATE_WRAPPER_C=1 cargo check -p bun_usockets`, which makes
+build.rs overwrite the committed `wrapper.c` instead of failing on drift.

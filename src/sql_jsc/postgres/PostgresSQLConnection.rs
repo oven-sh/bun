@@ -462,7 +462,7 @@ impl PostgresSQLConnection {
         };
 
         if !crate::shared::tls_adopt::adopt_socket_into_tls(
-            tcp,
+            *tcp,
             tls_group,
             uws::SocketKind::PostgresTls,
             ssl_ctx,

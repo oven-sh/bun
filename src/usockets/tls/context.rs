@@ -53,9 +53,9 @@ impl create_bun_socket_error_t {
     }
 }
 
-/// `struct us_bun_verify_error_t` — TLS handshake verification result,
-/// returned/passed BY VALUE across the ABI. `code`/`reason` point into
-/// BoringSSL's static error-string tables.
+/// `struct us_bun_verify_error_t` — TLS handshake verification result, BY
+/// VALUE across the ABI. Only `code` is static; `reason` may point into the
+/// per-socket `FatalReason` (tls-semantics §3.4) — copy it before the callback returns.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct us_bun_verify_error_t {

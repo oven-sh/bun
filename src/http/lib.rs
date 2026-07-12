@@ -590,10 +590,6 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
 }
 
 // ───────────────────────────── HTTPClient struct ─────────────────────────────
-// The heavy `impl HTTPClient` (socket dispatch / state machine) remains
-// gated below until the missing
-// `bun_usockets::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
-// `shutdown`/`connect_group`/…) land.
 
 use bun_core::ZigStringSlice;
 use bun_url::URL;

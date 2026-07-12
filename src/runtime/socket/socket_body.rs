@@ -3303,14 +3303,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         // Fail closed (C10): `group::adopt_socket` skips the kind restamp on
         // shut-down sockets while `adopt_tls` still attaches TLS and returns
-        // `Some`. Generation-validated queries, so stale handles bail here too.
-        {
-            let sock = this.socket.get();
-            if sock.is_closed() || sock.is_shutdown() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "upgradeTLS requires an established socket"
-                )));
-            }
+        // `Some`. Generation-validated query, so stale handles bail here too.
+        if this.socket.get().is_shutdown() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "upgradeTLS requires an established socket"
+            )));
         }
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw(format_args!("Expected options object")));
@@ -3613,7 +3610,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: `raw` came from `TLSSocket::new` (heap::alloc); intrusive +1 held.
         tls.twin
             .set(Some(unsafe { IntrusiveRc::from_raw(raw.as_ptr()) }));
-        hdr(raw_socket.ptr.as_ptr()).set_ssl_raw_tap(true);
+        // All post-adopt engine kicks below go through the raw-routed handle:
+        // they synchronously dispatch (decrypted on_data / on_handshake /
+        // ALPN+SNI JS), so no `&mut us_socket_t` may span them (C17).
+        let upgraded = SocketHandler::<true>::from(raw_socket);
+        upgraded.set_ssl_raw_tap(true);
 
         let tls_js_value = tls.get_this_value(global);
         let raw_js_value = raw_ref.get_this_value(global);
@@ -3635,17 +3636,17 @@ impl<const SSL: bool> NewSocket<SSL> {
         // it before ext was repointed would have ALPN/onOpen land in the
         // dead TCPSocket.
         TLSSocket::on_open(tls, tls.socket.get());
-        hdr(raw_socket.ptr.as_ptr()).start_tls_handshake();
+        upgraded.start_tls_handshake();
         // The socket being wrapped may have had its readable interest off (an
         // accepted socket nobody was reading yet — its ClientHello is still in
         // the kernel buffer); make sure the adopted TLS socket is reading so
         // the handshake can be driven. A no-op when it was already reading.
-        hdr(raw_socket.ptr.as_ptr()).resume();
+        upgraded.resume_stream();
         // Feed bytes that arrived before the upgrade (already pulled off the fd
         // by the plain-TCP layer) into the TLS engine exactly as if they had
         // just been received — for a server-side wrap this is the ClientHello.
         if !initial_data.is_empty() {
-            hdr(raw_socket.ptr.as_ptr()).tls_feed(initial_data.as_slice());
+            upgraded.tls_feed(initial_data.as_slice());
         }
 
         let array = JSValue::create_empty_array(global, 2)?;

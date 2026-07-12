@@ -31,6 +31,7 @@ use crate::LIBUS_SOCKET_DESCRIPTOR;
 /// Packed 1-byte socket flags (bit assignments per cabi-surface.md §3.7:
 /// `last_write_failed` is bit 7 — frozen while the SHIM pokes it).
 #[derive(Copy, Clone, Default)]
+#[repr(transparent)]
 pub(crate) struct SocketFlags(pub(crate) u8);
 
 impl SocketFlags {
@@ -1129,33 +1130,6 @@ impl SocketHeader {
         NonNull::new(s)
     }
 
-    /// Send ClientHello; split from `adopt_tls` so ext can be repointed first.
-    /// No-op on a closed (or non-TLS) socket, like C us_socket_start_tls_handshake.
-    pub fn start_tls_handshake(&mut self) {
-        if self.is_closed() {
-            return;
-        }
-        let s: *mut Self = self;
-        let loop_ = socket_loop(s);
-        if let Some(t) = tls_state(s) {
-            TlsState::handshake(t, s, loop_);
-        }
-    }
-
-    /// Feed already-read bytes through the TLS decrypt path (chunked at i32;
-    /// stops if the socket closes mid-feed).
-    pub fn tls_feed(&mut self, data: &[u8]) {
-        let s: *mut Self = self;
-        let loop_ = socket_loop(s);
-        for chunk in data.chunks(i32::MAX as usize) {
-            let Some(t) = tls_state(s) else { return };
-            if header_mut(s).is_closed() {
-                return;
-            }
-            TlsState::read(t, s, loop_, chunk);
-        }
-    }
-
     /// Tee inbound ciphertext to the ssl_raw_tap dispatch before SSL_read.
     pub fn set_ssl_raw_tap(&mut self, enabled: bool) {
         if let Transport::Tls(t) = &mut self.transport {
@@ -1167,6 +1141,33 @@ impl SocketHeader {
     /// owned `ssl_ctx` ref (null = fall through to default); `error` aborts.
     pub fn sni_resolve(&mut self, ctx: *mut SslCtx, error: bool) {
         socket_sni_resolve(self, ctx, error);
+    }
+}
+
+/// Send ClientHello; split from `adopt_tls` so ext can be repointed first.
+/// No-op on a closed (or non-TLS) socket, like C us_socket_start_tls_handshake.
+/// Raw entry: the handshake dispatches consumer callbacks (C17).
+pub(crate) fn socket_start_tls_handshake(s: *mut SocketHeader) {
+    if header_mut(s).is_closed() {
+        return;
+    }
+    let loop_ = socket_loop(s);
+    if let Some(t) = tls_state(s) {
+        TlsState::handshake(t, s, loop_);
+    }
+}
+
+/// Feed already-read bytes through the TLS decrypt path (chunked at i32;
+/// stops if the socket closes mid-feed). Raw entry: dispatches decrypted
+/// on_data / on_handshake (C17).
+pub(crate) fn socket_tls_feed(s: *mut SocketHeader, data: &[u8]) {
+    let loop_ = socket_loop(s);
+    for chunk in data.chunks(i32::MAX as usize) {
+        let Some(t) = tls_state(s) else { return };
+        if header_mut(s).is_closed() {
+            return;
+        }
+        TlsState::read(t, s, loop_, chunk);
     }
 }
 

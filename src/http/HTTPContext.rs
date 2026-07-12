@@ -852,10 +852,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
             .http_proxy
             .clone()
             .unwrap_or_else(|| client.url.clone());
+        let ssl_ctx = if SSL { self.ssl_ctx_for_connect() } else { None };
         let socket = HTTPSocket::<SSL>::connect_unix_group(
             &mut self.group,
             Self::KIND,
-            if SSL { self.ssl_ctx_for_connect() } else { None },
+            ssl_ctx,
             socket_path,
             ActiveSocket::<SSL>::init(
                 client
@@ -1034,10 +1035,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
         }
 
+        let ssl_ctx = if SSL { self.ssl_ctx_for_connect() } else { None };
         let socket = HTTPSocket::<SSL>::connect_group(
             &mut self.group,
             Self::KIND,
-            if SSL { self.ssl_ctx_for_connect() } else { None },
+            ssl_ctx,
             hostname,
             port as c_int,
             ActiveSocket::<SSL>::init(

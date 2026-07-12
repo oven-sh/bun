@@ -1,13 +1,35 @@
+--- a/rust/bssl-sys/Cargo.toml
++++ b/rust/bssl-sys/Cargo.toml
+@@ -14,3 +14,10 @@ path = "../bssl-macros"
+ 
+ [lints.rust]
+ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bindgen_rs_file)'] }
++
++# Bun (bssl-sys-prebuilt-bindings.patch): bindings are generated at build time
++# by the replaced build.rs. Pinned exactly — the committed --wrap-static-fns
++# shim (src/usockets/tls/bssl_bindings/wrapper.c) must byte-match this
++# version's output; bumping bindgen requires re-running regenerate.sh there.
++[build-dependencies]
++bindgen = { version = "=0.72.1", features = ["experimental"] }
 --- a/rust/bssl-sys/build.rs
 +++ b/rust/bssl-sys/build.rs
-@@ -1,133 +1,41 @@
+@@ -1,133 +1,346 @@
 -// Copyright 2021 The BoringSSL Authors
 +// Bun: replaced by patches/boringssl/bssl-sys-prebuilt-bindings.patch.
  //
 -// Licensed under the Apache License, Version 2.0 (the "License");
 -// you may not use this file except in compliance with the License.
 -// You may obtain a copy of the License at
--//
++// Upstream build.rs copies CMake-generated bindings from $BORINGSSL_BUILD_DIR
++// and emits link directives for a second BoringSSL build — neither exists in
++// Bun's build. Instead this script runs bindgen here, at build time, against
++// the vendored headers: the Rust bindings and the --wrap-static-fns shim are
++// written into cargo's OUT_DIR and consumed through the crate's
++// BINDGEN_RS_FILE escape hatch. No link directives are emitted — BoringSSL
++// objects (and the committed copy of the shim,
++// src/usockets/tls/bssl_bindings/wrapper.c) are compiled by
++// scripts/build/deps/boringssl.ts and resolve at final-binary link.
+ //
 -//     https://www.apache.org/licenses/LICENSE-2.0
 -//
 -// Unless required by applicable law or agreed to in writing, software
@@ -15,13 +37,10 @@
 -// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 -// See the License for the specific language governing permissions and
 -// limitations under the License.
-+// Upstream build.rs copies CMake-generated bindings from $BORINGSSL_BUILD_DIR
-+// and emits link directives for a second BoringSSL build. Bun instead commits
-+// pre-generated bindings (src/usockets/tls/bssl_bindings/, regenerate.sh) and
-+// consumes them through the crate's BINDGEN_RS_FILE escape hatch; BoringSSL
-+// objects (and the --wrap-static-fns wrapper.c shims) are compiled by
-+// scripts/build/deps/boringssl.ts and resolve at final-binary link, so no
-+// cargo link directives are emitted here.
++// Cross-target `cargo check` works without a native sysroot for the target:
++// libc headers come from vendor/zig's bundled set (linux gnu/musl/android,
++// freebsd), the macOS SDK ($MACOS_SDK), or the MSVC/UCRT splat ($WINSYSROOT).
++// See src/usockets/tls/bssl_bindings/README.md.
  
  use std::env;
 -use std::path::Path;
@@ -82,27 +101,16 @@
 -    println!("cargo:rerun-if-env-changed=BORINGSSL_BUILD_DIR");
 -    if let Some(build_dir) = env::var_os("BORINGSSL_BUILD_DIR") {
 -        return PathBuf::from(build_dir);
--    }
--
--    let crate_dir = env::var_os("CARGO_MANIFEST_DIR").unwrap();
--    return Path::new(&crate_dir).join("../../build");
--}
--
--fn get_cpp_runtime_lib() -> Option<String> {
--    println!("cargo:rerun-if-env-changed=BORINGSSL_RUST_CPPLIB");
++use std::fs;
 +use std::path::{Component, Path, PathBuf};
- 
--    if let Ok(cpp_lib) = env::var("BORINGSSL_RUST_CPPLIB") {
--        return Some(cpp_lib);
--    }
--
--    if env::var_os("CARGO_CFG_UNIX").is_some() {
--        match env::var("CARGO_CFG_TARGET_OS").unwrap().as_ref() {
--            "macos" => Some("c++".into()),
--            _ => Some("stdc++".into()),
++use std::process::Command;
++
++const WRAPPER_C_REPO_PATH: &str = "src/usockets/tls/bssl_bindings/wrapper.c";
++const BORINGSSL_TS_REPO_PATH: &str = "scripts/build/deps/boringssl.ts";
++
 +// Fold `.`/`..` lexically. The OS resolves symlinks BEFORE `..`, so a checkout
 +// whose vendor/ is a symlink would otherwise escape to the symlink target's
-+// parent; the bindings live relative to the checkout root as spelled.
++// parent; the repo files live relative to the checkout root as spelled.
 +fn lexical_normalize(path: &Path) -> PathBuf {
 +    let mut parts: Vec<Component> = Vec::new();
 +    for component in path.components() {
@@ -112,17 +120,217 @@
 +                parts.pop();
 +            }
 +            other => parts.push(other),
++        }
+     }
++    parts.iter().collect()
++}
+ 
+-    let crate_dir = env::var_os("CARGO_MANIFEST_DIR").unwrap();
+-    return Path::new(&crate_dir).join("../../build");
++// Numeric-aware sort key so "MacOSX26.5.sdk" beats "MacOSX9.0.sdk" and MSVC
++// "14.44.35207" beats "14.9.x".
++fn version_key(name: &str) -> Vec<u64> {
++    name.split(|c: char| !c.is_ascii_digit())
++        .filter(|s| !s.is_empty())
++        .map(|s| s.parse().unwrap_or(0))
++        .collect()
+ }
+ 
+-fn get_cpp_runtime_lib() -> Option<String> {
+-    println!("cargo:rerun-if-env-changed=BORINGSSL_RUST_CPPLIB");
++fn newest_entry(dir: &Path, filter: impl Fn(&str) -> bool) -> Option<PathBuf> {
++    let mut best: Option<(Vec<u64>, PathBuf)> = None;
++    for entry in fs::read_dir(dir).ok()?.flatten() {
++        let Ok(name) = entry.file_name().into_string() else {
++            continue;
++        };
++        if !filter(&name) {
++            continue;
++        }
++        let key = version_key(&name);
++        if best.as_ref().is_none_or(|(k, _)| key > *k) {
++            best = Some((key, entry.path()));
++        }
++    }
++    best.map(|(_, path)| path)
++}
+ 
+-    if let Ok(cpp_lib) = env::var("BORINGSSL_RUST_CPPLIB") {
+-        return Some(cpp_lib);
++// Compiler builtin headers (stdarg.h, stddef.h, …) for the -nostdinc targets.
++fn clang_resource_include() -> PathBuf {
++    println!("cargo:rerun-if-env-changed=CLANG");
++    let clang = env::var("CLANG").unwrap_or_else(|_| "clang".into());
++    let output = Command::new(&clang)
++        .arg("-print-resource-dir")
++        .output()
++        .unwrap_or_else(|err| {
++            panic!(
++                "bssl-sys: failed to run `{} -print-resource-dir`: {}\n\
++                 note: clang provides the builtin headers bindgen needs for cross-target parsing; \
++                 install clang or set CLANG=<path-to-clang>",
++                clang, err
++            )
++        });
++    assert!(
++        output.status.success(),
++        "bssl-sys: `{clang} -print-resource-dir` failed: {}",
++        String::from_utf8_lossy(&output.stderr)
++    );
++    PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()).join("include")
++}
++
++fn isystem(args: &mut Vec<String>, dir: &Path) {
++    args.push("-isystem".into());
++    args.push(dir.display().to_string());
++}
++
++// Hermetic libc headers from vendor/zig for linux/android/freebsd targets.
++// `family` is zig's per-arch dir prefix (x86 for x86_64-gnu — zig's glibc
++// headers use the x86 family dir; x86_64 for musl), `abi` the header set.
++fn zig_libc_args(args: &mut Vec<String>, zig_libc: &Path, family: &str, abi: &str, generic: &str) {
++    args.push("-nostdinc".into());
++    isystem(args, &clang_resource_include());
++    isystem(args, &zig_libc.join(format!("{family}-{abi}")));
++    isystem(args, &zig_libc.join(generic));
++    // The -any dirs don't exist for every family (e.g. no x86_64-linux-any);
++    // clang would ignore a missing -isystem, skip it to keep the args honest.
++    for extra in [format!("{family}-linux-any"), "any-linux-any".into()] {
++        let dir = zig_libc.join(&extra);
++        if dir.is_dir() {
++            isystem(args, &dir);
++        }
++    }
++}
++
++fn target_sysroot_args(target: &str, host: &str, repo_root: &Path) -> Vec<String> {
++    let mut args = Vec::new();
++    let arch = target.split('-').next().unwrap();
++    let zig_libc = repo_root.join("vendor/zig/lib/libc/include");
++
++    if target.ends_with("-apple-darwin") {
++        println!("cargo:rerun-if-env-changed=MACOS_SDK");
++        println!("cargo:rerun-if-env-changed=MACOS_SDK_PATH");
++        let sdk = env::var("MACOS_SDK")
++            .or_else(|_| env::var("MACOS_SDK_PATH"))
++            .map(PathBuf::from)
++            .ok()
++            .or_else(|| {
++                let cache = PathBuf::from(env::var("HOME").unwrap_or_default()).join(".bun/build-cache");
++                newest_entry(&cache, |n| n.starts_with("MacOSX") && n.ends_with(".sdk"))
++            })
++            .or_else(|| {
++                // Native macOS build: ask Xcode.
++                if !host.ends_with("-apple-darwin") {
++                    return None;
++                }
++                let out = Command::new("xcrun").args(["--show-sdk-path"]).output().ok()?;
++                out.status
++                    .success()
++                    .then(|| PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()))
++            });
++        let Some(sdk) = sdk.filter(|s| s.is_dir()) else {
++            panic!(
++                "bssl-sys: no macOS SDK found for target {}.\n\
++                 note: set MACOS_SDK=<path to MacOSX*.sdk> (default: newest \
++                 $HOME/.bun/build-cache/MacOSX*.sdk, or xcrun on a macOS host)",
++                target
++            );
++        };
++        args.push("-isysroot".into());
++        args.push(sdk.display().to_string());
++        return args;
+     }
+ 
+-    if env::var_os("CARGO_CFG_UNIX").is_some() {
+-        match env::var("CARGO_CFG_TARGET_OS").unwrap().as_ref() {
+-            "macos" => Some("c++".into()),
+-            _ => Some("stdc++".into()),
++    if target.contains("-windows-") {
++        println!("cargo:rerun-if-env-changed=WINSYSROOT");
++        let sysroot = PathBuf::from(env::var("WINSYSROOT").unwrap_or_else(|_| "/opt/winsysroot".into()));
++        let msvc = newest_entry(&sysroot.join("VC/Tools/MSVC"), |_| true).map(|d| d.join("include"));
++        let ucrt = newest_entry(&sysroot.join("Windows Kits/10/Include"), |_| true).map(|d| d.join("ucrt"));
++        // Native Windows build without an xwin splat: libclang finds the
++        // installed MSVC/SDK headers on its own (INCLUDE from the dev shell).
++        if msvc.is_none() && target == host {
++            return args;
          }
 -    } else {
 -        None
++        let (Some(msvc), Some(ucrt)) = (msvc, ucrt) else {
++            panic!(
++                "bssl-sys: no MSVC/UCRT headers under {} for target {target}.\n\
++                 note: set WINSYSROOT=<xwin splat root> (default: /opt/winsysroot); it must \
++                 contain VC/Tools/MSVC/<ver>/include and Windows Kits/10/Include/<ver>/ucrt",
++                sysroot.display()
++            );
++        };
++        args.push("-nostdinc".into());
++        isystem(&mut args, &clang_resource_include());
++        isystem(&mut args, &msvc);
++        isystem(&mut args, &ucrt);
++        return args;
      }
-+    parts.iter().collect()
++
++    if !zig_libc.is_dir() {
++        // Native build on a box without vendor/zig: the host's own libc
++        // headers are the right ones anyway. Cross targets have no fallback.
++        if target == host {
++            return args;
++        }
++        panic!(
++            "bssl-sys: {} not found; it provides the hermetic libc headers for \
++             cross-target bindgen ({}).\n\
++             note: fetch the vendored zig toolchain, or build for the host target only",
++            zig_libc.display(),
++            target
++        );
++    }
++
++    if target.ends_with("-linux-gnu") {
++        let family = if arch == "x86_64" { "x86" } else { arch };
++        zig_libc_args(&mut args, &zig_libc, family, "linux-gnu", "generic-glibc");
++    } else if target.ends_with("-linux-musl") || target.ends_with("-linux-android") {
++        // zig bundles no bionic headers; musl's are the closest available. The
++        // only libc types that leak into the OpenSSL API surface (FILE*,
++        // struct tm, struct timeval, time_t) have identical shapes in both.
++        zig_libc_args(&mut args, &zig_libc, arch, "linux-musl", "generic-musl");
++    } else if target.ends_with("-freebsd") {
++        args.push("-nostdinc".into());
++        isystem(&mut args, &clang_resource_include());
++        isystem(&mut args, &zig_libc.join(format!("{arch}-freebsd-none")));
++        isystem(&mut args, &zig_libc.join("generic-freebsd"));
++    } else if target != host {
++        panic!("bssl-sys: no sysroot mapping for target {}; add one to rust/bssl-sys/build.rs (bssl-sys-prebuilt-bindings.patch)", target);
++    }
++    args
++}
++
++fn pinned_boringssl_commit(repo_root: &Path) -> String {
++    let ts_path = repo_root.join(BORINGSSL_TS_REPO_PATH);
++    println!("cargo:rerun-if-changed={}", ts_path.display());
++    let src = fs::read_to_string(&ts_path)
++        .unwrap_or_else(|err| panic!("bssl-sys: cannot read {}: {err}", ts_path.display()));
++    const NEEDLE: &str = "const BORINGSSL_COMMIT = \"";
++    let start = src
++        .find(NEEDLE)
++        .unwrap_or_else(|| panic!("bssl-sys: BORINGSSL_COMMIT not found in {}", ts_path.display()))
++        + NEEDLE.len();
++    let commit = &src[start..start + 40];
++    assert!(
++        commit.chars().all(|c| c.is_ascii_hexdigit()),
++        "bssl-sys: malformed BORINGSSL_COMMIT in {}",
++        ts_path.display()
++    );
++    commit.to_string()
  }
  
  fn main() {
 -    let bssl_build_dir = get_bssl_build_dir();
 -    let bssl_sys_build_dir = bssl_build_dir.join("rust/bssl-sys");
-+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
++    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
++    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
      let target = env::var("TARGET").unwrap();
 -    let out_dir = env::var("OUT_DIR").unwrap();
 -    let bindgen_out_file = Path::new(&out_dir).join("bindgen.rs");
@@ -144,23 +352,121 @@
 -    );
 -    println!("cargo:rustc-link-lib=static=crypto");
 -    println!("cargo:rustc-link-lib=static=ssl");
--
++    let host = env::var("HOST").unwrap();
++
++    // manifest is <root>/vendor/boringssl/rust/bssl-sys
++    let repo_root = lexical_normalize(&manifest_dir.join("../../../.."));
++    let boringssl_include = lexical_normalize(&manifest_dir.join("../../include"));
++    let wrapper_h = manifest_dir.join("wrapper.h");
++
++    let mut clang_args = vec![
++        format!("--target={target}"),
++        "-I".into(),
++        boringssl_include.display().to_string(),
++    ];
++    clang_args.extend(target_sysroot_args(&target, &host, &repo_root));
++
++    // Mirrors the bindgen invocation in vendor/boringssl/rust/bssl-sys/CMakeLists.txt.
++    let static_fns_c = out_dir.join("static_fns.c");
++    let bindings = bindgen::Builder::default()
++        .header(wrapper_h.display().to_string())
++        .use_core()
++        .enable_function_attribute_detection()
++        .default_macro_constant_type(bindgen::MacroTypeVariation::Signed)
++        .rustified_enum("point_conversion_form_t")
++        .allowlist_file(r".*[/\\]include[/\\]openssl[/\\].*\.h")
++        .wrap_static_fns(true)
++        .wrap_static_fns_path(&static_fns_c)
++        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
++        .clang_args(&clang_args)
++        .generate()
++        .unwrap_or_else(|err| {
++            panic!("bssl-sys: bindgen failed for target {} (clang args: {:?}): {}", target, clang_args, err)
++        });
+ 
 -    println!(
 -        "cargo:rustc-link-search=native={}",
 -        bssl_sys_build_dir.display()
--    );
++    let bindgen_rs = out_dir.join("bindgen.rs");
++    bindings
++        .write_to_file(&bindgen_rs)
++        .unwrap_or_else(|err| panic!("bssl-sys: cannot write {}: {err}", bindgen_rs.display()));
++    println!("cargo:rustc-cfg=bindgen_rs_file");
++    println!("cargo:rustc-env=BINDGEN_RS_FILE={}", bindgen_rs.display());
++
++    check_static_fns_shim(&repo_root, &wrapper_h, &static_fns_c, &out_dir, &target);
++}
++
++// The --wrap-static-fns shim must be compiled into the BoringSSL objects, so
++// one copy is committed (src/usockets/tls/bssl_bindings/wrapper.c) and built
++// by scripts/build/deps/boringssl.ts. It is target-independent and changes
++// only on BoringSSL or bindgen bumps; regenerate it here every build and fail
++// loudly on drift so a stale committed copy can't ship.
++fn check_static_fns_shim(repo_root: &Path, wrapper_h: &Path, static_fns_c: &Path, out_dir: &Path, target: &str) {
++    let commit = pinned_boringssl_commit(repo_root);
++    let generated = fs::read_to_string(static_fns_c)
++        .unwrap_or_else(|err| panic!("bssl-sys: cannot read {}: {err}", static_fns_c.display()));
++    let wrapper_h_src = fs::read_to_string(wrapper_h)
++        .unwrap_or_else(|err| panic!("bssl-sys: cannot read {}: {err}", wrapper_h.display()));
++
++    let mut expected = format!(
++        "// BoringSSL commit: {commit} (bindgen --wrap-static-fns shim; refresh via src/usockets/tls/bssl_bindings/regenerate.sh)\n\
++         // Generated by the bssl-sys build.rs (patches/boringssl/bssl-sys-prebuilt-bindings.patch) — do not edit.\n\
++         // Header list inlined from rust/bssl-sys/wrapper.h so it builds with only\n\
++         // -I vendor/boringssl/include; extern \"C\" guards keep the *__extern symbol\n\
++         // names unmangled under scripts/build/deps/boringssl.ts's lang:\"cxx\" compile.\n"
+     );
 -    println!("cargo:rustc-link-lib=static=rust_wrapper");
--
++    for line in wrapper_h_src.lines() {
++        if !line.starts_with("//") {
++            expected.push_str(line);
++            expected.push('\n');
++        }
++    }
++    expected.push_str("\n#if defined(__cplusplus)\nextern \"C\" {\n#endif\n");
++    // Drop the first generated line — an #include of wrapper.h by absolute
++    // path (machine-specific); the inlined header above replaces it.
++    expected.push_str(generated.split_once('\n').map_or("", |(_, rest)| rest));
++    expected.push_str("\n#if defined(__cplusplus)\n}  // extern \"C\"\n#endif\n");
++
++    let out_wrapper_c = out_dir.join("wrapper.c");
++    fs::write(&out_wrapper_c, &expected)
++        .unwrap_or_else(|err| panic!("bssl-sys: cannot write {}: {err}", out_wrapper_c.display()));
+ 
 -    if let Some(cpp_lib) = get_cpp_runtime_lib() {
 -        println!("cargo:rustc-link-lib={}", cpp_lib);
--    }
--
++    let committed_path = repo_root.join(WRAPPER_C_REPO_PATH);
++    println!("cargo:rerun-if-changed={}", committed_path.display());
++    println!("cargo:rerun-if-env-changed=BSSL_SYS_UPDATE_WRAPPER_C");
++    if env::var_os("BSSL_SYS_UPDATE_WRAPPER_C").is_some_and(|v| v == "1") {
++        fs::write(&committed_path, &expected)
++            .unwrap_or_else(|err| panic!("bssl-sys: cannot write {}: {err}", committed_path.display()));
++        println!("cargo:warning=bssl-sys: updated {WRAPPER_C_REPO_PATH}");
++        return;
+     }
+ 
 -    println!("cargo:conf={}", OSSL_CONF_DEFINES.join(","));
-+    let bindings = lexical_normalize(
-+        &Path::new(&manifest_dir).join("../../../../src/usockets/tls/bssl_bindings"),
-+    )
-+    .join(format!("wrapper_{}.rs", target));
-+    println!("cargo:rustc-cfg=bindgen_rs_file");
-+    println!("cargo:rustc-env=BINDGEN_RS_FILE={}", bindings.display());
-+    println!("cargo:rerun-if-changed={}", bindings.display());
++    let committed = fs::read_to_string(&committed_path).unwrap_or_default();
++    if committed == expected {
++        return;
++    }
++    let first_line = committed.lines().next().unwrap_or("");
++    if !first_line.contains(&commit) {
++        panic!(
++            "{} is stale: its stamp does not match the pinned BoringSSL commit \
++             {} ({}).\n\
++             note: run src/usockets/tls/bssl_bindings/regenerate.sh after bumping BORINGSSL_COMMIT.",
++            WRAPPER_C_REPO_PATH, commit, BORINGSSL_TS_REPO_PATH
++        );
++    }
++    panic!(
++        "{} does not match the shim bindgen generated for target {} \
++         (fresh copy: {}).\n\
++         note: run src/usockets/tls/bssl_bindings/regenerate.sh, or if this target genuinely \
++         produces a different shim, the shim can no longer be compiled once for all targets — \
++         see src/usockets/tls/bssl_bindings/README.md.",
++        WRAPPER_C_REPO_PATH,
++        target,
++        out_wrapper_c.display()
++    );
  }

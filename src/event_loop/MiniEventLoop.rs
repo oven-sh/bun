@@ -434,7 +434,8 @@ impl<'a> MiniEventLoop<'a> {
     /// node stays with the caller until the callback runs.
     pub fn enqueue_task_concurrent(&mut self, task: NonNull<AnyTaskWithExtraContext>) {
         self.concurrent_tasks.push(task);
-        // Raw cross-thread wake path — never forms `&mut UwsLoop`.
+        // Raw cross-thread wake path — never forms `&mut UwsLoop`. Liveness:
+        // the MiniEventLoop and its loop live until process exit.
         bun_usockets::us_wakeup_loop(self.loop_ptr());
     }
 
@@ -460,7 +461,8 @@ impl<'a> MiniEventLoop<'a> {
         self.concurrent_tasks
             .push(unsafe { NonNull::new_unchecked(task) });
 
-        // Raw cross-thread wake path — never forms `&mut UwsLoop`.
+        // Raw cross-thread wake path — never forms `&mut UwsLoop`. Liveness:
+        // the MiniEventLoop and its loop live until process exit.
         bun_usockets::us_wakeup_loop(self.loop_ptr());
     }
 

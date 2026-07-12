@@ -210,7 +210,7 @@ impl FilePoll {
     pub fn deactivate(&mut self, loop_: &mut WindowsLoop) {
         debug_assert!(self.flags.contains(Flags::HasIncrementedPollCount));
         loop_.sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
-        bun_core::scoped_log!(FilePoll, "deactivate - active={}", loop_.is_active());
+        bun_core::scoped_log!(FilePoll, "deactivate - active={}", loop_.active_count());
         self.flags.remove(Flags::HasIncrementedPollCount);
     }
 
@@ -220,7 +220,7 @@ impl FilePoll {
             (!self.flags.contains(Flags::Closed)
                 && !self.flags.contains(Flags::HasIncrementedPollCount)) as u32,
         );
-        bun_core::scoped_log!(FilePoll, "activate - active={}", loop_.is_active());
+        bun_core::scoped_log!(FilePoll, "activate - active={}", loop_.active_count());
         self.flags.insert(Flags::HasIncrementedPollCount);
     }
 
@@ -419,7 +419,8 @@ impl Waker {
     pub fn wake(&self) {
         // See `wait()` — the thread-safe raw wake path (`uv_async_send`)
         // instead of forming a `&mut WindowsLoop` that would alias the
-        // event-loop thread's access held across `us_loop_run`.
+        // event-loop thread's access held across `us_loop_run`. Liveness:
+        // `loop_` is the process-global singleton, never freed.
         bun_usockets::us_wakeup_loop(self.loop_.as_ptr());
     }
 }

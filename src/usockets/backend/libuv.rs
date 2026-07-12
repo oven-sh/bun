@@ -131,6 +131,10 @@ pub(crate) fn is_active(loop_: *mut Loop) -> bool {
     uv::loop_alive(loop_)
 }
 
+pub(crate) fn active_count(loop_: *mut Loop) -> u32 {
+    uv::active_count(loop_)
+}
+
 // ── wakeup async (R10.4 libuv arm) ───────────────────────────────────────────
 
 /// uv_async, unreffed; `cb` receives the LOOP pointer (`cb_expects_the_loop`).

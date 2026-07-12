@@ -46,7 +46,11 @@ pub fn adopt_socket_into_tls<Ext>(
         socket: uws::InternalSocket::Connected(sref),
     });
     // ext is now repointed; safe to kick the handshake (any dispatch lands
-    // on the TLS owner).
-    sock.start_tls_handshake();
+    // on the TLS owner). Raw-routed via the handle: the handshake dispatches
+    // into the driver, so `sock`'s `&mut` must not span it (C17).
+    uws::SocketTLS {
+        socket: uws::InternalSocket::Connected(sref),
+    }
+    .start_tls_handshake();
     true
 }

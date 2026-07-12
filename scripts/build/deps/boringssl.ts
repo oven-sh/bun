@@ -20,7 +20,7 @@
  *           console.log("nasm\n",f([...j.bcm.nasm,...j.crypto.nasm]))'
  */
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { quote } from "../shell.ts";
@@ -30,24 +30,22 @@ import { depSourceDir } from "../source.ts";
 const BORINGSSL_COMMIT = "1a41b9025c2c0a37edd07ff10f6944f03e028522";
 
 /**
- * The pre-generated bssl-sys bindings under src/usockets/tls/bssl_bindings/
- * are vendored bindgen output pinned to BORINGSSL_COMMIT (see regenerate.sh
- * there). Stale bindings against bumped headers are silent ABI drift, so every
- * configure verifies the stamp regenerate.sh writes into each generated file.
+ * The bssl-sys Rust bindings are generated at build time by the patched
+ * vendored crate's build.rs; the only committed artifact is the
+ * --wrap-static-fns shim src/usockets/tls/bssl_bindings/wrapper.c (see the
+ * README there). A stale shim against bumped headers is silent ABI drift, so
+ * every configure verifies the BORINGSSL_COMMIT stamp build.rs writes into it.
  */
 function checkBsslBindingsStamp(repoRoot: string): void {
-  const dir = resolve(repoRoot, "src/usockets/tls/bssl_bindings");
-  const generated = [...readdirSync(dir).filter(f => /^wrapper_.*\.rs$/.test(f)), "wrapper.c"];
-  for (const file of generated) {
-    const firstLine = readFileSync(resolve(dir, file), "utf8").split("\n", 1)[0] ?? "";
-    const stamped = firstLine.match(/^\/\/ BoringSSL commit: ([0-9a-f]{40}) /)?.[1];
-    if (stamped !== BORINGSSL_COMMIT) {
-      throw new Error(
-        `src/usockets/tls/bssl_bindings/${file} was generated for BoringSSL commit ` +
-          `${stamped ?? "<missing stamp>"} but scripts/build/deps/boringssl.ts pins ${BORINGSSL_COMMIT}.\n` +
-          `note: re-run src/usockets/tls/bssl_bindings/regenerate.sh after bumping BORINGSSL_COMMIT.`,
-      );
-    }
+  const file = "src/usockets/tls/bssl_bindings/wrapper.c";
+  const firstLine = readFileSync(resolve(repoRoot, file), "utf8").split("\n", 1)[0] ?? "";
+  const stamped = firstLine.match(/^\/\/ BoringSSL commit: ([0-9a-f]{40}) /)?.[1];
+  if (stamped !== BORINGSSL_COMMIT) {
+    throw new Error(
+      `${file} was generated for BoringSSL commit ` +
+        `${stamped ?? "<missing stamp>"} but scripts/build/deps/boringssl.ts pins ${BORINGSSL_COMMIT}.\n` +
+        `note: re-run src/usockets/tls/bssl_bindings/regenerate.sh after bumping BORINGSSL_COMMIT.`,
+    );
   }
 }
 
@@ -63,8 +61,8 @@ export const boringssl: Dependency = {
 
   // bssl-sys (vendor/boringssl/rust) is a cargo path dep of bun_usockets. Its
   // upstream build.rs expects CMake-generated bindings + a second BoringSSL
-  // build; the patch points it at the pre-generated bindings committed under
-  // src/usockets/tls/bssl_bindings/ instead and emits no link directives.
+  // build; the patch replaces it with one that runs bindgen at build time
+  // into cargo's OUT_DIR and emits no link directives.
   patches: ["patches/boringssl/bssl-sys-prebuilt-bindings.patch"],
 
   build: cfg => {
@@ -78,8 +76,8 @@ export const boringssl: Dependency = {
       kind: "direct",
       lang: "cxx",
       // The last entry is the bssl-sys static-inline shim (bindgen
-      // --wrap-static-fns), committed in-tree next to the pre-generated
-      // bindings (target-independent; see regenerate.sh there).
+      // --wrap-static-fns), the one committed bindgen artifact
+      // (target-independent; see the README next to it).
       sources: [
         ...BCM_SRCS,
         ...CRYPTO_SRCS,

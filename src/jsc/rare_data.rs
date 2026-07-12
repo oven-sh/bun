@@ -862,9 +862,10 @@ impl RareData {
         let _ = self;
         let mut rounds: u8 = 0;
         while rounds < 8 {
-            // `uws_loop_mut()` is the centralised BACKREF accessor for the
-            // per-VM uSockets loop (live for the VM lifetime).
-            if !vm.uws_loop_mut().close_all_groups() {
+            // `*mut Loop`, never `&mut`: on_close dispatches into JS which can
+            // re-derive loop borrows (Bun.connect) — a receiver held across
+            // the dispatch would alias them (C17).
+            if !bun_usockets::Loop::close_all_groups(vm.uws_loop()) {
                 break;
             }
             rounds += 1;
@@ -1060,7 +1061,7 @@ impl Drop for RareData {
 
         if let Some(s) = self.default_client_ssl_ctx.take() {
             // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.
-            unsafe { boring::SSL_CTX_free(s) };
+            unsafe { boring::SSL_CTX_free(s.cast()) };
         }
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.

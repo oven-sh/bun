@@ -247,6 +247,8 @@ impl AnyEventLoop<'static> {
     #[inline]
     pub fn wakeup(&mut self) {
         // Raw cross-thread-safe wake path — never forms `&mut Loop`.
+        // Liveness: worker teardown unpublishes the loop pointer under its
+        // lock before `on_thread_exit` frees it — no wake can see a dead loop.
         bun_usockets::us_wakeup_loop(self.r#loop());
     }
 

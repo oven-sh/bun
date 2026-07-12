@@ -710,6 +710,36 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// Kick the deferred post-adopt handshake (C10 split: adopt → repoint
+    /// ext → handshake). Raw entry: SSL_do_handshake dispatches on_handshake
+    /// and the ALPN/SNI callbacks (C17).
+    pub fn start_tls_handshake(&self) {
+        if let InternalSocket::Connected(r) = self.socket {
+            if let Some(p) = r.resolve() {
+                crate::socket::socket_start_tls_handshake(p.as_ptr());
+            }
+        }
+    }
+
+    /// Feed already-read wire bytes through the TLS decrypt path. Raw entry:
+    /// dispatches decrypted on_data / on_handshake (C17).
+    pub fn tls_feed(&self, data: &[u8]) {
+        if let InternalSocket::Connected(r) = self.socket {
+            if let Some(p) = r.resolve() {
+                crate::socket::socket_tls_feed(p.as_ptr(), data);
+            }
+        }
+    }
+
+    /// Tee inbound ciphertext to the ssl_raw_tap hook (flag write; no dispatch).
+    pub fn set_ssl_raw_tap(&self, enabled: bool) {
+        if let InternalSocket::Connected(r) = self.socket {
+            if let Some(h) = sock(r) {
+                h.set_ssl_raw_tap(enabled);
+            }
+        }
+    }
+
     /// `None` unless `IS_SSL`.
     pub fn ssl(&self) -> Option<*mut SSL> {
         if !IS_SSL {

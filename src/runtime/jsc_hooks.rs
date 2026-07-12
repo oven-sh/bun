@@ -250,7 +250,8 @@ pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun
         // digest. The +1 ref returned here is held for the VM's lifetime, so
         // the entry never tombstones.
         match cache.get_or_create_opts(&Default::default(), &mut err) {
-            Some(ctx) => rare.default_client_ssl_ctx = Some(ctx),
+            // boringssl-sys vs bssl-sys nominals of the same C struct.
+            Some(ctx) => rare.default_client_ssl_ctx = Some(ctx.cast()),
             None => bun_core::Output::panic(format_args!(
                 "default client SSL_CTX init failed: {}",
                 bun_core::fmt::s(err.message().unwrap_or(b"unknown")),
@@ -279,7 +280,8 @@ unsafe fn ssl_ctx_cache_get_or_create(
     // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
     // address for the VM's lifetime and is only touched from the JS thread.
     let cache = unsafe { &mut (*state).ssl_ctx_cache };
-    cache.get_or_create_opts(opts, err)
+    // boringssl-sys vs bssl-sys nominals of the same C struct.
+    cache.get_or_create_opts(opts, err).map(|p| p.cast())
 }
 
 // ════════════════════════════════════════════════════════════════════════════

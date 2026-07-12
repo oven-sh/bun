@@ -23,11 +23,11 @@ bun_core.workspace = true
 # Platform-split `addrinfo` type shared with the DNS bridge (consumers/04).
 bun_dns.workspace = true
 libc.workspace = true
-# Raw BoringSSL bindings (tls-semantics.md Part 2d), consumed through the
-# crate's BINDGEN_RS_FILE escape hatch: pre-generated per-target bindings are
-# committed in tls/bssl_bindings/ and build.rs is replaced by
-# patches/boringssl/bssl-sys-prebuilt-bindings.patch (no link directives —
-# Bun compiles/links its own BoringSSL objects via scripts/build/deps/boringssl.ts).
+# Raw BoringSSL bindings (tls-semantics.md Part 2d). build.rs is replaced by
+# patches/boringssl/bssl-sys-prebuilt-bindings.patch: it runs bindgen at build
+# time into OUT_DIR (consumed via the crate's BINDGEN_RS_FILE escape hatch)
+# and emits no link directives — Bun compiles/links its own BoringSSL objects
+# via scripts/build/deps/boringssl.ts. See tls/bssl_bindings/README.md.
 bssl-sys = { path = "../../vendor/boringssl/rust/bssl-sys" }
 
 [target.'cfg(windows)'.dependencies]

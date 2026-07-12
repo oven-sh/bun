@@ -22,6 +22,8 @@ use crate::unsafe_core::deref;
 use crate::unsafe_core::ffi;
 use crate::unsafe_core::slab::ChunkedSlab;
 
+bun_core::declare_scope!(Loop, visible);
+
 /// Layout/semantics placeholder for the cross-thread defer mutex. Locked via
 /// `bun_threading` (`Bun__lock`-compatible word): futex u32 on Linux/FreeBSD,
 /// os_unfair_lock u32 on macOS, SRWLOCK (pointer) on Windows. Size is
@@ -383,19 +385,37 @@ impl PosixLoop {
     // ── poll / keep-alive accounting ────────────────────────────────────────
 
     pub fn inc(&mut self) {
+        bun_core::scoped_log!(Loop, "inc {} + 1 = {}", self.num_polls, self.num_polls + 1);
         self.num_polls += 1;
     }
 
     pub fn dec(&mut self) {
+        bun_core::scoped_log!(Loop, "dec {} - 1 = {}", self.num_polls, self.num_polls - 1);
         self.num_polls -= 1;
     }
 
     pub fn ref_(&mut self) {
+        bun_core::scoped_log!(
+            Loop,
+            "ref {} + 1 = {} | {} + 1 = {}",
+            self.num_polls,
+            self.num_polls + 1,
+            self.active,
+            self.active + 1
+        );
         self.num_polls += 1;
         self.active += 1;
     }
 
     pub fn unref(&mut self) {
+        bun_core::scoped_log!(
+            Loop,
+            "unref {} - 1 = {} | {} - 1 = {}",
+            self.num_polls,
+            self.num_polls - 1,
+            self.active,
+            self.active.saturating_sub(1)
+        );
         self.num_polls -= 1;
         self.active = self.active.saturating_sub(1);
     }
@@ -405,27 +425,42 @@ impl PosixLoop {
     }
 
     pub fn add_active(&mut self, value: u32) {
+        bun_core::scoped_log!(
+            Loop,
+            "add {} + {} = {}",
+            self.active,
+            value,
+            self.active.saturating_add(value)
+        );
         self.active = self.active.saturating_add(value);
     }
 
     pub fn sub_active(&mut self, value: u32) {
+        bun_core::scoped_log!(
+            Loop,
+            "sub {} - {} = {}",
+            self.active,
+            value,
+            self.active.saturating_sub(value)
+        );
         self.active = self.active.saturating_sub(value);
     }
 
-    /// Bulk `ref_`: applies `count` queued concurrent refs at once, keeping
-    /// the old direct-poke saturating semantics on `active`.
+    /// Bulk `ref_`: applies `count` queued concurrent refs at once.
     pub fn ref_count(&mut self, count: i32) {
-        debug_assert!(count >= 0, "ref_count takes a non-negative count");
+        bun_core::scoped_log!(Loop, "ref x {}", count);
         self.num_polls += count;
-        self.active = self.active.saturating_add(count.max(0).unsigned_abs());
+        self.active = self
+            .active
+            .saturating_add(u32::try_from(count).expect("int cast"));
     }
 
-    /// Callers pass non-negative drain totals (pending_unref_counter); a
-    /// negative count must not abort like the old `try_from().expect` did.
     pub fn unref_count(&mut self, count: i32) {
-        debug_assert!(count >= 0, "unref_count takes a non-negative count");
+        bun_core::scoped_log!(Loop, "unref x {}", count);
         self.num_polls -= count;
-        self.active = self.active.saturating_sub(count.max(0).unsigned_abs());
+        self.active = self
+            .active
+            .saturating_sub(u32::try_from(count).expect("int cast"));
     }
 
     // ── introspection ───────────────────────────────────────────────────────
@@ -448,9 +483,11 @@ impl PosixLoop {
 
     // ── uWS / quic bridges ──────────────────────────────────────────────────
 
-    /// `uws_res_clear_corked_socket` — force-drain both cork slots.
-    pub fn uncork(&mut self) {
-        ffi::clear_corked_socket(self);
+    /// `uws_res_clear_corked_socket` — force-drain both cork slots. Takes
+    /// `*mut`: the flush dispatches consumer write callbacks that may
+    /// re-derive loop borrows (C17), same as the tick family.
+    pub fn uncork(this: *mut PosixLoop) {
+        ffi::clear_corked_socket(this);
     }
 
     /// `uws_loop_date_header_timer_update`.
@@ -459,12 +496,13 @@ impl PosixLoop {
     }
 
     /// Packetize HTTP/3 stream writes since the last process_conns.
-    /// Early-returns when `quic_head` is null.
-    pub fn drain_quic_if_necessary(&mut self) {
-        if self.internal_loop_data.quic_head.is_null() {
+    /// Early-returns when `quic_head` is null. Takes `*mut`: the flush can
+    /// dispatch consumer stream callbacks that re-derive loop borrows (C17).
+    pub fn drain_quic_if_necessary(this: *mut PosixLoop) {
+        if ffi::ld_quic_head(this).is_null() {
             return;
         }
-        ffi::quic_flush_if_pending(self);
+        ffi::quic_flush_if_pending(this);
     }
 
     // ── teardown ────────────────────────────────────────────────────────────
@@ -478,8 +516,10 @@ impl PosixLoop {
 
     /// `close_all` on every group linked to this loop — the FULL linked list,
     /// reporting whether any group was closed (rare_data retry loop, C16).
-    pub fn close_all_groups(&mut self) -> bool {
-        close_all_groups_impl(self)
+    /// Takes `*mut`: on_close dispatches into consumer JS which may re-derive
+    /// loop borrows (Bun.connect in a close handler — C17, group.rs re-entry).
+    pub fn close_all_groups(this: *mut PosixLoop) -> bool {
+        close_all_groups_impl(this)
     }
 }
 
@@ -623,27 +663,37 @@ impl WindowsLoop {
         self.internal_loop_data.should_enable_date_header_timer()
     }
 
-    pub fn uncork(&mut self) {
-        ffi::clear_corked_socket(self);
+    /// See `PosixLoop::uncork` — `*mut` because the flush can re-enter (C17).
+    pub fn uncork(this: *mut WindowsLoop) {
+        ffi::clear_corked_socket(this);
     }
 
     pub fn update_date(&mut self) {
         ffi::date_header_timer_update(self);
     }
 
-    pub fn drain_quic_if_necessary(&mut self) {
-        if self.internal_loop_data.quic_head.is_null() {
+    /// See `PosixLoop::drain_quic_if_necessary` — `*mut`, re-entrant (C17).
+    pub fn drain_quic_if_necessary(this: *mut WindowsLoop) {
+        if ffi::ld_quic_head(this).is_null() {
             return;
         }
-        ffi::quic_flush_if_pending(self);
+        ffi::quic_flush_if_pending(this);
     }
 
     pub fn drain_closed_sockets(&mut self) {
         tick::drain_closed_sockets(self);
     }
 
-    pub fn close_all_groups(&mut self) -> bool {
-        close_all_groups_impl(self)
+    /// See `PosixLoop::close_all_groups` — `*mut`, on_close re-enters (C17).
+    pub fn close_all_groups(this: *mut WindowsLoop) -> bool {
+        close_all_groups_impl(this)
+    }
+
+    /// `uv_loop.active_handles` — debug-diagnostic keep-alive counter
+    /// (FilePoll activate/deactivate scoped logging).
+    pub fn active_count(&self) -> u32 {
+        let this: *const WindowsLoop = self;
+        crate::backend::libuv::active_count(this.cast_mut())
     }
 }
 

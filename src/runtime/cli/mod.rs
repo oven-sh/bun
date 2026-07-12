@@ -567,6 +567,11 @@ pub mod cli {
         // SAFETY: single-threaded process startup; `mimalloc` is already init.
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
+        // Socket-kind vtables must be installed before the first socket of any
+        // Rust-handled kind exists; `bun install`/standalone reach the HTTP
+        // client without ever initializing a VM, so register at process start.
+        crate::socket::uws_dispatch::ensure_registered();
+
         // (The panic hook is installed by `bun_crash_handler::init()` in bun_bin.)
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
         let log = unsafe { (*LOG_.get()).assume_init_mut() };

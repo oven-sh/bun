@@ -1078,6 +1078,11 @@ pub(crate) mod uv {
         unsafe { sys::uv_loop_alive(uv_loop_of(loop_)) != 0 }
     }
 
+    pub(crate) fn active_count(loop_: *mut Loop) -> u32 {
+        // SAFETY: see `add_active` — counter-only read on a live loop.
+        unsafe { (*uv_loop_of(loop_)).active_handles }
+    }
+
     // ── prepare/check hooks (libuv.c:154-186) ────────────────────────────────
 
     unsafe extern "C" fn prepare_cb(p: *mut sys::uv_prepare_t) {

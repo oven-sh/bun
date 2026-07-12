@@ -19,6 +19,9 @@ use crate::unsafe_core::poll_access;
 /// The ONLY thread-safe wakeup entry point. Takes a raw `*mut Loop` because
 /// the loop thread may be parked inside [`us_loop_run`] concurrently —
 /// forming `&mut Loop` here would alias (consumers/10-event-loop.md §8).
+/// Callers own the liveness contract: the loop must not be freed while a
+/// wake can race (worker teardown unpublishes the pointer under its lock
+/// before `on_thread_exit`) — document it at every call site.
 /// R10.1: RELEASE-bump `pending_wakeups` FIRST, then signal the async; the
 /// counter is an optimization layered on top of the async, not a replacement.
 pub fn us_wakeup_loop(loop_: *mut Loop) {

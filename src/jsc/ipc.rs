@@ -963,6 +963,14 @@ impl SendQueue {
                 }
                 #[cfg(not(windows))]
                 {
+                    // Clear the dispatch owner word first: the close below
+                    // dispatches on_close synchronously, which must not derive
+                    // a second `&mut SendQueue` under a live caller frame (C17).
+                    if let Some(slot) = s.ext::<Option<core::ptr::NonNull<SendQueue>>>() {
+                        // SAFETY: raw place write; no dispatch ext borrow is
+                        // active on this frame.
+                        unsafe { *slot = None };
+                    }
                     s.close(match reason {
                         CloseReason::Normal => bun_usockets::CloseCode::Normal,
                         CloseReason::Failure => bun_usockets::CloseCode::Failure,

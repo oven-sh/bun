@@ -28,6 +28,8 @@ bun_opaque::opaque_ffi! {
 // `CppWebSocket` is an UnsafeCell-backed opaque ZST, so `&CppWebSocket` carries
 // no `readonly`/`noalias` — the C++ side owns and mutates all state behind it.
 // Imports whose only non-value param is that handle are declared `safe fn`.
+// `*mut Socket` is opaque to C++; the lint recurses into repr(Rust) pointees.
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     fn WebSocket__didConnect(
         websocket_context: &CppWebSocket,

@@ -227,7 +227,7 @@ impl YesTask {
                     owner.enqueue_task_concurrent(ct);
                 }
                 EventLoopHandle::Mini(mut mini) => {
-                    (*mini.loop_).tick();
+                    bun_usockets::Loop::tick(mini.loop_);
                     let at =
                         core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
                             EventLoopTask::Mini(at) => {

@@ -2,8 +2,8 @@
 //! own kind→vtable dispatch tables; this module is the ONLY place that knows
 //! the kind→handler mapping. [`ensure_registered`] installs a static
 //! monomorphized vtable per Rust `SocketKind` plus the TLS side-channel hooks
-//! (raw ciphertext tap / deferred session / keylog delivery), and runs at VM
-//! init — before the first socket of any of these kinds can be created.
+//! (raw ciphertext tap / deferred session / keylog delivery), and runs at
+//! process + VM init — before the first socket of any of these kinds exists.
 
 use core::ptr::NonNull;
 
@@ -14,9 +14,13 @@ use bun_usockets::{ConnectingSocket, SocketKind, us_socket_t};
 
 use super::uws_handlers as handlers;
 
-/// Reborrow a live dispatch socket pointer. The core only dispatches live,
-/// non-null slab-resident sockets, and slots are not recycled until the tick
-/// postlude (C6) — the same contract the old opaque `opaque_mut` relied on.
+/// Reborrow a live socket pointer. Sound in two contexts: (1) dispatch — the
+/// core only dispatches live slab-resident sockets and slots are not recycled
+/// until the tick postlude (C6); (2) synchronous JS entry points (connect /
+/// upgrade ext stamps) — the pointer was generation-validated on entry and no
+/// postlude can run mid-call. The returned `&mut` must NOT span any call that
+/// can dispatch (close/write/handshake/feed) — use the raw-routed
+/// `NewSocketHandler` methods for those (C17).
 #[inline]
 pub(crate) fn hdr<'a>(s: *mut us_socket_t) -> &'a mut us_socket_t {
     debug_assert!(!s.is_null());
@@ -42,10 +46,10 @@ pub(crate) fn wrap<const SSL: bool>(s: *mut us_socket_t) -> uws::NewSocketHandle
 
 /// Register every Rust-handled kind's vtable + the TLS side-channel hooks.
 /// Idempotent; must run before the first socket of any Rust kind is created.
-/// Callers: each Bun-socket entry point (listen/connect/upgradeTLS), plus
-/// `jsc_hooks::init_runtime_state` — VM init precedes every lower-tier
-/// consumer (fetch/WebSocket/SQL/spawn-IPC), which cannot call up into this
-/// crate themselves.
+/// Callers: process start (`cli::Command::start`, covering VM-less paths like
+/// `bun install`), VM init (`jsc_hooks::init_runtime_state`, covering
+/// embedded/worker paths), and each Bun-socket entry point — lower-tier
+/// consumers (fetch/WebSocket/SQL/spawn-IPC) cannot call up into this crate.
 pub fn ensure_registered() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {

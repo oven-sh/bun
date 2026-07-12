@@ -71,22 +71,8 @@ pub(crate) fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mys
 // directly).
 // ──────────────────────────────────────────────────────────────────────────
 
-// `uws.us_bun_verify_error_t::toJS` — canonical body is `bun_jsc::system_error`
-// (bun_uws-typed until the shim cutover re-exports bun_usockets' nominal);
-// rebuilt field-by-field so both pre- and post-cutover states compile.
-pub fn verify_error_to_js(
-    err: &bun_usockets::us_bun_verify_error_t,
-    global: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    bun_jsc::system_error::verify_error_to_js(
-        &bun_uws::us_bun_verify_error_t {
-            error_no: err.error_no,
-            code: err.code,
-            reason: err.reason,
-        },
-        global,
-    )
-}
+// `uws.us_bun_verify_error_t::toJS` — canonical body is `bun_jsc::system_error`.
+pub use bun_jsc::system_error::verify_error_to_js;
 
 // ──────────────────────────────────────────────────────────────────────────
 // uws.create_bun_socket_error_t::toJS

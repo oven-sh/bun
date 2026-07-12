@@ -9,6 +9,9 @@ use crate::quic::{PendingConnect, Socket, Stream};
 
 bun_opaque::opaque_ffi! { pub struct Context; }
 
+// `Loop`'s crate-private slab tail is not FFI-safe; quic.c only reads the
+// repr(C) prefix. Same policy as `bun_usockets::unsafe_core::ffi`.
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     fn us_create_quic_client_context(
         loop_: *mut Loop,

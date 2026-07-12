@@ -52,25 +52,41 @@ impl<E> Swallow for Result<(), E> {
     }
 }
 
-/// Snapshot the owner word out of an `ExtSlot` ext token and deref it.
+/// Snapshot the owner word out of an `ExtSlot` ext token and deref it SHARED.
 ///
 /// # Safety
-/// `ExtSlot`'s non-re-entrancy contract: the stamped owner is a live unique
-/// heap allocation and no aliasing `&mut Owner` exists for the borrow's
-/// duration (single-threaded dispatch). Same contract as the old
-/// `thunk::ext_owner`.
+/// The stamped owner is a live heap allocation and dispatch is
+/// single-threaded. The `&T` spans the consumer callback; sound because
+/// re-entrant dispatch (close/write from inside the callback) only re-derives
+/// further `&T`s through this same path — never a `&mut` — and each driver
+/// holds a ref keeping the owner alive across its own close path.
 #[inline(always)]
-unsafe fn slot_owner<'a, T>(ext: &mut ExtMut<'_, ExtSlot<T>>) -> Option<&'a mut T> {
+unsafe fn slot_owner_ref<'a, T>(ext: &mut ExtMut<'_, ExtSlot<T>>) -> Option<&'a T> {
     let snap: Option<NonNull<T>> = ext.with(|slot| slot.get());
     // SAFETY: per fn contract.
-    snap.map(|mut p| unsafe { p.as_mut() })
+    unsafe { snap_owner_ref(snap) }
 }
 
-/// [`slot_owner`] for an already-copied owner word (the close-then-notify
+/// [`slot_owner_ref`] for an already-copied owner word (the close-then-notify
 /// path snapshots BEFORE the close so the slot storage may be gone).
 #[inline(always)]
-unsafe fn snap_owner<'a, T>(snap: Option<NonNull<T>>) -> Option<&'a mut T> {
-    // SAFETY: caller upholds the `slot_owner` contract for the snapshot.
+unsafe fn snap_owner_ref<'a, T>(snap: Option<NonNull<T>>) -> Option<&'a T> {
+    // SAFETY: caller upholds the `slot_owner_ref` contract for the snapshot.
+    snap.map(|p| unsafe { p.as_ref() })
+}
+
+/// [`slot_owner_ref`], exclusive — SpawnIPC ONLY (the IPC handlers take
+/// `&mut SendQueue`).
+///
+/// # Safety
+/// The `&mut` spans the consumer callback, so nothing during the callback may
+/// derive an aliasing borrow of the owner: the only synchronous dispatch
+/// re-entry from `SendQueue` is `close_socket`, which clears this ext word
+/// BEFORE the dispatching close so the nested `on_close` no-ops (C17).
+#[inline(always)]
+unsafe fn slot_owner_mut<'a, T>(ext: &mut ExtMut<'_, ExtSlot<T>>) -> Option<&'a mut T> {
+    let snap: Option<NonNull<T>> = ext.with(|slot| slot.get());
+    // SAFETY: per fn contract.
     snap.map(|mut p| unsafe { p.as_mut() })
 }
 
@@ -385,39 +401,40 @@ where
 // methods on the owner type itself. Ext stores `?*Owner` — optional because a
 // connect/accept can fail and dispatch `on_close`/`on_connect_error` BEFORE
 // the caller has had a chance to stash `this` in the freshly-zeroed ext slot.
+//
+// Owners arrive as `&Owner`, never `&mut`: the drivers' inherent handlers all
+// take `&self` (interior mutability), and a `&mut` argument protected across
+// a callback that re-enters dispatch (fail/disconnect → close from inside
+// on_data/on_end) would alias the re-derived owner borrow (C17).
 pub trait NsSocketEvents<Owner, const SSL: bool> {
-    fn on_open(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_open(_this: &Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    fn on_data(
-        _this: &mut Owner,
-        _s: NewSocketHandler<SSL>,
-        _data: &[u8],
-    ) -> bun_jsc::JsResult<()> {
+    fn on_data(_this: &Owner, _s: NewSocketHandler<SSL>, _data: &[u8]) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    fn on_writable(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_writable(_this: &Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
     fn on_close(
-        _this: &mut Owner,
+        _this: &Owner,
         _s: NewSocketHandler<SSL>,
         _code: i32,
         _reason: Option<*mut c_void>,
     ) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    fn on_timeout(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_timeout(_this: &Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    fn on_long_timeout(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_long_timeout(_this: &Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    fn on_end(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+    fn on_end(_this: &Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
     fn on_connect_error(
-        _this: &mut Owner,
+        _this: &Owner,
         _s: NewSocketHandler<SSL>,
         _code: i32,
     ) -> bun_jsc::JsResult<()> {
@@ -425,7 +442,7 @@ pub trait NsSocketEvents<Owner, const SSL: bool> {
     }
     /// Default no-op covers adapters that leave the handshake slot unbound.
     fn on_handshake(
-        _this: &mut Owner,
+        _this: &Owner,
         _s: NewSocketHandler<SSL>,
         _ok: i32,
         _err: us_bun_verify_error_t,
@@ -455,22 +472,22 @@ where
     const HAS_ON_HANDSHAKE: bool = true;
 
     fn on_open(mut ext: ExtMut<'_, Self::Ext>, s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: shared-owner contract (see `slot_owner_ref`).
+        let Some(this) = (unsafe { slot_owner_ref(&mut ext) }) else {
             return;
         };
         swallow(H::on_open(this, wrap::<SSL>(s)));
     }
     fn on_data(mut ext: ExtMut<'_, Self::Ext>, s: *mut us_socket_t, data: &[u8]) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: shared-owner contract (see `slot_owner_ref`).
+        let Some(this) = (unsafe { slot_owner_ref(&mut ext) }) else {
             return;
         };
         swallow(H::on_data(this, wrap::<SSL>(s), data));
     }
     fn on_writable(mut ext: ExtMut<'_, Self::Ext>, s: *mut us_socket_t) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: shared-owner contract (see `slot_owner_ref`).
+        let Some(this) = (unsafe { slot_owner_ref(&mut ext) }) else {
             return;
         };
         swallow(H::on_writable(this, wrap::<SSL>(s)));
@@ -481,29 +498,29 @@ where
         code: i32,
         reason: Option<*mut c_void>,
     ) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: shared-owner contract (see `slot_owner_ref`).
+        let Some(this) = (unsafe { slot_owner_ref(&mut ext) }) else {
             return;
         };
         swallow(H::on_close(this, wrap::<SSL>(s), code, reason));
     }
     fn on_timeout(mut ext: ExtMut<'_, Self::Ext>, s: *mut us_socket_t) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: shared-owner contract (see `slot_owner_ref`).
+        let Some(this) = (unsafe { slot_owner_ref(&mut ext) }) else {
             return;
         };
         swallow(H::on_timeout(this, wrap::<SSL>(s)));
     }
     fn on_long_timeout(mut ext: ExtMut<'_, Self::Ext>, s: *mut us_socket_t) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: shared-owner contract (see `slot_owner_ref`).
+        let Some(this) = (unsafe { slot_owner_ref(&mut ext) }) else {
             return;
         };
         swallow(H::on_long_timeout(this, wrap::<SSL>(s)));
     }
     fn on_end(mut ext: ExtMut<'_, Self::Ext>, s: *mut us_socket_t) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: shared-owner contract (see `slot_owner_ref`).
+        let Some(this) = (unsafe { slot_owner_ref(&mut ext) }) else {
             return;
         };
         swallow(H::on_end(this, wrap::<SSL>(s)));
@@ -512,15 +529,17 @@ where
         // Close before notify — see RawPtrHandler::on_connect_error.
         let snap = ext.with(|slot| slot.get());
         wrap::<SSL>(s).close(CloseCode::Failure);
-        // SAFETY: snapshot taken before close; unique heap owner,
-        // single-threaded dispatch (the slot storage may be gone, so deref the
-        // snapshot rather than re-borrowing `ext`).
-        if let Some(t) = unsafe { snap_owner(snap) } {
+        // SAFETY: snapshot taken before close (the slot storage may be gone,
+        // so deref the snapshot rather than re-borrowing `ext`); shared-owner
+        // contract per `slot_owner_ref`.
+        if let Some(t) = unsafe { snap_owner_ref(snap) } {
             swallow(H::on_connect_error(t, wrap::<SSL>(s), code));
         }
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
-        let Some(this) = conn(c).ext::<ExtSlot<Owner>>().owner_mut() else {
+        let snap = conn(c).ext::<ExtSlot<Owner>>().get();
+        // SAFETY: shared-owner contract (see `slot_owner_ref`).
+        let Some(this) = (unsafe { snap_owner_ref(snap) }) else {
             return;
         };
         swallow(H::on_connect_error(this, from_connecting::<SSL>(c), code));
@@ -531,8 +550,8 @@ where
         ok: bool,
         err: us_bun_verify_error_t,
     ) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: shared-owner contract (see `slot_owner_ref`).
+        let Some(this) = (unsafe { slot_owner_ref(&mut ext) }) else {
             return;
         };
         swallow(H::on_handshake(this, wrap::<SSL>(s), ok as i32, err));
@@ -554,24 +573,24 @@ where
 macro_rules! impl_ns_socket_events_forward {
     ($Owner:ty, $Handler:ty) => {
         impl<const SSL: bool> NsSocketEvents<$Owner, SSL> for $Handler {
-            fn on_open(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+            fn on_open(this: &$Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
                 swallow(Self::on_open(this, s));
                 Ok(())
             }
             fn on_data(
-                this: &mut $Owner,
+                this: &$Owner,
                 s: NewSocketHandler<SSL>,
                 data: &[u8],
             ) -> bun_jsc::JsResult<()> {
                 swallow(Self::on_data(this, s, data));
                 Ok(())
             }
-            fn on_writable(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+            fn on_writable(this: &$Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
                 swallow(Self::on_writable(this, s));
                 Ok(())
             }
             fn on_close(
-                this: &mut $Owner,
+                this: &$Owner,
                 s: NewSocketHandler<SSL>,
                 code: i32,
                 reason: Option<*mut c_void>,
@@ -579,16 +598,16 @@ macro_rules! impl_ns_socket_events_forward {
                 swallow(Self::on_close(this, s, code, reason));
                 Ok(())
             }
-            fn on_timeout(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+            fn on_timeout(this: &$Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
                 swallow(Self::on_timeout(this, s));
                 Ok(())
             }
-            fn on_end(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+            fn on_end(this: &$Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
                 swallow(Self::on_end(this, s));
                 Ok(())
             }
             fn on_connect_error(
-                this: &mut $Owner,
+                this: &$Owner,
                 s: NewSocketHandler<SSL>,
                 code: i32,
             ) -> bun_jsc::JsResult<()> {
@@ -596,7 +615,7 @@ macro_rules! impl_ns_socket_events_forward {
                 Ok(())
             }
             fn on_handshake(
-                this: &mut $Owner,
+                this: &$Owner,
                 s: NewSocketHandler<SSL>,
                 ok: i32,
                 err: us_bun_verify_error_t,
@@ -730,7 +749,9 @@ pub type Valkey<const SSL: bool> =
 // ── Bun.spawn IPC / process.send() ──────────────────────────────────────────
 // Ext is `*IPC.SendQueue` for both child-side `process.send` and parent-side
 // `Bun.spawn({ipc})`. The IPC handlers are free functions, not methods on
-// SendQueue, so we adapt manually.
+// SendQueue, so we adapt manually. They take `&mut SendQueue`; sound only
+// because `SendQueue::close_socket` clears this ext word before its
+// dispatching close (see `slot_owner_mut`).
 pub struct SpawnIPC;
 
 use IPC::IPCHandlers::PosixSocket as IpcH;
@@ -748,22 +769,22 @@ impl VHandler for SpawnIPC {
 
     fn on_open(_ext: ExtMut<'_, Self::Ext>, _s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {}
     fn on_data(mut ext: ExtMut<'_, Self::Ext>, s: *mut us_socket_t, data: &[u8]) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: exclusive-owner contract (see `slot_owner_mut`).
+        let Some(this) = (unsafe { slot_owner_mut(&mut ext) }) else {
             return;
         };
         IpcH::on_data(this, wrap::<false>(s), data);
     }
     fn on_fd(mut ext: ExtMut<'_, Self::Ext>, s: *mut us_socket_t, fd: c_int) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: exclusive-owner contract (see `slot_owner_mut`).
+        let Some(this) = (unsafe { slot_owner_mut(&mut ext) }) else {
             return;
         };
         IpcH::on_fd(this, wrap::<false>(s), fd);
     }
     fn on_writable(mut ext: ExtMut<'_, Self::Ext>, s: *mut us_socket_t) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: exclusive-owner contract (see `slot_owner_mut`).
+        let Some(this) = (unsafe { slot_owner_mut(&mut ext) }) else {
             return;
         };
         IpcH::on_writable(this, wrap::<false>(s));
@@ -774,22 +795,22 @@ impl VHandler for SpawnIPC {
         code: i32,
         reason: Option<*mut c_void>,
     ) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: exclusive-owner contract (see `slot_owner_mut`).
+        let Some(this) = (unsafe { slot_owner_mut(&mut ext) }) else {
             return;
         };
         IpcH::on_close(this, wrap::<false>(s), code, reason);
     }
     fn on_timeout(mut ext: ExtMut<'_, Self::Ext>, s: *mut us_socket_t) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: exclusive-owner contract (see `slot_owner_mut`).
+        let Some(this) = (unsafe { slot_owner_mut(&mut ext) }) else {
             return;
         };
         IpcH::on_timeout(this, wrap::<false>(s));
     }
     fn on_end(mut ext: ExtMut<'_, Self::Ext>, s: *mut us_socket_t) {
-        // SAFETY: ExtSlot non-re-entrancy contract (see `slot_owner`).
-        let Some(this) = (unsafe { slot_owner(&mut ext) }) else {
+        // SAFETY: exclusive-owner contract (see `slot_owner_mut`).
+        let Some(this) = (unsafe { slot_owner_mut(&mut ext) }) else {
             return;
         };
         IpcH::on_end(this, wrap::<false>(s));

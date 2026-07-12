@@ -143,3 +143,11 @@ The 12 per-target bssl_bindings/wrapper_*.rs files (~343k lines committed) must 
 collapsed before the PR: diff them, keep ONE shared bindings file + a minimal
 cfg-gated divergence module (per-OS at worst). Verify cargo check on linux x64
 + rust:check-all after collapsing.
+
+### ORCHESTRATOR NOTE (supersedes the bindings-dedupe note above)
+Owner directive: bindgen outputs are NOT committed. A dedicated agent is moving
+bssl-sys binding generation to build time (patched build.rs runs the bindgen
+crate into OUT_DIR; committed per-target wrapper_*.rs files deleted; wrapper.c
+stays committed with a build-time drift assert). Final applier: verify
+cargo check -p bun_usockets natively AND for at least one foreign target,
+confirm boringssl.ts stamp checks updated, and ensure no wrapper_*.rs remain.

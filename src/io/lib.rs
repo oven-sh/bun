@@ -2201,7 +2201,8 @@ pub mod waker {
             // See `wait()` — this is the cross-thread wake path; forming a
             // `&mut WindowsLoop` here would alias the event-loop thread's
             // borrow held across `us_loop_run`. Pass the raw pointer to the
-            // thread-safe wake (`uv_async_send`) instead.
+            // thread-safe wake (`uv_async_send`) instead. Liveness: `loop_`
+            // is the process-global singleton (see `loop_ref` docs below).
             bun_usockets::us_wakeup_loop(self.loop_ref().as_ptr());
         }
 

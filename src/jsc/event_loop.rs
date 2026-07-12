@@ -342,11 +342,13 @@ impl EventLoop {
         self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
 
-        // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
+        // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
-        // `event_loop_handle` (which is the libuv loop).
+        // `event_loop_handle` (which is the libuv loop). `*mut Loop`, never
+        // `&mut`: the flush can dispatch stream callbacks that re-derive
+        // loop borrows (C17).
         if vm.event_loop_handle.is_some() {
-            vm.uws_loop_mut().drain_quic_if_necessary();
+            uws::Loop::drain_quic_if_necessary(vm.uws_loop());
         }
 
         Ok(())
@@ -952,6 +954,8 @@ impl EventLoop {
         // Cross-thread callers (enqueue_task_concurrent, worker terminate)
         // reach here while the loop thread may be parked inside a tick —
         // use the raw `us_wakeup_loop(*mut Loop)`, never a `&mut Loop`.
+        // Liveness: worker teardown unpublishes the loop under its lock
+        // before `on_thread_exit` frees it.
         #[cfg(windows)]
         {
             if let Some(loop_) = self.uws_loop {
@@ -961,7 +965,12 @@ impl EventLoop {
         }
         #[cfg(not(windows))]
         {
-            if let Some(loop_) = self.vm_ref().event_loop_handle {
+            let vm = self.virtual_machine.expect("virtual_machine").as_ptr();
+            // SAFETY: same raw-place projection as `uv_loop` — no
+            // `&VirtualMachine` is formed; cross-thread callers race with a
+            // JS-thread `&mut VM` held across a tick.
+            let handle = unsafe { core::ptr::addr_of!((*vm).event_loop_handle).read() };
+            if let Some(loop_) = handle {
                 uws::us_wakeup_loop(loop_);
             }
         }

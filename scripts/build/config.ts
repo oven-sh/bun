@@ -920,7 +920,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
   assert(
     !webkitMimalloc || (linux && abi === "gnu" && !asan && !debug && !baseline),
-    "webkitMimalloc=true requires Linux glibc release non-baseline (only -mimalloc and -mimalloc-lto WebKit prebuilts exist)",
+    "webkitMimalloc=true requires Linux glibc release non-asan non-baseline (only -mimalloc and -mimalloc-lto WebKit prebuilts exist)",
   );
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");

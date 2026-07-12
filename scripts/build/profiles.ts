@@ -162,6 +162,9 @@ export const profiles = {
     webkit: "prebuilt",
     lto: false,
     webkitMimalloc: true,
+    // Own dir so A/B against --profile=release (different WebKit destDir →
+    // different -I on every C++ edge) doesn't force full rebuilds each switch.
+    buildDir: "build/release-mimalloc",
   },
 
   /** Release with local WebKit. */

@@ -765,12 +765,6 @@ impl IpcData {
 /// (`process.send`).
 pub struct SpawnIpcProtocol;
 
-/// Idempotent. Must run before the first spawn-IPC socket is adopted; both
-/// adoption sites (spawn bindings, `VirtualMachine::get_ipc_instance`) call it.
-pub fn register_protocol() {
-    bun_usockets::register::<SpawnIpcProtocol>();
-}
-
 impl bun_usockets::Protocol for SpawnIpcProtocol {
     type Owner = IpcData;
     const KIND: bun_usockets::SocketKind = bun_usockets::SocketKind::SpawnIpc;

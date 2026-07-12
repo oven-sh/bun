@@ -108,24 +108,24 @@ pub trait Protocol: Sized + 'static {
     }
 }
 
-/// Register `P` for its kind (and TLS sibling) in the static kind tables.
-/// Must happen before the first socket of the kind is created; a second
-/// registration with a different protocol panics (same rule as
-/// [`dispatch::register_kind`]).
-pub fn register<P: Protocol>() {
-    register_kind_for::<P>(P::KIND);
-    if let Some(kind) = P::KIND_TLS {
-        register_kind_for::<P>(kind);
-    }
-}
-
-fn register_kind_for<P: Protocol>(kind: SocketKind) {
-    dispatch::register_kind_raw(kind, trampolines::make2::<P>(), TypeId::of::<P>());
-    dispatch::register_owner_ops(
+/// Const-build the kind-table row for `P` at `kind` (the runtime dispatch
+/// module places one per Rust-handled `SocketKind` in `BUN_UWS_KIND_TABLE`).
+/// Const-eval traps when `kind` is not `P::KIND` / `P::KIND_TLS`, so a row
+/// placed at the wrong index is a compile error.
+pub const fn kind_entry<P: Protocol>(kind: SocketKind) -> dispatch::KindEntry {
+    let matches_kind = kind as usize == P::KIND as usize
+        || match P::KIND_TLS {
+            Some(tls) => kind as usize == tls as usize,
+            None => false,
+        };
+    assert!(matches_kind, "kind_entry placed at a kind P does not handle");
+    dispatch::KindEntry {
         kind,
-        OwnerOps {
+        vtable: trampolines::make2::<P>(),
+        owner_ops: OwnerOps {
             deref: trampolines::owner_deref_erased::<P::Owner>,
         },
-        TypeId::of::<P::Owner>(),
-    );
+        handler_type: TypeId::of::<P>,
+        owner_type: TypeId::of::<P::Owner>,
+    }
 }

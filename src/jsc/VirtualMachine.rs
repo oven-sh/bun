@@ -6442,8 +6442,6 @@ impl VirtualMachine {
         #[cfg(not(windows))]
         let this: *mut VirtualMachine = self;
 
-        crate::ipc::register_protocol();
-
         #[cfg(not(windows))]
         let instance: *mut IPCInstance = {
             // SAFETY: disjoint borrow — `spawn_ipc_group` only touches the

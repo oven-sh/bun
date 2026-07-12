@@ -1,16 +1,18 @@
-//! Socket event dispatch wiring. The Rust core (`bun_usockets`) drives its
-//! own kind→vtable dispatch tables; this module is the ONLY place that knows
-//! the kind→handler mapping. [`ensure_registered`] installs a static
-//! monomorphized vtable per Rust `SocketKind` plus the TLS side-channel hooks
-//! (raw ciphertext tap / deferred session / keylog delivery), and runs at
-//! process + VM init — before the first socket of any of these kinds exists.
+//! Socket event dispatch wiring. This module is the ONLY place that knows
+//! the kind→handler mapping: `BUN_UWS_KIND_TABLE` is the fully
+//! const-initialized kind table (one monomorphized Protocol v2 row per Rust
+//! `SocketKind`) plus the TLS side-channel hooks (raw ciphertext tap /
+//! deferred session / keylog delivery). `bun_usockets` resolves both
+//! `no_mangle` statics at link time — no runtime registration exists, and a
+//! missing/misplaced kind is a compile error (array shape +
+//! `validate_kind_table`).
 
 use core::ptr::NonNull;
 
 use bun_usockets as uws;
-use bun_usockets::dispatch::{self, TlsSideChannelHooks};
 use bun_usockets::unsafe_core::trampolines::with_socket_owner;
 use bun_usockets::us_socket_t;
+use uws::{KindEntry, KindTable, SOCKET_KIND_COUNT, TlsSideChannelHooks, kind_entry};
 
 use super::uws_handlers as handlers;
 
@@ -22,42 +24,95 @@ pub(crate) fn wrap<const SSL: bool>(s: *mut us_socket_t) -> uws::NewSocketHandle
     ))
 }
 
-/// Register every Protocol v2 kind this binary dispatches on the JS thread,
-/// plus the TLS side-channel hooks. Idempotent; must run before the first
-/// socket of any of these kinds is created. Callers: process start
-/// (`cli::Command::start`, covering VM-less paths like `bun install`), VM
-/// init (`jsc_hooks::init_runtime_state`, covering embedded/worker paths),
-/// and each Bun-socket entry point. Registration is `Once`-guarded here and
-/// idempotent in the kind tables, so consumers that self-register at their
-/// own entry points (postgres/mysql at connect, spawn-IPC at adoption) are
-/// safe to double-register.
-pub fn ensure_registered() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        // Bun.connect / Bun.listen (accepted sockets carry the same kinds —
-        // the listener itself never dispatches; see `Listener::listen`).
-        uws::register::<handlers::BunSocket<false>>();
-        uws::register::<handlers::BunSocket<true>>();
+// ── the link-time kind table ─────────────────────────────────────────────────
+// One const row per Rust-handled kind. `kind_entry` const-eval traps a row
+// built for the wrong kind; `validate_kind_table` traps a row placed at the
+// wrong index; the array shape traps a missing kind when SOCKET_KIND_COUNT
+// grows. Group-vtable kinds (Dynamic, UwsHttp*/UwsWs*) and the ABI-reserved
+// listener kinds stay `None` — their routing is fixed in core.
 
-        // HTTP client thread (kind tables are process-global; registering
-        // from the JS thread covers the HTTP thread's loop too).
-        bun_http::http_context::register_protocol();
+use bun_usockets::SocketKind as K;
 
-        // WebSocket client (upgrade + framed, TCP + TLS).
-        bun_http_jsc::websocket_client::register_ws_client_protocols();
+const E_BUN_TCP: KindEntry = kind_entry::<handlers::BunSocket<false>>(K::BunSocketTcp);
+const E_BUN_TLS: KindEntry = kind_entry::<handlers::BunSocket<true>>(K::BunSocketTls);
+const E_HTTP: KindEntry = kind_entry::<bun_http::http_context::HttpProtocol<false>>(K::HttpClient);
+const E_HTTP_TLS: KindEntry =
+    kind_entry::<bun_http::http_context::HttpProtocol<true>>(K::HttpClientTls);
+const E_WS_UPGRADE: KindEntry = kind_entry::<
+    bun_http_jsc::websocket_client::websocket_upgrade_client::HTTPClient<false>,
+>(K::WsClientUpgrade);
+const E_WS_UPGRADE_TLS: KindEntry = kind_entry::<
+    bun_http_jsc::websocket_client::websocket_upgrade_client::HTTPClient<true>,
+>(K::WsClientUpgradeTls);
+const E_WS: KindEntry =
+    kind_entry::<bun_http_jsc::websocket_client::WebSocket<false>>(K::WsClient);
+const E_WS_TLS: KindEntry =
+    kind_entry::<bun_http_jsc::websocket_client::WebSocket<true>>(K::WsClientTls);
+const E_POSTGRES: KindEntry = kind_entry::<
+    bun_sql_jsc::postgres::postgres_sql_connection::PostgresProtocol,
+>(K::Postgres);
+const E_POSTGRES_TLS: KindEntry = kind_entry::<
+    bun_sql_jsc::postgres::postgres_sql_connection::PostgresProtocol,
+>(K::PostgresTls);
+const E_MYSQL: KindEntry =
+    kind_entry::<bun_sql_jsc::mysql::js_my_sql_connection::MySQLSocketProtocol>(K::Mysql);
+const E_MYSQL_TLS: KindEntry =
+    kind_entry::<bun_sql_jsc::mysql::js_my_sql_connection::MySQLSocketProtocol>(K::MysqlTls);
+const E_VALKEY: KindEntry =
+    kind_entry::<crate::valkey_jsc::js_valkey::ValkeyProtocol>(K::Valkey);
+const E_VALKEY_TLS: KindEntry =
+    kind_entry::<crate::valkey_jsc::js_valkey::ValkeyProtocol>(K::ValkeyTls);
+const E_SPAWN_IPC: KindEntry = kind_entry::<bun_jsc::ipc::SpawnIpcProtocol>(K::SpawnIpc);
+#[cfg(not(windows))]
+const E_TEST_CHANNEL: KindEntry =
+    kind_entry::<crate::cli::test::parallel::channel::ChannelProtocol>(K::TestChannel);
 
-        // Valkey (postgres/mysql/spawn-IPC self-register at their own
-        // connect/adoption entry points in their crates).
-        uws::register::<crate::valkey_jsc::js_valkey::ValkeyProtocol>();
+const KIND_TABLE: KindTable = [
+    /* Invalid (trap) */ None,
+    /* Dynamic (group vtable) */ None,
+    Some(&E_BUN_TCP),
+    Some(&E_BUN_TLS),
+    /* BunListenerTcp (ABI-reserved) */ None,
+    /* BunListenerTls (ABI-reserved) */ None,
+    Some(&E_HTTP),
+    Some(&E_HTTP_TLS),
+    Some(&E_WS_UPGRADE),
+    Some(&E_WS_UPGRADE_TLS),
+    Some(&E_WS),
+    Some(&E_WS_TLS),
+    Some(&E_POSTGRES),
+    Some(&E_POSTGRES_TLS),
+    Some(&E_MYSQL),
+    Some(&E_MYSQL_TLS),
+    Some(&E_VALKEY),
+    Some(&E_VALKEY_TLS),
+    Some(&E_SPAWN_IPC),
+    /* UwsHttp (group vtable) */ None,
+    /* UwsHttpTls (group vtable) */ None,
+    /* UwsWs (group vtable) */ None,
+    /* UwsWsTls (group vtable) */ None,
+    /* TestChannel (uv pipes on Windows) */
+    #[cfg(not(windows))]
+    Some(&E_TEST_CHANNEL),
+    #[cfg(windows)]
+    None,
+];
 
-        dispatch::register_tls_side_channel(&TLS_HOOKS);
-    });
-}
+// Compile-time: every row sits at its own kind's index (KIND_TABLE cannot be
+// a static for this check — const eval cannot read statics).
+const _: () = uws::validate_kind_table(&KIND_TABLE);
+const _: () = assert!(KIND_TABLE.len() == SOCKET_KIND_COUNT);
+
+/// The one definition `bun_usockets` dispatch resolves at link time.
+#[unsafe(no_mangle)]
+static BUN_UWS_KIND_TABLE: KindTable = KIND_TABLE;
 
 // ── TLS side-channel hooks (only `BunSocketTls` sockets reach these; the
-// dispatch driver gates on kind + slot liveness before calling) ─────────────
+// dispatch driver gates on kind + slot liveness before calling). Same
+// link-time seam as the kind table. ──────────────────────────────────────────
 
-static TLS_HOOKS: TlsSideChannelHooks = TlsSideChannelHooks {
+#[unsafe(no_mangle)]
+static BUN_UWS_TLS_SIDE_CHANNEL: TlsSideChannelHooks = TlsSideChannelHooks {
     ssl_raw_tap: ssl_raw_tap_hook,
     session: session_hook,
     keylog: keylog_hook,

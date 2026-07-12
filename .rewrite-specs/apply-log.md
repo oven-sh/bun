@@ -701,3 +701,89 @@ target was the MAIN loop's poll universe, which is unified. darwin/freebsd
 arms gate on CI (kqueue Proc/Machport/Memorystatus, machport DNS).
 (b) P1 valkey close-during-connect promise delta: ACCEPTED (C parity; suites
 green; nothing asserts the old behavior).
+
+## 2026-07-12 — no-OnceLock + lone-dyn directives executed (post-D2 cleanup)
+
+### Const kind table (dispatch.rs directive)
+- KIND_TABLES / OWNER_OPS / TLS_SIDE_CHANNEL OnceLocks DELETED, along with
+  every runtime registration fn: dispatch::{register_kind, register_kind_raw,
+  register_owner_ops, register_tls_side_channel}, protocol::register,
+  uws_dispatch::ensure_registered, bun_http::http_context::register_protocol,
+  bun_http_jsc::register_ws_client_protocols, bun_jsc::ipc::register_protocol,
+  and the postgres/mysql/Channel lazy self-register lines (+ all 9 callers).
+- ONE fully const table lives in src/runtime/socket/uws_dispatch.rs (the crate
+  that sees every protocol type): 17 `const E_*: KindEntry` rows built by the
+  new `pub const fn uws::kind_entry::<P>(kind)` (protocol.rs), assembled into
+  `const KIND_TABLE: KindTable` (explicit 24-slot array literal) and exported
+  as `#[unsafe(no_mangle)] static BUN_UWS_KIND_TABLE`. TLS side-channel hooks
+  are the sibling `#[unsafe(no_mangle)] static BUN_UWS_TLS_SIDE_CHANNEL`.
+- Cross-crate boundary: bun_usockets declares both as
+  `unsafe extern "Rust" { safe static ... }` in unsafe_core/trampolines.rs
+  (the crate-root #![deny(unsafe_code)] forbids extern blocks elsewhere) —
+  a single link-time seam, no init code. `cargo test -p bun_usockets` links
+  via `#[cfg(test)]` empty-table fallbacks in the same file (crate unit tests
+  never create table-dispatched sockets); bun_uws_shim's test target links
+  without any fallback (its objects don't pull dispatch).
+- Compile-time enforcement: array shape (SOCKET_KIND_COUNT growth = length
+  mismatch), `kind_entry` const-asserts kind ∈ {P::KIND, P::KIND_TLS} (row
+  built for the wrong protocol = const-eval error), and the new
+  `uws::validate_kind_table` runs in a `const _: () = ...` (row at the wrong
+  index / entry on Invalid/Dynamic/Uws* = const-eval error; KindEntry gained
+  a crate-private `kind` field for this).
+- TypeId checks: kept as runtime data, no lazy init — KindEntry stores
+  `fn() -> TypeId` monomorphized pointers (const TypeId::of is not stable);
+  owner_registered_as/kind_dispatches_to read the const table directly. The
+  fail-closed attach semantics are unchanged.
+- Semantics deltas (all strictly tighter): dispatch on a kind with no table
+  entry now panics unconditionally (before: only if nobody had registered
+  yet); tls_hooks() can no longer be "unregistered"; conflicting-registration
+  panics are replaced by structural impossibility.
+
+### TestChannel de-generic (prereq for one table row per kind)
+- ChannelProtocol<Owner> had one instantiation per ChannelOwner — impossible
+  as a single const row. ChannelState is now NON-generic: the owner backref
+  is `Cell<*mut ()>` + `Cell<Option<&'static OwnerHooks>>` (two monomorphized
+  fn pointers, `frame_thunk::<Owner>`/`done_thunk::<Owner>`, stamped at
+  adopt/adopt_pipe next to the backref, cleared in Channel::drop before the
+  owner can be mid-drop). ChannelProtocol is a plain unit struct.
+
+### bssl.rs EX_INDICES (matches deleted openssl.c:181-393 pthread_once shape)
+- OnceLock<ExIndices> → `static EX_ONCE: std::sync::Once` + an
+  UnsafeCell<ExIndices> in a Sync wrapper: written exactly once inside
+  call_once at first SSL_CTX/SSL touch (same site as C), &'static reads only
+  after call_once (its synchronization = the C's pthread_once). Zero caller
+  churn (ex_indices() signature unchanged, 27 call sites).
+
+### ffi.rs BIO method (C stored it per-loop; ours is cross-loop by design)
+- Two OnceLocks → `BIO_INIT: Once` + AtomicUsize/AtomicI32 latches (the
+  has_epoll_pwait2 plain-latch shape, ordered by the Once). Kept process-
+  global rather than the C's loop-local field because `ssl_wbio_ctl` compares
+  BIO_method_type across SSLWrapper-vs-ours with no loop in hand, and the
+  type index must be identical on the JS and HTTP-client loops.
+
+### group.rs lone dyn (on_create)
+- `Option<Box<dyn FnMut(AnySocket)>>` → `Option<(fn(*mut c_void, AnySocket),
+  *mut c_void)>` (Copy). Accept path is allocation-free and the take/put-back
+  ownership dance is gone (copy out, call). Single producer
+  (runtime/socket/Listener.rs) now registers a named `accept_hook_body` fn
+  with the Listener as ctx (same lifetime argument the BackRef relied on);
+  single consumer (group.rs accept loop) unchanged otherwise.
+
+### Verification
+- cargo check -p bun_usockets / --workspace / --workspace --all-targets: GREEN.
+- cargo test -p bun_usockets: 24/24. cargo test -p bun_uws_shim --no-run: links.
+- bun bd: builds, boots (1.4.0-debug).
+- bun/net/socket.test.ts: 65 pass/2 skip/0 fail (incl. 2048-cycle
+  GC+upgradeTLS stress → tls side-channel seam exercised).
+- serve.test.ts: 251/3 — the EXACT documented pre-existing set (root-range
+  ENV, not-instanciate MARGINAL, abort-sendfile PRE-EXISTING).
+- spawn.ipc + spawn-ipc-gc + bun-ipc-inherit: 13/13 (SpawnIpc row).
+- bun test --parallel 2-file smoke: 3/3 (TestChannel row, erased hooks).
+- websocket-client + websocket-upgrade tests: 30/30 (WsClient* rows).
+- Manual: fetch http+https 200 (HttpClient/HttpClientTls rows + Once-based
+  ex_indices/BIO init on the HTTP thread).
+- Acceptance greps: `grep -rn 'OnceLock\|LazyLock\|OnceCell\|lazy_static'
+  src/usockets src/uws_shim` = 0 hits; `grep -rn 'dyn ' src/usockets
+  --include='*.rs'` = 0 hits.
+- bun run rust:check-all: 10/10 targets GREEN (windows arm of the table +
+  Channel.rs windows hooks type-checked).

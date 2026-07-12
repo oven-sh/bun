@@ -586,7 +586,6 @@ impl JSMySQLConnection {
             // group after the SSLRequest exchange. `owner_ref()` transfers one
             // strong ref to core; core releases it at the socket terminal
             // (incl. the silent no-event close of a never-completed connect).
-            uws::register::<MySQLSocketProtocol>();
             let group = vm.mysql_socket_group::<false>();
             let result = if !path.is_empty() {
                 SocketTCP::connect_unix_owned(

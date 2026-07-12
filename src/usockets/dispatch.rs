@@ -1,13 +1,13 @@
-//! kind → static vtable dispatch tables (absorbs uws_dispatch.rs
-//! registration) + the compile-time vtable generator moved unchanged from
-//! `src/uws_sys/vtable.rs` (consumers/01-api-surface.md §5). The extern "C"
-//! trampolines live in `unsafe_core::trampolines`. Dispatch rules per
-//! core-semantics.md §12 and contract C17 (every callback may synchronously
-//! re-enter; never touch ext after a terminal callback).
+//! kind → static vtable dispatch over the link-time const kind table
+//! (`BUN_UWS_KIND_TABLE`, defined in the runtime dispatch module) + the
+//! compile-time vtable generator moved unchanged from `src/uws_sys/vtable.rs`
+//! (consumers/01-api-surface.md §5). The extern "C" trampolines live in
+//! `unsafe_core::trampolines`. Dispatch rules per core-semantics.md §12 and
+//! contract C17 (every callback may synchronously re-enter; never touch ext
+//! after a terminal callback).
 
 use core::any::TypeId;
 use core::ffi::{c_int, c_void};
-use std::sync::OnceLock;
 
 use crate::connecting::ConnectingSocket;
 use crate::group::VTable;
@@ -203,42 +203,10 @@ impl<H: Handler> Make<H> {
 // switches on `s.kind` and falls back to the group vtable for UwsHttp{,Tls},
 // UwsWs{,Tls} and Dynamic (cabi-surface.md §2.1).
 
-const SOCKET_KIND_COUNT: usize = SocketKind::TestChannel as usize + 1;
+pub const SOCKET_KIND_COUNT: usize = SocketKind::TestChannel as usize + 1;
 
-/// Per-kind static tables for Rust-handled kinds, with the registering
-/// handler's `TypeId` so a conflicting second registration panics.
-/// `make::<H>()` may promote to distinct addresses per codegen unit, so
-/// re-registering the same `H` is a benign no-op.
-static KIND_TABLES: [OnceLock<(&'static VTable, TypeId)>; SOCKET_KIND_COUNT] =
-    [const { OnceLock::new() }; SOCKET_KIND_COUNT];
-
-/// Register the static vtable dispatched for `kind`. Must happen before the
-/// first socket of that kind is created. `Invalid` and group-vtable kinds
-/// (Dynamic/uWS) are rejected — their routing is fixed. Panics on a second
-/// registration with a different handler type.
-pub fn register_kind<H: Handler>(kind: SocketKind) {
-    register_kind_raw(kind, make::<H>(), TypeId::of::<H>());
-}
-
-/// Shared registration funnel for v1 handlers and Protocol v2
-/// (`protocol::register`); `id` identifies the registering handler/protocol
-/// type so a conflicting second registration panics.
-pub(crate) fn register_kind_raw(kind: SocketKind, vt: &'static VTable, id: TypeId) {
-    assert!(
-        kind != SocketKind::Invalid && !uses_group_vtable(kind),
-        "register_kind: {kind:?} does not dispatch through the static tables"
-    );
-    let (_, registered) = KIND_TABLES[kind as usize].get_or_init(|| (vt, id));
-    assert!(
-        *registered == id,
-        "register_kind: conflicting handler registration for {kind:?}"
-    );
-}
-
-// ── Protocol v2 owner registry (safe-protocol.md) ─────────────────────────────
-
-/// Type-erased owner operations for a Protocol v2 kind. Presence in
-/// `OWNER_OPS` is what marks a kind as v2: terminal dispatch releases the
+/// Type-erased owner operations for a Protocol v2 kind. A table entry
+/// carrying these marks the kind as v2: terminal dispatch releases the
 /// core-owned ext ref through `deref` (trampolines::release_owner_ext).
 #[derive(Copy, Clone)]
 pub(crate) struct OwnerOps {
@@ -247,37 +215,67 @@ pub(crate) struct OwnerOps {
     pub(crate) deref: unsafe fn(*mut c_void),
 }
 
-static OWNER_OPS: [OnceLock<(OwnerOps, TypeId)>; SOCKET_KIND_COUNT] =
-    [const { OnceLock::new() }; SOCKET_KIND_COUNT];
-
-/// Register the owner ops dispatched for a Protocol v2 `kind`; panics on a
-/// conflicting owner type (same rule as [`register_kind_raw`]).
-pub(crate) fn register_owner_ops(kind: SocketKind, ops: OwnerOps, owner_id: TypeId) {
-    let (_, registered) = OWNER_OPS[kind as usize].get_or_init(|| (ops, owner_id));
-    assert!(
-        *registered == owner_id,
-        "register_owner_ops: conflicting owner registration for {kind:?}"
-    );
+/// One row of the link-time kind table: the const-built vtable and owner ops
+/// for a Rust-handled `SocketKind`. Built ONLY by [`crate::kind_entry`];
+/// fields stay crate-private so the runtime crate can hold entries but not
+/// forge them.
+pub struct KindEntry {
+    /// The kind this row was built for ([`validate_kind_table`] traps rows
+    /// placed at the wrong index).
+    pub(crate) kind: SocketKind,
+    pub(crate) vtable: &'static VTable,
+    pub(crate) owner_ops: OwnerOps,
+    /// Registered protocol type (debug dispatch checks).
+    pub(crate) handler_type: fn() -> TypeId,
+    /// Registered `Protocol::Owner` type (attach surface fails closed).
+    pub(crate) owner_type: fn() -> TypeId,
 }
 
-/// True iff `kind` is a Protocol v2 kind whose registered owner type is `O`.
-/// The attach surface fails closed on anything else: a v1/unregistered kind
-/// would leak the ref at the terminal, a different owner type is confusion.
+/// The process-wide kind→handler table, fully const-initialized in the one
+/// crate that sees every protocol type (`bun_runtime::socket::uws_dispatch`)
+/// and resolved here at link time — the Rust analog of the C loop's fixed
+/// dispatch switch. `None` = kind never dispatches through the static tables
+/// (Invalid trap, group-vtable kinds, ABI-reserved listener kinds).
+pub type KindTable = [Option<&'static KindEntry>; SOCKET_KIND_COUNT];
+
+/// Const-eval integrity check for the link-time table: every present row
+/// must sit at its own kind's index, and kinds outside the static tables
+/// (Invalid, Dynamic/uWS group-vtable kinds) must be `None`. Run it in a
+/// `const _: () = ...` next to the table so a misplaced row is a compile
+/// error.
+pub const fn validate_kind_table(t: &KindTable) {
+    let mut i = 0;
+    while i < SOCKET_KIND_COUNT {
+        match t[i] {
+            Some(e) => assert!(e.kind as usize == i, "kind-table row at the wrong index"),
+            None => {}
+        }
+        i += 1;
+    }
+    assert!(t[SocketKind::Invalid as usize].is_none());
+    assert!(t[SocketKind::Dynamic as usize].is_none());
+    assert!(t[SocketKind::UwsHttp as usize].is_none());
+    assert!(t[SocketKind::UwsHttpTls as usize].is_none());
+    assert!(t[SocketKind::UwsWs as usize].is_none());
+    assert!(t[SocketKind::UwsWsTls as usize].is_none());
+}
+
+#[inline]
+fn entry(kind: SocketKind) -> Option<&'static KindEntry> {
+    crate::unsafe_core::trampolines::kind_table()[kind as usize]
+}
+
+/// True iff `kind` is a Protocol v2 kind whose table-registered owner type is
+/// `O`. The attach surface fails closed on anything else: a kind without a
+/// table entry would leak the ref at the terminal, a different owner type is
+/// confusion.
 pub(crate) fn owner_registered_as<O: 'static>(kind: SocketKind) -> bool {
-    if uses_group_vtable(kind) || kind == SocketKind::Invalid {
-        return false;
-    }
-    OWNER_OPS[kind as usize]
-        .get()
-        .is_some_and(|(_, id)| *id == TypeId::of::<O>())
+    entry(kind).is_some_and(|e| (e.owner_type)() == TypeId::of::<O>())
 }
 
-/// `Some` iff `kind` was registered through Protocol v2 (owner-carrying ext).
+/// `Some` iff `kind` has a Protocol v2 table entry (owner-carrying ext).
 pub(crate) fn owner_ops(kind: SocketKind) -> Option<&'static OwnerOps> {
-    if uses_group_vtable(kind) || kind == SocketKind::Invalid {
-        return None;
-    }
-    OWNER_OPS[kind as usize].get().map(|(ops, _)| ops)
+    entry(kind).map(|e| &e.owner_ops)
 }
 
 /// Silent-terminal owner release (C1: SEMI_SOCKET closes and detach dispatch
@@ -288,13 +286,10 @@ pub(crate) fn release_owner_on_silent_terminal(s: *mut us_socket_t) {
 }
 
 /// Debug ext-type check backing `Trampolines::ext` (api.md kind registry):
-/// a static kind's trampoline belongs to the handler registered for it.
-/// Group-vtable kinds have no registry entry — vacuously true there.
+/// a static kind's trampoline belongs to the handler in its table entry.
+/// Kinds without an entry (group-vtable) are vacuously true.
 pub(crate) fn kind_dispatches_to<H: Handler>(kind: SocketKind) -> bool {
-    uses_group_vtable(kind)
-        || KIND_TABLES[kind as usize]
-            .get()
-            .is_none_or(|(_, id)| *id == TypeId::of::<H>())
+    entry(kind).is_none_or(|e| (e.handler_type)() == TypeId::of::<H>())
 }
 
 /// TLS side-channel hooks (raw ciphertext tap / new-session / keylog). These
@@ -307,33 +302,17 @@ pub struct TlsSideChannelHooks {
     pub keylog: fn(s: *mut us_socket_t, line: &[u8]),
 }
 
-static TLS_SIDE_CHANNEL: OnceLock<&'static TlsSideChannelHooks> = OnceLock::new();
-
-/// Register the TLS side-channel hooks. Re-registering the same static is a
-/// no-op; a conflicting registration panics (single-sourced, like the kind
-/// tables).
-pub fn register_tls_side_channel(hooks: &'static TlsSideChannelHooks) {
-    let prev = TLS_SIDE_CHANNEL.get_or_init(|| hooks);
-    assert!(
-        core::ptr::eq(*prev, hooks),
-        "register_tls_side_channel: conflicting hooks registration"
-    );
-}
-
-/// The registered hooks; panics like `vt()` does for an unregistered kind —
-/// silently dropping raw-tap ciphertext would corrupt the upgradeTLS
-/// `[raw, tls]` pair (tls-semantics §2.7).
+/// The link-time hooks (`BUN_UWS_TLS_SIDE_CHANNEL`, defined next to the kind
+/// table in the runtime dispatch module) — always present, so raw-tap
+/// ciphertext can never be silently dropped (tls-semantics §2.7).
 fn tls_hooks() -> &'static TlsSideChannelHooks {
-    TLS_SIDE_CHANNEL
-        .get()
-        .copied()
-        .unwrap_or_else(|| panic!("TLS side-channel event with no hooks registered"))
+    crate::unsafe_core::trampolines::tls_side_channel()
 }
 
 /// Resolve the vtable for a socket event. `None` = vacant slab slot (stale
 /// kernel pointer, OQ-4 structural fix) — the caller drops the event.
 /// Panics: kind=Invalid (calloc trap, crash-by-design), missing group vtable
-/// for Dynamic/uWS kinds, unregistered Rust kind.
+/// for Dynamic/uWS kinds, kind without a table entry.
 fn vt(s: *mut us_socket_t) -> Option<&'static VTable> {
     if !trampolines::socket_slot_live(s) {
         return None;
@@ -349,10 +328,9 @@ fn vt(s: *mut us_socket_t) -> Option<&'static VTable> {
                 .unwrap_or_else(|| panic!("socket kind {k:?} has no group vtable")),
         ),
         k => Some(
-            KIND_TABLES[k as usize]
-                .get()
-                .map(|(vt, _)| *vt)
-                .unwrap_or_else(|| panic!("dispatch on unregistered socket kind {k:?}")),
+            entry(k)
+                .unwrap_or_else(|| panic!("dispatch on socket kind {k:?} with no table entry"))
+                .vtable,
         ),
     }
 }
@@ -370,10 +348,9 @@ fn vtc(cs: *mut ConnectingSocket) -> Option<&'static VTable> {
                 .unwrap_or_else(|| panic!("connecting socket kind {k:?} has no group vtable")),
         ),
         k => Some(
-            KIND_TABLES[k as usize]
-                .get()
-                .map(|(vt, _)| *vt)
-                .unwrap_or_else(|| panic!("dispatch on unregistered socket kind {k:?}")),
+            entry(k)
+                .unwrap_or_else(|| panic!("dispatch on socket kind {k:?} with no table entry"))
+                .vtable,
         ),
     }
 }

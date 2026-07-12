@@ -1495,7 +1495,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     #[cfg(unix)]
     if !IS_SYNC {
         if let Some(mode) = maybe_ipc_mode {
-            IPC::register_protocol();
             let ipc = IPC::IpcRef::new(mode, subprocess_ipc_owner(subprocess_ptr));
             // SAFETY: re-borrow `jsc_vm` through the raw pointer for the nested
             // `vm` arg while `rare_data()` holds the outer &mut.

@@ -1647,10 +1647,12 @@ impl ListenSocket {
     /// Protocol v2 accept hook (safe-protocol.md `Listener::on_create`): runs
     /// once per accepted socket BEFORE its on_open dispatch — attach the
     /// owner via [`AnySocket::attach_owner`] inside. Replaces any prior hook;
-    /// closing the listener from inside the hook drops it.
-    pub fn on_create(&mut self, hook: impl FnMut(AnySocket) + 'static) {
+    /// closing the listener from inside the hook drops it. Static fn + raw
+    /// context word (allocation-free accept path); `ctx` must stay valid for
+    /// the listener's lifetime.
+    pub fn on_create(&mut self, hook: fn(*mut c_void, AnySocket), ctx: *mut c_void) {
         let ls: *mut Self = self;
-        crate::group::listener_data(ls).on_create = Some(Box::new(hook));
+        crate::group::listener_data(ls).on_create = Some((hook, ctx));
     }
 
     /// Missing-SNI dynamic resolver registration (cabi-surface.md §4.3).

@@ -1280,7 +1280,6 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         // Postgres always opens plain TCP first (SSLRequest happens in-band),
         // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
         // adopts into `postgres_tls_group` after the server's `S`.
-        uws::register::<PostgresProtocol>();
         let group = vm.postgres_socket_group::<false>();
         let path_slice = this.path.slice();
         // `dupe_ref` is the owner ref TRANSFERRED to core (Protocol v2);

@@ -51,16 +51,45 @@ pub type Socket = uws::NewSocketHandler<false>;
 #[cfg(windows)]
 pub type Socket = ();
 
+/// Monomorphized per-`Owner` frame-delivery hooks; set at adopt alongside
+/// the erased backref, cleared with it in `Channel::drop`. Type erasure here
+/// keeps [`ChannelState`] non-generic, so the single `TestChannel` kind has
+/// exactly one owner type in the link-time kind table.
+struct OwnerHooks {
+    /// SAFETY (caller of both): `p` is the live erased owner stored next to
+    /// these hooks (module-doc lifetime: the owner outlives all callbacks).
+    frame: unsafe fn(*mut (), frame::Kind, &mut frame::Reader<'_>),
+    done: unsafe fn(*mut ()),
+}
+
+/// SAFETY: `p` is the live `Owner` these monomorphized hooks were built for.
+unsafe fn frame_thunk<Owner: ChannelOwner>(
+    p: *mut (),
+    kind: frame::Kind,
+    rd: &mut frame::Reader<'_>,
+) {
+    // SAFETY: caller contract above.
+    unsafe { &mut *p.cast::<Owner>() }.on_channel_frame(kind, rd);
+}
+
+/// SAFETY: `p` is the live `Owner` these monomorphized hooks were built for.
+unsafe fn done_thunk<Owner: ChannelOwner>(p: *mut ()) {
+    // SAFETY: caller contract above.
+    unsafe { &mut *p.cast::<Owner>() }.on_channel_done();
+}
+
 /// Refcounted transport state; on POSIX this is the Protocol v2 socket owner
 /// for `SocketKind::TestChannel`. Refs: the embedding [`Channel`] holds one
 /// (released in its `Drop`); the socket core holds one from `from_fd_owned`
 /// until the terminal callback.
 #[derive(bun_ptr::RefCounted)]
-pub struct ChannelState<Owner> {
+pub struct ChannelState {
     ref_count: bun_ptr::RefCount<Self>,
-    /// Backref for frame delivery only (owner dispatch, not socket
+    /// Erased backref for frame delivery only (owner dispatch, not socket
     /// lifecycle); null before `adopt` and after `Channel::drop`.
-    owner: Cell<*mut Owner>,
+    owner: Cell<*mut ()>,
+    /// Delivery hooks for the erased owner; set/cleared with `owner`.
+    hooks: Cell<Option<&'static OwnerHooks>>,
     /// Incoming bytes that don't yet form a complete frame.
     incoming: JsCell<Vec<u8>>,
     /// Outgoing bytes the kernel didn't accept yet.
@@ -70,11 +99,12 @@ pub struct ChannelState<Owner> {
     socket: Cell<Socket>,
 }
 
-impl<Owner> ChannelState<Owner> {
+impl ChannelState {
     fn new() -> bun_ptr::RefPtr<Self> {
         bun_ptr::RefPtr::new(ChannelState {
             ref_count: bun_ptr::RefCount::init(),
             owner: Cell::new(core::ptr::null_mut()),
+            hooks: Cell::new(None),
             incoming: JsCell::new(Vec::new()),
             out: JsCell::new(Vec::new()),
             done: Cell::new(false),
@@ -82,15 +112,16 @@ impl<Owner> ChannelState<Owner> {
             socket: Cell::new(Socket::DETACHED),
         })
     }
-}
 
-impl<Owner: ChannelOwner> ChannelState<Owner> {
     fn deliver_frame(&self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         let owner = self.owner.get();
-        if !owner.is_null() {
+        if !owner.is_null()
+            && let Some(hooks) = self.hooks.get()
+        {
             // SAFETY: the owner embeds the `Channel` holding this state and
-            // outlives all callbacks (module doc); nulled in `Channel::drop`.
-            unsafe { &mut *owner }.on_channel_frame(kind, rd);
+            // outlives all callbacks (module doc); nulled in `Channel::drop`,
+            // and the hooks were monomorphized for exactly this owner type.
+            unsafe { (hooks.frame)(owner, kind, rd) };
         }
     }
 
@@ -99,9 +130,11 @@ impl<Owner: ChannelOwner> ChannelState<Owner> {
             return;
         }
         let owner = self.owner.get();
-        if !owner.is_null() {
+        if !owner.is_null()
+            && let Some(hooks) = self.hooks.get()
+        {
             // SAFETY: see `deliver_frame`.
-            unsafe { &mut *owner }.on_channel_done();
+            unsafe { (hooks.done)(owner) };
         }
     }
 
@@ -200,31 +233,31 @@ impl<Owner: ChannelOwner> ChannelState<Owner> {
     }
 }
 
-/// Protocol v2 registration tag; one `Owner` instantiation per process
-/// (coordinator vs worker run in separate processes), so the single
-/// `TestChannel` kind never sees a conflicting registration.
+/// Protocol v2 tag for the single `TestChannel` kind-table row; the owner
+/// dispatch is type-erased through [`OwnerHooks`], so coordinator and worker
+/// share this one non-generic protocol.
 #[cfg(not(windows))]
-struct ChannelProtocol<Owner>(PhantomData<Owner>);
+pub struct ChannelProtocol;
 
 #[cfg(not(windows))]
-impl<Owner: ChannelOwner + 'static> uws::Protocol for ChannelProtocol<Owner> {
-    type Owner = ChannelState<Owner>;
+impl uws::Protocol for ChannelProtocol {
+    type Owner = ChannelState;
     const KIND: uws::SocketKind = uws::SocketKind::TestChannel;
 
-    fn on_data(o: &ChannelState<Owner>, _s: uws::AnySocket, data: &mut [u8]) {
+    fn on_data(o: &ChannelState, _s: uws::AnySocket, data: &mut [u8]) {
         o.ingest(data);
     }
 
-    fn on_writable(o: &ChannelState<Owner>, _s: uws::AnySocket) {
+    fn on_writable(o: &ChannelState, _s: uws::AnySocket) {
         o.flush();
     }
 
-    fn on_close(o: &ChannelState<Owner>, _s: uws::AnySocket, _code: uws::CloseCode2, _errno: i32) {
+    fn on_close(o: &ChannelState, _s: uws::AnySocket, _code: uws::CloseCode2, _errno: i32) {
         o.socket.set(Socket::DETACHED);
         o.mark_done();
     }
 
-    fn on_end(o: &ChannelState<Owner>, _s: uws::AnySocket) {
+    fn on_end(o: &ChannelState, _s: uws::AnySocket) {
         // No half-close: peer FIN closes the socket outright.
         o.socket.get().close(uws::CloseCode::Normal);
     }
@@ -237,7 +270,7 @@ impl<Owner: ChannelOwner + 'static> uws::Protocol for ChannelProtocol<Owner> {
 pub struct Channel<Owner> {
     /// Owned ref (`RefPtr` has no `Drop`): released in `Channel::drop` after
     /// the owner backref is cleared.
-    state: bun_ptr::RefPtr<ChannelState<Owner>>,
+    state: bun_ptr::RefPtr<ChannelState>,
     #[cfg(windows)]
     pub backend: WindowsBackend,
     _owner: PhantomData<*mut Owner>,
@@ -327,6 +360,12 @@ impl Default for WindowsBackend {
 // -- adopt / send / close ------------------------------------------------------
 
 impl<Owner: ChannelOwner + 'static> Channel<Owner> {
+    /// The erased delivery hooks for this `Owner` instantiation.
+    const OWNER_HOOKS: &'static OwnerHooks = &OwnerHooks {
+        frame: frame_thunk::<Owner>,
+        done: done_thunk::<Owner>,
+    };
+
     /// Shared embedded group for this channel. The per-file isolation swap
     /// skips `rare.test_parallel_ipc_group` so the coordinator link survives.
     #[cfg(not(windows))]
@@ -359,7 +398,8 @@ impl<Owner: ChannelOwner + 'static> Channel<Owner> {
         // SAFETY: `self` is always embedded at `Owner::OFFSET` inside an
         // `Owner` that outlives all callbacks (see module doc).
         let owner_ptr: *mut Owner = unsafe { Owner::from_field_ptr(std::ptr::from_mut(self)) };
-        self.state.owner.set(owner_ptr);
+        self.state.owner.set(owner_ptr.cast::<()>());
+        self.state.hooks.set(Some(Self::OWNER_HOOKS));
         #[cfg(windows)]
         {
             let _ = vm;
@@ -403,10 +443,6 @@ impl<Owner: ChannelOwner + 'static> Channel<Owner> {
         }
         #[cfg(not(windows))]
         {
-            // Lazy registration: one Owner type per process (coordinator and
-            // worker are separate processes), so first-registration wins and
-            // never conflicts.
-            uws::register::<ChannelProtocol<Owner>>();
             let g = Self::ensure_posix_group(vm);
             // Transfers a strong ref to the socket core (released at the
             // terminal callback); the other ref stays in `self.state`.
@@ -446,7 +482,8 @@ impl<Owner: ChannelOwner + 'static> Channel<Owner> {
         // SAFETY: `self` is embedded at `Owner::OFFSET` inside an `Owner` that
         // outlives all callbacks (see module doc).
         let owner_ptr: *mut Owner = unsafe { Owner::from_field_ptr(std::ptr::from_mut(self)) };
-        self.state.owner.set(owner_ptr);
+        self.state.owner.set(owner_ptr.cast::<()>());
+        self.state.hooks.set(Some(Self::OWNER_HOOKS));
         // The read callbacks are expressed via the `StreamReader` trait impl
         // below and routed through `read_start_ctx`, which stashes `self` in
         // `handle.data`.
@@ -608,6 +645,7 @@ impl<Owner> Drop for Channel<Owner> {
         // close-triggered `on_channel_done` must not form `&mut Owner`.
         self.state.done.set(true);
         self.state.owner.set(core::ptr::null_mut());
+        self.state.hooks.set(None);
         #[cfg(windows)]
         {
             // Drop assumes no uv_write is in flight: `submit_windows_write`

@@ -136,15 +136,6 @@ pub(crate) fn socket_from_any<const SSL: bool>(s: AnySocket) -> Socket<SSL> {
     Socket::<SSL>::from_any(*s.socket())
 }
 
-/// Register the four WS-client kinds (upgrade + framed, TCP + TLS) in the
-/// Protocol v2 kind tables. Must run before the first WS client connects.
-pub fn register_ws_client_protocols() {
-    uws::register::<websocket_upgrade_client::HTTPClient<false>>();
-    uws::register::<websocket_upgrade_client::HTTPClient<true>>();
-    uws::register::<WebSocket<false>>();
-    uws::register::<WebSocket<true>>();
-}
-
 // Protocol v2 handler set for the framed phase (kind = `WsClient[Tls]`).
 // No `on_open`: the socket arrives via adoption of an already-connected
 // upgrade socket. The dispatch trampoline holds a strong owner ref across

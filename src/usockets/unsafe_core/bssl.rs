@@ -5,8 +5,9 @@
 
 use core::ffi::{CStr, c_char, c_int, c_long, c_uint, c_void};
 use core::ptr;
+use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicI64, Ordering};
-use std::sync::OnceLock;
+use std::sync::Once;
 
 use crate::tls::SSL;
 use crate::tls::context::SslCtx;
@@ -458,7 +459,27 @@ pub struct ExIndices {
     pub pending_keylog: c_int,
 }
 
-static EX_INDICES: OnceLock<ExIndices> = OnceLock::new();
+/// pthread_once-shaped storage (the deleted openssl.c's `us_ex_idx_once` +
+/// plain int statics): written exactly once inside `EX_ONCE`, read only
+/// after `call_once` returns — the `Once` provides the happens-before.
+struct ExCell(UnsafeCell<ExIndices>);
+// SAFETY: single write inside `Once::call_once`; all reads are ordered after
+// it by `call_once`'s synchronization.
+unsafe impl Sync for ExCell {}
+
+static EX_ONCE: Once = Once::new();
+static EX_INDICES: ExCell = ExCell(UnsafeCell::new(ExIndices {
+    ctx: -1,
+    sni_user: -1,
+    ctx_cache: -1,
+    ctx_user_ca: -1,
+    reneg_state: -1,
+    sni_pending: -1,
+    listener: -1,
+    is_socket: -1,
+    pending_session: -1,
+    pending_keylog: -1,
+}));
 static SSL_CTX_LIVE: AtomicI64 = AtomicI64::new(0);
 
 unsafe extern "C" fn ctx_ex_free(
@@ -517,14 +538,17 @@ unsafe extern "C" fn pending_list_free(
     }
 }
 
-/// One-time registration (OnceLock = the pthread_once race rule: SSL_CTX
-/// creation runs from both the JS and HTTP-client threads).
+/// One-time registration at first SSL_CTX/SSL touch (`Once` = the C's
+/// pthread_once rule: SSL_CTX creation runs from both the JS and HTTP-client
+/// threads).
 pub fn ex_indices() -> &'static ExIndices {
-    EX_INDICES.get_or_init(|| {
+    EX_ONCE.call_once(|| {
         let null = ptr::null_mut();
-        // SAFETY: registration-only FFI; free_funcs match each slot's payload.
+        // SAFETY: registration-only FFI; free_funcs match each slot's
+        // payload. Sole write to the cell — no reader exists until
+        // `call_once` returns.
         unsafe {
-            ExIndices {
+            *EX_INDICES.0.get() = ExIndices {
                 ctx: SSL_CTX_get_ex_new_index(0, null, null, null, Some(ctx_ex_free)),
                 sni_user: SSL_CTX_get_ex_new_index(0, null, null, null, None),
                 ctx_cache: SSL_CTX_get_ex_new_index(
@@ -541,9 +565,12 @@ pub fn ex_indices() -> &'static ExIndices {
                 is_socket: SSL_get_ex_new_index(0, null, null, null, None),
                 pending_session: SSL_get_ex_new_index(0, null, null, null, Some(pending_list_free)),
                 pending_keylog: SSL_get_ex_new_index(0, null, null, null, Some(pending_list_free)),
-            }
+            };
         }
-    })
+    });
+    // SAFETY: `call_once` returned, so the single write above happened-before
+    // this read and no write can ever run again.
+    unsafe { &*EX_INDICES.0.get() }
 }
 
 pub fn ssl_ctx_live_count() -> i64 {

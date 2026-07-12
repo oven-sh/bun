@@ -34,7 +34,6 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys as sys;
 use bun_usockets as uws;
 
-use super::uws_dispatch::ensure_registered;
 
 // Thin local wrapper that erases the concrete `runtime::socket::UpgradedDuplex`
 // to the opaque `bun_usockets::handle::UpgradedDuplex` handle (same
@@ -547,7 +546,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let this = uws::this_ptr_of(self);
         let _guard = this.ref_guard();
 
-        ensure_registered();
         let vm = self.get_handlers().vm;
         // SAFETY: per-thread VM singleton; `VirtualMachine::get()` yields the
         // canonical `*mut` (write provenance) — never derive `&mut` from the
@@ -3477,7 +3475,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `on_open`/`start_tls_handshake`.
 
         let sni: Option<&core::ffi::CStr> = cfg.and_then(|c| c.server_name_cstr());
-        ensure_registered();
         // SAFETY: per-thread VM singleton; no aliasing `&mut` held.
         let group = VirtualMachine::get()
             .as_mut()

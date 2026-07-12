@@ -92,8 +92,9 @@ pub use handle::{
 #[cfg(windows)]
 pub use handle::WindowsNamedPipe;
 pub use kind::SocketKind;
+pub use dispatch::{KindEntry, KindTable, SOCKET_KIND_COUNT, TlsSideChannelHooks, validate_kind_table};
 pub use protocol::{
-    CloseCode2, ConnectFailure, OwnerRef, Protocol, VerifyError, owner_ref_of, register,
+    CloseCode2, ConnectFailure, OwnerRef, Protocol, VerifyError, kind_entry, owner_ref_of,
     this_ptr_of,
 };
 #[cfg(not(windows))]

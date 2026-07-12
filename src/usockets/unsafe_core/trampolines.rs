@@ -24,6 +24,40 @@ use crate::tls::context::us_bun_verify_error_t;
 use crate::unsafe_core::ext;
 use crate::unsafe_core::slab::ChunkedSlab;
 
+// ── link-time dispatch tables ────────────────────────────────────────────────
+// The const kind table and TLS side-channel hooks are DEFINED (no_mangle) in
+// the one crate that sees every protocol type — bun_runtime's
+// socket/uws_dispatch.rs — and resolved here at link time, the same single
+// seam the C loop's fixed dispatch switch used. Crate unit tests provide the
+// empty fallbacks below so the test binary links without the runtime crate.
+
+#[cfg(not(test))]
+unsafe extern "Rust" {
+    safe static BUN_UWS_KIND_TABLE: crate::dispatch::KindTable;
+    safe static BUN_UWS_TLS_SIDE_CHANNEL: crate::dispatch::TlsSideChannelHooks;
+}
+
+#[cfg(test)]
+static BUN_UWS_KIND_TABLE: crate::dispatch::KindTable =
+    [None; crate::dispatch::SOCKET_KIND_COUNT];
+#[cfg(test)]
+static BUN_UWS_TLS_SIDE_CHANNEL: crate::dispatch::TlsSideChannelHooks =
+    crate::dispatch::TlsSideChannelHooks {
+        ssl_raw_tap: |_, _| {},
+        session: |_, _| {},
+        keylog: |_, _| {},
+    };
+
+#[inline]
+pub(crate) fn kind_table() -> &'static crate::dispatch::KindTable {
+    &BUN_UWS_KIND_TABLE
+}
+
+#[inline]
+pub(crate) fn tls_side_channel() -> &'static crate::dispatch::TlsSideChannelHooks {
+    &BUN_UWS_TLS_SIDE_CHANNEL
+}
+
 pub(crate) struct Trampolines<H>(core::marker::PhantomData<H>);
 
 impl<H: Handler> Trampolines<H> {
@@ -707,7 +741,7 @@ pub(crate) fn release_poll_owner(ops: &PollOwnerOps, word: *mut c_void) {
 
 /// Produce the `&'static VTable` for a Protocol v2 registration — every slot
 /// filled (v2 defaults are no-ops, so a filled slot == v1's skipped None).
-pub(crate) fn make2<P: Protocol>() -> &'static VTable {
+pub(crate) const fn make2<P: Protocol>() -> &'static VTable {
     &Make2::<P>::VT
 }
 

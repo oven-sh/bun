@@ -283,7 +283,7 @@ impl<const SSL: bool> ExistingSocket<SSL> {
 
 /// Protocol v2 registration marker for the HTTP client kinds; the ext word
 /// is a core-owned strong ref to a [`SocketOwner`].
-pub(crate) struct HttpProtocol<const SSL: bool>;
+pub struct HttpProtocol<const SSL: bool>;
 
 /// Convert the trampoline's [`uws::AnySocket`] to the kind-matching typed
 /// handle (the KIND registration fixes the SSL flavor).
@@ -330,13 +330,6 @@ impl<const SSL: bool> uws::Protocol for HttpProtocol<SSL> {
     fn on_handshake(o: &Self::Owner, s: uws::AnySocket, ok: bool, err: uws::VerifyError) {
         Handler::<SSL>::on_handshake(o, from_any::<SSL>(s), ok, err);
     }
-}
-
-/// Install the Protocol v2 vtables for the HTTP client kinds. Must run before
-/// the first HTTP-thread socket exists (`HTTPThread::on_start`). Idempotent.
-pub fn register_protocol() {
-    uws::register::<HttpProtocol<false>>();
-    uws::register::<HttpProtocol<true>>();
 }
 
 impl<const SSL: bool> HTTPContext<SSL> {

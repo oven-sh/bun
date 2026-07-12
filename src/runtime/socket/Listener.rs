@@ -17,7 +17,7 @@ use bun_sys::{self, Fd};
 use bun_usockets as uws;
 use bun_usockets::unsafe_core::trampolines::with_socket_owner;
 
-use super::uws_dispatch::{ensure_registered, wrap};
+use super::uws_dispatch::wrap;
 
 /// Reborrow a live listen socket. Valid only while the listener is linked
 /// into its group's `head_listen_sockets` list (`ListenerType::Uws` guards
@@ -190,7 +190,6 @@ impl Listener {
         // SAFETY: VirtualMachine::get() returns the per-thread VM; valid for program lifetime.
         let vm = VirtualMachine::get().as_mut();
 
-        ensure_registered();
         let mut socket_config = SocketConfig::from_js(vm, opts, global, SocketMode::Server)?;
         // Teardown handled by Drop on SocketConfig; `handlers` is an `Rc` the
         // `Listener` clones out of it.
@@ -500,21 +499,14 @@ impl Listener {
 
         this_ref.connection = connection;
         this_ref.listener.set(ListenerType::Uws(listen_socket));
-        {
-            // Protocol v2 accept hook: runs once per accepted socket BEFORE
-            // its on_open dispatch, attaching the owner. The listener
-            // strictly outlives its listen socket (`do_stop`/`finalize` close
-            // it first), so the BackRef stays valid for the hook's lifetime.
-            let listener_ref = bun_ptr::BackRef::new(&*this_ref);
-            ls_mut(listen_socket).on_create(move |s: uws::AnySocket| {
-                let l: &Listener = listener_ref.get();
-                if l.ssl {
-                    Listener::on_create::<true>(l, s);
-                } else {
-                    Listener::on_create::<false>(l, s);
-                }
-            });
-        }
+        // Protocol v2 accept hook: runs once per accepted socket BEFORE its
+        // on_open dispatch, attaching the owner. The listener strictly
+        // outlives its listen socket (`do_stop`/`finalize` close it first),
+        // so the context pointer stays valid for the hook's lifetime.
+        ls_mut(listen_socket).on_create(
+            Listener::accept_hook_body,
+            core::ptr::from_ref(&*this_ref).cast_mut().cast(),
+        );
         if !default_data.is_empty() {
             this_ref
                 .strong_data
@@ -609,10 +601,25 @@ impl Listener {
         s
     }
 
+    /// `ListenSocket::on_create` trampoline: `ctx` is the accepting
+    /// `Listener`, which strictly outlives its listen socket.
+    fn accept_hook_body(ctx: *mut core::ffi::c_void, s: uws::AnySocket) {
+        // SAFETY: `ctx` was stamped from a live `&Listener` at `listen`; the
+        // listener outlives the listen socket (`do_stop`/`finalize` close it
+        // first), so it is live for every accept.
+        let l: &Listener = unsafe { &*ctx.cast::<Listener>() };
+        if l.ssl {
+            Listener::on_create::<true>(l, s);
+        } else {
+            Listener::on_create::<false>(l, s);
+        }
+    }
+
     /// Protocol v2 accept hook body (registered on the ListenSocket in
-    /// `listen`): allocates the `NewSocket` wrapper and transfers one strong
-    /// owner ref to core via `attach_owner`. Core dispatches the socket's
-    /// `on_open` right after this returns — same tick as the accept.
+    /// `listen` via [`accept_hook`]): allocates the `NewSocket` wrapper and
+    /// transfers one strong owner ref to core via `attach_owner`. Core
+    /// dispatches the socket's `on_open` right after this returns — same
+    /// tick as the accept.
     pub fn on_create<const SSL: bool>(listener: &Listener, socket: uws::AnySocket) {
         jsc::mark_binding!();
         log!("onCreate");

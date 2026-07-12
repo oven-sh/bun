@@ -153,7 +153,8 @@ pub(crate) struct ListenerData {
     pub(crate) owner_ext: *mut c_void,
     /// Protocol v2 accept hook (safe-protocol.md `Listener::on_create`): runs
     /// per accepted socket BEFORE its on_open so the handler sees the owner.
-    pub(crate) on_create: Option<Box<dyn FnMut(crate::handle::AnySocket)>>,
+    /// Static fn + context word — the accept path stays allocation-free.
+    pub(crate) on_create: Option<(fn(*mut c_void, crate::handle::AnySocket), *mut c_void)>,
 }
 
 /// Recover the accept state of a not-yet-closed listener. The listener
@@ -704,11 +705,11 @@ pub(crate) fn on_accept_poll_ready(ls: *mut ListenSocket) {
         if !ssl_ctx.is_null() {
             attach_tls_accepted(s, ssl_ctx, ls);
         }
-        // Protocol v2 owner attach (`Listener::on_create`): take the hook out
+        // Protocol v2 owner attach (`Listener::on_create`): copy the hook out
         // of ListenerData first — the hook may close the listener, which
         // drops the ListenerData box (no borrow may span the call).
-        if let Some(mut hook) = listener_data(ls).on_create.take() {
-            hook(crate::unsafe_core::trampolines::any_socket(s));
+        if let Some((hook, ctx)) = listener_data(ls).on_create {
+            hook(ctx, crate::unsafe_core::trampolines::any_socket(s));
             // Spec-shape deviation (safe-protocol.md has on_create RETURN the
             // owner): the hook attaches manually — surface a forgotten attach.
             debug_assert!(
@@ -717,11 +718,6 @@ pub(crate) fn on_accept_poll_ready(ls: *mut ListenSocket) {
                     || !header_mut(s).ext.is_null(),
                 "on_create hook did not attach_owner on a Protocol v2 socket"
             );
-            // Put back only if the slot is still empty: the hook may have
-            // registered a replacement on its own listener.
-            if !header_mut(listen_s).is_closed() && listener_data(ls).on_create.is_none() {
-                listener_data(ls).on_create = Some(hook);
-            }
         }
         if !header_mut(s).is_closed() {
             socket::socket_open(s, false, addr.ip());

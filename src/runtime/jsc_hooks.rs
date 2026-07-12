@@ -309,11 +309,6 @@ unsafe fn init_runtime_state(
     // (`VirtualMachine::init`) may still hold a `&mut VirtualMachine` to the
     // same allocation. Dereference per-field via the raw `vm` ptr if needed.
 
-    // Every socket consumer (fetch/WebSocket/SQL/spawn-IPC) reaches dispatch
-    // only after some VM initialized on this or an ancestor thread, so this is
-    // the registration point for kinds whose entry points live in lower tiers.
-    crate::socket::uws_dispatch::ensure_registered();
-
     // Note: `uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm` is already
     // done by
     // the low tier (`VirtualMachine::init` writes it immediately before calling

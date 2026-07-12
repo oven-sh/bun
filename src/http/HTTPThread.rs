@@ -1307,9 +1307,6 @@ mod _event_loop_draft {
         let thread = crate::http_thread_mut();
         thread.loop_ = loop_;
         thread.uws_loop = uws_loop;
-        // Protocol v2 vtables for the HTTP client kinds must be installed
-        // before the first socket of either kind exists.
-        crate::http_context::register_protocol();
         thread.http_context.init();
         // `https_context.init_with_thread_opts` eagerly builds the BoringSSL
         // `SSL_CTX` and parses the bundled root-CA store

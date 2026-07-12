@@ -1481,7 +1481,8 @@ pub(crate) mod uv {
 // the read/write/handshake/shutdown calls (tls-semantics.md §1-§5).
 
 use core::ffi::{CStr, c_long};
-use std::sync::OnceLock;
+use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::Once;
 
 use crate::handle::CloseCode;
 use crate::tls::SSL;
@@ -1615,33 +1616,41 @@ pub(crate) fn ctl_free(ctl: *mut BioCtl) {
 
 // ── custom BIO pair (per socket; tls-semantics §1.3) ─────────────────────────
 
-static BIO_METHOD_PTR: OnceLock<usize> = OnceLock::new();
-static BIO_METHOD_TYPE: OnceLock<c_int> = OnceLock::new();
+// One-time BIO method registration at first SSL creation (pthread_once
+// shape, like the C's ex-index init): `BIO_INIT` orders the two plain-latch
+// writes below before any reader.
+static BIO_INIT: Once = Once::new();
+static BIO_METHOD_PTR: AtomicUsize = AtomicUsize::new(0);
+static BIO_METHOD_TYPE: AtomicI32 = AtomicI32::new(0);
 
-/// Unique BIO type index: identifies OUR BIOs (data == BioCtl) vs foreign
-/// ones (SSLWrapper's BIO_s_mem stores a BUF_MEM*, tls-semantics §6.2).
-fn bio_type() -> c_int {
-    *BIO_METHOD_TYPE.get_or_init(|| {
-        // SAFETY: one-time process init.
-        let ty = unsafe { BIO_get_new_index() };
-        assert!(ty > 0, "BIO_get_new_index exhausted");
-        ty
-    })
-}
-
-fn bio_method() -> *const BIO_METHOD {
-    *BIO_METHOD_PTR.get_or_init(|| {
+fn bio_init() {
+    BIO_INIT.call_once(|| {
         // SAFETY: one-time process init; BIO_meth_* on a fresh method object.
         unsafe {
-            let m = BIO_meth_new(bio_type(), c"bun BIO".as_ptr());
+            let ty = BIO_get_new_index();
+            assert!(ty > 0, "BIO_get_new_index exhausted");
+            let m = BIO_meth_new(ty, c"bun BIO".as_ptr());
             assert!(!m.is_null(), "BIO_meth_new failed");
             BIO_meth_set_create(m, Some(bio_create_cb));
             BIO_meth_set_write(m, Some(bio_write_cb));
             BIO_meth_set_read(m, Some(bio_read_cb));
             BIO_meth_set_ctrl(m, Some(bio_ctrl_cb));
-            m as usize
+            BIO_METHOD_TYPE.store(ty, Ordering::Relaxed);
+            BIO_METHOD_PTR.store(m as usize, Ordering::Relaxed);
         }
-    }) as *const BIO_METHOD
+    });
+}
+
+/// Unique BIO type index: identifies OUR BIOs (data == BioCtl) vs foreign
+/// ones (SSLWrapper's BIO_s_mem stores a BUF_MEM*, tls-semantics §6.2).
+fn bio_type() -> c_int {
+    bio_init();
+    BIO_METHOD_TYPE.load(Ordering::Relaxed)
+}
+
+fn bio_method() -> *const BIO_METHOD {
+    bio_init();
+    BIO_METHOD_PTR.load(Ordering::Relaxed) as *const BIO_METHOD
 }
 
 unsafe extern "C" fn bio_create_cb(bio: *mut BIO) -> c_int {

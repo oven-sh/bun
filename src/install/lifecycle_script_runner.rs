@@ -124,7 +124,7 @@ impl YarnCommands {
 pub fn replace_package_manager_run(
     copy_script: &mut Vec<u8>,
     script: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     use bun_core::strings;
 
     #[inline]
@@ -489,7 +489,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     pub unsafe fn spawn_next_script(
         this: *mut Self,
         next_script_index: u8,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         bun_core::analytics::Features::LIFECYCLE_SCRIPTS.fetch_add(1, Ordering::Relaxed);
 
         // SAFETY: `this` is non-null and uniquely accessed (caller contract).
@@ -532,7 +532,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     unsafe fn spawn_next_script_inner(
         this: *mut Self,
         next_script_index: u8,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // SAFETY: `this` is non-null and uniquely accessed (caller contract).
         // Body wrapped in one block; per-field accesses do not materialize a
         // whole-struct `&mut Self` across reentrant calls.
@@ -1138,7 +1138,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         log_level: crate::LogLevel,
         foreground: bool,
         ctx: Option<InstallCtx<'a>>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let package_name = list.package_name.clone();
         let lifecycle_subprocess = Self::new(LifecycleScriptSubprocess {
             manager: bun_ptr::BackRef::new_mut(manager),

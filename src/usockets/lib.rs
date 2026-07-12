@@ -17,6 +17,8 @@
 pub mod backend;
 pub mod connecting;
 pub mod dispatch;
+pub mod error;
+pub use error::{Error, Result};
 pub mod fault;
 pub mod group;
 pub mod handle;

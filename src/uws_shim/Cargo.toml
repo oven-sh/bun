@@ -10,6 +10,7 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+bun_alloc.workspace = true
 bitflags.workspace = true
 bstr.workspace = true
 bun_boringssl.workspace = true

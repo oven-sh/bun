@@ -19,7 +19,10 @@ socket_fault_injection = []
 workspace = true
 
 [dependencies]
+bun_alloc.workspace = true
 bun_core.workspace = true
+bun_errno.workspace = true
+thiserror.workspace = true
 # Protocol v2 owner refcounting (protocol.rs; safe-protocol.md).
 bun_ptr.workspace = true
 # Platform-split `addrinfo` type shared with the DNS bridge (consumers/04).

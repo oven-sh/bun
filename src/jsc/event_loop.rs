@@ -158,9 +158,9 @@ pub enum JsTerminated {
 /// Short alias for `Result<T, JsTerminated>`.
 pub type JsTerminatedResult<T> = Result<T, JsTerminated>;
 
-impl From<JsTerminated> for bun_core::Error {
+impl From<JsTerminated> for crate::CrateError {
     fn from(_: JsTerminated) -> Self {
-        bun_core::err!("JSTerminated")
+        crate::CrateError::JSTerminated
     }
 }
 

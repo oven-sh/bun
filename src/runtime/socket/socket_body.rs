@@ -541,7 +541,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Connect to `self.connection` (must be `Some`). Reads the field directly
     /// rather than taking it by-ref so the single caller in `connect_finish`
     /// doesn't need a disjoint borrow.
-    pub fn do_connect(&self) -> Result<(), bun_core::Error> {
+    pub fn do_connect(&self) -> crate::Result<()> {
         // Keep `self` alive across the re-entrant connect path.
         let this = uws::this_ptr_of(self);
         let _guard = this.ref_guard();
@@ -603,7 +603,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     core::mem::size_of::<*mut c_void>() as c_int,
                 ) {
                     uws::ConnectResult::Failed => {
-                        return Err(bun_core::err!("FailedToOpenSocket"));
+                        return Err(crate::Error::FailedToOpenSocket);
                     }
                     uws::ConnectResult::Socket(s) => {
                         SocketHandler::<SSL>::from(uws::SocketRef::from_live(
@@ -630,7 +630,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     core::mem::size_of::<*mut c_void>() as c_int,
                 );
                 if s.is_null() {
-                    return Err(bun_core::err!("FailedToOpenSocket"));
+                    return Err(crate::Error::FailedToOpenSocket);
                 }
                 let handle = SocketHandler::<SSL>::from(uws::SocketRef::from_live(
                     NonNull::new(s).expect("checked non-null above"),
@@ -650,7 +650,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     false,
                 );
                 if s.is_null() {
-                    return Err(bun_core::err!("ConnectionFailed"));
+                    return Err(crate::Error::ConnectionFailed);
                 }
                 let sock = SocketHandler::<SSL>::from(uws::SocketRef::from_live(
                     NonNull::new(s).expect("checked non-null above"),
@@ -4236,7 +4236,7 @@ impl DuplexUpgradeContext {
                     unsafe { Self::deinit(this) };
                     return;
                 }
-                let started: Result<(), bun_core::Error> = {
+                let started: crate::Result<()> = {
                     // SAFETY: `this` is live; this `&mut` is scoped to the block
                     // and ends before any `Self::deinit` call below.
                     let this_ref = unsafe { &mut *this };
@@ -4256,7 +4256,7 @@ impl DuplexUpgradeContext {
                     }
                 };
                 if let Err(err) = started {
-                    if err == bun_core::err!("OutOfMemory") {
+                    if matches!(err, crate::Error::Alloc(_)) {
                         bun_core::out_of_memory();
                     }
                     let errno = sys::SystemErrno::ECONNREFUSED as c_int;

@@ -1037,12 +1037,12 @@ impl SocketHeader {
     /// Returned slice is a view into `buf` (raw 4/16 address bytes).
     /// Verbatim C quirk (R3.25): syscall failure or a too-small buffer yield
     /// an EMPTY slice, never an error — the Err arm exists for surface parity.
-    pub fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
+    pub fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
         Ok(copy_addr(io::local_addr(self.fd), buf))
     }
 
     /// Returned slice is a view into `buf`.
-    pub fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
+    pub fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
         Ok(copy_addr(io::remote_addr(self.fd), buf))
     }
 

@@ -2252,7 +2252,7 @@ impl H2FrameParser {
         name: &[u8],
         value: &[u8],
         never_index: bool,
-    ) -> Result<usize, bun_core::Error> {
+    ) -> crate::Result<usize> {
         let old_len = encoded_headers.len();
         let required = old_len + name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
         // Note: materializing `&mut [u8]` over uninitialized capacity is UB and
@@ -2278,12 +2278,12 @@ impl H2FrameParser {
         }
     }
 
-    pub(crate) fn decode(&self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
+    pub(crate) fn decode(&self, src_buffer: &[u8]) -> crate::Result<HeaderValue> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
-                return hpack.decode(src_buffer).map_err(bun_core::Error::from);
+                return hpack.decode(src_buffer).map_err(crate::Error::from);
             }
-            Err(bun_core::err!("UnableToDecode"))
+            Err(crate::Error::UnableToDecode)
         })
     }
 
@@ -2294,15 +2294,15 @@ impl H2FrameParser {
         name: &[u8],
         value: &[u8],
         never_index: bool,
-    ) -> Result<usize, bun_core::Error> {
+    ) -> crate::Result<usize> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
                 // lets make sure the name is lowercase
                 return hpack
                     .encode(name, value, never_index, dst_buffer, dst_offset)
-                    .map_err(bun_core::Error::from);
+                    .map_err(crate::Error::from);
             }
-            Err(bun_core::err!("UnableToEncode"))
+            Err(crate::Error::UnableToEncode)
         })
     }
 
@@ -5998,7 +5998,7 @@ impl bun_io::Write for DirectWriterStruct {
         if self.writer.write(data) {
             Ok(())
         } else {
-            Err(bun_core::err!("SocketClosed"))
+            Err(bun_core::Error::WriteFailed)
         }
     }
 }
@@ -7208,12 +7208,9 @@ impl H2FrameParser {
     }
 
     /// validate header name and convert to lowecase if needed
-    fn to_valid_header_name<'a>(
-        in_: &'a [u8],
-        out: &'a mut [u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    fn to_valid_header_name<'a>(in_: &'a [u8], out: &'a mut [u8]) -> crate::Result<&'a [u8]> {
         if in_.len() > 4096 {
-            return Err(bun_core::err!("InvalidHeaderName"));
+            return Err(crate::Error::InvalidHeaderName);
         }
         debug_assert!(out.len() >= in_.len());
         let mut in_slice = in_;
@@ -7252,11 +7249,11 @@ impl H2FrameParser {
                     b':' => {
                         // only allow pseudoheaders at the beginning
                         if i != 0 || any {
-                            return Err(bun_core::err!("InvalidHeaderName"));
+                            return Err(crate::Error::InvalidHeaderName);
                         }
                         continue;
                     }
-                    _ => return Err(bun_core::err!("InvalidHeaderName")),
+                    _ => return Err(crate::Error::InvalidHeaderName),
                 }
             }
 
@@ -7414,7 +7411,7 @@ impl H2FrameParser {
                     never_index,
                 ) {
                     Ok(_) => Ok(None),
-                    Err(err) if err == bun_core::err!("OutOfMemory") => {
+                    Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
                         Err(global_object.throw(format_args!("Failed to allocate header buffer")))
                     }
                     Err(_) => {
@@ -8350,7 +8347,7 @@ impl H2FrameParser {
                         value,
                         never_index,
                     ) {
-                        if err == bun_core::err!("OutOfMemory") {
+                        if matches!(err, crate::Error::Alloc(_)) {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
@@ -8537,7 +8534,7 @@ impl H2FrameParser {
                             value,
                             never_index,
                         ) {
-                            if err == bun_core::err!("OutOfMemory") {
+                            if matches!(err, crate::Error::Alloc(_)) {
                                 return Err(global_object
                                     .throw(format_args!("Failed to allocate header buffer")));
                             }
@@ -8627,7 +8624,7 @@ impl H2FrameParser {
                         value,
                         never_index,
                     ) {
-                        if err == bun_core::err!("OutOfMemory") {
+                        if matches!(err, crate::Error::Alloc(_)) {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }

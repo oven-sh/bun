@@ -694,6 +694,46 @@ export function depBuildDir(cfg: Config, name: string): string {
   return resolve(cfg.buildDir, "deps", name);
 }
 
+/** Source directory for a non-prebuilt dep. */
+function resolveSrcDir(cfg: Config, name: string, source: Exclude<Source, { kind: "prebuilt" }>): string {
+  return source.kind === "in-tree"
+    ? resolve(cfg.cwd, source.path)
+    : source.kind === "local" && source.path
+      ? source.path
+      : depSourceDir(cfg, name);
+}
+
+/**
+ * Direct-build sources living under ANOTHER dep's fetched tree (lsquic
+ * compiles lsqpack's lsqpack.c) are implicit outputs of the OWNING dep's
+ * fetch — precompute the attribution so its fetch edge declares them.
+ */
+export function collectCrossDepSources(cfg: Config, deps: readonly Dependency[]): Map<string, string[]> {
+  const enabled = deps.filter(d => !d.enabled || d.enabled(cfg));
+  // Only github-archive deps have a fetch edge to attribute outputs to.
+  const owners = enabled
+    .filter(d => d.source(cfg).kind === "github-archive")
+    .map(d => ({ name: d.name, prefix: join(depSourceDir(cfg, d.name), "/") }));
+  const byOwner = new Map<string, string[]>();
+  for (const dep of enabled) {
+    const source = dep.source(cfg);
+    if (source.kind === "prebuilt") continue;
+    const buildSpec = dep.build(cfg);
+    if (buildSpec.kind !== "direct") continue;
+    const srcDir = resolveSrcDir(cfg, dep.name, source);
+    for (const s of buildSpec.sources) {
+      const abs = resolve(srcDir, typeof s === "string" ? s : s.path);
+      if (abs.startsWith(join(srcDir, "/"))) continue; // own fetch declares it
+      const owner = owners.find(o => o.name !== dep.name && abs.startsWith(o.prefix));
+      if (owner === undefined) continue; // in-tree/local file — exists on disk, no fetch produces it
+      const list = byOwner.get(owner.name) ?? [];
+      if (!list.includes(abs)) list.push(abs);
+      byOwner.set(owner.name, list);
+    }
+  }
+  return byOwner;
+}
+
 /**
  * Resolve a dependency: emit ninja rules for fetch → configure → build,
  * return absolute paths for linking.
@@ -706,6 +746,7 @@ export function resolveDep(
   cfg: Config,
   dep: Dependency,
   resolved: ReadonlyMap<string, ResolvedDep>,
+  crossDepSources?: ReadonlyMap<string, string[]>,
 ): ResolvedDep | null {
   if (dep.enabled && !dep.enabled(cfg)) {
     return null;
@@ -727,12 +768,7 @@ export function resolveDep(
   // Source directory. For in-tree deps (sqlite), this points into the bun
   // repo instead of vendor/. Local deps can override via `path` to point
   // outside the worktree. Everything else is vendor/<name>/.
-  const srcDir =
-    source.kind === "in-tree"
-      ? resolve(cfg.cwd, source.path)
-      : source.kind === "local" && source.path
-        ? source.path
-        : depSourceDir(cfg, dep.name);
+  const srcDir = resolveSrcDir(cfg, dep.name, source);
 
   // Resolve conditional patches. Same list for the whole configure run —
   // we don't want patches changing between emitFetch and the hash check.
@@ -751,9 +787,9 @@ export function resolveDep(
   if (buildSpec.kind === "direct") {
     for (const s of buildSpec.sources) {
       const abs = resolve(srcDir, typeof s === "string" ? s : s.path);
-      // In-tree sources compiled alongside a dep (boringssl's bssl-sys
-      // wrapper.c) are not produced by the fetch — declaring them as fetch
-      // outputs would let `ninja -t clean` delete committed files.
+      // Only sources this dep's OWN fetch extracts are its implicit outputs.
+      // In-tree sources (boringssl's wrapper.c) have no fetch; cross-dep
+      // sources (lsqpack.c) belong to the owning dep's fetch — see crossDepSources.
       if (abs.startsWith(join(srcDir, "/"))) directSources.push(abs);
     }
     for (const h of Object.values(buildSpec.headers ?? {})) {
@@ -774,7 +810,11 @@ export function resolveDep(
   //   (CMakeLists.txt) as the stamp. Editing it → reconfigure.
   let sourceStamp: string;
   if (source.kind === "github-archive") {
-    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [...resolvedSources, ...directSources]);
+    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [
+      ...resolvedSources,
+      ...directSources,
+      ...(crossDepSources?.get(dep.name) ?? []),
+    ]);
   } else {
     // Local/in-tree: no .ref to write. Use the build system's manifest file
     // as the stamp — touching it triggers reconfigure/rebuild.

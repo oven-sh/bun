@@ -282,7 +282,14 @@ impl<'a> Row<'a> {
                     column.flags.contains(ColumnFlags::BINARY),
                     column.character_set,
                     reader,
-                )?;
+                )
+                .map_err(|e| match e {
+                    crate::Error::MySqlProtocol(e) => e,
+                    other => other
+                        .name()
+                        .parse()
+                        .unwrap_or(AnyMySQLError::InvalidBinaryValue),
+                })?;
             }
             value.index = match column.name_or_index {
                 // The indexed columns can be out of order.

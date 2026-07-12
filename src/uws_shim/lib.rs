@@ -69,6 +69,7 @@ pub use bun_jsc_macros::uws_callback;
 // One definition each; the shim only adds the C++-facing bindings above.
 
 pub use bun_usockets::us_wakeup_loop;
+pub use bun_usockets::{Error, Result};
 #[cfg(not(windows))]
 pub use bun_usockets::PosixLoop;
 #[cfg(windows)]
@@ -452,7 +453,6 @@ pub mod ssl_wrapper {
         OutOfMemory,
         InvalidOptions,
     }
-    bun_core::named_error_set!(InitError);
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum WriteDataError {
@@ -460,7 +460,6 @@ pub mod ssl_wrapper {
         WantRead,
         WantWrite,
     }
-    bun_core::named_error_set!(WriteDataError);
 
     // SAFETY: SSLWrapper is an inline field of the owning socket; handler vtable
     // re-entry may write `flags`/`ssl` but never frees the wrapper (only

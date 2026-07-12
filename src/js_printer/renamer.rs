@@ -433,7 +433,7 @@ impl MinifyRenamer {
     pub fn assign_names_by_frequency(
         &mut self,
         name_minifier: &js_ast::NameMinifier,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let mut name_buf: Vec<u8> = Vec::with_capacity(64);
 
         let mut sorted: Vec<SlotAndCount> = Vec::new();
@@ -1098,7 +1098,7 @@ impl ExportRenamer {
         self.arena.alloc_slice_copy(input)
     }
 
-    pub fn next_minified_name(&mut self) -> Result<Vec<u8>, bun_core::Error> {
+    pub fn next_minified_name(&mut self) -> Result<Vec<u8>, crate::Error> {
         let name = js_ast::NameMinifier::default_number_to_minified_name(self.count)?;
         self.count += 1;
         Ok(name)

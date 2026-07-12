@@ -25,14 +25,10 @@ mod error;
 pub use error::Error;
 #[cfg(windows)]
 pub use error::ReturnCodeExt;
-// `bun_sys::Error` is the rich syscall error (errno+tag+path); `bun_core::Error`
-// is the lightweight NonZeroU16 code. They are distinct types. Downstream that
-// just wants "an error" gets the code via `From`.
-impl From<Error> for bun_core::Error {
+impl From<Error> for bun_errno::SystemErrno {
     #[inline]
-    fn from(e: Error) -> bun_core::Error {
-        // Encode as the errno's name (e.g., "ENOENT") in the interned table.
-        bun_core::Error::from_errno(e.errno as i32)
+    fn from(e: Error) -> Self {
+        bun_errno::SystemErrno::init(i64::from(e.errno)).unwrap_or(bun_errno::SystemErrno::EIO)
     }
 }
 /// The JS-facing rich error
@@ -937,10 +933,6 @@ use core::ffi::{c_char, c_void};
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
-/// Re-exported here so callers
-/// that already depend on `bun_sys` (e.g. `bun_install` Windows paths) can
-/// write `bun_sys::errno_to_zig_err(..)` without also importing `bun_core`.
-pub use bun_core::errno_to_zig_err;
 pub use bun_core::{Fd, FdKind, FdNative, FdOptional, FileKind, Mode, Stdio, kind_from_mode};
 
 /// Anything that can hand out an [`Fd`] without giving up ownership: a raw
@@ -1320,10 +1312,12 @@ pub fn errno() -> *mut i32 {
 }
 
 /// Copy `path` into a NUL-terminated buffer.
-/// Returns `NameTooLong` if `path` contains an interior NUL.
+/// Returns `ENAMETOOLONG` if `path` contains an interior NUL.
 #[inline]
-pub fn to_posix_path(path: &[u8]) -> core::result::Result<std::ffi::CString, bun_core::Error> {
-    std::ffi::CString::new(path).map_err(|_| bun_core::err!("NameTooLong"))
+pub fn to_posix_path(
+    path: &[u8],
+) -> core::result::Result<std::ffi::CString, bun_errno::SystemErrno> {
+    std::ffi::CString::new(path).map_err(|_| bun_errno::SystemErrno::ENAMETOOLONG)
 }
 
 #[inline]
@@ -3095,7 +3089,7 @@ mod posix_impl {
     }
 
     // ── socket primitives (recv/send/socketpair) ──
-    // Full networking lives in `bun_uws_sys`; these are the bare libc wrappers
+    // Full networking lives in `bun_uws_shim`; these are the bare libc wrappers
     // exposed for shell/pipe IPC.
     pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
@@ -6211,12 +6205,12 @@ unsafe impl Send for DynLib {}
 unsafe impl Sync for DynLib {}
 impl DynLib {
     /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryW(path)`.
-    pub fn open(path: &[u8]) -> core::result::Result<Self, bun_core::Error> {
+    pub fn open(path: &[u8]) -> core::result::Result<Self, bun_errno::SystemErrno> {
         let mut buf = bun_paths::PathBuffer::default();
         // `std.DynLib.open` returns `error.NameTooLong`; never truncate (could
         // dlopen a different library whose path is a prefix of the requested one).
         if path.len() >= buf.0.len() {
-            return Err(bun_core::err!("NameTooLong"));
+            return Err(bun_errno::SystemErrno::ENAMETOOLONG);
         }
         let len = path.len();
         buf.0[..len].copy_from_slice(path);
@@ -6225,7 +6219,7 @@ impl DynLib {
         let z = ZStr::from_buf(&buf.0[..], len);
         match dlopen(z, RTLD::LAZY) {
             Some(h) => Ok(Self { handle: h }),
-            None => Err(bun_core::err!("FileNotFound")),
+            None => Err(bun_errno::SystemErrno::ENOENT),
         }
     }
     /// `dlsym` typed lookup.
@@ -6438,16 +6432,14 @@ pub fn symlink_running_executable(target: &ZStr, dest: &ZStr) -> Maybe<()> {
 }
 /// Best-effort recursive delete of an absolute
 /// path. Routes through `Dir::delete_tree` on the parent directory.
-pub fn delete_tree_absolute(path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+pub fn delete_tree_absolute(path: &[u8]) -> Maybe<()> {
     let parent = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(path);
     let base = bun_paths::basename(path);
     if parent.is_empty() || base.is_empty() {
         // Nothing sensible to do (root or empty); silent success.
         return Ok(());
     }
-    let dir = open_dir_absolute(parent)
-        .map(Dir::from_fd)
-        .map_err(bun_core::Error::from)?;
+    let dir = open_dir_absolute(parent).map(Dir::from_fd)?;
     dir.delete_tree(base)
 }
 /// Windows variant skips `DELETE` access; on POSIX identical.
@@ -7979,7 +7971,7 @@ pub fn move_file_z_with_handle(
     filename: &ZStr,
     to_dir: Fd,
     destination: &ZStr,
-) -> core::result::Result<(), bun_core::Error> {
+) -> Maybe<()> {
     match renameat(from_dir, filename, to_dir, destination) {
         Ok(()) => Ok(()),
         Err(e) if e.get_errno() == E::EISDIR => {
@@ -7988,12 +7980,12 @@ pub fn move_file_z_with_handle(
             let _ = unsafe {
                 libc::unlinkat(to_dir.native(), destination.as_ptr(), libc::AT_REMOVEDIR)
             };
-            renameat(from_dir, filename, to_dir, destination).map_err(Into::into)
+            renameat(from_dir, filename, to_dir, destination)
         }
         Err(e) if e.get_errno() == E::EXDEV => {
             // Cross-device: full `copyFileZSlowWithHandle`.
             #[cfg(unix)]
-            let st = fstat(from_handle).map_err(bun_core::Error::from)?;
+            let st = fstat(from_handle)?;
             // Unlink dest first — fixes ETXTBUSY on Linux.
             let _ = unlinkat(to_dir, destination);
             let dst = openat(
@@ -8001,8 +7993,7 @@ pub fn move_file_z_with_handle(
                 destination,
                 O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
                 0o644,
-            )
-            .map_err(bun_core::Error::from)?;
+            )?;
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // Preallocation is best-effort.
@@ -8019,11 +8010,11 @@ pub fn move_file_z_with_handle(
                 let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
             }
             let _ = close(dst);
-            r.map_err(bun_core::Error::from)?;
+            r?;
             let _ = unlinkat(from_dir, filename);
             Ok(())
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(e),
     }
 }
 
@@ -8915,11 +8906,7 @@ impl Drop for CloseOnDrop {
 pub mod make_path {
     use super::*;
     #[inline]
-    pub fn make_open_path(
-        dir: &Dir,
-        sub_path: &[u8],
-        opts: OpenDirOptions,
-    ) -> core::result::Result<Dir, bun_core::Error> {
+    pub fn make_open_path(dir: &Dir, sub_path: &[u8], opts: OpenDirOptions) -> Maybe<Dir> {
         dir.make_open_path(sub_path, opts)
     }
 
@@ -8927,33 +8914,30 @@ pub mod make_path {
     /// `makePath` taking `OSPathSlice`. Extends the
     /// canonical [`bun_paths::PathChar`] with the one syscall-dispatch hook.
     pub trait MakePathUnit: bun_paths::PathChar {
-        fn make_path_at(dir: Fd, sub: &[Self]) -> core::result::Result<(), bun_core::Error>;
+        fn make_path_at(dir: Fd, sub: &[Self]) -> Maybe<()>;
     }
     impl MakePathUnit for u8 {
         #[inline]
-        fn make_path_at(dir: Fd, sub: &[u8]) -> core::result::Result<(), bun_core::Error> {
-            mkdir_recursive_at(dir, sub).map_err(Into::into)
+        fn make_path_at(dir: Fd, sub: &[u8]) -> Maybe<()> {
+            mkdir_recursive_at(dir, sub)
         }
     }
     impl MakePathUnit for u16 {
         #[inline]
-        fn make_path_at(dir: Fd, sub: &[u16]) -> core::result::Result<(), bun_core::Error> {
-            make_path_w(dir, sub).map_err(Into::into)
+        fn make_path_at(dir: Fd, sub: &[u16]) -> Maybe<()> {
+            make_path_w(dir, sub)
         }
     }
     /// `bun.makePath` — `mkdir -p` relative to `dir`, generic over path-char
     /// width so callers can pass `OSPathChar` slices unchanged.
     #[inline]
-    pub fn make_path<T: MakePathUnit>(
-        dir: &Dir,
-        sub_path: &[T],
-    ) -> core::result::Result<(), bun_core::Error> {
+    pub fn make_path<T: MakePathUnit>(dir: &Dir, sub_path: &[T]) -> Maybe<()> {
         T::make_path_at(dir.fd, sub_path)
     }
     /// Explicit UTF-16 form (Windows). On POSIX transcodes via `make_path_w`.
     #[inline]
-    pub fn make_path_u16(dir: &Dir, sub_path: &[u16]) -> core::result::Result<(), bun_core::Error> {
-        make_path_w(dir.fd, sub_path).map_err(Into::into)
+    pub fn make_path_u16(dir: &Dir, sub_path: &[u16]) -> Maybe<()> {
+        make_path_w(dir.fd, sub_path)
     }
 }
 /// `WindowsSymlinkOptions` — Windows-only flag struct
@@ -9240,12 +9224,7 @@ pub fn exists(path: &[u8]) -> bool {
 /// delete-tree + rename); on EISDIR removes the dest dir and
 /// retries; on EXDEV falls back to the slow open+copy path. Only opens the
 /// source inside the EXDEV branch.
-pub fn move_file_z(
-    from_dir: Fd,
-    filename: &ZStr,
-    to_dir: Fd,
-    destination: &ZStr,
-) -> core::result::Result<(), bun_core::Error> {
+pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
     match renameat_concurrently_without_fallback(from_dir, filename, to_dir, destination) {
         Ok(()) => Ok(()),
         // allow over-writing an empty directory
@@ -9255,12 +9234,12 @@ pub fn move_file_z(
             let _ = unsafe {
                 libc::unlinkat(to_dir.native(), destination.as_ptr(), libc::AT_REMOVEDIR)
             };
-            renameat(from_dir, filename, to_dir, destination).map_err(Into::into)
+            renameat(from_dir, filename, to_dir, destination)
         }
         Err(e) if e.get_errno() == E::EXDEV => {
-            move_file_z_slow(from_dir, filename, to_dir, destination).map_err(Into::into)
+            move_file_z_slow(from_dir, filename, to_dir, destination)
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(e),
     }
 }
 /// `moveFileZSlow`: open source, unlink, copy to dest.
@@ -9695,9 +9674,9 @@ fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
 bun_core::link_impl_OutputSink! {
     Sys for () => |_this| {
         stderr() => bun_core::output::File(Fd::stderr()),
-        make_path(cwd, dir) => mkdir_recursive_at(cwd, dir).map_err(Into::into),
+        make_path(cwd, dir) => mkdir_recursive_at(cwd, dir).map_err(|_| bun_core::Error::Unexpected),
         create_file(cwd, path) =>
-            openat_a(cwd, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664).map_err(Into::into),
+            openat_a(cwd, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664).map_err(|_| bun_core::Error::Unexpected),
         quiet_writer_from_fd(fd) => {
             let mut out = bun_core::output::QuietWriter::ZEROED;
             qw_set_fd(&mut out, fd);
@@ -9726,12 +9705,12 @@ bun_core::link_impl_OutputSink! {
         quiet_writer_fd(qw) => qw_fd(qw),
         tty_winsize(fd) => sink_tty_winsize(fd),
         is_terminal(fd) => isatty(fd),
-        read(fd, buf) => read(fd, buf).map_err(Into::into),
+        read(fd, buf) => read(fd, buf).map_err(|_| bun_core::Error::Unexpected),
     }
 }
 
 // (former `__bun_uws_stat_file` provider deleted — body moved DOWN into
-// `bun_uws_sys::socket_context::stat_for_digest`, which calls `libc::stat`
+// `bun_uws_shim::socket_context::stat_for_digest`, which calls `libc::stat`
 // directly. uws_sys already links libc; the cross-crate hook bought nothing.)
 
 #[cfg(test)]

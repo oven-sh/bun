@@ -39,7 +39,7 @@ import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, linkerMapPath, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
-import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
+import { collectCrossDepSources, computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
 
@@ -176,8 +176,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.blank();
   const deps: ResolvedDep[] = [];
   const depsByName = new Map<string, ResolvedDep>();
+  const crossDepSources = collectCrossDepSources(cfg, allDeps);
   for (const dep of allDeps) {
-    const resolved = resolveDep(n, cfg, dep, depsByName);
+    const resolved = resolveDep(n, cfg, dep, depsByName, crossDepSources);
     if (resolved !== null) {
       deps.push(resolved);
       depsByName.set(dep.name, resolved);

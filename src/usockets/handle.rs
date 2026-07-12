@@ -1451,9 +1451,9 @@ pub enum ConnectError {
     FailedToOpenSocket,
 }
 
-impl From<ConnectError> for bun_core::Error {
+impl From<ConnectError> for crate::Error {
     fn from(_: ConnectError) -> Self {
-        bun_core::err!("FailedToOpenSocket")
+        crate::Error::FailedToOpenSocket
     }
 }
 
@@ -1564,7 +1564,7 @@ impl ListenSocket {
     }
 
     /// Returned slice is a view into `buf`.
-    pub fn get_local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
+    pub fn get_local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
         self.s.local_address(buf)
     }
 

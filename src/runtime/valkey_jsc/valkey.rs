@@ -206,7 +206,7 @@ impl Address {
         group: &mut SocketGroup,
         ssl_ctx: Option<*mut SslCtx>,
         is_tls: bool,
-    ) -> Result<AnySocket, bun_core::Error>
+    ) -> Result<AnySocket, crate::Error>
     where
         O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
     {
@@ -1349,7 +1349,7 @@ impl ValkeyClient {
         &mut self,
         command: &Command,
         mut promise: command::Promise,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let can_pipeline = command
             .meta
             .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
@@ -1413,7 +1413,7 @@ impl ValkeyClient {
         &mut self,
         global_this: &JSGlobalObject,
         command: &Command,
-    ) -> Result<*mut JSPromise, bun_core::Error> {
+    ) -> Result<*mut JSPromise, crate::Error> {
         // FIX: Check meta before using it for routing decisions
         let mut checked_command = *command;
         checked_command.meta = command.meta.check(command);
@@ -1551,7 +1551,7 @@ impl bun_io::Write for ValkeyClient {
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
         self.write_buffer
             .write(buf)
-            .map_err(|_| bun_core::Error::OUT_OF_MEMORY)
+            .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
     }
 }
 
@@ -1566,7 +1566,7 @@ impl bun_io::Write for WriteBufWriter<'_> {
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
         self.0
             .write(buf)
-            .map_err(|_| bun_core::Error::OUT_OF_MEMORY)
+            .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
     }
 }
 

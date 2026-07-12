@@ -97,7 +97,7 @@ pub enum Mode {
 pub(crate) fn add_dev_server_components_defines(
     server_define: &mut bun_bundler::options::Define,
     client_define: &mut bun_bundler::options::Define,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     bake_body::add_import_meta_defines(server_define, Mode::Development, Side::Server)?;
     bake_body::add_import_meta_defines(client_define, Mode::Development, Side::Client)
 }

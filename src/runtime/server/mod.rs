@@ -313,10 +313,10 @@ pub struct DevServerSlotVTable {
         core::ptr::NonNull<()>,
         path: &[u8],
         route: *mut html_bundle::Route,
-    ) -> Result<(), bun_core::Error>,
+    ) -> crate::Result<()>,
     /// Registers the dev server's own routes on the server's uWS app.
     /// Returns true if a catch-all "/*" handler was attached.
-    pub(crate) set_routes: fn(core::ptr::NonNull<()>, AnyServer) -> Result<bool, bun_core::Error>,
+    pub(crate) set_routes: fn(core::ptr::NonNull<()>, AnyServer) -> crate::Result<bool>,
 }
 
 /// Owned, type-erased dev server attached to a [`NewServer`]. Dropping the
@@ -391,11 +391,11 @@ impl DevServerSlotRaw {
         self,
         path: &[u8],
         route: *mut html_bundle::Route,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         (self.vtable.put_html_route)(self.ptr, path, route)
     }
 
-    pub(crate) fn set_routes(self, server: AnyServer) -> Result<bool, bun_core::Error> {
+    pub(crate) fn set_routes(self, server: AnyServer) -> crate::Result<bool> {
         (self.vtable.set_routes)(self.ptr, server)
     }
 }

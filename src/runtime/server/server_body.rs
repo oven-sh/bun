@@ -797,11 +797,9 @@ pub struct ServePlugins {
 /// implementation lives in `crate::bake`; the plugin loader stores the
 /// consumer type-erased so it stays agnostic of the concrete type.
 pub trait ServePluginsConsumer {
-    fn on_plugins_resolved(
-        &mut self,
-        plugins: Option<*mut JSBundler::Plugin>,
-    ) -> Result<(), bun_core::Error>;
-    fn on_plugins_rejected(&mut self) -> Result<(), bun_core::Error>;
+    fn on_plugins_resolved(&mut self, plugins: Option<*mut JSBundler::Plugin>)
+    -> crate::Result<()>;
+    fn on_plugins_rejected(&mut self) -> crate::Result<()>;
 }
 
 pub enum ServePluginsState {

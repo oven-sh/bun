@@ -1410,7 +1410,7 @@ fn generate_production_bundle<'a>(
     bake_options: bundle_v2::FrameworkBundleOptions<'a>,
     alloc: &'a Arena,
     event_loop: bundle_v2::EventLoop,
-) -> Result<Vec<OutputFile>, bun_core::Error> {
+) -> bun_bundler::Result<Vec<OutputFile>> {
     let mut this = BundleV2::init(
         server_transpiler,
         Some(bake_options),
@@ -1424,9 +1424,9 @@ fn generate_production_bundle<'a>(
 
     // Wrap so every exit path hits the cleanup below; `chunks` must drop
     // inside the closure, before `deinit_without_freeing_arena()`.
-    let result = (|| -> Result<Vec<OutputFile>, bun_core::Error> {
+    let result = (|| -> bun_bundler::Result<Vec<OutputFile>> {
         if this.transpiler.log().has_errors() {
-            return Err(bun_core::err!("BuildFailed"));
+            return Err(bun_bundler::Error::BuildFailed);
         }
 
         // Client files bundle for the browser; server files for the server
@@ -1446,13 +1446,13 @@ fn generate_production_bundle<'a>(
         this.enqueue_entry_points_with_targets(&entry_targets)?;
 
         if this.transpiler.log().has_errors() {
-            return Err(bun_core::err!("BuildFailed"));
+            return Err(bun_bundler::Error::BuildFailed);
         }
 
         this.wait_for_parse();
 
         if this.transpiler.log().has_errors() {
-            return Err(bun_core::err!("BuildFailed"));
+            return Err(bun_bundler::Error::BuildFailed);
         }
 
         this.scan_for_secondary_paths();
@@ -1561,7 +1561,7 @@ impl EntryPointMap {
         &mut self,
         abs_path: &[u8],
         side: bake::Side,
-    ) -> Result<OpaqueFileId, bun_core::Error> {
+    ) -> crate::Result<OpaqueFileId> {
         let probe = InputFile::init(abs_path, side);
         if let Some(index) = self.files.get_index(&probe) {
             return Ok(OpaqueFileId::init(index as u32));

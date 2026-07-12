@@ -731,18 +731,10 @@ impl ShellSubprocess {
                     // On OHOS (musl), posix_spawn may return ESPIPE for
                     // non-existent commands where glibc returns ENOENT.
                     #[cfg(target_env = "ohos")]
-                    {
-                        // TEMP: log spawn errno to diagnose "Illegal seek" on OHOS
-                        bun_core::pretty_errorln!(
-                            "<r><red>[OHOS spawn]<r> errno={} path={}",
-                            err.errno,
-                            bstr::BStr::new(&err.path),
-                        );
-                        if err.errno == libc::ESPIPE as u16 {
-                            let mut mapped = bun_sys::Error::new(libc::ENOENT, err.syscall);
-                            mapped.path = err.path.clone();
-                            return Err(ShellErr::Sys(mapped.to_shell_system_error()));
-                        }
+                    if err.errno == libc::ESPIPE as u16 {
+                        let mut mapped = bun_sys::Error::new(libc::ENOENT, err.syscall);
+                        mapped.path = err.path.clone();
+                        return Err(ShellErr::Sys(mapped.to_shell_system_error()));
                     }
                     return Err(ShellErr::Sys(err.to_shell_system_error()));
                 }

@@ -1685,7 +1685,10 @@ impl Archiver {
                                     break 'brk __pathname;
                                 }
 
-                                let index = __pathname.iter().position(|&b| b == SEP).unwrap();
+                                let index = match __pathname.iter().position(|&b| b == SEP) {
+                                    Some(i) => i,
+                                    None => continue 'loop_,
+                                };
                                 break 'brk &__pathname[..index];
                             };
                             let mut temp_buf = [0u8; 1024];
@@ -2157,8 +2160,7 @@ impl Archiver {
                                     if A::HAS_APPEND_MUTABLE {
                                         let result = ctx_
                                             .all_files
-                                            .get_or_put_adapted(&h, &archiver::U64Context)
-                                            .expect("unreachable");
+                                            .get_or_put_adapted(&h, &archiver::U64Context)?;
                                         if !result.found_existing {
                                             *result.value_ptr = appender
                                                 .append_mutable(path_slice)?

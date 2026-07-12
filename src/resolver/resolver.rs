@@ -5731,7 +5731,9 @@ impl<'a> Resolver<'a> {
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
+                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
+                | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                | crate::Error::Sys(bun_errno::SystemErrno::EPERM) => {}
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,

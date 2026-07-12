@@ -628,16 +628,6 @@ function fakeParentPort() {
     value: self.removeEventListener.bind(self),
   });
 
-  Object.defineProperty(fake, "removeListener", {
-    value: self.removeEventListener.bind(self),
-    enumerable: false,
-  });
-
-  Object.defineProperty(fake, "addListener", {
-    value: self.addEventListener.bind(self),
-    enumerable: false,
-  });
-
   return fake;
 }
 let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();

@@ -132,7 +132,12 @@ test("Bun.TOML.parse accepts nested array literals with adjacent brackets", () =
   expect(Bun.TOML.parse("a = [[1], [2]]")).toEqual({ a: [[1], [2]] });
   expect(Bun.TOML.parse('a = [["x"], ["y"]]')).toEqual({ a: [["x"], ["y"]] });
   expect(Bun.TOML.parse("a = [[[1]]]")).toEqual({ a: [[[1]]] });
-  expect(Bun.TOML.parse("a = [[1, 2], [3, 4]]")).toEqual({ a: [[1, 2], [3, 4]] });
+  expect(Bun.TOML.parse("a = [[1, 2], [3, 4]]")).toEqual({
+    a: [
+      [1, 2],
+      [3, 4],
+    ],
+  });
   expect(Bun.TOML.parse("a = [[]]")).toEqual({ a: [[]] });
   expect(Bun.TOML.parse("a = [[], []]")).toEqual({ a: [[], []] });
   expect(Bun.TOML.parse("a = [[[1], [2]], [[3]]]")).toEqual({ a: [[[1], [2]], [[3]]] });

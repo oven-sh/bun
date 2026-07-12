@@ -305,45 +305,47 @@ describe("HTTP server CONNECT", () => {
 
   test("should handle partial writes and buffering", async () => {
     await using proxyServer = http.createServer();
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
     let bufferReceived = "";
 
     proxyServer.on("connect", (req, socket, head) => {
       let sentTestData = false;
+      socket.on("error", reject);
       socket.on("data", chunk => {
         bufferReceived += chunk.toString();
         // End only once the client's tunneled bytes have arrived so the
         // assertion on bufferReceived is not racing the server's FIN.
         if (!sentTestData && bufferReceived.includes("Client data")) {
           sentTestData = true;
-          socket.write("Test data");
-          socket.end();
+          socket.write("Test data", () => socket.end());
         }
       });
 
-      // Send response in small chunks
-      socket.write("HTTP/1.1 ");
-      setTimeout(() => socket.write("200 "), 10);
-      setTimeout(() => socket.write("Connection "), 20);
-      setTimeout(() => socket.write("established\r\n\r\n"), 30);
+      // Send response in small chunks, each after the previous is flushed.
+      socket.write("HTTP/1.1 ", () =>
+        socket.write("200 ", () =>
+          socket.write("Connection ", () => socket.write("established\r\n\r\n")),
+        ),
+      );
     });
 
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");
     const proxyAddress = proxyServer.address() as AddressInfo;
 
     const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      // Send request in chunks
-      client.write("CONNECT example.com:80 ");
-      setTimeout(() => client.write("HTTP/1.1\r\n"), 5);
-      setTimeout(() => client.write("Host: example.com\r\n\r\n"), 10);
+      // Send request in chunks, each after the previous is flushed.
+      client.write("CONNECT example.com:80 ", () =>
+        client.write("HTTP/1.1\r\n", () => client.write("Host: example.com\r\n\r\n")),
+      );
     });
 
-    const { promise, resolve } = Promise.withResolvers<string>();
     const received: string[] = [];
     let sentClientData = false;
 
+    client.on("error", reject);
     client.on("data", data => {
       received.push(data.toString());
-      // Send the client bytes once the tunnel is up, not at a fixed delay.
+      // Send the client bytes once the tunnel is up.
       if (!sentClientData && received.join("").includes("Connection established\r\n\r\n")) {
         sentClientData = true;
         client.write("Client data");

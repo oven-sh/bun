@@ -1737,7 +1737,7 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         break;
     }
     case Bun::WebSocketErrorCode::timeout: {
-        didReceiveClose(CleanStatus::Clean, 1013, "Timeout"_s);
+        didReceiveClose(CleanStatus::NotClean, 1006, "Timeout"_s);
         break;
     }
     case Bun::WebSocketErrorCode::closed: {

@@ -579,12 +579,12 @@ reason)`. A never-opened connect (SEMI_SOCKET) MUST NOT get on_close —
     re-forward adoption. Repeat-read heuristic (POSIX, loop.c:691-713):
     continue the loop only if `s` alive, `length >= LIBUS_RECV_BUFFER_LENGTH
     - 24\*1024`, `length <= LIBUS_RECV_BUFFER_LENGTH`, and (`error`set (hung
-up — macOS delivers EV_EOF with the same event) or`loop->num_ready_polls < 25`), and socket not closed and NOT paused
-(`flags.is_paused`— a pause from inside on_data stops the loop).`repeat_recv_count`increments only when`error == 0`, and when
-`repeat_recv_count > 10 && loop->num_ready_polls > 2` the loop stops
-(starvation guard). Windows (loop.c:715-731): after a successful read,
-probe recv exactly once more (`repeat_recv_count++ == 0`) unless
-      closed/paused, to catch AFD_POLL_ABORT races.
+    up — macOS delivers EV_EOF with the same event) or`loop->num_ready_polls < 25`), and socket not closed and NOT paused
+    (`flags.is_paused`— a pause from inside on_data stops the loop).`repeat_recv_count`increments only when`error == 0`, and when
+    `repeat_recv_count > 10 && loop->num_ready_polls > 2` the loop stops
+    (starvation guard). Windows (loop.c:715-731): after a successful read,
+    probe recv exactly once more (`repeat_recv_count++ == 0`) unless
+    closed/paused, to catch AFD_POLL_ABORT races.
   - `length == 0`: set `eof = 1`, break (handled below).
   - `length == -1 && !bsd_would_block()`: peer-initiated TCP error → bypass
     the SSL-graceful path and `us_internal_socket_close_raw(s, LIBUS_ERR,

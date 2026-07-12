@@ -134,13 +134,15 @@ describe("Bun.file().lock()", () => {
 
     const controller = new AbortController();
     const pending = Bun.file(path).lock({ signal: controller.signal });
-    controller.abort();
+    controller.abort("stop");
     const err = await pending.then(
       () => null,
       e => e,
     );
     expect(err).not.toBeNull();
     expect(err.name).toBe("AbortError");
+    expect(err.code).toBe("ABORT_ERR");
+    expect(err.cause).toBe("stop");
 
     holder.stdin.write("go\n");
     holder.stdin.end();
@@ -151,12 +153,14 @@ describe("Bun.file().lock()", () => {
   test("lock({ signal }) rejects immediately if already aborted", async () => {
     using dir = tempDir("bun-file-lock", { "a.txt": "hello" });
     const err = await Bun.file(join(String(dir), "a.txt"))
-      .lock({ signal: AbortSignal.abort() })
+      .lock({ signal: AbortSignal.abort("nope") })
       .then(
         () => null,
         e => e,
       );
+    expect(err?.name).toBe("AbortError");
     expect(err?.code).toBe("ABORT_ERR");
+    expect(err?.cause).toBe("nope");
   });
 
   test("nonblocking exclusive lock fails when shared lock is held on another fd", async () => {
@@ -276,5 +280,13 @@ describe("FileLock I/O", () => {
     using dir = tempDir("bun-file-lock", { "a.txt": "x" });
     await using lock = await Bun.file(join(String(dir), "a.txt")).lock();
     expect(() => lock.truncate(-1)).toThrow(/>= 0/);
+  });
+
+  test("bytes(n) clamps to file size", async () => {
+    using dir = tempDir("bun-file-lock", { "a.txt": "hello" });
+    await using lock = await Bun.file(join(String(dir), "a.txt")).lock();
+    const result = await lock.bytes(Number.MAX_SAFE_INTEGER);
+    expect(result.byteLength).toBe(5);
+    expect(new TextDecoder().decode(result)).toBe("hello");
   });
 });

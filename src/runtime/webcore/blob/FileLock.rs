@@ -267,23 +267,27 @@ impl ConcurrentPromiseTaskContext for LockTaskCtx<'_> {
 
     fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
         let global = self.global_this;
-        if let Some(signal) = self.signal.take() {
+        let aborted = self.aborted.load(Ordering::SeqCst) != 0;
+        // Build the same Node-style AbortError (`code: 'ABORT_ERR'`,
+        // `cause === signal.reason`) the pre-aborted path uses, before
+        // detaching the listener and releasing the ref.
+        let abort_err = self.signal.take().and_then(|signal| {
             // SAFETY: `signal` holds a +1 ref taken in `schedule_lock`.
+            let err = aborted
+                .then(|| unsafe { (*signal).node_abort_error_if_aborted(global) })
+                .flatten();
             unsafe { (*signal).detach(core::ptr::from_mut(self).cast::<c_void>()) };
-        }
-        if self.aborted.load(Ordering::SeqCst) != 0 {
+            err
+        });
+        if aborted {
             if let Some(Ok(held)) = self.result.take() {
                 let _ = bun_sys::funlock(held.fd);
                 drop(held);
             }
-            let err = global.create_dom_exception_instance(
-                jsc::DOMExceptionCode::AbortError,
-                format_args!("The operation was aborted."),
-            );
-            return match err {
-                Ok(v) => promise.reject(global, Ok(v)),
-                Err(_) => promise.reject(global, Err(jsc::JsError::Thrown)),
-            };
+            let err = abort_err.unwrap_or_else(|| {
+                global.create_error_instance(format_args!("The operation was aborted."))
+            });
+            return promise.reject(global, Ok(err));
         }
         match self.result.take() {
             Some(Ok(held)) => {
@@ -390,13 +394,18 @@ impl ConcurrentPromiseTaskContext for IoTaskCtx<'_> {
             IoOp::Read { len, kind } => {
                 let file = File::borrow(&fd);
                 match *len {
-                    Some(n) => {
-                        let mut buf = vec![0u8; n];
-                        file.pread_all(&mut buf, 0).map(|read| {
-                            buf.truncate(read);
-                            IoResult::Read(buf, *kind)
-                        })
-                    }
+                    Some(n) => (|| {
+                        // Clamp to file size so an oversized request can't
+                        // force a huge infallible allocation and OOM-abort.
+                        let size = file.get_end_pos()?;
+                        let want = n.min(size);
+                        let mut buf = Vec::new();
+                        buf.try_reserve_exact(want).map_err(|_| bun_sys::Error::oom())?;
+                        buf.resize(want, 0);
+                        let read = file.pread_all(&mut buf, 0)?;
+                        buf.truncate(read);
+                        Ok(IoResult::Read(buf, *kind))
+                    })(),
                     None => file.read_to_end().map(|v| IoResult::Read(v, *kind)),
                 }
             }

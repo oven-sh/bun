@@ -137,3 +137,9 @@ this intermediate state (W18's documented sequencing). The deletion/flip wave
 must: add bun_usockets (features=["cabi"]) to bun_bin, delete the C core
 files + duplicate BUN_SOCKET_KIND_* statics in src/uws_sys/SocketKind.rs, and
 land it as one build step.
+
+### ORCHESTRATOR NOTE (pre-final cleanup, binding)
+The 12 per-target bssl_bindings/wrapper_*.rs files (~343k lines committed) must be
+collapsed before the PR: diff them, keep ONE shared bindings file + a minimal
+cfg-gated divergence module (per-OS at worst). Verify cargo check on linux x64
++ rust:check-all after collapsing.

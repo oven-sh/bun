@@ -100,12 +100,14 @@ static void tsfn_abort_release_finalize(napi_env env, void *finalize_data,
 }
 
 // Create a tsfn (thread_count=1), acquire a second reference (thread_count=2),
-// then abort it (thread_count=1, closing). The abort's dispatch runs on the
-// next event-loop turn, sees thread_count!=0, and returns without finalizing.
+// optionally queue some items, then abort it (thread_count=1, closing). The
+// abort's dispatch runs on the next event-loop turn, sees thread_count!=0, and
+// returns without finalizing.
 static napi_value test_napi_threadsafe_function_abort_then_last_release(
     const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   napi_value resource_name = Napi::String::New(env, "abort_then_last_release");
+  int queued = info[0].IsNumber() ? info[0].As<Napi::Number>().Int32Value() : 0;
   tsfn_abort_release_finalized = false;
   NODE_API_CALL(env,
                 napi_create_threadsafe_function(
@@ -116,6 +118,10 @@ static napi_value test_napi_threadsafe_function_abort_then_last_release(
                     tsfn_abort_release_finalize, /* context */ nullptr,
                     &noop_callback, &tsfn_abort_release));
   NODE_API_CALL(env, napi_acquire_threadsafe_function(tsfn_abort_release));
+  for (int i = 0; i < queued; i++) {
+    NODE_API_CALL(env, napi_call_threadsafe_function(
+                           tsfn_abort_release, nullptr, napi_tsfn_nonblocking));
+  }
   NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_release,
                                                       napi_tsfn_abort));
   return env.Undefined();

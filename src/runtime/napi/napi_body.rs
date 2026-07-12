@@ -2523,7 +2523,7 @@ impl ThreadSafeFunction {
 
     pub fn dispatch_one(&mut self, is_first: bool) -> bool {
         let mut queue_finalizer_after_call = false;
-        let (has_more, task) = 'brk: {
+        let task = 'brk: {
             // `MutexGuard` holds the lock by raw pointer, so it does not borrow
             // `*self` across the `&mut self` calls below.
             let _g = self.lock.lock_guard();
@@ -2554,7 +2554,7 @@ impl ThreadSafeFunction {
                 self.blocking_condvar.signal();
             }
 
-            break 'brk (!self.is_closing(), t);
+            break 'brk t;
         };
 
         if self.call(task, !is_first).is_err() {
@@ -2565,7 +2565,9 @@ impl ThreadSafeFunction {
             self.maybe_queue_finalizer();
         }
 
-        has_more
+        // An item was dequeued: keep on_dispatch looping so remaining queued
+        // items drain and the empty-queue thread_count==0 path can finalize.
+        true
     }
 
     /// This function can be called multiple times in one tick of the event loop.

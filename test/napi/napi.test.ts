@@ -417,10 +417,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toBe("success!");
     });
 
-    it("runs the finalizer and exits when the last reference is released after abort", async () => {
-      const result = await checkSameOutput("test_threadsafe_function_abort_then_last_release", []);
-      expect(result).toContain("finalized: true");
-    });
+    it.each([0, 3])(
+      "runs the finalizer and exits when the last reference is released after abort (%d queued items)",
+      async queued => {
+        const result = await checkSameOutput("test_threadsafe_function_abort_then_last_release", [queued]);
+        expect(result).toContain("finalized: true");
+      },
+    );
 
     it("wakes blocked producers, runs the finalizer and exits when aborted with a bounded queue", async () => {
       const result = await checkSameOutput("test_threadsafe_function_abort_blocked_producers", []);

@@ -77,9 +77,9 @@ nativeTests.test_promise_with_threadsafe_function = async () => {
   return await nativeTests.create_promise_with_threadsafe_function(() => 1234);
 };
 
-nativeTests.test_threadsafe_function_abort_then_last_release = async () => {
-  // create (thread_count=1), acquire (=2), abort (=1, closing)
-  nativeTests.test_napi_threadsafe_function_abort_then_last_release();
+nativeTests.test_threadsafe_function_abort_then_last_release = async (_, queued = 0) => {
+  // create (thread_count=1), acquire (=2), optionally queue items, abort (=1, closing)
+  nativeTests.test_napi_threadsafe_function_abort_then_last_release(queued);
   // let the abort's scheduled dispatch run first
   await new Promise(resolve => setImmediate(resolve));
   // release the last reference of the already-closing tsfn (=0)

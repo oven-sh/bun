@@ -357,7 +357,11 @@ test.concurrent("a throw from a 'data' listener is an uncaughtException, and std
   });
 });
 
-test.concurrent("a throw from a 'readable' listener is an uncaughtException and does not destroy stdin", async () => {
+test.concurrent("a throw from a 'readable' listener is an uncaughtException, including the EOF emission", async () => {
+  // 'readable' fires twice: once for the buffered chunk (via nextTick; already
+  // routed to uncaughtException) and once synchronously from push(null) at EOF.
+  // The EOF-path throw must reach uncaughtException too (node compat); before
+  // this fix internalRead() silently swallowed it.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -365,14 +369,15 @@ test.concurrent("a throw from a 'readable' listener is an uncaughtException and 
       `const seen = [];
       process.on("uncaughtException", e => seen.push("uncaughtException:" + e.message));
       process.stdin.on("error", e => seen.push("stream-error:" + e.message));
+      let n = 0;
       process.stdin.on("readable", () => {
+        n++;
         let chunk;
         while ((chunk = process.stdin.read()) !== null) seen.push("readable:" + chunk.toString());
-        throw new Error("readable-throw");
+        throw new Error("readable-throw-" + n);
       });
-      process.stdin.on("end", () => {
-        console.log(JSON.stringify({ seen, destroyed: process.stdin.destroyed }));
-      });`,
+      process.stdin.on("end", () => seen.push("end"));
+      process.on("exit", () => console.log(JSON.stringify(seen)));`,
     ],
     stdin: "pipe",
     stdout: "pipe",
@@ -382,13 +387,16 @@ test.concurrent("a throw from a 'readable' listener is an uncaughtException and 
   proc.stdin.write("hello");
   await proc.stdin.end();
 
-  const result = await stdioResult(proc);
-  const report = JSON.parse(result.stdout!);
-  expect(report.seen).toContain("readable:hello");
-  expect(report.seen).toContain("uncaughtException:readable-throw");
-  expect(report.seen).not.toContain("stream-error:readable-throw");
-  expect(report.destroyed).toBe(false);
-  expect(result.exitCode).toBe(0);
+  expect(await stdioResult(proc)).toEqual({
+    stdout:
+      JSON.stringify([
+        "readable:hello",
+        "uncaughtException:readable-throw-1",
+        "end",
+        "uncaughtException:readable-throw-2",
+      ]) + "\n",
+    exitCode: 0,
+  });
 });
 
 test.concurrent("pause() and resume() churn while data is in flight never destroys stdin", async () => {

@@ -4,6 +4,10 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
 
+#if USE(MIMALLOC)
+#include <bmalloc/mimalloc.h>
+#endif
+
 extern "C" int Bun__defaultRemainingRunsUntilSkipReleaseAccess;
 
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
@@ -66,4 +70,10 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             vm->didEnterVM = false;
         }
     }
+
+#if USE(MIMALLOC)
+    // Process this thread's retired mimalloc pages and queue arena purges
+    // for the scavenger while the event loop is idle.
+    mi_theap_collect(mi_theap_get_default(), /* force */ false);
+#endif
 }

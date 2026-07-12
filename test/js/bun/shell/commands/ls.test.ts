@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isPosix, tempDirWithFiles } from "harness";
+import { isPosix, tempDir, tempDirWithFiles } from "harness";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -196,6 +196,53 @@ describe.concurrent("bunshell ls", () => {
         .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toContain("file-with-!@#$%^&*()"))
         .run();
+    });
+  });
+
+  describe("sorting", () => {
+    // POSIX: "The ls utility shall sort directory and non-directory operands
+    // separately according to the collating sequence in the current locale."
+    // coreutils/bash always sort; raw readdir order is wrong.
+    test("entries are sorted by name by default", async () => {
+      using dir = tempDir("ls-sort", { m: "", a: "", z: "", k: "", b: "" });
+      const { stdout } = await $`ls`.cwd(String(dir)).quiet();
+      expect(stdout.toString()).toBe("a\nb\nk\nm\nz\n");
+    });
+
+    test("entries are sorted with an explicit directory operand", async () => {
+      using dir = tempDir("ls-sort-arg", { m: "", a: "", z: "", k: "" });
+      const { stdout } = await $`ls ${String(dir)}`.quiet();
+      expect(stdout.toString()).toBe("a\nk\nm\nz\n");
+    });
+
+    test("-r reverses the sort order", async () => {
+      using dir = tempDir("ls-sort-rev", { m: "", a: "", z: "", k: "" });
+      const { stdout } = await $`ls -r`.cwd(String(dir)).quiet();
+      expect(stdout.toString()).toBe("z\nm\nk\na\n");
+    });
+
+    test("-a includes . and .. in the sorted output", async () => {
+      using dir = tempDir("ls-sort-all", { b: "", a: "" });
+      const { stdout } = await $`ls -a`.cwd(String(dir)).quiet();
+      expect(stdout.toString()).toBe(".\n..\na\nb\n");
+    });
+
+    test("-l long listing is sorted by name", async () => {
+      using dir = tempDir("ls-sort-long", { m: "", a: "", z: "" });
+      const { stdout } = await $`ls -l`.cwd(String(dir)).quiet();
+      const names = stdout
+        .toString()
+        .trim()
+        .split("\n")
+        .map(l => l.trim().split(/\s+/).pop());
+      expect(names).toEqual(["a", "m", "z"]);
+    });
+
+    test("-U does not sort (directory order)", async () => {
+      using dir = tempDir("ls-no-sort", { m: "", a: "", z: "" });
+      const { stdout, exitCode } = await $`ls -U`.cwd(String(dir)).quiet();
+      expect(stdout.toString().trim().split("\n").sort()).toEqual(["a", "m", "z"]);
+      expect(exitCode).toBe(0);
     });
   });
 

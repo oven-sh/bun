@@ -1560,6 +1560,8 @@ describe("deno_task", () => {
         ["stdout from subprocess", `$\`\${process.execPath} -e 0 > \${stream}\``],
         ["stderr from subprocess", `$\`\${process.execPath} -e 0 2> \${stream}\``],
         ["in pipeline", `$\`\${process.execPath} -e 0 | \${process.execPath} -e 0 < \${stream}\``],
+        ["first in pipeline", `$\`\${process.execPath} -e 0 < \${stream} | \${process.execPath} -e 0\``],
+        ["both sides of pipeline", `$\`\${process.execPath} -e 0 < \${stream} | \${process.execPath} -e 0 < \${stream}\``],
         ["after && (async re-entry)", `$\`\${process.execPath} -e 0 && \${process.execPath} -e 0 < \${stream}\``],
       ])("%s", async (_, shellExpr) => {
         const script = /* ts */ `

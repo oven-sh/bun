@@ -140,12 +140,11 @@ impl Yield {
                     err,
                 } => crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err),
                 Yield::Failed => {
+                    // Reject the ShellPromise and stop: do not drain pipelines,
+                    // or downstream commands would spawn after the promise is
+                    // already settled (hang/UAF) or throw into a cleared reject.
                     interp.reject_pending_exception();
-                    if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {
-                        y
-                    } else {
-                        return;
-                    }
+                    return;
                 }
                 Yield::Suspended | Yield::Done => {
                     if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {

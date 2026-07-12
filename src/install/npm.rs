@@ -671,6 +671,38 @@ pub(crate) fn negatable_from_json_value<T: NegatableEnum>(value: &JSON::E::JsonV
     this.combine()
 }
 
+/// Resets and refills `bundled_deps_set` / `bundle_all_deps` from a version's
+/// `bundleDependencies` (or legacy `bundledDependencies`) field.
+fn extract_bundled_deps(
+    version_obj: Option<&JSON::E::ObjectJSON>,
+    bundled_deps_set: &mut StringSet,
+    bundle_all_deps: &mut bool,
+) -> Result<(), AllocError> {
+    bundled_deps_set.map.clear_retaining_capacity();
+    *bundle_all_deps = false;
+    let Some(bundled_deps_value) = version_obj
+        .and_then(|o| o.get(b"bundleDependencies"))
+        .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
+    else {
+        return Ok(());
+    };
+    match bundled_deps_value {
+        JSON::E::JsonValue::Boolean(boolean) => {
+            *bundle_all_deps = *boolean;
+        }
+        JSON::E::JsonValue::Array(arr) => {
+            for bundled_dep in arr.get().items() {
+                let Some(s) = bundled_dep.as_str() else {
+                    continue;
+                };
+                bundled_deps_set.insert(s)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
@@ -2023,7 +2055,7 @@ impl PackageManifest {
         let mut optional_peer_dep_names: Vec<u64> = Vec::new();
 
         let mut bundled_deps_set = StringSet::init();
-        let mut bundle_all_deps: bool;
+        let mut bundle_all_deps = false;
 
         let mut bundled_deps_count: usize = 0;
 
@@ -2159,27 +2191,7 @@ impl PackageManifest {
                     }
                 }
 
-                bundled_deps_set.map.clear_retaining_capacity();
-                bundle_all_deps = false;
-                if let Some(bundled_deps_value) = version_obj
-                    .and_then(|o| o.get(b"bundleDependencies"))
-                    .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
-                {
-                    match bundled_deps_value {
-                        JSON::E::JsonValue::Boolean(boolean) => {
-                            bundle_all_deps = *boolean;
-                        }
-                        JSON::E::JsonValue::Array(arr) => {
-                            for bundled_dep in arr.get().items() {
-                                let Some(s) = bundled_dep.as_str() else {
-                                    continue;
-                                };
-                                bundled_deps_set.insert(s)?;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                extract_bundled_deps(version_obj, &mut bundled_deps_set, &mut bundle_all_deps)?;
 
                 for pair in &DEPENDENCY_GROUPS {
                     if let Some(obj) = version_obj
@@ -2366,27 +2378,7 @@ impl PackageManifest {
 
                 let version_obj = prop.value.as_object();
 
-                bundled_deps_set.map.clear_retaining_capacity();
-                bundle_all_deps = false;
-                if let Some(bundled_deps_value) = version_obj
-                    .and_then(|o| o.get(b"bundleDependencies"))
-                    .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
-                {
-                    match bundled_deps_value {
-                        JSON::E::JsonValue::Boolean(boolean) => {
-                            bundle_all_deps = *boolean;
-                        }
-                        JSON::E::JsonValue::Array(arr) => {
-                            for bundled_dep in arr.get().items() {
-                                let Some(s) = bundled_dep.as_str() else {
-                                    continue;
-                                };
-                                bundled_deps_set.insert(s)?;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                extract_bundled_deps(version_obj, &mut bundled_deps_set, &mut bundle_all_deps)?;
 
                 let mut package_version: PackageVersion = empty_version;
 

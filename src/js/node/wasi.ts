@@ -1847,8 +1847,14 @@ var require_wasi = __commonJS({
           },
           random_get: (bufPtr, bufLen) => {
             this.refreshMemory();
-            crypto.getRandomValues(this.memory.buffer, bufPtr, bufLen);
-            return bufLen;
+            if (bufPtr < 0 || bufLen < 0 || bufPtr + bufLen > this.memory.buffer.byteLength) {
+              return constants_1.WASI_EINVAL;
+            }
+            const buffer = new Uint8Array(this.memory.buffer, bufPtr, bufLen);
+            for (let offset = 0; offset < bufLen; offset += 65536) {
+              crypto.getRandomValues(buffer.subarray(offset, Math.min(offset + 65536, bufLen)));
+            }
+            return constants_1.WASI_ESUCCESS;
           },
           sched_yield() {
             return constants_1.WASI_ESUCCESS;

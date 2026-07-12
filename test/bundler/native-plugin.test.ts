@@ -562,12 +562,8 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
   });
 
   it("keeps the onBeforeParse external alive across GC when JS drops its reference", async () => {
-    // The external is passed inline to onBeforeParse with no other JS
-    // references. onLoad forces a synchronous full GC after defer(). Before
-    // the fix the NapiExternal cell was not visited by JSBundlerPlugin's
-    // visitChildren, so it was finalized mid-build and the native callback
-    // read freed memory (heap-use-after-free under ASAN, segfault in
-    // release when the freed page was unmapped).
+    // The external is passed inline with no other JS reference, and onLoad
+    // forces a full GC after defer(); the NapiExternal must survive the build.
     const srcDir = path.join(tempdir, "gc_safe_src");
     const files = Array.from({ length: 40 }, (_, i) => `src${i}.ts`);
     await Promise.all(files.map(f => Bun.write(path.join(srcDir, f), `export const v = "foo foo foo";\n`)));

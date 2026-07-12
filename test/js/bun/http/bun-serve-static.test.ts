@@ -108,7 +108,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
       test.each(["arrayBuffer", "blob", "bytes", "text"])(
         "%s",
         async method => {
-          const byteSize = static_responses[path][method]?.size;
+          const byteSize = static_responses[path].size;
 
           const bytes = method === "blob" ? static_responses[path] : await static_responses[path][method]();
 

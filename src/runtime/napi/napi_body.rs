@@ -647,11 +647,10 @@ pub(super) extern "C" fn napi_create_string_latin1(
         return env.ok();
     }
 
-    let (string, bytes) = bun_core::String::create_uninitialized_latin1(slice.len());
-    // `string` derefs on Drop.
+    let (mut string, bytes) = bun_core::String::create_uninitialized_latin1(slice.len());
     bytes.copy_from_slice(slice);
 
-    let js = match string.to_js(env.to_js()) {
+    let js = match string.transfer_to_js(env.to_js()) {
         Ok(v) => v,
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
     };

@@ -4,7 +4,7 @@ use core::mem::size_of;
 use bun_ast::Loc;
 use bun_collections::MultiArrayList;
 use bun_core::{self, ZigStringSlice};
-use bun_core::{declare_scope, err, scoped_log};
+use bun_core::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
 
 use crate::vlq::decode as decode_vlq;
@@ -405,8 +405,8 @@ impl Lookup {
 
                 // SAFETY: `standalone_module_graph_data` returns a pointer
                 // owned by the standalone module graph trailer; lifetime is
-                // process-static (mmapped). `source_file_contents` mutates the
-                // decompression cache in-place.
+                // process-static (mmapped). `source_file_contents` fills the
+                // per-index decompression cache through a `OnceLock`.
                 let code = unsafe { (*serialized).source_file_contents(index) };
 
                 return Some(ZigStringSlice::from_utf8_never_free(code?));
@@ -508,7 +508,7 @@ pub fn parse(
         if mapping.ensure_total_capacity(count).is_err() {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Out of memory",
-                err: err!("OutOfMemory"),
+                err: crate::Error::Alloc(bun_alloc::AllocError),
                 loc: Loc::default(),
                 ..Default::default()
             });
@@ -558,7 +558,7 @@ pub fn parse(
             SimdResult::OutOfMemory => {
                 return ParseResult::Fail(ParseResultFail {
                     msg: b"Out of memory",
-                    err: err!("OutOfMemory"),
+                    err: crate::Error::Alloc(bun_alloc::AllocError),
                     loc: Loc::default(),
                     ..Default::default()
                 });
@@ -591,7 +591,7 @@ pub fn parse(
         if generated_column_delta.start == 0 {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Missing generated column value",
-                err: err!("MissingGeneratedColumnValue"),
+                err: crate::Error::MissingGeneratedColumnValue,
                 value: generated.columns.zero_based(),
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -605,7 +605,7 @@ pub fn parse(
         if generated.columns.zero_based() < 0 {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Invalid generated column value",
-                err: err!("InvalidGeneratedColumnValue"),
+                err: crate::Error::InvalidGeneratedColumnValue,
                 value: generated.columns.zero_based(),
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -639,7 +639,7 @@ pub fn parse(
         if source_index_delta.start == 0 {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Invalid source index delta",
-                err: err!("InvalidSourceIndexDelta"),
+                err: crate::Error::InvalidSourceIndexDelta,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
@@ -651,7 +651,7 @@ pub fn parse(
         if source_index < 0 || source_index >= sources_count {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Invalid source index value",
-                err: err!("InvalidSourceIndexValue"),
+                err: crate::Error::InvalidSourceIndexValue,
                 value: source_index,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -665,7 +665,7 @@ pub fn parse(
         if original_line_delta.start == 0 {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Missing original line",
-                err: err!("MissingOriginalLine"),
+                err: crate::Error::MissingOriginalLine,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
@@ -677,7 +677,7 @@ pub fn parse(
         if original.lines.zero_based() < 0 {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Invalid original line value",
-                err: err!("InvalidOriginalLineValue"),
+                err: crate::Error::InvalidOriginalLineValue,
                 value: original.lines.zero_based(),
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -691,7 +691,7 @@ pub fn parse(
         if original_column_delta.start == 0 {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Missing original column value",
-                err: err!("MissingOriginalColumnValue"),
+                err: crate::Error::MissingOriginalColumnValue,
                 value: original.columns.zero_based(),
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -703,7 +703,7 @@ pub fn parse(
         if original.columns.zero_based() < 0 {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Invalid original column value",
-                err: err!("InvalidOriginalColumnValue"),
+                err: crate::Error::InvalidOriginalColumnValue,
                 value: original.columns.zero_based(),
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -728,7 +728,7 @@ pub fn parse(
                     if name_index_delta.start == 0 {
                         return ParseResult::Fail(ParseResultFail {
                             msg: b"Invalid name index delta",
-                            err: err!("InvalidNameIndexDelta"),
+                            err: crate::Error::InvalidNameIndexDelta,
                             value: i32::from(c),
                             loc: Loc {
                                 start: i32::try_from(bytes.len() - remain.len())
@@ -744,7 +744,7 @@ pub fn parse(
                             if mapping.ensure_with_names().is_err() {
                                 return ParseResult::Fail(ParseResultFail {
                                     msg: b"Out of memory",
-                                    err: err!("OutOfMemory"),
+                                    err: crate::Error::Alloc(bun_alloc::AllocError),
                                     loc: Loc {
                                         start: i32::try_from(bytes.len() - remain.len())
                                             .unwrap_or(i32::MAX),

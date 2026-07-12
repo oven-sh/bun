@@ -405,6 +405,16 @@ impl JSGlobalObject {
         Ok(str)
     }
 
+    /// Renders `value` the way Node's `ERR_INVALID_ARG_VALUE` does (`util.inspect`
+    /// quoting, via the same C++ formatter the C++ overloads use). Returns a
+    /// +1-ref'd string wrapped in [`OwnedString`] so the ref is released on drop.
+    pub fn inspect_for_error_message(global: &Self, value: JSValue) -> JsResult<OwnedString> {
+        crate::top_scope!(scope, global);
+        let str = OwnedString::new(Bun__ErrorCode__inspectForErrorMessage(global, value));
+        scope.return_if_exception()?;
+        Ok(str)
+    }
+
     pub fn throw_incompatible_option_pair(&self, opt1: &[u8], opt2: &[u8]) -> JsError {
         self.err(
             JscError::INCOMPATIBLE_OPTION_PAIR,
@@ -871,19 +881,27 @@ impl JSGlobalObject {
         self.throw_value(instance)
     }
 
-    pub fn throw_error(&self, err: bun_core::Error, fmt: &'static str) -> JsError {
-        if err == bun_core::err!("OutOfMemory") {
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn throw_error(&self, err: impl bun_core::output::ErrName, fmt: &'static str) -> JsError {
+        if err.name() == b"OutOfMemory" {
             return self.throw_out_of_memory();
         }
 
         // If we're throwing JSError, that means either:
         // - We're throwing an exception while another exception is already active
         // - We're incorrectly returning JSError from a function that did not throw.
-        debug_assert!(err != bun_core::err!("JSError"));
+        debug_assert!(err.name() != b"JSError");
 
         let mut buffer: Vec<u8> = Vec::new();
         use core::fmt::Write;
-        if write!(WriteVec(&mut buffer), "{} {}", err.name(), fmt).is_err() {
+        if write!(
+            WriteVec(&mut buffer),
+            "{} {}",
+            bstr::BStr::new(err.name()),
+            fmt
+        )
+        .is_err()
+        {
             return self.throw_out_of_memory();
         }
         let str = ZigString::init_utf8(&buffer);
@@ -1601,6 +1619,11 @@ unsafe extern "C" {
     safe fn JSGlobalObject__createOutOfMemoryError(this: &JSGlobalObject) -> JSValue;
 
     safe fn Bun__ErrorCode__determineSpecificType(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> BunString;
+
+    safe fn Bun__ErrorCode__inspectForErrorMessage(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> BunString;

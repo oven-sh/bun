@@ -5,9 +5,9 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
+use crate::Error;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{Error, err};
 
 use super::stream::{State as StreamState, Stream};
 use super::{dispatch, encode};
@@ -195,7 +195,7 @@ impl ClientSession {
     /// pointer (derived from `&mut self`) carries write provenance for the
     /// final `heap::take` in `deref`.
     #[inline]
-    fn ref_scope(&mut self) -> SessionRefGuard {
+    pub(crate) fn ref_scope(&mut self) -> SessionRefGuard {
         // SAFETY: `self` is a live heap-allocated ClientSession.
         unsafe { SessionRefGuard::new(self) }
     }
@@ -346,7 +346,7 @@ impl ClientSession {
             if let Some(err) = self.fatal_error {
                 client.h2_fail(err);
             } else if client.signals.get(signals::Field::Aborted) {
-                client.h2_fail(err!(Aborted));
+                client.h2_fail(crate::Error::Aborted);
             } else if self.has_headroom() {
                 self.attach(client);
             } else {
@@ -518,26 +518,35 @@ impl ClientSession {
     /// sibling re-arming, or strip the safety net from one that wants it),
     /// so the session disarms only when *every* attached client opted out.
     fn rearm_timeout(&mut self) {
-        let want = 'blk: {
-            for &s in self.streams.values() {
-                if let Some(c) = stream_ref(s).client_ref() {
-                    if !c.flags.disable_timeout {
-                        break 'blk true;
-                    }
-                }
-            }
-            for &c in &self.pending_attach {
-                if !pending_client_mut(c).flags.disable_timeout {
-                    break 'blk true;
-                }
-            }
-            false
+        // The socket is shared by every stream on the session, so arm the
+        // longest effective idle timeout among them (0 = every client's
+        // effective deadline is "none", or no clients are attached).
+        let mut want: core::ffi::c_uint = 0;
+        let mut any_unbounded = false;
+        let mut fold = |eff: core::ffi::c_uint| {
+            any_unbounded |= eff == 0;
+            want = want.max(eff);
         };
-        self.socket.set_timeout(if want {
-            crate::idle_timeout_seconds()
-        } else {
-            0
-        });
+        for &s in self.streams.values() {
+            if let Some(c) = stream_ref(s).client_ref() {
+                fold(c.effective_idle_timeout_seconds());
+            }
+        }
+        for &c in &self.pending_attach {
+            fold(pending_client_mut(c).effective_idle_timeout_seconds());
+        }
+        // A client whose effective deadline is 0 ("no timeout": explicit
+        // `{timeout:false}`, or no override under global=0) contributes 0 to
+        // the max, so a sibling's short explicit override would arm the
+        // shared socket and kill both. Restore the pre-per-request-override
+        // lower bound: floor at the global default, or disarm entirely when
+        // the global is 0. When every client is unbounded `want` is already 0
+        // and the timer stays disarmed.
+        if any_unbounded && want != 0 {
+            let global = crate::idle_timeout_seconds();
+            want = if global == 0 { 0 } else { want.max(global) };
+        }
+        self.socket.set_timeout(want);
     }
 
     /// HTTP-thread wake-up from `scheduleResponseBodyDrain`: JS just enabled
@@ -554,6 +563,24 @@ impl ClientSession {
             }
             client.h2_drain_response_body(self.socket);
             return;
+        }
+    }
+
+    pub fn resume_receive_by_http_id(&mut self, async_http_id: u32) {
+        let _guard = self.ref_scope();
+        let found = self.streams.values().iter().any(|&s| {
+            stream_mut(s)
+                .client_ref()
+                .is_some_and(|c| c.async_http_id == async_http_id)
+        });
+        if !found {
+            return;
+        }
+        self.replenish_window();
+        if self.write_buffer.is_not_empty() {
+            if let Err(err) = self.flush() {
+                self.fail_all(err);
+            }
         }
     }
 
@@ -612,10 +639,16 @@ impl ClientSession {
         let mut updates: Vec<(u32, u32)> = Vec::new();
         for &s in self.streams.values() {
             let s = stream_mut(s);
-            if s.unacked_bytes >= threshold && !s.remote_closed() {
-                updates.push((s.id, s.unacked_bytes));
-                s.unacked_bytes = 0;
+            if s.unacked_bytes < threshold || s.remote_closed() {
+                continue;
             }
+            if s.client_ref()
+                .is_some_and(|c| c.signals.is_receive_paused())
+            {
+                continue;
+            }
+            updates.push((s.id, s.unacked_bytes));
+            s.unacked_bytes = 0;
         }
         for (id, unacked) in updates {
             self.write_window_update(id, unacked);
@@ -637,7 +670,7 @@ impl ClientSession {
         while total < len {
             let wrote = self.socket.write(&pending.slice()[total..]);
             if wrote < 0 {
-                return Err(err!(WriteFailed));
+                return Err(crate::Error::WriteFailed);
             }
             let n = wrote as usize;
             total += n;
@@ -677,7 +710,7 @@ impl ClientSession {
         }
 
         if self.flush().is_err() {
-            self.fatal_error = Some(err!(WriteFailed));
+            self.fatal_error = Some(crate::Error::WriteFailed);
         }
 
         if let Some(err) = self.fatal_error {
@@ -776,7 +809,7 @@ impl ClientSession {
         }
         self.read_buffer.truncate(tail);
         if self.flush().is_err() {
-            self.fatal_error = Some(err!(WriteFailed));
+            self.fatal_error = Some(crate::Error::WriteFailed);
         }
     }
 
@@ -838,7 +871,7 @@ impl ClientSession {
             .position(|&c| pending_client_mut(c).async_http_id == async_http_id);
         if let Some(i) = found {
             let client = self.pending_attach.swap_remove(i);
-            pending_client_mut(client).h2_fail(err!(Aborted));
+            pending_client_mut(client).h2_fail(crate::Error::Aborted);
             self.rearm_timeout();
             self.maybe_release();
             return;
@@ -856,7 +889,7 @@ impl ClientSession {
             }
         }
         if let Some(stream) = target {
-            self.detach_with_failure(stream, err!(Aborted));
+            self.detach_with_failure(stream, crate::Error::Aborted);
         }
         self.rearm_timeout();
         self.maybe_release();
@@ -874,7 +907,7 @@ impl ClientSession {
                 }
             };
             if aborted {
-                self.detach_with_failure(stream, err!(Aborted));
+                self.detach_with_failure(stream, crate::Error::Aborted);
             } else {
                 i += 1;
             }
@@ -950,7 +983,7 @@ impl ClientSession {
             let _ = self.flush();
             stream.client = None;
             client.h2 = None;
-            client.h2_fail(err!(Aborted));
+            client.h2_fail(crate::Error::Aborted);
             return true;
         }
 
@@ -961,7 +994,7 @@ impl ClientSession {
             // before producing any of it (REFUSED_STREAM after HEADERS would
             // be a server bug, but retrying then re-streams a body prefix
             // into a Response that JS already holds — silent corruption).
-            if err == err!(HTTP2RefusedStream)
+            if err == crate::Error::HTTP2RefusedStream
                 && stream.status_code == 0
                 && client.h2_retries < crate::MAX_H2_RETRIES
                 && matches!(
@@ -1094,7 +1127,7 @@ impl ClientSession {
     fn finish_stream(&mut self, stream: &mut Stream, client: &mut HTTPClient) -> bool {
         if let Some(cl) = client.state.content_length {
             if stream.data_bytes_received != cl as u64 {
-                client.h2_fail(err!(HTTP2ContentLengthMismatch));
+                client.h2_fail(crate::Error::HTTP2ContentLengthMismatch);
                 return true;
             }
         }

@@ -6,7 +6,7 @@ bun_core::declare_scope!(MySQLRequest, visible);
 pub fn execute_query<Context: WriterContext>(
     query: &[u8],
     writer: NewWriter<Context>,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     bun_core::scoped_log!(
         MySQLRequest,
         "executeQuery len: {} {}",
@@ -25,7 +25,7 @@ pub fn execute_query<Context: WriterContext>(
 pub fn prepare_request<Context: WriterContext>(
     query: &[u8],
     writer: NewWriter<Context>,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     bun_core::scoped_log!(MySQLRequest, "prepareRequest {}", bstr::BStr::new(query));
     let mut packet = writer.start(0)?;
     writer.int1(CommandType::COM_STMT_PREPARE as u8)?;

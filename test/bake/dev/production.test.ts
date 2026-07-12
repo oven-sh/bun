@@ -500,6 +500,60 @@ export default function Counter() {
     expect(foundCounterBundle).toBe(true);
   });
 
+  test("inline flight data is escaped as a single unit across stream chunks", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-flight-escaping", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "components/Box.tsx": `"use client";
+
+export default function Box({ children }) {
+  return <b>{children}</b>;
+}`,
+      "pages/index.tsx": `import Box from "../components/Box";
+
+const filler = Buffer.alloc(495, "</script>").toString();
+
+async function Item({ index }: { index: number }) {
+  return <i>{index + ":" + filler}</i>;
+}
+
+export default function IndexPage() {
+  return (
+    <div>
+      <h1>Chunked</h1>
+      <Box>hydrated</Box>
+      {Array.from({ length: 120 }, (_, i) => (
+        <Item key={i} index={i} />
+      ))}
+    </div>
+  );
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(exitCode).toBe(0);
+
+    const htmlContent = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    const opener = "(self.__bun_f||=[]).push('";
+    const start = htmlContent.indexOf(opener);
+    expect(start).toBeGreaterThan(-1);
+    const end = htmlContent.indexOf("')</script>", start);
+    expect(end).toBeGreaterThan(start);
+    const payload = htmlContent.slice(start + opener.length, end);
+    expect(payload).toContain("</\\script></\\script>");
+    expect(payload).not.toContain("</script");
+  });
+
   test("don't include client code if fully static route", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-client-js", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,

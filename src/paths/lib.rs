@@ -5,6 +5,10 @@
 // `PlatformT` sealed-trait workaround.
 #![feature(adt_const_params)]
 #![allow(incomplete_features)]
+
+pub mod error;
+pub use error::{Error, Result};
+
 // `bun.w_path_buffer_pool` — u16 sibling. Backed by the same generic
 // thread-local pool as the u8 one (path_buffer_pool.rs already handles both
 // via `PoolStorage`).
@@ -29,7 +33,7 @@ pub mod w_path_buffer_pool {
 // `bun_paths::strings::*`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod string_paths;
-/// `bun.strings.*` superset: `bun_core`'s scalar/SIMD string utils plus the
+/// `bun.strings.*` superset: the full `bun_core::strings` namespace plus the
 /// path-shape transcoders that live here. Downstream crates that previously
 /// wrote `bun_core::strings::paths::X` / `bun_core::strings::to_nt_path`
 /// import `bun_paths::strings` instead.
@@ -340,6 +344,8 @@ pub mod component_iterator;
 pub use component_iterator::{
     Component, ComponentIterator, MakePathStep, PathFormat, component_iterator, make_path_with,
 };
+pub mod classify;
+pub use classify::{RelPathFacts, classify_rel_t};
 // Crate-root re-exports for the path-mutation helpers so `#[cfg(windows)]`
 // install paths can call
 // `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.
@@ -432,7 +438,7 @@ pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
 // ──────────────────────────────────────────────────────────────────────────
 // Windows path-prefix constants — relocated from
 // `bun_sys::windows` so tier-1 callers
-// (`bun_core::immutable::paths`, this crate's `Path.rs`) can resolve them
+// (this crate's `string_paths.rs` and `Path.rs`) can resolve them
 // without depending upward on `bun_sys`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
@@ -597,7 +603,7 @@ pub mod fs {
             extname: &[u8],
             buf: &'b mut [u8],
             hash: u64,
-        ) -> Result<&'b mut ZStr, bun_core::Error> {
+        ) -> crate::Result<&'b mut ZStr> {
             let hex_value: u64 =
                 (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
 
@@ -611,10 +617,10 @@ pub mod fs {
                 TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
                 bun_core::fmt::s(extname),
             )
-            .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             let written = len - cursor.len();
             if written >= len {
-                return Err(bun_core::err!("NoSpaceLeft"));
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
             }
             buf[written] = 0;
             Ok(ZStr::from_buf_mut(buf, written))
@@ -746,6 +752,7 @@ pub mod fs {
 
                 // Ignore trailing slashes
                 path = &path[0..i];
+                base = path;
             }
 
             // Strip off the extension

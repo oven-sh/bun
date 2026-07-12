@@ -255,18 +255,15 @@ ffiWrappers[FFIType.uint16_t] = `{
   return ret <= 0 ? 0 : ret > 0xffff ? 0xffff : ret;
 }`;
 
+// Plain numbers pass through untouched: NaN, -0.0, and every other double are
+// already in the representation the compiled stub reads. Everything else
+// (BigInt included) is converted with Number().
 ffiWrappers[FFIType.double] = `{
-  if (typeof val === "bigint") {
-    if (val.valueOf() < BigInt(Number.MAX_VALUE)) {
-      return Math.abs(Number(val).valueOf()) + (0.00 - 0.00);
-    }
+  if (typeof val === "number") {
+    return val;
   }
 
-  if (!val) {
-    return 0 + (0.00 - 0.00);
-  }
-
-  return val + (0.00 - 0.00);
+  return Number(val);
 }`;
 
 ffiWrappers[FFIType.float] = ffiWrappers[10] = `{
@@ -421,7 +418,7 @@ const native = {
   },
 };
 
-const ccFn = $newZigFunction("ffi.zig", "Bun__FFI__cc", 1);
+const ccFn = $newRustFunction("ffi.rs", "Bun__FFI__cc", 1);
 
 function normalizePath(path) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {

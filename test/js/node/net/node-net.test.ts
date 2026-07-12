@@ -969,3 +969,96 @@ describe("Socket fd adoption", () => {
     expect(() => new Socket({ fd: 0x7ffff })).not.toThrow();
   });
 });
+
+describe("paused socket whose peer sends RST", () => {
+  // Regression: on Linux, epoll forwarded the raw EPOLLERR bit (8) as a libus
+  // close code, which the JS error path read as errno 8 and surfaced as a
+  // bogus `Error: read ENOEXEC` when the socket was not actively reading.
+  // kqueue already normalized the flag to 0/1.
+  it("does not surface a bogus errno error", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const errors: NodeJS.ErrnoException[] = [];
+    const server = createServer(c => {
+      c.on("error", () => {});
+      // RST only once the client says it has paused.
+      c.on("data", () => c.resetAndDestroy());
+    });
+    try {
+      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const c = connect(port, "127.0.0.1", () => {
+        c.pause();
+        c.write("x");
+      });
+      c.on("error", e => errors.push(e));
+      c.on("close", () => resolve());
+      await promise;
+    } finally {
+      server.close();
+    }
+    expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
+  });
+});
+
+// libuv's uv__tcp_bind always sets SO_REUSEADDR on Unix, so Node can bind a
+// client localPort that still has earlier connections in TIME_WAIT. Bun used
+// to call bind() bare here and fail with EADDRINUSE, which made
+// sequential/test-net-localport.js order-dependent in CI. Windows is skipped
+// because libuv intentionally does not set SO_REUSEADDR there.
+it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TIME_WAIT sockets", async () => {
+  // Reserve a port and release it so nothing else is listening on it.
+  const probe = createServer();
+  await new Promise<void>((resolve, reject) => {
+    probe.on("error", reject);
+    probe.listen(0, "127.0.0.1", resolve);
+  });
+  const localPort = (probe.address() as import("node:net").AddressInfo).port;
+  await new Promise<void>(r => probe.close(() => r()));
+
+  // Leave a few server-side TIME_WAIT sockets on localPort: the server sends
+  // and then active-closes each connection, which is what puts its local end
+  // (localPort) into TIME_WAIT.
+  {
+    const { promise: drained, resolve: onDrained } = Promise.withResolvers<void>();
+    let accepted = 0;
+    let closed = 0;
+    const waitServer = createServer(c => {
+      if (++accepted === 4) waitServer.close();
+      c.end("x");
+      c.on("close", () => {
+        if (++closed === 4) onDrained();
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      waitServer.on("error", reject);
+      waitServer.listen(localPort, "127.0.0.1", resolve);
+    });
+    for (let i = 0; i < 4; i++) {
+      const c = connect(localPort, "127.0.0.1");
+      c.on("error", () => {});
+      c.resume();
+    }
+    await drained;
+  }
+
+  // Now bind an outgoing connection's local port to localPort. Without
+  // SO_REUSEADDR the kernel rejects this with EADDRINUSE while the TIME_WAIT
+  // entries exist.
+  const target = createServer(c => c.end());
+  try {
+    await new Promise<void>((resolve, reject) => {
+      target.on("error", reject);
+      target.listen(0, "127.0.0.1", resolve);
+    });
+    const targetPort = (target.address() as import("node:net").AddressInfo).port;
+    const { promise, resolve, reject } = Promise.withResolvers<Socket>();
+    const c = connect({ host: "127.0.0.1", port: targetPort, localPort });
+    c.on("connect", () => resolve(c));
+    c.on("error", reject);
+    const sock = await promise;
+    expect(sock.localPort).toBe(localPort);
+    sock.destroy();
+  } finally {
+    target.close();
+  }
+});

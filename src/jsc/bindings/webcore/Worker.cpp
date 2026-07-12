@@ -27,6 +27,7 @@
 #include "config.h"
 #include "Worker.h"
 
+#include "BunClientData.h"
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "Event.h"
@@ -43,8 +44,13 @@
 #include "MessageEvent.h"
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
+#include "JSDOMConvertObject.h"
+#include "JSDOMConvertSequences.h"
 #include "JSMessagePort.h"
+#include "MessagePortPipe.h"
 #include "JSBroadcastChannel.h"
+#include "JSStructuredSerializeOptions.h"
+#include "BunClientData.h"
 
 namespace WebCore {
 
@@ -410,6 +416,34 @@ bool Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>
     return ScriptExecutionContext::postTaskTo(m_clientIdentifier, WTF::move(task));
 }
 
+uint64_t Worker::registerCrossVMRequest(JSC::VM& vm, JSC::JSPromise* promise)
+{
+    uint64_t id = m_nextRequestId.fetch_add(1);
+    Locker lock(m_pendingTasksMutex);
+    m_pendingCrossVMRequests.add(id, JSC::Strong<JSC::JSPromise>(vm, promise));
+    return id;
+}
+
+JSC::Strong<JSC::JSPromise> Worker::takeCrossVMRequest(uint64_t id)
+{
+    Locker lock(m_pendingTasksMutex);
+    return m_pendingCrossVMRequests.take(id);
+}
+
+void Worker::rejectAllCrossVMRequests(JSC::JSGlobalObject* globalObject)
+{
+    HashMap<uint64_t, JSC::Strong<JSC::JSPromise>> pending;
+    {
+        Locker lock(m_pendingTasksMutex);
+        pending = std::exchange(m_pendingCrossVMRequests, {});
+    }
+    if (pending.isEmpty())
+        return;
+    auto& vm = JSC::getVM(globalObject);
+    for (auto& entry : pending)
+        entry.value->reject(vm, Bun::createError(defaultGlobalObject(globalObject), Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+}
+
 // ---- Worker-thread entry points ---------------------------------------------
 
 void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
@@ -496,17 +530,43 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
 
 bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
 {
+    // This is the top of the stack for the worker's error dispatch: both the
+    // structured clone below (even in NonThrowing mode, serialization can run
+    // JS via getters/proxies and leave a pending exception) and the `code`
+    // property read must not propagate exceptions out of this function.
+    auto& vm = JSC::getVM(workerGlobalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+    CLEAR_IF_EXCEPTION(scope);
     if (!serialized)
         return false;
 
-    return postTaskToParent([protectedThis = Ref { *this }, serialized](ScriptExecutionContext& context) {
+    // Structured clone keeps only the standard Error fields
+    // (name/message/stack/line/column/sourceURL), but Node's worker 'error'
+    // event preserves `error.code` (lib/internal/error_serdes.js) and the
+    // vendored node tests assert on it (e.g. ERR_TRACE_EVENTS_UNAVAILABLE).
+    // Carry a string `code` across the thread boundary manually. If reading
+    // `code` throws (a throwing getter/proxy), drop the code and proceed.
+    String errorCode;
+    if (value.isObject() && !scope.exception()) {
+        JSValue codeValue = value.getObject()->getIfPropertyExists(workerGlobalObject, WebCore::builtinNames(vm).codePublicName());
+        if (!scope.exception() && codeValue && codeValue.isString())
+            errorCode = codeValue.toWTFString(workerGlobalObject);
+        CLEAR_IF_EXCEPTION(scope);
+    }
+
+    return postTaskToParent([protectedThis = Ref { *this }, serialized, errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
         auto* globalObject = context.globalObject();
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         ErrorEvent::Init init;
         JSValue deserialized = serialized->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
         RETURN_IF_EXCEPTION(scope, );
+        if (!errorCode.isNull()) {
+            if (auto* errorObject = deserialized.getObject())
+                errorObject->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, errorCode));
+        }
         init.error = deserialized;
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
@@ -547,7 +607,21 @@ bool Worker::dispatchExit(int32_t exitCode)
             // handlers observe threadId == -1 and isOnline() == false while
             // postMessage() (gated only on Closed) still accepts and drops the
             // message, matching browser/Node and pre-refactor behaviour.
-            protectedThis->m_state.store(State::Closing);
+            //
+            // Drop any tasks queued while the worker was Pending and never
+            // reached Running (m_pendingCrossVMRequests / rejectAllCrossVMRequests
+            // settles the callers' promises + frees the parent-VM Strong<>).
+            // Take the queue under the same lock that flips m_state so a racing
+            // postTaskToWorkerGlobalScope either lands in the cleared queue or
+            // sees Closing and returns false.
+            {
+                Locker lock(protectedThis->m_pendingTasksMutex);
+                protectedThis->m_state.store(State::Closing);
+                protectedThis->m_pendingTasks.clear();
+            }
+            // Reject any introspection promises whose round-trip never completed.
+            if (auto* ctx = protectedThis->scriptExecutionContext())
+                protectedThis->rejectAllCrossVMRequests(ctx->globalObject());
 
             if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
                 auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
@@ -569,6 +643,10 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     vm.setHasTerminationRequest();
+    // Mark the context permanently terminating so postTaskTo drops tasks that
+    // can never run (e.g. notifyPeerClosed posted during the final collectNow).
+    if (auto* ctx = globalObject->scriptExecutionContext())
+        ctx->markTerminating();
 
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -603,8 +681,36 @@ extern "C" void WebWorker__dispatchExit(Worker* worker, int32_t exitCode)
     worker->dispatchExit(exitCode);
 }
 
+// The entry module just finished (or failed) its top-level evaluation. Flush
+// the worker_threads hub's deferred cross-thread deliveries: node's bootstrap
+// runs the synchronous CJS main before any port delivery, so a routed message
+// must not observe "no listeners" while the entry that registers them is still
+// loading. Called from spin() on EVERY post-evaluation path (including entry
+// throw / TLA reject / TLA unsettled) so a buffered postMessageToThread never
+// leaves its sender's Atomics.waitAsync unresolved.
+extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
+{
+    auto* hook = globalObject->nodeWorkerEntryEvaluatedHook();
+    if (!hook)
+        return;
+    globalObject->setNodeWorkerEntryEvaluatedHook(nullptr);
+    auto& vm = JSC::getVM(globalObject);
+    // On failure paths (entry threw / TLA rejected) an exception may already be
+    // pending; the hook itself can't observe it and shutdown will report/discard
+    // it either way, so clear it here so JSC::call doesn't assert. On the success
+    // path scope.exception() is null and this is a no-op.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    CLEAR_IF_EXCEPTION(scope);
+    if (vm.hasPendingTerminationException())
+        return;
+    JSC::MarkedArgumentBuffer args;
+    JSC::call(globalObject, hook, args, "entryEvaluated hook"_s);
+    CLEAR_IF_EXCEPTION(scope);
+}
+
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
 {
+    WebWorker__entrySettled(globalObject);
     worker->dispatchOnline(globalObject);
 }
 
@@ -664,6 +770,56 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortIsActive, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto port = callFrame->argument(0);
+    if (auto* messagePort = dynamicDowncast<JSMessagePort>(port)) {
+        auto& wrapped = messagePort->wrapped();
+        bool active = (wrapped.isDetached() == false) && wrapped.pipe()->isOtherSideOpen(wrapped.side());
+        return JSC::JSValue::encode(jsBoolean(active));
+    }
+    return JSC::JSValue::encode(jsBoolean(false));
+}
+
+// markAsUncloneable/markAsUntransferable tag objects with a DontEnum JSC private name
+// (node uses a v8 Private): invisible to and unforgeable from user JS, and not removable,
+// so marking cannot be undone. Primitives are a documented no-op.
+static void markObjectWithPrivateName(JSC::VM& vm, JSC::JSValue value, const JSC::Identifier& privateName)
+{
+    JSC::JSObject* object = value.getObject();
+    if (!object || object->getDirect(vm, privateName))
+        return;
+    object->putDirect(vm, privateName, JSC::jsBoolean(true), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUncloneable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    markObjectWithPrivateName(vm, callFrame->argument(0), builtinNames(vm).isUncloneablePrivateName());
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUntransferable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    markObjectWithPrivateName(vm, callFrame->argument(0), builtinNames(vm).isUntransferablePrivateName());
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsMarkedAsUntransferable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto* object = callFrame->argument(0).getObject();
+    return JSC::JSValue::encode(jsBoolean(object && !!object->getDirect(vm, builtinNames(vm).isUntransferablePrivateName())));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetEntryEvaluatedHook, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    if (auto* hook = callFrame->argument(0).getObject())
+        defaultGlobalObject(lexicalGlobalObject)->setNodeWorkerEntryEvaluatedHook(hook);
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -671,6 +827,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
+    JSValue threadName = jsEmptyString(vm);
     JSMap* environmentData = nullptr;
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
@@ -704,6 +861,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
         // Main thread starts at 1
         threadId = jsNumber(worker->clientIdentifier() - 1);
+        threadName = jsString(vm, options.name);
     }
     if (!environmentData) {
         environmentData = JSMap::create(vm, globalObject->mapStructure());
@@ -712,12 +870,23 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     ASSERT(environmentData);
     globalObject->setNodeWorkerEnvironmentData(environmentData);
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 4);
+    bool isNodeWorker = false;
+    if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM()))
+        isNodeWorker = worker->options().kind == WorkerOptions::Kind::Node;
+
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 11);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 3, environmentData);
+    array->putDirectIndex(globalObject, 4, threadName);
+    array->putDirectIndex(globalObject, 5, JSFunction::create(vm, globalObject, 1, "isMessagePortActive"_s, jsMessagePortIsActive, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 6, JSFunction::create(vm, globalObject, 1, "markAsUntransferable"_s, jsFunctionMarkAsUntransferable, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 7, JSFunction::create(vm, globalObject, 1, "isMarkedAsUntransferable"_s, jsFunctionIsMarkedAsUntransferable, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 8, JSFunction::create(vm, globalObject, 1, "markAsUncloneable"_s, jsFunctionMarkAsUncloneable, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 9, JSFunction::create(vm, globalObject, 1, "setEntryEvaluatedHook"_s, jsFunctionSetEntryEvaluatedHook, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
     return array;
 }
 
@@ -740,26 +909,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
 
-    if (options.isObject()) {
-        JSC::JSValue transferListValue;
-        // postMessage(message, sequence<object>) overload — second argument is the transfer list itself.
+    // postMessage(message, sequence<object>) and postMessage(message, { transfer })
+    // overloads. Both are converted per WebIDL before serializing, so an invalid
+    // transfer list throws a TypeError without detaching anything.
+    if (!options.isUndefinedOrNull()) {
         bool isSequence = hasIteratorMethod(globalObject, options);
         RETURN_IF_EXCEPTION(scope, {});
         if (isSequence) {
-            transferListValue = options;
+            transferList = convert<IDLSequence<IDLObject>>(*globalObject, options);
+            RETURN_IF_EXCEPTION(scope, {});
         } else {
-            // postMessage(message, { transfer }) overload.
-            JSC::JSObject* optionsObject = options.getObject();
-            transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
+            auto serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
             RETURN_IF_EXCEPTION(scope, {});
-        }
-        if (transferListValue.isObject()) {
-            forEachInIterable(globalObject, transferListValue, [&transferList](JSC::VM& vm, JSC::JSGlobalObject*, JSC::JSValue nextValue) {
-                if (nextValue.isObject()) {
-                    transferList.append(JSC::Strong<JSC::JSObject>(vm, nextValue.getObject()));
-                }
-            });
-            RETURN_IF_EXCEPTION(scope, {});
+            transferList = WTF::move(serializeOptions.transfer);
         }
     }
 

@@ -15,11 +15,7 @@ test("delete() and stat() should work with unicode paths", async () => {
 
   expect(async () => {
     await Bun.file(filename).stat();
-  }).toThrow(
-    process.platform === "linux"
-      ? `ENOENT: no such file or directory, statx '${filename}'`
-      : `ENOENT: no such file or directory, stat '${filename}'`,
-  );
+  }).toThrow(`ENOENT: no such file or directory, stat '${filename}'`);
 
   await Bun.write(filename, "HI");
 
@@ -40,8 +36,7 @@ test("writer.end() should not close the fd if it does not own the fd", async () 
     const fd = fileHandle.fd;
 
     await Bun.file(fd).writer().end();
-    // @ts-ignore
-    await fsPromises.close(fd);
+    await fileHandle.close();
     expect(await Bun.file(filename).text()).toBe("");
   }
 });

@@ -29,6 +29,7 @@ const { URL, URLSearchParams } = globalThis;
 const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 const { urlToHttpOptions } = require("internal/url");
 const { validateString } = require("internal/validators");
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 function Url() {
   this.protocol = null;
@@ -76,16 +77,19 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   hostnameMaxLen = 255,
   // protocols that can allow "unsafe" and "unwise" chars.
   unsafeProtocol = {
+    __proto__: null,
     javascript: true,
     "javascript:": true,
   },
   // protocols that never have a hostname.
   hostlessProtocol = {
+    __proto__: null,
     javascript: true,
     "javascript:": true,
   },
   // protocols that always contain a // bit.
   slashedProtocol = {
+    __proto__: null,
     http: true,
     https: true,
     ftp: true,
@@ -200,7 +204,7 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
       if (simplePath[2]) {
         this.search = simplePath[2];
         if (parseQueryString) {
-          this.query = new URLSearchParams(this.search.slice(1)).toJSON();
+          this.query = ObjectSetPrototypeOf(new URLSearchParams(this.search.slice(1)).toJSON(), null);
         } else {
           this.query = this.search.slice(1);
         }
@@ -229,13 +233,13 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
   let slashes;
   if (slashesDenoteHost || proto || rest.match(/^\/\/[^@/]+@[^@/]+/)) {
     slashes = rest.substring(0, 2) === "//";
-    if (slashes && !(proto && hostlessProtocol[proto])) {
+    if (slashes && !(proto && hostlessProtocol[lowerProto])) {
       rest = rest.substring(2);
       this.slashes = true;
     }
   }
 
-  if (!hostlessProtocol[proto] && (slashes || (proto && !slashedProtocol[proto]))) {
+  if (!hostlessProtocol[lowerProto] && (slashes || (lowerProto && !slashedProtocol[lowerProto]))) {
     /*
      * there's a hostname.
      * the first instance of /, ?, ;, or # ends the host.
@@ -399,13 +403,13 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
     this.query = rest.substring(qm + 1);
     if (parseQueryString) {
       const query = this.query;
-      this.query = new URLSearchParams(query).toJSON();
+      this.query = ObjectSetPrototypeOf(new URLSearchParams(query).toJSON(), null);
     }
     rest = rest.slice(0, qm);
   } else if (parseQueryString) {
     // no query string, but parseQueryString still requested
     this.search = null;
-    this.query = {};
+    this.query = Object.create(null);
   }
   if (rest) {
     this.pathname = rest;

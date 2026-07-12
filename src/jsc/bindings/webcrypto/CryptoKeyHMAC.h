@@ -59,7 +59,7 @@ public:
 
     CryptoAlgorithmIdentifier hashAlgorithmIdentifier() const { return m_hash; }
 
-    static ExceptionOr<size_t> getKeyLength(const CryptoAlgorithmParameters&);
+    static ExceptionOr<std::optional<size_t>> getKeyLength(const CryptoAlgorithmParameters&);
 
 private:
     CryptoKeyHMAC(const Vector<uint8_t>& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);

@@ -1,10 +1,11 @@
 use crate::mal_prelude::*;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::Error as BunError;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{Data, Loc, Log, Range, Source};
 use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt};
-use bun_core::{self as bun, Error as BunError, FeatureFlags, Output};
+use bun_core::{self as bun, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_sourcemap::{
     self as SourceMap, DebugIDFormatter, LineOffsetTable, SourceMapPieces, SourceMapState,
@@ -836,7 +837,7 @@ impl<'a> LinkerContext<'a> {
             self.graph.propagate_async_dependencies()?;
         }
 
-        scan_imports_and_exports(self).map_err(BunError::from)?;
+        scan_imports_and_exports(self)?;
 
         // Stop now if there were errors
         if self.log().has_errors() {
@@ -1075,6 +1076,18 @@ impl<'a> LinkerContext<'a> {
             .expect("TODO: handle error");
     }
 
+    /// The relative path from the chunk directory to a file source, as written
+    /// into the source map's `sources` array. `sources` entries are URLs, so the
+    /// host separator is normalized to `/` (the invariant `Path::pretty` holds).
+    fn source_map_relative_path(
+        chunk_abs_dir: &[u8],
+        source_abs_path: &[u8],
+    ) -> Result<Box<[u8]>, AllocError> {
+        let mut rel = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, source_abs_path)?;
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
+        Ok(rel)
+    }
+
     pub fn generate_source_map_for_chunk(
         &mut self,
         isolated_hash: u64,
@@ -1114,8 +1127,7 @@ impl<'a> LinkerContext<'a> {
                 // (drops at scope exit).
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage =
-                        bun_paths::resolve_path::relative_alloc(chunk_abs_dir, path.text)?;
+                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
                     &rel_path_storage
                 } else {
                     path.pretty
@@ -1142,8 +1154,7 @@ impl<'a> LinkerContext<'a> {
 
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage =
-                        bun_paths::resolve_path::relative_alloc(chunk_abs_dir, path.text)?;
+                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
                     &rel_path_storage
                 } else {
                     path.pretty
@@ -1277,18 +1288,17 @@ bun_core::oom_from_alloc!(LinkError);
 impl From<BunError> for LinkError {
     fn from(e: BunError) -> Self {
         // OOM keeps its identity through
-        // `load()`, so OOMs travelling as `bun_core::Error` must not be
+        // `load()`, so OOMs travelling as `crate::Error` must not be
         // misreported as build failures. Everything else collapses to
         // `BuildFailed`; user-facing diagnostics flow through the bundler `Log`,
         // not this variant.
-        if e == BunError::OUT_OF_MEMORY {
+        if matches!(e, BunError::Alloc(_)) {
             LinkError::OutOfMemory
         } else {
             LinkError::BuildFailed
         }
     }
 }
-bun_core::named_error_set!(LinkError);
 
 pub struct LinkerOptions {
     pub generate_bytecode_cache: bool,

@@ -1,4 +1,5 @@
 #![warn(unused_must_use)]
+use crate::Error;
 use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind};
 use crate::parser::{
@@ -10,7 +11,6 @@ use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
 use bun_collections::VecExt;
-use bun_core::Error;
 
 // `ListManaged(Stmt)` in the parser is arena-backed (`p.arena`).
 type StmtList<'bump> = BumpVec<'bump, Stmt>;
@@ -369,11 +369,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::ExportDefault,
     ) -> Result<(), Error> {
         // scopeguard can't borrow `p` across the body; restructured to a tail
-        // closure invoked at every return site below.
+        // closure invoked at every return site below. Guard on `is_symbol()`
+        // because early returns can reach this before the parse-time name
+        // ref (SourceContentsSlice/AllocatedName) has been rewritten.
         macro_rules! record_on_exit {
             () => {
-                if let Some(ref_) = data.default_name.ref_.to_nullable() {
-                    p.record_declared_symbol(ref_);
+                if data.default_name.ref_.is_symbol() {
+                    p.record_declared_symbol(data.default_name.ref_);
                 }
             };
         }
@@ -455,7 +457,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if data.default_name.ref_.is_source_contents_slice() {
+                if !data.default_name.ref_.is_symbol() {
                     data.default_name = p.create_default_name(expr.loc).expect("unreachable");
                 }
 
@@ -611,7 +613,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Ok(());
                         }
 
-                        if data.default_name.ref_.is_source_contents_slice() {
+                        if !data.default_name.ref_.is_symbol() {
                             data.default_name =
                                 p.create_default_name(stmt.loc).expect("unreachable");
                         }
@@ -806,7 +808,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
 
-                        if data.default_name.ref_.is_source_contents_slice() {
+                        if !data.default_name.ref_.is_symbol() {
                             data.default_name =
                                 p.create_default_name(stmt.loc).expect("unreachable");
                         }

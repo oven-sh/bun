@@ -70,10 +70,10 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    let contains = strings::contains_case_insensitive_ascii;
+    let starts_with = strings::starts_with_case_insensitive_ascii;
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    let contains = strings::contains;
-    if !contains(child, parent) {
+    let starts_with = strings::starts_with;
+    if !starts_with(child, parent) {
         return ParentEqual::Unrelated;
     }
 
@@ -1140,13 +1140,7 @@ pub fn normalize_string_generic_tz<
         buf[buf_i] = T::from_u8(0);
     }
 
-    let result = &mut buf[0..buf_i];
-
-    if cfg!(debug_assertions) && is_windows {
-        debug_assert!(!strings::has_prefix_t::<T>(result, T::lit(b"\\:\\")));
-    }
-
-    result
+    &mut buf[0..buf_i]
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
@@ -1469,6 +1463,19 @@ pub fn join_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> 
         spill.resize(needed, 0);
     }
     join_string_buf::<P>(&mut spill[..], parts)
+}
+
+/// [`join_z`] (thread-local buffer) when the result fits, otherwise into
+/// `spill` (grown as needed). `spill` is untouched in the common case.
+pub fn join_z_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a ZStr {
+    let needed = join_needed(parts);
+    if needed <= JOIN_BUF_LEN {
+        return join_z::<P>(parts);
+    }
+    if spill.len() < needed {
+        spill.resize(needed, 0);
+    }
+    join_z_buf::<P>(&mut spill[..], parts)
 }
 
 pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
@@ -2189,10 +2196,7 @@ impl PosixToWinNormalizer {
     }
 
     #[inline]
-    pub fn resolve_cwd<'a>(
-        &'a mut self,
-        maybe_posix_path: &'a [u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    pub fn resolve_cwd<'a>(&'a mut self, maybe_posix_path: &'a [u8]) -> crate::Result<&'a [u8]> {
         Self::resolve_cwd_with_external_buf(&mut self._raw_bytes, maybe_posix_path)
     }
 
@@ -2201,7 +2205,7 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd_z<'a>(
         &'a mut self,
         maybe_posix_path: &'a [u8],
-    ) -> Result<&'a mut ZStr, bun_core::Error> {
+    ) -> crate::Result<&'a mut ZStr> {
         Self::resolve_cwd_with_external_buf_z(&mut self._raw_bytes, maybe_posix_path)
     }
     // On posix `_raw_bytes` is `()` so `resolve_cwd_z` is windows-only.
@@ -2296,7 +2300,7 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd_with_external_buf<'a>(
         buf: &'a mut PosixToWinBuf,
         maybe_posix_path: &'a [u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    ) -> crate::Result<&'a [u8]> {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
         #[cfg(windows)]
@@ -2320,7 +2324,7 @@ impl PosixToWinNormalizer {
                     // combination can't exist on NT anyway, so error out
                     // instead of writing past a buffer.
                     if sr_len + maybe_posix_path.len() - 1 >= buf.len() {
-                        return Err(bun_core::err!("NameTooLong"));
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
@@ -2344,7 +2348,7 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd_with_external_buf_z<'a>(
         buf: &'a mut PathBuffer,
         maybe_posix_path: &[u8],
-    ) -> Result<&'a mut ZStr, bun_core::Error> {
+    ) -> crate::Result<&'a mut ZStr> {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
         #[cfg(windows)]
@@ -2363,7 +2367,7 @@ impl PosixToWinNormalizer {
                     // can't exist on NT anyway, so error out instead of
                     // writing past it.
                     if sr_len + maybe_posix_path.len() > buf.len() {
-                        return Err(bun_core::err!("NameTooLong"));
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
@@ -2386,7 +2390,7 @@ impl PosixToWinNormalizer {
         }
 
         if maybe_posix_path.len() + 1 > buf.len() {
-            return Err(bun_core::err!("NameTooLong"));
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
         }
         buf[..maybe_posix_path.len()].copy_from_slice(maybe_posix_path);
         buf[maybe_posix_path.len()] = 0;

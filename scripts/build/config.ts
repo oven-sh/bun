@@ -762,9 +762,18 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // -baseline WebKit prebuilt has no -lto variant).
   const baseline = partial.baseline ?? false;
 
-  // WebKit-uses-mimalloc variant (JSC and bun share one allocator). Opt-in:
-  // -mimalloc prebuilts exist only for Linux glibc release (enforced below).
-  const webkitMimalloc = partial.webkitMimalloc ?? false;
+  // WebKit-uses-mimalloc variant: on by default for Linux glibc release so JSC
+  // and bun share one allocator. Gated to the exact combinations oven-sh/WebKit
+  // ships -mimalloc prebuilts for (amd64/arm64 glibc, release + release-lto).
+  const webkitMimalloc =
+    partial.webkitMimalloc ??
+    (linux &&
+      abi === "gnu" &&
+      release &&
+      !asan &&
+      !baseline &&
+      (partial.webkit ?? "prebuilt") === "prebuilt" &&
+      partial.webkitVersion === undefined);
 
   // LTO: default on for CI release non-asan non-assertions builds on Linux
   // and on darwin cross-compiles. Windows is NOT in the default even though

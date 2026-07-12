@@ -13,8 +13,8 @@ export const WEBKIT_VERSION = "c9ad5813fd23bd8b98b0738abc3d037ec716aa92";
  * Tagged by PR rather than commit; drop once the PR merges and WEBKIT_VERSION
  * is bumped to an autobuild carrying the -mimalloc artifacts. */
 export const WEBKIT_MIMALLOC_PREVIEW = {
-  commit: "22b4f7cd40c0dce65973b3dcc54689fa58c5a213",
-  tag: "autobuild-preview-pr-283-22b4f7cd",
+  commit: "f625cc549093f75fda66b4e65401f781767bc6c0",
+  tag: "autobuild-preview-pr-283-f625cc54",
 } as const;
 
 /**

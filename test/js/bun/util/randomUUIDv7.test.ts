@@ -34,27 +34,47 @@ describe("randomUUIDv7", () => {
   });
 
   test("custom timestamp", () => {
-    const customTimestamp = 1625097600000; // 2021-07-01T00:00:00.000Z
+    // Use a far-future timestamp so it is ahead of the Date.now() calls above;
+    // the implementation never moves the emitted timestamp backward.
+    const customTimestamp = 4099680000000; // 2099-11-30T00:00:00.000Z
     const uuid = Bun.randomUUIDv7("hex", customTimestamp);
-    expect(uuid).toStartWith("017a5f5d-");
-    expect(Bun.randomUUIDv7()).not.toStartWith("017a5f5d-");
-    expect(Bun.randomUUIDv7("hex", new Date(customTimestamp))).toStartWith("017a5f5d-");
-    console.log({ uuid });
-    console.log({ uuid: Bun.randomUUIDv7("hex", new Date(customTimestamp)) });
-    console.log({ uuid: Bun.randomUUIDv7("hex", new Date(customTimestamp)) });
+    expect(uuid).toStartWith("03ba87f8-5800-");
+    expect(Bun.randomUUIDv7("hex", new Date(customTimestamp + 1))).toStartWith("03ba87f8-5801-");
   });
 
   test("monotonic", () => {
     const customTimestamp = 1625097600000; // 2021-07-01T00:00:00.000Z
-    let input = Array.from({ length: 100 }, () => Bun.randomUUIDv7("hex", customTimestamp));
-    let sorted = input.slice().sort();
-
-    // If we get unlucky, it will rollover.
-    if (!Bun.deepEquals(sorted, input)) {
-      input = Array.from({ length: 100 }, () => Bun.randomUUIDv7("hex", customTimestamp));
-      sorted = input.slice().sort();
-    }
-
+    const input = Array.from({ length: 100 }, () => Bun.randomUUIDv7("hex", customTimestamp));
+    const sorted = input.slice().sort();
     expect(sorted).toEqual(input);
+  });
+
+  test("monotonic across 12-bit counter rollover", () => {
+    // 10000 UUIDs at a pinned millisecond forces at least two rollovers of the
+    // 12-bit rand_a counter. The sequence must still be strictly increasing.
+    const ts = 1750000000000;
+    let prev = "";
+    let firstBreak = -1;
+    for (let i = 0; i < 10000; i++) {
+      const u = Bun.randomUUIDv7("hex", ts);
+      if (i > 0 && u <= prev && firstBreak === -1) firstBreak = i;
+      prev = u;
+    }
+    expect(firstBreak).toBe(-1);
+  });
+
+  test("counter is seeded pseudo-randomly on a new millisecond", () => {
+    // Sample the first UUID of several fresh milliseconds. The 12-bit rand_a
+    // field (bytes 6-7, low 12 bits) should not be the same constant every time.
+    const seen = new Set<number>();
+    let ts = 5_000_000_000_000; // ahead of every other timestamp used in this file
+    for (let i = 0; i < 64; i++) {
+      ts += 1_000_000; // jump far ahead of any rollover-bumped timestamp
+      const buf = Bun.randomUUIDv7("buffer", ts);
+      seen.add(((buf[6] & 0x0f) << 8) | buf[7]);
+    }
+    // With an 11-bit random seed, 64 independent draws collapsing to one value
+    // has probability 2^-693. A fixed reset (the old behavior) yields size 1.
+    expect(seen.size).toBeGreaterThan(1);
   });
 });

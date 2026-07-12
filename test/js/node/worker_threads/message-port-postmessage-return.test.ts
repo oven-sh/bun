@@ -84,7 +84,9 @@ test("MessagePort.postMessage() returns true, or undefined when the port is clos
         w.on("message", m => results.push(m));
         w.on("error", reject);
         w.on("exit", code =>
-          results.length === 2 ? resolve() : reject(new Error(`worker exited (${code}) with ${results.length} messages`)),
+          results.length === 2
+            ? resolve()
+            : reject(new Error(`worker exited (${code}) with ${results.length} messages`)),
         );
       });
       expect(results).toEqual(["x", true]);

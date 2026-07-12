@@ -4475,8 +4475,10 @@ describe("Buffer.prototype.toString binary-to-text encodings", () => {
   // after the forced GC, would otherwise skew only the hex side). Runs in a
   // fresh subprocess so this suite's heap cannot skew either side. Skipped on
   // debug/ASAN builds where instrumentation makes timing ratios meaningless.
-  it.skipIf(isDebug || isASAN)("toString('hex') large-buffer throughput stays within 3x of a same-size latin1 copy", async () => {
-    const script = `
+  it.skipIf(isDebug || isASAN)(
+    "toString('hex') large-buffer throughput stays within 3x of a same-size latin1 copy",
+    async () => {
+      const script = `
       const buf = Buffer.alloc(110000);
       const ref = Buffer.alloc(buf.length * 2);
       for (let i = 0; i < ref.length; i++) ref[i] = i & 0x7f;
@@ -4508,19 +4510,20 @@ describe("Buffer.prototype.toString binary-to-text encodings", () => {
       console.log(JSON.stringify({ hex: median(hexTimes), latin1: median(latin1Times) }));
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
 
-    const { hex, latin1 } = JSON.parse(stdout.trim());
-    expect(hex).toBeLessThan(3 * latin1);
-  });
+      const { hex, latin1 } = JSON.parse(stdout.trim());
+      expect(hex).toBeLessThan(3 * latin1);
+    },
+  );
 
   it("toString('base64') and toString('base64url') match the reference for small buffers", () => {
     withoutAggressiveGC(() => {

@@ -266,7 +266,10 @@ test("MySQL sequence-id validation accepts the 255->0 wrap within a result set",
   try {
     const big = (await sql.unsafe("select n").simple()) as Array<{ n: string }>;
     expect(big.length).toBe(rowCount);
-    expect({ first: big[0], last: big[rowCount - 1] }).toEqual({ first: { n: "0" }, last: { n: String(rowCount - 1) } });
+    expect({ first: big[0], last: big[rowCount - 1] }).toEqual({
+      first: { n: "0" },
+      last: { n: String(rowCount - 1) },
+    });
     const after = await sql.unsafe("select after").simple();
     expect(after).toEqual([{ after: "ok" }]);
   } finally {

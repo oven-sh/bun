@@ -570,11 +570,7 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     // release when the freed page was unmapped).
     const srcDir = path.join(tempdir, "gc_safe_src");
     const files = Array.from({ length: 40 }, (_, i) => `src${i}.ts`);
-    await Promise.all(
-      files.map(f =>
-        Bun.write(path.join(srcDir, f), `export const v = "foo foo foo";\n`),
-      ),
-    );
+    await Promise.all(files.map(f => Bun.write(path.join(srcDir, f), `export const v = "foo foo foo";\n`)));
     const imports = files.map((f, i) => `import { v as v${i} } from "./gc_safe_src/${f}";`).join("\n");
     await Bun.write(
       path.join(tempdir, "gc_safe_index.ts"),

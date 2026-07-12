@@ -3996,6 +3996,10 @@ mod windows_impl {
         // SAFETY: `ov` is valid for the duration of the call.
         let ok = unsafe { w::kernel32::UnlockFileEx(fd.native() as w::HANDLE, 0, !0, !0, &mut ov) };
         if ok == 0 {
+            // POSIX flock(LOCK_UN) on an unlocked fd is a no-op; match that.
+            if w::Win32Error::get() == w::Win32Error::NOT_LOCKED {
+                return Ok(());
+            }
             return Err(Error::new(w::get_last_errno(), Tag::flock).with_fd(fd));
         }
         Ok(())

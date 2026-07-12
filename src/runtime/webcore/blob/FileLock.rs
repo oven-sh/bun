@@ -391,25 +391,20 @@ impl ConcurrentPromiseTaskContext for IoTaskCtx<'_> {
     fn run(&mut self) {
         let fd = self.held.fd;
         self.result = Some(match &self.op {
-            IoOp::Read { len, kind } => {
+            IoOp::Read { len, kind } => (|| {
                 let file = File::borrow(&fd);
-                match *len {
-                    Some(n) => (|| {
-                        // Clamp to file size so an oversized request can't
-                        // force a huge infallible allocation and OOM-abort.
-                        let size = file.get_end_pos()?;
-                        let want = n.min(size);
-                        let mut buf = Vec::new();
-                        buf.try_reserve_exact(want)
-                            .map_err(|_| bun_sys::Error::oom())?;
-                        buf.resize(want, 0);
-                        let read = file.pread_all(&mut buf, 0)?;
-                        buf.truncate(read);
-                        Ok(IoResult::Read(buf, *kind))
-                    })(),
-                    None => file.read_to_end().map(|v| IoResult::Read(v, *kind)),
-                }
-            }
+                // Always positional from offset 0 so repeated reads are
+                // idempotent (Windows `read_to_end()` is cursor-based).
+                let size = file.get_end_pos()?;
+                let want = len.map_or(size, |n| n.min(size));
+                let mut buf = Vec::new();
+                buf.try_reserve_exact(want)
+                    .map_err(|_| bun_sys::Error::oom())?;
+                buf.resize(want, 0);
+                let read = file.pread_all(&mut buf, 0)?;
+                buf.truncate(read);
+                Ok(IoResult::Read(buf, *kind))
+            })(),
             IoOp::Write { data } => {
                 let bytes = data.slice();
                 File::borrow(&fd)

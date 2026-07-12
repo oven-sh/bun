@@ -15,7 +15,9 @@ use crate::api;
 /// (kind stamp and `SSL` always agree for these kinds).
 #[inline(always)]
 fn sock<const SSL: bool>(s: uws::AnySocket) -> uws::NewSocketHandler<SSL> {
-    uws::NewSocketHandler::<SSL> { socket: *s.socket() }
+    uws::NewSocketHandler::<SSL> {
+        socket: *s.socket(),
+    }
 }
 
 /// Rebuild the overloaded v1 close code (0/1/2 = self-initiated CloseCode,

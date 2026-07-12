@@ -20,11 +20,11 @@ pub struct sockaddr_storage {
     __pad: [u8; 126],
 }
 
+#[cfg(not(windows))]
+use crate::LIBUS_RECV_BUFFER_LENGTH;
 use crate::backend::Events;
 use crate::loop_::Loop;
 use crate::unsafe_core::io;
-#[cfg(not(windows))]
-use crate::LIBUS_RECV_BUFFER_LENGTH;
 use crate::{LIBUS_SOCKET_DESCRIPTOR, LIBUS_SOCKET_ERROR};
 
 /// `LIBUS_SEND_BUFFER_LENGTH` — the loop's shared UDP send scratch (metadata
@@ -325,7 +325,9 @@ impl Socket {
         iface: Option<&sockaddr_storage>,
         drop: bool,
     ) -> c_int {
-        raw_rc(io::set_source_specific_membership(self.fd, source, group, iface, drop))
+        raw_rc(io::set_source_specific_membership(
+            self.fd, source, group, iface, drop,
+        ))
     }
 }
 

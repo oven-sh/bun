@@ -58,9 +58,13 @@ pub(crate) enum ArmedSource {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     Pri,
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    Proc { pid: i32 },
+    Proc {
+        pid: i32,
+    },
     #[cfg(target_os = "macos")]
-    Machport { port: u32 },
+    Machport {
+        port: u32,
+    },
     #[cfg(target_os = "macos")]
     Memorystatus,
 }
@@ -126,7 +130,10 @@ pub(crate) fn take_owner_for_teardown(
     p: NonNull<RegisteredPoll>,
 ) -> (&'static PollOwnerOps, *mut c_void) {
     poll_access::with_registered(p.as_ptr(), |q| {
-        (q.ops, core::mem::replace(&mut q.owner, core::ptr::null_mut()))
+        (
+            q.ops,
+            core::mem::replace(&mut q.owner, core::ptr::null_mut()),
+        )
     })
 }
 
@@ -490,10 +497,14 @@ mod tests {
         let dropped = Rc::new(Cell::new(false));
         let owner = new_owner(&dropped, false);
         let probe = owner.dupe_ref();
-        let r = register::<FdProto>(loop_, fd_source(efd, true, false), owner, true)
-            .expect("register");
+        let r =
+            register::<FdProto>(loop_, fd_source(efd, true, false), owner, true).expect("register");
         assert!(r.is_alive());
-        assert_eq!(poll_access::num_polls(loop_), 1, "keep_alive counts the poll");
+        assert_eq!(
+            poll_access::num_polls(loop_),
+            1,
+            "keep_alive counts the poll"
+        );
 
         poll_access::eventfd::send(efd);
         assert_eq!(dispatch_pending(loop_), 1);
@@ -502,7 +513,11 @@ mod tests {
             assert_eq!(ev.len(), 1);
             assert!(ev[0].readable && !ev[0].writable && !ev[0].error && !ev[0].eof);
         }
-        assert_eq!(probe.data().poll.get(), Some(r), "handler got a live handle");
+        assert_eq!(
+            probe.data().poll.get(),
+            Some(r),
+            "handler got a live handle"
+        );
 
         // Interest change to writable-only: the eventfd counter is nonzero
         // (readable at the fd level), but only WRITABLE may be delivered.
@@ -536,8 +551,8 @@ mod tests {
         let dropped = Rc::new(Cell::new(false));
         let owner = new_owner(&dropped, true);
         let probe = owner.dupe_ref();
-        let r = register::<FdProto>(loop_, fd_source(efd, true, false), owner, true)
-            .expect("register");
+        let r =
+            register::<FdProto>(loop_, fd_source(efd, true, false), owner, true).expect("register");
         probe.data().poll.set(Some(r));
         probe.deref(); // the slot now holds the ONLY ref
         assert!(!dropped.get());
@@ -582,8 +597,13 @@ mod tests {
             .expect("first register");
         let d2 = Rc::new(Cell::new(false));
         assert_eq!(
-            register::<FdProto>(loop_, fd_source(efd, true, false), new_owner(&d2, false), false)
-                .unwrap_err(),
+            register::<FdProto>(
+                loop_,
+                fd_source(efd, true, false),
+                new_owner(&d2, false),
+                false
+            )
+            .unwrap_err(),
             libc::EEXIST
         );
         assert!(d2.get(), "losing owner released");
@@ -605,8 +625,13 @@ mod tests {
         let loop_ = create_test_loop();
         let efd = poll_access::eventfd::create();
         let dropped = Rc::new(Cell::new(false));
-        let r = register::<FdProto>(loop_, fd_source(efd, true, false), new_owner(&dropped, false), false)
-            .expect("register");
+        let r = register::<FdProto>(
+            loop_,
+            fd_source(efd, true, false),
+            new_owner(&dropped, false),
+            false,
+        )
+        .expect("register");
         // Closing the fd auto-removes it from epoll; the next interest
         // update must surface the kernel failure, not report success.
         io::close(efd, false);
@@ -650,8 +675,13 @@ mod tests {
         let loop_ = create_test_loop();
         let efd = poll_access::eventfd::create();
         let dropped = Rc::new(Cell::new(false));
-        let r = register::<FdProto>(loop_, fd_source(efd, true, false), new_owner(&dropped, false), false)
-            .expect("register");
+        let r = register::<FdProto>(
+            loop_,
+            fd_source(efd, true, false),
+            new_owner(&dropped, false),
+            false,
+        )
+        .expect("register");
         assert_eq!(poll_access::num_polls(loop_), 0, "fallthrough registration");
         r.set_keep_alive(true);
         assert_eq!(poll_access::num_polls(loop_), 1);

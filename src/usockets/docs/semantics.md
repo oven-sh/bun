@@ -24,6 +24,7 @@ are a private bitfield 1/2 translated per call (epoll_kqueue.h:32-33); on libuv
 they are `UV_READABLE`/`UV_WRITABLE` (libuv.h:24-25).
 
 Constants (libusockets.h:58-82):
+
 - `LIBUS_RECV_BUFFER_LENGTH` = 524288 (512 KiB)
 - `LIBUS_RECV_BUFFER_PADDING` = 32 (both ends of recv_buf)
 - `LIBUS_SEND_BUFFER_LENGTH` = 16384 (UDP send metadata only)
@@ -67,7 +68,7 @@ Constants (libusockets.h:58-82):
 - **R1.4** `us_internal_loop_data_init` (loop.c:120-143) MUST: set
   `sweep_next_tick_ns = -1` (POSIX) or create the sweep `us_timer_t` (libuv);
   zero `sweep_timer_count`; malloc `recv_buf` of `LIBUS_RECV_BUFFER_LENGTH + 2*
-  LIBUS_RECV_BUFFER_PADDING` and `send_buf` of `LIBUS_SEND_BUFFER_LENGTH`,
+LIBUS_RECV_BUFFER_PADDING` and `send_buf` of `LIBUS_SEND_BUFFER_LENGTH`,
   calling `Bun__outOfMemory()` if either is NULL (loop.c:133); store
   pre/post callbacks; create the wakeup async with `fallthrough=1, ext=0` and
   set its callback to `wakeup_cb` (loop.c:136-137). Under ASSERT_ENABLED it
@@ -98,7 +99,7 @@ Constants (libusockets.h:58-82):
   8. `us_internal_loop_post(loop)` (R1.14)
   9. `loop->data.tick_depth--`
 - **R1.9** `bun_epoll_pwait2` (epoll_kqueue.c:123-150): if `has_epoll_pwait2 !=
-  0`, call raw syscall `sys_epoll_pwait2` (SYS 441; supplied by Bun's Rust
+0`, call raw syscall `sys_epoll_pwait2` (SYS 441; supplied by Bun's Rust
   platform layer) with an empty sigmask, retrying while return == `-EINTR`. If
   it returns any of `-ENOSYS/-EPERM/-EOPNOTSUPP/-EACCES/-EFAULT`, latch
   `has_epoll_pwait2 = 0` and fall back forever to `epoll_pwait` with a
@@ -118,7 +119,7 @@ Constants (libusockets.h:58-82):
   4. Sweep fold: `timeout = us_internal_clamp_to_sweep(loop, timeout, &storage)`
      (epoll_kqueue.c:384).
   5. Wakeup swap: `had_wakeups = atomic_exchange(&loop->pending_wakeups, 0,
-     ACQUIRE)` (epoll_kqueue.c:386). This pairs with the RELEASE
+ACQUIRE)` (epoll_kqueue.c:386). This pairs with the RELEASE
      `fetch_add` in `us_wakeup_loop` (R10.1).
   6. `will_idle = had_wakeups == 0 && (timeout == NULL || timeout != {0,0})`
      (epoll_kqueue.c:387).
@@ -129,12 +130,12 @@ Constants (libusockets.h:58-82):
   8. Poll: epoll uses `bun_epoll_pwait2` with the timeout as-is (a zero
      timespec is already a kernel fast path — comment epoll_kqueue.c:393-395).
      kqueue uses `kevent64(..., will_idle ? 0 : KEVENT_FLAG_IMMEDIATE,
-     timeout)` retried on EINTR — the IMMEDIATE flag avoids a ~14 µs XNU
+timeout)` retried on EINTR — the IMMEDIATE flag avoids a ~14 µs XNU
      thread_block round-trip for an already-expired deadline
      (epoll_kqueue.c:398-408).
   9. `us_internal_dispatch_ready_polls`; `us_internal_drain_ready_polls`;
      `us_internal_sweep_if_due`; `us_internal_loop_post`; `tick_depth--`.
-- **R1.11** The caller-provided `timeout` is a *relative* timespec; NULL means
+- **R1.11** The caller-provided `timeout` is a _relative_ timespec; NULL means
   block indefinitely. The effective timeout is
   `min(caller, quic_next_tick_us, sweep deadline)` in that folding order.
 - **R1.12** Reentrancy: `tick_depth` counts nesting of run/tick bodies. A
@@ -186,7 +187,7 @@ Constants (libusockets.h:58-82):
   `error = !!(events & EPOLLERR)` (normalized to 0/1 — a raw EPOLLERR value 8
   would be misread as an errno downstream, comment epoll_kqueue.c:194-196),
   `eof = events & EPOLLHUP`, `events &= us_poll_events(poll)` (mask to what
-  the poll is *currently* registered for), then if `events || error || eof`
+  the poll is _currently_ registered for), then if `events || error || eof`
   call `us_internal_dispatch_ready_poll(poll, error, eof, events)`.
 - **R1.19** **Kqueue** does a two-pass coalesce (epoll_kqueue.c:206-283)
   because each filter arrives as a separate kevent: pass 1 decodes each entry
@@ -206,12 +207,12 @@ Constants (libusockets.h:58-82):
   `num_ready_polls = 0` and stop. (Mirrors libuv's saturation re-poll.)
 - **R1.21** **Poll mutation during iteration**:
   `us_internal_loop_update_pending_ready_polls(loop, old, new, old_events,
-  new_events)` (epoll_kqueue.c:420-441) scans `ready_polls` from
+new_events)` (epoll_kqueue.c:420-441) scans `ready_polls` from
   `current_ready_poll` (inclusive) forward, replacing up to N entries whose
   pointer equals `old` with `new` (N = 1 on epoll, 2 on kqueue). `new` may be
   NULL (removal — e.g. poll_stop/close). It is invoked by `us_poll_change`
   (with new==old, so it is effectively a no-op there but preserved for parity;
-  stale event *bits* are instead filtered by the `events &= us_poll_events()`
+  stale event _bits_ are instead filtered by the `events &= us_poll_events()`
   mask at dispatch), by `us_poll_stop` (new = NULL), and by `us_poll_resize`
   (old → new). NOTE: entries at indexes < current_ready_poll are never
   rewritten — they were already dispatched.
@@ -253,7 +254,7 @@ Constants (libusockets.h:58-82):
   stored in the low 3 bits; POLLING_OUT=8, POLLING_IN=16 in the top 2 bits of
   a 5-bit field. `POLL_TYPE_KIND_MASK=0b111`, `POLL_TYPE_POLLING_MASK=0b11000`.
 - **R2.2** epoll/kqueue `us_poll_t` is 4 bytes: bitfield `{fd:27 signed,
-  poll_type:5}` (epoll_kqueue.h:109-114). fd is limited to 2^26-1. libuv
+poll_type:5}` (epoll_kqueue.h:109-114). fd is limited to 2^26-1. libuv
   `us_poll_t` is `{uv_poll_t *uv_p; fd; unsigned char poll_type}`
   (libuv.h:39-45).
 - **R2.3** `us_create_poll(loop, fallthrough, ext_size)` (epoll_kqueue.c:63-68):
@@ -278,7 +279,7 @@ Constants (libusockets.h:58-82):
   bits (epoll_kqueue.c:100-102) — it does not SET from scratch, so the poll
   must be inited first (comment epoll_kqueue.c:99).
 - **R2.6** `us_poll_events(p)` derives R/W from the POLLING_IN/OUT bits
-  (epoll_kqueue.c:86-88). This is the poll's *believed* registration and is
+  (epoll_kqueue.c:86-88). This is the poll's _believed_ registration and is
   the source of truth for the dispatch-time event mask (R1.18).
 - **R2.7** `us_poll_start_rc(p, loop, events)` (epoll_kqueue.c:513-539): store
   polling bits; **epoll**: build `epoll_event{events, data.ptr=p}`; if neither
@@ -286,23 +287,23 @@ Constants (libusockets.h:58-82):
   (a level-triggered RDHUP for an already-received FIN would spin the loop —
   comment epoll_kqueue.c:518-527); `EPOLL_CTL_ADD` retried on EINTR; returns
   the epoll_ctl rc (0 success, −1 + errno). **kqueue**: `kqueue_change(kqfd,
-  fd, 0, events, p)` (R2.9). `us_poll_start` is the same ignoring the rc.
+fd, 0, events, p)` (R2.9). `us_poll_start` is the same ignoring the rc.
 - **R2.8** `us_poll_change(p, loop, events)` (epoll_kqueue.c:545-570): no-op if
   events unchanged. Else update polling bits; epoll `EPOLL_CTL_MOD` with the
   same zero-events → `EPOLLHUP|EPOLLERR` rule; kqueue `kqueue_change(fd,
-  old_events, events, p)`; then
+old_events, events, p)`; then
   `us_internal_loop_update_pending_ready_polls(loop, p, p, old, new)`.
 - **R2.9** `kqueue_change` (epoll_kqueue.c:447-482): builds ≤2 kevent64
   changes: EVFILT_READ EV_ADD/EV_DELETE when the R bit differs. For W:
-  *special zero-events rule* — if the new events poll for NEITHER R nor W and
+  _special zero-events rule_ — if the new events poll for NEITHER R nor W and
   the old events did not include W, ADD `EVFILT_WRITE EV_ADD|EV_ONESHOT` (a
   half-open socket needs some filter armed to learn about the FIN/EOF;
   epoll relies on implicit EPOLLHUP instead); otherwise if the W bit differs,
   `EVFILT_WRITE EV_ADD|EV_ONESHOT` or `EV_DELETE`. **EVFILT_WRITE is always
   one-shot on kqueue; EVFILT_READ is level-triggered (no EV_CLEAR, no
   ONESHOT).** Submitted with `KEVENT_FLAG_ERROR_EVENTS`; if the call returns
-  >0 error events, `errno` is set from `change_list[0].data` to mirror
-  epoll's error contract (epoll_kqueue.c:474-480).
+  > 0 error events, `errno` is set from `change_list[0].data` to mirror
+  > epoll's error contract (epoll_kqueue.c:474-480).
 - **R2.10** `us_poll_stop` (epoll_kqueue.c:572-589): epoll `EPOLL_CTL_DEL`
   (retried on EINTR; the `event` argument is uninitialized — legal since
   Linux 2.6.9); kqueue calls `kqueue_change(fd, old_events, 0, NULL)` only if
@@ -319,9 +320,9 @@ Constants (libusockets.h:58-82):
   `new_p` and calls `us_poll_change(new_p, loop, events)` (forcing a MOD);
   kqueue calls `kqueue_change(fd, 0, R|W, new_p)` (forcibly re-adds both
   filters). Then `us_internal_loop_update_pending_ready_polls(loop, p, new_p,
-  events, events)`. The OLD poll is NOT freed here. On libuv
+events, events)`. The OLD poll is NOT freed here. On libuv
   (libuv.c:232-249): keeps the same `uv_poll_t`, re-points `uv_p->data =
-  new_p`, sets `p->uv_p = NULL` (old poll no longer owns the uv handle).
+new_p`, sets `p->uv_p = NULL` (old poll no longer owns the uv handle).
 - **R2.12** `us_internal_dispatch_ready_poll(p, error, eof, events)`
   (loop.c:431-917) switches on `us_internal_poll_type(p)`:
   - CALLBACK (loop.c:433-444): unless `cb->leave_poll_ready`, call
@@ -378,10 +379,8 @@ Constants (libusockets.h:58-82):
   16-aligned by ALIGNMENT of the struct.
 - **R3.2** A socket allocation is one poll allocation:
   `us_create_poll(loop, 0, sizeof(us_socket_t) - sizeof(us_poll_t) + ext_size
-  + sizeof(us_poll_t))` — expressed variously as
-  `sizeof(struct us_socket_t) + ext` (context.c:506,644,678; socket.c:416) or
-  `sizeof(us_socket_t) - sizeof(us_poll_t) + listen->socket_ext_size` for
-  accepts (loop.c:483). Poll header first, socket fields, then ext.
+  - sizeof(us_poll_t))`— expressed variously as`sizeof(struct us_socket_t) + ext`(context.c:506,644,678; socket.c:416) or`sizeof(us_socket_t) - sizeof(us_poll_t) + listen->socket_ext_size` for
+    accepts (loop.c:483). Poll header first, socket fields, then ext.
 - **R3.3** Field init on every creation path MUST set: `group`, `kind`,
   `ssl = NULL`, `timeout = 255`, `long_timeout = 255`, all flags zero except
   `allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN)` where an
@@ -404,10 +403,10 @@ Constants (libusockets.h:58-82):
 
 - **R3.5** `us_socket_adopt(s, group, kind, old_ext_size, ext_size)`
   (context.c:265-329). Precondition: if `us_socket_is_closed(s) ||
-  us_socket_is_shut_down(s)`, return `s` unchanged (no adoption of closed or
+us_socket_is_shut_down(s)`, return `s` unchanged (no adoption of closed or
   shut-down sockets). Steps:
   1. If `low_prio_state != 1`: `us_internal_socket_group_unlink_socket(
-     old_group, s)` (this also fixes `group->iterator` if we're inside
+old_group, s)` (this also fixes `group->iterator` if we're inside
      on_timeout, R3.14). If parked (state==1) and the group actually changes:
      move the `low_prio_count` from old to new group, touch (link) the new
      group, maybe-unlink the old (context.c:276-283); the socket itself stays
@@ -422,7 +421,7 @@ Constants (libusockets.h:58-82):
      `us_internal_ssl_socket_relocated(loop, s, new_s)`.
      If `s->connect_state` exists (adopting an in-flight connect attempt),
      re-point `c->connecting_head = new_s`, `c->group = group`, `c->kind =
-     kind`, and move c between the groups' connecting lists
+kind`, and move c between the groups' connecting lists
      (context.c:307-312). NOTE: this assumes the adopted socket is the list
      head — see OQ-7.
   3. Unconditionally stamp `new_s->group = group`, `new_s->kind = kind`,
@@ -430,15 +429,15 @@ Constants (libusockets.h:58-82):
   4. If `new_s->flags.low_prio_state == 1`: splice the new pointer into the
      loop low-prio queue in place of the old (fix neighbor/head pointers,
      context.c:319-324). Else `us_internal_socket_group_link_socket(group,
-     new_s)`.
+new_s)`.
   5. Return `new_s`.
-  With `ext_size == -1` the socket is re-stamped (group/kind/timeouts) with
-  no resize and no connect_state fixup.
+     With `ext_size == -1` the socket is re-stamped (group/kind/timeouts) with
+     no resize and no connect_state fixup.
 - **R3.6** Adoption forwarding: everywhere the dispatcher regains control
   after calling out (accept-open loop.c:521-523, socket case entry
   loop.c:549-551, after writable loop.c:567-569, after on_data
   loop.c:687-689), it MUST apply: `if (s && s->flags.adopted && s->prev)
-  s = s->prev;`. I.e. a closed+adopted socket's `prev` field is repurposed as
+s = s->prev;`. I.e. a closed+adopted socket's `prev` field is repurposed as
   the forwarding pointer to the relocated socket. (`us_socket_adopt_tls` and
   `us_socket_tls_feed` live in crypto/openssl.c — TLS layer, out of scope —
   but they reuse `us_socket_adopt` and the same forwarding contract.)
@@ -446,9 +445,9 @@ Constants (libusockets.h:58-82):
 ### 3.4 Group linkage invariants
 
 - **R3.7** `us_socket_group_t` (libusockets.h:270-287): `{loop, vtable, ext,
-  head_sockets, head_connecting_sockets, head_listen_sockets, iterator,
-  prev, next, global_tick (u32), low_prio_count (u16), timestamp (u8),
-  long_timestamp (u8), linked (u8)}`. `us_socket_group_init`
+head_sockets, head_connecting_sockets, head_listen_sockets, iterator,
+prev, next, global_tick (u32), low_prio_count (u16), timestamp (u8),
+long_timestamp (u8), linked (u8)}`. `us_socket_group_init`
   (context.c:49-55) zeroes the struct and sets loop/vtable/ext; it does NOT
   link into the loop.
 - **R3.8** Lazy linking: `us_internal_group_touched` links the group at the
@@ -457,7 +456,7 @@ Constants (libusockets.h:58-82):
   link_connecting_socket, init_listen_socket).
   `us_internal_group_maybe_unlink` (context.c:185-190) unlinks iff `linked`
   and the group is empty: `head_sockets == NULL && head_connecting_sockets ==
-  NULL && head_listen_sockets == NULL && low_prio_count == 0`
+NULL && head_listen_sockets == NULL && low_prio_count == 0`
   (context.c:171-176).
 - **R3.9** `us_internal_socket_group_link_socket` (context.c:192-204): no-op
   for closed sockets. Push at head of `head_sockets` (doubly linked via
@@ -503,11 +502,10 @@ Constants (libusockets.h:58-82):
   `s->ssl && !closed` route to `us_internal_ssl_close` (graceful TLS close,
   may defer); else `us_internal_socket_close_raw`.
 - **R3.17** `us_internal_socket_close_raw(s, code, reason)` (socket.c:263-337)
-  exact sequence:
-  0. If `s->ssl && s->ssl_in_use` (JS destroyed the socket from inside a
-     BoringSSL callback): DO NOT close now; set `ssl_pending_detach = 1`,
-     `ssl_pending_close_code = code`, return `s`. The SSL driver's epilogue
-     re-runs the close (socket.c:264-273).
+  exact sequence: 0. If `s->ssl && s->ssl_in_use` (JS destroyed the socket from inside a
+  BoringSSL callback): DO NOT close now; set `ssl_pending_detach = 1`,
+  `ssl_pending_close_code = code`, return `s`. The SSL driver's epilogue
+  re-runs the close (socket.c:264-273).
   1. If already closed, return `s` unchanged.
   2. Unlink: if `low_prio_state == 1`, splice out of the loop low-prio queue,
      zero prev/next/state, `group->low_prio_count--`, then
@@ -526,7 +524,7 @@ Constants (libusockets.h:58-82):
      matches SEMI_SOCKET(2) and any type with bit 2 set, in practice only
      SEMI_SOCKET; SOCKET=0 and SOCKET_SHUT_DOWN=1 pass). Route
      `us_internal_ssl_on_close` if `s->ssl` else `us_dispatch_close(s, code,
-     reason)`. A never-opened connect (SEMI_SOCKET) MUST NOT get on_close —
+reason)`. A never-opened connect (SEMI_SOCKET) MUST NOT get on_close —
      its owner is notified via on_connect_error instead (socket.c:316-325).
   8. `us_internal_ssl_detach(s)` (SSL_free + NULL; idempotent, no-op for
      plain TCP).
@@ -580,35 +578,33 @@ Constants (libusockets.h:58-82):
   - `length > 0`: dispatch `ssl_on_data`/`us_dispatch_data(s, buf, length)`;
     re-forward adoption. Repeat-read heuristic (POSIX, loop.c:691-713):
     continue the loop only if `s` alive, `length >= LIBUS_RECV_BUFFER_LENGTH
-    - 24*1024`, `length <= LIBUS_RECV_BUFFER_LENGTH`, and (`error` set (hung
-    up — macOS delivers EV_EOF with the same event) or
-    `loop->num_ready_polls < 25`), and socket not closed and NOT paused
-    (`flags.is_paused` — a pause from inside on_data stops the loop).
-    `repeat_recv_count` increments only when `error == 0`, and when
-    `repeat_recv_count > 10 && loop->num_ready_polls > 2` the loop stops
-    (starvation guard). Windows (loop.c:715-731): after a successful read,
-    probe recv exactly once more (`repeat_recv_count++ == 0`) unless
-    closed/paused, to catch AFD_POLL_ABORT races.
+    - 24\*1024`, `length <= LIBUS_RECV_BUFFER_LENGTH`, and (`error`set (hung
+up — macOS delivers EV_EOF with the same event) or`loop->num_ready_polls < 25`), and socket not closed and NOT paused
+(`flags.is_paused`— a pause from inside on_data stops the loop).`repeat_recv_count`increments only when`error == 0`, and when
+`repeat_recv_count > 10 && loop->num_ready_polls > 2` the loop stops
+(starvation guard). Windows (loop.c:715-731): after a successful read,
+probe recv exactly once more (`repeat_recv_count++ == 0`) unless
+      closed/paused, to catch AFD_POLL_ABORT races.
   - `length == 0`: set `eof = 1`, break (handled below).
   - `length == -1 && !bsd_would_block()`: peer-initiated TCP error → bypass
     the SSL-graceful path and `us_internal_socket_close_raw(s, LIBUS_ERR,
-    NULL)`; **return** from dispatch (loop.c:736-748). The close code is the
+  NULL)`; **return** from dispatch (loop.c:736-748). The close code is the
     raw errno.
-  (d) EOF handling (loop.c:755-784), only if `eof && s`: if socket already
-  closed → return (no on_end after close). If `us_socket_is_shut_down(s)`
-  (we sent FIN first, got FIN back) → `close_raw(s, 0 /*CLEAN*/, NULL)`,
-  return. If `allow_half_open`: `us_poll_change(&s->p, loop, W)` — an
-  ABSOLUTE event set: stop readable, force-keep writable even if it wasn't
-  currently armed (a same-tick queued write must still flush; the writable
-  dispatch disarms W again once drained — comment loop.c:765-775) — then
-  dispatch `ssl_on_end`/`us_dispatch_end`. Else: dispatch on_end, then
-  `close_raw(s, 0, NULL)`, return.
-  (e) ERROR handling (loop.c:786-799), only if `error && s`: fetch real errno
-  via `us_socket_get_error(s)` (SO_ERROR; epoll_kqueue.c:863-871 — falls back
-  to `errno` if getsockopt itself fails) and
-  `close_raw(s, so_error > 2 ? so_error : ECONNRESET, NULL)` — values 0..2
-  are clamped to ECONNRESET because they'd collide with the CloseCode enum
-  that JS filters as self-initiated; return.
+    (d) EOF handling (loop.c:755-784), only if `eof && s`: if socket already
+    closed → return (no on_end after close). If `us_socket_is_shut_down(s)`
+    (we sent FIN first, got FIN back) → `close_raw(s, 0 /*CLEAN*/, NULL)`,
+    return. If `allow_half_open`: `us_poll_change(&s->p, loop, W)` — an
+    ABSOLUTE event set: stop readable, force-keep writable even if it wasn't
+    currently armed (a same-tick queued write must still flush; the writable
+    dispatch disarms W again once drained — comment loop.c:765-775) — then
+    dispatch `ssl_on_end`/`us_dispatch_end`. Else: dispatch on_end, then
+    `close_raw(s, 0, NULL)`, return.
+    (e) ERROR handling (loop.c:786-799), only if `error && s`: fetch real errno
+    via `us_socket_get_error(s)` (SO_ERROR; epoll_kqueue.c:863-871 — falls back
+    to `errno` if getsockopt itself fails) and
+    `close_raw(s, so_error > 2 ? so_error : ECONNRESET, NULL)` — values 0..2
+    are clamped to ECONNRESET because they'd collide with the CloseCode enum
+    that JS filters as self-initiated; return.
 - **R3.23** Pause/resume (socket.c:747-769): `us_socket_pause` — no-op if
   paused or closed; `us_poll_change(W)` (absolute: keep only writable),
   `is_paused = 1`. `us_socket_resume` — no-op unless paused; clear flag;
@@ -621,8 +617,7 @@ Constants (libusockets.h:58-82):
 - **R3.24** `us_socket_ext` = `s+1`; `us_connecting_socket_ext` = `c+1`
   (socket.c:594-600). `us_socket_kind`/`set_kind`, `us_socket_group`,
   `us_socket_is_tls` = `ssl != NULL` (socket.c:76-94).
-  `us_socket_get_native_handle`: SSL* if TLS else `(void*)(uintptr_t)fd`
-  (socket.c:456-461); for connecting sockets always `(void*)-1`
+  `us_socket_get_native_handle`: SSL* if TLS else `(void*)(uintptr_t)fd`(socket.c:456-461); for connecting sockets always`(void\*)-1`
   (socket.c:463-465).
 - **R3.25** Address accessors (socket.c:29-74, 651-689) go through
   `bsd_local_addr`/`bsd_remote_addr` (getsockname/getpeername) each call —
@@ -642,7 +637,7 @@ Constants (libusockets.h:58-82):
   invokes on_open itself (via `us_socket_open`) — from_fd does not dispatch.
 - **R3.28** `us_socket_pair` (socket.c:387-397), POSIX-only:
   `socketpair(AF_UNIX, SOCK_STREAM)`, then `us_socket_from_fd(group, kind,
-  NULL, ext, fds[0], 0)`; fds[1] is left for the caller.
+NULL, ext, fds[0], 0)`; fds[1] is left for the caller.
 - **R3.29** Listen socket close (`us_listen_socket_close`, context.c:426-449):
   if not closed — `us_poll_stop`, `bsd_close_socket(fd)`,
   `us_internal_listen_socket_ssl_free(ls)` (frees SSL_CTX ref + SNI tree),
@@ -661,18 +656,18 @@ Constants (libusockets.h:58-82):
 - **R3.31** `us_socket_group_close_all_ex(group, also_listeners)`
   (context.c:81-147), exact order:
   1. If also_listeners: close listeners first (`while (head_listen_sockets)
-     us_listen_socket_close(...)`) so nothing new is accepted.
+us_listen_socket_close(...)`) so nothing new is accepted.
   2. Close every connecting socket (walk with cached `next_pending`).
   3. Walk `head_sockets` (cached next): SEMI_SOCKET (in-flight connect
      attempt) → dispatch `us_dispatch_connect_error(s, ECONNABORTED)` first
      (so the owner wrapper detaches), then `close_raw(s, RESET, 0)` if the
      handler didn't close; established → `us_socket_close(s, CLEAN, 0)`.
   4. Force-drain survivors: `while (head_sockets)
-     close_raw(head_sockets, RESET, 0)` — TLS sockets whose graceful close
+close_raw(head_sockets, RESET, 0)` — TLS sockets whose graceful close
      deferred are forcibly closed so no socket outlives the owner's storage.
   5. If `low_prio_count`: walk `loop->data.low_prio_head`, and for each
      parked socket belonging to this group call `us_socket_close(q, CLEAN,
-     0)` (close_raw's low-prio branch unlinks + decrements the counter);
+0)` (close_raw's low-prio branch unlinks + decrements the counter);
      assert count reaches 0.
 
 ---
@@ -699,8 +694,8 @@ Constants (libusockets.h:58-82):
     socket.c:496-501).
   - anything else → `*fatal = 1`, return 0, and DO NOT arm writable
     (retry can never succeed).
-  On short write (`written != length`): `last_write_failed = 1`, poll R|W.
-  Return `written` (≥0).
+    On short write (`written != length`): `last_write_failed = 1`, poll R|W.
+    Return `written` (≥0).
 - **R4.3** `us_socket_write2(s, header, hlen, payload, plen)`
   (socket.c:399-410): closed/shut-down → 0. `bsd_write2` (single writev of
   the two chunks on POSIX; two sequential sends on Windows, where the payload
@@ -723,7 +718,7 @@ Constants (libusockets.h:58-82):
   bsd_send, stopping at the first short write, returning −1 if nothing was
   written (bsd.c:934-942).
 - **R4.6** `bsd_send` (bsd.c:956-986) = `send(fd, buf, len,
-  MSG_NOSIGNAL | MSG_DONTWAIT)` retried on EINTR (MSG_NOSIGNAL defined to 0
+MSG_NOSIGNAL | MSG_DONTWAIT)` retried on EINTR (MSG_NOSIGNAL defined to 0
   where missing; macOS relies on SO_NOSIGPIPE set at creation,
   bsd.c:332-340). There is NO MSG_MORE / TCP_CORK corking on the send path
   itself; `us_socket_flush` → `bsd_socket_flush` clears `TCP_CORK` on Linux
@@ -746,7 +741,7 @@ Constants (libusockets.h:58-82):
   (`us_socket_stream_buffer_t` does not exist in this tree; buffering lives
   in the Zig/Rust callers).
 - **R4.10** IPC fd passing, send side: `us_socket_ipc_write_fd(s, data,
-  length, fd)` (socket.c:556-592, POSIX only): closed/shut-down → 0. Build a
+length, fd)` (socket.c:556-592, POSIX only): closed/shut-down → 0. Build a
   1-iovec msghdr with a single `SCM_RIGHTS` cmsg of one int
   (`CMSG_SPACE(sizeof(int))` control buffer), `bsd_sendmsg(fd, &msg, 0)`
   (EINTR-retried, bsd.c:989-1003 — note flags=0, no MSG_NOSIGNAL/DONTWAIT
@@ -774,15 +769,15 @@ Constants (libusockets.h:58-82):
   itself is NEVER swept (see OQ-5).
 - **R5.4** Sweep clocks: per-group `global_tick` increments once per sweep;
   `timestamp = global_tick % 240`; `long_timestamp = (global_tick / 15) %
-  240` (loop.c:236-238). With one sweep per 4 s, one long tick = 15 sweeps =
+240` (loop.c:236-238). With one sweep per 4 s, one long tick = 15 sweeps =
   60 s.
 - **R5.5** Sweep enable/disable refcount: EVERY link of a socket or
   connecting socket calls `us_internal_enable_sweep_timer(loop)`; every
   unlink calls `us_internal_disable_sweep_timer(loop)` (context.c:203,226,
   241,259). POSIX (loop.c:81-94): count 0→1 sets `sweep_next_tick_ns = now +
-  4e9` and calls `Bun__internal_ensureDateHeaderTimerIsEnabled(loop)`; count
+4e9` and calls `Bun__internal_ensureDateHeaderTimerIsEnabled(loop)`; count
   →0 sets `sweep_next_tick_ns = -1`. libuv (loop.c:56-69): 0→1 arms the
-  repeating 4000 ms uv timer (+ same Bun call); →0 *intends* to swap the
+  repeating 4000 ms uv timer (+ same Bun call); →0 _intends_ to swap the
   callback to a no-op, but `us_timer_set` early-returns for the sweep timer
   once `has_added_timer_to_event_loop` is set (libuv.c:300-305), so in
   practice on libuv the sweep keeps firing `sweep_timer_cb` forever after
@@ -798,7 +793,7 @@ Constants (libusockets.h:58-82):
   there is no timerfd / EVFILT_TIMER on POSIX.
 - **R5.8** `us_internal_sweep_if_due(loop)` (loop.c:104-115), called after
   dispatch in both run paths: return if disarmed or `now <
-  sweep_next_tick_ns`. Re-arm FIRST (`sweep_next_tick_ns = now + 4e9`) —
+sweep_next_tick_ns`. Re-arm FIRST (`sweep_next_tick_ns = now + 4e9`) —
   a timeout handler may unlink the last socket and disarm — then
   `us_internal_timer_sweep(loop)`. On libuv the sweep is driven by the uv
   timer callback instead (loop.c:386-389).
@@ -806,14 +801,14 @@ Constants (libusockets.h:58-82):
   recursively. For each group (cursor = `loop_data->iterator`, advanced as in
   R3.12/R3.14): bump the clocks (R5.4), then walk `head_sockets`. Inner fast
   loop scans until `short_ticks == s->timeout || long_ticks ==
-  s->long_timeout` or list end. On a hit: `group->iterator = s`. If short
+s->long_timeout` or list end. On a hit: `group->iterator = s`. If short
   matches: `s->timeout = 255` (one-shot — the handler must re-arm) then
   `us_dispatch_timeout(s)`. Then, group-survival check (R3.14). If the
   socket survived as cursor (`group->iterator == s`) and long matches:
   `s->long_timeout = 255`, `us_dispatch_long_timeout(s)`, survival check
   again. Advance per R3.14. Both timeouts on the same tick fire short first,
   long second, on the same dispatch. After the group's walk: `group->iterator
-  = 0`, advance the loop cursor.
+= 0`, advance the loop cursor.
 - **R5.10** Re-arm rules: dispatch does NOT re-arm anything. A handler that
   wants a recurring timeout MUST call `us_socket_timeout` again. A handler
   that closes the socket is safe (close unlinks and fixes both iterators).
@@ -823,17 +818,17 @@ Constants (libusockets.h:58-82):
 ## 6. CONNECT
 
 - **R6.1** `us_connecting_socket_t` (internal.h:310-338): `{addrinfo_req,
-  group, loop (captured at create; survives group detach), ssl_ctx (up_ref'd
-  borrow), next (dns_ready / closed-list link), connecting_head (list of
-  in-flight attempt sockets via s->connect_next), options, socket_ext_size,
-  bitfields closed/shutdown/shutdown_read/pending_resolve_callback/
-  error_is_dns, timeout, long_timeout, kind, port, error, addrinfo_head
-  (cursor into the resolved list), next_pending/prev_pending (group list)}`.
+group, loop (captured at create; survives group detach), ssl_ctx (up_ref'd
+borrow), next (dns_ready / closed-list link), connecting_head (list of
+in-flight attempt sockets via s->connect_next), options, socket_ext_size,
+bitfields closed/shutdown/shutdown_read/pending_resolve_callback/
+error_is_dns, timeout, long_timeout, kind, port, error, addrinfo_head
+(cursor into the resolved list), next_pending/prev_pending (group list)}`.
   Allocated as `us_calloc(1, sizeof + socket_ext_size)` (context.c:611) —
   ext lives at `c+1` and is memcpy'd into every attempt socket
   (context.c:693).
 - **R6.2** `us_socket_group_connect(group, kind, ssl_ctx, host, port,
-  local_host, local_port, options, ext_size, *has_dns_resolved)`
+local_host, local_port, options, ext_size, *has_dns_resolved)`
   (context.c:567-634), on the loop thread:
   1. Parse `local_host` as a literal IP (never resolved) into `local_addr`
      if given (context.c:574-578; `try_parse_ip` handles v4 then v6,
@@ -858,8 +853,8 @@ Constants (libusockets.h:58-82):
      for completion notification (may fire immediately via the dns_ready
      queue if the request already completed). Return `c` with
      `*has_dns_resolved = 0`.
-  Return type is `void*`: `us_socket_t*` when `*has_dns_resolved == 1`,
-  `us_connecting_socket_t*` otherwise.
+     Return type is `void*`: `us_socket_t*` when `*has_dns_resolved == 1`,
+     `us_connecting_socket_t*` otherwise.
 - **R6.3** `us_socket_group_connect_resolved_dns` (context.c:496-528):
   `bsd_create_connect_socket(addr, local_addr, options)` (R8.9) → NULL on
   failure (errno preserved). `bsd_socket_nodelay(fd, 1)`. Create poll of
@@ -880,7 +875,7 @@ Constants (libusockets.h:58-82):
   - Completion: the resolver (any thread) calls
     `us_internal_dns_callback_threadsafe(c, req)` = `us_internal_dns_callback`
     (push c onto `loop->data.dns_ready_head` under `Bun__lock(&loop->data.
-    mutex)`) + `us_wakeup_loop(loop)`. The non-threadsafe variant
+mutex)`) + `us_wakeup_loop(loop)`. The non-threadsafe variant
     (same-thread) skips the wakeup (loop.c:322-340).
   - Drain: `us_internal_handle_dns_results(loop)` (loop_pre AND loop_post)
     swaps `dns_ready_head` to a local list under the mutex, then calls
@@ -898,10 +893,10 @@ Constants (libusockets.h:58-82):
   — the keep-alive was already balanced by the cancel branch of close
   (comment context.c:703-707). Else: balance the keep-alive
   (`num_polls--` / `active_handles--`). If `result->error`: `c->error =
-  result->error`, `c->error_is_dns = 1` (the two error namespaces overlap
+result->error`, `c->error_is_dns = 1` (the two error namespaces overlap
   numerically — consumers MUST check error_is_dns first, internal.h:324-328),
   `us_connecting_socket_close(c)`. Else set `c->addrinfo_head =
-  &result->entries->info` and `start_connections(c, 4)`; if zero attempts
+&result->entries->info` and `start_connections(c, 4)`; if zero attempts
   could be opened, `c->error = ECONNREFUSED` then close (a real connect
   failure must not read as caller abort, context.c:739-744).
 - **R6.7** Happy-eyeballs (`CONCURRENT_CONNECTIONS = 4`, context.c:27):
@@ -970,18 +965,16 @@ Constants (libusockets.h:58-82):
   `loop->data.closed_connecting_head` via `c->next`; actual `us_free` happens
   in `us_internal_free_closed_sockets` (R1.15). Never free immediately — c
   may still sit on the dns_ready list.
-- **R6.12** on_connect_error vs on_connecting_error: `us_dispatch_connect_
-  error(s, code)` fires on a real (attempt) `us_socket_t` — direct-connect
-  failure (R6.9) and group close_all of an in-flight attempt (R3.31.3).
-  `us_dispatch_connecting_error(c, code)` fires on the
-  `us_connecting_socket_t` — DNS failure, all-attempts-failed, or
+- **R6.12** on*connect_error vs on_connecting_error: `us_dispatch_connect*
+  error(s, code)`fires on a real (attempt)`us_socket_t`— direct-connect
+failure (R6.9) and group close_all of an in-flight attempt (R3.31.3).`us_dispatch_connecting_error(c, code)`fires on the`us_connecting_socket_t` — DNS failure, all-attempts-failed, or
   cancellation (R6.10). Exactly one of {on_open, on_connect_error(s),
   on_connecting_error(c)} terminates a connect.
 - **R6.13** Connecting-socket accessor semantics: `get_error` = c->error;
   `get_dns_error` = error_is_dns ? error : 0 (socket.c:636-642);
   `shutdown`/`shutdown_read` just latch bits consumed after promotion by the
   Zig caller (socket.c:52-54, 632-634); `is_shut_down` = c->shutdown;
-  `is_closed` = c->closed; `ext` = c+1; `get_native_handle` = (void*)-1.
+  `is_closed` = c->closed; `ext` = c+1; `get_native_handle` = (void\*)-1.
 
 ---
 
@@ -996,7 +989,7 @@ Constants (libusockets.h:58-82):
   accepted socket), `accept_kind` (kind stamped onto accepted sockets),
   `deferred_accept` flag.
 - **R7.2** `us_socket_group_listen(group, kind, ssl_ctx, host, port, options,
-  ext_size, *error)` (context.c:369-399): `bsd_create_listen_socket` (R8.6)
+ext_size, *error)` (context.c:369-399): `bsd_create_listen_socket` (R8.6)
   → 0 on failure. Create poll of `sizeof(us_listen_socket_t)` (no ext on the
   listener poll itself), init `POLL_TYPE_SEMI_SOCKET`, `us_poll_start_rc(R)`;
   registration failure (e.g. epoll ENOSPC) → close fd, free poll, report via
@@ -1007,7 +1000,7 @@ Constants (libusockets.h:58-82):
   struct fields per R7.1 (up_ref ssl_ctx, sni = NULL, on_server_name = NULL,
   deferred_accept = 0); link into `head_listen_sockets` + touch group. If
   `options & LIBUS_LISTEN_DEFER_ACCEPT`, `ls->deferred_accept =
-  bsd_set_defer_accept(fd)` (1 only if the setsockopt succeeded, R8.8).
+bsd_set_defer_accept(fd)` (1 only if the setsockopt succeeded, R8.8).
   `us_socket_group_listen_unix` (context.c:401-424) is identical minus
   defer-accept.
 - **R7.3** Accept loop — the SEMI_SOCKET/readable arm (loop.c:468-541):
@@ -1015,7 +1008,7 @@ Constants (libusockets.h:58-82):
   TODO in source; EMFILE/ENFILE are silently dropped until the next readable
   event). On success loop:
   1. `us_create_poll(loop, 0, sizeof(us_socket_t) - sizeof(us_poll_t) +
-     socket_ext_size)`; init `POLL_TYPE_SOCKET`; `us_poll_start_rc(R)`. If
+socket_ext_size)`; init `POLL_TYPE_SOCKET`; `us_poll_start_rc(R)`. If
      registration fails: `bsd_close_socket(client_fd)` (peer sees RST rather
      than a black hole) + `us_poll_free`, `continue` to the next accept
      (loop.c:485-492).
@@ -1025,7 +1018,7 @@ Constants (libusockets.h:58-82):
   3. `bsd_socket_nodelay(client_fd, 1)` — nodelay always on (loop.c:510).
   4. Link into accept_group.
   5. If `listen_socket->ssl_ctx`: `us_internal_ssl_attach(s, ssl_ctx, 0,
-     NULL, listen_socket)` then `us_internal_ssl_on_open(s, 0, ip, iplen)`;
+NULL, listen_socket)` then `us_internal_ssl_on_open(s, 0, ip, iplen)`;
      else `us_dispatch_open(s, 0, ip, iplen)` — ip is the raw 4/16-byte
      peer address from accept (loop.c:514-519).
   6. Adoption-forward `s` (R3.6).
@@ -1037,8 +1030,8 @@ Constants (libusockets.h:58-82):
      loop (loop.c:534-537).
   9. `bsd_accept_socket` again; loop until it returns error (EAGAIN drains
      the backlog).
-  Accepted fds are CLOEXEC+NONBLOCK via accept4 where available; otherwise
-  set by `bsd_set_nonblocking(apple_no_sigpipe(fd))` (bsd.c:800-846).
+     Accepted fds are CLOEXEC+NONBLOCK via accept4 where available; otherwise
+     set by `bsd_set_nonblocking(apple_no_sigpipe(fd))` (bsd.c:800-846).
 - **R7.4** macOS accept quirk (bsd.c:817-834): if accept returns a socket
   with `addr->len == 0` (XNU bug: dual-stack v4 connection immediately
   RST), probe `recv(MSG_PEEK|MSG_DONTWAIT)`; if no data, close the fd and
@@ -1064,7 +1057,7 @@ Constants (libusockets.h:58-82):
   FIONBIO at poll init; connect paths use `win32_set_nonblocking`
   explicitly, bsd.c:342-354).
 - **R8.2** Addr plumbing: `struct bsd_addr_t` = `{sockaddr_storage mem, len,
-  char *ip, ip_length, port}` (networking/bsd.h:51-57).
+char *ip, ip_length, port}` (networking/bsd.h:51-57).
   `internal_finalize_bsd_addr` (bsd.c:743-757) points `ip` INTO `mem`
   (sin_addr / sin6_addr), sets ip_length 4/16, port via ntohs; unknown
   family → ip_length 0, port −1. No string formatting anywhere in the core —
@@ -1099,7 +1092,7 @@ Constants (libusockets.h:58-82):
   `O_PATH|O_DIRECTORY` and rewrite the sun_path as
   `/proc/self/fd/<dirfd>/<basename>` (ENAMETOOLONG if even that overflows);
   abstract sockets (leading NUL) use `addrlen = offsetof(sun_path) +
-  path_len`. macOS: same trick but via `__pthread_fchdir(dirfd)` +relative
+path_len`. macOS: same trick but via `__pthread_fchdir(dirfd)` +relative
   basename around the bind/connect, restored with `__pthread_fchdir(-1)`
   (bsd.c:1389-1414, 1826-1849). Other/too-long → ENAMETOOLONG. Windows
   simulates ENOENT/ENAMETOOLONG via SetLastError. Note: no unlink() of a
@@ -1155,10 +1148,10 @@ Constants (libusockets.h:58-82):
   `port` (bound port, captured once at creation), bits `closed`/`connected`,
   `next` (closed-list link). No ext.
 - **R9.2** `us_create_udp_socket(loop, data_cb, drain_cb, close_cb,
-  recv_error_cb, host, port, flags, *err, user)` (udp.c:149-202):
+recv_error_cb, host, port, flags, *err, user)` (udp.c:149-202):
   `bsd_create_udp_socket` (R9.8) → 0 on failure. Poll of
   `sizeof(us_udp_socket_t)`, `POLL_TYPE_UDP`, `us_poll_start_rc(R|W)` —
-  registration failure closes fd, frees poll, reports errno via *err and
+  registration failure closes fd, frees poll, reports errno via \*err and
   errno. Cache the bound port via getsockname. Because the poll starts R|W,
   the first tick delivers one writable event → one initial `on_drain`
   (then W is cleared per R9.6).
@@ -1174,7 +1167,7 @@ Constants (libusockets.h:58-82):
      The socket stays open. Track `recv_error_surfaced`.
   3. If `events & R` and not closed: loop — `bsd_udp_setup_recvbuf` over the
      loop's shared recv_buf (LIBUS_RECV_BUFFER_LENGTH), `npackets =
-     bsd_recvmmsg(fd, &recvbuf, MSG_DONTWAIT)`:
+bsd_recvmmsg(fd, &recvbuf, MSG_DONTWAIT)`:
      - `> 0` → `u->on_data(u, &recvbuf, npackets)`; repeat while not closed.
      - `== LIBUS_SOCKET_ERROR` and not would-block: Linux → surface errno
        via on_recv_error (socket stays open, `recv_error_surfaced = 1`);
@@ -1186,7 +1179,7 @@ Constants (libusockets.h:58-82):
      ensures a level-triggered EPOLLOUT+EPOLLERR combo can't spin
      (loop.c:885-897). Then `u->on_drain(u)`.
   5. Close-on-error: Linux — only if `error && !recv_error_surfaced &&
-     !recv_would_block_only && !closed` (residual unexplained EPOLLERR);
+!recv_would_block_only && !closed` (residual unexplained EPOLLERR);
      elsewhere — any `error` closes via `us_udp_socket_close`
      (loop.c:899-913).
 - **R9.5** Packet buffer layout (`udp_recvbuf`, networking/bsd.h:140-152):
@@ -1206,7 +1199,7 @@ Constants (libusockets.h:58-82):
   WSAECONNRESET/WSAENETRESET (per-destination ICMP, retry — matches libuv,
   bsd.c:138-144). Returns packet count or −1.
 - **R9.7** Send path: `us_udp_socket_send(s, payloads, lengths, addresses,
-  num)` (udp.c:47-72): batches through the loop's 16 KiB `send_buf` via
+num)` (udp.c:47-72): batches through the loop's 16 KiB `send_buf` via
   `bsd_udp_setup_sendbuf` (bsd.c:203-254 — builds mmsghdr+iovec arrays in
   place, capacity `(16384 - hdr) / (sizeof(mmsghdr)+sizeof(iovec))`;
   computes per-address socklen; tracks has_empty/has_addresses for the macOS
@@ -1241,7 +1234,7 @@ Constants (libusockets.h:58-82):
 
 - **R10.1** `us_wakeup_loop(loop)` (loop.c:160-165), callable from ANY
   thread: on epoll/kqueue, `atomic_fetch_add(&loop->pending_wakeups, 1,
-  RELEASE)` FIRST, then `us_internal_async_wakeup(loop->data.wakeup_async)`.
+RELEASE)` FIRST, then `us_internal_async_wakeup(loop->data.wakeup_async)`.
   On libuv, just uv_async_send (no pending_wakeups field is consumed there).
 - **R10.2** Coalescing/GC-safepoint interplay: `pending_wakeups` is swapped
   to 0 with ACQUIRE at the top of every bun tick (R1.10.5). Any nonzero
@@ -1306,7 +1299,7 @@ Constants (libusockets.h:58-82):
   `US_FAULT_SSL_LOOP_BUFFER` simulates the one-shot TLS loop-buffer
   allocation failure (hook lives in crypto/openssl.c, ERRNO action only).
 - **R11.3** Rule = `{action, errno_value, clamp_bytes, after_n_calls,
-  repeat (−1 = forever), target_fd (−1 = any)}` (fault_inject.h:61-71).
+repeat (−1 = forever), target_fd (−1 = any)}` (fault_inject.h:61-71).
   Actions: ERRNO → return −1 with errno (and WSASetLastError on Windows);
   ZERO → return 0 (recv: peer closed; send: backpressure); SHORT → clamp
   the length lvalue in place and let the real syscall run
@@ -1345,13 +1338,13 @@ same symbols (or their Rust homes) directly:
   for `loop->data.mutex` (dns_ready list) and the fault-inject lock.
   `Bun__lock__size` ABI check (loop.c:44,138-142).
 - **R12.4** DNS bridge: `Bun__addrinfo_get / _set / _cancel / _freeRequest /
-  _getRequestResult` (internal.h:140-144) — contract in R6.5. The result
+_getRequestResult` (internal.h:140-144) — contract in R6.5. The result
   shape is `struct addrinfo_result { addrinfo_result_entry *entries; int
-  error }` where each entry embeds an `addrinfo` + `sockaddr_storage`
+error }` where each entry embeds an `addrinfo` + `sockaddr_storage`
   (internal.h:110-118); entries are chained via `info.ai_next`.
 - **R12.5** Dispatch layer: `us_dispatch_open/data/fd/writable/close/timeout/
-  long_timeout/end/connect_error/connecting_error/handshake/session/keylog/
-  ssl_raw_tap` (internal.h:120-138) — implemented in
+long_timeout/end/connect_error/connecting_error/handshake/session/keylog/
+ssl_raw_tap` (internal.h:120-138) — implemented in
   `src/runtime/socket/uws_dispatch.rs`; switches on `s->kind`, falling back
   to `s->group->vtable` for C++ (uWS) kinds. loop.c NEVER reads the vtable
   directly.
@@ -1369,9 +1362,9 @@ same symbols (or their Rust homes) directly:
   sendmsg_x/recvmsg_x.
 - **R12.11** TLS boundary (crypto/openssl.c, out of scope but the symbols
   the core links against): `us_internal_ssl_{attach, detach, close, on_open,
-  on_data, on_writable, on_close, on_end, shutdown, write, is_low_prio,
-  is_shut_down, is_handshake_finished, handshake_callback_has_fired,
-  get_native_handle, verify_error, socket_relocated, ctx_up_ref, ctx_unref}`
+on_data, on_writable, on_close, on_end, shutdown, write, is_low_prio,
+is_shut_down, is_handshake_finished, handshake_callback_has_fired,
+get_native_handle, verify_error, socket_relocated, ctx_up_ref, ctx_unref}`
   and `us_internal_listen_socket_ssl_free` (internal.h:162-234).
 - **R12.12** QUIC boundary: `us_quic_loop_process(loop)` under
   LIBUS_USE_QUIC (loop.c:401-413) plus `quic_next_tick_us` folding
@@ -1388,7 +1381,7 @@ except where an entry states an explicit fix.
 - **OQ-1: `us_udp_socket_send` batching arithmetic is broken**
   (udp.c:54-70). `num` is decremented by `count` per batch, yet both the
   loop condition (`total_sent < num`) and the partial-send re-arm test
-  (`sent < num`) compare against the *post-decrement remaining* count.
+  (`sent < num`) compare against the _post-decrement remaining_ count.
   Observable consequences: (a) a partial send within the FINAL batch never
   arms writable (`sent < 0` is false when num reached 0) — the drain
   callback for the common single-batch case is never scheduled by this
@@ -1445,7 +1438,7 @@ except where an entry states an explicit fix.
   unrelated earlier syscall when listen succeeds. Callers only read it on
   failure; the out-param is defined as failure-only.
 - **OQ-9: `bsd_would_block` ignores EAGAIN** (bsd.c:1009 — `|| errno ==
-  EAGAIN` commented out). Identical to EWOULDBLOCK on Linux/macOS/FreeBSD/
+EAGAIN` commented out). Identical to EWOULDBLOCK on Linux/macOS/FreeBSD/
   Windows targets Bun supports, so no observable difference today; the
   literal check is preserved.
 - **OQ-10: SEMI_SOCKET skip test in close_raw uses a bitmask, not

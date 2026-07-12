@@ -436,8 +436,7 @@ pub(crate) fn dispatch_handshake(s: *mut us_socket_t, ok: bool, err: us_bun_veri
 // the kind gate below only differs from the old C in unreachable states.
 
 pub(crate) fn dispatch_ssl_raw_tap(s: *mut us_socket_t, data: &[u8]) {
-    if !trampolines::socket_slot_live(s)
-        || trampolines::socket_kind(s) != SocketKind::BunSocketTls
+    if !trampolines::socket_slot_live(s) || trampolines::socket_kind(s) != SocketKind::BunSocketTls
     {
         return;
     }
@@ -445,8 +444,7 @@ pub(crate) fn dispatch_ssl_raw_tap(s: *mut us_socket_t, data: &[u8]) {
 }
 
 pub(crate) fn dispatch_session(s: *mut us_socket_t, session: &[u8]) {
-    if !trampolines::socket_slot_live(s)
-        || trampolines::socket_kind(s) != SocketKind::BunSocketTls
+    if !trampolines::socket_slot_live(s) || trampolines::socket_kind(s) != SocketKind::BunSocketTls
     {
         return;
     }
@@ -454,8 +452,7 @@ pub(crate) fn dispatch_session(s: *mut us_socket_t, session: &[u8]) {
 }
 
 pub(crate) fn dispatch_keylog(s: *mut us_socket_t, line: &[u8]) {
-    if !trampolines::socket_slot_live(s)
-        || trampolines::socket_kind(s) != SocketKind::BunSocketTls
+    if !trampolines::socket_slot_live(s) || trampolines::socket_kind(s) != SocketKind::BunSocketTls
     {
         return;
     }

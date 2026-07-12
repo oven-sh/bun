@@ -34,7 +34,6 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys as sys;
 use bun_usockets as uws;
 
-
 // Thin local wrapper that erases the concrete `runtime::socket::UpgradedDuplex`
 // to the opaque `bun_usockets::handle::UpgradedDuplex` handle (same
 // allocation, different-crate newtype — see usockets/unsafe_core/ffi.rs §duplex).
@@ -610,11 +609,11 @@ impl<const SSL: bool> NewSocket<SSL> {
                             NonNull::new(s).expect("non-null connect socket"),
                         ))
                     }
-                    uws::ConnectResult::Connecting(c) => SocketHandler::<SSL>::from_connecting(
-                        uws::ConnectingRef::from_live(
+                    uws::ConnectResult::Connecting(c) => {
+                        SocketHandler::<SSL>::from_connecting(uws::ConnectingRef::from_live(
                             NonNull::new(c).expect("non-null connecting socket"),
-                        ),
-                    ),
+                        ))
+                    }
                 };
                 self.socket.set(handle);
                 // Transfer one strong ref to core; released exactly once at

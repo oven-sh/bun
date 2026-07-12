@@ -1520,8 +1520,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // uws owns the fd now (owns_fd=1); neutralize the slot so
                     // finalizeStreams doesn't double-close.
                     subprocess.stdio_pipes.with_mut(|v| {
-                        v[usize::try_from(ipc_channel).expect("int cast")] =
-                            ExtraPipe::Unavailable;
+                        v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
                     });
                 }
                 None => {

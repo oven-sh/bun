@@ -22,8 +22,8 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
 use bun_ptr::AsCtxPtr;
 use bun_usockets::{
-    self as uws, AnySocket, NewSocketHandler, SocketKind, SocketRef, SslCtx,
-    us_bun_verify_error_t, us_socket_t,
+    self as uws, AnySocket, NewSocketHandler, SocketKind, SocketRef, SslCtx, us_bun_verify_error_t,
+    us_socket_t,
 };
 
 use self::cpp_websocket::{CppWebSocket, CppWebSocketRef};

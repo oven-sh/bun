@@ -420,7 +420,11 @@ impl Drop for TlsState {
 /// Session/keylog parking opt-in marker (bssl `is_socket` ex_data — the CTX
 /// new-session/keylog callbacks only park for marked SSLs; §2.1/§2.7).
 fn mark_socket(ssl: *mut SSL) {
-    bssl::ssl_set_ex_data(ssl, bssl::ex_indices().is_socket, 1usize as *mut core::ffi::c_void);
+    bssl::ssl_set_ex_data(
+        ssl,
+        bssl::ex_indices().is_socket,
+        1usize as *mut core::ffi::c_void,
+    );
 }
 
 /// Fresh short-lived `TlsState` borrow per access cluster (C17): must end
@@ -432,12 +436,14 @@ fn t<'a>(this: *mut TlsState) -> &'a mut TlsState {
 /// `us_socket_sni_resolve` (docs/tls.md §2.6, openssl.c:2186-2219): resume
 /// a handshake suspended by an async SNI callback. Consumes the owned `ctx`
 /// ref; no-op when the socket died or the handshake is not suspended.
-pub(crate) fn sni_resolve(this: *mut TlsState, s: *mut SocketHeader, ctx: *mut SslCtx, error: bool) {
+pub(crate) fn sni_resolve(
+    this: *mut TlsState,
+    s: *mut SocketHeader,
+    ctx: *mut SslCtx,
+    error: bool,
+) {
     let ssl = t(this).ssl;
-    if ssl.is_null()
-        || deref::with_socket(s, |h| h.is_closed())
-        || !bssl::sni_is_waiting(ssl)
-    {
+    if ssl.is_null() || deref::with_socket(s, |h| h.is_closed()) || !bssl::sni_is_waiting(ssl) {
         // Late/duplicate resolution: release the handed-in reference.
         if !ctx.is_null() {
             crate::tls::context::ssl_ctx_unref(ctx);
@@ -633,8 +639,7 @@ impl TlsState {
     }
 
     fn verify_error_for(&self, s: *mut SocketHeader) -> us_bun_verify_error_t {
-        if self.ssl.is_null() || deref::with_socket(s, |h| h.is_closed()) || self.is_shut_down(s)
-        {
+        if self.ssl.is_null() || deref::with_socket(s, |h| h.is_closed()) || self.is_shut_down(s) {
             return us_bun_verify_error_t::default();
         }
         self.verify_error()
@@ -818,7 +823,12 @@ impl TlsState {
     /// Decrypt ciphertext arriving from the kernel (or `tls_feed`) and
     /// dispatch plaintext on_data via the loop scratch buffer. No
     /// `&mut TlsState` is held across the dispatches (C17).
-    pub(crate) fn read(this: *mut TlsState, s: *mut SocketHeader, loop_: *mut Loop, ciphertext: &[u8]) {
+    pub(crate) fn read(
+        this: *mut TlsState,
+        s: *mut SocketHeader,
+        loop_: *mut Loop,
+        ciphertext: &[u8],
+    ) {
         bssl::err_clear_error();
         // Lazy session/keylog marker: an accepted node:tls socket's kind is
         // stamped after attach (§2.1).

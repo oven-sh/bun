@@ -118,7 +118,10 @@ pub const fn kind_entry<P: Protocol>(kind: SocketKind) -> dispatch::KindEntry {
             Some(tls) => kind as usize == tls as usize,
             None => false,
         };
-    assert!(matches_kind, "kind_entry placed at a kind P does not handle");
+    assert!(
+        matches_kind,
+        "kind_entry placed at a kind P does not handle"
+    );
     dispatch::KindEntry {
         kind,
         vtable: trampolines::make2::<P>(),

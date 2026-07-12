@@ -119,7 +119,11 @@ const fn value_stride<T>() -> usize {
 /// formed; class-independent (meta is always exactly 16 bytes before the
 /// value — layout contract).
 fn meta_of<T>(value: NonNull<T>) -> *mut SlotMeta {
-    value.as_ptr().cast::<u8>().wrapping_sub(SLOT_META_BYTES).cast()
+    value
+        .as_ptr()
+        .cast::<u8>()
+        .wrapping_sub(SLOT_META_BYTES)
+        .cast()
 }
 
 impl<T> ChunkedSlab<T> {
@@ -150,7 +154,10 @@ impl<T> ChunkedSlab<T> {
     /// slab is dropped.
     pub fn alloc_with_ext(&mut self, value: T, ext_capacity: usize) -> (NonNull<T>, u64) {
         const {
-            assert!(align_of::<T>() <= SLOT_META_BYTES, "slab value over-aligned");
+            assert!(
+                align_of::<T>() <= SLOT_META_BYTES,
+                "slab value over-aligned"
+            );
         }
         let ci = self.class_index(ext_capacity.next_multiple_of(SLOT_META_BYTES));
         loop {
@@ -243,8 +250,7 @@ impl<T> ChunkedSlab<T> {
             let cid = (*meta).chunk_id;
             let e = &mut self.chunks[cid as usize];
             let slot = ptr.as_ptr().cast::<u8>().sub(SLOT_META_BYTES);
-            let idx =
-                (slot.offset_from(e.base.as_ptr()) as usize / e.slot_size as usize) as u16;
+            let idx = (slot.offset_from(e.base.as_ptr()) as usize / e.slot_size as usize) as u16;
             debug_assert!((idx as u32) < e.slots);
             (*meta).next_free = e.free_head;
             e.free_head = idx;
@@ -360,7 +366,9 @@ impl<T> ChunkedSlab<T> {
                 unsafe {
                     let slot = e.base.as_ptr().add(i as usize * e.slot_size as usize);
                     if (*slot.cast::<SlotMeta>()).generation & 1 == 1 {
-                        f(NonNull::new_unchecked(slot.add(SLOT_META_BYTES).cast::<T>()));
+                        f(NonNull::new_unchecked(
+                            slot.add(SLOT_META_BYTES).cast::<T>(),
+                        ));
                     }
                 }
             }
@@ -370,12 +378,19 @@ impl<T> ChunkedSlab<T> {
     /// Find or create the class for `cap` (already rounded to 16) — one per
     /// distinct family-max ext size, ~5 per loop in practice.
     fn class_index(&mut self, cap: usize) -> usize {
-        if let Some(i) = self.classes.iter().position(|c| c.ext_capacity as usize == cap) {
+        if let Some(i) = self
+            .classes
+            .iter()
+            .position(|c| c.ext_capacity as usize == cap)
+        {
             return i;
         }
         // In-tree creation sites pass sizeof() constants; a cap past u16 would
         // silently truncate the stamped capacity, so fail loudly instead.
-        assert!(cap <= u16::MAX as usize, "inline ext capacity exceeds size-class limit");
+        assert!(
+            cap <= u16::MAX as usize,
+            "inline ext capacity exceeds size-class limit"
+        );
         let slot_size = SLOT_META_BYTES + value_stride::<T>() + cap;
         let chunk_bytes = (slot_size * SLOTS_PER_CHUNK).next_multiple_of(CHUNK_BYTES_MIN);
         self.classes.push(SizeClass {
@@ -460,7 +475,11 @@ mod os {
                 0,
             )
         };
-        let p = if p == libc::MAP_FAILED { core::ptr::null_mut() } else { p };
+        let p = if p == libc::MAP_FAILED {
+            core::ptr::null_mut()
+        } else {
+            p
+        };
         bun_core::handle_oom(NonNull::new(p.cast::<u8>()).ok_or(()))
     }
 
@@ -534,7 +553,14 @@ mod os {
     pub(super) fn decommit(base: NonNull<u8>, bytes: usize) {
         // MEM_RESET: discardable but still committed+readable (see `win`).
         // SAFETY: `base`/`bytes` are exactly one live `map` result.
-        unsafe { win::VirtualAlloc(base.as_ptr().cast(), bytes, win::MEM_RESET, win::PAGE_READWRITE) };
+        unsafe {
+            win::VirtualAlloc(
+                base.as_ptr().cast(),
+                bytes,
+                win::MEM_RESET,
+                win::PAGE_READWRITE,
+            )
+        };
     }
 
     #[cfg(all(windows, not(miri)))]
@@ -665,10 +691,18 @@ mod tests {
         let mut slab = ChunkedSlab::<u8>::new();
         let (p, g0) = slab.alloc(0);
         for cycle in 0..5u64 {
-            assert_eq!(unsafe { ChunkedSlab::generation(p) } & 1, 1, "occupied must be odd");
+            assert_eq!(
+                unsafe { ChunkedSlab::generation(p) } & 1,
+                1,
+                "occupied must be odd"
+            );
             // SAFETY: p is live at the top of each cycle.
             unsafe { slab.free(p) };
-            assert_eq!(unsafe { ChunkedSlab::generation(p) } & 1, 0, "vacant must be even");
+            assert_eq!(
+                unsafe { ChunkedSlab::generation(p) } & 1,
+                0,
+                "vacant must be even"
+            );
             // Generation advances by exactly 2 per free+alloc cycle, so every
             // prior handle mismatches forever (until counter wrap).
             let (p2, g2) = slab.alloc(0);
@@ -766,7 +800,10 @@ mod tests {
         assert_eq!(p2, p, "LIFO reuse within the class");
         // SAFETY: same slot, same capacity.
         let bytes = unsafe { core::slice::from_raw_parts(inline_ext_of(p2).unwrap().as_ptr(), 48) };
-        assert!(bytes.iter().all(|&b| b == 0), "ext must be re-zeroed on reuse");
+        assert!(
+            bytes.iter().all(|&b| b == 0),
+            "ext must be re-zeroed on reuse"
+        );
     }
 
     #[test]
@@ -783,7 +820,10 @@ mod tests {
         // ext bytes are inside the slot, not shared.
         let stride = (SLOT_META_BYTES + value_stride::<u64>() + 64) as isize;
         // SAFETY: pointer identity arithmetic only.
-        assert_eq!(unsafe { c.as_ptr().cast::<u8>().offset_from(b.as_ptr().cast::<u8>()) }, stride);
+        assert_eq!(
+            unsafe { c.as_ptr().cast::<u8>().offset_from(b.as_ptr().cast::<u8>()) },
+            stride
+        );
         assert_eq!(slab.live_count(), 3);
     }
 
@@ -839,8 +879,7 @@ mod tests {
     fn stale_handle_is_safe_and_invalid_after_decommit() {
         let mut slab = ChunkedSlab::<usize>::new();
         let a = fill_chunk(&mut slab);
-        let stale: Vec<(NonNull<usize>, u64)> =
-            a.iter().map(|&p| (p, generation_of(p))).collect();
+        let stale: Vec<(NonNull<usize>, u64)> = a.iter().map(|&p| (p, generation_of(p))).collect();
         let b = fill_chunk(&mut slab);
         drain(&mut slab, &a);
         drain(&mut slab, &b); // decommits chunk A (hysteresis keeps B)
@@ -901,7 +940,10 @@ mod tests {
         // only thing separating cycle N from cycle N+1.
         assert_eq!(reborn & COUNTER_MASK, stale_gen & COUNTER_MASK);
         assert_eq!(reborn >> EPOCH_SHIFT, 1);
-        assert_ne!(reborn, stale_gen, "cycle-N handle must not validate in cycle N+1");
+        assert_ne!(
+            reborn, stale_gen,
+            "cycle-N handle must not validate in cycle N+1"
+        );
         assert_ne!(generation_of(victim), stale_gen);
     }
 
@@ -933,7 +975,10 @@ mod tests {
         let per = slab.slots_per_chunk(0);
         let all: Vec<_> = (0..2 * per).map(|i| (i, slab.alloc(i).0)).collect();
         assert_eq!(slab.chunk_count(), 2, "reuse, don't grow");
-        assert_eq!(slab.chunk_occupied(0) + slab.chunk_occupied(1), 2 * per as u32);
+        assert_eq!(
+            slab.chunk_occupied(0) + slab.chunk_occupied(1),
+            2 * per as u32
+        );
         for (i, p) in &all {
             // SAFETY: all slots live.
             assert_eq!(unsafe { *p.as_ref() }, *i);

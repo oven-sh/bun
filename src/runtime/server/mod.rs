@@ -2661,8 +2661,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let _ = unsafe { &mut *this }.set_routes();
             }
         } else {
-            app = match uws::NewApp::<SSL>::create(&uws::BunSocketContextOptions::default())
-            {
+            app = match uws::NewApp::<SSL>::create(&uws::BunSocketContextOptions::default()) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() {

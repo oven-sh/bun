@@ -3,9 +3,9 @@
 //! against Bun's linked BoringSSL objects + root_certs.cpp). A follow-up may swap the
 //! extern block for the pre-generated bssl-sys bindings behind these helpers.
 
+use core::cell::UnsafeCell;
 use core::ffi::{CStr, c_char, c_int, c_long, c_uint, c_void};
 use core::ptr;
-use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Once;
 
@@ -46,16 +46,9 @@ pub struct SHA256_CTX {
     md_len: c_uint,
 }
 
-pub type PemPasswordCb =
-    unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
-pub type CryptoExFree = unsafe extern "C" fn(
-    *mut c_void,
-    *mut c_void,
-    *mut CRYPTO_EX_DATA,
-    c_int,
-    c_long,
-    *mut c_void,
-);
+pub type PemPasswordCb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
+pub type CryptoExFree =
+    unsafe extern "C" fn(*mut c_void, *mut c_void, *mut CRYPTO_EX_DATA, c_int, c_long, *mut c_void);
 type VerifyCb = unsafe extern "C" fn(c_int, *mut X509_STORE_CTX) -> c_int;
 type NewSessionCb = unsafe extern "C" fn(*mut SSL, *mut SSL_SESSION) -> c_int;
 type KeylogCb = unsafe extern "C" fn(*const SSL, *const c_char);
@@ -346,7 +339,11 @@ pub fn stat_for_digest(path: &CStr) -> Option<[i64; 3]> {
     }
     // SAFETY: stat returned 0, so the buffer is fully initialized.
     let st = unsafe { st.assume_init() };
-    Some([st.st_mtime as i64, st.st_mtime_nsec as i64, st.st_size as i64])
+    Some([
+        st.st_mtime as i64,
+        st.st_mtime_nsec as i64,
+        st.st_size as i64,
+    ])
 }
 
 #[cfg(windows)]
@@ -659,7 +656,11 @@ pub enum SniSuspension {
 pub fn sni_set(ssl: *mut SSL, state: SniSuspension) {
     let idx = ex_indices().sni_pending;
     sni_clear(ssl);
-    ssl_set_ex_data(ssl, idx, bun_core::heap::into_raw(Box::new(state)).cast::<c_void>());
+    ssl_set_ex_data(
+        ssl,
+        idx,
+        bun_core::heap::into_raw(Box::new(state)).cast::<c_void>(),
+    );
 }
 
 /// Take (and clear) the suspension state; the caller owns any carried ctx ref.
@@ -677,7 +678,11 @@ pub fn sni_take(ssl: *mut SSL) -> Option<SniSuspension> {
 pub fn sni_is_waiting(ssl: *const SSL) -> bool {
     let p = ssl_get_ex_data(ssl.cast_mut(), ex_indices().sni_pending);
     // SAFETY: slot only ever holds Box<SniSuspension> from sni_set.
-    !p.is_null() && matches!(unsafe { &*p.cast::<SniSuspension>() }, SniSuspension::Waiting)
+    !p.is_null()
+        && matches!(
+            unsafe { &*p.cast::<SniSuspension>() },
+            SniSuspension::Waiting
+        )
 }
 
 fn sni_clear(ssl: *mut SSL) {
@@ -1002,8 +1007,7 @@ pub fn ctx_use_certificate_chain_content(ctx: *mut SslCtx, content: &CStr) -> bo
                 }
                 if ret {
                     let err = err_peek_last_error();
-                    if err_get_lib(err) == ERR_LIB_PEM
-                        && err_get_reason(err) == PEM_R_NO_START_LINE
+                    if err_get_lib(err) == ERR_LIB_PEM && err_get_reason(err) == PEM_R_NO_START_LINE
                     {
                         err_clear_error();
                     } else {
@@ -1251,8 +1255,7 @@ pub fn parse_pkcs12(data: &[u8], pass: Option<&CStr>) -> Result<Pkcs12Pem, &'sta
         let mut cert: *mut X509 = ptr::null_mut();
         let mut extra: *mut OPENSSL_STACK = ptr::null_mut();
         let pass_ptr = pass.map_or(c"".as_ptr(), CStr::as_ptr);
-        let parsed =
-            PKCS12_parse(p12, pass_ptr, &raw mut pkey, &raw mut cert, &raw mut extra) == 1;
+        let parsed = PKCS12_parse(p12, pass_ptr, &raw mut pkey, &raw mut cert, &raw mut extra) == 1;
 
         let cleanup = |tag: &'static str| -> &'static str {
             if !pkey.is_null() {
@@ -1287,8 +1290,15 @@ pub fn parse_pkcs12(data: &[u8], pass: Option<&CStr>) -> Result<Pkcs12Pem, &'sta
         let mut out: Result<Pkcs12Pem, &'static str> = Err("parse");
         if !kb.is_null()
             && !cb.is_null()
-            && PEM_write_bio_PrivateKey(kb, pkey, ptr::null(), ptr::null(), 0, None, ptr::null_mut())
-                == 1
+            && PEM_write_bio_PrivateKey(
+                kb,
+                pkey,
+                ptr::null(),
+                ptr::null(),
+                0,
+                None,
+                ptr::null_mut(),
+            ) == 1
             && PEM_write_bio_X509(cb, cert) == 1
         {
             if let (Some(key), Some(cert_pem)) = (pem_from_bio(kb), pem_from_bio(cb)) {

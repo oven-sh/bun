@@ -8,21 +8,21 @@ use core::ptr::NonNull;
 
 use bun_core::Fd;
 
+use crate::LIBUS_SOCKET_ALLOW_HALF_OPEN;
 use crate::connecting::{self, ConnectingSocket};
 use crate::group::{ConnectResult, SocketGroup};
 use crate::kind::SocketKind;
-use crate::socket::{SocketHeader, us_socket_t};
 use crate::protocol::OwnerRef;
+use crate::socket::{SocketHeader, us_socket_t};
 use crate::tls::SSL;
 use crate::tls::context::{SslCtx, ssl_ctx_unref, us_bun_verify_error_t};
 use crate::unsafe_core::ext as uext;
-use crate::unsafe_core::trampolines;
 use crate::unsafe_core::ffi::duplex;
 #[cfg(windows)]
 use crate::unsafe_core::ffi::named_pipe;
+use crate::unsafe_core::trampolines;
 use crate::unsafe_core::{ffi, slab};
 use crate::write::UsIoVec;
-use crate::LIBUS_SOCKET_ALLOW_HALF_OPEN;
 
 // ──────────────────────────────────────────────────────────────────────────
 // CloseCode
@@ -928,7 +928,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // Fail closed (release-checked): a raw non-refcounted pointer on a
         // Protocol v2 kind would be rc_deref'd at the terminal (confusion).
         if crate::dispatch::owner_ops(k).is_some() {
-            debug_assert!(false, "from_fd: {k:?} is a Protocol v2 kind (use from_fd_owned)");
+            debug_assert!(
+                false,
+                "from_fd: {k:?} is a Protocol v2 kind (use from_fd_owned)"
+            );
             return None;
         }
         Self::from_fd_raw(g, k, handle, this, is_ipc)
@@ -975,7 +978,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // Fail closed (release-checked): a raw non-refcounted pointer on a
         // Protocol v2 kind would be rc_deref'd at the terminal (confusion).
         if crate::dispatch::owner_ops(kind).is_some() {
-            debug_assert!(false, "connect_group: {kind:?} is a Protocol v2 kind (use connect_owned)");
+            debug_assert!(
+                false,
+                "connect_group: {kind:?} is a Protocol v2 kind (use connect_owned)"
+            );
             return Err(ConnectError::FailedToOpenSocket);
         }
         Self::connect_group_raw(g, kind, ssl_ctx, raw_host, port, owner, allow_half_open)
@@ -1098,7 +1104,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     ) -> bool {
         // Same release-checked v2-kind guard as `connect_group`.
         if crate::dispatch::owner_ops(kind).is_some() {
-            debug_assert!(false, "adopt_group: {kind:?} is a Protocol v2 kind (use adopt_owned)");
+            debug_assert!(
+                false,
+                "adopt_group: {kind:?} is a Protocol v2 kind (use adopt_owned)"
+            );
             return false;
         }
         let Some(p) = tcp.resolve() else {
@@ -1212,7 +1221,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // registered owner type is exactly `O` — anything else is type
         // confusion in dispatch or a permanent leak at the terminal.
         if !crate::dispatch::owner_registered_as::<O>(kind) {
-            debug_assert!(false, "attach_owner: {kind:?} not registered for this owner type");
+            debug_assert!(
+                false,
+                "attach_owner: {kind:?} not registered for this owner type"
+            );
             owner.deref();
             return;
         }
@@ -1245,7 +1257,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     {
         // Same fail-closed typed-owner check as `attach_owner`.
         if !crate::dispatch::owner_registered_as::<O>(kind) {
-            debug_assert!(false, "connect_owned: {kind:?} not registered for this owner type");
+            debug_assert!(
+                false,
+                "connect_owned: {kind:?} not registered for this owner type"
+            );
             owner.deref();
             return Err(ConnectError::FailedToOpenSocket);
         }
@@ -1283,12 +1298,21 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
     {
         if !crate::dispatch::owner_registered_as::<O>(kind) {
-            debug_assert!(false, "connect_unix_owned: {kind:?} not registered for this owner type");
+            debug_assert!(
+                false,
+                "connect_unix_owned: {kind:?} not registered for this owner type"
+            );
             owner.deref();
             return Err(ConnectError::FailedToOpenSocket);
         }
-        match Self::connect_unix_group_raw::<O>(g, kind, ssl_ctx, path, owner.as_ptr(), allow_half_open)
-        {
+        match Self::connect_unix_group_raw::<O>(
+            g,
+            kind,
+            ssl_ctx,
+            path,
+            owner.as_ptr(),
+            allow_half_open,
+        ) {
             Ok(s) => {
                 let _ = owner.into_raw();
                 Ok(s)
@@ -1312,7 +1336,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
     {
         if !crate::dispatch::owner_registered_as::<O>(k) {
-            debug_assert!(false, "from_fd_owned: {k:?} not registered for this owner type");
+            debug_assert!(
+                false,
+                "from_fd_owned: {k:?} not registered for this owner type"
+            );
             owner.deref();
             return None;
         }
@@ -1346,7 +1373,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             return None;
         };
         if !crate::dispatch::owner_registered_as::<O>(kind) {
-            debug_assert!(false, "adopt_owned: {kind:?} not registered for this owner type");
+            debug_assert!(
+                false,
+                "adopt_owned: {kind:?} not registered for this owner type"
+            );
             owner.deref();
             return None;
         }
@@ -1404,7 +1434,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             return None;
         }
         if !crate::dispatch::owner_registered_as::<O>(kind) {
-            debug_assert!(false, "adopt_tls_owned: {kind:?} not registered for this owner type");
+            debug_assert!(
+                false,
+                "adopt_tls_owned: {kind:?} not registered for this owner type"
+            );
             owner.deref();
             return None;
         }
@@ -1418,12 +1451,23 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         let (old_word, old_kind) = (h.ext, h.kind());
         // Same release-checked adoption-families guard as `adopt_owned`.
         if crate::dispatch::uses_group_vtable(old_kind) {
-            debug_assert!(false, "adopt_tls_owned from a group-vtable kind {old_kind:?}");
+            debug_assert!(
+                false,
+                "adopt_tls_owned from a group-vtable kind {old_kind:?}"
+            );
             owner.deref();
             return None;
         }
-        if h.adopt_tls(uext::deref_mut(g), kind, ssl_ctx, sni, is_client, word, word)
-            .is_none()
+        if h.adopt_tls(
+            uext::deref_mut(g),
+            kind,
+            ssl_ctx,
+            sni,
+            is_client,
+            word,
+            word,
+        )
+        .is_none()
         {
             owner.deref();
             return None;
@@ -1664,7 +1708,12 @@ impl ListenSocket {
     /// Missing-SNI dynamic resolver registration (docs/cabi.md §4.3).
     pub fn on_server_name(
         &mut self,
-        cb: extern "C" fn(*mut ListenSocket, *const core::ffi::c_char, *mut c_int, *mut c_void) -> *mut c_void,
+        cb: extern "C" fn(
+            *mut ListenSocket,
+            *const core::ffi::c_char,
+            *mut c_int,
+            *mut c_void,
+        ) -> *mut c_void,
     ) {
         let ls: *mut Self = self;
         let ld = crate::group::listener_data(ls);

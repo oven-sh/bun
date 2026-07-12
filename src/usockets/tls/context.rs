@@ -103,8 +103,7 @@ impl us_bun_verify_error_t {
     /// UNABLE_TO_GET_ISSUER_CERT when no peer cert, with the PSK / TLS1.3-
     /// resumption exemptions; `error == 0` ⇒ code/reason null.
     pub fn from_ssl(ssl: *const SSL) -> Self {
-        let err =
-            bssl::verify_peer_certificate(ssl, bssl::X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
+        let err = bssl::verify_peer_certificate(ssl, bssl::X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
         if err == bssl::X509_V_OK {
             return Self::default();
         }
@@ -265,10 +264,7 @@ impl BunSocketContextOptions {
     /// attach (docs/tls.md §7).
     // Options pass BY VALUE across the frozen ABI (docs/cabi.md §3.7).
     #[allow(clippy::large_types_passed_by_value)]
-    pub fn create_ssl_context(
-        self,
-        err: &mut create_bun_socket_error_t,
-    ) -> Option<*mut SslCtx> {
+    pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<*mut SslCtx> {
         let ctx = ssl_ctx_from_options(self, err);
         if ctx.is_null() { None } else { Some(ctx) }
     }
@@ -569,8 +565,7 @@ pub fn ssl_ctx_add_ca_cert(ctx: *mut SslCtx, pem: &core::ffi::CStr) -> i32 {
     let store_is_shared = !store.is_null() && core::ptr::eq(store, shared);
     // shared_default_ca_store up-refs per return; release the comparison ref.
     bssl::x509_store_free(shared);
-    let store_is_empty =
-        !store.is_null() && !store_is_shared && bssl::x509_store_is_empty(store);
+    let store_is_empty = !store.is_null() && !store_is_shared && bssl::x509_store_is_empty(store);
     if store_is_shared || store_is_empty {
         let own = bssl::default_ca_store();
         if own.is_null() {

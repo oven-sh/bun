@@ -7,10 +7,10 @@
 
 use core::ptr;
 
-use crate::backend::{self, Backend, Events, PollState, MAX_READY_POLLS};
+use crate::LIBUS_SOCKET_DESCRIPTOR;
+use crate::backend::{self, Backend, Events, MAX_READY_POLLS, PollState};
 use crate::loop_::Loop;
 use crate::unsafe_core::poll_access;
-use crate::LIBUS_SOCKET_DESCRIPTOR;
 
 /// macOS uses `kevent64_s`; usockets aliases it to `struct kevent` on FreeBSD.
 #[cfg(target_os = "macos")]
@@ -50,9 +50,19 @@ impl Backend for Kqueue {
         // Two SEPARATE submissions (kqueue_change's zero-events branch would
         // leave an armed one-shot WRITE): FreeBSD's shim suppresses the
         // eventlist, so a batched ENOENT could abort the WRITE EV_DELETE.
-        let mut read_del = [poll_access::make_kev(fd, libc::EVFILT_READ, libc::EV_DELETE, 0)];
+        let mut read_del = [poll_access::make_kev(
+            fd,
+            libc::EVFILT_READ,
+            libc::EV_DELETE,
+            0,
+        )];
         let rc_read = poll_access::kevent_error_events(self.kqfd, &mut read_del);
-        let mut write_del = [poll_access::make_kev(fd, libc::EVFILT_WRITE, libc::EV_DELETE, 0)];
+        let mut write_del = [poll_access::make_kev(
+            fd,
+            libc::EVFILT_WRITE,
+            libc::EV_DELETE,
+            0,
+        )];
         let rc_write = poll_access::kevent_error_events(self.kqfd, &mut write_del);
         if rc_read != 0 { rc_read } else { rc_write }
     }
@@ -101,7 +111,11 @@ pub(crate) fn kqueue_change(
         changes[n] = poll_access::make_kev(
             fd,
             libc::EVFILT_READ,
-            if is_readable { libc::EV_ADD } else { libc::EV_DELETE },
+            if is_readable {
+                libc::EV_ADD
+            } else {
+                libc::EV_DELETE
+            },
             udata,
         );
         n += 1;
@@ -172,16 +186,32 @@ pub(crate) fn poll_stop(p: *mut PollState, loop_: *mut Loop) {
     let st = poll_access::read_poll(p);
     let old_events = st.events();
     if !old_events.is_empty() {
-        kqueue_change(poll_access::loop_fd(loop_), st.fd(), old_events, Events::NONE, 0);
+        kqueue_change(
+            poll_access::loop_fd(loop_),
+            st.fd(),
+            old_events,
+            Events::NONE,
+            0,
+        );
     } else {
         // believed-NONE can still have an armed one-shot EVFILT_WRITE with
         // real slot udata (pause -> raw_shutdown). Detach paths keep the fd
         // open, so no close-DEL destroys the knote: delete both filters.
         let kqfd = poll_access::loop_fd(loop_);
         let fd = st.fd();
-        let mut rd = [poll_access::make_kev(fd, libc::EVFILT_READ, libc::EV_DELETE, 0)];
+        let mut rd = [poll_access::make_kev(
+            fd,
+            libc::EVFILT_READ,
+            libc::EV_DELETE,
+            0,
+        )];
         poll_access::kevent_error_events(kqfd, &mut rd);
-        let mut wr = [poll_access::make_kev(fd, libc::EVFILT_WRITE, libc::EV_DELETE, 0)];
+        let mut wr = [poll_access::make_kev(
+            fd,
+            libc::EVFILT_WRITE,
+            libc::EV_DELETE,
+            0,
+        )];
         poll_access::kevent_error_events(kqfd, &mut wr);
     }
     backend::update_pending_ready_polls(loop_, p, ptr::null_mut(), old_events, Events::NONE);

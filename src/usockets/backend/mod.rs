@@ -23,9 +23,9 @@ use kqueue as platform;
 
 use core::ffi::c_void;
 
+use crate::LIBUS_SOCKET_DESCRIPTOR;
 use crate::loop_::Loop;
 use crate::unsafe_core::{deref, io, poll_access};
-use crate::LIBUS_SOCKET_DESCRIPTOR;
 
 /// `LIBUS_MAX_READY_POLLS` — capacity of `Loop.ready_polls`.
 #[cfg(not(windows))]
@@ -351,10 +351,12 @@ pub(crate) fn dispatch_ready_polls(loop_: *mut Loop) {
 #[cfg(not(windows))]
 pub(crate) fn drain_ready_polls(loop_: *mut Loop) {
     let mut drain_count: i32 = 48;
-    while poll_access::num_ready_polls(loop_) == MAX_READY_POLLS as i32 && {
-        drain_count -= 1;
-        drain_count != 0
-    } && poll_access::num_polls(loop_) > 0
+    while poll_access::num_ready_polls(loop_) == MAX_READY_POLLS as i32
+        && {
+            drain_count -= 1;
+            drain_count != 0
+        }
+        && poll_access::num_polls(loop_) > 0
     {
         let n = platform::wait_immediate(loop_);
         if n <= 0 {

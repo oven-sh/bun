@@ -1121,8 +1121,7 @@ impl JSValkeyClient {
         // Adopt the keep-alive ref add_timer took (remove_timer/stop_timers
         // skip FIRED timers); it keeps `self` alive until scope end.
         // SAFETY: the FIRED timer's unreleased ref is owned by this fire.
-        let _timer_ref =
-            unsafe { bun_ptr::ScopedRef::adopt(std::ptr::from_ref(self).cast_mut()) };
+        let _timer_ref = unsafe { bun_ptr::ScopedRef::adopt(std::ptr::from_ref(self).cast_mut()) };
         if self.client.get().flags.failed {
             return;
         }
@@ -1177,8 +1176,7 @@ impl JSValkeyClient {
         // Adopt the keep-alive ref add_timer took (remove_timer/stop_timers
         // skip FIRED timers); it keeps `self` alive until scope end.
         // SAFETY: the FIRED timer's unreleased ref is owned by this fire.
-        let _timer_ref =
-            unsafe { bun_ptr::ScopedRef::adopt(std::ptr::from_ref(self).cast_mut()) };
+        let _timer_ref = unsafe { bun_ptr::ScopedRef::adopt(std::ptr::from_ref(self).cast_mut()) };
 
         // Execute reconnection logic
         self.reconnect();
@@ -1577,11 +1575,11 @@ impl JSValkeyClient {
         let owner = self.owner_ref();
         // SAFETY: `group` is the lazy-initialised per-VM `SocketGroup` (stable
         // for the VM's lifetime), only touched here on the JS thread.
-        let result = self
-            .client
-            .get()
-            .address
-            .connect(owner, unsafe { &mut *group }, ssl_ctx, is_tls);
+        let result =
+            self.client
+                .get()
+                .address
+                .connect(owner, unsafe { &mut *group }, ssl_ctx, is_tls);
         match result {
             Ok(socket) => {
                 self.client_mut().socket = socket;

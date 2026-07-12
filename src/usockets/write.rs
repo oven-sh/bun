@@ -11,8 +11,8 @@ use core::ffi::c_void;
 use bun_core::Fd;
 
 use crate::backend::Events;
-use crate::socket::{is_shut_down_full, SocketFlags, SocketHeader};
-use crate::tls::{Transport, TlsState};
+use crate::socket::{SocketFlags, SocketHeader, is_shut_down_full};
+use crate::tls::{TlsState, Transport};
 use crate::unsafe_core::{ext, io};
 
 /// `us_iovec_t` — layout == POSIX iovec.

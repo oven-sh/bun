@@ -19,8 +19,7 @@ use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
     self as jsc, ErrorCode, ErrorableResolvedSource, ErrorableString, Exception, JSGlobalObject,
-    JSInternalPromise, JSValue, JsResult, PlatformEventLoop, ResolvedSource, VM,
-    ZigException,
+    JSInternalPromise, JSValue, JsResult, PlatformEventLoop, ResolvedSource, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;

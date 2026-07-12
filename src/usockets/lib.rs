@@ -83,28 +83,30 @@ pub use bun_core::Timespec;
 pub use connecting::ConnectingSocket;
 pub use dispatch as vtable;
 pub use dispatch::Handler;
+pub use dispatch::{
+    KindEntry, KindTable, SOCKET_KIND_COUNT, TlsSideChannelHooks, validate_kind_table,
+};
 pub use group::{ConnectResult, SocketGroup, VTable};
+#[cfg(windows)]
+pub use handle::WindowsNamedPipe;
 pub use handle::{
     AnySocket, CloseCode, ConnectError, ConnectingRef, ExtSlot, InternalSocket, ListenSocket,
     NewSocketHandler, SocketHandler, SocketRef, SocketTCP, SocketTLS, SocketTcp, SocketTls,
     UpgradedDuplex,
 };
-#[cfg(windows)]
-pub use handle::WindowsNamedPipe;
 pub use kind::SocketKind;
-pub use dispatch::{KindEntry, KindTable, SOCKET_KIND_COUNT, TlsSideChannelHooks, validate_kind_table};
-pub use protocol::{
-    CloseCode2, ConnectFailure, OwnerRef, Protocol, VerifyError, kind_entry, owner_ref_of,
-    this_ptr_of,
-};
 #[cfg(not(windows))]
 pub use loop_::PosixLoop;
-pub use loop_::{InternalLoopData, Loop, LoopHandler};
-pub use loop_::{PollEvents, PollProtocol, PollRef, PollSource};
 #[cfg(windows)]
 pub use loop_::WindowsLoop;
 pub use loop_::on_thread_exit;
 pub use loop_::wakeup::{us_loop_run, us_wakeup_loop};
+pub use loop_::{InternalLoopData, Loop, LoopHandler};
+pub use loop_::{PollEvents, PollProtocol, PollRef, PollSource};
+pub use protocol::{
+    CloseCode2, ConnectFailure, OwnerRef, Protocol, VerifyError, kind_entry, owner_ref_of,
+    this_ptr_of,
+};
 pub use socket::{SocketHeader, us_socket_t};
 pub use tls::SSL;
 pub use tls::context::{

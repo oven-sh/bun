@@ -3,12 +3,12 @@
 //! the dynamic on_server_name callback and the sni_resolve suspend/resume
 //! path (docs/cabi.md §4.3).
 
-use core::ffi::{c_char, c_int, c_void, CStr};
+use core::ffi::{CStr, c_char, c_int, c_void};
 use std::collections::BTreeMap;
 
 use crate::handle::ListenSocket;
 use crate::socket::us_socket_t;
-use crate::tls::context::{ssl_ctx_unref, ssl_ctx_up_ref, SslCtx};
+use crate::tls::context::{SslCtx, ssl_ctx_unref, ssl_ctx_up_ref};
 
 /// sni_tree.cpp MAX_LABELS: find/remove reject hostnames with >10 labels;
 /// add has no limit (A.5, ported verbatim).

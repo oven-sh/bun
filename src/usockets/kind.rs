@@ -101,5 +101,4 @@ impl SocketKind {
             SocketKind::UwsHttp | SocketKind::UwsHttpTls | SocketKind::UwsWs | SocketKind::UwsWsTls
         )
     }
-
 }

@@ -529,7 +529,9 @@ mod kqueue_sys {
 }
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-pub(crate) use kqueue_sys::{kevent_error_events, kevent_wait_ready, kqueue_create, make_kev, zeroed_kev};
+pub(crate) use kqueue_sys::{
+    kevent_error_events, kevent_wait_ready, kqueue_create, make_kev, zeroed_kev,
+};
 // Extended form (filter payloads): darwin Machport/Memorystatus arms plus the
 // macos+freebsd Proc(NOTE_EXIT) arm.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]

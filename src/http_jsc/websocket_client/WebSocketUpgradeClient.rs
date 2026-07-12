@@ -483,7 +483,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         .as_usockets_for_client_verification();
                     // SAFETY: `vm_ptr` is the live per-thread VM (caller
                     // contract); JS thread.
-                    let ctx = unsafe { (hooks.ssl_ctx_cache_get_or_create)(vm_ptr, &opts, &mut err) };
+                    let ctx =
+                        unsafe { (hooks.ssl_ctx_cache_get_or_create)(vm_ptr, &opts, &mut err) };
                     let Some(ctx) = ctx else {
                         // Do NOT fall through to the default trust store — the
                         // user passed an explicit CA/cert and BoringSSL
@@ -783,7 +784,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         // SAFETY: SSL_get_servername returns a NUL-terminated C
                         // string owned by the SSL session; full provenance
                         // retained above.
-                        unsafe { bun_core::ffi::cstr(servername) }.to_bytes().to_vec()
+                        unsafe { bun_core::ffi::cstr(servername) }
+                            .to_bytes()
+                            .to_vec()
                     } else {
                         Vec::new()
                     }
@@ -850,9 +853,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        self.to_send_len.set(
-            self.input_body_buf.borrow().len() - usize::try_from(wrote).expect("int cast"),
-        );
+        self.to_send_len
+            .set(self.input_body_buf.borrow().len() - usize::try_from(wrote).expect("int cast"));
     }
 
     pub fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
@@ -863,7 +865,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// Snapshot of the tunnel pointer, with the `proxy` RefCell borrow scoped
     /// so re-entrant tunnel callbacks can reach `clear_data` safely.
     fn tunnel_ptr(&self) -> Option<core::ptr::NonNull<WebSocketProxyTunnel>> {
-        self.proxy.borrow().as_ref().and_then(WebSocketProxy::get_tunnel)
+        self.proxy
+            .borrow()
+            .as_ref()
+            .and_then(WebSocketProxy::get_tunnel)
     }
 
     pub fn handle_data(&self, socket: Socket<SSL>, data: &[u8]) {
@@ -1025,8 +1030,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
 
         // For wss:// through proxy, we need to do TLS handshake inside the tunnel
-        let target_https: Option<bool> =
-            self.proxy.borrow().as_ref().map(WebSocketProxy::is_target_https);
+        let target_https: Option<bool> = self
+            .proxy
+            .borrow()
+            .as_ref()
+            .map(WebSocketProxy::is_target_https);
         let Some(target_https) = target_https else {
             // Proxy state must exist in proxy_handshake state.
             self.fail(ErrorCode::ProxyTunnelFailed);
@@ -1059,9 +1067,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        self.to_send_len.set(
-            self.input_body_buf.borrow().len() - usize::try_from(wrote).expect("int cast"),
-        );
+        self.to_send_len
+            .set(self.input_body_buf.borrow().len() - usize::try_from(wrote).expect("int cast"));
 
         // If there's remaining data after the proxy response, process it
         if !remain_buf.is_empty() {

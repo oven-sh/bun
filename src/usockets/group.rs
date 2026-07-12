@@ -6,7 +6,7 @@
 //! §6 (connect entry), §7 (listen/accept). Socket close/dispatch paths live
 //! in socket.rs and call back into the linkage helpers here.
 
-use core::ffi::{c_int, c_void, CStr};
+use core::ffi::{CStr, c_int, c_void};
 use core::ptr;
 
 use crate::backend::{Events, PollType};
@@ -14,12 +14,12 @@ use crate::connecting::{self, ConnectingSocket};
 use crate::dispatch;
 use crate::handle::{CloseCode, ListenSocket};
 use crate::kind::SocketKind;
-use crate::loop_::{timeouts, Loop};
-use crate::socket::{self, close_raw, socket_close, us_socket_t, SocketFlags};
+use crate::loop_::{Loop, timeouts};
+use crate::socket::{self, SocketFlags, close_raw, socket_close, us_socket_t};
+use crate::tls::Transport;
 use crate::tls::context::{self as tls_context, SslCtx, us_bun_verify_error_t};
 use crate::tls::sni::{OnServerName, SniMap};
 use crate::tls::state::TlsState;
-use crate::tls::Transport;
 use crate::unsafe_core::ext::{deref_mut, drop_box, header_mut};
 use crate::unsafe_core::{ffi, io};
 use crate::{LIBUS_LISTEN_DEFER_ACCEPT, LIBUS_SOCKET_ALLOW_HALF_OPEN, LIBUS_SOCKET_DESCRIPTOR};
@@ -329,8 +329,8 @@ impl SocketGroup {
         // 1. local_host is only ever a literal IP — never resolved. An
         // unparseable one is silently ignored: connect proceeds unbound
         // (context.c:574-578 has no failure branch).
-        let local =
-            local_binding.and_then(|(local_host, local_port)| io::try_parse_ip(local_host, local_port));
+        let local = local_binding
+            .and_then(|(local_host, local_port)| io::try_parse_ip(local_host, local_port));
 
         // 2. Literal host: direct connect, no DNS.
         if let Some(addr) = io::try_parse_ip(host, port16) {
@@ -378,7 +378,9 @@ impl SocketGroup {
         }
 
         // 4. Slow path: connecting socket owns the request from here.
-        ConnectResult::Connecting(connecting::create(this, kind, ssl_ctx, req, port16, options))
+        ConnectResult::Connecting(connecting::create(
+            this, kind, ssl_ctx, req, port16, options,
+        ))
     }
 
     /// Same shape via the unix connect syscalls; no DNS, no connecting

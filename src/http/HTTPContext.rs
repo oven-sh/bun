@@ -502,8 +502,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     }
 
     pub(crate) fn tag_as_h2(socket: HTTPSocket<SSL>, session: *const h2::ClientSession) {
-        let session =
-            NonNull::new(session.cast_mut()).expect("tag_as_h2 requires a live session");
+        let session = NonNull::new(session.cast_mut()).expect("tag_as_h2 requires a live session");
         Self::set_state(socket, ActiveSocket::H2(session));
     }
 
@@ -536,10 +535,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         self.init_with_opts(&opts)
     }
 
-    fn init_with_opts(
-        &mut self,
-        opts: &uws::BunSocketContextOptions,
-    ) -> Result<(), InitError> {
+    fn init_with_opts(&mut self, opts: &uws::BunSocketContextOptions) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
         let mut err = uws::create_bun_socket_error_t::none;
         // `uws::SslCtx` (bssl-sys) and `SSL_CTX` (bun_boringssl_sys) are two
@@ -667,7 +663,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // `PooledSocket::drop` (which would otherwise drop garbage in
                     // `ssl_config: Option<Arc>` / `target_hostname: Box<[u8]>`).
                     let pending_addr = slot.addr();
-                    owner_ref.data().state.set(ActiveSocket::Pooled(pending_addr));
+                    owner_ref
+                        .data()
+                        .state
+                        .set(ActiveSocket::Pooled(pending_addr));
                     socket.flush();
                     socket.timeout(0);
                     socket.set_timeout_minutes(5);
@@ -894,7 +893,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
             .http_proxy
             .clone()
             .unwrap_or_else(|| client.url.clone());
-        let ssl_ctx = if SSL { self.ssl_ctx_for_connect() } else { None };
+        let ssl_ctx = if SSL {
+            self.ssl_ctx_for_connect()
+        } else {
+            None
+        };
         let owner = SocketOwner::<SSL>::new_client(client);
         // Second ref so the owner-held handle can be stamped after connect
         // (connect_unix_owned transfers `owner` to the core ext).
@@ -1032,7 +1035,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // Retag the parked owner to the new client and refresh its
                     // held handle, then release the pool's ref (the core ext
                     // ref keeps the owner alive while the socket lives).
-                    o.data().state.set(ActiveSocket::Client(client.as_erased_ptr()));
+                    o.data()
+                        .state
+                        .set(ActiveSocket::Client(client.as_erased_ptr()));
                     o.data().socket.set(sock);
                     o.deref();
                 } else {
@@ -1084,7 +1089,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
         }
 
-        let ssl_ctx = if SSL { self.ssl_ctx_for_connect() } else { None };
+        let ssl_ctx = if SSL {
+            self.ssl_ctx_for_connect()
+        } else {
+            None
+        };
         let owner = SocketOwner::<SSL>::new_client(client);
         // Second ref so the owner-held handle can be stamped after connect
         // (connect_owned transfers `owner` to the core ext).

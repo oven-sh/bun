@@ -44,22 +44,18 @@ const E_WS_UPGRADE: KindEntry = kind_entry::<
 const E_WS_UPGRADE_TLS: KindEntry = kind_entry::<
     bun_http_jsc::websocket_client::websocket_upgrade_client::HTTPClient<true>,
 >(K::WsClientUpgradeTls);
-const E_WS: KindEntry =
-    kind_entry::<bun_http_jsc::websocket_client::WebSocket<false>>(K::WsClient);
+const E_WS: KindEntry = kind_entry::<bun_http_jsc::websocket_client::WebSocket<false>>(K::WsClient);
 const E_WS_TLS: KindEntry =
     kind_entry::<bun_http_jsc::websocket_client::WebSocket<true>>(K::WsClientTls);
-const E_POSTGRES: KindEntry = kind_entry::<
-    bun_sql_jsc::postgres::postgres_sql_connection::PostgresProtocol,
->(K::Postgres);
-const E_POSTGRES_TLS: KindEntry = kind_entry::<
-    bun_sql_jsc::postgres::postgres_sql_connection::PostgresProtocol,
->(K::PostgresTls);
+const E_POSTGRES: KindEntry =
+    kind_entry::<bun_sql_jsc::postgres::postgres_sql_connection::PostgresProtocol>(K::Postgres);
+const E_POSTGRES_TLS: KindEntry =
+    kind_entry::<bun_sql_jsc::postgres::postgres_sql_connection::PostgresProtocol>(K::PostgresTls);
 const E_MYSQL: KindEntry =
     kind_entry::<bun_sql_jsc::mysql::js_my_sql_connection::MySQLSocketProtocol>(K::Mysql);
 const E_MYSQL_TLS: KindEntry =
     kind_entry::<bun_sql_jsc::mysql::js_my_sql_connection::MySQLSocketProtocol>(K::MysqlTls);
-const E_VALKEY: KindEntry =
-    kind_entry::<crate::valkey_jsc::js_valkey::ValkeyProtocol>(K::Valkey);
+const E_VALKEY: KindEntry = kind_entry::<crate::valkey_jsc::js_valkey::ValkeyProtocol>(K::Valkey);
 const E_VALKEY_TLS: KindEntry =
     kind_entry::<crate::valkey_jsc::js_valkey::ValkeyProtocol>(K::ValkeyTls);
 const E_SPAWN_IPC: KindEntry = kind_entry::<bun_jsc::ipc::SpawnIpcProtocol>(K::SpawnIpc);
@@ -128,9 +124,8 @@ fn ssl_raw_tap_hook(s: *mut us_socket_t, data: &[u8]) {
     let sock = wrap::<true>(s);
     // upgradeTLS sets the tap bit only after the owner-swapping adopt, so an
     // unstamped/mistyped owner here is an invariant violation — loud in debug.
-    let twin = with_socket_owner::<true, TLSSocket, _>(&sock, |tls| {
-        tls.twin.get().as_ref().cloned()
-    });
+    let twin =
+        with_socket_owner::<true, TLSSocket, _>(&sock, |tls| tls.twin.get().as_ref().cloned());
     debug_assert!(twin.is_some(), "ssl_raw_tap on unstamped ext");
     // Hold our own +1 on the `[raw, _]` twin across the handler: `on_data`
     // may re-enter JS and drop the `tls.twin` ref mid-call.

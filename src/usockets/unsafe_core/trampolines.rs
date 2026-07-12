@@ -38,8 +38,7 @@ unsafe extern "Rust" {
 }
 
 #[cfg(test)]
-static BUN_UWS_KIND_TABLE: crate::dispatch::KindTable =
-    [None; crate::dispatch::SOCKET_KIND_COUNT];
+static BUN_UWS_KIND_TABLE: crate::dispatch::KindTable = [None; crate::dispatch::SOCKET_KIND_COUNT];
 #[cfg(test)]
 static BUN_UWS_TLS_SIDE_CHANNEL: crate::dispatch::TlsSideChannelHooks =
     crate::dispatch::TlsSideChannelHooks {
@@ -277,7 +276,14 @@ pub(crate) fn invoke_open(vt: &VTable, s: *mut us_socket_t, is_client: bool, ip:
         // SAFETY: slot signature matches this lowering; `ip` outlives the
         // call. The `*mut` is C-ABI shape only — `ip` is lowered from a
         // shared borrow, so the handler must not write through it (cabi §4.1).
-        let _ = unsafe { f(s, is_client as c_int, ip.as_ptr().cast_mut(), c_len(ip.len())) };
+        let _ = unsafe {
+            f(
+                s,
+                is_client as c_int,
+                ip.as_ptr().cast_mut(),
+                c_len(ip.len()),
+            )
+        };
     }
 }
 
@@ -510,9 +516,7 @@ pub fn this_ptr_of<O>(o: &O) -> bun_ptr::ThisPtr<O> {
 /// `None` for stale/detached handles, v1 kinds, owner-type mismatches, and
 /// the detached/pre-stamp (null-word) window. The caller must `deref()` (or
 /// transfer) the returned ref — `RefPtr` has no `Drop`.
-pub fn socket_owner_ref<const SSL: bool, O>(
-    s: &NewSocketHandler<SSL>,
-) -> Option<bun_ptr::RefPtr<O>>
+pub fn socket_owner_ref<const SSL: bool, O>(s: &NewSocketHandler<SSL>) -> Option<bun_ptr::RefPtr<O>>
 where
     O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
 {
@@ -616,7 +620,9 @@ impl<P: Protocol> Trampolines2<P> {
     pub(crate) extern "C" fn on_fd(s: *mut us_socket_t, fd: c_int) -> *mut us_socket_t {
         // POSIX-only event (SCM_RIGHTS); the `as _` widens for the Windows
         // Fd backing type, where this slot never fires.
-        Self::dispatch(s, |o, sock| P::on_fd(o, sock, bun_core::Fd::from_native(fd as _)));
+        Self::dispatch(s, |o, sock| {
+            P::on_fd(o, sock, bun_core::Fd::from_native(fd as _))
+        });
         s
     }
 
@@ -667,7 +673,9 @@ impl<P: Protocol> Trampolines2<P> {
         // SAFETY: occupied slab slot (dispatch validates parity first); raw
         // field read only (pending window, C13).
         let word = unsafe { (*cs).ext };
-        Self::with_owner(word, |o| P::on_connect_error(o, ConnectFailure { errno: code }));
+        Self::with_owner(word, |o| {
+            P::on_connect_error(o, ConnectFailure { errno: code })
+        });
         cs
     }
 

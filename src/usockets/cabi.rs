@@ -53,7 +53,12 @@ pub type LoopCb = unsafe extern "C" fn(*mut Loop);
 /// `(ptr, c_int len)` → byte slice; null/non-positive lengths become empty.
 unsafe fn byte_slice<'a>(data: *const c_char, len: c_int) -> &'a [u8] {
     // SAFETY: caller passes a buffer valid for `len` bytes when non-null.
-    unsafe { ext::c_slice(data.cast_mut().cast::<u8>(), usize::try_from(len).unwrap_or(0)) }
+    unsafe {
+        ext::c_slice(
+            data.cast_mut().cast::<u8>(),
+            usize::try_from(len).unwrap_or(0),
+        )
+    }
 }
 
 unsafe fn opt_cstr<'a>(p: *const c_char) -> Option<&'a CStr> {

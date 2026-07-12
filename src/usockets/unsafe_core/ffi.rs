@@ -364,7 +364,13 @@ pub(crate) fn slab_alloc_socket(
 ) -> *mut us_socket_t {
     // SAFETY: loop-thread call on a live loop; the autoref borrow covers only
     // the `sockets` field place.
-    unsafe { (*loop_).sockets.alloc_with_ext(value, ext_capacity).0.as_ptr() }
+    unsafe {
+        (*loop_)
+            .sockets
+            .alloc_with_ext(value, ext_capacity)
+            .0
+            .as_ptr()
+    }
 }
 
 /// Connecting-slab twin of [`slab_alloc_socket`] (same aliasing rationale).
@@ -1217,7 +1223,10 @@ pub(crate) mod uv {
         // failure the box is reclaimed here (uv registered nothing). On
         // success the box is owned by `s.uv_p` until `socket_poll_stop_close`.
         unsafe {
-            debug_assert!((*s).uv_p.is_null(), "double first-arm would leak the old uv_poll");
+            debug_assert!(
+                (*s).uv_p.is_null(),
+                "double first-arm would leak the old uv_poll"
+            );
             let h: *mut UvPollHandle = Box::into_raw(Box::new(mem::zeroed()));
             if sys::uv_poll_init_socket(uv_loop_of(loop_), &raw mut (*h).uv, (*s).fd) != 0 {
                 drop(Box::from_raw(h));
@@ -2158,9 +2167,8 @@ pub(crate) unsafe extern "C" fn sni_cb(ssl: *mut SSL, _al: *mut c_int, _arg: *mu
         return SSL_TLSEXT_ERR_OK;
     }
     // SAFETY: live ssl inside the servername callback.
-    let hostname = unsafe {
-        bssl_sys::SSL_get_servername(ssl, bssl_sys::TLSEXT_NAMETYPE_host_name)
-    };
+    let hostname =
+        unsafe { bssl_sys::SSL_get_servername(ssl, bssl_sys::TLSEXT_NAMETYPE_host_name) };
     if !hostname.is_null() {
         // SAFETY: BoringSSL returns a NUL-terminated servername.
         let host = unsafe { CStr::from_ptr(hostname) };

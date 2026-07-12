@@ -79,17 +79,17 @@ with create/write/read/ctrl hooks; `BIO_set_data` points at the `loop_ssl_data`.
      parking a partial one.
   3. Otherwise: `us_socket_raw_write(ssl_socket, …)` directly (`openssl.c:560-567`); 0 bytes
      → `BIO_set_retry_write` and −1 (→ `SSL_ERROR_WANT_WRITE`).
-  `us_socket_raw_write` (`socket.c:537`) NEVER re-enters the SSL layer and deliberately only
-  gates on fd-closed / FIN-sent — NOT on TLS shutdown — so close_notify can be flushed after
-  `SSL_shutdown` set SENT_SHUTDOWN (`socket.c:538-547` comment). Partial writes set
-  `flags.last_write_failed` and arm writable polling.
+     `us_socket_raw_write` (`socket.c:537`) NEVER re-enters the SSL layer and deliberately only
+     gates on fd-closed / FIN-sent — NOT on TLS shutdown — so close_notify can be flushed after
+     `SSL_shutdown` set SENT_SHUTDOWN (`socket.c:538-547` comment). Partial writes set
+     `flags.last_write_failed` and arm writable polling.
 - **ctrl** (`openssl.c:486-493`): `BIO_CTRL_FLUSH` → 1, everything else → 0.
 
 ### 1.4 Re-entrancy protocol (`us_internal_ssl_loop_state_save/restore`)
 
 Because the routing state is loop-global, **any JS callback that runs from inside
 `SSL_do_handshake`/`SSL_read`** (SNI resolver, ALPN cb, handshake dispatch, data dispatch,
-session/keylog dispatch) can write to or destroy a *different* TLS socket on the same loop,
+session/keylog dispatch) can write to or destroy a _different_ TLS socket on the same loop,
 which repoints `ssl_socket` and clobbers the read window. Rules:
 
 - **MUST** save `{ssl_socket, ssl_read_input, ssl_read_input_length, ssl_read_input_offset}`
@@ -129,7 +129,7 @@ which repoints `ssl_socket` and clobbers the read window. Rules:
   - `SSL_set_connect_state`;
   - `SSL_set_tlsext_host_name(ssl, sni)` when an SNI name was passed;
   - **Verification is per-SSL, never per-CTX**: if `SSL_CTX_get_verify_mode(ctx) ==
-    SSL_VERIFY_NONE` (context built without ca/requestCert), the socket gets
+SSL_VERIFY_NONE` (context built without ca/requestCert), the socket gets
     `SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback)`, and — unless the CTX is
     marked as carrying user CAs via the `us_ctx_user_ca_ex_idx` ex_data flag — a per-SSL
     trust store: `SSL_set0_verify_cert_store(ssl, us_get_shared_default_ca_store())`.
@@ -185,8 +185,9 @@ which repoints `ssl_socket` and clobbers the read window. Rules:
 
 Fired **exactly once** per connection (state moves to HANDSHAKE_COMPLETED first, so
 re-entry no-ops). Call sites:
+
 1. `ssl_update_handshake` success/failure paths (above);
-2. inside the `SSL_read` loop when the handshake completes *with* app data in the same
+2. inside the `SSL_read` loop when the handshake completes _with_ app data in the same
    record flight — fired BEFORE delivering data so JS can read ALPN/cert and re-tag the
    socket, with full loop-state save/restore around it (`openssl.c:1949-1967`);
 3. inside the `SSL_read` loop when the handshake completed but no app data (peer's Finished
@@ -216,9 +217,9 @@ Payload: `us_dispatch_handshake(s, success, us_bun_verify_error_t)`
     28 X509_V_ERR cases, else "UNSPECIFIED"); `reason` =
     `X509_verify_cert_error_string`. `error == 0` ⇒ code/reason NULL.
 - Special errors: parked-fatal-reason dispatch uses `{error: -71, code: "EPROTO",
-  reason: <ERR_error_string_n text>}` (`openssl.c:1489-1491`); close-before-established
+reason: <ERR_error_string_n text>}` (`openssl.c:1489-1491`); close-before-established
   uses `{error: -46, code: "ECONNRESET", reason: "Client network socket disconnected
-  before secure TLS connection was established"}` (`openssl.c:1517-1520`).
+before secure TLS connection was established"}` (`openssl.c:1517-1520`).
 - **The C layer never fails closed itself.** `us_verify_callback` always returns 1
   (`openssl.c:865-870`) so the handshake never aborts on verification; the verdict is
   carried in the verify_error and **the fail-closed decision is made in Rust**:
@@ -294,7 +295,7 @@ Two-callback design on the listener's default `SSL_CTX`:
   `ssl_set_loop_data` + `ssl_update_handshake` re-drives, and `us_select_cert_cb` re-fires
   and consumes the state.
 - **SNI tree** (`sni_tree.cpp`, see §7.5): nodes hold `struct sni_node_t {SSL_CTX* ctx
-  (upref'd); void* user}` (`openssl.c:128-132`); destructor frees both
+(upref'd); void* user}` (`openssl.c:128-132`); destructor frees both
   (`openssl.c:2266-2271`). `us_listen_socket_add_server_name` also stashes `user` in CTX
   ex_data `us_sni_ex_idx` so per-socket lookup works via `SSL_get_SSL_CTX` regardless of
   which ctx SNI selected (`openssl.c:2473-2476`; consumed by
@@ -312,11 +313,11 @@ Two-callback design on the listener's default `SSL_CTX`:
 ### 2.7 Sessions, tickets, keylog
 
 - CTX config (`openssl.c:1077-1086`): session cache mode `CLIENT|SERVER|NO_INTERNAL|
-  NO_AUTO_CLEAR` + `SSL_CTX_sess_set_new_cb(us_ssl_new_session_cb)` +
+NO_AUTO_CLEAR` + `SSL_CTX_sess_set_new_cb(us_ssl_new_session_cb)` +
   `SSL_CTX_set_keylog_callback(us_ssl_keylog_cb)`. Rationale: for TLS 1.3 the resumable
   session only exists when the peer's NewSessionTicket arrives, and BoringSSL only exposes
   it via the new-session callback; NO_INTERNAL stops BoringSSL double-caching.
-- **Parking protocol** (MUST preserve): both callbacks fire from *inside*
+- **Parking protocol** (MUST preserve): both callbacks fire from _inside_
   `SSL_read`/`SSL_do_handshake`, where dispatching JS could free the SSL under the caller.
   So they only serialize and park on SSL ex_data queues
   (`us_ssl_pending_session_idx` / `us_ssl_pending_keylog_idx`), append-order preserved
@@ -347,6 +348,7 @@ Two-callback design on the listener's default `SSL_CTX`:
 
 ALPN is configured **entirely from Rust** via raw BoringSSL calls on the native handles;
 openssl.c contains no ALPN code (only quic.c does for lsquic):
+
 - client: `SSL_set_alpn_protos` on the per-socket SSL
   (`src/runtime/socket/socket_body.rs:1435`, `src/http/lib.rs:1134`);
 - server: `SSL_CTX_set_alpn_select_cb(ctx, select_alpn_callback)` registered on the
@@ -354,9 +356,9 @@ openssl.c contains no ALPN code (only quic.c does for lsquic):
   (`socket_body.rs:1398-1420`); the callback handles dynamic per-connection ALPN (Node
   ALPNCallback contract) and falls back to the static list (`socket_body.rs:70-215`);
 - read-back: `SSL_get0_alpn_selected` (`src/runtime/socket/tls_socket_functions.rs:1085-1102`).
-An implementation that keeps the Rust side intact only needs to keep exposing the `SSL*`
-(or equivalent hooks) — but note the ALPN callback runs inside the handshake and is a §1.4
-nesting trigger.
+  An implementation that keeps the Rust side intact only needs to keep exposing the `SSL*`
+  (or equivalent hooks) — but note the ALPN callback runs inside the handshake and is a §1.4
+  nesting trigger.
 
 ## 3. Read path
 
@@ -391,7 +393,7 @@ nesting trigger.
      - `ZERO_RETURN` (peer close_notify): flush sessions/keylog, dispatch any decrypted
        `read` bytes, then `ssl_close(s, 0, NULL)` → clean close (`openssl.c:1888-1903`).
      - `SSL_ERROR_SSL` / `SSL_ERROR_SYSCALL`: park fatal reason (§3.4), `ssl_close(s,0,
-       NULL)`, clear the scratch (`openssl.c:1905-1910`).
+NULL)`, clear the scratch (`openssl.c:1905-1910`).
 7. Post-loop: if `ssl_write_wants_read && !ssl_read_wants_write` → clear flag and re-enter
    `us_internal_ssl_on_writable(s)` (a prior SSL_write starved for handshake input can
    proceed now; the `!ssl_read_wants_write` guard prevents recursion)
@@ -453,7 +455,7 @@ bytes consumed; 0 = caller must buffer and retry on writable.
   sequenced). Return 1 = wire took all, 0 = spill pending.
 - `ssl_drain_spill` (`openssl.c:602-617`): raw-write the remaining slice; frees + clears
   the slot when done. Returns 1 when clear or not-ours.
-- **Ordering invariants (MUST)**: spilled ciphertext reaches *that* socket's fd, in order,
+- **Ordering invariants (MUST)**: spilled ciphertext reaches _that_ socket's fd, in order,
   before any of its later records; drained from the owner's writable event
   (`openssl.c:1776-1791`); while another socket owns the slot, other sockets write
   through per-record (pre-batching behavior). Deferred actions after drain:
@@ -578,23 +580,23 @@ relocation support can be dropped entirely.
 `us_ssl_ctx_build_raw`, `openssl.c:893-1088`, and `us_ssl_ctx_from_options`,
 `openssl.c:1234-1257`.) Effects, in application order:
 
-| field | effect | cite |
-|---|---|---|
-| — | `SSL_CTX_new(TLS_method())`; live-counter ex_data registered immediately so every exit balances | 897-901 |
-| — | **Required modes**: `SSL_CTX_set_read_ahead(1)`, `SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER` — "changing these breaks the BIO logic" | 903-905 |
-| `ssl_min_version`/`ssl_max_version` | `SSL_CTX_set_min/max_proto_version`; **default floor TLS1_2_VERSION** when min unset; max only set when nonzero | 906-911 |
-| `ssl_prefer_low_memory_usage` | adds `SSL_MODE_RELEASE_BUFFERS` | 913-915 |
-| `passphrase` | strdup'd into `SSL_CTX_set_default_passwd_cb_userdata` + `passphrase_cb` (copies the passphrase, fails if longer than buf, `openssl.c:473-479`); **dropped as soon as key loading finishes** (or on build failure) so `SSL_CTX_free` is sufficient everywhere downstream | 917-924, 876-889, 974-977 |
-| `cert`/`key` arrays (`cert_count`/`key_count`) vs `cert_file_name`/`key_file_name` | **Pair-wise interleaved loading** when in-memory arrays with equal counts > 1 (multi-identity RSA+EC; loading all certs then all keys would fail KEY_TYPE_MISMATCH); else certs (file or each mem chain via `us_ssl_ctx_use_certificate_chain`, 812-863: `PEM_read_bio_X509_AUX` leaf + chain certs, trailing NO_START_LINE tolerated) then keys (file or mem PEM/DER via `us_ssl_ctx_use_privatekey_content`, 734-766) | 926-973 |
-| `ca_file_name` | `SSL_load_client_CA_file` → `SSL_CTX_set_client_CA_list`; mark `us_ctx_user_ca_ex_idx`; `SSL_CTX_load_verify_locations` **into the fresh empty store** (explicit CA REPLACES default trust — Node semantics); then set verify mode | 979-1001 |
-| `ca` array | mark user-CA; add each PEM (may contain multiple certs) to the CTX's own store AND client-CA list via `add_ca_cert_to_ctx_store` (768-810; a PEM doc with zero certs but a `-----BEGIN` block is tolerated Node-style — e.g. a private key passed as ca; non-PEM is an error); verify mode per cert-loop iteration | 1003-1021 |
-| `request_cert` (no CAs) | `SSL_CTX_set_cert_store(us_get_shared_default_ca_store())` (process-shared bundled-roots store, refcounted); verify mode | 1022-1031 |
-| `reject_unauthorized` | only chooses `SSL_VERIFY_PEER \| SSL_VERIFY_FAIL_IF_NO_PEER_CERT` vs `SSL_VERIFY_PEER` in the three branches above; **no CA/request_cert ⇒ CTX verify mode stays NONE** (client-side verification is per-SSL, §2.1) | 998-1030 |
-| `dh_params_file_name` | `PEM_read_DHparams` from file → `SSL_CTX_set_tmp_dh`; then forces `SSL_CTX_set_cipher_list(DEFAULT_CIPHER_LIST)` (default_ciphers.h) | 1033-1057 |
-| `ssl_ciphers` | `SSL_CTX_set_cipher_list`; failure → INVALID_CIPHERS **except** the empty-string+NO_CIPHER_MATCH combo which is tolerated; error is *peeked* not consumed so the Rust caller can decompose the reason | 1059-1071 |
-| `secure_options` | `SSL_CTX_set_options(secure_options)` verbatim (Node secureOptions bitmask) | 1073-1075 |
-| — | session cache mode + new-session cb + keylog cb (§2.7) | 1077-1086 |
-| `client_renegotiation_limit`/`window` | packed into ctx ex_data (§2.5) — applied by `us_ssl_ctx_from_options`, NOT build_raw | 1250-1254 |
+| field                                                                              | effect                                                                                                                                                                                                                                                                                                                                                                                                                  | cite                      |
+| ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| —                                                                                  | `SSL_CTX_new(TLS_method())`; live-counter ex_data registered immediately so every exit balances                                                                                                                                                                                                                                                                                                                         | 897-901                   |
+| —                                                                                  | **Required modes**: `SSL_CTX_set_read_ahead(1)`, `SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER` — "changing these breaks the BIO logic"                                                                                                                                                                                                                                                                                          | 903-905                   |
+| `ssl_min_version`/`ssl_max_version`                                                | `SSL_CTX_set_min/max_proto_version`; **default floor TLS1_2_VERSION** when min unset; max only set when nonzero                                                                                                                                                                                                                                                                                                         | 906-911                   |
+| `ssl_prefer_low_memory_usage`                                                      | adds `SSL_MODE_RELEASE_BUFFERS`                                                                                                                                                                                                                                                                                                                                                                                         | 913-915                   |
+| `passphrase`                                                                       | strdup'd into `SSL_CTX_set_default_passwd_cb_userdata` + `passphrase_cb` (copies the passphrase, fails if longer than buf, `openssl.c:473-479`); **dropped as soon as key loading finishes** (or on build failure) so `SSL_CTX_free` is sufficient everywhere downstream                                                                                                                                                | 917-924, 876-889, 974-977 |
+| `cert`/`key` arrays (`cert_count`/`key_count`) vs `cert_file_name`/`key_file_name` | **Pair-wise interleaved loading** when in-memory arrays with equal counts > 1 (multi-identity RSA+EC; loading all certs then all keys would fail KEY_TYPE_MISMATCH); else certs (file or each mem chain via `us_ssl_ctx_use_certificate_chain`, 812-863: `PEM_read_bio_X509_AUX` leaf + chain certs, trailing NO_START_LINE tolerated) then keys (file or mem PEM/DER via `us_ssl_ctx_use_privatekey_content`, 734-766) | 926-973                   |
+| `ca_file_name`                                                                     | `SSL_load_client_CA_file` → `SSL_CTX_set_client_CA_list`; mark `us_ctx_user_ca_ex_idx`; `SSL_CTX_load_verify_locations` **into the fresh empty store** (explicit CA REPLACES default trust — Node semantics); then set verify mode                                                                                                                                                                                      | 979-1001                  |
+| `ca` array                                                                         | mark user-CA; add each PEM (may contain multiple certs) to the CTX's own store AND client-CA list via `add_ca_cert_to_ctx_store` (768-810; a PEM doc with zero certs but a `-----BEGIN` block is tolerated Node-style — e.g. a private key passed as ca; non-PEM is an error); verify mode per cert-loop iteration                                                                                                      | 1003-1021                 |
+| `request_cert` (no CAs)                                                            | `SSL_CTX_set_cert_store(us_get_shared_default_ca_store())` (process-shared bundled-roots store, refcounted); verify mode                                                                                                                                                                                                                                                                                                | 1022-1031                 |
+| `reject_unauthorized`                                                              | only chooses `SSL_VERIFY_PEER \| SSL_VERIFY_FAIL_IF_NO_PEER_CERT` vs `SSL_VERIFY_PEER` in the three branches above; **no CA/request_cert ⇒ CTX verify mode stays NONE** (client-side verification is per-SSL, §2.1)                                                                                                                                                                                                     | 998-1030                  |
+| `dh_params_file_name`                                                              | `PEM_read_DHparams` from file → `SSL_CTX_set_tmp_dh`; then forces `SSL_CTX_set_cipher_list(DEFAULT_CIPHER_LIST)` (default_ciphers.h)                                                                                                                                                                                                                                                                                    | 1033-1057                 |
+| `ssl_ciphers`                                                                      | `SSL_CTX_set_cipher_list`; failure → INVALID_CIPHERS **except** the empty-string+NO_CIPHER_MATCH combo which is tolerated; error is _peeked_ not consumed so the Rust caller can decompose the reason                                                                                                                                                                                                                   | 1059-1071                 |
+| `secure_options`                                                                   | `SSL_CTX_set_options(secure_options)` verbatim (Node secureOptions bitmask)                                                                                                                                                                                                                                                                                                                                             | 1073-1075                 |
+| —                                                                                  | session cache mode + new-session cb + keylog cb (§2.7)                                                                                                                                                                                                                                                                                                                                                                  | 1077-1086                 |
+| `client_renegotiation_limit`/`window`                                              | packed into ctx ex_data (§2.5) — applied by `us_ssl_ctx_from_options`, NOT build_raw                                                                                                                                                                                                                                                                                                                                    | 1250-1254                 |
 
 - Error reporting: `enum create_bun_socket_error_t*` out-param
   (LOAD_CA_FILE / INVALID_CA_FILE / INVALID_CA / INVALID_CIPHERS); all other failures
@@ -649,8 +651,8 @@ normative points:
    peek-don't-consume in cipher-list failure (§7.1); `ERR_peek_last_error` (not get) when
    parking so the queue survives until cleared (`openssl.c:1460-1467`).
 2. **`SSL_CTX_set_read_ahead(1)` + `SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER`** are load-bearing
-   for the custom-BIO design (`openssl.c:903-905`). ACCEPT_MOVING_WRITE_BUFFER matters
-   because retried `SSL_write`s after WANT_* may present a different buffer address
+   for the custom-BIO design (`openssl.c:903-905`). ACCEPT*MOVING_WRITE_BUFFER matters
+   because retried `SSL_write`s after WANT*\* may present a different buffer address
    (caller re-buffers plaintext).
 3. **BIO retry flags**: read/write hooks must `BIO_clear_retry_flags` then set
    retry-read/retry-write precisely; reporting a swallowed write as written is used
@@ -696,7 +698,7 @@ BoringSSL build: `oven-sh/boringssl@1a41b902` (`scripts/build/deps/boringssl.ts:
 - Bindings are generated by **bindgen at CMake time, not cargo time**
   (`vendor/boringssl/rust/CMakeLists.txt:32-73`): `bindgen wrapper.h` with
   `--allowlist-file=".*[[:punct:]]include[[:punct:]]openssl[[:punct:]].*\.h"` — i.e. the
-  allowlist is a *file* filter admitting **every** declaration in `include/openssl/*.h`.
+  allowlist is a _file_ filter admitting **every** declaration in `include/openssl/*.h`.
   `wrapper.h` includes ssl.h, bio.h, pem.h, pkcs8.h, pkcs12.h, dh.h, err.h, x509.h, etc.
   (`bssl-sys/wrapper.h:1-90`). Static-inline functions are covered via
   `--wrap-static-fns`, which emits a generated `wrapper.c` compiled into a small
@@ -715,26 +717,27 @@ BoringSSL build: `oven-sh/boringssl@1a41b902` (`scripts/build/deps/boringssl.ts:
   symbols through bssl-sys, e.g. `bssl-tls/src/io.rs:334-343`,
   `connection/lifecycle.rs:204`).
 - Caveat: **no pre-generated bindings are vendored** (no `wrapper_<target>.rs` files in
-  tree) and `bssl-sys/build.rs:93-124` only *copies* CMake-produced bindings from
+  tree) and `bssl-sys/build.rs:93-124` only _copies_ CMake-produced bindings from
   `$BORINGSSL_BUILD_DIR` and emits `cargo:rustc-link-lib=static=crypto/ssl/rust_wrapper`
   (+ `links = "bssl"`, `bssl-sys/Cargo.toml:14`).
 
 ## (b) bssl-tls viability for the event-loop design
 
-Status: explicitly WIP (`bssl-tls/src/lib.rs:31` "*WARNING* this crate is still work in
+Status: explicitly WIP (`bssl-tls/src/lib.rs:31` "_WARNING_ this crate is still work in
 progress").
 
 **What fits (genuinely sans-I/O — it does NOT own fds or require std::io/tokio):**
+
 - I/O is a **custom BIO over user traits**: `AbstractReader::read(&mut self,
-  async_ctx: Option<&mut Context>, buf) -> AbstractSocketResult{Ok(n), Retry,
-  EndOfStream, Err}` / `AbstractWriter::{write, flush}` (`bssl-tls/src/io.rs:267-295`);
+async_ctx: Option<&mut Context>, buf) -> AbstractSocketResult{Ok(n), Retry,
+EndOfStream, Err}` / `AbstractWriter::{write, flush}` (`bssl-tls/src/io.rs:267-295`);
   `Retry` maps to `BIO_set_retry_read/write` (`io.rs:400-406, 459-465`); attach via
   `TlsConnection::set_io`/`set_split_io` → `SSL_set_bio`
   (`connection/transport.rs:47-78`). Bun would implement these over ciphertext buffers —
   the same shape as §1.3 (there is no public `BIO_s_mem` pair API; the trait IS the
   memory-BIO analogue).
 - Manual handshake driving: `TlsConnectionInHandshake::do_handshake() ->
-  Result<Option<TlsRetryReason>, Error>` (`connection/lifecycle.rs:202-205`), typed
+Result<Option<TlsRetryReason>, Error>` (`connection/lifecycle.rs:202-205`), typed
   `accept()/connect()`, sync `sync_read/sync_write/flush` with
   `IoStatus::{Ok,EndOfStream,Retry,Err}` (`connection/io.rs:81-183`), `sync_shutdown`
   close_notify state machine (`lifecycle.rs:289-317`).
@@ -748,6 +751,7 @@ progress").
   timing (§2.7's parked-queue design needs the callback).
 
 **Hard gaps (all must-haves for Bun.serve / node:tls):**
+
 1. **No ALPN API at all** (no set_alpn_protos / alpn_select_cb / get0_alpn_selected
    wrappers; only error-code enum mentions).
 2. **No server SNI / certificate-selection callback** (no servername_callback,
@@ -793,8 +797,8 @@ verify.rs:72-147}`) — a good fit for cert loading (§7.1) and verify-detail ex
      `BINDGEN_RS_FILE=<path>` (`bssl-sys/src/lib.rs:17-24`), neutering build.rs's copy
      step and link directives;
   3. add the generated static-inline `wrapper.c` shims to `boringssl.ts` sources.
-  Version skew is structurally impossible (same vendored commit provides headers and
-  rust/ tree).
+     Version skew is structurally impossible (same vendored commit provides headers and
+     rust/ tree).
 - **Consumers of `bun_boringssl_sys`** (must keep compiling if we replace/augment it):
   see Appendix A §A.7 for the grep'd list — spanning node:crypto (EVP/HMAC/X509/etc.),
   `src/http` (client TLS + proxy tunnels), `src/uws` (SSLWrapper), `src/runtime/socket`
@@ -807,17 +811,18 @@ verify.rs:72-147}`) — a good fit for cert loading (§7.1) and verify-detail ex
 
 **Use `bssl-sys` (pre-generated bindings via `BINDGEN_RS_FILE`) as the raw layer inside a
 hand-written `TlsState` state machine; do NOT build on `bssl-tls`. Optionally adopt
-`bssl-x509` for cert/key loading and verify-detail extraction. Keep root_certs_* and
+`bssl-x509` for cert/key loading and verify-detail extraction. Keep root*certs*\* and
 sni_tree as-is (or port sni_tree trivially — see A.5).**
 
 Rationale:
+
 1. Part 1's contract is dominated by things no safe layer expresses: the loop-shared BIO
    routing + save/restore re-entrancy protocol (§1.4), deferred-destruction
    (`ssl_in_use`/`ssl_pending_detach` + alert-swallowing BIO), write batching with the
    single spill slot and its honesty invariant (§4), the FIN-instead-of-close_notify
    half-close substitute (§5.1), parked session/keylog queues (§2.7), async-SNI
    suspension via `ssl_select_cert_retry` (§2.6), and per-SSL verify-store overrides
-   (§2.1). The Rust implementation is a port of *this* state machine; bssl-tls would sit at the
+   (§2.1). The Rust implementation is a port of _this_ state machine; bssl-tls would sit at the
    wrong altitude even if complete.
 2. bssl-tls is WIP and missing ALPN, server SNI dispatch, client-CA-list, the
    new-session callback, and PKCS12 — each a hard requirement. Filling them means
@@ -946,7 +951,7 @@ comparison (no normalization — callers must lowercase).
 ## A.6 Root certs (per platform) — can stay as-is
 
 - `root_certs.h`: pure data (Mozilla NSS-derived PEM bundle, `us_cert_string_t
-  root_certs[]`).
+root_certs[]`).
 - `root_certs.cpp` (314 lines): `std::call_once` parse of bundled PEMs +
   `NODE_EXTRA_CA_CERTS` (`136-165`; load failure warns via
   `BUN__warn__extra_ca_load_failed`); API consumed by openssl.c and NodeTLS.cpp:
@@ -1035,5 +1040,5 @@ replacement; the socket/uws_sys/http files are the ones it touches anyway.
    RFC 6066 hostnames are case-insensitive, so correctness depends on callers
    normalizing on both add and lookup (Listener.rs lowercases both paths).
 9. **`us_socket_raw_writev`** exists but the batch flush keeps the single copy
-   + `raw_write`; iovec batching (memory-BIO + writev, as Node does) is a
-   possible perf follow-up, not required for parity.
+   - `raw_write`; iovec batching (memory-BIO + writev, as Node does) is a
+     possible perf follow-up, not required for parity.

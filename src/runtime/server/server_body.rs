@@ -3467,11 +3467,7 @@ where
         resp.end(&json_string, resp.should_close_connection());
     }
 
-    pub fn on404(
-        _this: &mut Self,
-        req: &mut uws::Request,
-        resp: &mut uws::NewAppResponse<SSL>,
-    ) {
+    pub fn on404(_this: &mut Self, req: &mut uws::Request, resp: &mut uws::NewAppResponse<SSL>) {
         if cfg!(debug_assertions) {
             // NOTE: see on_chrome_dev_tools_json_request — scoped_log! double-evaluates args.
             let m = req.method().to_vec();

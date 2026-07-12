@@ -553,7 +553,8 @@ where
 {
     // bun_uws_shim::ResponseKind, not the shim's: consumed only by unmigrated
     // bun_uws-typed FFI (`FetchHeaders::to_uws_response`, `CookieMap::write`).
-    const RESP_KIND: bun_uws_shim::ResponseKind = bun_uws_shim::ResponseKind::from(SSL_ENABLED, HTTP3);
+    const RESP_KIND: bun_uws_shim::ResponseKind =
+        bun_uws_shim::ResponseKind::from(SSL_ENABLED, HTTP3);
 
     /// Reborrow the owning server. `server` is a BACKREF (LIFETIMES.tsv): set
     /// at construction in `init()` from the `NewServer` that owns the request

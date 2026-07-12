@@ -221,9 +221,7 @@ impl SSLConfig {
     /// Returns socket options for client-side TLS with manual verification.
     /// Sets request_cert=1 (to receive server cert) and reject_unauthorized=0
     /// (to handle verification manually in handshake callback).
-    pub fn as_usockets_for_client_verification(
-        &self,
-    ) -> uws::BunSocketContextOptions {
+    pub fn as_usockets_for_client_verification(&self) -> uws::BunSocketContextOptions {
         let mut opts = self.as_usockets();
         opts.request_cert = 1;
         opts.reject_unauthorized = 0;

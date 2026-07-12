@@ -394,7 +394,14 @@ pub(crate) fn attempt_failed(c: *mut ConnectingSocket, s: *mut us_socket_t) {
 
     let remaining = attempts_count(deref_mut(c));
     if remaining <= 1 {
-        let opened = start_connections(c, if remaining == 0 { CONCURRENT_CONNECTIONS } else { 1 });
+        let opened = start_connections(
+            c,
+            if remaining == 0 {
+                CONCURRENT_CONNECTIONS
+            } else {
+                1
+            },
+        );
         if opened == 0 && attempts_count(deref_mut(c)) == 0 {
             deref_mut(c).error = libc::ECONNREFUSED;
             close_raw(c);
@@ -407,7 +414,10 @@ pub(crate) fn attempt_failed(c: *mut ConnectingSocket, s: *mut us_socket_t) {
 /// winner BEFORE `finish_promotion` drops c's ref (R6.9 ordering).
 pub(crate) fn promote_winner(c: *mut ConnectingSocket, winner: *mut us_socket_t) -> *mut SslCtx {
     let cm = deref_mut(c);
-    let attempts = core::mem::replace(&mut cm.attempts, [core::ptr::null_mut(); CONCURRENT_CONNECTIONS]);
+    let attempts = core::mem::replace(
+        &mut cm.attempts,
+        [core::ptr::null_mut(); CONCURRENT_CONNECTIONS],
+    );
     let ssl_ctx = cm.ssl_ctx;
     for s in attempts {
         if !s.is_null() && s != winner {

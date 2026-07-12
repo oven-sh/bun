@@ -541,7 +541,11 @@ impl FilePoll {
             flags,
             owner,
             registration: None,
-            allocator_type: if vm.is_js() { AllocatorType::Js } else { AllocatorType::Mini },
+            allocator_type: if vm.is_js() {
+                AllocatorType::Js
+            } else {
+                AllocatorType::Mini
+            },
         }
     }
 
@@ -723,8 +727,7 @@ impl FilePoll {
             if is_fd_direction {
                 let readable = matches!(flag, Flags::Readable | Flags::Process)
                     || self.flags.contains(Flags::PollReadable);
-                let writable =
-                    flag == Flags::Writable || self.flags.contains(Flags::PollWritable);
+                let writable = flag == Flags::Writable || self.flags.contains(Flags::PollWritable);
                 if let Err(errno) = poll_ref.change_on(loop_, readable, writable) {
                     // Failed rearm: fully disarm so the kernel, the registry
                     // slot, and the interest flags all agree with the failure
@@ -746,10 +749,8 @@ impl FilePoll {
 
         let source = match flag {
             Flags::Readable | Flags::Writable => {
-                let readable =
-                    flag == Flags::Readable || self.flags.contains(Flags::PollReadable);
-                let writable =
-                    flag == Flags::Writable || self.flags.contains(Flags::PollWritable);
+                let readable = flag == Flags::Readable || self.flags.contains(Flags::PollReadable);
+                let writable = flag == Flags::Writable || self.flags.contains(Flags::PollWritable);
                 PollSource::Fd {
                     fd: fd.native(),
                     readable,
@@ -969,7 +970,6 @@ impl Flags {
             other => other,
         }
     }
-
 }
 
 #[allow(dead_code)]

@@ -321,8 +321,8 @@ mod imp {
 
     use crate::write::UsIoVec;
     use crate::{
-        LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE, LIBUS_LISTEN_REUSE_ADDR,
-        LIBUS_LISTEN_REUSE_PORT, LIBUS_SOCKET_IPV6_ONLY,
+        LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE, LIBUS_LISTEN_REUSE_ADDR, LIBUS_LISTEN_REUSE_PORT,
+        LIBUS_SOCKET_IPV6_ONLY,
     };
     use crate::{LIBUS_SOCKET_DESCRIPTOR, LIBUS_SOCKET_ERROR};
 
@@ -414,9 +414,18 @@ mod imp {
         fault_check!(SEND, fd, len);
         // SAFETY: `data[..len]` is a valid read of `len` bytes (len ≤ data.len()).
         let r = retry_eintr!(unsafe {
-            libc::send(fd, data.as_ptr().cast(), len, MSG_NOSIGNAL | libc::MSG_DONTWAIT)
+            libc::send(
+                fd,
+                data.as_ptr().cast(),
+                len,
+                MSG_NOSIGNAL | libc::MSG_DONTWAIT,
+            )
         });
-        if r < 0 { -(errno() as isize) } else { r as isize }
+        if r < 0 {
+            -(errno() as isize)
+        } else {
+            r as isize
+        }
     }
 
     /// writev(2), IOV_MAX-capped at 1024, EINTR-retried.
@@ -428,19 +437,33 @@ mod imp {
         let r = retry_eintr!(unsafe {
             libc::writev(fd, iov.as_ptr().cast::<libc::iovec>(), count as c_int)
         });
-        if r < 0 { -(errno() as isize) } else { r as isize }
+        if r < 0 {
+            -(errno() as isize)
+        } else {
+            r as isize
+        }
     }
 
     /// 2-chunk writev (`bsd_write2`); shares the WRITEV fault hook (R11.2).
     pub(crate) fn write2(fd: LIBUS_SOCKET_DESCRIPTOR, first: &[u8], second: &[u8]) -> isize {
         fault_check!(WRITEV, fd);
         let chunks = [
-            libc::iovec { iov_base: first.as_ptr().cast_mut().cast(), iov_len: first.len() },
-            libc::iovec { iov_base: second.as_ptr().cast_mut().cast(), iov_len: second.len() },
+            libc::iovec {
+                iov_base: first.as_ptr().cast_mut().cast(),
+                iov_len: first.len(),
+            },
+            libc::iovec {
+                iov_base: second.as_ptr().cast_mut().cast(),
+                iov_len: second.len(),
+            },
         ];
         // SAFETY: `chunks` holds 2 valid iovecs borrowing `first`/`second`.
         let r = retry_eintr!(unsafe { libc::writev(fd, chunks.as_ptr(), 2) });
-        if r < 0 { -(errno() as isize) } else { r as isize }
+        if r < 0 {
+            -(errno() as isize)
+        } else {
+            r as isize
+        }
     }
 
     /// recv(2) with MSG_DONTWAIT into the loop's shared buffer, EINTR-retried.
@@ -452,7 +475,11 @@ mod imp {
         let r = retry_eintr!(unsafe {
             libc::recv(fd, buf.as_mut_ptr().cast(), len, libc::MSG_DONTWAIT)
         });
-        if r < 0 { -(errno() as isize) } else { r as isize }
+        if r < 0 {
+            -(errno() as isize)
+        } else {
+            r as isize
+        }
     }
 
     /// Control buffer sized/aligned for one SCM_RIGHTS int.
@@ -490,7 +517,11 @@ mod imp {
             ptr::write_unaligned(libc::CMSG_DATA(cmsg).cast::<c_int>(), pass);
 
             let r = retry_eintr!(libc::sendmsg(fd, &msg, 0));
-            if r < 0 { -(errno() as isize) } else { r as isize }
+            if r < 0 {
+                -(errno() as isize)
+            } else {
+                r as isize
+            }
         }
     }
 
@@ -544,7 +575,10 @@ mod imp {
     /// socket.c:305-309).
     pub(crate) fn close(fd: LIBUS_SOCKET_DESCRIPTOR, rst: bool) {
         if rst {
-            let l = libc::linger { l_onoff: 1, l_linger: 0 };
+            let l = libc::linger {
+                l_onoff: 1,
+                l_linger: 0,
+            };
             so(fd, libc::SOL_SOCKET, libc::SO_LINGER, &l);
         }
         // SAFETY: plain fd syscall; caller owns the fd.
@@ -935,7 +969,13 @@ mod imp {
         }
         if addr.ss_family as c_int == libc::AF_INET6 {
             let addr6 = as_v6(addr);
-            if so(fd, libc::IPPROTO_IPV6, libc::IPV6_MULTICAST_IF, &addr6.sin6_scope_id) != 0 {
+            if so(
+                fd,
+                libc::IPPROTO_IPV6,
+                libc::IPV6_MULTICAST_IF,
+                &addr6.sin6_scope_id,
+            ) != 0
+            {
                 return -errno();
             }
             return 0;
@@ -990,10 +1030,17 @@ mod imp {
             }
             // linux libc spells IPV6_JOIN/LEAVE_GROUP as IPV6_ADD/DROP_MEMBERSHIP (same values).
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            let option =
-                if drop { libc::IPV6_DROP_MEMBERSHIP } else { libc::IPV6_ADD_MEMBERSHIP };
+            let option = if drop {
+                libc::IPV6_DROP_MEMBERSHIP
+            } else {
+                libc::IPV6_ADD_MEMBERSHIP
+            };
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            let option = if drop { libc::IPV6_LEAVE_GROUP } else { libc::IPV6_JOIN_GROUP };
+            let option = if drop {
+                libc::IPV6_LEAVE_GROUP
+            } else {
+                libc::IPV6_JOIN_GROUP
+            };
             so(fd, libc::IPPROTO_IPV6, option, &mreq)
         } else {
             let addr4 = as_v4(addr);
@@ -1003,7 +1050,11 @@ mod imp {
                 Some(iface) => as_v4(iface).sin_addr.s_addr,
                 None => libc::INADDR_ANY.to_be(),
             };
-            let option = if drop { libc::IP_DROP_MEMBERSHIP } else { libc::IP_ADD_MEMBERSHIP };
+            let option = if drop {
+                libc::IP_DROP_MEMBERSHIP
+            } else {
+                libc::IP_ADD_MEMBERSHIP
+            };
             so(fd, libc::IPPROTO_IP, option, &mreq)
         };
         if rc != 0 { -errno() } else { 0 }
@@ -1044,7 +1095,11 @@ mod imp {
                 }
                 mreq.gsr_source = *source;
                 mreq.gsr_group = *group;
-                let option = if drop { MCAST_LEAVE_SOURCE_GROUP } else { MCAST_JOIN_SOURCE_GROUP };
+                let option = if drop {
+                    MCAST_LEAVE_SOURCE_GROUP
+                } else {
+                    MCAST_JOIN_SOURCE_GROUP
+                };
                 if so(fd, libc::IPPROTO_IPV6, option, &mreq) != 0 {
                     return -errno();
                 }
@@ -1208,8 +1263,13 @@ mod imp {
                 let ai = unsafe { &*a };
                 if ai.ai_family == family {
                     if let Ok(fd) = create_socket(ai.ai_family, ai.ai_socktype, ai.ai_protocol) {
-                        match bind_listen_fd(fd, ai.ai_family, ai.ai_addr, ai.ai_addrlen as _, options)
-                        {
+                        match bind_listen_fd(
+                            fd,
+                            ai.ai_family,
+                            ai.ai_addr,
+                            ai.ai_addrlen as _,
+                            options,
+                        ) {
                             Ok(()) => {
                                 // SAFETY: `result` is the live list; freed once.
                                 unsafe { libc::freeaddrinfo(result) };
@@ -1271,7 +1331,10 @@ mod imp {
     fn open_socket_dir(path: &[u8], dirname_len: usize, flags: c_int) -> Result<c_int, i32> {
         // C copies into a NUL-terminated buffer: an interior NUL truncates.
         let dirname = &path[..dirname_len];
-        let dirname = &dirname[..dirname.iter().position(|&b| b == 0).unwrap_or(dirname.len())];
+        let dirname = &dirname[..dirname
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(dirname.len())];
         let cstr = std::ffi::CString::new(dirname).unwrap();
         // SAFETY: cstr is NUL-terminated and outlives the call.
         let dirfd = unsafe { libc::open(cstr.as_ptr(), flags | libc::O_CLOEXEC, 0o700) };
@@ -1507,7 +1570,11 @@ mod imp {
             }
         }
 
-        let rc = do_connect_raw(fd, ptr::from_ref(addr).cast(), ip_addrlen(addr.ss_family as c_int));
+        let rc = do_connect_raw(
+            fd,
+            ptr::from_ref(addr).cast(),
+            ip_addrlen(addr.ss_family as c_int),
+        );
         if rc != 0 {
             close(fd, false);
             return Err(rc);
@@ -1554,7 +1621,11 @@ mod imp {
         unsafe {
             let mut storage: libc::sockaddr_storage = zeroed();
             let v4 = (&raw mut storage).cast::<libc::sockaddr_in>();
-            if inet_pton(libc::AF_INET, host.as_ptr(), (&raw mut (*v4).sin_addr).cast()) == 1
+            if inet_pton(
+                libc::AF_INET,
+                host.as_ptr(),
+                (&raw mut (*v4).sin_addr).cast(),
+            ) == 1
             {
                 (*v4).sin_family = libc::AF_INET as libc::sa_family_t;
                 (*v4).sin_port = port.to_be();
@@ -1565,8 +1636,11 @@ mod imp {
                 return Some(storage);
             }
             let v6 = (&raw mut storage).cast::<libc::sockaddr_in6>();
-            if inet_pton(libc::AF_INET6, host.as_ptr(), (&raw mut (*v6).sin6_addr).cast())
-                == 1
+            if inet_pton(
+                libc::AF_INET6,
+                host.as_ptr(),
+                (&raw mut (*v6).sin6_addr).cast(),
+            ) == 1
             {
                 (*v6).sin6_family = libc::AF_INET6 as libc::sa_family_t;
                 (*v6).sin6_port = port.to_be();
@@ -1633,7 +1707,11 @@ mod imp {
             }
             break r;
         };
-        if r < 0 { -(win::wsa_errno() as isize) } else { r as isize }
+        if r < 0 {
+            -(win::wsa_errno() as isize)
+        } else {
+            r as isize
+        }
     }
 
     /// `bsd_writev` windows arm (bsd.c:988-997): sequential sends, stopping
@@ -1684,7 +1762,11 @@ mod imp {
             }
             break r;
         };
-        if r < 0 { -(win::wsa_errno() as isize) } else { r as isize }
+        if r < 0 {
+            -(win::wsa_errno() as isize)
+        } else {
+            r as isize
+        }
     }
 
     /// R6.9 pre-step (context.c:749-765): zero-length MSG_PUSH_IMMEDIATE recv
@@ -1708,7 +1790,10 @@ mod imp {
     /// C12, socket.c:305-309). `closesocket`, never CRT `close` (bsd.c:720-726).
     pub(crate) fn close(fd: LIBUS_SOCKET_DESCRIPTOR, rst: bool) {
         if rst {
-            let l = win::linger { l_onoff: 1, l_linger: 0 };
+            let l = win::linger {
+                l_onoff: 1,
+                l_linger: 0,
+            };
             win::so(fd, win::SOL_SOCKET, win::SO_LINGER, &l);
         }
         // SAFETY: plain socket-handle call; caller owns the socket.
@@ -1989,7 +2074,13 @@ mod imp {
         }
         if c_int::from(addr.ss_family) == ws2::AF_INET6 {
             let addr6 = win::as_v6(addr);
-            if win::so(fd, win::IPPROTO_IPV6, win::IPV6_MULTICAST_IF, &addr6.sin6_scope_id) != 0 {
+            if win::so(
+                fd,
+                win::IPPROTO_IPV6,
+                win::IPV6_MULTICAST_IF,
+                &addr6.sin6_scope_id,
+            ) != 0
+            {
                 return -win::wsa_errno();
             }
             return 0;
@@ -2016,7 +2107,11 @@ mod imp {
             if let Some(iface) = iface {
                 mreq.ipv6mr_interface = win::as_v6(iface).sin6_scope_id as _;
             }
-            let option = if drop { win::IPV6_LEAVE_GROUP } else { win::IPV6_JOIN_GROUP };
+            let option = if drop {
+                win::IPV6_LEAVE_GROUP
+            } else {
+                win::IPV6_JOIN_GROUP
+            };
             win::so(fd, win::IPPROTO_IPV6, option, &mreq)
         } else {
             let addr4 = win::as_v4(addr);
@@ -2026,8 +2121,11 @@ mod imp {
                 Some(iface) => win::as_v4(iface).sin_addr.s_addr,
                 None => 0, // INADDR_ANY
             };
-            let option =
-                if drop { win::IP_DROP_MEMBERSHIP } else { win::IP_ADD_MEMBERSHIP };
+            let option = if drop {
+                win::IP_DROP_MEMBERSHIP
+            } else {
+                win::IP_ADD_MEMBERSHIP
+            };
             win::so(fd, win::IPPROTO_IP, option, &mreq)
         };
         if rc != 0 { -win::wsa_errno() } else { 0 }
@@ -2206,8 +2304,7 @@ mod imp {
         let mut result: *mut ws2::addrinfo = ptr::null_mut();
         // SAFETY: host/port are NUL-terminated; `result` is freed below on
         // every path after a 0 return.
-        let rc =
-            unsafe { ws2::getaddrinfo(host_ptr, port_string.as_ptr(), &hints, &mut result) };
+        let rc = unsafe { ws2::getaddrinfo(host_ptr, port_string.as_ptr(), &hints, &mut result) };
         if rc != 0 {
             return Err(0);
         }
@@ -2220,8 +2317,13 @@ mod imp {
                 let ai = unsafe { &*a };
                 if ai.ai_family == family {
                     if let Ok(fd) = create_socket(ai.ai_family, ai.ai_socktype, ai.ai_protocol) {
-                        match bind_listen_fd(fd, ai.ai_family, ai.ai_addr, ai.ai_addrlen as c_int, options)
-                        {
+                        match bind_listen_fd(
+                            fd,
+                            ai.ai_family,
+                            ai.ai_addr,
+                            ai.ai_addrlen as c_int,
+                            options,
+                        ) {
                             Ok(()) => {
                                 // SAFETY: `result` is the live list; freed once.
                                 unsafe { ws2::freeaddrinfo(result) };
@@ -2271,11 +2373,18 @@ mod imp {
     ) -> Result<LIBUS_SOCKET_DESCRIPTOR, i32> {
         let addr = create_unix_socket_address(path)?;
         let fd = create_socket(ws2::AF_UNIX, ws2::SOCK_STREAM, 0)?;
-        if let Err(e) =
-            bind_and_listen(fd, (&raw const addr).cast(), size_of::<win::sockaddr_un>() as c_int, 512)
-        {
+        if let Err(e) = bind_and_listen(
+            fd,
+            (&raw const addr).cast(),
+            size_of::<win::sockaddr_un>() as c_int,
+            512,
+        ) {
             close(fd, false);
-            return Err(if e == win::WSAENETDOWN { win::ERROR_PATH_NOT_FOUND } else { e });
+            return Err(if e == win::WSAENETDOWN {
+                win::ERROR_PATH_NOT_FOUND
+            } else {
+                e
+            });
         }
         Ok(fd)
     }
@@ -2288,8 +2397,11 @@ mod imp {
         let addr = create_unix_socket_address(path)?;
         let fd = create_socket(ws2::AF_UNIX, ws2::SOCK_STREAM, 0)?;
         win::set_fionbio(fd);
-        let rc =
-            do_connect_raw(fd, (&raw const addr).cast(), size_of::<win::sockaddr_un>() as c_int);
+        let rc = do_connect_raw(
+            fd,
+            (&raw const addr).cast(),
+            size_of::<win::sockaddr_un>() as c_int,
+        );
         if rc != 0 {
             close(fd, false);
             return Err(rc);
@@ -2339,8 +2451,9 @@ mod imp {
                 let mut result = *addr;
                 // SAFETY: result is SOCKADDR_STORAGE with ss_family AF_INET.
                 unsafe {
-                    (*(&raw mut result).cast::<ws2::sockaddr_in>()).sin_addr.s_addr =
-                        0x7f000001u32.to_be(); // INADDR_LOOPBACK
+                    (*(&raw mut result).cast::<ws2::sockaddr_in>())
+                        .sin_addr
+                        .s_addr = 0x7f000001u32.to_be(); // INADDR_LOOPBACK
                 }
                 return Some(result);
             }
@@ -2352,7 +2465,9 @@ mod imp {
                 loopback[15] = 1; // in6addr_loopback
                 // SAFETY: result is SOCKADDR_STORAGE with ss_family AF_INET6.
                 unsafe {
-                    (*(&raw mut result).cast::<ws2::sockaddr_in6>()).sin6_addr.s6_addr = loopback;
+                    (*(&raw mut result).cast::<ws2::sockaddr_in6>())
+                        .sin6_addr
+                        .s6_addr = loopback;
                 }
                 return Some(result);
             }
@@ -2440,10 +2555,7 @@ mod imp {
 
     /// `init_addr_with_port` (context.c:530-540): resolved DNS entry →
     /// connect sockaddr with the requested port stamped over the entry's.
-    pub(crate) fn addr_from_entry(
-        info: *const bun_dns::addrinfo,
-        port: u16,
-    ) -> super::ConnectAddr {
+    pub(crate) fn addr_from_entry(info: *const bun_dns::addrinfo, port: u16) -> super::ConnectAddr {
         // SAFETY: `info` is a live entry of the DNS request's result buffer
         // (borrowed until freeRequest); `ai_addr` spans `ai_addrlen` bytes of
         // the family it declares.
@@ -2472,15 +2584,22 @@ mod imp {
         unsafe {
             let mut storage: super::ConnectAddr = win::pod_zeroed();
             let v4 = (&raw mut storage).cast::<ws2::sockaddr_in>();
-            if win::inet_pton(ws2::AF_INET, host.as_ptr(), (&raw mut (*v4).sin_addr).cast()) == 1
+            if win::inet_pton(
+                ws2::AF_INET,
+                host.as_ptr(),
+                (&raw mut (*v4).sin_addr).cast(),
+            ) == 1
             {
                 (*v4).sin_family = ws2::AF_INET as u16;
                 (*v4).sin_port = port.to_be();
                 return Some(storage);
             }
             let v6 = (&raw mut storage).cast::<ws2::sockaddr_in6>();
-            if win::inet_pton(ws2::AF_INET6, host.as_ptr(), (&raw mut (*v6).sin6_addr).cast())
-                == 1
+            if win::inet_pton(
+                ws2::AF_INET6,
+                host.as_ptr(),
+                (&raw mut (*v6).sin6_addr).cast(),
+            ) == 1
             {
                 (*v6).sin6_family = ws2::AF_INET6 as u16;
                 (*v6).sin6_port = port.to_be();
@@ -2825,7 +2944,11 @@ mod udp_imp {
         buf: *mut u8,
         length: &mut i32,
     ) {
-        let addr = if remote { remote_addr(fd) } else { local_addr(fd) };
+        let addr = if remote {
+            remote_addr(fd)
+        } else {
+            local_addr(fd)
+        };
         let Some(addr) = addr else {
             *length = 0;
             return;
@@ -3173,8 +3296,7 @@ mod udp_imp {
             {
                 loop {
                     // SAFETY: msgvec holds `count` wired entries.
-                    let ret =
-                        unsafe { sendmsg_x(fd, msgvec, count as c_uint, libc::MSG_DONTWAIT) };
+                    let ret = unsafe { sendmsg_x(fd, msgvec, count as c_uint, libc::MSG_DONTWAIT) };
                     if ret >= 0 {
                         return (count as c_int, ret as c_int);
                     }
@@ -3190,9 +3312,8 @@ mod udp_imp {
             for i in 0..count {
                 loop {
                     // SAFETY: per-message sendmsg over wired headers.
-                    let ret = unsafe {
-                        libc::sendmsg(fd, &(*msgvec.add(i)).msg_hdr, libc::MSG_DONTWAIT)
-                    };
+                    let ret =
+                        unsafe { libc::sendmsg(fd, &(*msgvec.add(i)).msg_hdr, libc::MSG_DONTWAIT) };
                     if ret < 0 {
                         let e = errno();
                         if e == libc::EINTR {
@@ -3458,7 +3579,11 @@ mod udp_imp {
 
         // SAFETY: ai_addr/ai_addrlen come from the live getaddrinfo entry.
         let bind_rc = unsafe {
-            win::bind(listen_fd, (*listen_addr).ai_addr, (*listen_addr).ai_addrlen as c_int)
+            win::bind(
+                listen_fd,
+                (*listen_addr).ai_addr,
+                (*listen_addr).ai_addrlen as c_int,
+            )
         };
         if bind_rc != 0 {
             *err = win::wsa_errno();
@@ -3491,7 +3616,11 @@ mod udp_imp {
         buf: *mut u8,
         length: &mut i32,
     ) {
-        let addr = if remote { remote_addr(fd) } else { local_addr(fd) };
+        let addr = if remote {
+            remote_addr(fd)
+        } else {
+            local_addr(fd)
+        };
         let Some(addr) = addr else {
             *length = 0;
             return;
@@ -3639,8 +3768,11 @@ mod udp_imp {
                 // SAFETY: payload/address pointers are borrowed from the
                 // caller's slices for the duration of this call only.
                 let ret = unsafe {
-                    let family =
-                        if addr.is_null() { ws2::AF_UNSPEC } else { c_int::from((*addr).sa_family) };
+                    let family = if addr.is_null() {
+                        ws2::AF_UNSPEC
+                    } else {
+                        c_int::from((*addr).sa_family)
+                    };
                     if family == ws2::AF_UNSPEC {
                         ws2::send(fd, payloads[i].cast(), len, 0)
                     } else if family == ws2::AF_INET {
@@ -3715,7 +3847,13 @@ pub(crate) fn so_error(fd: LIBUS_SOCKET_DESCRIPTOR) -> i32 {
     let mut len = core::mem::size_of::<core::ffi::c_int>() as core::ffi::c_int;
     // SAFETY: out-params are stack-valid ints of the advertised length.
     let rc = unsafe {
-        win::getsockopt(fd, win::SOL_SOCKET, SO_ERROR, (&raw mut error).cast(), &raw mut len)
+        win::getsockopt(
+            fd,
+            win::SOL_SOCKET,
+            SO_ERROR,
+            (&raw mut error).cast(),
+            &raw mut len,
+        )
     };
     if rc == -1 { errno() } else { error }
 }

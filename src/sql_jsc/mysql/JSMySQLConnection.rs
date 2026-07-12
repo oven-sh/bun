@@ -994,12 +994,7 @@ impl uws::Protocol for MySQLSocketProtocol {
     }
 
     // Fires only on the MysqlTls kind (plain sockets never handshake).
-    fn on_handshake(
-        this: &JSMySQLConnection,
-        _: AnySocket,
-        ok: bool,
-        ssl_error: uws::VerifyError,
-    ) {
+    fn on_handshake(this: &JSMySQLConnection, _: AnySocket, ok: bool, ssl_error: uws::VerifyError) {
         let handshake_was_successful = match this.connection_mut().do_handshake(ok, ssl_error) {
             Ok(v) => v,
             Err(e) => {

@@ -29,7 +29,7 @@ construction.**
 ### Strategy 3: no relocation, ever
 
 `adopt`/`adopt_tls` re-stamp kind + repoint ext in place. Ext capacity is
-fixed at creation to the max of the socket's *adoption family* (a `const fn`
+fixed at creation to the max of the socket's _adoption family_ (a `const fn`
 over the closed `SocketKind` set; Rust kinds all use 8-byte ext, uWS kinds use
 `max(sizeof HttpResponseData, sizeof WebSocketData)` passed in at
 listen/context creation). Adoption never crosses families — crossing would
@@ -115,6 +115,7 @@ tls/context.rs.
 UpgradedDuplex(*mut UpgradedDuplex) | Pipe(*mut WindowsNamedPipe)`; still Copy.
 All `NewSocketHandler<SSL>` / `AnySocket` method names and semantics are
 preserved, including:
+
 - state: is_closed/is_shutdown/is_established/is_detached/get_error/dns_error/get_verify_error
 - io: write/write2/raw_write/raw_writev/write_check_error/write_fd/flush/tls_feed
 - lifecycle: open/close(CloseCode)/shutdown/shutdown_read/pause/resume/adopt/adopt_tls/
@@ -125,9 +126,10 @@ preserved, including:
 Stale-generation behavior == Detached behavior for every method.
 
 `ext<T>()`: the kind registry records each kind's ext type id (debug-checked)
-+ size; access goes through unsafe_core::ext with a kind check. Rust kinds
-keep `Option<NonNull<Owner>>` 8-byte slots; uWS kinds expose `ext_ptr()` bytes
-via cabi only.
+
+- size; access goes through unsafe_core::ext with a kind check. Rust kinds
+  keep `Option<NonNull<Owner>>` 8-byte slots; uWS kinds expose `ext_ptr()` bytes
+  via cabi only.
 
 `SocketGroup`: stays repr(C) embedded-by-value (uWS C++ embeds it; sizeof
 static_asserted there). init/destroy/close_all/listen/listen_unix/connect/
@@ -138,40 +140,40 @@ connect_unix/from_fd/pair/owner/is_empty/next_in_loop unchanged.
 
 ## Load-bearing contracts (treat as tests)
 
-C1. SEMI_SOCKET explicit close dispatches NO callbacks (valkey/sql/ws compensate).
+C1. SEMI*SOCKET explicit close dispatches NO callbacks (valkey/sql/ws compensate).
 C2. Exactly one of on_close/on_connect_error per successful connect, EXCEPT C1.
 C3. on_close: ext still readable; code 0/1/2 = CloseCode, >2 = real errno; reason ptr passthrough.
 C4. Connecting close: on_connecting_error dispatched synchronously; ext-null ⇒ silent no-op.
-C5. connect_* may dispatch connect_error synchronously before returning; close-then-notify order.
+C5. connect*_ may dispatch connect_error synchronously before returning; close-then-notify order.
 C6. Deferred free: header memory (incl. ext) readable until tick postlude; closed_head drainable
-    post-last-tick (drain_closed_sockets).
+post-last-tick (drain_closed_sockets).
 C7. write returns bytes accepted; 0 = would-block; <0 fatal; ENOBUFS/ENOMEM => 0; no MSG_MORE.
-    on_writable after kernel drain; paused bit must reset on pool reuse (resettable/introspectable).
+on_writable after kernel drain; paused bit must reset on pool reuse (resettable/introspectable).
 C8. Low-prio queue: 5/tick, parked off head_sockets, group.low_prio_count coherent with is_empty.
 C9. Timeout wheels: 4s ticks (255=off) + minute wheel; sweep folded into poll deadline; sweep
-    enable refcounted; connecting sockets copy timeout bytes onto attempt children; pooled sockets'
-    minute wheel works with no active request attached.
+enable refcounted; connecting sockets copy timeout bytes onto attempt children; pooled sockets'
+minute wheel works with no active request attached.
 C10. adopt/adopt_tls: in-place, no handshake kick (caller repoints ext then start_tls_handshake);
-     cork slot ownership transfers (uWS C++ HttpResponse depends on it).
+cork slot ownership transfers (uWS C++ HttpResponse depends on it).
 C11. TLS: on_handshake(success, us_bun_verify_error_t) always delivered (verify decided by
-     consumer); get_native_handle live SSL* during handshake cb; session/keylog delivered ONLY
-     after the SSL stack unwinds (pending queues); loop TLS routing state save/restore equivalent
-     around JS run inside handshakes (ALPN/SNI callbacks) — encoded as RAII scratch take/restore.
+consumer); get_native_handle live SSL_ during handshake cb; session/keylog delivered ONLY
+after the SSL stack unwinds (pending queues); loop TLS routing state save/restore equivalent
+around JS run inside handshakes (ALPN/SNI callbacks) — encoded as RAII scratch take/restore.
 C12. CloseCode: normal (TLS close_notify + deferred fd close), fast_shutdown, failure (SO_LINGER 0
-     RST). shutdown_read + shutdown after queued close frame => CLEAN_SHUTDOWN branch on EOF, not
-     on_end (ws client close-frame flush depends on it).
+RST). shutdown_read + shutdown after queued close frame => CLEAN_SHUTDOWN branch on EOF, not
+on_end (ws client close-frame flush depends on it).
 C13. DNS bridge (five fns): cancel linearization, cache poisoning rules, dns_ready_head
-     non-wakeup vs threadsafe enqueue, keep-alive balance (semantics.md §6).
+non-wakeup vs threadsafe enqueue, keep-alive balance (semantics.md §6).
 C14. from_fd: owns fd only on success; sets nonblocking itself; no on_open self-dispatch;
-     ipc flag enables SCM_RIGHTS receive (on_fd) and write_fd.
+ipc flag enables SCM_RIGHTS receive (on_fd) and write_fd.
 C15. UDP: sync on_close, closed_udp_head lifetime, one-shot drain, Linux MSG_ERRQUEUE vs
-     non-Linux close-on-error, batch recv loop close recheck (semantics.md §9).
+non-Linux close-on-error, batch recv loop close recheck (semantics.md §9).
 C16. Loop: parks only when num_polls>0; pending_wakeups!=0 skips GC-safepoint sleep; parent
-     tag/ptr + jsc_vm slots; quic pre/post hooks + quic_next_tick_us readable; close_all_groups
-     walks the FULL linked list and reports progress (rare_data retry loop).
+tag/ptr + jsc_vm slots; quic pre/post hooks + quic_next_tick_us readable; close_all_groups
+walks the FULL linked list and reports progress (rare_data retry loop).
 C17. Every callback may synchronously re-enter (write/close/connect/adopt from inside any
-     callback); dispatch never touches ext after a terminal callback; no &mut formed over
-     consumer-owned state.
+callback); dispatch never touches ext after a terminal callback; no &mut formed over
+consumer-owned state.
 
 ## Consumer protocol (Protocol v2)
 
@@ -199,11 +201,11 @@ pub trait Protocol: Sized + 'static {
 
 - `Socket` is the generation-checked Copy handle (safe methods only).
 - Registration: `register::<P>()` monomorphizes into the static kind table;
-  the trampoline (unsafe_core, written once) does: validate generation → load
-  owner ref → take dispatch guard (`owner.ref_()`) → call safe handler → drop
-  guard. An owner can drop to zero refs mid-callback and stays alive until
-  dispatch returns; its LAST release happens outside dispatch by core
-  guarantee. Handlers receive `&Owner` (shared), never `&mut` — owners are
+  the trampoline (unsafe*core, written once) does: validate generation → load
+  owner ref → take dispatch guard (`owner.ref*()`) → call safe handler → drop
+guard. An owner can drop to zero refs mid-callback and stays alive until
+dispatch returns; its LAST release happens outside dispatch by core
+guarantee. Handlers receive `&Owner`(shared), never`&mut` — owners are
   interior-mutable.
 - Owner attach: `connect(.., owner)`, `from_fd(.., owner)`, `adopt(.., owner)`;
   `Listener::on_create` supplies the owner for accepted sockets.
@@ -281,15 +283,15 @@ preserved verbatim. See tls.md "Resolved design notes".
    used (missing ALPN/server-SNI/client-CA/new-session/PKCS12); see tls.md
    PART 2.
 2. SSLWrapper (`bun_uws_shim::ssl_wrapper`) survives unchanged (already Rust,
-   targets BoringSSL, not the deleted C); its five us_ssl_* helper deps come
+   targets BoringSSL, not the deleted C); its five us*ssl*\* helper deps come
    from tls/context.rs. Unification with TlsState is a follow-up.
 3. sni_tree.cpp → tls/sni.rs (verbatim matching semantics incl. case
-   behavior); root_certs*.cpp stay as C++ data TUs. openssl.c deleted.
+   behavior); root_certs\*.cpp stay as C++ data TUs. openssl.c deleted.
    wolfSSL cfg paths dropped.
-4. cabi keeps us_ssl_ctx_build_raw (quic.c) + the surface in cabi.md §1/§9.1;
+4. cabi keeps us*ssl_ctx_build_raw (quic.c) + the surface in cabi.md §1/§9.1;
    `us_socket_t`/`us_listen_socket_t`/`us_loop_t` are opaque to all surviving
    C/C++; only `us_socket_group_t` stays public repr(C). The 3 formerly
-   shim-defined us_* helpers (poking s->p / group->loop / last_write_failed)
+   shim-defined us*\* helpers (poking s->p / group->loop / last_write_failed)
    live in cabi.rs.
 5. The C-parity quirks OQ-1..16 (semantics.md) are ALL preserved verbatim as
    documented quirks, EXCEPT OQ-4 (stale kernel data.ptr after zero-event

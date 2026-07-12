@@ -68,24 +68,24 @@ pub use bun_jsc_macros::uws_callback;
 // ─────────────── core types re-exported from `bun_usockets` ─────────────────
 // One definition each; the shim only adds the C++-facing bindings above.
 
-pub use bun_usockets::us_wakeup_loop;
-pub use bun_usockets::{Error, Result};
 #[cfg(not(windows))]
 pub use bun_usockets::PosixLoop;
 #[cfg(windows)]
 pub use bun_usockets::WindowsLoop;
 #[cfg(windows)]
 pub use bun_usockets::backend::libuv::Timer;
-pub use us_socket::us_socket_stream_buffer_t;
+pub use bun_usockets::us_wakeup_loop;
 pub use bun_usockets::{
-    AnySocket, CloseCode, ConnectError, ConnectResult, ConnectingSocket, ExtSlot, InternalSocket,
-    LIBUS_LISTEN_DEFAULT, LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE, LIBUS_LISTEN_EXCLUSIVE_PORT,
-    LIBUS_LISTEN_REUSE_ADDR, LIBUS_LISTEN_REUSE_PORT, LIBUS_SOCKET_ALLOW_HALF_OPEN,
-    LIBUS_SOCKET_DESCRIPTOR, LIBUS_SOCKET_IPV6_ONLY, InternalLoopData, ListenSocket, Loop,
-    LoopHandler, NewSocketHandler, SocketGroup, SocketHandler, SocketKind, SocketRef, SocketTCP,
-    SocketTLS, SocketTcp, SocketTls, Timespec, create_bun_socket_error_t, on_thread_exit, udp,
-    us_bun_verify_error_t, us_socket_t, vtable,
+    AnySocket, CloseCode, ConnectError, ConnectResult, ConnectingSocket, ExtSlot, InternalLoopData,
+    InternalSocket, LIBUS_LISTEN_DEFAULT, LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE,
+    LIBUS_LISTEN_EXCLUSIVE_PORT, LIBUS_LISTEN_REUSE_ADDR, LIBUS_LISTEN_REUSE_PORT,
+    LIBUS_SOCKET_ALLOW_HALF_OPEN, LIBUS_SOCKET_DESCRIPTOR, LIBUS_SOCKET_IPV6_ONLY, ListenSocket,
+    Loop, LoopHandler, NewSocketHandler, SocketGroup, SocketHandler, SocketKind, SocketRef,
+    SocketTCP, SocketTLS, SocketTcp, SocketTls, Timespec, create_bun_socket_error_t,
+    on_thread_exit, udp, us_bun_verify_error_t, us_socket_t, vtable,
 };
+pub use bun_usockets::{Error, Result};
+pub use us_socket::us_socket_stream_buffer_t;
 
 /// Alias for the per-group C vtable struct under its pre-merge name.
 pub use bun_usockets::VTable as SocketGroupVTable;

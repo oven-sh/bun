@@ -55,7 +55,11 @@ struct Slot {
     fired: c_int,
 }
 
-const EMPTY_SLOT: Slot = Slot { rule: NO_RULE, calls_seen: 0, fired: 0 };
+const EMPTY_SLOT: Slot = Slot {
+    rule: NO_RULE,
+    calls_seen: 0,
+    fired: 0,
+};
 
 /// Lock-free hot-path flag; release-stored under the state lock whenever any
 /// rule is non-NONE, acquire-loaded by `check` (R11.4).
@@ -71,17 +75,25 @@ fn recompute_armed(slots: &[Slot; US_FAULT_COUNT]) {
 }
 
 pub fn us_fault_set(syscall: c_int, rule: &UsFaultRule) {
-    let Ok(idx) = usize::try_from(syscall) else { return };
+    let Ok(idx) = usize::try_from(syscall) else {
+        return;
+    };
     if idx >= US_FAULT_COUNT {
         return;
     }
     let mut slots = STATE.lock().unwrap();
-    slots[idx] = Slot { rule: *rule, calls_seen: 0, fired: 0 };
+    slots[idx] = Slot {
+        rule: *rule,
+        calls_seen: 0,
+        fired: 0,
+    };
     recompute_armed(&slots);
 }
 
 pub fn us_fault_clear(syscall: c_int) {
-    let Ok(idx) = usize::try_from(syscall) else { return };
+    let Ok(idx) = usize::try_from(syscall) else {
+        return;
+    };
     if idx >= US_FAULT_COUNT {
         return;
     }

@@ -158,9 +158,7 @@ pub unsafe fn ext_owner<'a, T>(ext: &Option<core::ptr::NonNull<T>>) -> Option<&'
 /// `s` must be a live socket with an `Option<NonNull<T>>`-typed ext slot;
 /// the pointee (if any) is live and uniquely accessed for `'a`.
 #[inline(always)]
-pub unsafe fn socket_ext_owner<'a, T>(
-    s: *mut bun_usockets::us_socket_t,
-) -> Option<&'a mut T> {
+pub unsafe fn socket_ext_owner<'a, T>(s: *mut bun_usockets::us_socket_t) -> Option<&'a mut T> {
     // SAFETY: per caller contract above.
     unsafe { ext_owner(&*(*s).ext::<Option<core::ptr::NonNull<T>>>()) }
 }

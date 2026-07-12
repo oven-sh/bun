@@ -1050,10 +1050,7 @@ impl EventLoop {
         {
             // The tick takes `*mut Loop` (re-entrant callbacks re-fetch the
             // same loop); no `&mut Loop` is held across it.
-            let loop_ = self
-                .vm_ref()
-                .event_loop_handle
-                .expect("event_loop_handle");
+            let loop_ = self.vm_ref().event_loop_handle.expect("event_loop_handle");
             // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
             while !unsafe { done.read_volatile() } {
                 uws::Loop::tick(loop_);

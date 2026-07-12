@@ -47,7 +47,9 @@ pub struct SecureContext {
 /// `SSL_CTX_new` was called O(1) times, not O(connections).
 #[bun_jsc::host_fn]
 pub(crate) fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-    Ok(JSValue::js_number(uws::tls::context::ssl_ctx_live_count() as f64))
+    Ok(JSValue::js_number(
+        uws::tls::context::ssl_ctx_live_count() as f64
+    ))
 }
 
 impl SecureContext {
@@ -328,8 +330,7 @@ impl SecureContext {
         // truncates it, same as the old C helper's `const char*` view.
         let mut owned = bytes.to_vec();
         owned.push(0);
-        let pem =
-            core::ffi::CStr::from_bytes_until_nul(&owned).expect("NUL appended above");
+        let pem = core::ffi::CStr::from_bytes_until_nul(&owned).expect("NUL appended above");
         let ok = uws::tls::context::ssl_ctx_add_ca_cert(this.ctx.cast(), pem);
         if ok == 0 {
             return Err(global.throw(format_args!("Invalid CA certificate")));

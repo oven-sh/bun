@@ -169,13 +169,8 @@ impl SSLContextCache {
         }));
         *gop.value_ptr = entry;
         // SAFETY: ctx is a valid SSL_CTX*; entry is a fresh non-null heap pointer.
-        if unsafe {
-            boringssl::SSL_CTX_set_ex_data(
-                ctx,
-                cache_ex_idx(),
-                entry.cast::<c_void>(),
-            )
-        } != 1
+        if unsafe { boringssl::SSL_CTX_set_ex_data(ctx, cache_ex_idx(), entry.cast::<c_void>()) }
+            != 1
         {
             self.map.swap_remove(&d);
             // SAFETY: entry was just heap-allocated above and not yet published to ex_data.
@@ -256,11 +251,7 @@ impl Drop for SSLContextCache {
             if !e.ctx.is_null() {
                 // SAFETY: ctx non-null; clearing the ex_data slot we set.
                 unsafe {
-                    boringssl::SSL_CTX_set_ex_data(
-                        e.ctx,
-                        cache_ex_idx(),
-                        ptr::null_mut(),
-                    );
+                    boringssl::SSL_CTX_set_ex_data(e.ctx, cache_ex_idx(), ptr::null_mut());
                 }
             }
             // SAFETY: entry was heap-allocated in get_or_create_digest and is removed

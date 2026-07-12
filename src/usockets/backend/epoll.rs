@@ -5,10 +5,10 @@
 
 use core::ptr;
 
+use crate::LIBUS_SOCKET_DESCRIPTOR;
 use crate::backend::{self, Backend, Events, PollState};
 use crate::loop_::Loop;
 use crate::unsafe_core::poll_access;
-use crate::LIBUS_SOCKET_DESCRIPTOR;
 
 /// `ready_polls` element type.
 pub type EventType = libc::epoll_event;
@@ -116,7 +116,13 @@ pub(crate) fn poll_change(p: *mut PollState, loop_: *mut Loop, events: Events) -
 pub(crate) fn poll_stop(p: *mut PollState, loop_: *mut Loop) {
     let st = poll_access::read_poll(p);
     let old_events = st.events();
-    poll_access::epoll_ctl(poll_access::loop_fd(loop_), libc::EPOLL_CTL_DEL, st.fd(), 0, 0);
+    poll_access::epoll_ctl(
+        poll_access::loop_fd(loop_),
+        libc::EPOLL_CTL_DEL,
+        st.fd(),
+        0,
+        0,
+    );
     backend::update_pending_ready_polls(loop_, p, ptr::null_mut(), old_events, Events::NONE);
 }
 

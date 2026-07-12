@@ -167,11 +167,7 @@ extern "C" fn on_drain(socket: *mut udp::Socket) {
     event_loop.exit();
 }
 
-extern "C" fn on_data(
-    socket: *mut udp::Socket,
-    buf: *mut udp::PacketBuffer,
-    packets: c_int,
-) {
+extern "C" fn on_data(socket: *mut udp::Socket, buf: *mut udp::PacketBuffer, packets: c_int) {
     let udp_socket: &UDPSocket = UDPSocket::from_uws(socket);
     // Guard before the batch loop: a mid-batch close downgrades `this_value`,
     // after which a GC inside a later packet's callback could finalize the
@@ -1081,12 +1077,7 @@ impl UDPSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::set_any_ttl(
-            this,
-            global_this,
-            callframe,
-            udp::Socket::set_unicast_ttl,
-        )
+        Self::set_any_ttl(this, global_this, callframe, udp::Socket::set_unicast_ttl)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1095,12 +1086,7 @@ impl UDPSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::set_any_ttl(
-            this,
-            global_this,
-            callframe,
-            udp::Socket::set_multicast_ttl,
-        )
+        Self::set_any_ttl(this, global_this, callframe, udp::Socket::set_multicast_ttl)
     }
 
     fn set_any_ttl(
@@ -1443,11 +1429,7 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-        let res = udp_mut(socket).send(
-            &[payload.as_ptr()],
-            &[payload.len()],
-            &[addr_ptr],
-        );
+        let res = udp_mut(socket).send(&[payload.as_ptr()], &[payload.len()], &[addr_ptr]);
         drop(payload_str);
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::send) {
             return Err(global_this.throw_value(err.to_js(global_this)));

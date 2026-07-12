@@ -2137,7 +2137,9 @@ mod tests {
             // still flushes diagnostics on early-return for parity.
             let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(core::ptr::from_mut::<bun_core::io::Writer>(bun_core::output::error_writer()));
+                let _ = unsafe { &*log }.print(core::ptr::from_mut::<bun_core::io::Writer>(
+                    bun_core::output::error_writer(),
+                ));
             });
 
             // const opts = Options.BundleOptions{ .target = .browser, ... };
@@ -2208,7 +2210,9 @@ mod tests {
             let mut log = bun_ast::Log::init();
             let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(core::ptr::from_mut::<bun_core::io::Writer>(bun_core::output::error_writer()));
+                let _ = unsafe { &*log }.print(core::ptr::from_mut::<bun_core::io::Writer>(
+                    bun_core::output::error_writer(),
+                ));
             });
 
             let opts = bun_resolver::options::BundleOptions {

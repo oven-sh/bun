@@ -10,6 +10,9 @@ use core::ptr::{self, NonNull};
 
 use bun_core::Fd;
 
+#[cfg(not(windows))]
+use crate::LIBUS_RECV_BUFFER_LENGTH;
+use crate::LIBUS_SOCKET_DESCRIPTOR;
 use crate::backend::{Events, PollState, PollType};
 use crate::connecting::ConnectingSocket;
 use crate::dispatch;
@@ -24,9 +27,6 @@ use crate::unsafe_core::deref::{with_group, with_loop_data, with_socket};
 use crate::unsafe_core::ext::{deref_mut, header_mut};
 use crate::unsafe_core::{ffi, io};
 use crate::write::UsIoVec;
-#[cfg(not(windows))]
-use crate::LIBUS_RECV_BUFFER_LENGTH;
-use crate::LIBUS_SOCKET_DESCRIPTOR;
 
 /// Packed 1-byte socket flags (bit assignments per docs/cabi.md §3.7:
 /// `last_write_failed` is bit 7 — frozen while the SHIM pokes it).
@@ -338,7 +338,10 @@ pub(crate) fn close_raw_errno(s: *mut SocketHeader, code: c_int, reason: *mut c_
     unlink_for_death(s, loop_); // step 2
     poll_stop_for_close(s, loop_); // step 3
     // steps 4-5: SO_LINGER{1,0} RST for CONNECTION_RESET, then close(2).
-    io::close(with_socket(s, |h| h.fd), code == CloseCode::failure as c_int);
+    io::close(
+        with_socket(s, |h| h.fd),
+        code == CloseCode::failure as c_int,
+    );
     with_socket(s, |h| h.flags.set(SocketFlags::IS_CLOSED, true)); // step 6
     // Step 7 (C1): a never-opened connect (SEMI_SOCKET) gets NO on_close —
     // its owner is notified via on_connect_error instead (OQ-10 equality).
@@ -775,7 +778,11 @@ pub(crate) fn on_socket_poll_ready(
     // with the CloseCode enum JS filters as self-initiated.
     if error && !with_socket(s, |h| h.is_closed()) {
         let so_error = io::so_error(with_socket(s, |h| h.fd));
-        let code = if so_error > 2 { so_error } else { ECONNRESET_ERRNO };
+        let code = if so_error > 2 {
+            so_error
+        } else {
+            ECONNRESET_ERRNO
+        };
         close_raw_errno(s, code, ptr::null_mut());
     }
 }
@@ -1140,7 +1147,10 @@ impl SocketHeader {
         // R3.5 step 2 (OQ-7): C restamps a live connect_state's group/kind on
         // every adopt; unreachable here — after_open nulls connect_state
         // before any dispatch that could adopt.
-        debug_assert!(self.connect_state.is_null(), "adopt with live connect_state");
+        debug_assert!(
+            self.connect_state.is_null(),
+            "adopt with live connect_state"
+        );
         crate::group::adopt_socket(s, g, k);
         NonNull::new(s)
     }

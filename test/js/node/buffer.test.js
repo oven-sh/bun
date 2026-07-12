@@ -4465,16 +4465,9 @@ describe("Buffer.prototype.toString binary-to-text encodings", () => {
     });
   });
 
-  // Throughput regression guard for the bulk hex encoder. The baseline is a
-  // latin1 copy with the SAME output size (2x the hex input), so both sides
-  // pay identical string-allocation costs and the ratio isolates encoding: a
-  // scalar per-byte hex loop costs ~5x that baseline (it did before the SIMD
-  // kernel landed) while the vectorized encoder stays within ~1.3x; 3x
-  // separates the regimes with margin on both sides and is allocator-agnostic
-  // (a size-dependent allocator policy, like mimalloc purging 220KB blocks
-  // after the forced GC, would otherwise skew only the hex side). Runs in a
-  // fresh subprocess so this suite's heap cannot skew either side. Skipped on
-  // debug/ASAN builds where instrumentation makes timing ratios meaningless.
+  // Hex-encoder throughput guard. Baseline is a same-output-size latin1 copy
+  // so both sides pay identical allocation costs (allocator-agnostic): scalar
+  // hex is ~5x that, SIMD ~1.3x, so 3x separates the regimes. Skip debug/ASAN.
   it.skipIf(isDebug || isASAN)(
     "toString('hex') large-buffer throughput stays within 3x of a same-size latin1 copy",
     async () => {

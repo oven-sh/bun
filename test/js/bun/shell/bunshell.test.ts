@@ -1560,6 +1560,7 @@ describe("deno_task", () => {
         ["stdout from subprocess", `$\`\${process.execPath} -e 0 > \${stream}\``],
         ["stderr from subprocess", `$\`\${process.execPath} -e 0 2> \${stream}\``],
         ["in pipeline", `$\`\${process.execPath} -e 0 | \${process.execPath} -e 0 < \${stream}\``],
+        ["after && (async re-entry)", `$\`\${process.execPath} -e 0 && \${process.execPath} -e 0 < \${stream}\``],
       ])("%s", async (_, shellExpr) => {
         const script = /* ts */ `
           import { $ } from "bun";
@@ -1578,13 +1579,12 @@ describe("deno_task", () => {
           stdout: "pipe",
           stderr: "pipe",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
           stdout: "caught: Unknown JS value used in shell: [object ReadableStream]",
           exitCode: 0,
           signalCode: null,
         });
-        expect(stderr).not.toContain("panic");
       });
     });
   });

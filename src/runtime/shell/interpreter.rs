@@ -1256,6 +1256,39 @@ impl Interpreter {
         Ok(())
     }
 
+    /// `Yield::Failed`: reject the ShellPromise with the pending exception and
+    /// release the keepalive. `has_pending_activity` stays non-zero so GC
+    /// cannot collect us while a PipeReader still holds our pointer.
+    pub fn reject_pending_exception(&self) {
+        use crate::jsc::JSValue;
+        use crate::jsc::generated::JSShellInterpreter;
+
+        let Some(global) = self.global_this_ref() else {
+            return;
+        };
+        let Some(exc) = global.try_take_exception() else {
+            return;
+        };
+        let err = exc.to_error().unwrap_or(exc);
+        self.keep_alive.with_mut(|k| k.disable());
+        let this_jsvalue = self.this_jsvalue.get();
+        let reject = (this_jsvalue != JSValue::ZERO)
+            .then(|| JSShellInterpreter::reject_get_cached(this_jsvalue))
+            .flatten()
+            .filter(|r| r.is_callable());
+        let Some(reject) = reject else {
+            global.report_active_exception_as_unhandled(global.throw_value(err));
+            return;
+        };
+        JSShellInterpreter::resolve_set_cached(this_jsvalue, global, JSValue::UNDEFINED);
+        JSShellInterpreter::reject_set_cached(this_jsvalue, global, JSValue::UNDEFINED);
+        let loop_ = self.event_loop;
+        let _entered = loop_.entered();
+        if let Err(e) = reject.call(global, JSValue::UNDEFINED, &[err]) {
+            global.report_active_exception_as_unhandled(e);
+        }
+    }
+
     pub fn finish(&self, exit_code: ExitCode) -> Yield {
         use crate::jsc::JSValue;
         use crate::jsc::generated::JSShellInterpreter;
@@ -1355,13 +1388,8 @@ impl Interpreter {
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
         self.started.store(true, Ordering::SeqCst);
         Script::start(self, root).run(self);
-        if global_this.has_exception() {
-            // A state node threw (`Yield::failed()`); release the event-loop
-            // keepalive. `has_pending_activity` stays non-zero so GC cannot
-            // collect us while a PipeReader still holds our pointer.
-            self.keep_alive.with_mut(|k| k.disable());
-            return Err(crate::jsc::JsError::Thrown);
-        }
+        // `Yield::run` rejects the promise and releases keepalive on
+        // `Yield::Failed`, so no post-run exception check is needed here.
 
         Ok(crate::jsc::JSValue::UNDEFINED)
     }

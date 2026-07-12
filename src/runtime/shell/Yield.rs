@@ -139,7 +139,15 @@ impl Yield {
                     written,
                     err,
                 } => crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err),
-                Yield::Suspended | Yield::Failed | Yield::Done => {
+                Yield::Failed => {
+                    interp.reject_pending_exception();
+                    if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {
+                        y
+                    } else {
+                        return;
+                    }
+                }
+                Yield::Suspended | Yield::Done => {
                     if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {
                         y
                     } else {

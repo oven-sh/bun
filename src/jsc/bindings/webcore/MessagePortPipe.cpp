@@ -261,7 +261,12 @@ void MessagePortPipe::markClosed(uint8_t side)
     {
         auto& s = m_sides[side];
         Locker locker { s.lock };
-        s.state.fetch_or(Closed | ClosedByRequest, std::memory_order_acq_rel);
+        // Clear Attached so a drain task already in flight bails at its
+        // per-iteration guard instead of popping the retained inbox and
+        // handing each message to the now-detached port (which would drop
+        // it). The inbox stays; only the terminal close() swaps it out.
+        uint64_t st = s.state.load(std::memory_order_relaxed);
+        s.state.store((st | Closed | ClosedByRequest) & ~Attached, std::memory_order_release);
     }
     notifyPeerClosed(1 - side);
 }

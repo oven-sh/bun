@@ -33,6 +33,43 @@ describe("MessagePort.close() retains already-queued messages", () => {
     port2.close();
   });
 
+  test.concurrent("a drain scheduled before close() does not consume the retained inbox", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { MessageChannel, receiveMessageOnPort } = require("node:worker_threads");
+          const { port1, port2 } = new MessageChannel();
+          const got = [];
+          port1.on("message", m => got.push(m));   // started: a drain is scheduled on send()
+          port2.postMessage("a");
+          port2.postMessage("b");
+          port1.close();
+          const sync = receiveMessageOnPort(port1);
+          setImmediate(() => {
+            // The stale drain must have bailed (node's uv_close cancels the
+            // pending uv_async); the inbox is still here for rmo and nothing
+            // was delivered to the listener.
+            console.log(JSON.stringify({ got, sync, after: receiveMessageOnPort(port1) }));
+            port2.close();
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+    // Node still returns "b" at the first setImmediate (uv close callbacks fire
+    // after the check phase); bun drops it one phase earlier. Either way the
+    // listener was never called and same-tick rmo returned "a".
+    expect({ got: out.got, sync: out.sync }).toEqual({ got: [], sync: { message: "a" } });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("the retained queue is dropped once the deferred close runs", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -45,11 +82,13 @@ describe("MessagePort.close() retains already-queued messages", () => {
           port2.postMessage("b");
           port1.close();
           const sync = receiveMessageOnPort(port1);
-          setImmediate(() => {
-            // Deferred close has dropped the remaining inbox (node's OnClose -> Detach).
+          // Node drops the inbox in the uv close-callbacks phase, which runs
+          // after setImmediate; two nested setImmediates land past that in
+          // both runtimes.
+          setImmediate(() => setImmediate(() => {
             console.log(JSON.stringify({ sync, after: receiveMessageOnPort(port1) }));
             port2.close();
-          });
+          }));
         `,
       ],
       env: bunEnv,

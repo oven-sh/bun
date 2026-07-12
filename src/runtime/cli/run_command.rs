@@ -292,7 +292,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         for part in passthrough {
             copy_script.push(b' ');
             if needs_escape_utf8_ascii_latin1(part) {
-                escape_8bit::<true>(part, &mut copy_script).unwrap_or_oom();
+                escape_8bit::<true, false>(part, &mut copy_script).unwrap_or_oom();
                 continue;
             }
             copy_script.extend_from_slice(part);

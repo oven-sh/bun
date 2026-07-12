@@ -114,6 +114,41 @@ describe.concurrent("obsolete snapshot detection", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("beforeAll failure suppresses obsolete for jumped-over tests", async () => {
+    const dir = tempDirWithFiles("snap-hook-fail", {
+      "snap.test.ts":
+        `import { describe, test, expect, beforeAll } from "bun:test";\n` +
+        `test("outer", () => expect(1).toMatchSnapshot());\n` +
+        `describe("inner", () => {\n` +
+        `  beforeAll(() => { throw new Error("db down"); });\n` +
+        `  test("a", () => expect(2).toMatchSnapshot());\n` +
+        `});\n`,
+      "__snapshots__/snap.test.ts.snap":
+        "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\n" +
+        "exports[`outer 1`] = `1`;\n\n" +
+        "exports[`inner a 1`] = `2`;\n",
+    });
+    const { stderr, exitCode } = await run(dir);
+    expect(stderr).not.toContain("obsolete");
+    expect(exitCode).toBe(1);
+  });
+
+  test("skipped test with a hinted snapshot is not counted obsolete", async () => {
+    const dir = tempDirWithFiles("snap-hint", {
+      "snap.test.ts":
+        `import { test, expect } from "bun:test";\n` +
+        `test("keeps", () => expect({ a: 1 }).toMatchSnapshot());\n` +
+        `test.skip("skipped", () => expect({ b: 2 }).toMatchSnapshot("my hint"));\n`,
+      "__snapshots__/snap.test.ts.snap":
+        "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\n" +
+        'exports[`keeps 1`] = `\n{\n  "a": 1,\n}\n`;\n\n' +
+        'exports[`skipped: my hint 1`] = `\n{\n  "b": 2,\n}\n`;\n',
+    });
+    const { stderr, exitCode } = await run(dir);
+    expect(stderr).not.toContain("obsolete");
+    expect(exitCode).toBe(0);
+  });
+
   test("-t filtered test's snapshot is not counted obsolete", async () => {
     const dir = tempDirWithFiles(
       "snapobs-filter",

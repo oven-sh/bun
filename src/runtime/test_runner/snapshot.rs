@@ -44,10 +44,10 @@ pub struct Snapshots<'a> {
     /// `write_snapshot_file` so ordering relative to the first
     /// `toMatchSnapshot` call does not matter.
     pub skipped_test_names: &'a mut Vec<(FileId, Box<[u8]>)>,
-    /// Set when the current file used `.only()` (CLI or in-source). Unchecked
-    /// keys are then ignored for the obsolete tally since non-only tests were
-    /// never sequenced.
-    pub had_only_in_file: bool,
+    /// Set when the current file's run was partial: `.only()` drops siblings
+    /// before sequencing, and a failing hook or test can jump past later tests.
+    /// Unchecked keys are then ignored for the obsolete tally.
+    pub file_was_partial: bool,
     pub _current_file: Option<File>,
     /// Read-only backref into `Jest::RUNNER.files[..].source.path` (not owned
     /// here, never freed): the runner is process-global and its files are
@@ -359,7 +359,7 @@ impl<'a> Snapshots<'a> {
                 // Skipped tests' entries are not rewritten into `file_buf`, so
                 // they are physically removed; keep them in the tally.
                 self.removed += self.unchecked_keys.len();
-            } else if !self.had_only_in_file {
+            } else if !self.file_was_partial {
                 for (id, name) in self.skipped_test_names.iter() {
                     if *id == file.id {
                         Self::mark_snapshots_as_checked_for_test(self.unchecked_keys, name);
@@ -367,8 +367,7 @@ impl<'a> Snapshots<'a> {
                 }
                 self.obsolete += self.unchecked_keys.len();
             }
-            self.skipped_test_names.retain(|(id, _)| *id != file.id);
-            self.had_only_in_file = false;
+            self.file_was_partial = false;
 
             file.file
                 .write_all(self.file_buf)
@@ -412,7 +411,20 @@ impl<'a> Snapshots<'a> {
             if end == key.len() || end == 0 || key[end - 1] != b' ' {
                 return true;
             }
-            !strings::eql(&key[..end - 1], test_name)
+            let stripped = &key[..end - 1];
+            if strings::eql(stripped, test_name) {
+                return false;
+            }
+            // Also match `{test_name}: {hint}` so skipped tests with hinted
+            // snapshots are not counted obsolete (Jest does not handle this).
+            if stripped.len() > test_name.len() + 2
+                && strings::starts_with(stripped, test_name)
+                && stripped[test_name.len()] == b':'
+                && stripped[test_name.len() + 1] == b' '
+            {
+                return false;
+            }
+            true
         });
     }
 
@@ -986,6 +998,9 @@ impl<'a> Snapshots<'a> {
                 self.file_buf.extend_from_slice(Self::FILE_HEADER);
             }
 
+            // Drop stale entries from files that never opened a snapshot file
+            // (`write_snapshot_file` was a no-op for them).
+            self.skipped_test_names.retain(|(id, _)| *id == file_id);
             self._current_file = Some(file);
         }
 

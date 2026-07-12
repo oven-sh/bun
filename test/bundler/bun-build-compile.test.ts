@@ -214,8 +214,11 @@ describe("compiled binary validity", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    // import.meta.path uses native separators on Windows (B:\~BUN\root\...); normalize before comparing.
+    const norm = (s: string) => s.replaceAll("\\", "/");
+    const out = JSON.parse(stdout.trim());
     const expected = (isWindows ? "B:/~BUN/root/" : "/$bunfs/root/") + "éxe";
-    expect(JSON.parse(stdout.trim())).toEqual({
+    expect({ main: norm(out.main), meta: norm(out.meta), argv1: norm(out.argv1) }).toEqual({
       main: expected,
       meta: expected,
       argv1: expected,

@@ -140,8 +140,10 @@ impl UUID7 {
         (ts, count)
     }
 
-    pub fn init(timestamp: u64, random: [u8; 8]) -> UUID7 {
-        let seed = u16::from_ne_bytes([random[6], random[7]]);
+    pub fn init(timestamp: u64, random: [u8; 10]) -> UUID7 {
+        // random[0..8] supplies rand_b; random[8..10] seeds the rand_a counter
+        // so the seeded counter value is independent of the visible random bits.
+        let seed = u16::from_le_bytes([random[8], random[9]]);
         let (timestamp, count) = Self::next(timestamp, seed);
 
         let mut bytes = [0u8; 16];

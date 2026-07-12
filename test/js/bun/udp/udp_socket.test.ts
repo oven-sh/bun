@@ -89,14 +89,11 @@ describe("udpSocket()", () => {
   // Out-of-range connect.port used to be silently rewritten to 0, so send()
   // returned true while every datagram was dropped. The bind path already
   // rejected the same values; connect must too.
-  test.each([-1, 0, 65536, 99999, NaN, Infinity, "abc"] as const)(
-    "connect with out-of-range port %p rejects",
-    port => {
-      expect(() => udpSocket({ connect: { hostname: "127.0.0.1", port: port as number } })).toThrow(
-        'Expected "connect.port" to be an integer between 1 and 65535',
-      );
-    },
-  );
+  test.each([-1, 0, 65536, 99999, NaN, Infinity, "abc"] as const)("connect with out-of-range port %p rejects", port => {
+    expect(() => udpSocket({ connect: { hostname: "127.0.0.1", port: port as number } })).toThrow(
+      'Expected "connect.port" to be an integer between 1 and 65535',
+    );
+  });
 
   test("connect with valid port at range boundaries is accepted", async () => {
     for (const port of [1, 65535]) {

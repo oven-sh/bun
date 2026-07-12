@@ -81,7 +81,9 @@ delete ffi.closeCallback;
 
 class JSCallback {
   constructor(cb, options) {
-    const { ctx, ptr } = nativeCallback(options, cb);
+    const result = nativeCallback(options, cb);
+    if (Error.isError(result)) throw result;
+    const { ctx, ptr } = result;
     this.#ctx = ctx;
     this.ptr = ptr;
     this.#threadsafe = !!options?.threadsafe;
@@ -161,8 +163,7 @@ const ffiWrappers = new Array(21);
 var char = "val|0";
 ffiWrappers.fill(char);
 ffiWrappers[FFIType.uint8_t] = "val<0?0:val>=255?255:val|0";
-ffiWrappers[FFIType.int16_t] = "val<=-32768?-32768:val>=32768?32768:val|0";
-ffiWrappers[FFIType.uint16_t] = "val<=0?0:val>=65536?65536:val|0";
+ffiWrappers[FFIType.int16_t] = "val<=-32768?-32768:val>=32767?32767:val|0";
 ffiWrappers[FFIType.int32_t] = "val|0";
 // https://github.com/oven-sh/bun/issues/7007
 // This cast with `|0` looks incorrect as it converts 0xffffffff into -1, but this misinterpretation
@@ -185,29 +186,6 @@ ffiWrappers[FFIType.uint32_t] = "val<0?0:val>0xFFFFFFFF?-1:val|0";
 ffiWrappers[FFIType.i64_fast] = `{
   if (typeof val === "bigint") {
     if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
-      return Number(val).valueOf() || 0;
-    }
-
-    return val;
-  }
-
-  return !val ? 0 : +val || 0;
-}`;
-ffiWrappers[FFIType.i64_fast] = `{
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
-      return Number(val).valueOf() || 0;
-    }
-
-    return val;
-  }
-
-  return !val ? 0 : +val || 0;
-}`;
-
-ffiWrappers[FFIType.u64_fast] = `{
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= 0) {
       return Number(val).valueOf() || 0;
     }
 
@@ -301,6 +279,10 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
     return __GlobalBunFFIPtrFunctionForWrapper(val);
   }
 
+  if (typeof val.ptr === "number") {
+    return val.ptr;
+  }
+
   if (typeof val === "string") {
     throw new TypeError("To convert a string to a pointer, encode it as a buffer");
   }
@@ -335,12 +317,18 @@ ffiWrappers[FFIType.function] = `{
 }`;
 
 function FFIBuilder(params, returnType, functionToCall, name) {
-  const hasReturnType = typeof FFIType[returnType] === "number" && FFIType[returnType as string] !== FFIType.void;
+  // A type spec may be either a string label ("cstring") or the numeric
+  // FFIType constant (FFIType.cstring). Normalize to the numeric id so both
+  // forms resolve the same wrapper — FFIType[label] maps label->number, but
+  // FFIType[number] reverse-maps number->label, which must not be re-indexed.
+  const returnTypeId = typeof returnType === "number" ? returnType : FFIType[returnType as string];
+  const hasReturnType = typeof returnTypeId === "number" && returnTypeId !== FFIType.void;
   var paramNames = new Array(params.length);
   var args = new Array(params.length);
   for (let i = 0; i < params.length; i++) {
     paramNames[i] = `p${i}`;
-    const wrapper = ffiWrappers[FFIType[params[i]]];
+    const typeId = typeof params[i] === "number" ? params[i] : FFIType[params[i]];
+    const wrapper = ffiWrappers[typeId];
     if (wrapper) {
       // doing this inline benchmarked about 4x faster than referencing
       args[i] = `(val=>${wrapper})(p${i})`;
@@ -351,7 +339,7 @@ function FFIBuilder(params, returnType, functionToCall, name) {
 
   var code = `functionToCall(${args.join(", ")})`;
   if (hasReturnType) {
-    if (FFIType[returnType as string] === FFIType.cstring) {
+    if (returnTypeId === FFIType.cstring) {
       code = `return new __GlobalBunCString(${code})`;
     } else {
       code = `return ${code}`;
@@ -494,12 +482,13 @@ function cc(options) {
   const result = ccFn(options);
   if (Error.isError(result)) throw result;
 
+  const symbols = options.symbols;
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
+    if (symbols[key]?.args?.length || FFIType[symbols[key]?.returns as string] === FFIType.cstring) {
       result.symbols[key] = FFIBuilder(
-        options[key].args ?? [],
-        options[key].returns ?? FFIType.void,
+        symbols[key].args ?? [],
+        symbols[key].returns ?? FFIType.void,
         symbol,
         // in stacktraces:
         // instead of

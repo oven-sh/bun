@@ -1734,8 +1734,7 @@ pub(super) fn generate_symbol_for_function(
 
             if val.is_any_int() {
                 let int = val.to_int32();
-                // Reject Buffer (20); only the string-label path accepts it.
-                if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
+                if let Some(t) = ABIType::from_int(int) {
                     abi_types.push(t);
                     continue;
                 } else {
@@ -1775,8 +1774,7 @@ pub(super) fn generate_symbol_for_function(
         if let Some(ret_value) = value.get_truthy(global, "returns")? {
             if ret_value.is_any_int() {
                 let int = ret_value.to_int32();
-                // Reject Buffer (20); only the string-label path accepts it.
-                if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
+                if let Some(t) = ABIType::from_int(int) {
                     return_type = t;
                     break 'brk;
                 } else {
@@ -1814,7 +1812,7 @@ pub(super) fn generate_symbol_for_function(
         ));
     }
 
-    if function.threadsafe && return_type != ABIType::Void {
+    if threadsafe && return_type != ABIType::Void {
         return Ok(Some(
             ZigString::static_(b"Threadsafe functions must return void").to_error_instance(global),
         ));

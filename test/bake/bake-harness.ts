@@ -142,6 +142,10 @@ export interface DevServerTest {
    * Only run this test.
    */
   only?: boolean;
+  /**
+   * Extra environment variables for the spawned dev-server process.
+   */
+  env?: Record<string, string>;
 }
 
 let interactive = false;
@@ -1971,6 +1975,7 @@ function testImpl<T extends DevServerTest>(
           // BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
           // BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
           BUN_ASSUME_PERFECT_INCREMENTAL: "0",
+          ...options.env,
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],

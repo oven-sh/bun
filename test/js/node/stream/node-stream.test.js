@@ -788,6 +788,34 @@ describe("webstreams adapters (Node v26 sync)", () => {
     expect(done).toBe(true);
   });
 
+  // The toWeb adapter's pull() calls resume() on the source. After 'end' and
+  // autoDestroy, Node 26's resume() is a no-op on destroyed streams, so the
+  // source is left paused / non-flowing. We narrow that guard (see the
+  // fd-slicer test below) but must still match Node's resting state here.
+  it("Readable.toWeb leaves the source paused / non-flowing after EOF", async () => {
+    const src = Readable.from([Buffer.from("a"), Buffer.from("b")], { objectMode: false });
+    const reader = Readable.toWeb(src).getReader();
+    const chunks = [];
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    await new Promise(resolve => (src.closed ? resolve() : src.once("close", resolve)));
+    expect(Buffer.concat(chunks).toString()).toBe("ab");
+    expect({
+      readableEnded: src.readableEnded,
+      destroyed: src.destroyed,
+      readableFlowing: src.readableFlowing,
+      isPaused: src.isPaused(),
+    }).toEqual({
+      readableEnded: true,
+      destroyed: true,
+      readableFlowing: false,
+      isPaused: true,
+    });
+  });
+
   // Upstream: v26 adapters use eos(stream, { writable: false }) so a Duplex
   // readable side completes without waiting for the half-open writable side.
   it("Readable.toWeb of a half-open Duplex closes when the readable side ends", async () => {

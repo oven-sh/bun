@@ -2387,6 +2387,11 @@ impl PostgresSQLConnection {
         match message_type {
             MessageType::DataRow => {
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+                if request.status.get() == QueryStatus::Fail {
+                    // ErrorResponse already rejected this request and dropped
+                    // its GC protection; consume and discard until ReadyForQuery.
+                    return reader.skip_message();
+                }
 
                 let statement = request
                     .statement_mut()
@@ -2544,6 +2549,9 @@ impl PostgresSQLConnection {
             }
             MessageType::CommandComplete => {
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+                if request.status.get() == QueryStatus::Fail {
+                    return reader.skip_message();
+                }
 
                 let mut cmd: protocol::CommandComplete = Default::default();
                 cmd.decode_internal(reader.reborrow())?;
@@ -3000,6 +3008,9 @@ impl PostgresSQLConnection {
             MessageType::CloseComplete => {
                 reader.eat_message(&protocol::CLOSE_COMPLETE)?;
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+                if request.status.get() == QueryStatus::Fail {
+                    return Ok(());
+                }
                 request.on_result(
                     b"CLOSECOMPLETE",
                     self.global(),
@@ -3024,6 +3035,9 @@ impl PostgresSQLConnection {
             MessageType::EmptyQueryResponse => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+                if request.status.get() == QueryStatus::Fail {
+                    return Ok(());
+                }
                 request.on_result(b"", self.global(), self.js_value.get().get(), false);
                 self.update_ref();
             }

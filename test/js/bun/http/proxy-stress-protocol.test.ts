@@ -12,6 +12,7 @@ import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
 import {
+  AdversarialProxy,
   cartesian,
   clearProxyEnv,
   createAdversarialOrigin,
@@ -22,11 +23,23 @@ import {
   tlsCert,
 } from "./proxy-stress-helpers";
 
+// Concurrency note: 102 tests share one {http, https} proxy pair from
+// beforeAll to avoid ephemeral-port reuse under test.concurrent's rolling
+// listen(0) churn. Tests that inspect proxy.connections keep a dedicated
+// proxy.
 let savedEnv: Record<string, string | undefined>;
-beforeAll(() => {
+let sharedHttpProxy: AdversarialProxy;
+let sharedHttpsProxy: AdversarialProxy;
+const sharedProxy = (tls: boolean) => (tls ? sharedHttpsProxy : sharedHttpProxy);
+
+beforeAll(async () => {
   savedEnv = clearProxyEnv();
+  sharedHttpProxy = await createAdversarialProxy({ tls: false });
+  sharedHttpsProxy = await createAdversarialProxy({ tls: true });
 });
-afterAll(() => {
+afterAll(async () => {
+  await sharedHttpProxy?.close();
+  await sharedHttpsProxy?.close();
   restoreProxyEnv(savedEnv);
 });
 
@@ -75,7 +88,7 @@ describe("early reply during upload", () => {
       `${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin, ${status} after 1KB of a 1MB upload`,
       async () => {
         await using origin = await makeEarlyReplyOrigin(status, 1024, originTls);
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(origin.url, {
           method: "POST",
           body: Buffer.alloc(1024 * 1024, "u"),
@@ -122,6 +135,7 @@ describe("multi-hop redirect through proxy", () => {
           origins.push({ close: () => o.close(), url: o.url });
           next = o.url;
         }
+        // This test inspects proxy.connections, so it needs a dedicated proxy.
         await using proxy = await createAdversarialProxy({ tls: proxyTls });
         try {
           const res = await fetch(next!, { proxy: proxy.url, keepalive: false, tls: laxTls });
@@ -160,7 +174,7 @@ describe("large response headers through tunnel", () => {
           body: "big",
           headers: { "X-Big": bigValue },
         });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
         expect(await res.text()).toBe("big");
         expect(res.headers.get("x-big")).toBe(bigValue);
@@ -185,7 +199,7 @@ describe("large request headers through tunnel", () => {
       async () => {
         const bigValue = Buffer.alloc(size, "Q").toString("latin1");
         await using origin = await createAdversarialOrigin({ tls: originTls, body: "ok" });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(origin.url, {
           proxy: proxy.url,
           keepalive: false,
@@ -234,7 +248,7 @@ describe("1xx through tunnel", () => {
       `${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin, ${info} then 200`,
       async () => {
         await using origin = await make1xxOrigin(originTls, info);
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(origin.url, {
           method: "POST",
           body: "x",
@@ -267,6 +281,7 @@ describe.skipIf(!isIPv6())("IPv6 literal origin through proxy", () => {
         tls: originTls ? tlsCert : undefined,
         fetch: () => new Response("v6"),
       });
+      // This test inspects proxy.connections, so it needs a dedicated proxy.
       await using proxy = await createAdversarialProxy({ tls: proxyTls });
       const scheme = originTls ? "https" : "http";
       const res = await fetch(`${scheme}://[::1]:${origin.port}/`, {
@@ -300,6 +315,7 @@ describe("many proxy.headers", () => {
       `${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin, ${count} proxy headers`,
       async () => {
         await using origin = await createAdversarialOrigin({ tls: originTls, body: "ok" });
+        // This test inspects proxy.connections, so it needs a dedicated proxy.
         await using proxy = await createAdversarialProxy({ tls: proxyTls });
         const headers: Record<string, string> = {};
         for (let i = 0; i < count; i++) headers[`X-Proxy-${i}`] = `v${i}`;
@@ -383,7 +399,7 @@ describe("HTTP/1.0 origin through tunnel", () => {
       `${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin HTTP/1.0`,
       async () => {
         await using origin = await makeHttp10Origin(originTls);
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
         expect(await res.text()).toBe("old-school");
         expect(res.status).toBe(200);
@@ -407,6 +423,7 @@ describe('redirect: "manual" through proxy', () => {
       async () => {
         await using target = await createAdversarialOrigin({ tls: originTls, body: "should-not-reach" });
         await using origin = await createAdversarialOrigin({ tls: originTls, redirectTo: target.url });
+        // This test inspects proxy.connections, so it needs a dedicated proxy.
         await using proxy = await createAdversarialProxy({ tls: proxyTls });
         const res = await fetch(origin.url, {
           proxy: proxy.url,
@@ -439,6 +456,7 @@ describe('redirect: "error" through proxy', () => {
           tls: originTls,
           redirectTo: "http://never-reached.invalid/",
         });
+        // This test inspects proxy.connections, so it needs a dedicated proxy.
         await using proxy = await createAdversarialProxy({ tls: proxyTls });
         await expect(
           fetch(origin.url, {
@@ -473,7 +491,7 @@ describe("response body consumers through tunnel", () => {
           body: payload,
           headers: consumer === "json" ? { "Content-Type": "application/json" } : {},
         });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
         expect(res.status).toBe(200);
         switch (consumer) {

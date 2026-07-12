@@ -35,11 +35,6 @@ type FD = number;
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
 
-// Bun supports a fast path for `createReadStream("path.txt")` with `.pipe(res)`,
-// where the entire stream implementation can be bypassed, effectively making it
-// `new Response(Bun.file("path.txt"))`.
-// This makes an idomatic Node.js pattern much faster.
-const kReadStreamFastPath = Symbol("kReadStreamFastPath");
 const kIsPerformingIO = Symbol("kIsPerformingIO");
 const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
@@ -142,7 +137,7 @@ function ReadStream(this: FSStream, path, options): void {
   // Only buffers are supported.
   options.decodeStrings = true;
 
-  let { fd, autoClose, fs: customFs, start, end = Infinity, encoding } = options;
+  let { fd, autoClose, fs: customFs, start, end = Infinity } = options;
 
   if (fd == null) {
     this[kFs] = customFs || fs;
@@ -207,13 +202,6 @@ function ReadStream(this: FSStream, path, options): void {
     }
   }
 
-  this[kReadStreamFastPath] =
-    start === 0 &&
-    end === Infinity &&
-    autoClose &&
-    !customFs &&
-    // is it an encoding which we don't need to decode?
-    (encoding === "buffer" || encoding === "binary" || encoding == null || encoding === "utf-8" || encoding === "utf8");
   Readable.$call(this, options);
   return this as unknown as void;
 }
@@ -351,9 +339,7 @@ readStreamPrototype._destroy = function (this: FSStream, err, cb) {
   // running in a thread pool. Therefore, file descriptors are not safe
   // to close while used in a pending read or write operation. Wait for
   // any pending IO (kIsPerformingIO) to complete (kIoDone).
-  if (this[kReadStreamFastPath]) {
-    this.once(kReadStreamFastPath, er => close(this, err || er, cb));
-  } else if (this[kIsPerformingIO]) {
+  if (this[kIsPerformingIO]) {
     this.once(kIoDone, er => close(this, err || er, cb));
   } else {
     close(this, err, cb);
@@ -400,13 +386,6 @@ function closeAfterSync(stream, err, cb) {
   });
   stream.fd = null;
 }
-
-ReadStream.prototype.pipe = function (this: FSStream, dest, pipeOpts) {
-  // Fast path for streaming files:
-  // if (this[kReadStreamFastPath]) {
-  // }
-  return Readable.prototype.pipe.$call(this, dest, pipeOpts);
-};
 
 function WriteStream(this: FSStream, path: string | null, options?: any): void {
   if (!(this instanceof WriteStream)) {

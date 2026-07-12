@@ -901,6 +901,12 @@ unsafe extern "C" {
     pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
     pub fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
 
+    // ── RAND ─────────────────────────────────────────────────────────────
+    /// Fills `buf[0..len]` from BoringSSL's thread-local CTR-DRBG and returns 1.
+    /// In the event that sufficient random data can not be obtained, `abort`
+    /// is called. See `rand_bytes` for the safe wrapper.
+    pub(crate) fn RAND_bytes(buf: *mut u8, len: usize) -> c_int;
+
     // ── ERR ──────────────────────────────────────────────────────────────
     // Thread-local error queue — no pointer args, no preconditions.
     pub safe fn ERR_clear_error();

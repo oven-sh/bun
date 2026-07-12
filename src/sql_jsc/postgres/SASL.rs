@@ -146,7 +146,7 @@ impl SASL {
     pub fn nonce(&mut self) -> &[u8] {
         if self.nonce_len == 0 {
             let mut bytes: [u8; NONCE_BYTE_LEN] = [0; NONCE_BYTE_LEN];
-            bun_core::csprng(&mut bytes);
+            bun_boringssl_sys::rand_bytes(&mut bytes);
             self.nonce_len = u8::try_from(bun_base64::encode(&mut self.nonce_base64_bytes, &bytes))
                 .expect("int cast");
         }

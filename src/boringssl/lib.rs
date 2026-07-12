@@ -50,6 +50,7 @@ use x509 as X509;
 
 /// BoringSSL's translated C API
 pub use boring as c;
+pub use boring::rand_bytes;
 
 pub fn load() {
     // Callers are expected to invoke this on a single thread during startup

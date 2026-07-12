@@ -133,7 +133,7 @@ impl EntropyCache {
         self.fill();
     }
     pub fn fill(&mut self) {
-        bun_core::csprng(&mut self.cache);
+        bun_boringssl::rand_bytes(&mut self.cache);
         self.index = 0;
     }
     pub fn get(&mut self) -> [u8; 16] {
@@ -682,7 +682,7 @@ impl RareData {
     pub fn default_csrf_secret(&mut self) -> &[u8] {
         if self.default_csrf_secret.is_empty() {
             let mut secret = vec![0u8; 16].into_boxed_slice();
-            bun_core::csprng(&mut secret);
+            bun_boringssl::rand_bytes(&mut secret);
             self.default_csrf_secret = secret;
         }
         &self.default_csrf_secret

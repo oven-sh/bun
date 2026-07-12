@@ -108,7 +108,7 @@ impl BlockList {
             estimated_size: AtomicU32::new(0),
             serialize_nonce: {
                 let mut n = [0u8; 8];
-                bun_core::csprng(&mut n);
+                bun_boringssl_sys::rand_bytes(&mut n);
                 u64::from_ne_bytes(n)
             },
         }));

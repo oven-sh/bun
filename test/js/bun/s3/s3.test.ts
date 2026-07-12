@@ -1883,5 +1883,5 @@ describe("s3 multipart CompleteMultipartUpload body validation", () => {
       error: "rejected:InternalError",
     });
     expect(exitCode).toBe(0);
-  }, 60_000);
+  });
 });

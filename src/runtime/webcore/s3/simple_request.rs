@@ -419,16 +419,20 @@ impl S3HttpSimpleTask {
                 // (truncated/proxy body) must also be treated as a failure.
                 let status = response.status_code;
                 if !this.fail_if_contains_error(status)? {
-                    let committed = this.result.body.as_ref().is_some_and(|b| {
-                        strings::index_of(b.list.as_slice(), b"</CompleteMultipartUploadResult>")
+                    let committed = status == 200
+                        && this.result.body.as_ref().is_some_and(|b| {
+                            strings::index_of(
+                                b.list.as_slice(),
+                                b"</CompleteMultipartUploadResult>",
+                            )
                             .is_some()
-                    });
+                        });
                     if committed {
                         callback(S3CommitResult::Success, this.callback_context)?;
                     } else {
                         this.callback.fail(
                             b"InternalError",
-                            b"CompleteMultipartUpload returned 200 without a CompleteMultipartUploadResult body; the upload was not committed",
+                            b"CompleteMultipartUpload response did not contain a CompleteMultipartUploadResult element; the upload was not committed",
                             this.callback_context,
                         )?;
                     }

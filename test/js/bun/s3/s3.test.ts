@@ -1786,7 +1786,15 @@ describe("s3 multipart upload id validation", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The S3 client does not honor NO_PROXY, so an inherited proxy would
+      // hijack the request to the stub server.
+      env: {
+        ...bunEnv,
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

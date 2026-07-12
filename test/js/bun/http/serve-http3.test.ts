@@ -18,6 +18,15 @@ const fetchH3 = (port: number, path: string, init: RequestInit & { signal?: Abor
 // a live loopback server answers in well under this even on the ASAN lane.
 const DEAD_PORT_ABORT_MS = 1000;
 
+// Every fixture server in this file is torn down on stdin close so the client's
+// pooled session sees CONNECTION_CLOSE and is dropped; otherwise a killed
+// process leaves the client retransmitting until lsquic's idle timeout, and if
+// the OS reuses that ephemeral UDP port a later test's request gets matched
+// onto the dead conn. us_quic_listen_socket_close() flushes CONNECTION_CLOSE
+// synchronously during stop(true); the trailing setTimeout gives the kernel a
+// tick to deliver the loopback datagram before the process exits.
+const STOP_ON_STDIN_END = `process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 100); });`;
+
 const fixture = `
 import { serve } from "bun";
 
@@ -150,12 +159,8 @@ const server = serve({
 });
 
 console.error("PORT=" + server.port);
-// Graceful stop on stdin close so the client receives CONNECTION_CLOSE and
-// drops the session — otherwise a SIGKILLed server leaves the client session
-// retransmitting until lsquic's idle timeout, and if the OS reuses the
-// ephemeral UDP port a later test's request gets matched onto that dead conn.
 process.stdin.on("data", () => {});
-process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 100); });
+${STOP_ON_STDIN_END}
 `;
 
 async function withServer(
@@ -337,7 +342,7 @@ describe("Bun.serve HTTP/3", () => {
       });
       console.error("PORT=" + server.port);
       process.stdin.on("data", () => {});
-      process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 50); });
+      ${STOP_ON_STDIN_END}
     `;
     await withCustomServer(script, async port => {
       // 256 KB body via ReadableStream → no Content-Length on the wire.
@@ -396,7 +401,7 @@ describe("Bun.serve HTTP/3", () => {
       });
       console.error("PORT=" + server.port);
       process.stdin.on("data", () => {});
-      process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 50); });
+      ${STOP_ON_STDIN_END}
     `;
     await withCustomServer(script, async port => {
       expect(await fetchH3(port, "/anything").then(r => r.text())).toBe("from-route");
@@ -873,7 +878,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
           console.error("RELOADED");
         }
       });
-      process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 50); });
+      ${STOP_ON_STDIN_END}
     `;
     await withCustomServer(script, async (port, send, waitForStderr) => {
       expect(await fetchH3(port, "/old").then(r => r.text())).toBe("old-route");
@@ -912,30 +917,33 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         console.error("PORT=" + server.port);
       };
       start(0);
-      process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 50); });
-      for await (const line of console) {
-        if (line === "stop") {
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", async line => {
+        if (line.includes("stop")) {
           // Let the delayed-ACK timer fire so send_ctl has nothing scheduled
           // when listen_socket_close runs; that's the state in which the old
           // lsquic_conn_close() path went silent.
           await Bun.sleep(100);
           const port = server.port;
           server.stop(true);
-          console.error("STOPPED");
           start(port);
+          console.error("RESTARTED");
         }
-      }
+      });
+      ${STOP_ON_STDIN_END}
     `;
     await withCustomServer(script, async (port, send, waitForStderr) => {
       // Warm the pooled client session.
       expect((await fetchH3(port, "/").then(r => r.headers.get("x-len"))) ?? "").toBe("0");
       send("stop");
-      await waitForStderr(/STOPPED/);
+      // waitForStderr matches against the accumulated buffer, so a second
+      // /PORT=/ wait would resolve on the startup line; RESTARTED is emitted
+      // only after the new listener is bound.
+      await waitForStderr(/RESTARTED/);
       // Same process now listens again on the same port. A fresh handshake
       // should complete because the client dropped the old session on
       // CONNECTION_CLOSE; if it reused the dead one the POST below stalls
       // until idle-timeout and then rejects with HTTP3StreamReset.
-      await waitForStderr(/PORT=(\d+)/);
       const body = Buffer.alloc(40_000, "noCL");
       const res = await fetchH3(port, "/", {
         method: "POST",
@@ -948,7 +956,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         }),
         // Fail fast instead of waiting out the ~10s idle alarm; the debug
         // lane's handshake is well under this on a fresh session.
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(2000),
       });
       expect(res.headers.get("x-len")).toBe(String(body.length));
       expect((await res.bytes()).length).toBe(body.length);
@@ -1092,7 +1100,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       });
       console.error("PORT=" + server.port);
       process.stdin.on("data", () => {});
-      process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 50); });
+      ${STOP_ON_STDIN_END}
     `;
     await withCustomServer(script, async port => {
       // Warm the QUIC connection so the /hang stream is actually bound
@@ -1151,7 +1159,7 @@ describe("Bun.serve HTTP/3 production", () => {
       });
       console.error("PORT=" + server.port);
       process.stdin.on("data", () => {});
-      process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 50); });
+      ${STOP_ON_STDIN_END}
     `;
     await withCustomServer(script, async port => {
       const res = await fetchH3(port, "/");

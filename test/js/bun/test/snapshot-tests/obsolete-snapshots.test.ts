@@ -23,6 +23,20 @@ async function run(dir: string, extra: string[] = []) {
 }
 
 describe.concurrent("obsolete snapshot detection", () => {
+  test("passing test with fewer toMatchSnapshot calls than keys on disk reports obsolete", async () => {
+    const dir = tempDirWithFiles("snapobs-reduced", {
+      "snap.test.ts":
+        `import { test, expect } from "bun:test";\n` + `test("foo", () => expect(1).toMatchSnapshot());\n`,
+      "__snapshots__/snap.test.ts.snap":
+        "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\n" +
+        "exports[`foo 1`] = `1`;\n\n" +
+        "exports[`foo 2`] = `2`;\n",
+    });
+    const { stderr, exitCode } = await run(dir);
+    expect(stderr).toContain("1 obsolete");
+    expect(exitCode).toBe(0);
+  });
+
   test("reports obsolete snapshots without -u", async () => {
     const dir = tempDirWithFiles(
       "snapobs-detect",

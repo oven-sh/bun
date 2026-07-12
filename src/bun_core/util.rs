@@ -2826,7 +2826,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
 // must use `bun_boringssl_sys::rand_bytes` (userspace DRBG, no syscall per
 // call).
 fn os_entropy(bytes: &mut [u8]) {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
     {
         let mut filled = 0usize;
         while filled < bytes.len() {

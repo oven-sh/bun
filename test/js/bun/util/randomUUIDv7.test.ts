@@ -49,6 +49,13 @@ describe("randomUUIDv7", () => {
     expect(sorted).toEqual(input);
   });
 
+  test("older explicit timestamps do not move UUIDs backward", () => {
+    const latest = Bun.randomUUIDv7("hex", 4_500_000_000_000);
+    const stale = Bun.randomUUIDv7("hex", 1);
+    expect(stale > latest).toBe(true);
+    expect(stale.slice(0, 13)).toBe(latest.slice(0, 13));
+  });
+
   test("monotonic across 12-bit counter rollover", () => {
     // 10000 UUIDs at a pinned millisecond forces at least two rollovers of the
     // 12-bit rand_a counter. The sequence must still be strictly increasing.

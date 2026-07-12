@@ -68,12 +68,13 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             // > If you are not moving a VM to the different thread, then you can aquire the access and do not need to release
             vm->heap.stopIfNecessary();
             vm->didEnterVM = false;
-        }
-    }
 
 #if USE(MIMALLOC)
-    // Process this thread's retired mimalloc pages and queue arena purges
-    // for the scavenger while the event loop is idle.
-    mi_theap_collect(mi_theap_get_default(), /* force */ false);
+            // Process this thread's retired mimalloc pages and queue arena
+            // purges for the scavenger. Shares the release-access throttle
+            // above so steady-idle parks stay free of per-park work.
+            mi_theap_collect(mi_theap_get_default(), /* force */ false);
 #endif
+        }
+    }
 }

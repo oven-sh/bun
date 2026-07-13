@@ -4593,7 +4593,6 @@ impl VirtualMachine {
         Ok(promise)
     }
 
-
     /// Loads a test-file entry point and waits for the load promise to settle.
     pub fn load_entry_point_for_test_runner(
         &mut self,

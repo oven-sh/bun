@@ -553,20 +553,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // When the file imports macros, also track `const` literals that
                 // appear after the leading declaration prefix so they can be
                 // substituted into macro arguments. Visiting is top-down, so an
-                // entry only becomes visible to textually-later uses.
+                // entry only becomes visible to textually-later uses. Macro-
+                // derived values are only recorded for `const` bindings so a
+                // reassignable `let`/`var` never enters the map.
                 let track_for_macro_args =
                     Self::ALLOW_MACROS && was_const && self.macro_.refs.count() > 0;
-                if could_be_const_value
-                    || (Self::ALLOW_MACROS && could_be_macro)
-                    || track_for_macro_args
-                {
+                let track_macro_result = Self::ALLOW_MACROS && was_const && could_be_macro;
+                if could_be_const_value || track_macro_result || track_for_macro_args {
                     if let Some(val) = decl.value {
                         if val.can_be_const_value() {
                             self.const_values.put(id_ref, val).expect("oom");
                         }
                     }
                 }
-                if !could_be_const_value && !(Self::ALLOW_MACROS && could_be_macro) {
+                if !could_be_const_value && !track_macro_result {
                     self.vis_scope().is_after_const_local_prefix = true;
                 }
                 // SAFETY: original_name is arena-owned, valid for 'a.
@@ -581,7 +581,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             BData::BObject(_) | BData::BArray(_) => {
                 if Self::ALLOW_MACROS {
-                    if could_be_macro && let Some(value) = decl.value {
+                    if was_const
+                        && could_be_macro
+                        && let Some(value) = decl.value
+                    {
                         self.visit_binding_and_expr_for_macro(decl.binding, value);
                     }
                 }

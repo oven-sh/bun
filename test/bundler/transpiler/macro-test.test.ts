@@ -223,6 +223,15 @@ describe("const folding into macro arguments", () => {
     expect(r.exitCode).not.toBe(0);
   });
 
+  test.concurrent("let bindings with a macro initialiser are still rejected", async () => {
+    const r = await runShape(
+      "macro-const-let-macroinit",
+      importLine + "let x = getText();\nx = 'bar';\nconsole.log(identity(x));\n",
+    );
+    expect(r.stderr).toContain("Cannot convert identifier to JS");
+    expect(r.exitCode).not.toBe(0);
+  });
+
   test.concurrent("bun build: const after an unrelated statement", async () => {
     const r = await runShape(
       "macro-const-build-b",

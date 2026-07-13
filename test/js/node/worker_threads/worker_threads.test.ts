@@ -1,4 +1,5 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -21,6 +22,12 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+
+// Worker spawn/teardown is 10-100x slower in debug/ASAN builds; the
+// multi-worker tests here overrun the 5s default.
+if (isDebug) {
+  setDefaultTimeout(90_000);
+}
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {

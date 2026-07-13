@@ -1062,3 +1062,113 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
     target.close();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/34064
+describe("exceptions thrown from socket event listeners", () => {
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("a throwing 'data' listener reaches uncaughtException, not the socket 'error' listener", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const net = require("node:net");
+      process.on("uncaughtException", (e) => {
+        console.log("uncaughtException: " + e.message);
+        process.exit(3);
+      });
+      const server = net.createServer((s) => s.end("x"));
+      server.listen(0, "127.0.0.1", () => {
+        const c = net.connect(server.address().port, "127.0.0.1");
+        c.on("error", (e) => {
+          console.log("socket error listener: " + e.message);
+          process.exit(7);
+        });
+        c.on("data", () => {
+          throw new Error("boom from data listener");
+        });
+      });
+    `);
+    expect(stdout.trim()).toBe("uncaughtException: boom from data listener");
+    expect(exitCode).toBe(3);
+  });
+
+  it("a throwing 'data' listener on an accepted server socket reaches uncaughtException", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const net = require("node:net");
+      process.on("uncaughtException", (e) => {
+        console.log("uncaughtException: " + e.message);
+        process.exit(3);
+      });
+      const server = net.createServer((s) => {
+        s.on("error", (e) => {
+          console.log("socket error listener: " + e.message);
+          process.exit(7);
+        });
+        s.on("data", () => {
+          throw new Error("boom from server data listener");
+        });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const c = net.connect(server.address().port, "127.0.0.1");
+        c.on("error", () => {});
+        c.on("connect", () => c.write("hello"));
+      });
+    `);
+    expect(stdout.trim()).toBe("uncaughtException: boom from server data listener");
+    expect(exitCode).toBe(3);
+  });
+
+  it("without an uncaughtException handler, a throwing 'data' listener crashes the process", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const net = require("node:net");
+      const server = net.createServer((s) => s.end("x"));
+      server.listen(0, "127.0.0.1", () => {
+        const c = net.connect(server.address().port, "127.0.0.1");
+        c.on("error", (e) => {
+          console.log("socket error listener: " + e.message);
+          process.exit(7);
+        });
+        c.on("data", () => {
+          throw new Error("fatal boom");
+        });
+      });
+    `);
+    expect(stdout).not.toContain("socket error listener");
+    expect(stderr).toContain("fatal boom");
+    expect(exitCode).toBe(1);
+  });
+
+  it("emitting an unhandled 'error' on another emitter from a 'data' listener reaches uncaughtException", async () => {
+    // The pg pool shape from the issue: the data listener re-emits 'error' on
+    // an emitter with no listeners, so emit() rethrows the error.
+    const { stdout, stderr, exitCode } = await run(`
+      const net = require("node:net");
+      const { EventEmitter } = require("node:events");
+      process.on("uncaughtException", (e) => {
+        console.log("uncaughtException: " + e.message);
+        process.exit(3);
+      });
+      const pool = new EventEmitter();
+      const server = net.createServer((s) => s.end("x"));
+      server.listen(0, "127.0.0.1", () => {
+        const c = net.connect(server.address().port, "127.0.0.1");
+        c.on("error", (e) => {
+          console.log("socket error listener: " + e.message);
+          process.exit(7);
+        });
+        c.on("data", () => {
+          pool.emit("error", new Error("pool error"));
+        });
+      });
+    `);
+    expect(stdout.trim()).toBe("uncaughtException: pool error");
+    expect(exitCode).toBe(3);
+  });
+});

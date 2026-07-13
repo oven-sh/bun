@@ -193,7 +193,7 @@ test.skipIf(isWindows)(
       } else {
         const srv = net.createServer(() => {});
         srv.on("error", e => {
-          process.send({ err: { code: e.code, syscall: e.syscall, errno: e.errno } }, () => process.exit(0));
+          process.send({ err: { code: e.code, syscall: e.syscall, errno: e.errno, address: e.address } }, () => process.exit(0));
         });
         srv.on("listening", () => {
           process.send({ err: { code: "UNEXPECTED_LISTENING" } }, () => process.exit(1));
@@ -215,7 +215,7 @@ test.skipIf(isWindows)(
     const out = trimmed ? JSON.parse(trimmed) : {};
     expect({ stderr: stderr.trim(), ...out }).toEqual({
       stderr: "",
-      saw: { code: "EADDRINUSE", syscall: "bind", errno: process.binding("uv").UV_EADDRINUSE },
+      saw: { code: "EADDRINUSE", syscall: "bind", errno: process.binding("uv").UV_EADDRINUSE, address: "::" },
       exit: [0, null],
     });
     expect(exitCode).toBe(0);

@@ -3643,7 +3643,7 @@ function listenInCluster(
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
     err = checkBindError(err, port, handle);
     if (err) {
-      const ex = new ExceptionWithHostPort(err, "bind", address, port);
+      const ex = new ExceptionWithHostPort(err, "bind", hostname ?? path, port);
       return server.emit("error", ex);
     }
     server[kRealListen](

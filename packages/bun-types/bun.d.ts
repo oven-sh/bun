@@ -915,11 +915,11 @@ declare module "bun" {
    */
   namespace YAML {
     /**
-     * Parse a YAML string into a JavaScript value
+     * Parse a YAML document into a JavaScript value.
      *
      * @category Utilities
      *
-     * @param input The YAML string to parse
+     * @param input The YAML document to parse, as a string or UTF-8 bytes
      * @returns A JavaScript value
      *
      * @example
@@ -934,7 +934,9 @@ declare module "bun" {
      * console.log(YAML.parse("abc: def")) // { "abc": "def" }
      * ```
      */
-    export function parse(input: string): unknown;
+    export function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+    ): unknown;
 
     /**
      * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or
@@ -1481,7 +1483,7 @@ declare module "bun" {
    */
   namespace JSON5 {
     /**
-     * Parse a JSON5 string into a JavaScript value.
+     * Parse a JSON5 document into a JavaScript value.
      *
      * JSON5 is a superset of JSON based on ECMAScript 5.1 that supports
      * comments, trailing commas, unquoted keys, single-quoted strings,
@@ -1489,7 +1491,7 @@ declare module "bun" {
      *
      * @category Utilities
      *
-     * @param input The JSON5 string to parse
+     * @param input The JSON5 document to parse, as a string or UTF-8 bytes
      * @returns A JavaScript value
      *
      * @example
@@ -1506,7 +1508,9 @@ declare module "bun" {
      * }`);
      * ```
      */
-    export function parse(input: string): unknown;
+    export function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+    ): unknown;
 
     /**
      * Convert a JavaScript value into a JSON5 string. Object keys that are

@@ -352,6 +352,40 @@ it(".query works", () => {
   }
 });
 
+it(".query skips empty-key pairs instead of terminating the parse", () => {
+  const { dir } = make(["posts.tsx", "posts/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  // An empty-key pair ("=value") should be skipped, not treated as end-of-query.
+  // Previously "?=v&x=1&y=2" yielded {} and "?x=1&=v&y=2" dropped y.
+  for (const [current, expected] of [
+    ["/posts?x=1&y=2", { x: "1", y: "2" }],
+    ["/posts?=v&x=1&y=2", { x: "1", y: "2" }],
+    ["/posts?x=1&=v&y=2", { x: "1", y: "2" }],
+    ["/posts?x=1&y=2&=v", { x: "1", y: "2" }],
+    ["/posts?=v", {}],
+    ["/posts?=&x=1", { x: "1" }],
+    ["/posts?==&x=1", { x: "1" }],
+    ["/posts?=v&=w&x=1", { x: "1" }],
+    ["/posts?&&&x=1", { x: "1" }],
+    ["/posts?a=%20&=v&b=2", { a: " ", b: "2" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+
+  // Same scanner is used when path params are present (init_with_scanner path).
+  for (const [current, expected] of [
+    ["/posts/123?=v&x=1&y=2", { id: "123", x: "1", y: "2" }],
+    ["/posts/123?x=1&=v&y=2", { id: "123", x: "1", y: "2" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+});
+
 it("reload() works", () => {
   // set up the test
   const { dir } = make(["posts.tsx"]);

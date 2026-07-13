@@ -1135,9 +1135,15 @@ function nReadingNextTick(self) {
 // If the user uses them, then switch into old mode.
 Readable.prototype.resume = function () {
   const state = this._readableState;
-  // Deliberate divergence from Node 26 (nodejs/node#62557): no destroyed
-  // early-return here. fd-slicer-style readables set `destroyed` right before
-  // push(null), and the guard strands their buffer when a piped dest drains.
+  // Node 26 (nodejs/node#62557) early-returns on kDestroyed. We narrow it to
+  // kDestroyed && kEndEmitted: fd-slicer-style readables set `destroyed` right
+  // before push(null), and the full guard strands their buffered tail when a
+  // piped dest drains (yauzl/extract-zip). Once 'end' has fired there is
+  // nothing left to flush, so becoming a no-op restores readableFlowing /
+  // isPaused() parity for consumers that resume() past EOF (Readable.toWeb).
+  if ((state[kState] & (kDestroyed | kEndEmitted)) === (kDestroyed | kEndEmitted)) {
+    return this;
+  }
   if ((state[kState] & kFlowing) === 0) {
     $debug("resume");
     // We flow only if there is no one listening

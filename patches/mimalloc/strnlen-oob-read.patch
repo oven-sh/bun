@@ -1,0 +1,15 @@
+--- a/src/libc.c
++++ b/src/libc.c
+@@ -64,7 +64,11 @@
+ size_t _mi_strnlen(const char* s, size_t max_len) {
+   if (s==NULL) return 0;
+   size_t len = 0;
+-  while(s[len] != 0 && len < max_len) { len++; }
++  // Bun patch: test the bound BEFORE dereferencing. Upstream reads s[max_len]
++  // on unterminated buffers (unix_detect_thp passes a 32-byte stack read with
++  // no NUL), a 1-byte stack over-read that ASan traps intermittently at
++  // startup, depending on the uninitialized bytes after the file contents.
++  while(len < max_len && s[len] != 0) { len++; }
+   return len;
+ }
+ 

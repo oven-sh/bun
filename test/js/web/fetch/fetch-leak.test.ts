@@ -68,6 +68,17 @@ describe("fetch doesn't leak", () => {
       NAME: name,
     };
 
+    if (isASAN) {
+      // The fixture judges leakage by RSS delta, but ASAN's quarantine retains
+      // freed allocations (256 MB by default): 1000 compressed-body requests
+      // free ~65 MB of transient buffers and the delta still reads ~276 MB —
+      // pure quarantine, measured with zero real leakage. Cap the child's
+      // quarantine so RSS tracks live memory again; a genuine
+      // one-body-per-request leak still exceeds the threshold by orders of
+      // magnitude.
+      env.ASAN_OPTIONS = `${bunEnv.ASAN_OPTIONS ?? ""}:quarantine_size_mb=32`.replace(/^:/, "");
+    }
+
     if (tls) {
       env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
     }
@@ -727,6 +738,12 @@ test("should not leak using readable stream", async () => {
       // ASAN's quarantine retains freed allocations so RSS stays elevated
       // under bun-asan; the fixture only allows MAX_MEMORY_INCREASE MiB.
       MAX_MEMORY_INCREASE: isASAN ? "64" : "5", // in MB
+      // The fixture asserts RSS stabilizes after iteration 250, but with the
+      // default 256 MB quarantine the freed 128 KB bodies are never reused and
+      // RSS keeps climbing through all 500 iterations (~97 MB past the sample
+      // point, over the 64 MB allowance). Cap the quarantine so freed churn
+      // recycles and the stabilization the test asserts can actually happen.
+      ...(isASAN && { ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS ?? ""}:quarantine_size_mb=32`.replace(/^:/, "") }),
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -792,4 +809,7 @@ test("should not leak request-body ReadableStream when server ignores the body",
   expect(stdout + stderr).toContain('"after"');
   expect(stderr).not.toContain("LEAK");
   expect(exitCode).toBe(0);
-});
+  // The scenario itself takes ~100 ms; under ASAN the spawned child's startup
+  // (shadow-memory init) plus suite load overruns the 5 s default. Standalone
+  // ASAN runs pass in well under a second.
+}, isASAN ? 30_000 : 5_000);

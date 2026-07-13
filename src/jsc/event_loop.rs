@@ -610,6 +610,9 @@ impl EventLoop {
         self.vm_ref().as_mut().gc_controller.request_hint();
     }
 
+    /// Acts on a hint left by `request_gc_hint`. Must run BEFORE the poll deadline is computed
+    /// (`timer::All::get_timeout`): the GC heuristic arms a one-shot timer, and a timer armed
+    /// after the deadline is not in it -- the loop would sleep straight past it.
     pub fn drain_pending_gc_hint(&mut self) {
         self.vm_ref().as_mut().gc_controller.drain_pending_hint();
     }
@@ -1130,6 +1133,7 @@ impl EventLoop {
             self.hold_forever_poll(loop_);
         }
 
+        self.drain_pending_gc_hint();
         self.process_gc_timer();
         self.process_gc_timer();
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
@@ -1481,12 +1485,4 @@ pub extern "C" fn Bun__EventLoop__unregisterDeferredTask(
     vm.event_loop_ref()
         .deferred_tasks
         .unregister_task(core::ptr::NonNull::new(ctx))
-}
-
-/// Called from `Bun__JSC_onBeforeWait`, just before the loop blocks: microtasks have drained by
-/// now, so a GC hint requested by a finished HTTP transaction can finally see that turn's garbage.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__drainPendingGCHint() {
-    // SAFETY: JS thread, immediately before the event loop blocks; the VM is live.
-    unsafe { (*VirtualMachine::get().event_loop()).drain_pending_gc_hint() };
 }

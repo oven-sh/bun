@@ -1,6 +1,8 @@
 #include "root.h"
 #include "BunClientData.h"
 
+#include <atomic>
+
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
 
@@ -10,9 +12,11 @@
 extern "C" void mi_on_thread_idle(void) noexcept;
 #endif
 
-extern "C" int Bun__defaultRemainingRunsUntilSkipReleaseAccess;
-extern "C" int Bun__mimallocIdleSweepIntervalMs;
-extern "C" void Bun__drainPendingGCHint();
+// Rust-side `AtomicI32` statics (src/jsc/VirtualMachine.rs). Same layout as a plain
+// int32_t, but Rust writes them (env parsing) while this thread reads them, so read
+// them as atomics rather than through a plain `int`.
+extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
+extern "C" std::atomic<int32_t> Bun__mimallocIdleSweepIntervalMs;
 
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
 {
@@ -56,7 +60,7 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
         // finalizers that might've been waiting to be run is a good idea.
         // But if you haven't, like if the process is just waiting on I/O
         // then don't bother.
-        const int defaultRemainingRunsUntilSkipReleaseAccess = Bun__defaultRemainingRunsUntilSkipReleaseAccess;
+        const int defaultRemainingRunsUntilSkipReleaseAccess = Bun__defaultRemainingRunsUntilSkipReleaseAccess.load(std::memory_order_relaxed);
 
         static thread_local int remainingRunsUntilSkipReleaseAccess = 0;
 
@@ -73,20 +77,19 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             vm->heap.stopIfNecessary();
             vm->didEnterVM = false;
 
-            // A finished HTTP transaction asked for the heap to be looked at; act here so
-            // the response's microtasks have drained and the garbage exists to be seen.
-            // Must precede the sweep -- the GC is what makes the pages free to hand back.
-            Bun__drainPendingGCHint();
-
 #if USE(MIMALLOC)
             // Collect retired pages, punch free-block holes, hand the arena purge to
             // the scavenger. Rate-limited: a busy server parks between every request,
             // and unthrottled sweeps cost ~25% of express throughput for no memory gain.
-            static thread_local MonotonicTime lastIdleSweep;
-            const auto now = MonotonicTime::now();
-            if ((now - lastIdleSweep) >= Seconds::fromMilliseconds(Bun__mimallocIdleSweepIntervalMs)) {
-                lastIdleSweep = now;
-                mi_on_thread_idle();
+            // 0 sweeps on every park here; a negative value disables the sweep.
+            const int32_t idleSweepIntervalMs = Bun__mimallocIdleSweepIntervalMs.load(std::memory_order_relaxed);
+            if (idleSweepIntervalMs >= 0) {
+                static thread_local MonotonicTime lastIdleSweep;
+                const auto now = MonotonicTime::now();
+                if ((now - lastIdleSweep) >= Seconds::fromMilliseconds(idleSweepIntervalMs)) {
+                    lastIdleSweep = now;
+                    mi_on_thread_idle();
+                }
             }
 #endif
         }

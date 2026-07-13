@@ -123,12 +123,12 @@ impl GarbageCollectionController {
             }
         }
 
+        // Negative disables the sweep, 0 sweeps on every park; both are useful for A/B runs,
+        // so unlike the knob above this one accepts the full range.
         if let Some(val) = env.and_then(|e| e.get(b"BUN_MIMALLOC_IDLE_SWEEP_INTERVAL_MS")) {
             if let Some(parsed) = bun_core::fmt::parse_decimal::<c_int>(val) {
-                if parsed >= 0 {
-                    crate::virtual_machine::Bun__mimallocIdleSweepIntervalMs
-                        .store(parsed, core::sync::atomic::Ordering::Relaxed);
-                }
+                crate::virtual_machine::Bun__mimallocIdleSweepIntervalMs
+                    .store(parsed, core::sync::atomic::Ordering::Relaxed);
             }
         }
 

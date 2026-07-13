@@ -41,9 +41,10 @@ pub static isBunTest: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 pub(crate) static Bun__defaultRemainingRunsUntilSkipReleaseAccess: core::sync::atomic::AtomicI32 =
     core::sync::atomic::AtomicI32::new(10);
 
-/// Minimum gap between idle mimalloc sweeps. The sweep walks every page of every theap,
-/// and a busy server parks between every request; profiling express put it at 26% of the
-/// main thread for no memory gain there.
+/// Minimum gap between idle mimalloc sweeps (`BUN_MIMALLOC_IDLE_SWEEP_INTERVAL_MS`). The sweep
+/// walks every page of every theap, and a busy server parks between every request; profiling
+/// express put it at 26% of the main thread for no memory gain there.
+/// 0 sweeps on every eligible park; a negative value disables the sweep entirely.
 #[unsafe(no_mangle)]
 pub(crate) static Bun__mimallocIdleSweepIntervalMs: core::sync::atomic::AtomicI32 =
     core::sync::atomic::AtomicI32::new(100);

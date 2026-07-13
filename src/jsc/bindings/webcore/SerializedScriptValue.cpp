@@ -6404,9 +6404,8 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             if (arrayBuffer->isDetached() || arrayBuffer->isShared())
                 return Exception { DataCloneError };
             if (arrayBuffer->isLocked()) {
-                auto scope = DECLARE_THROW_SCOPE(vm);
                 throwVMTypeError(&lexicalGlobalObject, scope, errorMessageForTransfer(arrayBuffer));
-                RELEASE_AND_RETURN(scope, Exception { ExistingExceptionError });
+                return Exception { ExistingExceptionError };
             }
             arrayBuffers.append(WTF::move(arrayBuffer));
             continue;

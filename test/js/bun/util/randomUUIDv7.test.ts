@@ -55,6 +55,63 @@ describe("randomUUIDv7", () => {
     expect(firstBreak).toBe(-1);
   });
 
+  describe("timestamp range validation", () => {
+    test.each([
+      ["2**48", 2 ** 48],
+      ["2**53 - 1", 2 ** 53 - 1],
+      ["NaN", NaN],
+      ["Date(-1)", new Date(-1)],
+      ["Date(2**48)", new Date(2 ** 48)],
+      ["Date(8.64e15)", new Date(8.64e15)],
+      ["Invalid Date", new Date(NaN)],
+    ])("rejects %s", (_, ts) => {
+      expect(() => Bun.randomUUIDv7("hex", ts)).toThrow(RangeError);
+      expect(() => Bun.randomUUIDv7(undefined, ts)).toThrow(RangeError);
+      // @ts-expect-error single-arg timestamp overload
+      expect(() => Bun.randomUUIDv7(ts)).toThrow(RangeError);
+    });
+
+    test("RangeError message advertises the 48-bit bound", () => {
+      const err = (() => {
+        try {
+          Bun.randomUUIDv7("hex", 2 ** 48);
+        } catch (e) {
+          return e as RangeError;
+        }
+        throw new Error("did not throw");
+      })();
+      expect(err).toBeInstanceOf(RangeError);
+      expect(err.message).toContain("281474976710655");
+      expect(err.message).not.toContain("9007199254740991");
+    });
+
+    test("accepts 2**48 - 1 (max 48-bit value)", async () => {
+      // Subprocess: 2**48-1 would park the process-global timestamp at year 10889.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const tsOf = u => parseInt(u.replaceAll("-", "").slice(0, 12), 16);
+            const max = 2 ** 48 - 1;
+            console.log(JSON.stringify([
+              tsOf(Bun.randomUUIDv7("hex", max)),
+              tsOf(Bun.randomUUIDv7(undefined, max)),
+              tsOf(Bun.randomUUIDv7("hex", new Date(max))),
+            ]));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const max = 2 ** 48 - 1;
+      expect(JSON.parse(stdout)).toEqual([max, max, max]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // The remaining tests pass far-future timestamps. UUID_V7_LAST_TIMESTAMP is a
   // process-global that never moves backward, so run each in a fresh subprocess
   // to avoid leaving the test process parked in the year 2100+.

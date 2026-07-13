@@ -66,9 +66,6 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
       expect(res.headers.get("Content-Length")).toBe(static_responses[path].size.toString());
       expect(handler.mock.calls.length, "Handler should not be called").toBe(previousCallCount);
     });
-
-    // Stress loops live in bun-serve-static-stress-*.test.ts so /big's ~48GB of
-    // loopback traffic gets its own per-file wall clock instead of sharing this one.
   });
 
   it("/redirect", async () => {

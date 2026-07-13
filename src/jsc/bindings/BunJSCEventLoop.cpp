@@ -12,11 +12,10 @@
 extern "C" void mi_on_thread_idle(void) noexcept;
 #endif
 
-// Rust-side `AtomicI32` statics (src/jsc/VirtualMachine.rs). Same layout as a plain
-// int32_t, but Rust writes them (env parsing) while this thread reads them, so read
-// them as atomics rather than through a plain `int`.
+// Rust-side `AtomicI32` static (src/jsc/VirtualMachine.rs). Same layout as a plain
+// int32_t, but Rust writes it (env parsing) while this thread reads it, so read
+// it as an atomic rather than through a plain `int`.
 extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
-extern "C" std::atomic<int32_t> Bun__mimallocIdleSweepIntervalMs;
 
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
 {
@@ -81,15 +80,11 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             // Collect retired pages, punch free-block holes, hand the arena purge to
             // the scavenger. Rate-limited: a busy server parks between every request,
             // and unthrottled sweeps cost ~25% of express throughput for no memory gain.
-            // 0 sweeps on every park here; a negative value disables the sweep.
-            const int32_t idleSweepIntervalMs = Bun__mimallocIdleSweepIntervalMs.load(std::memory_order_relaxed);
-            if (idleSweepIntervalMs >= 0) {
-                static thread_local MonotonicTime lastIdleSweep;
-                const auto now = MonotonicTime::now();
-                if ((now - lastIdleSweep) >= Seconds::fromMilliseconds(idleSweepIntervalMs)) {
-                    lastIdleSweep = now;
-                    mi_on_thread_idle();
-                }
+            static thread_local MonotonicTime lastIdleSweep;
+            const auto now = MonotonicTime::now();
+            if ((now - lastIdleSweep) >= Seconds::fromMilliseconds(100)) {
+                lastIdleSweep = now;
+                mi_on_thread_idle();
             }
 #endif
         }

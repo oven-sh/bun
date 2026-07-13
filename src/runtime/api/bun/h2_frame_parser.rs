@@ -3200,7 +3200,7 @@ impl H2FrameParser {
 
     pub(crate) fn _write(&self, bytes: &[u8]) -> bool {
         let _keepalive = self.keepalive();
-        let result = match self.native_socket.get() {
+        match self.native_socket.get() {
             BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
                 self._generic_write(socket.get(), bytes)
             }
@@ -3254,8 +3254,7 @@ impl H2FrameParser {
                 };
                 return r;
             }
-        };
-        result
+        }
     }
 
     fn has_backpressure(&self) -> bool {

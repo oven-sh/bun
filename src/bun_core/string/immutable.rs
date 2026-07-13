@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 use core::ffi::c_int;
 
 use crate::BoundedArray;
-use crate::Error;
+use crate::CrateError as Error;
 use bun_alloc::AllocError;
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
@@ -1475,7 +1475,7 @@ pub fn concat_buf_t<'a, T: Copy>(out: &'a mut [T], strs: &[&[T]]) -> Result<&'a 
     let mut off: usize = 0;
     for s in strs {
         if s.len() > out.len() - off {
-            return Err(crate::err!("NoSpaceLeft"));
+            return Err(crate::CrateError::NoSpaceLeft);
         }
         out[off..off + s.len()].copy_from_slice(s);
         off += s.len();
@@ -2729,11 +2729,10 @@ pub fn is_hex_code_point<T: TryInto<u8>>(cp: T) -> bool {
 /// Unicode `Zs` (Space_Separator) general category — the exact 17-codepoint
 /// set, stable since Unicode 4.0. Shared core of:
 ///   - ECMAScript `WhiteSpace` (js_parser::lexer)
-///   - the JSON5/JS-flavoured JSON lexer (parsers::json_lexer)
 ///   - CommonMark §2.1 "Unicode whitespace" (md::helpers)
 /// Callers compose with their own ASCII / U+FEFF / line-terminator extras —
-/// those differ per spec and MUST NOT be folded in here (FEFF is Cf, not Zs,
-/// and is ECMAScript-only; 2028/2029 are Zl/Zp, json_lexer-only).
+/// those differ per spec and MUST NOT be folded in here (FEFF is Cf, not Zs;
+/// 2028/2029 are Zl/Zp).
 #[inline]
 pub const fn is_unicode_space_separator(cp: u32) -> bool {
     matches!(
@@ -3056,11 +3055,11 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
 /// (defined there) and `to_utf16_alloc` (defined here) share a single error
 /// type — callers like `TextDecoder` match on `strings::ToUTF16Error` for both.
 pub use unicode_draft::ToUTF16Error;
-impl From<ToUTF16Error> for crate::Error {
+impl From<ToUTF16Error> for crate::CrateError {
     fn from(e: ToUTF16Error) -> Self {
         match e {
-            ToUTF16Error::InvalidByteSequence => crate::err!("InvalidByteSequence"),
-            ToUTF16Error::OutOfMemory => crate::err!("OutOfMemory"),
+            ToUTF16Error::InvalidByteSequence => crate::CrateError::InvalidByteSequence,
+            ToUTF16Error::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
         }
     }
 }
@@ -3135,6 +3134,56 @@ pub fn to_utf16_alloc(
         out.push(0);
     }
     Ok(Some(out))
+}
+
+/// WTF-8 → UTF-16LE iff `bytes` contains any non-ASCII byte; pure-ASCII inputs return `None`.
+pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
+    first_non_ascii(bytes)?;
+
+    let out_length = simdutf::length::utf16::from::utf8(bytes);
+    let mut out: Vec<u16> = Vec::with_capacity(out_length.max(1));
+    // SAFETY: `out` has ≥ `out_length` u16 of capacity; simdutf writes at most that many.
+    let res = unsafe {
+        simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
+            bytes.as_ptr(),
+            bytes.len(),
+            out.as_mut_ptr(),
+        )
+    };
+    if res.is_successful() && out_length > 0 {
+        // SAFETY: on success simdutf initialised exactly `out_length` u16s.
+        unsafe { out.set_len(out_length) };
+        return Some(out);
+    }
+
+    out.reserve(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b < 0x80 {
+            out.push(u16::from(b));
+            i += 1;
+            continue;
+        }
+        let width = wtf8_byte_sequence_length_with_invalid(b);
+        if width == 1 {
+            out.push(UNICODE_REPLACEMENT as u16);
+            i += 1;
+            continue;
+        }
+        let take = (width as usize).min(bytes.len() - i);
+        let mut buf = [0u8; 4];
+        buf[..take].copy_from_slice(&bytes[i..i + take]);
+        let cp = decode_wtf8_rune_t::<i32>(buf, width, -1);
+        if cp < 0 {
+            out.push(UNICODE_REPLACEMENT as u16);
+            i += 1;
+            continue;
+        }
+        push_codepoint_utf16(&mut out, cp as u32);
+        i += take;
+    }
+    Some(out)
 }
 
 /// `PATTERN_KEY_COMPARE` from the Node.js ESM resolution spec — the comparator

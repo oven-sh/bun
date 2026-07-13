@@ -2,11 +2,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cinttypes>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #include "utils.h"
 
@@ -86,6 +89,113 @@ static napi_value test_napi_threadsafe_function_does_not_hang_after_finalize(
   NODE_API_CALL(env, napi_release_threadsafe_function(cb, napi_tsfn_release));
   printf("success!\n");
   return env.Undefined();
+}
+
+static napi_threadsafe_function tsfn_abort_release = nullptr;
+static bool tsfn_abort_release_finalized = false;
+
+static void tsfn_abort_release_finalize(napi_env env, void *finalize_data,
+                                        void *finalize_hint) {
+  tsfn_abort_release_finalized = true;
+}
+
+// Create a tsfn (thread_count=1), acquire a second reference (thread_count=2),
+// optionally queue some items, then abort it (thread_count=1, closing). The
+// abort's dispatch runs on the next event-loop turn, sees thread_count!=0, and
+// returns without finalizing.
+static napi_value test_napi_threadsafe_function_abort_then_last_release(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "abort_then_last_release");
+  int queued = info[0].IsNumber() ? info[0].As<Napi::Number>().Int32Value() : 0;
+  tsfn_abort_release_finalized = false;
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, /* JavaScript function */ nullptr,
+                    /* async resource */ nullptr, resource_name,
+                    /* max queue size (unlimited) */ 0,
+                    /* initial thread count */ 1, /* finalize data */ nullptr,
+                    tsfn_abort_release_finalize, /* context */ nullptr,
+                    &noop_callback, &tsfn_abort_release));
+  NODE_API_CALL(env, napi_acquire_threadsafe_function(tsfn_abort_release));
+  for (int i = 0; i < queued; i++) {
+    NODE_API_CALL(env, napi_call_threadsafe_function(
+                           tsfn_abort_release, nullptr, napi_tsfn_nonblocking));
+  }
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_release,
+                                                      napi_tsfn_abort));
+  return env.Undefined();
+}
+
+// Releases the last reference of the already-closing tsfn. The finalizer must
+// run and the event-loop keepalive must drop so the process exits.
+static napi_value test_napi_threadsafe_function_abort_then_last_release_drop(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_release,
+                                                      napi_tsfn_release));
+  tsfn_abort_release = nullptr;
+  return env.Undefined();
+}
+
+static napi_value
+test_napi_threadsafe_function_abort_then_last_release_finalized(
+    const Napi::CallbackInfo &info) {
+  return Napi::Boolean::New(info.Env(), tsfn_abort_release_finalized);
+}
+
+static napi_threadsafe_function tsfn_abort_blocked = nullptr;
+static bool tsfn_abort_blocked_finalized = false;
+static std::atomic<int> tsfn_abort_blocked_about_to_call{0};
+
+static void tsfn_abort_blocked_finalize(napi_env env, void *finalize_data,
+                                        void *finalize_hint) {
+  tsfn_abort_blocked_finalized = true;
+}
+
+static void tsfn_abort_blocked_producer() {
+  napi_threadsafe_function tsfn = tsfn_abort_blocked;
+  tsfn_abort_blocked_about_to_call.fetch_add(1);
+  napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_blocking);
+}
+
+// Create a tsfn with max_queue_size=1 and initial_thread_count=3, fill the
+// queue, spawn two producers that block in napi_call_threadsafe_function
+// (napi_tsfn_blocking), then abort. Both producers must wake, observe
+// napi_closing, and the finalizer must run so the process exits.
+static napi_value test_napi_threadsafe_function_abort_blocked_producers(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "abort_blocked_producers");
+  tsfn_abort_blocked_finalized = false;
+  tsfn_abort_blocked_about_to_call.store(0);
+  NODE_API_CALL(
+      env, napi_create_threadsafe_function(
+               env, /* JavaScript function */ nullptr,
+               /* async resource */ nullptr, resource_name,
+               /* max queue size */ 1,
+               /* initial thread count */ 3, /* finalize data */ nullptr,
+               tsfn_abort_blocked_finalize, /* context */ nullptr,
+               &noop_callback, &tsfn_abort_blocked));
+  // Fill the queue so both producer threads block on the condvar. The JS
+  // thread is parked in this function, so dispatch cannot drain it yet.
+  NODE_API_CALL(env, napi_call_threadsafe_function(tsfn_abort_blocked, nullptr,
+                                                   napi_tsfn_nonblocking));
+  std::thread(tsfn_abort_blocked_producer).detach();
+  std::thread(tsfn_abort_blocked_producer).detach();
+  while (tsfn_abort_blocked_about_to_call.load() < 2) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_blocked,
+                                                      napi_tsfn_abort));
+  return env.Undefined();
+}
+
+static napi_value
+test_napi_threadsafe_function_abort_blocked_producers_finalized(
+    const Napi::CallbackInfo &info) {
+  return Napi::Boolean::New(info.Env(), tsfn_abort_blocked_finalized);
 }
 
 static napi_value
@@ -2388,12 +2498,126 @@ static napi_value test_napi_create_tsfn_async_context_frame(const Napi::Callback
   return env.Undefined();
 }
 
+static napi_value
+test_typedarray_info_byte_offset(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value typedarray = info[1];
+
+  napi_typedarray_type type;
+  size_t length = 0;
+  void *data = nullptr;
+  napi_value arraybuffer = nullptr;
+  size_t byte_offset = SIZE_MAX;
+  NODE_API_CALL(env,
+                napi_get_typedarray_info(env, typedarray, &type, &length, &data,
+                                         &arraybuffer, &byte_offset));
+
+  void *arraybuffer_data = nullptr;
+  size_t arraybuffer_byte_length = 0;
+  NODE_API_CALL(env,
+                napi_get_arraybuffer_info(env, arraybuffer, &arraybuffer_data,
+                                          &arraybuffer_byte_length));
+
+  bool data_at_offset =
+      static_cast<uint8_t *>(arraybuffer_data) + byte_offset ==
+      static_cast<uint8_t *>(data);
+  printf("byte_offset=%zu length=%zu arraybuffer_byte_length=%zu "
+         "data_is_arraybuffer_data_plus_byte_offset=%s\n",
+         byte_offset, length, arraybuffer_byte_length,
+         data_at_offset ? "true" : "false");
+  return ok(env);
+}
+
+static napi_value
+test_dataview_info_byte_offset(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value dataview = info[1];
+
+  size_t byte_length = 0;
+  void *data = nullptr;
+  napi_value arraybuffer = nullptr;
+  size_t byte_offset = SIZE_MAX;
+  NODE_API_CALL(env, napi_get_dataview_info(env, dataview, &byte_length, &data,
+                                            &arraybuffer, &byte_offset));
+
+  void *arraybuffer_data = nullptr;
+  size_t arraybuffer_byte_length = 0;
+  NODE_API_CALL(env,
+                napi_get_arraybuffer_info(env, arraybuffer, &arraybuffer_data,
+                                          &arraybuffer_byte_length));
+
+  bool data_at_offset =
+      static_cast<uint8_t *>(arraybuffer_data) + byte_offset ==
+      static_cast<uint8_t *>(data);
+  printf("byte_offset=%zu byte_length=%zu arraybuffer_byte_length=%zu "
+         "data_is_arraybuffer_data_plus_byte_offset=%s\n",
+         byte_offset, byte_length, arraybuffer_byte_length,
+         data_at_offset ? "true" : "false");
+  return ok(env);
+}
+
+static napi_value
+test_create_arraybuffer_zeroed(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  const size_t size = 1024;
+  const int rounds = 1024;
+  int buffers_with_nonzero_bytes = 0;
+
+  for (int i = 0; i < rounds; i++) {
+    napi_value scratch;
+    void *scratch_data = nullptr;
+    NODE_API_CALL(env,
+                  napi_create_arraybuffer(env, size, &scratch_data, &scratch));
+    memset(scratch_data, 0xEE, size);
+    NODE_API_CALL(env, napi_detach_arraybuffer(env, scratch));
+
+    napi_value probe;
+    void *probe_data = nullptr;
+    NODE_API_CALL(env, napi_create_arraybuffer(env, size, &probe_data, &probe));
+    const uint8_t *bytes = static_cast<const uint8_t *>(probe_data);
+    bool all_zero = true;
+    for (size_t j = 0; j < size; j++) {
+      if (bytes[j] != 0) {
+        all_zero = false;
+        break;
+      }
+    }
+    if (!all_zero) {
+      buffers_with_nonzero_bytes++;
+    }
+    NODE_API_CALL(env, napi_detach_arraybuffer(env, probe));
+  }
+
+  if (buffers_with_nonzero_bytes == 0) {
+    printf("PASS: napi_create_arraybuffer memory is zero-filled\n");
+  } else {
+    printf("FAIL: napi_create_arraybuffer returned memory with nonzero "
+           "bytes\n");
+  }
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
+  REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
+  REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
+  REGISTER_FUNCTION(env, exports, test_create_arraybuffer_zeroed);
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
   REGISTER_FUNCTION(env, exports, test_napi_get_value_string_utf8_with_buffer);
   REGISTER_FUNCTION(env, exports,
                     test_napi_threadsafe_function_does_not_hang_after_finalize);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_abort_then_last_release);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_abort_then_last_release_drop);
+  REGISTER_FUNCTION(
+      env, exports,
+      test_napi_threadsafe_function_abort_then_last_release_finalized);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_abort_blocked_producers);
+  REGISTER_FUNCTION(
+      env, exports,
+      test_napi_threadsafe_function_abort_blocked_producers_finalized);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_string);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_bigint);
   REGISTER_FUNCTION(env, exports, test_napi_delete_property);

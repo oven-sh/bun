@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 use std::sync::LazyLock;
 
 use bun_collections::{ArrayHashMap, ArrayIdentityContextU64};
@@ -49,39 +48,22 @@ impl PostinstallOptimizer {
         expr: &js_ast::Expr,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
-        // `expr.as_array()` returns `None` for both non-array AND empty
-        // array, so the `items.len == 0` check below is dead.
         let Some(mut array) = expr.as_array() else {
             return Ok(false);
         };
-        if array.array.items.len_u32() == 0 {
-            return Ok(true);
-        }
 
         while let Some(entry) = array.next() {
             let js_ast::ExprData::EString(s) = &entry.data else {
                 continue;
             };
-            // JSON parsing never folds strings into ropes (same invariant
-            // `as_utf8_string_literal` asserted before this was inlined).
             debug_assert!(s.next.is_none());
-            // The JSON lexer emits UTF-16 `EString`s for non-ASCII
-            // package.json strings, so both representations must hash the same
-            // UTF-8 bytes.
-            let hash = if s.is_utf8() {
-                let str = s.slice8();
-                if str.is_empty() {
-                    continue;
-                }
-                semver::string::Builder::string_hash(str)
-            } else {
-                let utf8 = bun_core::strings::to_utf8_alloc(s.slice16());
-                if utf8.is_empty() {
-                    continue;
-                }
-                semver::string::Builder::string_hash(&utf8)
-            };
-            list.dynamic.put(hash, value)?;
+            debug_assert!(s.is_utf8());
+            let str = s.slice8();
+            if str.is_empty() {
+                continue;
+            }
+            list.dynamic
+                .put(semver::string::Builder::string_hash(str), value)?;
         }
 
         Ok(true)

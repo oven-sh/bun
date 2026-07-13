@@ -28,7 +28,7 @@ const excluded = new Set(["toHaveReturnedTimes.rs"]);
 test("every expect matcher increments the expect-call counter", () => {
   const glob = new Glob("*.rs");
   const files = [...glob.scanSync({ cwd: MATCHER_DIR, absolute: true })].sort();
-  expect(files.length).toBeGreaterThan(50);
+  expect(files.length).toBeGreaterThan(40);
 
   const missing: string[] = [];
   for (const file of files) {

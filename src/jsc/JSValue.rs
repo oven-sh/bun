@@ -953,6 +953,11 @@ impl JSValue {
     }
     /// `as_array_buffer`, but pins the backing `JSC::ArrayBuffer` first so it
     /// cannot be detached. The pin does not prevent collection.
+    ///
+    /// While pinned, a JS `transfer()`, `structuredClone(v, { transfer: [ab] })`
+    /// or `postMessage(v, [ab])` hands the destination a copy and leaves the
+    /// source attached rather than throwing. See `JSC__JSValue__pinArrayBuffer`
+    /// in bindings.cpp for why. Release the pin with `ArrayBuffer::unpin`.
     pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
         if !JSC__JSValue__pinArrayBuffer(self) {
             return None;
@@ -1047,7 +1052,7 @@ impl JSValue {
     /// promise's await-chain frames to this error's stack.
     ///
     /// `this` is the error value (must be a `JSError` or `Exception` cell);
-    /// no-op otherwise — see `bindings.cpp:Bun__attachAsyncStackFromPromise`.
+    /// no-op otherwise — see `AsyncStackTrace.cpp:Bun__attachAsyncStackFromPromise`.
     pub fn attach_async_stack_from_promise(self, global: &JSGlobalObject, promise: &JSPromise) {
         Bun__attachAsyncStackFromPromise(global, self, promise)
     }
@@ -1576,13 +1581,6 @@ impl JSValue {
             JSC__JSValue__jsonStringifyFast(self, global, out)
         })
     }
-
-    /// `JSC__JSValue__parseJSON` (bindings.cpp / headers.h:279) — parse `self`
-    /// (a JS string value) as JSON. The C++ symbol takes an *EncodedJSValue*,
-    /// not a `*const ZigString`.
-    pub fn parse_json(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        host_fn::from_js_host_call(global, || JSC__JSValue__parseJSON(self, global))
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2094,7 +2092,6 @@ unsafe extern "C" {
         this: JSValue,
         global: &JSGlobalObject,
     ) -> f64;
-    safe fn JSC__JSValue__parseJSON(this: JSValue, global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__toZigString(
         this: JSValue,
         out: &mut bun_core::ZigString,
@@ -2201,24 +2198,6 @@ impl core::fmt::Display for StringFormatter<'_> {
 }
 
 impl JSValue {
-    // ── C-API bridging. ───────
-    /// `JSValue.c(JSValueRef)` — wrap a C-API `JSValueRef` as a `JSValue`.
-    #[inline]
-    pub fn c(ptr: crate::C::JSValueRef) -> JSValue {
-        JSValue(ptr as usize, PhantomData)
-    }
-    /// `JSValue.asRef()` — view as C-API `JSValueRef`.
-    #[inline]
-    pub fn as_ref(self) -> crate::C::JSValueRef {
-        self.0 as crate::C::JSValueRef
-    }
-    /// `JSValue.asObjectRef()` — view as C-API `JSObjectRef` (caller asserts
-    /// `is_object()`).
-    #[inline]
-    pub fn as_object_ref(self) -> crate::C::JSObjectRef {
-        self.0 as crate::C::JSObjectRef
-    }
-
     // ── Equality / identity. ────────────────
     #[inline]
     pub fn eql_value(self, other: JSValue) -> bool {
@@ -2558,6 +2537,21 @@ impl JSValue {
         }
         JSC__JSValue__getDirectIndex(self, global, i)
     }
+    /// Smallest own present index of a `JSArray` that is `>= start`, or
+    /// `None` when every index from `start` to the end of the array is a
+    /// hole. Walks the array's backing storage (and sparse map) so a run of
+    /// holes is skipped in one call instead of probing each index.
+    /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
+    pub fn next_present_index(self, start: u32) -> Option<u32> {
+        debug_assert!(self.is_cell() && self.js_type().is_array());
+        unsafe extern "C" {
+            safe fn Bun__JSArray__nextPresentIndex(this: JSValue, start: u32) -> u64;
+        }
+        match Bun__JSArray__nextPresentIndex(self, start) {
+            u64::MAX => None,
+            index => Some(index as u32),
+        }
+    }
     /// `JSValue.getNameProperty` — write the value's
     /// `.name` (function/class name) into `ret`. No-op for empty/`undefined`/`null`.
     pub fn get_name_property(
@@ -2585,6 +2579,24 @@ impl JSValue {
     pub fn get_proxy_internal_field(self, field: ProxyField) -> JSValue {
         debug_assert!(self.is_cell() && self.js_type() == JSType::ProxyObject);
         Bun__ProxyObject__getInternalField(self, field as u32)
+    }
+
+    /// Returns the wrapped target of a `JSGlobalProxy` or `ProxyObject`, or
+    /// `ZERO` if `self` is not a proxy.
+    pub fn get_proxy_target(self) -> JSValue {
+        Bun__JSValue__getProxyTarget(self)
+    }
+
+    // ── ArrayBufferView accessors. ─────────────────────
+    /// Backing `ArrayBuffer` wrapper for a typed array or `DataView`.
+    /// Returns `ZERO` if `self` is not an `ArrayBufferView`.
+    pub fn get_array_buffer_view_buffer(self, global: &JSGlobalObject) -> JSValue {
+        Bun__JSValue__getArrayBufferViewBuffer(self, global)
+    }
+
+    /// `byteOffset` of a typed array or `DataView`, `0` otherwise.
+    pub fn get_array_buffer_view_byte_offset(self) -> usize {
+        Bun__JSValue__getArrayBufferViewByteOffset(self)
     }
 
     // ── Formatting. ────────────────────────────────────
@@ -2707,6 +2719,12 @@ unsafe extern "C" {
         callback: ForEachCallback,
     );
     safe fn Bun__ProxyObject__getInternalField(this: JSValue, field: u32) -> JSValue;
+    safe fn Bun__JSValue__getProxyTarget(this: JSValue) -> JSValue;
+    safe fn Bun__JSValue__getArrayBufferViewBuffer(
+        this: JSValue,
+        global: &JSGlobalObject,
+    ) -> JSValue;
+    safe fn Bun__JSValue__getArrayBufferViewByteOffset(this: JSValue) -> usize;
     safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, func: JSValue, arg: JSValue);
     fn Bun__JSValue__deserialize(
         global: *const JSGlobalObject,

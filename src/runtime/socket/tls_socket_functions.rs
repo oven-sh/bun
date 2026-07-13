@@ -1292,8 +1292,9 @@ pub(super) fn set_verify_mode(
 
     let request_cert = request_cert_js.to_boolean();
     let reject_unauthorized = reject_unauthorized_js.to_boolean();
+    let acts_as_server = this.acts_as_tls_server();
     let mut verify_mode: c_int = boringssl::SSL_VERIFY_NONE;
-    if this.is_server() {
+    if acts_as_server {
         if request_cert {
             verify_mode = boringssl::SSL_VERIFY_PEER;
             if reject_unauthorized {
@@ -1301,6 +1302,13 @@ pub(super) fn set_verify_mode(
             }
         }
     }
+    // Keep the enforcement flag in sync with the verify mode this call installs.
+    this.update_flags(|f| {
+        f.set(
+            super::Flags::REJECT_UNAUTHORIZED,
+            reject_unauthorized && (!acts_as_server || request_cert),
+        );
+    });
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };

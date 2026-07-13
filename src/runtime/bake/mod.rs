@@ -21,6 +21,7 @@ pub(crate) mod bake_body;
 mod dev_server_body;
 pub(crate) use dev_server_body::get_deinit_count_for_testing;
 pub(crate) use dev_server_body::is_allowed_dev_host;
+pub(crate) use dev_server_body::is_allowed_host_header;
 
 #[path = "FrameworkRouter.rs"]
 pub(crate) mod framework_router_body;
@@ -220,7 +221,7 @@ impl Framework {
         renderer: Graph,
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
-    ) -> Result<*mut bun_bundler::bake_types::Framework, bun_core::Error> {
+    ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
         use bun_options_types::schema as bun_schema;
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
@@ -372,7 +373,7 @@ impl Framework {
         server: &mut bun_resolver::Resolver,
         client: &mut bun_resolver::Resolver,
         arena: &bun_alloc::Arena,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let mut had_errors = false;
 
         if let Some(rfr) = &mut self.react_fast_refresh {
@@ -422,7 +423,7 @@ impl Framework {
         }
 
         if had_errors {
-            return Err(bun_core::err!("ModuleNotFound"));
+            return Err(crate::Error::ModuleNotFound);
         }
         Ok(())
     }

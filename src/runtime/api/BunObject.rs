@@ -499,13 +499,21 @@ pub(crate) fn braces(
         if strings::is_all_ascii(brace_slice.slice()) {
             break 'lexer_output match Braces::Lexer::tokenize(brace_slice.slice()) {
                 Ok(v) => v,
-                Err(err) => return Err(global.throw_error(err.into(), "failed to tokenize braces")),
+                Err(err) => {
+                    return Err(
+                        global.throw_error(crate::Error::from(err), "failed to tokenize braces")
+                    );
+                }
             };
         }
 
         match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice.slice()) {
             Ok(v) => break 'lexer_output v,
-            Err(err) => return Err(global.throw_error(err.into(), "failed to tokenize braces")),
+            Err(err) => {
+                return Err(
+                    global.throw_error(crate::Error::from(err), "failed to tokenize braces")
+                );
+            }
         }
     };
 
@@ -523,7 +531,9 @@ pub(crate) fn braces(
         let mut parser = Braces::Parser::init(&lexer_output.tokens[..], &arena);
         let ast_node = match parser.parse() {
             Ok(v) => v,
-            Err(err) => return Err(global.throw_error(err.into(), "failed to parse braces")),
+            Err(err) => {
+                return Err(global.throw_error(crate::Error::from(err), "failed to parse braces"));
+            }
         };
         // NOTE: see `tokenize` arm — manual JSON encoder for the AST.
         let str = Braces::ast_to_json(&ast_node);
@@ -873,13 +883,11 @@ pub(crate) fn register_macro(
         .get_or_put(id)
         .expect("unreachable");
     if get_or_put_result.found_existing {
-        // `value_ptr` is `&mut JSObjectRef` (`*mut OpaqueJSValue`); recover the
-        // protected JSValue and unprotect it before overwriting.
-        JSValue::c(*get_or_put_result.value_ptr).unprotect();
+        get_or_put_result.value_ptr.unprotect();
     }
 
     arguments[1].protect();
-    *get_or_put_result.value_ptr = arguments[1].as_object_ref();
+    *get_or_put_result.value_ptr = arguments[1];
 
     Ok(JSValue::UNDEFINED)
 }
@@ -1960,7 +1968,8 @@ pub(crate) fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObje
         Ok(p) => p,
         Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
         Err(err) => {
-            let _ = global_this.throw_error(err.into(), "Failed to create Redis client");
+            let _ =
+                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
             return JSValue::ZERO;
         }
     };
@@ -1975,7 +1984,8 @@ pub(crate) fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObje
         Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
         Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
         Err(err) => {
-            let _ = global_this.throw_error(err.into(), "Failed to create Redis client");
+            let _ =
+                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
             return JSValue::ZERO;
         }
     }
@@ -2302,19 +2312,29 @@ pub fn parse_compress_args(
     Ok((buffer_value, options_val))
 }
 
-/// [`parse_compress_args`] + sync `StringOrBuffer` coercion of `arguments[0]`.
-/// Shared by `JSZlib::{gzip,gunzip,deflate,inflate}_sync` and
-/// `JSZstd::{compress,decompress}_sync`.
+/// Sync `StringOrBuffer` coercion of the buffer argument. Callers that read
+/// option properties (which can run arbitrary JS) must do so *before* calling
+/// this, so nothing runs between the coercion and the use of the slice.
+#[inline]
+pub fn coerce_compress_buffer(
+    global: &JSGlobalObject,
+    buffer_value: JSValue,
+) -> JsResult<node::StringOrBuffer> {
+    if let Some(buffer) = node::StringOrBuffer::from_js(global, buffer_value)? {
+        return Ok(buffer);
+    }
+    Err(global.throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
+}
+
+/// [`parse_compress_args`] + [`coerce_compress_buffer`], for callers that read
+/// no further option properties.
 #[inline]
 pub fn parse_compress_buffer_and_options(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<(node::StringOrBuffer, Option<JSValue>)> {
     let (buffer_value, options_val) = parse_compress_args(global, callframe)?;
-    if let Some(buffer) = node::StringOrBuffer::from_js(global, buffer_value)? {
-        return Ok((buffer, options_val));
-    }
-    Err(global.throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
+    Ok((coerce_compress_buffer(global, buffer_value)?, options_val))
 }
 
 #[allow(non_snake_case)]
@@ -2363,13 +2383,45 @@ pub mod JSZlib {
         };
     }
 
+    /// Move `list`'s allocation into a `Uint8Array` backing store without
+    /// copying. After `shrink_to_fit`, an empty `Vec` owns no allocation (its
+    /// pointer is dangling), so no deallocator is registered for it.
+    fn leak_list_into_uint8array(
+        global_this: &JSGlobalObject,
+        mut list: Vec<u8>,
+    ) -> JsResult<JSValue> {
+        list.shrink_to_fit();
+        let is_empty = list.is_empty();
+        let leaked: &'static mut [u8] = list.leak();
+        let ptr = leaked.as_mut_ptr();
+        let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
+        // SAFETY: non-empty: `ptr` is the just-leaked `Vec` allocation, freed
+        // exactly once at GC by `global_deallocator` (`mi_free_ctx`) via the ctx
+        // pointer. Empty: no callback, and the dangling `ptr` is never read.
+        unsafe {
+            array_buffer.to_js_with_context(
+                global_this,
+                if is_empty {
+                    core::ptr::null_mut()
+                } else {
+                    ptr.cast::<c_void>()
+                },
+                if is_empty {
+                    None
+                } else {
+                    Some(global_deallocator)
+                },
+            )
+        }
+    }
+
     #[bun_jsc::host_fn]
     pub(crate) fn gzip_sync(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gzip_or_deflate_sync(global_this, &buffer, options_val, true)
+        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
+        gzip_or_deflate_sync(global_this, buffer_value, options_val, true)
     }
 
     #[bun_jsc::host_fn]
@@ -2377,8 +2429,8 @@ pub mod JSZlib {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gunzip_or_inflate_sync(global_this, &buffer, options_val, false)
+        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
+        gunzip_or_inflate_sync(global_this, buffer_value, options_val, false)
     }
 
     #[bun_jsc::host_fn]
@@ -2386,8 +2438,8 @@ pub mod JSZlib {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gzip_or_deflate_sync(global_this, &buffer, options_val, false)
+        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
+        gzip_or_deflate_sync(global_this, buffer_value, options_val, false)
     }
 
     #[bun_jsc::host_fn]
@@ -2395,13 +2447,13 @@ pub mod JSZlib {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gunzip_or_inflate_sync(global_this, &buffer, options_val, true)
+        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
+        gunzip_or_inflate_sync(global_this, buffer_value, options_val, true)
     }
 
     pub(crate) fn gunzip_or_inflate_sync(
         global_this: &JSGlobalObject,
-        buffer: &node::StringOrBuffer,
+        buffer_value: JSValue,
         options_val_: Option<JSValue>,
         is_gzip: bool,
     ) -> JsResult<JSValue> {
@@ -2453,6 +2505,7 @@ pub mod JSZlib {
             return Ok(JSValue::ZERO);
         }
 
+        let buffer = coerce_compress_buffer(global_this, buffer_value)?;
         let compressed = buffer.slice();
 
         let mut list: Vec<u8> = 'brk: {
@@ -2499,7 +2552,7 @@ pub mod JSZlib {
                                 global_this.throw(format_args!("Zlib error: Invalid argument"))
                             );
                         }
-                        return Err(global_this.throw_error(err.into(), "Zlib error"));
+                        return Err(global_this.throw_error(crate::Error::from(err), "Zlib error"));
                     }
                 };
 
@@ -2513,22 +2566,7 @@ pub mod JSZlib {
                 // `list` directly into the ArrayBuffer (freed by
                 // `global_deallocator`).
                 drop(reader);
-                list.shrink_to_fit();
-                // Ownership of the allocation transfers to JSC; freed via
-                // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
-                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
-                // GC via the ctx pointer (the data pointer itself).
-                unsafe {
-                    array_buffer.to_js_with_context(
-                        global_this,
-                        ptr.cast::<c_void>(),
-                        Some(global_deallocator),
-                    )
-                }
+                leak_list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
                 let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
@@ -2582,7 +2620,7 @@ pub mod JSZlib {
 
     pub(crate) fn gzip_or_deflate_sync(
         global_this: &JSGlobalObject,
-        buffer: &node::StringOrBuffer,
+        buffer_value: JSValue,
         options_val_: Option<JSValue>,
         is_gzip: bool,
     ) -> JsResult<JSValue> {
@@ -2624,6 +2662,7 @@ pub mod JSZlib {
             return Ok(JSValue::ZERO);
         }
 
+        let buffer = coerce_compress_buffer(global_this, buffer_value)?;
         let compressed = buffer.slice();
         let _ = window_bits; // unused
 
@@ -2654,7 +2693,7 @@ pub mod JSZlib {
                                 global_this.throw(format_args!("Zlib error: Invalid argument"))
                             );
                         }
-                        return Err(global_this.throw_error(err.into(), "Zlib error"));
+                        return Err(global_this.throw_error(crate::Error::from(err), "Zlib error"));
                     }
                 };
 
@@ -2666,22 +2705,7 @@ pub mod JSZlib {
                 // NOTE: see gunzip path — reader borrows `list`, so drop
                 // it before leaking `list` into the ArrayBuffer.
                 drop(reader);
-                list.shrink_to_fit();
-                // Ownership of the allocation transfers to JSC; freed via
-                // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
-                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
-                // GC via the ctx pointer (the data pointer itself).
-                unsafe {
-                    array_buffer.to_js_with_context(
-                        global_this,
-                        ptr.cast::<c_void>(),
-                        Some(global_deallocator),
-                    )
-                }
+                leak_list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
                 let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level.unwrap_or(6))
@@ -2784,10 +2808,11 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
+        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
 
         let level = get_level(global_this, options_val)?;
 
+        let buffer = coerce_compress_buffer(global_this, buffer_value)?;
         let input = buffer.slice();
 
         // Calculate max compressed size

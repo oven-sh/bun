@@ -183,6 +183,70 @@ it("should call cancel() on ReadableStream when the Request is aborted", async (
     },
   );
 });
+describe("HEAD request with a ReadableStream body", () => {
+  for (const isAsync of [false, true]) {
+    it(`calls cancel() and releases the stream (${isAsync ? "async" : "sync"} handler)`, async () => {
+      let starts = 0;
+      let cancels = 0;
+      let live = 0;
+      const cancelled = Promise.withResolvers<void>();
+      const enc = new TextEncoder();
+      const makeResponse = () => {
+        let t: ReturnType<typeof setInterval>;
+        return new Response(
+          new ReadableStream({
+            start(c) {
+              starts++;
+              live++;
+              t = setInterval(() => {
+                try {
+                  c.enqueue(enc.encode("data: tick\n\n"));
+                } catch {
+                  clearInterval(t);
+                  live--;
+                }
+              }, 20);
+            },
+            cancel() {
+              cancels++;
+              clearInterval(t);
+              live--;
+              if (cancels === starts) cancelled.resolve();
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      };
+      await using server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        fetch: isAsync
+          ? async () => {
+              await 1;
+              return makeResponse();
+            }
+          : () => makeResponse(),
+      });
+      Bun.gc(true);
+      const before = heapStats().objectTypeCounts.ReadableStream || 0;
+
+      for (let i = 0; i < 8; i++) {
+        const res = await fetch(server.url, { method: "HEAD" });
+        expect(res.status).toBe(200);
+        expect(res.headers.get("transfer-encoding")).toBe("chunked");
+        expect(await res.text()).toBe("");
+      }
+      await cancelled.promise;
+
+      expect({ starts, cancels, live }).toEqual({ starts: 8, cancels: 8, live: 0 });
+
+      Bun.gc(true);
+      const after = heapStats().objectTypeCounts.ReadableStream || 0;
+      // Before the fix this leaked one ReadableStream per HEAD (before -> before+8).
+      expect(after).toBeLessThanOrEqual(before + 2);
+    });
+  }
+});
 for (let withDelay of [true, false]) {
   for (let connectionHeader of ["keepalive", "not keepalive"] as const) {
     it(`should NOT call cancel() on ReadableStream that finished normally for ${connectionHeader} request and ${withDelay ? "with" : "without"} delay`, async () => {
@@ -371,6 +435,48 @@ it("should display a welcome message when the response value type is incorrect",
   );
 });
 
+// The async handler path already reported non-Response returns to stderr; the
+// synchronous path must emit the same diagnostic instead of staying silent.
+it("logs the invalid-response diagnostic when a synchronous fetch handler returns a non-Response value", async () => {
+  const script = `
+    const statuses = [];
+    async function hit(fetchImpl) {
+      await using server = Bun.serve({ port: 0, development: false, fetch: fetchImpl });
+      const res = await fetch(server.url);
+      await res.arrayBuffer();
+      statuses.push(res.status);
+    }
+    await hit(() => ({ forgot: "new Response" }));
+    await hit(() => "plain string");
+    await hit(() => 42);
+    await hit(async () => ({ forgot: "new Response" }));
+    console.log(JSON.stringify(statuses));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const diagnostics = stderr.match(/Expected a Response object, but received/g) ?? [];
+  expect({
+    // Returning a non-Response still renders 204 in production mode; only the
+    // missing stderr diagnostic on the synchronous path changes.
+    statuses: JSON.parse(stdout.trim()),
+    diagnosticCount: diagnostics.length,
+    exitCode,
+  }).toEqual({
+    statuses: [204, 204, 204, 204],
+    diagnosticCount: 4,
+    exitCode: 0,
+  });
+  expect(stderr).toContain(`received '"plain string"'`);
+  expect(stderr).toContain("received '42'");
+});
+
 it("request.signal works in trivial case", async () => {
   var aborty = new AbortController();
   var signaler = Promise.withResolvers();
@@ -482,6 +588,31 @@ it("request.url should be based on the Host header", async () => {
   );
 });
 
+it.each([
+  ["HTTP/1.0", "GET /helloooo HTTP/1.0\r\nHost: a/b\r\n\r\n"],
+  ["HTTP/1.1", "GET /helloooo HTTP/1.1\r\nHost: a b\r\nConnection: close\r\n\r\n"],
+])("request.url is the request-target when the %s Host header is not a valid authority", async (_version, payload) => {
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      return new Response(req.url);
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const response = await new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("close", () => resolve(Buffer.concat(chunks).toString()));
+    socket.write(payload);
+  });
+  socket.destroy();
+  expect(response).toStartWith("HTTP/1.1 200");
+  expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/helloooo");
+});
+
 describe("streaming", () => {
   describe("error handler", () => {
     it("throw on pull renders headers, does not call error handler", async () => {
@@ -544,9 +675,10 @@ describe("streaming", () => {
               controller.close();
             },
           });
-          // Lock the stream before handing it to the response. A locked stream
-          // cannot be piped, so the server must surface ERR_STREAM_CANNOT_PIPE
-          // instead of silently returning a 200 with an empty body.
+          // Lock the stream before handing it to the response. Constructing a
+          // Response from a locked stream throws a TypeError (fetch spec; Node
+          // agrees), which must reach the error handler instead of silently
+          // returning a 200 with an empty body.
           stream.getReader();
           return new Response(stream);
         },
@@ -560,9 +692,53 @@ describe("streaming", () => {
       expect(await response.text()).toBe("handled");
       expect(response.status).toBe(500);
       expect(captured).toEqual({
-        code: "ERR_STREAM_CANNOT_PIPE",
-        name: "Error",
-        message: "Stream already used, please create a new one",
+        code: undefined,
+        name: "TypeError",
+        message: "Body object should not be disturbed or locked",
+      });
+    });
+
+    it.each([
+      ["null", null],
+      ["undefined", undefined],
+      ["false", false],
+      ["0", 0],
+      ["empty string", ""],
+    ])("passes rejection reason %s verbatim on every rejection path", async (_, reason) => {
+      const received: Record<string, unknown> = {};
+      let route = "";
+      await using server = serve({
+        port: 0,
+        development: false,
+        routes: {
+          "/sync": () => {
+            throw reason;
+          },
+          "/presettled": async () => {
+            throw reason;
+          },
+          "/returned-reject": () => Promise.reject(reason),
+          "/awaited": async () => {
+            await Bun.sleep(1);
+            throw reason;
+          },
+        },
+        error(e) {
+          received[route] = e;
+          return new Response("handled", { status: 500 });
+        },
+      });
+      for (const p of ["/sync", "/presettled", "/returned-reject", "/awaited"]) {
+        route = p;
+        const res = await fetch(new URL(p, server.url));
+        expect(res.status).toBe(500);
+        expect(await res.text()).toBe("handled");
+      }
+      expect(received).toStrictEqual({
+        "/sync": reason,
+        "/presettled": reason,
+        "/returned-reject": reason,
+        "/awaited": reason,
       });
     });
   });
@@ -1192,6 +1368,100 @@ it("does not write body bytes for null body statuses", async () => {
   }
 });
 
+// Response.error() is a WHATWG network error: its status is 0, which has no
+// representation in an HTTP status line. It must never be written to the socket.
+describe("Response.error()", () => {
+  const unsendable =
+    "Cannot send a Response with status 0. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).";
+
+  async function rawStatusLine(port: number, method: string): Promise<string> {
+    const received: Buffer[] = [];
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+    await using connection = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        data(socket, data) {
+          received.push(data);
+        },
+        end() {
+          resolve();
+        },
+        error(socket, error) {
+          reject(error);
+        },
+        close() {
+          resolve();
+        },
+      },
+    });
+    connection.write(`${method} / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+    connection.flush();
+    await promise;
+    return Buffer.concat(received).toString().split("\r\n")[0];
+  }
+
+  describe.each(["GET", "HEAD"])("%s", method => {
+    it.each([
+      ["sync", () => Response.error()],
+      ["async", async () => Response.error()],
+    ])("a %s fetch handler returning it reaches error()", async (_label, fetchImpl) => {
+      const errors: Error[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        fetch: fetchImpl,
+        error(error) {
+          errors.push(error);
+          return new Response("handled", { status: 502 });
+        },
+      });
+
+      expect(await rawStatusLine(server.port, method)).toBe("HTTP/1.1 502 Bad Gateway");
+      expect(errors.map(error => error.message)).toEqual([unsendable]);
+    });
+  });
+
+  // Bun reports the synthesized error the same way it reports a thrown one, which
+  // would fail this test process, so the default 500 page is checked in a child.
+  it("responds 500 with no error() handler, and when error() returns it too", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const servers = [
+          Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: () => Response.error() }),
+          Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: () => Response.error(), error: () => Response.error() }),
+        ];
+        for (const server of servers) {
+          const response = await fetch(server.url);
+          console.log(response.status, await response.text());
+          server.stop(true);
+        }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("500 Something went wrong!\n500 Something went wrong!\n");
+    expect(stderr).toContain(unsendable);
+  });
+
+  it("is rejected when registered as a static route", () => {
+    expect(() =>
+      Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        routes: { "/": Response.error() },
+      }),
+    ).toThrow(
+      "Cannot use a Response with status 0 as a static route. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
+    );
+  });
+});
+
 describe("response framing", () => {
   type RawResponse = { statusLine: string; headerNames: string[]; headers: Record<string, string>; body: string };
   // Read the raw response so that `Content-Length: 0` and an absent
@@ -1375,6 +1645,117 @@ describe("response framing", () => {
       );
       expect(GET).toEqual({ status: 204, contentLength: null, transferEncoding: null, body: "" });
       expect(HEAD).toEqual({ status: 204, contentLength: null, transferEncoding: null, body: "" });
+    });
+  });
+
+  // RFC 9110 §9.3.2: a server MUST NOT send content in response to HEAD.
+  // RFC 9112 §6.3 rule 1: a HEAD response is terminated at the end of the
+  // header section; any octets after it are parsed as the next response on a
+  // keep-alive connection, so a body here desynchronizes the connection.
+  describe("HEAD on the error path writes no body bytes", () => {
+    const boom = () => {
+      throw new Error("boom");
+    };
+
+    // Paths with an error() handler, or no handler throw at all, can be
+    // exercised in-process: the error never reaches on_unhandled_rejection.
+    it.each([
+      ["sync error()", () => new Response("EBODY", { status: 503, headers: { "x-from": "error" } })],
+      ["async error()", async () => new Response("EBODY", { status: 503, headers: { "x-from": "error" } })],
+    ])("%s Response mirrors the normal HEAD path", async (_label, errorHandler) => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        fetch: boom,
+        error: errorHandler,
+      });
+      const head = await rawRequest(server.port, "HEAD");
+      const get = await rawRequest(server.port, "GET");
+      expect({
+        head: {
+          statusLine: head.statusLine,
+          body: head.body,
+          cl: head.headers["content-length"],
+          x: head.headers["x-from"],
+        },
+        get: {
+          statusLine: get.statusLine,
+          body: get.body,
+          cl: get.headers["content-length"],
+          x: get.headers["x-from"],
+        },
+      }).toEqual({
+        head: { statusLine: "HTTP/1.1 503 Service Unavailable", body: "", cl: "5", x: "error" },
+        get: { statusLine: "HTTP/1.1 503 Service Unavailable", body: "EBODY", cl: "5", x: "error" },
+      });
+    });
+
+    it("the dev missing-response page is not sent for HEAD", async () => {
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", development: true, fetch: () => undefined as any });
+      const head = await rawRequest(server.port, "HEAD");
+      const get = await rawRequest(server.port, "GET");
+      expect({
+        head: { statusLine: head.statusLine, body: head.body },
+        get: { statusLine: get.statusLine, body: get.body },
+      }).toEqual({
+        head: { statusLine: "HTTP/1.1 200 OK", body: "" },
+        get: { statusLine: "HTTP/1.1 200 OK", body: "Welcome to Bun! To get started, return a Response object." },
+      });
+    });
+
+    // The default-500 and dev-error-page paths report the thrown error via
+    // on_unhandled_rejection, which would fail an in-process test, so run
+    // them (and the keep-alive desync witness) in a subprocess.
+    it("default 500 / dev error page write no body, and HEAD does not desync a keep-alive connection", async () => {
+      const src = `
+        import net from "node:net";
+        const wire = (port, payload) => new Promise(resolve => {
+          let b = Buffer.alloc(0);
+          const s = net.connect(port, "127.0.0.1", () => s.write(payload));
+          s.on("data", d => { b = Buffer.concat([b, d]); });
+          s.on("error", () => resolve(b));
+          s.on("close", () => resolve(b));
+        });
+        const afterHead = w => w.toString("latin1").split("\\r\\n\\r\\n").slice(1).join("\\r\\n\\r\\n");
+        const boom = req => {
+          if (new URL(req.url).pathname === "/boom") throw new Error("boom");
+          return new Response("OKBODY");
+        };
+        const s1 = Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: boom });
+        const s2 = Bun.serve({ port: 0, hostname: "127.0.0.1", development: true, fetch: boom });
+        const head = m => m + " /boom HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n";
+        const out = {
+          prod_head: afterHead(await wire(s1.port, head("HEAD"))),
+          prod_get: afterHead(await wire(s1.port, head("GET"))),
+          dev_head_len: afterHead(await wire(s2.port, head("HEAD"))).length,
+          dev_get_len: afterHead(await wire(s2.port, head("GET"))).length,
+          pipeline: afterHead(await wire(s1.port,
+            "HEAD /boom HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n" +
+            "GET /ok HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n"
+          )).split("\\r\\n")[0],
+        };
+        console.log(JSON.stringify(out));
+        s1.stop(true); s2.stop(true);
+        process.exit(0);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = JSON.parse(stdout.trim().split("\n").at(-1)!);
+      expect(out).toEqual({
+        prod_head: "",
+        prod_get: "Something went wrong!",
+        dev_head_len: 0,
+        dev_get_len: expect.any(Number),
+        pipeline: "HTTP/1.1 200 OK",
+      });
+      expect(out.dev_get_len).toBeGreaterThan(1000);
+      expect(exitCode).toBe(0);
     });
   });
 });
@@ -1977,39 +2358,36 @@ it.concurrent("should work with dispose keyword", async () => {
   expect(fetch(url)).rejects.toThrow();
 });
 
-// prettier-ignore
+// Fixture serves a >1 MB file (the sendfile threshold). Each iteration reads
+// one chunk from several streams so the server is provably mid-send when
+// killed; on macOS the old sendfile(2) path could hang uninterruptibly here.
 it("should be able to stop in the middle of a file response", async () => {
-  async function doRequest(url: string) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(10) });
-      const read = (response.body as ReadableStream<any>).getReader();
-      while (true) {
-        const { value, done } = await read.read();
-        if (done) break;
-      }
-      expect(response.status).toBe(200);
-    } catch {}
-  }
   const fixture = join(import.meta.dir, "server-bigfile-send.fixture.js");
   for (let i = 0; i < 3; i++) {
-    const process = Bun.spawn([bunExe(), fixture], {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture],
       env: bunEnv,
       stderr: "inherit",
       stdout: "pipe",
       stdin: "ignore",
     });
-    const { value } = await process.stdout.getReader().read();
+    const { value } = await proc.stdout.getReader().read();
     const url = new TextDecoder().decode(value).trim();
-    const requests = [];
-    for (let j = 0; j < 5_000; j++) {
-      requests.push(doRequest(url));
+    // Deliberately small so macOS CI runners never approach mbuf exhaustion.
+    const readers: ReadableStreamDefaultReader[] = [];
+    for (let j = 0; j < 16; j++) {
+      const res = await fetch(url);
+      expect(res.status).toBe(200);
+      readers.push((res.body as ReadableStream).getReader());
     }
-    // only await for 1k requests (and kill the process)
-    await Promise.all(requests.slice(0, 1_000));
-    expect(process.exitCode || 0).toBe(0);
-    process.kill();
+    await Promise.all(readers.map(r => r.read()));
+    expect(proc.exitCode).toBe(null);
+    proc.kill();
+    await proc.exited;
+    expect(proc.signalCode).toBe("SIGTERM");
+    for (const r of readers) await r.cancel().catch(() => {});
   }
-}, 60_000);
+});
 
 it("should be able to abrupt stop the server", async () => {
   for (let i = 0; i < 10; i++) {
@@ -2393,6 +2771,67 @@ it.concurrent("#6462", async () => {
   ]);
 });
 
+it.concurrent("combines duplicate request headers per the Fetch spec", async () => {
+  // WHATWG Fetch requires repeated header fields to be combined with ", " when
+  // read via Headers.get(). Previously Bun.serve overwrote duplicate non-common
+  // request header names with the last value, dropping earlier values.
+  let seen: Record<string, string | null> = {};
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen = {
+        xdup: req.headers.get("x-dup"),
+        xonce: req.headers.get("x-once"),
+        xgap: req.headers.get("x-gap"),
+        xempty: req.headers.get("x-empty"),
+        accept: req.headers.get("accept"),
+      };
+      return new Response("ok");
+    },
+  });
+
+  const { promise, resolve } = Promise.withResolvers<void>();
+  await Bun.connect({
+    port: server.port,
+    hostname: server.hostname,
+    socket: {
+      open(socket) {
+        socket.write(
+          "GET / HTTP/1.1\r\n" +
+            `Host: ${server.hostname}\r\n` +
+            "X-Dup: first\r\n" +
+            "X-Dup: second\r\n" +
+            "X-Dup: third\r\n" +
+            "X-Once: only\r\n" +
+            "X-Gap: a\r\n" +
+            "X-Gap:\r\n" +
+            "X-Gap: c\r\n" +
+            "X-Empty:\r\n" +
+            "Accept: text/html\r\n" +
+            "Accept: application/json\r\n" +
+            "Connection: close\r\n" +
+            "\r\n",
+        );
+      },
+      data() {},
+      close() {
+        resolve();
+      },
+    },
+  });
+  await promise;
+
+  expect(seen).toEqual({
+    xdup: "first, second, third",
+    xonce: "only",
+    // the combine step has no empty-value exception, and a lone empty header
+    // is still visible — Node reports "a, , c" and "", not "a, c" and null
+    xgap: "a, , c",
+    xempty: "",
+    accept: "text/html, application/json",
+  });
+});
+
 it.concurrent("#6583", async () => {
   const callback = mock();
   using server = Bun.serve({
@@ -2615,6 +3054,31 @@ it.if(isPosix)("serves /bun:info over a unix socket in development mode", async 
   const text = await res.text();
   expect(text).toContain("bun_version");
   expect(res.status).toBe(200);
+});
+
+it("only serves /bun:info to requests with a local Host header in development mode", async () => {
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    development: true,
+    fetch() {
+      return new Response("handled by fetch");
+    },
+  });
+
+  const localHostRes = await fetch(`http://127.0.0.1:${server.port}/bun:info`, {
+    headers: { Host: "localhost" },
+  });
+  const localHostText = await localHostRes.text();
+  expect(localHostText).toContain("bun_version");
+  expect(localHostRes.status).toBe(200);
+
+  const foreignHostRes = await fetch(`http://127.0.0.1:${server.port}/bun:info`, {
+    headers: { Host: "example.com" },
+  });
+  const foreignHostText = await foreignHostRes.text();
+  expect(foreignHostText).toBe("handled by fetch");
+  expect(foreignHostRes.status).toBe(200);
 });
 
 // https://github.com/oven-sh/bun/issues/32469
@@ -2940,4 +3404,64 @@ it("type: direct stream — small write queued under backpressure is delivered i
   } finally {
     socket.destroy();
   }
+});
+
+// Aborting an upload mid-body while a req.body.tee() branch is the in-flight
+// response body must not crash the server process.
+it("survives aborted uploads while responding with a tee()d request-body branch", async () => {
+  const script = `
+    const net = require("node:net");
+    const readAll = async rs => { const rd = rs.getReader(); for (;;) { if ((await rd.read()).done) return; } };
+    let seen = 0, settled = 0, notify = () => {};
+    const srv = Bun.serve({
+      hostname: "127.0.0.1", port: 0, idleTimeout: 0,
+      error() { return new Response("err"); },
+      async fetch(req) {
+        if (!req.body) return new Response("nobody");
+        seen++;
+        const [a, b] = req.body.tee();
+        readAll(b).catch(() => {}).finally(() => { settled++; notify(); });
+        return new Response(a);
+      },
+    });
+    const chunk = Buffer.alloc(8192, 66);
+    let it = 0;
+    for (; it < 40; it++) {
+      await new Promise(done => {
+        const s = net.connect(srv.port, "127.0.0.1", () => {
+          s.write("POST / HTTP/1.1\\r\\nhost: x\\r\\ncontent-length: 262144\\r\\n\\r\\n");
+          setImmediate(() => {
+            s.write(chunk);
+            s.write(chunk);
+            s.write(chunk);
+            setImmediate(() => { s.destroy(); done(); });
+          });
+        });
+        s.on("data", () => {});
+        s.on("error", () => done());
+      });
+    }
+    // One clean request so every aborted connection's header has reached fetch().
+    await fetch(srv.url).then(r => r.text());
+    // readAll(b) settles only after the tee's source-error reaction has errored branch b,
+    // so settled == seen proves every tee reaction for every handled request has run.
+    while (settled < seen) await new Promise(r => { notify = r; });
+    console.log("SURVIVED", it, seen === settled);
+    srv.stop(true);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "SURVIVED 40 true",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });

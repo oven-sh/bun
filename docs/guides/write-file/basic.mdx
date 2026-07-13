@@ -4,9 +4,7 @@ sidebarTitle: Write string to file
 mode: center
 ---
 
-This code snippet writes a string to disk at a particular _absolute path_.
-
-It uses the fast [`Bun.write()`](/runtime/file-io#writing-files-bun-write) API to efficiently write data to disk. The first argument is a _destination_; the second is the _data_ to write.
+Use [`Bun.write()`](/runtime/file-io#writing-files-bun-write) to write a string to disk at an _absolute path_. The first argument is a _destination_; the second is the _data_ to write.
 
 ```ts
 const path = "/path/to/file.txt";
@@ -15,7 +13,7 @@ await Bun.write(path, "Lorem ipsum");
 
 ---
 
-Any relative paths will be resolved relative to the project root (the nearest directory containing a `package.json` file).
+Bun resolves relative paths from the current working directory.
 
 ```ts
 const path = "./file.txt";
@@ -24,7 +22,7 @@ await Bun.write(path, "Lorem ipsum");
 
 ---
 
-You can pass a `BunFile` as the destination. `Bun.write()` will write the data to its associated path.
+You can pass a `BunFile` as the destination. `Bun.write()` writes the data to its associated path.
 
 ```ts
 const path = Bun.file("./file.txt");
@@ -43,4 +41,4 @@ const bytes = await Bun.write(path, "Lorem ipsum");
 
 ---
 
-See [Docs > API > File I/O](/runtime/file-io#writing-files-bun-write) for complete documentation of `Bun.write()`.
+See [`Bun.write()`](/runtime/file-io#writing-files-bun-write).

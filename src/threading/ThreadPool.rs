@@ -902,9 +902,33 @@ impl ThreadPool {
                     self.stats.sleeps.fetch_add(1, Ordering::Relaxed);
                 }
 
-                // Only the owning thread may sweep its own mimalloc heaps; sweep now
-                // rather than waiting for the 10s idle timeout inside Event::wait().
-                bun_alloc::mimalloc::mi_on_thread_idle();
+                // Only the owning thread may sweep its own mimalloc heaps; sweep now rather
+                // than waiting for the 10s idle timeout inside Event::wait().
+                //
+                // Rate-limited, exactly like the JS thread's park in BunJSCEventLoop.cpp. A pool
+                // worker can wake and park once per *request* -- `vite preview` reads a file per
+                // request -- and an unthrottled sweep there ran a full hole sweep and purge drain
+                // each time: 1.18 madvise per HTTP request, whose memory JSC then faulted straight
+                // back in (3.8x the minor faults). It cost ~13% of that benchmark's throughput and
+                // returned no memory at all; the RSS win there is ordinary arena purging.
+                {
+                    const IDLE_SWEEP_INTERVAL: core::time::Duration =
+                        core::time::Duration::from_millis(100);
+                    thread_local! {
+                        static LAST_IDLE_SWEEP: core::cell::Cell<Option<std::time::Instant>> =
+                            const { core::cell::Cell::new(None) };
+                    }
+                    LAST_IDLE_SWEEP.with(|last| {
+                        let now = std::time::Instant::now();
+                        let due = last
+                            .get()
+                            .is_none_or(|prev| now.duration_since(prev) >= IDLE_SWEEP_INTERVAL);
+                        if due {
+                            last.set(Some(now));
+                            bun_alloc::mimalloc::mi_on_thread_idle();
+                        }
+                    });
+                }
 
                 self.idle_event.wait();
                 sync = self.sync.load(Ordering::Relaxed);

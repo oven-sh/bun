@@ -19,9 +19,9 @@ pub(crate) use crate::unsafe_core::bssl::{
 };
 
 /// BoringSSL `SSL_CTX`, from the pre-generated bssl-sys bindings (see
-/// ../bssl_bindings/README.md and docs/tls.md PART 2). Kept under the frozen
+/// src/bssl/bindings/README.md and docs/tls.md PART 2). Kept under the frozen
 /// `SslCtx` name; all access goes through `unsafe_core::bssl`.
-pub type SslCtx = bssl_sys::SSL_CTX;
+pub type SslCtx = bun_bssl::SSL_CTX;
 
 /// Parked-payload caps: a serialized SSL_SESSION (i2d) and one keylog line.
 /// Oversize entries are dropped at the parking site (openssl.c:233-236).

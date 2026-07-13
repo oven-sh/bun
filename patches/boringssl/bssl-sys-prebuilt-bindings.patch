@@ -17,7 +17,7 @@
 -// limitations under the License.
 +// Upstream build.rs copies CMake-generated bindings from $BORINGSSL_BUILD_DIR
 +// and emits link directives for a second BoringSSL build. Bun instead commits
-+// pre-generated per-target bindings (src/usockets/tls/bssl_bindings/, see
++// pre-generated per-target bindings (src/bssl/bindings/, see
 +// regenerate.sh there) and consumes them through the crate's BINDGEN_RS_FILE
 +// escape hatch; BoringSSL objects (and the --wrap-static-fns wrapper.c shims)
 +// are compiled by scripts/build/deps/boringssl.ts and resolve at final-binary
@@ -104,7 +104,7 @@
 +use std::io::{BufRead, BufReader};
 +use std::path::{Component, Path, PathBuf};
 +
-+const BINDINGS_REPO_DIR: &str = "src/usockets/tls/bssl_bindings";
++const BINDINGS_REPO_DIR: &str = "src/bssl/bindings";
 +const BORINGSSL_TS_REPO_PATH: &str = "scripts/build/deps/boringssl.ts";
 +
 +// Fold `.`/`..` lexically. The OS resolves symlinks BEFORE `..`, so a checkout

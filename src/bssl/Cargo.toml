@@ -1,0 +1,21 @@
+# The tree's BoringSSL binding surface: re-exports the vendored bssl-sys
+# crate (vendor/boringssl/rust/bssl-sys), whose bindings are pre-generated
+# per target and committed under bindings/ (see bindings/README.md).
+[package]
+name = "bun_bssl"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Raw BoringSSL bindings, consumed through the crate's BINDGEN_RS_FILE escape
+# hatch: pre-generated per-target bindings are committed in bindings/ and
+# build.rs is replaced by patches/boringssl/bssl-sys-prebuilt-bindings.patch
+# (no link directives — Bun compiles/links its own BoringSSL objects via
+# scripts/build/deps/boringssl.ts).
+bssl-sys = { path = "../../vendor/boringssl/rust/bssl-sys" }

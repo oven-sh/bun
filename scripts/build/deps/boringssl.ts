@@ -30,22 +30,22 @@ import { depSourceDir } from "../source.ts";
 const BORINGSSL_COMMIT = "1a41b9025c2c0a37edd07ff10f6944f03e028522";
 
 /**
- * The pre-generated bssl-sys bindings under src/usockets/tls/bssl_bindings/
+ * The pre-generated bssl-sys bindings under src/bssl/bindings/
  * are vendored bindgen output pinned to BORINGSSL_COMMIT (see regenerate.sh
  * there). Stale bindings against bumped headers are silent ABI drift, so every
  * configure verifies the stamp regenerate.sh writes into each generated file.
  */
 function checkBsslBindingsStamp(repoRoot: string): void {
-  const dir = resolve(repoRoot, "src/usockets/tls/bssl_bindings");
+  const dir = resolve(repoRoot, "src/bssl/bindings");
   const generated = [...readdirSync(dir).filter(f => /^wrapper_.*\.rs$/.test(f)), "wrapper.c"];
   for (const file of generated) {
     const firstLine = readFileSync(resolve(dir, file), "utf8").split("\n", 1)[0] ?? "";
     const stamped = firstLine.match(/^\/\/ BoringSSL commit: ([0-9a-f]{40}) /)?.[1];
     if (stamped !== BORINGSSL_COMMIT) {
       throw new Error(
-        `src/usockets/tls/bssl_bindings/${file} was generated for BoringSSL commit ` +
+        `src/bssl/bindings/${file} was generated for BoringSSL commit ` +
           `${stamped ?? "<missing stamp>"} but scripts/build/deps/boringssl.ts pins ${BORINGSSL_COMMIT}.\n` +
-          `note: re-run src/usockets/tls/bssl_bindings/regenerate.sh after bumping BORINGSSL_COMMIT.`,
+          `note: re-run src/bssl/bindings/regenerate.sh after bumping BORINGSSL_COMMIT.`,
       );
     }
   }
@@ -61,10 +61,10 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
-  // bssl-sys (vendor/boringssl/rust) is a cargo path dep of bun_usockets. Its
+  // bssl-sys (vendor/boringssl/rust) is a cargo path dep of bun_bssl. Its
   // upstream build.rs expects CMake-generated bindings + a second BoringSSL
   // build; the patch points it at the pre-generated bindings committed under
-  // src/usockets/tls/bssl_bindings/ instead and emits no link directives.
+  // src/bssl/bindings/ instead and emits no link directives.
   patches: ["patches/boringssl/bssl-sys-prebuilt-bindings.patch"],
 
   build: cfg => {
@@ -86,7 +86,7 @@ export const boringssl: Dependency = {
         ...SSL_SRCS,
         ...DECREPIT_SRCS,
         ...asm,
-        "../../src/usockets/tls/bssl_bindings/wrapper.c",
+        "../../src/bssl/bindings/wrapper.c",
       ],
       includes: ["include"],
       defines: {

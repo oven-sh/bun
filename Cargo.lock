@@ -355,6 +355,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_bssl"
+version = "0.0.0"
+dependencies = [
+ "bssl-sys",
+]
+
+[[package]]
 name = "bun_bundler"
 version = "0.0.0"
 dependencies = [
@@ -2186,8 +2193,8 @@ dependencies = [
 name = "bun_usockets"
 version = "0.0.0"
 dependencies = [
- "bssl-sys",
  "bun_alloc",
+ "bun_bssl",
  "bun_core",
  "bun_dns",
  "bun_errno",

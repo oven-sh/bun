@@ -2042,14 +2042,14 @@ impl HostName {
 
 /// Raw server_name extension parse — NOT `SSL_get_servername`; only the
 /// early-callback contract guarantees the raw hello (docs/tls.md §2.6.2).
-fn hello_servername(hello: *const bssl_sys::SSL_CLIENT_HELLO) -> Option<HostName> {
+fn hello_servername(hello: *const bun_bssl::SSL_CLIENT_HELLO) -> Option<HostName> {
     let mut data: *const u8 = core::ptr::null();
     let mut len: usize = 0;
     // SAFETY: live hello for the callback's duration; outputs written on 1.
     let ok = unsafe {
-        bssl_sys::SSL_early_callback_ctx_extension_get(
+        bun_bssl::SSL_early_callback_ctx_extension_get(
             hello,
-            bssl_sys::TLSEXT_TYPE_server_name as u16,
+            bun_bssl::TLSEXT_TYPE_server_name as u16,
             &mut data,
             &mut len,
         )
@@ -2071,7 +2071,7 @@ fn static_tree_select(ssl: *mut SSL, ls: *mut ListenSocket, host: &HostName) {
         if let Some((ctx, _user)) = sni.resolve(host.as_cstr()) {
             if !ctx.is_null() {
                 // SAFETY: live ssl mid-handshake; ctx is a live tree entry.
-                unsafe { bssl_sys::SSL_set_SSL_CTX(ssl, ctx) };
+                unsafe { bun_bssl::SSL_set_SSL_CTX(ssl, ctx) };
             }
         }
     }
@@ -2083,7 +2083,7 @@ pub(crate) fn ssl_wbio_ctl(ssl: *mut SSL) -> *mut BioCtl {
     // SAFETY: live ssl; only wbios carrying our unique BIO type hold a
     // BioCtl in their data slot — foreign BIOs (BIO_s_mem) return null.
     unsafe {
-        let wbio = bssl_sys::SSL_get_wbio(ssl);
+        let wbio = bun_bssl::SSL_get_wbio(ssl);
         if wbio.is_null() || BIO_method_type(wbio.cast()) != bio_type() {
             core::ptr::null_mut()
         } else {
@@ -2096,9 +2096,9 @@ pub(crate) fn ssl_wbio_ctl(ssl: *mut SSL) -> *mut BioCtl {
 /// selector; suspends via `SniSuspension` in SSL ex_data, resumed by
 /// `tls::state::sni_resolve` re-driving the handshake.
 pub(crate) unsafe extern "C" fn select_cert_cb(
-    hello: *const bssl_sys::SSL_CLIENT_HELLO,
-) -> bssl_sys::ssl_select_cert_result_t {
-    use bssl_sys::{
+    hello: *const bun_bssl::SSL_CLIENT_HELLO,
+) -> bun_bssl::ssl_select_cert_result_t {
+    use bun_bssl::{
         ssl_select_cert_result_t_ssl_select_cert_error as CERT_ERROR,
         ssl_select_cert_result_t_ssl_select_cert_retry as CERT_RETRY,
         ssl_select_cert_result_t_ssl_select_cert_success as CERT_SUCCESS,
@@ -2116,7 +2116,7 @@ pub(crate) unsafe extern "C" fn select_cert_cb(
         Some(bssl::SniSuspension::Resolved(ctx)) if !ctx.is_null() => {
             // Owned ref from sni_resolve: SSL_set_SSL_CTX takes its own.
             // SAFETY: live ssl mid-handshake; ctx carries our owned ref.
-            unsafe { bssl_sys::SSL_set_SSL_CTX(ssl, ctx) };
+            unsafe { bun_bssl::SSL_set_SSL_CTX(ssl, ctx) };
             bssl::ssl_ctx_free(ctx);
             return CERT_SUCCESS;
         }
@@ -2184,7 +2184,7 @@ pub(crate) unsafe extern "C" fn select_cert_cb(
         }
         _ if !dyn_ctx.is_null() => {
             // SAFETY: live ssl; dyn_ctx is the resolver's owned ref.
-            unsafe { bssl_sys::SSL_set_SSL_CTX(ssl, dyn_ctx) };
+            unsafe { bun_bssl::SSL_set_SSL_CTX(ssl, dyn_ctx) };
             bssl::ssl_ctx_free(dyn_ctx);
             CERT_SUCCESS
         }
@@ -2213,7 +2213,7 @@ pub(crate) unsafe extern "C" fn sni_cb(ssl: *mut SSL, _al: *mut c_int, _arg: *mu
     }
     // SAFETY: live ssl inside the servername callback.
     let hostname =
-        unsafe { bssl_sys::SSL_get_servername(ssl, bssl_sys::TLSEXT_NAMETYPE_host_name) };
+        unsafe { bun_bssl::SSL_get_servername(ssl, bun_bssl::TLSEXT_NAMETYPE_host_name) };
     if !hostname.is_null() {
         // SAFETY: BoringSSL returns a NUL-terminated servername.
         let host = unsafe { CStr::from_ptr(hostname) };
@@ -2222,7 +2222,7 @@ pub(crate) unsafe extern "C" fn sni_cb(ssl: *mut SSL, _al: *mut c_int, _arg: *mu
                 if let Some((ctx, _user)) = sni.resolve(host) {
                     if !ctx.is_null() {
                         // SAFETY: live ssl; borrowed tree ctx (own ref taken).
-                        unsafe { bssl_sys::SSL_set_SSL_CTX(ssl, ctx) };
+                        unsafe { bun_bssl::SSL_set_SSL_CTX(ssl, ctx) };
                     }
                 }
             }
@@ -2235,14 +2235,14 @@ pub(crate) unsafe extern "C" fn sni_cb(ssl: *mut SSL, _al: *mut c_int, _arg: *mu
 /// idempotent across listeners sharing the ctx — openssl.c:2462-2467).
 pub(crate) fn register_servername_cb(ctx: *mut SslCtx) {
     // SAFETY: live ctx; registration-only FFI.
-    unsafe { bssl_sys::SSL_CTX_set_tlsext_servername_callback(ctx, Some(sni_cb)) };
+    unsafe { bun_bssl::SSL_CTX_set_tlsext_servername_callback(ctx, Some(sni_cb)) };
 }
 
 /// Register `select_cert_cb` on the listener's default ctx
 /// (us_listen_socket_on_server_name — openssl.c:2515-2526).
 pub(crate) fn register_select_cert_cb(ctx: *mut SslCtx) {
     // SAFETY: live ctx; registration-only FFI.
-    unsafe { bssl_sys::SSL_CTX_set_select_certificate_cb(ctx, Some(select_cert_cb)) };
+    unsafe { bun_bssl::SSL_CTX_set_select_certificate_cb(ctx, Some(select_cert_cb)) };
 }
 
 // ── UpgradedDuplex / WindowsNamedPipe cycle-break shims ───────

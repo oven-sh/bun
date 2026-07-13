@@ -231,7 +231,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       // disk before it resolves the manifest. The `.ref` stamp's content is
       // the pinned commit, so a bump re-invokes cargo.
       // boringssl: same — bssl-sys (vendor/boringssl/rust/bssl-sys) is a path
-      // dep of bun_usockets; cargo needs the fetched (patched) tree on disk.
+      // dep of bun_bssl; cargo needs the fetched (patched) tree on disk.
       vendorStamps: [...(depsByName.get("lolhtml")?.outputs ?? []), ...(depsByName.get("boringssl")?.outputs ?? [])],
     });
   }
@@ -556,7 +556,7 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.blank();
 
   // Deps fetched as cargo path dependencies: lolhtml (bun_runtime/bun_bundler)
-  // and boringssl (bssl-sys, path dep of bun_usockets — only the fetched,
+  // and boringssl (bssl-sys, path dep of bun_bssl — only the fetched,
   // patched source tree is needed; its compile edges go unpulled here).
   // resolveDep emits the fetches; emitRust depends on the fetch stamps via
   // vendorStamps.

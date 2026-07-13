@@ -8,8 +8,8 @@ pub mod state;
 pub use state::{SslWindowGuard, TlsState};
 
 /// BoringSSL `SSL`, from the pre-generated bssl-sys bindings (see
-/// bssl_bindings/README.md and docs/tls.md PART 2).
-pub use bssl_sys::SSL;
+/// src/bssl/bindings/README.md and docs/tls.md PART 2).
+pub use bun_bssl::SSL;
 
 /// Lives on the `SocketHeader`. Spill + fatal-reason storage is LOOP-SHARED
 /// (docs/design.md §TLS buffer ownership), owned via generation-checked `SocketRef` — the

@@ -1,7 +1,8 @@
 # Pre-generated bssl-sys bindings
 
-`bun_usockets` depends on the vendored `bssl-sys` crate
-(`vendor/boringssl/rust/bssl-sys`) as its raw BoringSSL layer
+`bun_bssl` (`src/bssl`, the tree's BoringSSL binding surface — consumed by
+`bun_usockets`) re-exports the vendored `bssl-sys` crate
+(`vendor/boringssl/rust/bssl-sys`) as the raw BoringSSL layer
 (.rewrite-specs/tls-semantics.md Part 2d; api.md CHANGES 1). Upstream generates
 its bindings with bindgen at CMake time and links its own BoringSSL build —
 neither exists in Bun's build. Instead:

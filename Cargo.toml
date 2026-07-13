@@ -79,6 +79,7 @@ members = [
   "src/wyhash",
   "src/hash",
   "src/boringssl_sys",
+  "src/bssl",
   "src/bun_core",
   "src/bun_core_macros",
   "src/bun_output_tags",
@@ -426,6 +427,7 @@ bun_standalone_graph = { path = "src/standalone_graph" }
 bun_wyhash = { path = "src/wyhash" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
+bun_bssl = { path = "src/bssl" }
 bun_core = { path = "src/bun_core" }
 bun_core_macros = { path = "src/bun_core_macros" }
 bun_output_tags = { path = "src/bun_output_tags" }

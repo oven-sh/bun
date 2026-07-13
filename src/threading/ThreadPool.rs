@@ -902,34 +902,6 @@ impl ThreadPool {
                     self.stats.sleeps.fetch_add(1, Ordering::Relaxed);
                 }
 
-                // Only the owning thread may sweep its own mimalloc heaps; sweep now rather
-                // than waiting for the 10s idle timeout inside Event::wait().
-                //
-                // Rate-limited, exactly like the JS thread's park in BunJSCEventLoop.cpp. A pool
-                // worker can wake and park once per *request* -- `vite preview` reads a file per
-                // request -- and an unthrottled sweep there ran a full hole sweep and purge drain
-                // each time: 1.18 madvise per HTTP request, whose memory JSC then faulted straight
-                // back in (3.8x the minor faults). It cost ~13% of that benchmark's throughput and
-                // returned no memory at all; the RSS win there is ordinary arena purging.
-                {
-                    const IDLE_SWEEP_INTERVAL: core::time::Duration =
-                        core::time::Duration::from_millis(100);
-                    thread_local! {
-                        static LAST_IDLE_SWEEP: core::cell::Cell<Option<std::time::Instant>> =
-                            const { core::cell::Cell::new(None) };
-                    }
-                    LAST_IDLE_SWEEP.with(|last| {
-                        let now = std::time::Instant::now();
-                        let due = last
-                            .get()
-                            .is_none_or(|prev| now.duration_since(prev) >= IDLE_SWEEP_INTERVAL);
-                        if due {
-                            last.set(Some(now));
-                            bun_alloc::mimalloc::mi_on_thread_idle();
-                        }
-                    });
-                }
-
                 self.idle_event.wait();
                 sync = self.sync.load(Ordering::Relaxed);
             }
@@ -1391,7 +1363,7 @@ impl Event {
     fn wait(&self) {
         let mut acquire_with: u32 = Self::EMPTY;
         let mut state = self.state.load(Ordering::Relaxed);
-        let mut has_shrunk_memory: bool = false;
+        let mut has_swept: bool = false;
 
         loop {
             // If we're shutdown then exit early.
@@ -1441,15 +1413,30 @@ impl Event {
             // Acquiring to WAITING will make the next notify() or shutdown() wake a sleeping futex thread
             // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
             // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
-            let timeout_ns: Option<u64> = if !has_shrunk_memory {
-                Some(10_000_000_000) // 10 seconds
+            // Park on a deadline so an idle worker gives its memory back, and act only when the
+            // wait actually TIMED OUT -- i.e. this thread really was asleep that long, and is not
+            // merely parking between tasks. That distinction is the whole point: sweeping on every
+            // park cost ~13% of `vite preview`'s throughput (a pool worker wakes once per request
+            // there, so it swept once per request) and returned no memory at all.
+            //
+            // Runs at most once per idle period: `has_swept` is a local, so a notify() resets it by
+            // returning from wait(). The futex supplies the atomicity -- a notify() racing the
+            // timeout leaves the state NOTIFIED and the loop consumes it on the next turn, so the
+            // wakeup is delayed by the sweep, never lost.
+            //
+            // `mi_on_thread_idle()` supersedes both of the things this used to do here: it collects
+            // this thread's heaps (the old `mi_collect(false)`), discards the free-block holes
+            // inside still-used pages, and hands the arena purge to the scavenger. WTF's
+            // `releaseFastMallocFreeMemoryForThisThread` is gone with them -- under USE_MIMALLOC
+            // bmalloc routes into this same allocator, so it was collecting the heaps a second time.
+            let timeout_ns: Option<u64> = if !has_swept {
+                Some(100_000_000) // 100ms
             } else {
                 None
             };
             if Futex::wait(&self.state, Self::WAITING, timeout_ns).is_err() {
-                has_shrunk_memory = true;
-                bun_core::Global::mimalloc_cleanup(false);
-                bun_alloc::wtf::release_fast_malloc_free_memory_for_this_thread();
+                has_swept = true;
+                bun_alloc::mimalloc::mi_on_thread_idle();
             }
             state = self.state.load(Ordering::Relaxed);
             acquire_with = Self::WAITING;

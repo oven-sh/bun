@@ -965,20 +965,6 @@ pub fn page_size() -> usize {
 }
 
 // ── wtf (FastMalloc thread-cache release) ─────────────────────────────────
-// MOVE_DOWN from bun_jsc so bun_threading (T2) can call it without a T6 dep.
-pub mod wtf {
-    unsafe extern "C" {
-        // Defined in WebKit's WTF (linked into the final binary).
-        // No preconditions; thread-safe.
-        safe fn WTF__releaseFastMallocFreeMemoryForThisThread();
-    }
-
-    #[inline]
-    pub fn release_fast_malloc_free_memory_for_this_thread() {
-        WTF__releaseFastMallocFreeMemoryForThisThread()
-    }
-}
-
 // ── String — TYPE_ONLY landing ─────────────────────────────────────────────
 // Layout-only (#[repr(C)]) so T0/T1 crates can name the type; rich methods
 // (toJS, toUTF8, WTF refcounting) remain in bun_str via extension traits.

@@ -602,7 +602,6 @@ impl EventLoop {
         }
     }
 
-    #[inline]
     /// A finished HTTP transaction asks the GC heuristic to look at the heap -- but not yet:
     /// the response's JS handling and microtasks have not run, so the garbage is not there to
     /// see. Acted on at the next park (`drain_pending_gc_hint`).
@@ -614,6 +613,7 @@ impl EventLoop {
         self.vm_ref().as_mut().gc_controller.drain_pending_hint();
     }
 
+    #[inline]
     pub fn process_gc_timer(&mut self) {
         self.vm_ref().as_mut().gc_controller.process_gc_timer();
     }

@@ -1369,7 +1369,7 @@ pub enum Metadata {
 pub struct MetadataResolve {
     pub specifier: BabyString,
     pub import_kind: ImportKind,
-    pub err: bun_core::Error,
+    pub err: crate::Error,
 }
 
 impl Default for MetadataResolve {
@@ -1377,7 +1377,7 @@ impl Default for MetadataResolve {
         MetadataResolve {
             specifier: BabyString::new(0, 0),
             import_kind: ImportKind::default(),
-            err: bun_core::err!("ModuleNotFound"),
+            err: crate::Error::ModuleNotFound,
         }
     }
 }
@@ -1925,7 +1925,7 @@ impl Log {
         args: fmt::Arguments<'_>,
         specifier_arg: &[u8],
         import_kind: ImportKind,
-        err: bun_core::Error,
+        err: crate::Error,
     ) {
         let text = alloc_print(args);
         // TODO: fix this. this is stupid, the specifier should be returned by
@@ -1974,7 +1974,7 @@ impl Log {
         args: fmt::Arguments<'_>,
         specifier_arg: &[u8],
         import_kind: ImportKind,
-        err: bun_core::Error,
+        err: crate::Error,
     ) {
         // Always dupe the line_text from the source to ensure the Location data
         // outlives the source's backing memory (which may be arena-allocated).
@@ -2003,7 +2003,7 @@ impl Log {
             args,
             specifier_arg,
             import_kind,
-            bun_core::err!("ModuleNotFound"),
+            crate::Error::ModuleNotFound,
         )
     }
 
@@ -2091,12 +2091,16 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_zig_error_with_note(&mut self, err: bun_core::Error, note_args: fmt::Arguments<'_>) {
+    pub fn add_zig_error_with_note(
+        &mut self,
+        err_name: &'static str,
+        note_args: fmt::Arguments<'_>,
+    ) {
         self.errors += 1;
 
         let notes: Box<[Data]> = Box::new([range_data(None, Range::NONE, alloc_print(note_args))]);
 
-        let data = self.tracked_range_data(None, Range::NONE, err.name().as_bytes());
+        let data = self.tracked_range_data(None, Range::NONE, err_name.as_bytes());
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -2713,7 +2717,7 @@ impl ErrorPositionState {
     /// the column to 0, `\r\n` counts as a single line break, U+2028/U+2029
     /// are line breaks). Returns `true` if a line break was crossed.
     fn advance(&mut self, contents: &[u8], from: usize, to: usize) -> bool {
-        use bun_core::immutable::{CodepointIterator, Cursor};
+        use bun_core::strings::{CodepointIterator, Cursor};
         let iter_ = CodepointIterator::init(&contents[from..to]);
         let mut iter = Cursor::default();
         let mut crossed_line_break = false;
@@ -2771,7 +2775,7 @@ impl ErrorPositionState {
 /// Byte offset of the line break at or after `offset` (the end of the line
 /// containing `offset`), or the end of the file if this is the last line.
 fn scan_line_end(contents: &[u8], offset: usize) -> usize {
-    use bun_core::immutable::{CodepointIterator, Cursor};
+    use bun_core::strings::{CodepointIterator, Cursor};
     let iter_ = CodepointIterator::init(&contents[offset..]);
     let mut iter = Cursor::default();
 
@@ -2896,7 +2900,7 @@ impl Source {
         self.path.name().fmt_identifier()
     }
 
-    pub fn identifier_name(&mut self) -> Result<&[u8], bun_core::Error> {
+    pub fn identifier_name(&mut self) -> crate::Result<&[u8]> {
         if !self.identifier_name.is_empty() {
             return Ok(&self.identifier_name);
         }
@@ -2936,7 +2940,7 @@ impl Source {
         }
     }
 
-    pub fn init_file(file: &PathContentsPair) -> Result<Source, bun_core::Error> {
+    pub fn init_file(file: &PathContentsPair) -> crate::Result<Source> {
         let mut source = Source {
             path: file.path,
             contents: Cow::Borrowed(file.contents),
@@ -2946,7 +2950,7 @@ impl Source {
         Ok(source)
     }
 
-    pub fn init_recycled_file(file: &PathContentsPair) -> Result<Source, bun_core::Error> {
+    pub fn init_recycled_file(file: &PathContentsPair) -> crate::Result<Source> {
         let mut source = Source {
             path: file.path,
             contents: Cow::Borrowed(file.contents),
@@ -2983,7 +2987,7 @@ impl Source {
 
     pub fn range_of_operator_before(&self, loc: Loc, op: &[u8]) -> Range {
         let text = &self.contents[0..loc.i()];
-        let index = bun_core::immutable::index(text, op);
+        let index = bun_core::strings::index(text, op);
         if index >= 0 {
             return Range {
                 loc: Loc {
@@ -3035,7 +3039,7 @@ impl Source {
 
     pub fn range_of_operator_after(&self, loc: Loc, op: &[u8]) -> Range {
         let text = &self.contents[loc.i()..];
-        let index = bun_core::immutable::index(text, op);
+        let index = bun_core::strings::index(text, op);
         if index >= 0 {
             return Range {
                 loc: Loc {
@@ -3063,6 +3067,9 @@ impl Source {
         state.to_error_position(scan_line_end(contents, offset))
     }
 
+    /// Byte offset of 1-based (`line`, `col`) in `source_contents`, resuming the
+    /// scan from (`start_line`, `start_col`). Columns count UTF-16 code units,
+    /// the convention of JSC stack traces and source-map mappings.
     pub fn line_col_to_byte_offset(
         source_contents: &[u8],
         start_line: u64,
@@ -3070,7 +3077,7 @@ impl Source {
         line: u64,
         col: u64,
     ) -> Option<usize> {
-        use bun_core::immutable::{CodepointIterator, Cursor};
+        use bun_core::strings::{CodepointIterator, Cursor};
         let iter_ = CodepointIterator::init(source_contents);
         let mut iter = Cursor::default();
 
@@ -3102,7 +3109,7 @@ impl Source {
                     column_number = 1;
                 }
                 _ => {
-                    column_number += 1;
+                    column_number += if c > 0xFFFF { 2 } else { 1 };
                 }
             }
 
@@ -3155,7 +3162,7 @@ pub(crate) fn source_from_file_at(
 ) -> bun_sys::Maybe<Source> {
     let mut bytes = bun_sys::file::File::read_from(dir_fd, path)?;
     if opts.convert_bom {
-        if let Some(bom) = bun_core::immutable::BOM::detect(&bytes) {
+        if let Some(bom) = bun_core::strings::BOM::detect(&bytes) {
             bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
         }
     }
@@ -3182,6 +3189,8 @@ pub mod base;
 pub mod binding;
 pub mod char_freq;
 pub mod e;
+pub mod error;
+pub use error::{Error, Result};
 pub mod expr;
 pub mod fold_string_addition;
 pub mod g;
@@ -3299,6 +3308,10 @@ pub mod flags {
 
         /// Only applicable to function statements.
         IsExport,
+
+        /// A `// eslint-disable… react-hooks/…` comment was scanned at or before
+        /// this function's body close. The React Compiler skips such functions.
+        HasReactHooksSuppression,
     }
     pub type FunctionSet = EnumSet<Function>;
     pub const FUNCTION_NONE: FunctionSet = EnumSet::empty();

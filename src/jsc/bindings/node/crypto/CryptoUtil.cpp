@@ -84,6 +84,7 @@ EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, st
         auto buffer = JSC::ArrayBuffer::tryCreateUninitialized(bytes.size(), 1);
         if (!buffer) {
             throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return {};
         }
 
         memcpy(buffer->data(), bytes.data(), bytes.size());

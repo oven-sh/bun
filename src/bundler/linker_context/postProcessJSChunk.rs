@@ -19,8 +19,9 @@ use bun_collections::MultiArrayList;
 use bun_collections::VecExt;
 use bun_core::perf;
 use bun_core::{
-    MutableString, immutable as strings,
+    MutableString,
     string_joiner::{StringJoiner, Watcher},
+    strings,
 };
 use bun_js_printer::{self as js_printer, PrintResult};
 use bun_sourcemap as SourceMap;
@@ -44,7 +45,7 @@ pub fn post_process_js_chunk(
     worker: &mut ThreadPool::Worker,
     chunk: &mut Chunk,
     chunk_index: usize,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.postProcessJSChunk");
 
     let _ = chunk_index;

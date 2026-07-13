@@ -44,6 +44,7 @@ public:
     OrdinalNumber lineOffset = OrdinalNumber::fromZeroBasedInt(0);
     OrdinalNumber columnOffset = OrdinalNumber::fromZeroBasedInt(0);
     bool failed = false;
+    bool filenameProvided = false;
 
     BaseVMOptions() = default;
     BaseVMOptions(String filename);
@@ -72,6 +73,10 @@ public:
     bool allowStrings = true;
     bool allowWasm = true;
     bool notContextified = false;
+    // microtaskMode: "afterEvaluate" — the context gets its own microtask
+    // queue, drained only after each script/module evaluation (Node's
+    // own_microtask_queue contextify behavior).
+    bool ownMicrotaskQueue = false;
 };
 
 class NodeVMGlobalObject;
@@ -106,7 +111,7 @@ class NodeVMGlobalObject final : public Bun::GlobalScope {
 public:
     using Base = Bun::GlobalScope;
 
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::OverridesPut | JSC::OverridesGetOwnPropertyNames | JSC::GetOwnPropertySlotMayBeWrongAboutDontEnum | JSC::ProhibitsPropertyCaching;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | JSC::OverridesPut | JSC::OverridesGetOwnPropertyNames | JSC::GetOwnPropertySlotMayBeWrongAboutDontEnum | JSC::ProhibitsPropertyCaching;
     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
@@ -126,12 +131,17 @@ public:
     void clearContextifiedObject();
     void sigintReceived();
     bool isNotContextified() const { return m_contextOptions.notContextified; }
+    bool hasOwnMicrotaskQueue() const { return m_contextOptions.ownMicrotaskQueue; }
+    // Performs a microtask checkpoint on this context's own queue
+    // (microtaskMode: "afterEvaluate" contexts only; no-op otherwise).
+    void drainOwnMicrotasks();
     NodeVMSpecialSandbox* specialSandbox() const { return m_specialSandbox.get(); }
     void setSpecialSandbox(NodeVMSpecialSandbox* sandbox) { m_specialSandbox.set(vm(), this, sandbox); }
     JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
 
     // Override property access to delegate to contextified object
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
+    static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned index, JSC::PropertySlot&);
     static bool put(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow);

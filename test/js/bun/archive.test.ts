@@ -3,18 +3,20 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "path";
 
-// Minimal ustar tarball builder (pathnames must be <100 bytes).
-function ustarHeader(name: string, size: number): Buffer {
-  if (Buffer.byteLength(name) > 99) throw new Error("ustar name too long: " + name);
+// Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
+// a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.
+function ustarHeader(name: string | Buffer, size: number, typeflag: string = "0"): Buffer {
+  const nameBytes = typeof name === "string" ? Buffer.from(name) : name;
+  if (nameBytes.length > 99) throw new Error("ustar name too long: " + name);
   const h = Buffer.alloc(512);
-  h.write(name, 0, 100, "utf8");
+  nameBytes.copy(h, 0);
   h.write("0000644\0", 100);
   h.write("0000000\0", 108);
   h.write("0000000\0", 116);
   h.write(size.toString(8).padStart(11, "0") + "\0", 124);
   h.write("00000000000\0", 136);
   h.write("        ", 148);
-  h.write("0", 156);
+  h.write(typeflag, 156);
   h.write("ustar\0", 257);
   h.write("00", 263);
   let sum = 0;
@@ -23,13 +25,40 @@ function ustarHeader(name: string, size: number): Buffer {
   return h;
 }
 
-function ustarEntry(name: string, data: Buffer): Buffer {
+function ustarEntry(name: string | Buffer, data: Buffer): Buffer {
   const pad = Buffer.alloc((512 - (data.length % 512)) % 512);
   return Buffer.concat([ustarHeader(name, data.length), data, pad]);
 }
 
-function buildTarball(entries: Array<{ name: string; data: Buffer | string }>): Uint8Array {
+function buildTarball(entries: Array<{ name: string | Buffer; data: Buffer | string }>): Uint8Array {
   const parts = entries.map(e => ustarEntry(e.name, typeof e.data === "string" ? Buffer.from(e.data) : e.data));
+  parts.push(Buffer.alloc(1024));
+  return new Uint8Array(Buffer.concat(parts));
+}
+
+// One POSIX.1-2001 pax member: an 'x'-typed extended-header block carrying a
+// `<len> path=<name>\n` record (UTF-8 per the spec), then the file itself under
+// an ASCII-safe fallback name. This is what `tar -cf` emits by default.
+function paxEntry(name: string, data: Buffer | string, index: number): Buffer {
+  const body = ` path=${name}\n`;
+  // `<len>` is the decimal byte length of the whole record including its own
+  // digits: the smallest `len` with `digits(len) + byteLength(body) === len`.
+  const bodyBytes = Buffer.byteLength(body);
+  let len = bodyBytes + 1;
+  while (String(len).length + bodyBytes !== len) len++;
+  const recordBuf = Buffer.from(`${len}${body}`);
+  const recordPad = Buffer.alloc((512 - (recordBuf.length % 512)) % 512);
+  const fallback = `PaxFallback${index}`;
+  return Buffer.concat([
+    ustarHeader(`PaxHeaders/${index}`, recordBuf.length, "x"),
+    recordBuf,
+    recordPad,
+    ustarEntry(fallback, typeof data === "string" ? Buffer.from(data) : data),
+  ]);
+}
+
+function buildPaxTarball(entries: Array<{ name: string; data: Buffer | string }>): Uint8Array {
+  const parts = entries.map((e, i) => paxEntry(e.name, e.data, i));
   parts.push(Buffer.alloc(1024));
   return new Uint8Array(Buffer.concat(parts));
 }
@@ -1237,6 +1266,96 @@ describe("Bun.Archive", () => {
 
       const content = await Bun.file(join(String(dir), "unicode.txt")).text();
       expect(content).toBe("Hello, 世界! Привет! Γειά σου!");
+    });
+
+    test("round-trips non-ASCII entry names through bytes(), files(), and extract()", async () => {
+      const entries: Record<string, string> = {
+        "日本.txt": "nihon",
+        "café.txt": "cafe",
+        "emoji-😀/nested-ü.txt": "nested",
+        "ascii.txt": "plain",
+      };
+
+      const bytes = await new Bun.Archive(entries).bytes();
+      // The writer must carry the literal UTF-8 name in a pax `path=` record,
+      // which is what external readers (GNU/BSD tar, node-tar) key on.
+      expect(Buffer.from(bytes).includes(Buffer.from("path=日本.txt\n"))).toBe(true);
+      expect(Buffer.from(bytes).includes(Buffer.from("path=emoji-😀/nested-ü.txt\n"))).toBe(true);
+
+      const files = await new Bun.Archive(bytes).files();
+      expect([...files.keys()].sort()).toEqual(Object.keys(entries).sort());
+      for (const [name, content] of Object.entries(entries)) {
+        expect(await files.get(name)!.text()).toBe(content);
+      }
+
+      using dir = tempDir("archive-nonascii-roundtrip", {});
+      expect(await new Bun.Archive(bytes).extract(String(dir))).toBe(4);
+      for (const [name, content] of Object.entries(entries)) {
+        expect(await Bun.file(join(String(dir), name)).text()).toBe(content);
+      }
+    });
+
+    test("a pax extended header with a non-ASCII path does not truncate the listing", async () => {
+      // `tar` emits pax (POSIX.1-2001) by default, putting non-ASCII names in
+      // a UTF-8 `path=` extended-header record. One such member must neither
+      // lose its own name nor drop the entries that follow it.
+      const tar = buildPaxTarball([
+        { name: "日本.txt", data: "nihon" },
+        { name: "after.txt", data: "after" },
+      ]);
+
+      const files = await new Bun.Archive(tar).files();
+      expect([...files.keys()].sort()).toEqual(["after.txt", "日本.txt"].sort());
+      expect(await files.get("日本.txt")!.text()).toBe("nihon");
+      expect(await files.get("after.txt")!.text()).toBe("after");
+
+      // console.log / Bun.inspect counts entries with the same header loop.
+      expect(Bun.inspect(new Bun.Archive(tar))).toContain("files: 2");
+
+      using dir = tempDir("archive-nonascii-pax-glob", {});
+      expect(await new Bun.Archive(tar).extract(String(dir), { glob: "**" })).toBe(2);
+      expect(await Bun.file(join(String(dir), "日本.txt")).text()).toBe("nihon");
+      expect(await Bun.file(join(String(dir), "after.txt")).text()).toBe("after");
+    });
+
+    // The next two tests put raw non-ASCII bytes in a plain-ustar name field.
+    // Every modern tar emits a pax `path=` record for such names instead, and
+    // on Windows only that (wide-string) form is recoverable byte-exact.
+    test.skipIf(isWindows)("files() keys distinct non-ASCII ustar entry names without colliding them", async () => {
+      // A lossy pathname conversion collapses both names onto the same key
+      // (the empty string) and one entry silently overwrites the other.
+      const tar = buildTarball([
+        { name: "日本.txt", data: "nihon" },
+        { name: "café.txt", data: "cafe" },
+      ]);
+
+      const files = await new Bun.Archive(tar).files();
+      expect([...files.keys()].sort()).toEqual(["café.txt", "日本.txt"].sort());
+      expect(await files.get("日本.txt")!.text()).toBe("nihon");
+      expect(await files.get("café.txt")!.text()).toBe("cafe");
+
+      using dir = tempDir("archive-nonascii-ustar-glob", {});
+      // The glob option routes through a separate extraction loop.
+      expect(await new Bun.Archive(tar).extract(String(dir), { glob: "**" })).toBe(2);
+      expect(await Bun.file(join(String(dir), "日本.txt")).text()).toBe("nihon");
+      expect(await Bun.file(join(String(dir), "café.txt")).text()).toBe("cafe");
+    });
+
+    test.skipIf(isWindows)("files() keys an entry whose name is not even valid UTF-8", async () => {
+      // "foo\xff\xfe.txt": 0xFF and 0xFE are never valid UTF-8, so libarchive
+      // hands the raw header bytes back verbatim. They must not collapse onto
+      // an empty Map key.
+      const invalidUtf8Name = Buffer.from([0x66, 0x6f, 0x6f, 0xff, 0xfe, 0x2e, 0x74, 0x78, 0x74]);
+      const tar = buildTarball([
+        { name: invalidUtf8Name, data: "hello" },
+        { name: "good.txt", data: "world" },
+      ]);
+
+      const files = await new Bun.Archive(tar).files();
+      // Each invalid byte becomes U+FFFD at the JS-string boundary, never "".
+      expect([...files.keys()].sort()).toEqual(["foo\uFFFD\uFFFD.txt", "good.txt"]);
+      expect(await files.get("foo\uFFFD\uFFFD.txt")!.text()).toBe("hello");
+      expect(await files.get("good.txt")!.text()).toBe("world");
     });
   });
 

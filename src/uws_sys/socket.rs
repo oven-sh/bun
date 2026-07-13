@@ -322,6 +322,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// Raw `getaddrinfo(3)` return code for a pending connect whose name
+    /// lookup failed; 0 otherwise (a connect failure past name resolution, or
+    /// any non-connecting handle). A different namespace from
+    /// [`Self::get_error`] (errno).
+    pub fn dns_error(&self) -> i32 {
+        match self.socket {
+            InternalSocket::Connecting(c) => conn(c).get_dns_error(),
+            _ => 0,
+        }
+    }
+
     // ── lifecycle ───────────────────────────────────────────────────────────
 
     pub fn close(&self, code: CloseCode) {
@@ -894,9 +905,9 @@ mod sock_c {
 pub enum ConnectError {
     FailedToOpenSocket,
 }
-impl From<ConnectError> for bun_core::Error {
+impl From<ConnectError> for crate::Error {
     fn from(_: ConnectError) -> Self {
-        bun_core::err!("FailedToOpenSocket")
+        crate::Error::FailedToOpenSocket
     }
 }
 

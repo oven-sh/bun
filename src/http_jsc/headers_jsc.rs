@@ -71,6 +71,13 @@ pub fn from_fetch_headers(
     let names_ptr: *mut api::StringPointer = sliced.items_raw::<"name", api::StringPointer>();
     // SAFETY: same `items_raw` contract as above; `value` column is a disjoint allocation.
     let values_ptr: *mut api::StringPointer = sliced.items_raw::<"value", api::StringPointer>();
+    // Zero-init so any slot `copy_to` fails to write (iterator skip, count
+    // desync) reads as `{0, 0}` — a valid empty slice — rather than garbage.
+    // SAFETY: both columns hold exactly `header_count` `StringPointer` slots.
+    unsafe {
+        core::ptr::write_bytes(names_ptr, 0, header_count as usize);
+        core::ptr::write_bytes(values_ptr, 0, header_count as usize);
+    }
     if let Some(h) = h_ptr {
         // SAFETY: `h` is a valid `&FetchHeaders` for the call; columns sized by `count` above.
         unsafe { (*h).copy_to(names_ptr, values_ptr, headers.buf.as_mut_ptr()) };

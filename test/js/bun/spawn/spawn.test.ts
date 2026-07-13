@@ -14,7 +14,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -165,11 +165,15 @@ for (let [gcTick, label] of [
 
       it("check exit code from onExit", async () => {
         const count = isWindows || isDebug ? 100 : 1000;
+        // Bounded concurrency: 25 pairs (50 children) at a time keeps this from
+        // being 1000 strictly-serial spawn pairs without overwhelming CI runners.
+        const batchSize = 25;
 
-        for (let i = 0; i < count; i++) {
-          var exitCode1, exitCode2;
-          await new Promise<void>(resolve => {
-            var counter = 0;
+        const runPair = () =>
+          new Promise<[number | null, number | null]>(resolve => {
+            let exitCode1: number | null = null;
+            let exitCode2: number | null = null;
+            let counter = 0;
             spawn({
               cmd: [bunExe(), "-e", "process.exit(0)"],
               stdin: "ignore",
@@ -179,7 +183,7 @@ for (let [gcTick, label] of [
                 exitCode1 = code;
                 counter++;
                 if (counter === 2) {
-                  resolve();
+                  resolve([exitCode1, exitCode2]);
                 }
               },
             });
@@ -194,14 +198,19 @@ for (let [gcTick, label] of [
                 counter++;
 
                 if (counter === 2) {
-                  resolve();
+                  resolve([exitCode1, exitCode2]);
                 }
               },
             });
           });
 
-          expect(exitCode1).toBe(0);
-          expect(exitCode2).toBe(1);
+        for (let i = 0; i < count; i += batchSize) {
+          const batch = Math.min(batchSize, count - i);
+          const results = await Promise.all(Array.from({ length: batch }, runPair));
+          for (const [exitCode1, exitCode2] of results) {
+            expect(exitCode1).toBe(0);
+            expect(exitCode2).toBe(1);
+          }
         }
       }, 60_000_0);
 
@@ -638,7 +647,12 @@ describe("spawn unref and kill should not hang", () => {
 
 async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited"]) {
   console.log("running", order.join(","), "x 100");
-  for (let i = 0; i < (isWindows ? 10 : 100); i++) {
+  const total = isWindows ? 10 : 100;
+  // Iterations are independent; run a few at a time instead of strictly
+  // serially. Kept small (5) because all 16 orders run in parallel.
+  const batchSize = 5;
+
+  async function runOne() {
     const proc = spawn({
       cmd: [shellExe(), "-c", `sleep ${sleep}`],
       stdout: "ignore",
@@ -673,6 +687,10 @@ async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited
       }
     }
   }
+
+  for (let i = 0; i < total; i += batchSize) {
+    await Promise.all(Array.from({ length: Math.min(batchSize, total - i) }, runOne));
+  }
   expect().pass();
 }
 
@@ -683,7 +701,7 @@ describe("should not hang", () => {
       async () => {
         const runs: Promise<void>[] = [];
 
-        let initialMaxFD = -1;
+        const baselineMaxFD = getMaxFD();
         for (const order of [
           ["sleep", "kill", "unref", "exited"],
           ["sleep", "unref", "kill", "exited"],
@@ -703,25 +721,19 @@ describe("should not hang", () => {
           ["exited"],
         ]) {
           runs.push(
-            runTest(sleep, order)
-              .then(a => {
-                if (initialMaxFD === -1) {
-                  initialMaxFD = getMaxFD();
-                }
-
-                return a;
-              })
-              .catch(err => {
-                console.error("For order", JSON.stringify(order, null, 2));
-                throw err;
-              }),
+            runTest(sleep, order).catch(err => {
+              console.error("For order", JSON.stringify(order, null, 2));
+              throw err;
+            }),
           );
         }
 
         return await Promise.all(runs).then(ret => {
-          // assert we didn't leak any file descriptors
-          // add buffer room for flakiness
-          expect(initialMaxFD).toBeLessThanOrEqual(getMaxFD() + 50);
+          // Assert we didn't leak file descriptors: a real leak here compounds
+          // over 1600 iterations. The buffer accounts for the ~80 children that
+          // are transiently alive at once (16 orders x 5 concurrent iterations)
+          // plus any fds released lazily after `exited` resolves.
+          expect(getMaxFD()).toBeLessThanOrEqual(baselineMaxFD + 256);
           return ret;
         });
       },
@@ -972,6 +984,94 @@ describe("close handling", () => {
         ).toThrow(msg);
       });
     }
+
+    it("'socket-fd' at index < 3 throws", () => {
+      expect(() =>
+        spawn({
+          cmd: [bunExe(), "-e", ""],
+          env: bunEnv,
+          // @ts-expect-error — intentionally invalid at index 0
+          stdio: ["socket-fd", "pipe", "pipe"],
+        }),
+      ).toThrow("'socket-fd' is only supported at indices >= 3");
+    });
+
+    it("'socket-fd' with spawnSync throws", () => {
+      // SyncSubprocess has no .stdio, so the caller could never receive
+      // the fd to close; reject rather than leak it.
+      expect(() =>
+        spawnSync({
+          cmd: [bunExe(), "-e", ""],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "ignore", "socket-fd"],
+        }),
+      ).toThrow("'socket-fd' cannot be used with spawnSync");
+    });
+
+    it.skipIf(isWindows)(
+      "'socket-fd' at index >= 3 exposes a caller-owned fd the subprocess does not close",
+      async () => {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'hello-from-child')"],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "ignore", "socket-fd"],
+        });
+        const fd = proc.stdio[3];
+        expect(typeof fd).toBe("number");
+        try {
+          await proc.exited;
+          // fd is UnownedFd: still open and readable here (process exit does
+          // not touch stdio_pipes), and finalize_streams on later GC will skip
+          // this slot. The caller owns the close.
+          const buf = Buffer.alloc(64);
+          const n = readSync(fd as number, buf);
+          expect(buf.subarray(0, n).toString()).toBe("hello-from-child");
+        } finally {
+          // Caller is responsible for closing it.
+          closeSync(fd as number);
+        }
+        expect(() => fstatSync(fd as number)).toThrow(expect.objectContaining({ code: "EBADF" }));
+      },
+    );
+
+    it.skipIf(isWindows)("'pipe' at index >= 3: reading .stdio transfers fd ownership to the caller", async () => {
+      // Once .stdio exposes the raw fd number, JS owns it; the Subprocess
+      // finalizer must not close that number again at GC time (the kernel may
+      // have recycled it). Run in a child so a debug abort shows as exit != 0.
+      const fixture = /* js */ `
+        const fs = require("node:fs");
+        let hits = 0;
+        for (let i = 0; i < 4; i++) {
+          let p = Bun.spawn({
+            cmd: ["/bin/sh", "-c", "printf hi >&3"],
+            stdio: ["ignore", "ignore", "ignore", "pipe"],
+          });
+          await p.exited;
+          const fd = p.stdio[3];
+          if (typeof fd !== "number") throw new Error("stdio[3] not a number: " + fd);
+          const b = Buffer.alloc(8);
+          if (fs.readSync(fd, b) !== 2 || b.subarray(0, 2).toString() !== "hi")
+            throw new Error("stdio[3] unreadable");
+          fs.closeSync(fd);
+          const victim = fs.openSync(process.execPath, "r");
+          p = null;
+          Bun.gc(true);
+          await Bun.sleep(0);
+          Bun.gc(true);
+          try { fs.fstatSync(victim); } catch { hits++; }
+          try { fs.closeSync(victim); } catch {}
+        }
+        if (hits) throw new Error("finalizer closed " + hits + "/4 recycled fds");
+        console.log("PASS");
+      `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
+    });
   });
 });
 
@@ -1176,5 +1276,33 @@ describe("option combinations", () => {
     expect(messageReceived).toBe(true);
     expect(disconnectCalled).toBe(true);
     expect(await proc.exited).toBe(0);
+  });
+});
+
+describe("uid/gid", () => {
+  const isRoot = process.getuid?.() === 0;
+
+  it.if(isPosix && isRoot)("applies uid and gid to the child", async () => {
+    await using proc = spawn({ cmd: ["id", "-u"], uid: 65534, gid: 65534, stdout: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("65534");
+    expect(exitCode).toBe(0);
+  });
+
+  it.if(isPosix && isRoot)("omitting uid/gid leaves the child's ids unchanged", async () => {
+    await using proc = spawn({ cmd: ["id", "-u"], stdout: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("0");
+    expect(exitCode).toBe(0);
+  });
+
+  it.if(isPosix && !isRoot)("throws EPERM for a uid the process cannot set", () => {
+    let thrown: any;
+    try {
+      spawn({ cmd: ["id"], uid: 0 });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown?.code).toBe("EPERM");
   });
 });

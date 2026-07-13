@@ -212,9 +212,22 @@ impl File {
     /// `size+16`.
     pub fn read_to_end_with_array_list(&self, list: &mut Vec<u8>, hint: SizeHint) -> Maybe<usize> {
         match hint {
-            SizeHint::ProbablySmall => list.reserve(64),
+            SizeHint::ProbablySmall => {
+                if list.try_reserve(64).is_err() {
+                    return Err(Error::oom());
+                }
+            }
             SizeHint::UnknownSize => {
-                list.reserve_exact((self.get_end_pos()? + 16).saturating_sub(list.len()));
+                // `st_size` is only a hint (sparse files, racing writers, /proc):
+                // reserve fallibly so an absurd size surfaces as ENOMEM to the
+                // caller instead of aborting the process in `handle_alloc_error`.
+                let want = self
+                    .get_end_pos()?
+                    .saturating_add(16)
+                    .saturating_sub(list.len());
+                if list.try_reserve_exact(want).is_err() {
+                    return Err(Error::oom());
+                }
             }
         }
         read_fill_vec(list, 16, |dst, off| {
@@ -347,11 +360,7 @@ impl File {
     /// `NtSetInformationFile`, which opens its own source handle, so keeping
     /// `self` open across the call is fine and avoids passing a closed handle
     /// into the EXDEV fallback.)
-    pub fn close_and_move_to(
-        self,
-        src: &ZStr,
-        dest: &ZStr,
-    ) -> core::result::Result<(), bun_core::Error> {
+    pub fn close_and_move_to(self, src: &ZStr, dest: &ZStr) -> Maybe<()> {
         let cwd = Fd::cwd();
         let result = move_file_z_with_handle(self.handle, cwd, src, cwd, dest);
         let _ = self.close(); // close error is non-actionable; discarded
@@ -359,13 +368,8 @@ impl File {
     }
     /// `bun.sys.File.getPath` — `getFdPath(self.handle, buf)`.
     #[inline]
-    pub fn get_path<'a>(
-        &self,
-        buf: &'a mut bun_paths::PathBuffer,
-    ) -> core::result::Result<&'a [u8], bun_core::Error> {
-        get_fd_path(self.handle, buf)
-            .map(|s| &*s)
-            .map_err(Into::into)
+    pub fn get_path<'a>(&self, buf: &'a mut bun_paths::PathBuffer) -> Maybe<&'a [u8]> {
+        get_fd_path(self.handle, buf).map(|s| &*s)
     }
 
     // ── one-shot path helpers (open + io + close) ───────────────────────
@@ -379,16 +383,13 @@ impl File {
     /// Open + read; returns BOTH
     /// the open `File` handle and the bytes. Caller owns the fd and must
     /// `close()` it. On read error the fd is closed before returning (no leak).
-    pub fn read_file_from(
-        dir: impl AsFd,
-        path: &[u8],
-    ) -> core::result::Result<(Self, Vec<u8>), bun_core::Error> {
+    pub fn read_file_from(dir: impl AsFd, path: &[u8]) -> Maybe<(Self, Vec<u8>)> {
         let dir = dir.as_fd();
-        let f = Self::openat(dir, path, O::RDONLY, 0).map_err(Into::<bun_core::Error>::into)?;
+        let f = Self::openat(dir, path, O::RDONLY, 0)?;
         match f.read_to_end() {
             Ok(bytes) => Ok((f, bytes)),
             // The fd escapes only on success; `Drop` closes it here.
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e),
         }
     }
     /// Normalize a

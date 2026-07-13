@@ -223,10 +223,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       codegenInputs: codegen.rustInputs,
       codegenOrderOnly: codegen.rustOrderOnly,
       rustSources: sources.rust,
-      // lol-html is consumed as a path dep of `bun_lolhtml_sys`, not built
-      // into a separate archive — cargo needs `vendor/lolhtml/` on disk
-      // before it resolves the manifest. The `.ref` stamp's content is the
-      // pinned commit, so a bump re-invokes cargo.
+      // lol-html is a direct path dep of `bun_runtime`/`bun_bundler`
+      // (`lol_html = { path = "vendor/lolhtml" }` in the workspace Cargo.toml),
+      // not built into a separate archive — cargo needs `vendor/lolhtml/` on
+      // disk before it resolves the manifest. The `.ref` stamp's content is
+      // the pinned commit, so a bump re-invokes cargo.
       vendorStamps: depsByName.get("lolhtml")?.outputs ?? [],
     });
   }
@@ -298,6 +299,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // here — root-pch.h transitively includes Windows.h via WTF, so the
   // force-include would lock those in before the source can speak.
   const noPchSources = new Set<string>();
+
+  // highway_json.cpp is compiled -O2 even in debug profiles (see its
+  // fileOverrides entry in flags.ts); a TU at a different -O level than the
+  // PCH cannot use the PCH ("__OPTIMIZE__ ... was disabled in precompiled
+  // file"). It only includes highway + libc headers anyway.
+  if (cfg.debug) {
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_json.cpp"));
+  }
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
   if (cfg.windows) {
@@ -525,7 +534,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * set via --os/--arch overrides (cargo `--target <triple>`).
  *
  * Needs:
- *   - lolhtml FETCHED (path dep of `bun_lolhtml_sys`) — not built separately
+ *   - lolhtml FETCHED (path dep of `bun_runtime`/`bun_bundler`) — not built separately
  *   - codegen (Rust `include!`s/`include_bytes!`s the same generated set)
  *   - cargo build → libbun_rust.a
  *

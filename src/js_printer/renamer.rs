@@ -14,7 +14,7 @@ use bun_ast::{Ref, Symbol};
 use bun_collections::hive_array::Fallback as HiveArrayFallback;
 use bun_collections::{HashMap, StringHashMap, VecExt};
 use bun_core::Output;
-use bun_core::{MutableString, immutable as strings};
+use bun_core::{MutableString, strings};
 use bun_options_types::Format;
 use enum_map::EnumMap;
 
@@ -433,7 +433,7 @@ impl MinifyRenamer {
     pub fn assign_names_by_frequency(
         &mut self,
         name_minifier: &js_ast::NameMinifier,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let mut name_buf: Vec<u8> = Vec::with_capacity(64);
 
         let mut sorted: Vec<SlotAndCount> = Vec::new();
@@ -870,8 +870,8 @@ pub enum UnusedName {
 
 /// Fast-path for `MutableString::ensure_valid_identifier`: returns `true` iff
 /// `s` is a non-empty ASCII identifier (`[A-Za-z_$][A-Za-z0-9_$]*`). This is
-/// the exact condition under which `MutableString::ensure_valid_identifier`
-/// returns the input unchanged (modulo the strict-mode-reserved-word remap,
+/// a sufficient condition for `MutableString::ensure_valid_identifier` to
+/// return the input unchanged (modulo the strict-mode-reserved-word remap,
 /// handled by the caller). That function currently always allocates
 /// a `Box<[u8]>` even on the borrow path, so hoisting
 /// this check into the renamer keeps zero-alloc behaviour for the
@@ -993,10 +993,10 @@ impl NumberScope {
         //
         // `name` may still equal `input_name` bytewise even when `normalized`
         // is true: `ensure_valid_identifier` returns the input bytes unchanged
-        // for an identifier whose first codepoint is a non-ASCII ID_Start
-        // (e.g. `é`, `π`), since only `is_simple_ascii_identifier` is
-        // ASCII-restricted. The hot ASCII path skips the byte compare via
-        // `!normalized`; the rare non-ASCII path falls back to it.
+        // for any already-valid identifier (e.g. `Café`, `π`), since only
+        // `is_simple_ascii_identifier` is ASCII-restricted. The hot ASCII path
+        // skips the byte compare via `!normalized`; the rare non-ASCII path
+        // falls back to it.
         if !collided && (!normalized || strings::eql_long(name, input_name, true)) {
             // `input_name` is `Symbol::original_name.slice()` — an AST-arena
             // slice that outlives the renamer (see [`NameKey`] doc). No copy.
@@ -1098,7 +1098,7 @@ impl ExportRenamer {
         self.arena.alloc_slice_copy(input)
     }
 
-    pub fn next_minified_name(&mut self) -> Result<Vec<u8>, bun_core::Error> {
+    pub fn next_minified_name(&mut self) -> Result<Vec<u8>, crate::Error> {
         let name = js_ast::NameMinifier::default_number_to_minified_name(self.count)?;
         self.count += 1;
         Ok(name)

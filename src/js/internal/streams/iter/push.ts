@@ -709,8 +709,9 @@ function push(...args) {
   // Apply transforms lazily if provided
   let readable;
   if (transforms.length > 0) {
-    if (options.signal) {
-      readable = pullWithTransforms(rawReadable, ...transforms, { __proto__: null, signal: options.signal });
+    const signal = options.signal;
+    if (signal) {
+      readable = pullWithTransforms(rawReadable, ...transforms, { __proto__: null, signal });
     } else {
       readable = pullWithTransforms(rawReadable, ...transforms);
     }

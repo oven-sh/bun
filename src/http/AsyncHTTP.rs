@@ -59,7 +59,7 @@ pub struct AsyncHTTP<'a> {
     pub client: HTTPClient<'a>,
     pub waiting_deffered: bool,
     pub finalized: bool,
-    pub err: Option<bun_core::Error>,
+    pub err: Option<crate::Error>,
     pub async_http_id: u32,
 
     pub state: AtomicState,
@@ -124,7 +124,7 @@ fn http_thread_timer_read() -> u64 {
 
 /// Build the `Proxy-Authorization: Basic <b64(user[:pass])>` header value.
 /// Returns `None` (and logs) if percent-decoding fails.
-fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
+pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
     if proxy.username.is_empty() {
         return None;
     }
@@ -196,6 +196,7 @@ fn make_client<'a>(
         prev_redirect: Vec::new(),
         progress_node: None,
         flags: Flags::default(),
+        idle_timeout_seconds: None,
         state: InternalState::default(),
         tls_props: None,
         custom_ssl_ctx: None,
@@ -203,6 +204,7 @@ fn make_client<'a>(
         if_modified_since: b"",
         request_content_len_buf: [0u8; b"-4294967295".len()],
         http_proxy,
+        proxy_settings: None,
         proxy_headers,
         proxy_authorization: None,
         proxy_tunnel: None,
@@ -213,6 +215,9 @@ fn make_client<'a>(
         async_http_id,
         hostname,
         unix_socket_path: ZigStringSlice::EMPTY,
+        compress: None,
+        compressed_request_body: Vec::new(),
+        compressed_body_len: 0,
     }
 }
 
@@ -259,17 +264,22 @@ pub fn load_env(logger: &mut Log, env: &DotEnvLoader) {
 #[derive(Default)]
 pub struct Options<'a> {
     pub http_proxy: Option<URL<'a>>,
+    pub proxy_settings: Option<Box<crate::ProxySettings>>,
     pub proxy_headers: Option<Headers>,
     pub hostname: Option<&'a [u8]>,
     pub signals: Option<Signals>,
     pub unix_socket_path: Option<ZigStringSlice>,
     pub disable_timeout: Option<bool>,
+    /// Per-request idle timeout override in seconds; see
+    /// `HTTPClient::idle_timeout_seconds`.
+    pub idle_timeout_seconds: Option<core::ffi::c_uint>,
     pub verbose: Option<HTTPVerboseLevel>,
     pub disable_keepalive: Option<bool>,
     pub disable_decompression: Option<bool>,
     pub max_redirects: Option<u8>,
     pub reject_unauthorized: Option<bool>,
     pub tls_props: Option<SSLConfigSharedPtr>,
+    pub compress: Option<crate::compress_body::CompressOption>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -512,6 +522,10 @@ impl<'a> AsyncHTTP<'a> {
         if let Some(val) = options.disable_timeout {
             this.client.flags.disable_timeout = val;
         }
+        if let Some(val) = options.idle_timeout_seconds {
+            this.client.idle_timeout_seconds =
+                Some(crate::normalize_idle_timeout_seconds(val.into()));
+        }
         if let Some(val) = options.verbose {
             this.client.verbose = val;
         }
@@ -530,12 +544,12 @@ impl<'a> AsyncHTTP<'a> {
         if let Some(val) = options.tls_props {
             this.client.tls_props = Some(val);
         }
+        this.client.compress = options.compress;
+        this.client.proxy_settings = options.proxy_settings;
 
-        if let Some(proxy) = &this.http_proxy {
-            if let Some(auth) = build_proxy_authorization(proxy) {
-                this.client.proxy_authorization = Some(auth);
-            }
-        }
+        // `client.proxy_authorization` stays `None` on the JS-thread original;
+        // `on_start` derives it on the HTTP-thread clone so redirects can
+        // reassign it without double-freeing the `ptr::read`-shared Vec.
         this
     }
 
@@ -658,7 +672,7 @@ fn send_sync_callback(
 }
 
 impl<'a> AsyncHTTP<'a> {
-    pub fn send_sync(&mut self) -> Result<picohttp::Response<'static>, bun_core::Error> {
+    pub fn send_sync(&mut self) -> crate::Result<picohttp::Response<'static>> {
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
@@ -758,16 +772,44 @@ impl<'a> AsyncHTTP<'a> {
                 // (`start_queued_task`), so any owned field that was already
                 // populated at that point — `request_headers`,
                 // `client.header_entries`, `client.proxy_headers`,
-                // `client.proxy_authorization`, `client.tls_props`,
+                // `client.proxy_settings`, `client.tls_props`,
                 // `client.unix_socket_path` — is *shared* with the original
                 // and must NOT be dropped here; the original drops them when
                 // its `Box<AsyncHTTP>` is reclaimed. Only the state the clone
                 // built up itself during request processing is torn down.
                 {
+                    // `handle_response_metadata` rewrites per-hop request state in
+                    // place: `client.url`/`connected_url` become self-borrows into
+                    // `client.redirect` (freed just below), the method may be
+                    // downgraded to GET, and a cross-origin hop strips auth headers
+                    // from `client.header_entries`. The copy-back into the JS-thread
+                    // original must not hand a re-scheduled attempt any of that.
+                    //
+                    // `header_entries` is bitwise-shared with the original (see the
+                    // comment above), so it must never be dropped or reallocated
+                    // here. It was cloned from `request_headers` at init and only
+                    // ever shrinks (`ordered_remove`), so its capacity is enough;
+                    // the unchecked append below would corrupt the shared heap
+                    // allocation otherwise, so keep this assertion in release too.
+                    assert!(
+                        (*this).client.header_entries.capacity() >= (*this).request_headers.len()
+                    );
+                    (*this).client.header_entries.clear_retaining_capacity();
+                    (*this)
+                        .client
+                        .header_entries
+                        .append_list_assume_capacity(&(*this).request_headers);
+                    let original_url = (*this).url.clone();
+                    let original_method = (*this).method;
                     let client = &mut (*this).client;
+                    client.url = original_url;
+                    client.connected_url = URL::default();
+                    client.method = original_method;
                     // Clone-owned (allocated after `ptr::read`).
                     drop(core::mem::take(&mut client.redirect));
                     drop(core::mem::take(&mut client.prev_redirect));
+                    drop(core::mem::take(&mut client.compressed_request_body));
+                    drop(core::mem::take(&mut client.proxy_authorization));
                     if let Some(tunnel) = client.proxy_tunnel.take() {
                         // SAFETY: tunnel was created by ProxyTunnel::start
                         // (heap::alloc) and is refcounted; detach the socket
@@ -868,6 +910,14 @@ impl<'a> AsyncHTTP<'a> {
             self.as_erased_ptr(),
             AsyncHTTP::on_async_http_callback_raw,
         );
+
+        // Clone-owned: derived here (post-`ptr::read`) so
+        // `reevaluate_proxy_for_redirect` can freely drop/replace it. The
+        // original's copy stays `None`.
+        debug_assert!(self.client.proxy_authorization.is_none());
+        if let Some(proxy) = &self.client.http_proxy {
+            self.client.proxy_authorization = build_proxy_authorization(proxy);
+        }
 
         self.elapsed = http_thread_timer_read();
 

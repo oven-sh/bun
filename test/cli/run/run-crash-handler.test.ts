@@ -4,6 +4,11 @@ import { bunEnv, bunExe, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harn
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
+// CI sets BUN_CRASH_REPORT_URL so unexpected crashes are captured; these
+// deliberate crashes must not upload there or the runner pins them on the
+// next unrelated failing test as "crash reported" and blocks its retries.
+const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
+
 // On Linux, debug builds symbolize crash traces by spawning llvm-symbolizer;
 // without it the fallback printer has no Rust symbol names to assert on.
 const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-21"));
@@ -13,7 +18,7 @@ test.if(isDebug && isLinux && hasSymbolizer)(
   async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"],
-      env: bunEnv,
+      env: noReportEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     // The panic header goes to stderr; the symbolized frames are printed by
@@ -37,14 +42,12 @@ test.if(isDebug && isLinux && hasSymbolizer)(
   60_000, // symbolizing the debug binary takes several seconds
 );
 
-// The crash handler's final trap raises SIGILL on x86_64 (ud2) but SIGTRAP on
-// aarch64 (brk). `crash()` resets trap-signal dispositions to SIG_DFL right
-// before trapping so that the first trap is lethal — SIGTRAP was missing from
-// that list. A JS-registered listener (`process.on("SIGTRAP")`, which npm's
-// widely-used signal-exit package installs) is backed by a real sigaction that
-// enqueues to the JS thread and returns; returning from a synchronous trap
-// re-executes the trap instruction, so on aarch64 a crashing process would
-// spin in signal delivery forever (pinning a core) instead of dying.
+// `crash()` resets fatal-signal dispositions to SIG_DFL before re-raising so
+// that JS-registered listeners (`process.on("SIGABRT")` etc., installed by
+// npm's widely-used signal-exit package) cannot swallow the termination. A
+// JS listener's backing sigaction enqueues to the JS thread and returns;
+// without the reset the process would survive the raise and fall through to
+// the trap fallback, which on aarch64 (brk → SIGTRAP) used to spin forever.
 test.if(isPosix)(
   "panic terminates the process even when JS registered trap-signal listeners",
   async () => {
@@ -54,12 +57,13 @@ test.if(isPosix)(
         "-e",
         `process.on("SIGTRAP", () => {});
          process.on("SIGILL", () => {});
+         process.on("SIGABRT", () => {});
          require("bun:internal-for-testing").crash_handler.panic();`,
         // Make debug builds take the fast trace-string path instead of
         // spawning llvm-symbolizer, which can take tens of seconds.
         "--debug-crash-handler-use-trace-string",
       ],
-      env: bunEnv,
+      env: noReportEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -82,6 +86,41 @@ test.if(isPosix)(
   },
   20_000,
 );
+
+// After printing the crash report the handler must terminate with a signal
+// that reflects the crash cause: panics abort (SIGABRT), a caught fault is
+// re-raised as the original signal. Previously the handler ended in a trap
+// instruction (ud2 → SIGILL on x86_64, brk → SIGTRAP on aarch64) so shells
+// reported "illegal hardware instruction" for every crash and parent
+// processes could not distinguish a panic from a CPU/codegen fault.
+describe.if(isPosix)("terminal signal reflects the crash cause", () => {
+  test.each([
+    ["panic", "SIGABRT"],
+    ["outOfMemory", "SIGABRT"],
+    ["segfault", "SIGSEGV"],
+  ] as const)("%s terminates with %s", async (approach, expectedSignal) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        approach,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    if (approach === "segfault") {
+      expect(stderr).toContain("Segmentation fault at address");
+    } else if (approach === "panic") {
+      expect(stderr).toContain("invoked crashByPanic() handler");
+    }
+    expect(proc.signalCode).toBe(expectedSignal);
+    expect(exitCode).not.toBe(0);
+    void stdout;
+  });
+});
 
 test.if(process.platform === "darwin")("macOS has the assumed image offset", () => {
   // If this fails, then https://bun.report will be incorrect and the stack

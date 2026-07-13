@@ -162,7 +162,7 @@ void us_quic_loop_process(struct us_loop_t *loop) {
         }
     }
     /* Relative µs from now (≤0 means "tick due"). On epoll/kqueue,
-     * getTimeout() in Timer.zig folds this into the epoll_pwait2 timeout —
+     * getTimeout() in src/runtime/timer/mod.rs folds this into the epoll_pwait2 timeout —
      * no timerfd. On libuv there's no equivalent hook into the poll
      * timeout, so arm a fallthrough uv_timer instead. */
     loop->data.quic_next_tick_us = have_tick ? (min_diff < 0 ? 0 : min_diff) : -1;
@@ -853,10 +853,20 @@ void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
     if (!ls || !ls->udp) return;
     /* Send CONNECTION_CLOSE on every live conn before the fd disappears;
      * cooldown alone only schedules GOAWAY, which leaves peers waiting on
-     * in-flight streams that this abrupt close will never serve. */
+     * in-flight streams that this abrupt close will never serve.
+     *
+     * lsquic_conn_abort (IFC_ABORTED -> immediate_close) is used instead of
+     * lsquic_conn_close: for a *server* connection, ci_close only schedules
+     * SF_SEND_CONN_CLOSE if conn_ok_to_close(), and even then the tick at
+     * lsquic_full_conn_ietf.c's end_write only packs the frame when
+     * IFC_GOAWAY_CLOSE is set, CONNECTION_CLOSE was received, or packets are
+     * already scheduled. An idle server conn satisfies none of those, so
+     * abrupt stop() went silent and pooled clients reused the dead session
+     * until idle-timeout. IFC_ABORTED takes the IFC_IMMEDIATE_CLOSE_FLAGS
+     * path which always packs CONNECTION_CLOSE. */
     if (ls->ctx->engine) {
         for (us_quic_socket_t *qs = ls->ctx->conns; qs; qs = qs->next) {
-            if (qs->conn) lsquic_conn_close(qs->conn);
+            if (qs->conn) lsquic_conn_abort(qs->conn);
         }
         lsquic_engine_cooldown(ls->ctx->engine);
         us_quic_process(ls->ctx);

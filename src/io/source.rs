@@ -172,6 +172,15 @@ impl File {
         }
     }
 
+    /// Detach without closing the parent-owned fd. Returns true when an
+    /// operation is in flight (its callback frees the Box); false when idle
+    /// (caller drops the Box).
+    pub fn detach_borrowed_fd(&mut self) -> bool {
+        self.fs.data = core::ptr::null_mut();
+        self.stop();
+        self.state != FileState::Deinitialized
+    }
+
     /// Mark the operation as complete and clean up.
     /// Must be called first in the callback before processing data.
     pub fn complete(&mut self, was_canceled: bool) {

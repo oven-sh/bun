@@ -279,10 +279,11 @@ impl StatWatcherScheduler {
             return;
         }
 
-        // reschedule the timer
+        // reschedule the timer — this tag opts out of fake timers, so the
+        // deadline lives in the real heap and must be in real-clock units.
         timer_all.update(
             elt,
-            &Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(interval)),
+            &Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(interval)),
         );
     }
 
@@ -864,14 +865,13 @@ impl StatWatcher {
         };
         let global_this = this_ref.global_this();
 
-        let jsvalue =
-            match stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint) {
-                Ok(v) => v,
-                Err(err) => {
-                    global_this.report_active_exception_as_unhandled(err);
-                    return Ok(());
-                }
-            };
+        // Propagate to the dispatcher rather than swallowing: a termination
+        // exception is not cleared by `report_active_exception_as_unhandled`,
+        // so swallowing it here leaves the VM with an exception pending and
+        // the next queued task re-enters JS under a
+        // `scope.assertNoException()` RELEASE_ASSERT.
+        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
+            .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
@@ -896,14 +896,8 @@ impl StatWatcher {
             return Ok(());
         };
         let global_this = this_ref.global_this();
-        let jsvalue =
-            match stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint) {
-                Ok(v) => v,
-                Err(err) => {
-                    global_this.report_active_exception_as_unhandled(err);
-                    return Ok(());
-                }
-            };
+        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
+            .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         let result = js::listener_get_cached(js_this).unwrap().call(
@@ -911,16 +905,21 @@ impl StatWatcher {
             JSValue::UNDEFINED,
             &[jsvalue, jsvalue],
         );
-        if let Err(err) = result {
-            global_this.report_active_exception_as_unhandled(err);
+
+        // Append to the scheduler before propagating a listener error so the
+        // watcher keeps running after a throwing listener (Node semantics).
+        // `append` does not enter JS, so it is safe with an exception pending.
+        if !this_ref.closed.load(Ordering::Relaxed) {
+            // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
+            StatWatcherScheduler::append(this_ref.scheduler.as_ptr(), this);
         }
 
-        if this_ref.closed.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-        // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
-        StatWatcherScheduler::append(this_ref.scheduler.as_ptr(), this);
-        Ok(())
+        // Propagate to the dispatcher: `report_error_or_terminate` reports a
+        // regular throw as uncaught and stops the tick loop on termination.
+        // Swallowing the error here leaves a termination exception on the VM
+        // and the next queued task re-enters JS under a
+        // `scope.assertNoException()` RELEASE_ASSERT.
+        result.map(drop).map_err(Into::into)
     }
 
     /// Called from any thread
@@ -986,24 +985,27 @@ impl StatWatcher {
         let global_this = this_ref.global_this();
         let prev_jsvalue = js::gc::prev_stat::get(js_this).unwrap_or(JSValue::UNDEFINED);
         let current_jsvalue =
-            match stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint) {
-                Ok(v) => v,
-                Err(_) => return Ok(()), // TODO: properly propagate exception upwards
-            };
+            stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
+                .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, current_jsvalue);
 
-        let result = js::listener_get_cached(js_this).unwrap().call(
-            global_this,
-            JSValue::UNDEFINED,
-            &[current_jsvalue, prev_jsvalue],
-        );
-        if let Err(err) = result {
-            global_this.report_active_exception_as_unhandled(err);
-        }
-        Ok(())
+        // Propagate to the dispatcher: `report_error_or_terminate` reports a
+        // regular throw as uncaught and stops the tick loop on termination.
+        // Swallowing the error here leaves a termination exception on the VM
+        // and the next queued task re-enters JS under a
+        // `scope.assertNoException()` RELEASE_ASSERT.
+        js::listener_get_cached(js_this)
+            .unwrap()
+            .call(
+                global_this,
+                JSValue::UNDEFINED,
+                &[current_jsvalue, prev_jsvalue],
+            )
+            .map(drop)
+            .map_err(Into::into)
     }
 
-    pub(crate) fn init(args: &Arguments) -> Result<*mut StatWatcher, bun_core::Error> {
+    pub(crate) fn init(args: &Arguments) -> Result<*mut StatWatcher, crate::Error> {
         log!("init");
 
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -1170,7 +1172,7 @@ impl Arguments {
         })
     }
 
-    pub fn create_stat_watcher(self) -> Result<JSValue, bun_core::Error> {
+    pub fn create_stat_watcher(self) -> Result<JSValue, crate::Error> {
         // BACKREF — `init` returns the live heap watcher (refcount==1);
         // `ParentRef` Deref gives safe field access for the `this_value` read.
         let obj = ParentRef::from(

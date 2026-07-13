@@ -351,6 +351,9 @@ impl WindowsNamedPipe {
 // Snake-case names are what `bun_uws` imports; `#[path]` points at the
 // PascalCase source files on disk.
 
+pub mod error;
+pub use error::{Error, Result};
+
 #[path = "App.rs"]
 pub mod app;
 #[path = "BodyReaderMixin.rs"]
@@ -379,6 +382,8 @@ pub mod socket_group;
 pub mod socket_kind;
 #[path = "thunk.rs"]
 pub mod thunk;
+// libuv only — use `bun_event_loop::EventLoopTimer` elsewhere.
+#[cfg(windows)]
 #[path = "Timer.rs"]
 pub mod timer;
 #[path = "udp.rs"]
@@ -392,6 +397,46 @@ pub mod web_socket;
 
 #[path = "socket.rs"]
 pub mod socket;
+
+#[cfg(socket_fault_injection)]
+pub mod fault_inject {
+    use core::ffi::c_int;
+
+    pub const RECV: c_int = 0;
+    pub const SEND: c_int = 1;
+    pub const WRITEV: c_int = 2;
+    pub const SENDMSG: c_int = 3;
+    pub const RECVMSG: c_int = 4;
+    pub const CONNECT: c_int = 5;
+    pub const ACCEPT: c_int = 6;
+    pub const SOCKET: c_int = 7;
+    pub const CLOSE: c_int = 8;
+    pub const SHUTDOWN: c_int = 9;
+    /// Not a syscall: the per-loop TLS plaintext buffer allocation in
+    /// `us_internal_init_loop_ssl_data`.
+    pub const SSL_LOOP_BUFFER: c_int = 10;
+
+    pub const ACTION_NONE: c_int = 0;
+    pub const ACTION_ERRNO: c_int = 1;
+    pub const ACTION_SHORT: c_int = 2;
+    pub const ACTION_ZERO: c_int = 3;
+
+    #[repr(C)]
+    pub struct UsFaultRule {
+        pub action: c_int,
+        pub errno_value: c_int,
+        pub clamp_bytes: c_int,
+        pub after_n_calls: c_int,
+        pub repeat: c_int,
+        pub target_fd: c_int,
+    }
+
+    unsafe extern "C" {
+        pub fn us_fault_set(syscall: c_int, rule: *const UsFaultRule);
+        pub safe fn us_fault_clear(syscall: c_int);
+        pub safe fn us_fault_clear_all();
+    }
+}
 pub use socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
     SocketTcp, SocketTls,
@@ -404,6 +449,7 @@ pub use internal_loop_data::InternalLoopData;
 pub use loop_::WindowsLoop;
 pub use loop_::{Loop, PosixLoop};
 pub use socket_kind::SocketKind;
+#[cfg(windows)]
 pub use timer::Timer;
 #[cfg(not(windows))]
 pub type WindowsLoop = loop_::PosixLoop; // unified on non-Windows

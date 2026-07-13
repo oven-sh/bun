@@ -5,6 +5,7 @@ const types = require("node:util/types");
 const {
   validateFunction,
   validateInteger,
+  validateEncoding,
   getValidatedPath,
   throwIfNullBytesInFileName,
 } = require("internal/validators");
@@ -231,8 +232,9 @@ var access = function access(path, mode, callback) {
     // fd = getValidatedFd(fd); DEFERRED TO NATIVE
     let offset = offsetOrOptions;
     let params: any = null;
-    if (arguments.length <= 4) {
-      if (arguments.length === 4) {
+    const argc = arguments.length;
+    if (argc <= 4) {
+      if (argc === 4) {
         // This is fs.read(fd, buffer, options, callback)
         // validateObject(params, 'options', kValidateObjectAllowNullable);
         if (typeof params !== "object" || $isArray(params)) {
@@ -240,7 +242,7 @@ var access = function access(path, mode, callback) {
         }
         callback = length;
         params = offsetOrOptions;
-      } else if (arguments.length === 3) {
+      } else if (argc === 3) {
         // This is fs.read(fd, bufferOrParams, callback)
         if (!types.isArrayBufferView(buffer)) {
           // fs.read(fd, bufferOrParams, callback)
@@ -275,7 +277,9 @@ var access = function access(path, mode, callback) {
       callback(null, bytesWritten, buffer);
     }
 
-    if ($isTypedArrayView(buffer)) {
+    // $isTypedArrayView excludes DataView, so a DataView would fall through
+    // to the string signature. Use Node's predicate, like writeSync below.
+    if (types.isArrayBufferView(buffer)) {
       callback ||= position || length || offsetOrOptions;
       ensureCallback(callback);
 
@@ -291,6 +295,10 @@ var access = function access(path, mode, callback) {
       return;
     }
 
+    if (typeof buffer !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+    }
+
     if (!$isCallable(position)) {
       if ($isCallable(offsetOrOptions)) {
         position = offsetOrOptions;
@@ -301,6 +309,8 @@ var access = function access(path, mode, callback) {
       length = "utf8";
     }
 
+    // Node validates the encoding (synchronously) before the callback.
+    validateEncoding(buffer, length);
     callback = position;
     ensureCallback(callback);
 
@@ -498,6 +508,8 @@ var access = function access(path, mode, callback) {
       if (typeof buffer !== "string") {
         throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
       }
+      // writeSync(fd, string[, position[, encoding]]): `length` is the encoding.
+      validateEncoding(buffer, length);
       return fs.writeSync(fd, buffer, offsetOrOptions, length);
     } catch (err) {
       // Node's fs binding reports sync write failures by assigning the error
@@ -663,7 +675,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newZigFunction("runtime/node/types.zig", "jsAssertEncodingValid", 1))(
+            (assertEncodingForWindows ?? $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
               encoding,
             );
           }
@@ -672,8 +684,9 @@ const realpathSync: typeof import("node:fs").realpathSync =
         // resolve subst drives to their underlying location. The native call is
         // able to see through that.
         if (p instanceof URL) {
-          if (p.pathname.indexOf("%00") != -1) {
-            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", p.pathname);
+          const pathname = p.pathname;
+          if (pathname.indexOf("%00") != -1) {
+            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", pathname);
           }
           p = Bun.fileURLToPath(p as URL);
         } else {
@@ -785,14 +798,15 @@ const realpath: typeof import("node:fs").realpath =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newZigFunction("runtime/node/types.zig", "jsAssertEncodingValid", 1))(
+            (assertEncodingForWindows ?? $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
               encoding,
             );
           }
         }
         if (p instanceof URL) {
-          if (p.pathname.indexOf("%00") != -1) {
-            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", p.pathname);
+          const pathname = p.pathname;
+          if (pathname.indexOf("%00") != -1) {
+            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", pathname);
           }
           p = Bun.fileURLToPath(p as URL);
         } else {
@@ -935,18 +949,11 @@ function cpSync(src, dest, options) {
   options = validateCpOptions(options);
   src = getValidatedFsPath(src, "src");
   dest = getValidatedFsPath(dest, "dest");
-  if (
-    !options.filter &&
-    !options.dereference &&
-    !options.preserveTimestamps &&
-    !options.verbatimSymlinks &&
-    !options.mode &&
-    !options.errorOnExist &&
-    options.force
-  ) {
+  const { filter, dereference, preserveTimestamps, verbatimSymlinks, mode, errorOnExist, force, recursive } = options;
+  if (!filter && !dereference && !preserveTimestamps && !verbatimSymlinks && !mode && !errorOnExist && force) {
     const { ok, checked } = tryNativeFastPathSync(src, dest, options);
     if (ok) {
-      return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force, options.mode);
+      return fs.cpSync(src, dest, recursive, errorOnExist, force, mode);
     }
     return cpSyncFn(src, dest, options, checked);
   }
@@ -1180,6 +1187,18 @@ class Dir {
     if (this.#pendingCount > 0) throw this.#dirConcurrentError();
     if (handle > 2) fs.closeSync(handle);
     this.#handle = -1;
+  }
+
+  // Like node, disposing an already-closed Dir is a no-op rather than
+  // ERR_DIR_CLOSED so `using`/`await using` compose with an explicit close().
+  [Symbol.dispose]() {
+    if (this.#handle < 0) return;
+    this.closeSync();
+  }
+
+  async [Symbol.asyncDispose]() {
+    if (this.#handle < 0) return;
+    await this.close();
   }
 
   get path() {

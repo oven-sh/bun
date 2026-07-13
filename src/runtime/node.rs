@@ -20,9 +20,9 @@ pub mod assert {
 #[path = "node/types.rs"]
 pub mod types;
 pub use types::{
-    BlobOrStringOrBuffer, CallbackTask, Dirent, Encoding, FileSystemFlags, PathLike, PathOrBlob,
-    PathOrBuffer, PathOrFileDescriptor, StringOrBuffer, Valid, VectorArrayBuffer,
-    js_assert_encoding_valid, mode_from_js,
+    BlobOrStringOrBuffer, Dirent, Encoding, FileSystemFlags, PathLike, PathOrBlob, PathOrBuffer,
+    PathOrFileDescriptor, StringOrBuffer, Valid, VectorArrayBuffer, js_assert_encoding_valid,
+    mode_from_js,
 };
 
 pub use bun_jsc::MarkedArrayBuffer as Buffer;
@@ -93,6 +93,7 @@ pub mod fs;
 // fs.watch() / fs.watchFile() backends — declared here so `fs::watch` /
 // `fs::watch_file` can reach the real `Arguments` / `FSWatcher` /
 // `StatWatcher` types instead of opaque local stand-ins.
+#[cfg(not(windows))]
 #[path = "node/path_watcher.rs"]
 pub mod path_watcher;
 #[cfg(windows)]
@@ -101,6 +102,8 @@ pub mod win_watcher;
 // Force-references `Bun__UVSignalHandle__init` / `Bun__UVSignalHandle__close`
 // for C++ (`src/jsc/bindings/BunProcess.cpp`). Must be `mod`-declared or the
 // `#[no_mangle]` exports are never compiled into the binary.
+#[path = "node/memory_pressure.rs"]
+pub mod memory_pressure;
 #[path = "node/node_fs_binding.rs"]
 pub mod node_fs_binding;
 #[path = "node/node_fs_stat_watcher.rs"]

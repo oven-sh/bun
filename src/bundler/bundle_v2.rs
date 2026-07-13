@@ -340,12 +340,13 @@ pub mod bv2_impl {
     use bun_alloc::{AllocError, Arena as ThreadLocalArena};
 
     use self::bake_types as bake;
+    use crate::Error;
     use bun_ast::server_component_boundary;
     use bun_ast::{Binding, E, Expr, G, S};
     use bun_ast::{ImportKind, ImportRecord};
     use bun_collections::{ArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged, VecExt};
     use bun_core::strings;
-    use bun_core::{Error, FeatureFlags, Output};
+    use bun_core::{FeatureFlags, Output};
     use bun_resolver::DataURL;
     use bun_resolver::fs::PathResolverExt as _;
     use bun_resolver::{self as _resolver, is_package_path};
@@ -681,7 +682,7 @@ pub mod bv2_impl {
                     &mut self,
                     abs_path: &[u8],
                     side: Side,
-                ) -> Result<OpaqueFileId, bun_core::Error> {
+                ) -> crate::Result<OpaqueFileId> {
                     let probe = InputFile::init(abs_path, side);
                     if let Some(index) = self.files.get_index(&probe) {
                         return Ok(OpaqueFileId::init(index as u32));
@@ -737,7 +738,7 @@ pub mod bv2_impl {
                 // The three `safe fn`s below take only Rust references / by-value
                 // scalars: every pointer the C++ side reads is guaranteed valid by
                 // the type system, so there is no caller-side precondition left to
-                // discharge (mirrors the `safe fn` pattern in `lolhtml_sys`).
+                // discharge.
                 #[link_name = "JSBundlerPlugin__anyMatches"]
                 safe fn JSBundlerPlugin__anyMatches(
                     this: &Plugin,
@@ -1390,7 +1391,7 @@ pub mod bv2_impl {
                 path: &P,
                 contents: &[u8],
                 content_hash: u64,
-            ) -> Result<(), bun_core::Error> {
+            ) -> crate::Result<()> {
                 self.put_or_overwrite_asset(
                     core::ptr::from_ref::<P>(path).cast::<()>(),
                     contents,
@@ -1948,7 +1949,7 @@ pub mod bv2_impl {
                 }
             }
 
-            if cfg!(debug_assertions) && ReachableFiles.is_visible() {
+            if bun_core::env::IS_DEBUG && ReachableFiles.is_visible() {
                 bun_core::scoped_log!(
                     ReachableFiles,
                     "Reachable count: {} / {}",
@@ -2218,7 +2219,7 @@ pub mod bv2_impl {
                     Ok(r) => break r,
                     Err(err) => {
                         // Only perform directory busting when hot-reloading is enabled
-                        if err == bun_core::err!("ModuleNotFound") {
+                        if err == _resolver::Error::ModuleNotFound {
                             if let Some(dev) = &self.dev_server {
                                 if !had_busted_dir_cache {
                                     // Only re-query if we previously had something cached.
@@ -2289,7 +2290,7 @@ pub mod bv2_impl {
                                 [import_record.importer_source_index as usize],
                         );
 
-                        if err == bun_core::err!("ModuleNotFound") {
+                        if err == _resolver::Error::ModuleNotFound {
                             let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
                             let path_to_use = &import_record.specifier;
 
@@ -2777,21 +2778,32 @@ pub mod bv2_impl {
             this.linker.graph.bump = bun_ptr::BackRef::new(this.graph.heap);
             this.transpiler.log_mut().clone_line_text = true;
 
-            // We don't expose an option to disable this. Bake forbids tree-shaking
-            // since every export must is always exist in case a future module
-            // starts depending on it.
-            if this.transpiler.options.output_format == options::Format::InternalBakeDev {
-                this.transpiler.options.tree_shaking = false;
-                this.transpiler.resolver.opts.tree_shaking = false;
-            } else {
-                this.transpiler.options.tree_shaking = true;
-                this.transpiler.resolver.opts.tree_shaking = true;
-            }
+            // Bake forbids tree-shaking since every export must always exist in
+            // case a future module starts depending on it. The override is only
+            // set by `Bun.build({ treeShaking })` for tests/debugging.
+            let tree_shaking = this.transpiler.options.tree_shaking_override.unwrap_or(
+                this.transpiler.options.output_format != options::Format::InternalBakeDev,
+            );
+            this.transpiler.options.tree_shaking = tree_shaking;
+            this.transpiler.resolver.opts.tree_shaking = tree_shaking;
 
             // BACKREF: `LinkerContext<'a>.resolver` is `ParentRef<Resolver<'a>>`;
             // the resolver lives in `transpiler` which outlives `self` (same `'a`).
             this.linker.resolver = Some(bun_ptr::ParentRef::new(&this.transpiler.resolver));
             this.linker.graph.code_splitting = this.transpiler.options.code_splitting;
+
+            // Cross-chunk imports/exports are only generated for ESM (see
+            // computeCrossChunkDependencies). Reject other formats up front
+            // rather than panicking later. Matches esbuild.
+            if this.transpiler.options.code_splitting
+                && this.transpiler.options.output_format != options::Format::Esm
+            {
+                this.transpiler.log_mut().add_error(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    "Code splitting is currently only supported when format is set to \"esm\"",
+                );
+            }
 
             this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;
             this.linker.options.minify_identifiers = this.transpiler.options.minify_identifiers;
@@ -3778,7 +3790,7 @@ pub mod bv2_impl {
             // Wrap so every exit path (incl. `?`) hits the cleanup below.
             let result = (|| -> Result<BuildResult, Error> {
                 if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
+                    return Err(crate::Error::BuildFailed);
                 }
 
                 let entry_points: *const [Box<[u8]>] =
@@ -3789,7 +3801,7 @@ pub mod bv2_impl {
                 this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
 
                 if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
+                    return Err(crate::Error::BuildFailed);
                 }
 
                 this.wait_for_parse();
@@ -3801,7 +3813,7 @@ pub mod bv2_impl {
                 *source_code_size = this.source_code_length as u64;
 
                 if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
+                    return Err(crate::Error::BuildFailed);
                 }
 
                 this.scan_for_secondary_paths();
@@ -3916,7 +3928,7 @@ pub mod bv2_impl {
             this.unique_key = generate_unique_key();
 
             if this.transpiler.log().has_errors() {
-                return Err(bun_core::err!("BuildFailed"));
+                return Err(crate::Error::BuildFailed);
             }
 
             // enqueueEntryPoints schedules the runtime task before any fallible
@@ -3957,19 +3969,19 @@ pub mod bv2_impl {
             // inside the closure, before `deinit_without_freeing_arena()`.
             let result = (|| -> Result<Vec<options::OutputFile>, Error> {
                 if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
+                    return Err(crate::Error::BuildFailed);
                 }
 
                 this.enqueue_entry_points_bake_production(entry_points)?;
 
                 if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
+                    return Err(crate::Error::BuildFailed);
                 }
 
                 this.wait_for_parse();
 
                 if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
+                    return Err(crate::Error::BuildFailed);
                 }
 
                 this.scan_for_secondary_paths();
@@ -4140,7 +4152,9 @@ pub mod bv2_impl {
                                     .into_boxed_slice();
                             }
                             let mut v = Vec::new();
-                            template.print(&mut v).expect("oom");
+                            template
+                                .print(&mut v, !self.transpiler.options.compile)
+                                .expect("oom");
                             v.into_boxed_slice()
                         };
 
@@ -4418,7 +4432,7 @@ pub mod bv2_impl {
                             ..Default::default()
                         };
                         dev.handle_parse_task_failure(
-                            bun_core::err!("Plugin"),
+                            crate::Error::Plugin,
                             load.bake_graph(),
                             source.path.key_for_incremental_graph(),
                             &raw const temp_log,
@@ -4821,6 +4835,15 @@ pub mod bv2_impl {
                 }
             }
 
+            // `File.entry_bits` is `AutoBitSet::Dynamic` (global-heap) when
+            // entry points exceed the 64-bit static inline. The slab-only
+            // `MultiArrayList::drop` won't run its destructor.
+            for b in self.linker.graph.files.items_entry_bits_mut() {
+                if let bun_collections::AutoBitSet::Dynamic(d) = b {
+                    d.deinit();
+                }
+            }
+
             // Drop the lazily-created client transpiler (if any) before tearing
             // down workers — the slot
             // is invalidated ahead of `pool.workers_assignments` so no worker can
@@ -4870,7 +4893,7 @@ pub mod bv2_impl {
             self.unique_key = generate_unique_key();
 
             if self.transpiler.log().errors > 0 {
-                return Err(bun_core::err!("BuildFailed"));
+                return Err(crate::Error::BuildFailed);
             }
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -4883,7 +4906,7 @@ pub mod bv2_impl {
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
             if self.transpiler.log().errors > 0 {
-                return Err(bun_core::err!("BuildFailed"));
+                return Err(crate::Error::BuildFailed);
             }
 
             self.scan_for_secondary_paths();
@@ -4918,7 +4941,7 @@ pub mod bv2_impl {
             };
 
             if self.transpiler.log().errors > 0 {
-                return Err(bun_core::err!("BuildFailed"));
+                return Err(crate::Error::BuildFailed);
             }
 
             let mut output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
@@ -5173,7 +5196,7 @@ pub mod bv2_impl {
                                 // css-compatible loader.
                                 dev_server
                                     .handle_parse_task_failure(
-                                        bun_core::err!("InvalidCssImport"),
+                                        crate::Error::InvalidCssImport,
                                         bake::Graph::Client,
                                         sources[index].path.text,
                                         &raw const log,
@@ -6082,7 +6105,7 @@ pub mod bv2_impl {
                             };
 
                             // Only perform directory busting when hot-reloading is enabled
-                            if err == bun_core::err!("ModuleNotFound") {
+                            if err == _resolver::Error::ModuleNotFound {
                                 if self.bun_watcher.is_some() {
                                     if !had_busted_dir_cache {
                                         bun_core::scoped_log!(
@@ -6119,7 +6142,7 @@ pub mod bv2_impl {
                             // Rather than just the first one.
                             import_record.path.is_disabled = true;
 
-                            if err == bun_core::err!("ModuleNotFound") {
+                            if err == _resolver::Error::ModuleNotFound {
                                 let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
 
                                 if !import_record
@@ -6127,7 +6150,7 @@ pub mod bv2_impl {
                                     .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
                                     && !self.transpiler.options.ignore_module_resolution_errors
                                 {
-                                    last_error = Some(err);
+                                    last_error = Some(err.into());
                                     if is_package_path(import_record.path.text) {
                                         if ctx.target == Target::Browser
                                             && options::is_node_builtin(import_record.path.text)
@@ -6225,7 +6248,7 @@ pub mod bv2_impl {
                                 }
                             } else {
                                 // assume other errors are already in the log
-                                last_error = Some(err);
+                                last_error = Some(err.into());
                             }
                             continue 'outer;
                         }
@@ -7297,7 +7320,7 @@ pub mod bv2_impl {
             decls: Box<[DeclInfo]>,
         },
         Css {
-            result: Result<Box<[u8]>, bun_core::Error>,
+            result: crate::Result<Box<[u8]>>,
             source_index: IndexInt,
             source_map: Option<bun_sourcemap::Chunk>,
         },
@@ -7480,7 +7503,7 @@ pub mod bv2_impl {
         target: options::Target,
         top_level_dir: &[u8],
         bump: &bun_alloc::Arena,
-    ) -> Result<bun_paths::fs::Path<'static>, bun_core::Error> {
+    ) -> crate::Result<bun_paths::fs::Path<'static>> {
         use crate::bun_fs::PathResolverExt as _;
         use crate::bun_node_fallbacks;
         use bun_io::Write as _;
@@ -7511,7 +7534,7 @@ pub mod bv2_impl {
             } else {
                 path_clone.pretty = rel;
             }
-            path_clone.dupe_alloc_fix_pretty(bump)
+            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
         } else {
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
@@ -7523,7 +7546,7 @@ pub mod bv2_impl {
             let _ = fbs.write_all(path_clone.text);
             let written = fbs.pos;
             path_clone.pretty = &buf.0[..written];
-            path_clone.dupe_alloc_fix_pretty(bump)
+            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
         }
     }
 

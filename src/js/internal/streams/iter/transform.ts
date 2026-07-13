@@ -13,9 +13,9 @@ const { isArrayBufferView, isAnyArrayBuffer } = require("node:util/types");
 const { kValidatedTransform } = require("internal/streams/iter/types");
 const { checkRangesOrGetDefault, validateFiniteNumber, validateObject } = require("internal/validators");
 
-const NativeZlib = $zig("node_zlib_binding.zig", "NativeZlib");
-const NativeBrotli = $zig("node_zlib_binding.zig", "NativeBrotli");
-const NativeZstd = $zig("node_zlib_binding.zig", "NativeZstd");
+const NativeZlib = $rust("node_zlib_binding.rs", "NativeZlib");
+const NativeBrotli = $rust("node_zlib_binding.rs", "NativeBrotli");
+const NativeZstd = $rust("node_zlib_binding.rs", "NativeZstd");
 const constants = process.binding("constants").zlib;
 
 const Uint8ArraySlice = Uint8Array.prototype.slice;
@@ -200,9 +200,9 @@ function createBrotliHandle(mode, options, processCallback, onError) {
     brotliInitParamsArray[constants.BROTLI_PARAM_QUALITY] = 6;
     brotliInitParamsArray[constants.BROTLI_PARAM_LGWIN] = 20;
   }
-  if (options.params) {
+  const params = options.params;
+  if (params) {
     // User-supplied params override the defaults above.
-    const params = options.params;
     const keys = Object.keys(params);
     for (let i = 0; i < keys.length; i++) {
       const key = +keys[i];
@@ -248,8 +248,8 @@ function createZstdHandle(mode, options, processCallback, onError) {
 
   const initArray = isCompress ? zstdInitCParamsArray : zstdInitDParamsArray;
   initArray.fill(-1);
-  if (options.params) {
-    const params = options.params;
+  const params = options.params;
+  if (params) {
     const keys = Object.keys(params);
     for (let i = 0; i < keys.length; i++) {
       const key = +keys[i];

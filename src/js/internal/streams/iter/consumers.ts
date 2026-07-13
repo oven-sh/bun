@@ -140,25 +140,28 @@ function toArrayBuffer(data) {
 
 function validateBaseConsumerOptions(options) {
   validateObject(options, "options");
-  if (options.limit !== undefined) {
-    validateInteger(options.limit, "options.limit", 0);
+  const limit = options.limit;
+  if (limit !== undefined) {
+    validateInteger(limit, "options.limit", 0);
   }
-  if (options.encoding !== undefined) {
-    if (typeof options.encoding !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.encoding", "string", options.encoding);
+  const encoding = options.encoding;
+  if (encoding !== undefined) {
+    if (typeof encoding !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options.encoding", "string", encoding);
     }
     try {
-      new TextDecoder(options.encoding);
+      new TextDecoder(encoding);
     } catch {
-      throw $ERR_INVALID_ARG_VALUE_RangeError("options.encoding", options.encoding);
+      throw $ERR_INVALID_ARG_VALUE_RangeError("options.encoding", encoding);
     }
   }
 }
 
 function validateConsumerOptions(options) {
   validateBaseConsumerOptions(options);
-  if (options.signal !== undefined) {
-    validateAbortSignal(options.signal, "options.signal");
+  const { signal } = options;
+  if (signal !== undefined) {
+    validateAbortSignal(signal, "options.signal");
   }
 }
 
@@ -341,8 +344,9 @@ function merge(...args) {
   let sources;
   let options;
 
-  if (args.length > 0 && isMergeOptions(args[args.length - 1])) {
-    options = args[args.length - 1];
+  const argc = args.length;
+  if (argc > 0 && isMergeOptions(args[argc - 1])) {
+    options = args[argc - 1];
     sources = args.slice(0, -1);
   } else {
     sources = args;

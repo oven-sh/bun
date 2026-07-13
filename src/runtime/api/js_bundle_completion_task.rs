@@ -117,7 +117,7 @@ pub(crate) fn create_and_schedule_completion_task(
     plugins: Option<NonNull<Plugin>>,
     global_this: &JSGlobalObject,
     event_loop: *mut EventLoop,
-) -> Result<*mut JSBundleCompletionTask, bun_core::Error> {
+) -> crate::Result<*mut JSBundleCompletionTask> {
     let vm = global_this.bun_vm_ptr();
     let env = global_this.bun_vm().transpiler.env;
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
@@ -171,7 +171,7 @@ pub fn generate_from_javascript(
     plugins: Option<NonNull<Plugin>>,
     global_this: &JSGlobalObject,
     event_loop: *mut EventLoop,
-) -> Result<JSValue, bun_core::Error> {
+) -> crate::Result<JSValue> {
     let completion = create_and_schedule_completion_task(config, plugins, global_this, event_loop)?;
     // SAFETY: `completion` is the freshly-boxed allocation; sole owner on the JS
     // thread until the enqueued task runs.
@@ -598,7 +598,7 @@ impl JSBundleCompletionTask {
                 // `this.result.value.deinit()` — owned fields drop with the
                 // overwrite below; `output_files` (moved out above) drops here.
                 drop(output_files);
-                this.result = BundleV2Result::Err(bun_core::err!("CompilationFailed"));
+                this.result = BundleV2Result::Err(bun_bundler::Error::CompilationFailed);
             } else {
                 // Put the compacted output_files back.
                 match &mut this.result {
@@ -815,7 +815,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         &mut self,
         transpiler: &mut Transpiler<'a>,
         _bump: &'a Arena,
-    ) -> Result<(), bun_core::Error> {
+    ) -> bun_bundler::Result<()> {
         let config = &mut self.config;
 
         transpiler.options.env.behavior = config.env_behavior;
@@ -929,6 +929,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             .emit_dce_annotations
             .unwrap_or(!config.minify.whitespace);
         transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
+        transpiler.options.tree_shaking_override = config.tree_shaking;
         transpiler.options.css_chunking = config.css_chunking;
         transpiler.options.compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
@@ -952,6 +953,19 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.banner = std::borrow::Cow::Owned(config.banner.list.clone());
         transpiler.options.footer = std::borrow::Cow::Owned(config.footer.list.clone());
         transpiler.options.react_fast_refresh = config.react_fast_refresh;
+        transpiler.options.react_compiler = if config.react_compiler.is_enabled() {
+            config.react_compiler_output_mode.unwrap_or_else(|| {
+                if config.target.is_server_side() {
+                    bun_ast::runtime::ReactCompilerMode::Ssr
+                } else {
+                    bun_ast::runtime::ReactCompilerMode::Client
+                }
+            })
+        } else {
+            bun_ast::runtime::ReactCompilerMode::Disabled
+        };
+        transpiler.options.react_compiler_parse_test_pragmas =
+            config.react_compiler_parse_test_pragmas;
         transpiler.options.metafile = config.metafile;
         transpiler.options.metafile_json_path =
             Box::from(config.metafile_json_path.list.as_slice());
@@ -1026,7 +1040,7 @@ impl CompletionStruct for JSBundleCompletionTask {
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
-    ) -> Result<&'a mut Transpiler<'a>, bun_core::Error> {
+    ) -> bun_bundler::Result<&'a mut Transpiler<'a>> {
         let config = &self.config;
         let opts = api::TransformOptions {
             define: if config.define.count() > 0 {
@@ -1083,7 +1097,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler: &'a mut Transpiler<'a>,
         bump: &'a Arena,
         thread_pool: *mut bun_threading::ThreadPool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> bun_bundler::Result<()> {
         // `jsc.AnyEventLoop.init(allocator)` — Mini loop. Stack-owned (not
         // bump-allocated) so its `MiniEventLoop::tasks` queue is dropped at
         // scope exit; the bump bulk-free skips Drop. Declared before `bv2` so

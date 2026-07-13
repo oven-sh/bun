@@ -119,6 +119,7 @@ pub use bun_windows_sys::LPCVOID;
 pub use bun_windows_sys::LPCWSTR;
 pub use bun_windows_sys::LPSTR;
 pub use bun_windows_sys::LPWSTR;
+pub use bun_windows_sys::NT_ERROR;
 pub use bun_windows_sys::NT_SUCCESS;
 pub use bun_windows_sys::NTSTATUS;
 pub use bun_windows_sys::PWSTR;
@@ -139,6 +140,7 @@ pub const MOVEFILE_WRITE_THROUGH: DWORD = 0x8;
 pub use bun_windows_sys::FILETIME;
 
 pub use bun_windows_sys::DUPLICATE_SAME_ACCESS;
+pub use bun_windows_sys::FILE_ALL_INFORMATION;
 pub use bun_windows_sys::FILE_ATTRIBUTE_ARCHIVE;
 pub use bun_windows_sys::FILE_ATTRIBUTE_COMPRESSED;
 pub use bun_windows_sys::FILE_ATTRIBUTE_DEVICE;
@@ -153,8 +155,13 @@ pub use bun_windows_sys::FILE_ATTRIBUTE_SPARSE_FILE;
 pub use bun_windows_sys::FILE_ATTRIBUTE_SYSTEM;
 pub use bun_windows_sys::FILE_ATTRIBUTE_TEMPORARY;
 pub use bun_windows_sys::FILE_BASIC_INFORMATION;
+pub use bun_windows_sys::FILE_DEVICE_CONSOLE;
+pub use bun_windows_sys::FILE_DEVICE_NAMED_PIPE;
+pub use bun_windows_sys::FILE_DEVICE_NULL;
 pub use bun_windows_sys::FILE_DIRECTORY_FILE;
 pub use bun_windows_sys::FILE_DIRECTORY_INFORMATION;
+pub use bun_windows_sys::FILE_FS_DEVICE_INFORMATION;
+pub use bun_windows_sys::FILE_FS_VOLUME_INFORMATION;
 pub use bun_windows_sys::FILE_INFO_BY_HANDLE_CLASS;
 pub use bun_windows_sys::FILE_INFORMATION_CLASS;
 pub use bun_windows_sys::FILE_NON_DIRECTORY_FILE;
@@ -165,6 +172,7 @@ pub use bun_windows_sys::FILE_SHARE_READ;
 pub use bun_windows_sys::FILE_SHARE_WRITE;
 pub use bun_windows_sys::FILE_SYNCHRONOUS_IO_NONALERT;
 pub use bun_windows_sys::FILE_WRITE_THROUGH;
+pub use bun_windows_sys::FS_INFORMATION_CLASS;
 pub use bun_windows_sys::IO_STATUS_BLOCK;
 pub use bun_windows_sys::OBJECT_ATTRIBUTES;
 pub use bun_windows_sys::STANDARD_RIGHTS_READ;
@@ -188,20 +196,46 @@ pub use bun_core::windows_sys::{
     GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
 };
 
+/// 1601-01-01 → 1970-01-01 offset in 100-ns ticks.
+pub const EPOCH_DIFFERENCE_100NS: i64 = 11_644_473_600 * 10_000_000;
+
 /// Convert a 64-bit Windows `FILETIME`
 /// (100-ns intervals since 1601-01-01 UTC, as projected in
 /// `FILE_BASIC_INFORMATION`'s `LARGE_INTEGER` time fields) into nanoseconds
 /// since the **POSIX epoch** (1970-01-01 UTC), matching the clock
 /// `bun_core::time::nano_timestamp()` reports.
-///
-/// Computed as `(hns + epoch_shift * (ns_per_s/100)) * 100` where `epoch_shift`
-/// is `-11_644_473_600` seconds (1601→1970 shift). The shift is required:
-/// `nano_timestamp()` uses `SystemTime::UNIX_EPOCH`, not raw FILETIME.
 #[inline]
 pub const fn from_sys_time(nt_time: i64) -> i128 {
-    /// The 1601-01-01 → 1970-01-01 offset expressed in 100-ns ticks.
-    const WINDOWS_EPOCH_TO_UNIX_EPOCH_100NS: i128 = -11_644_473_600 * 10_000_000;
-    (nt_time as i128 + WINDOWS_EPOCH_TO_UNIX_EPOCH_100NS) * 100
+    (nt_time as i128 - EPOCH_DIFFERENCE_100NS as i128) * 100
+}
+
+/// Convert a 64-bit Windows `FILETIME` (100-ns ticks since 1601-01-01 UTC)
+/// into a libuv `uv_timespec_t` (seconds + nanoseconds since the Unix epoch).
+/// Matches libuv's `uv__filetime_to_timespec`.
+#[inline]
+pub fn filetime_to_timespec(filetime: i64) -> bun_libuv_sys::uv_timespec_t {
+    let t = filetime - EPOCH_DIFFERENCE_100NS;
+    let mut sec = t / 10_000_000;
+    let mut nsec = (t - sec * 10_000_000) * 100;
+    if nsec < 0 {
+        sec -= 1;
+        nsec += 1_000_000_000;
+    }
+    bun_libuv_sys::uv_timespec_t {
+        sec: sec as _,
+        nsec: nsec as _,
+    }
+}
+
+/// Convert a [`TimeLike`](crate::TimeLike) (seconds + nanoseconds since the
+/// Unix epoch) into a Windows `FILETIME`.
+#[inline]
+pub fn timespec_to_filetime(t: crate::TimeLike) -> FILETIME {
+    let ticks = (t.sec as i64 * 10_000_000 + t.nsec as i64 / 100 + EPOCH_DIFFERENCE_100NS) as u64;
+    FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    }
 }
 
 pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
@@ -345,7 +379,7 @@ pub fn CreateIoCompletionPort(
     existing_completion_port: HANDLE,
     completion_key: ULONG_PTR,
     concurrent_threads: DWORD,
-) -> core::result::Result<HANDLE, bun_core::Error> {
+) -> core::result::Result<HANDLE, bun_errno::SystemErrno> {
     let h = kernel32::CreateIoCompletionPort(
         file_handle,
         existing_completion_port,
@@ -353,7 +387,7 @@ pub fn CreateIoCompletionPort(
         concurrent_threads,
     );
     if h.is_null() {
-        return Err(bun_core::err!("Unexpected"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
     Ok(h)
 }
@@ -376,8 +410,8 @@ unsafe extern "system" {
 
 pub fn GetFileType(hFile: HANDLE) -> DWORD {
     let rc = GetFileType_raw(hFile);
-    // `syslog!` self-gates on `cfg!(debug_assertions)` (see lib.rs); no extra
-    // feature flag needed (there is no `debug_logs` feature in bun_sys).
+    // `syslog!` self-gates on `env::IS_DEBUG` (see lib.rs); no extra feature
+    // flag needed (there is no `debug_logs` feature in bun_sys).
     bun_sys::syslog!("GetFileType({}) = {}", Fd::from_system(hFile), rc);
     rc
 }
@@ -417,20 +451,16 @@ pub use bun_windows_sys::Win32Error;
 pub use bun_errno::Win32ErrorExt;
 
 /// `Win32Error::unwrap()` — extension trait because
-/// `Win32Error` is a foreign type and `bun_core::Error` is unavailable in
-/// `bun_errno` (orphan rule + layering).
+/// `Win32Error` is a foreign type (orphan rule).
 pub trait Win32ErrorUnwrap: Copy {
-    fn unwrap(self) -> Result<(), bun_core::Error>;
+    fn unwrap(self) -> Result<(), SystemErrno>;
 }
 impl Win32ErrorUnwrap for Win32Error {
-    fn unwrap(self) -> Result<(), bun_core::Error> {
+    fn unwrap(self) -> Result<(), SystemErrno> {
         if self == Win32Error::SUCCESS {
             return Ok(());
         }
-        if let Some(err) = self.to_system_errno() {
-            return Err(err.to_error());
-        }
-        Ok(())
+        Err(self.to_system_errno().unwrap_or(SystemErrno::EUNKNOWN))
     }
 }
 
@@ -501,13 +531,13 @@ pub fn get_last_errno() -> E {
         .to_e()
 }
 
-pub fn get_last_error() -> bun_core::Error {
-    bun_core::errno_to_zig_err(get_last_errno() as i32)
+pub fn get_last_error() -> SystemErrno {
+    SystemErrno::init(kernel32::GetLastError()).unwrap_or(SystemErrno::EUNKNOWN)
 }
 
 /// `kernel32.GetLastError()` as `Win32Error` — raw
 /// `DWORD` error truncated to the documented 16-bit code space. Callers that
-/// want the POSIX-style `bun_core::Error` should use [`get_last_error`].
+/// want the POSIX-style `SystemErrno` should use [`get_last_error`].
 #[inline]
 pub fn get_last_win32_error() -> Win32Error {
     Win32Error(kernel32::GetLastError() as u16)
@@ -706,6 +736,7 @@ pub fn GetFinalPathNameByHandle(
     let flags = match fmt.volume_name {
         win32::VolumeName::Dos => win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_DOS,
         win32::VolumeName::Nt => win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NT,
+        win32::VolumeName::None => win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NONE,
     };
     // SAFETY: out_buffer valid for out_buffer.len()
     let return_length = unsafe {
@@ -965,6 +996,12 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
             rc
         );
     }
+    // Another handle already set the delete disposition; the file is on its
+    // way out, which is what the caller asked for. Checked here so it covers
+    // both the FileDispositionInformationEx result and the legacy fallback.
+    if rc == windows::ntstatus::DELETE_PENDING || rc == windows::ntstatus::FILE_DELETED {
+        return bun_sys::Result::success();
+    }
     if let Some(err) = bun_sys::Result::<()>::errno_sys(rc, bun_sys::Tag::NtSetInformationFile) {
         return err;
     }
@@ -1066,7 +1103,7 @@ pub enum Subsystem {
 pub fn edit_win32_binary_subsystem(
     fd: &bun_sys::File,
     subsystem: Subsystem,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), bun_errno::SystemErrno> {
     const _: () = assert!(cfg!(windows));
     if kernel32_2::SetFilePointerEx(
         fd.handle.native(),
@@ -1075,14 +1112,16 @@ pub fn edit_win32_binary_subsystem(
         win32::FILE_BEGIN,
     ) == 0
     {
-        return Err(bun_core::err!("Win32Error"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
     // Use `read_all` (which retries on short reads) rather than a single
     // `read()` syscall, so a short read isn't mis-reported as EndOfStream.
     let mut off_bytes = [0u8; 4];
-    let n = fd.read_all(&mut off_bytes).map_err(bun_core::Error::from)?;
+    let n = fd
+        .read_all(&mut off_bytes)
+        .map_err(bun_errno::SystemErrno::from)?;
     if n != 4 {
-        return Err(bun_core::err!("EndOfStream"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
     let offset: u32 = u32::from_le_bytes(off_bytes);
     if kernel32_2::SetFilePointerEx(
@@ -1092,12 +1131,13 @@ pub fn edit_win32_binary_subsystem(
         win32::FILE_BEGIN,
     ) == 0
     {
-        return Err(bun_core::err!("Win32Error"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
     // Use `write_all` rather than a single `write()` + length check so a
     // short write is retried instead of failing.
     let sub_bytes = (subsystem as u16).to_le_bytes();
-    fd.write_all(&sub_bytes).map_err(bun_core::Error::from)?;
+    fd.write_all(&sub_bytes)
+        .map_err(bun_errno::SystemErrno::from)?;
     Ok(())
 }
 
@@ -1116,8 +1156,6 @@ pub mod rescle {
             copyright: *const u16,   // copyright (nullable)
         ) -> c_int;
     }
-
-    bun_core::named_error_set!(RescleError);
 
     #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
     pub enum RescleError {
@@ -1149,6 +1187,8 @@ pub mod rescle {
         FailedToCommit,
         #[error("WindowsMetadataEditError")]
         WindowsMetadataEditError,
+        #[error(transparent)]
+        Utf16(#[from] bun_core::strings::ToUTF16Error),
     }
 
     pub fn set_icon(exe_path: *const u16, icon: *const u16) -> Result<(), RescleError> {
@@ -1169,7 +1209,7 @@ pub mod rescle {
         version: Option<&[u8]>,
         description: Option<&[u8]>,
         copyright: Option<&[u8]>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), RescleError> {
         const _: () = assert!(cfg!(windows));
 
         // Validate version string format if provided
@@ -1320,7 +1360,7 @@ pub struct UpdateStdioModeFlagsOpts {
 pub fn update_stdio_mode_flags(
     i: bun_sys::Stdio,
     opts: UpdateStdioModeFlagsOpts,
-) -> Result<DWORD, bun_core::Error> {
+) -> Result<DWORD, SystemErrno> {
     let fd = i.fd();
     let mut original_mode: DWORD = 0;
     if kernel32_2::GetConsoleMode(fd.native(), &mut original_mode) != 0 {
@@ -1421,7 +1461,7 @@ pub fn become_watcher_manager() -> ! {
     loop {
         if let Err(err) = spawn_watcher_child(&mut procinfo, job) {
             bun_core::handle_error_return_trace(err);
-            if err == bun_core::err!("Win32Error") {
+            if err == bun_errno::SystemErrno::EIO {
                 // This read is best-effort — Drop guards inside
                 // `spawn_watcher_child` (FreeEnvironmentStringsW, Vec drops
                 // via HeapFree) may have clobbered the thread's last-error
@@ -1431,7 +1471,7 @@ pub fn become_watcher_manager() -> ! {
                 let last = Win32Error(GetLastError() as u16);
                 bun_core::Output::panic(format_args!("Failed to spawn process: {:?}\n", last));
             }
-            bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err.name()));
+            bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err));
         }
         // `kernel32::WaitForSingleObject` is the local `safe fn` re-decl
         // (by-value `HANDLE`/`DWORD` only); avoid the `bun_windows_sys`
@@ -1469,7 +1509,7 @@ pub fn become_watcher_manager() -> ! {
 pub fn spawn_watcher_child(
     procinfo: &mut PROCESS_INFORMATION,
     job: HANDLE,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), bun_errno::SystemErrno> {
     // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
     let mut attr_size: usize = 0;
     // SAFETY: query size with null buffer
@@ -1481,7 +1521,7 @@ pub fn spawn_watcher_child(
     if unsafe { externs::InitializeProcThreadAttributeList(p.as_mut_ptr(), 1, 0, &mut attr_size) }
         == 0
     {
-        return Err(bun_core::err!("Win32Error"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
     let mut job_local = job;
     // SAFETY: p initialized above; job_local valid for sizeof(HANDLE)
@@ -1497,7 +1537,7 @@ pub fn spawn_watcher_child(
         )
     } == 0
     {
-        return Err(bun_core::err!("Win32Error"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
 
     // The win32 layer exposes these as DWORD constants — assemble the raw mask.
@@ -1593,7 +1633,7 @@ pub fn spawn_watcher_child(
         )
     };
     if rc == 0 {
-        return Err(bun_core::err!("Win32Error"));
+        return Err(bun_errno::SystemErrno::EIO);
     }
     let mut is_in_job: BOOL = 0;
     let _ = kernel32_2::IsProcessInJob(procinfo.hProcess, job, &mut is_in_job);
@@ -2048,3 +2088,36 @@ pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
 bun_core::declare_scope!(windowsUserUniqueId, visible);
 
 // SetFilePointerEx referenced via the `pub use` at the top of this module.
+
+#[cfg(test)]
+mod tests {
+    use super::{E, SystemErrno, Win32Error, Win32ErrorExt as _, Win32ErrorUnwrap as _};
+
+    /// A Win32 code with no entry in `SystemErrno::init_win32_error`.
+    const UNMAPPED: Win32Error = Win32Error(0xFFFE);
+
+    #[test]
+    fn unwrap_success_is_ok() {
+        assert!(Win32Error::SUCCESS.unwrap().is_ok());
+    }
+
+    #[test]
+    fn unwrap_mapped_is_err() {
+        assert!(Win32Error::FILE_NOT_FOUND.unwrap().is_err());
+    }
+
+    /// `GetLastError()` after a failed Win32 call can return codes not present
+    /// in the errno mapping table (filter drivers, network redirectors, AV
+    /// hooks). Reporting success for those would swallow the failure.
+    #[test]
+    fn unwrap_unmapped_is_err() {
+        assert!(UNMAPPED.to_system_errno().is_none());
+        assert!(UNMAPPED.unwrap().is_err());
+    }
+
+    #[test]
+    fn to_e_unmapped_is_unknown() {
+        assert_eq!(UNMAPPED.to_e(), E::UNKNOWN);
+        assert_eq!(SystemErrno::EUNKNOWN.to_e(), E::UNKNOWN);
+    }
+}

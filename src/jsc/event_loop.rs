@@ -603,6 +603,17 @@ impl EventLoop {
     }
 
     #[inline]
+    /// A finished HTTP transaction asks the GC heuristic to look at the heap -- but not yet:
+    /// the response's JS handling and microtasks have not run, so the garbage is not there to
+    /// see. Acted on at the next park (`drain_pending_gc_hint`).
+    pub fn request_gc_hint(&mut self) {
+        self.vm_ref().as_mut().gc_controller.request_hint();
+    }
+
+    pub fn drain_pending_gc_hint(&mut self) {
+        self.vm_ref().as_mut().gc_controller.drain_pending_hint();
+    }
+
     pub fn process_gc_timer(&mut self) {
         self.vm_ref().as_mut().gc_controller.process_gc_timer();
     }
@@ -1469,4 +1480,12 @@ pub extern "C" fn Bun__EventLoop__unregisterDeferredTask(
     vm.event_loop_ref()
         .deferred_tasks
         .unregister_task(core::ptr::NonNull::new(ctx))
+}
+
+/// Called from `Bun__JSC_onBeforeWait`, just before the loop blocks: microtasks have drained by
+/// now, so a GC hint requested by a finished HTTP transaction can finally see that turn's garbage.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__drainPendingGCHint() {
+    // SAFETY: JS thread, immediately before the event loop blocks; the VM is live.
+    unsafe { (*VirtualMachine::get().event_loop()).drain_pending_gc_hint() };
 }

@@ -12,6 +12,7 @@ extern "C" void mi_on_thread_idle(void) noexcept;
 
 extern "C" int Bun__defaultRemainingRunsUntilSkipReleaseAccess;
 extern "C" int Bun__mimallocIdleSweepIntervalMs;
+extern "C" void Bun__drainPendingGCHint();
 
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
 {
@@ -71,6 +72,12 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             // > If you are not moving a VM to the different thread, then you can aquire the access and do not need to release
             vm->heap.stopIfNecessary();
             vm->didEnterVM = false;
+
+            // A finished HTTP transaction (Bun.serve does this per request; fetch now does it
+            // too) asked for the heap to be looked at. Do it here, not there: by now the
+            // response's microtasks have drained, so the turn's garbage actually exists to be
+            // seen. Must precede the sweep -- the GC is what makes the pages free to hand back.
+            Bun__drainPendingGCHint();
 
 #if USE(MIMALLOC)
             // Collect retired pages, discard the free-block holes inside still-used

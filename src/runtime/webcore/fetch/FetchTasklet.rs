@@ -1129,6 +1129,20 @@ impl FetchTasklet {
             (*vm.event_loop()).enqueue_task(Task::init(&raw mut (*holder).task));
         }
 
+        if is_done {
+            // The same GC hint Bun.serve fires at the end of a request, for the other
+            // direction: a finished HTTP transaction is where a turn's garbage appears, and
+            // an agent loop only makes *outbound* requests, so nothing else ever nudges the
+            // heuristic -- there is no idle moment to key off, since a real process always
+            // has a setInterval, a stream, analytics. Deferred to the next park rather than
+            // taken now: the body has been received but not yet *processed*, so the garbage
+            // does not exist to be measured until this response's microtasks have run.
+            //
+            // SAFETY: `vm` is the process-static VirtualMachine (checked non-shutting-down
+            // above); `.event_loop()` is VM-owned. JS thread, no aliasing `&mut`.
+            unsafe { (*vm.event_loop()).request_gc_hint() };
+        }
+
         dispatch_cleanup(self);
         cleanup(self);
         Ok(())

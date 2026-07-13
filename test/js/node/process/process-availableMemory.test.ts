@@ -60,30 +60,27 @@ test("process.availableMemory() returns a positive number", () => {
   expect(available).toBeGreaterThanOrEqual(0);
 });
 
-test.skipIf(!hasCgroupMemoryLimit())(
-  "process.availableMemory() respects cgroup memory limits on Linux",
-  () => {
-    const constrained = process.constrainedMemory();
-    const available = process.availableMemory();
-    const total = totalmem();
+test.skipIf(!hasCgroupMemoryLimit())("process.availableMemory() respects cgroup memory limits on Linux", () => {
+  const constrained = process.constrainedMemory();
+  const available = process.availableMemory();
+  const total = totalmem();
 
-    // The invariant the bug violates: a process can never have more memory
-    // available to it than its own cgroup limit. Before the fix, available
-    // was the host's MemAvailable (often hundreds of GB) while constrained
-    // was the container limit (often hundreds of MB).
-    expect(available).toBeLessThanOrEqual(constrained);
+  // The invariant the bug violates: a process can never have more memory
+  // available to it than its own cgroup limit. Before the fix, available
+  // was the host's MemAvailable (often hundreds of GB) while constrained
+  // was the container limit (often hundreds of MB).
+  expect(available).toBeLessThanOrEqual(constrained);
 
-    // Sanity: it should also never exceed host total memory.
-    expect(available).toBeLessThanOrEqual(total);
+  // Sanity: it should also never exceed host total memory.
+  expect(available).toBeLessThanOrEqual(total);
 
-    // Compare against an independent computation of the expected value:
-    // libuv's uv_get_available_memory() on Linux is (limit - current usage).
-    // Memory usage moves between the two reads, so allow generous slack.
-    const current = readCgroupCurrentMemory();
-    if (current !== null) {
-      const expected = Math.max(0, constrained - current);
-      const tolerance = 256 * 1024 * 1024;
-      expect(Math.abs(available - expected)).toBeLessThanOrEqual(tolerance);
-    }
-  },
-);
+  // Compare against an independent computation of the expected value:
+  // libuv's uv_get_available_memory() on Linux is (limit - current usage).
+  // Memory usage moves between the two reads, so allow generous slack.
+  const current = readCgroupCurrentMemory();
+  if (current !== null) {
+    const expected = Math.max(0, constrained - current);
+    const tolerance = 256 * 1024 * 1024;
+    expect(Math.abs(available - expected)).toBeLessThanOrEqual(tolerance);
+  }
+});

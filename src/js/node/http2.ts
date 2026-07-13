@@ -4736,8 +4736,10 @@ function setSessionTimeout(this: Http2Session, msecs, callback) {
   } else {
     // Snapshot the monotonic written counter at arm time so the first expiry
     // only refreshes if bytes actually went out during the period (see
-    // sessionTimerExpired).
-    this[kTimeoutWrittenSnapshot] = this[bunHTTP2Socket]?.bytesWritten ?? 0;
+    // sessionTimerExpired for why the native handle's counter, not the JS
+    // getter's drain-driven mirror).
+    this[kTimeoutWrittenSnapshot] =
+      this[bunHTTP2Socket]?._handle?.bytesWritten ?? this[bunHTTP2Socket]?.bytesWritten ?? 0;
     this[kTimeout] = setTimeout(sessionTimerExpired, msecs, this).unref();
     if (callback !== undefined) {
       validateFunction(callback, "callback");
@@ -4757,10 +4759,13 @@ function sessionTimerExpired(session: Http2Session) {
     // Node compares a monotonic chunks-sent counter, not instantaneous buffer
     // levels: a write that filled and fully drained between two expiries is
     // still progress, and sampling the (empty) buffer would misread it as an
-    // idle session. bytesWritten is the socket's cumulative counter, advanced
-    // by the native h2 writes too.
+    // idle session. The native handle's bytesWritten is the live cumulative
+    // counter (advanced by the parser's direct native writes); the JS socket's
+    // getter only mirrors it on drain events, which the native write path does
+    // not raise - reading the mirror missed every native write on Windows.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (callTimeout)
-    const bytesWritten = session[bunHTTP2Socket]?.bytesWritten ?? 0;
+    const sessionSocket = session[bunHTTP2Socket];
+    const bytesWritten = sessionSocket?._handle?.bytesWritten ?? sessionSocket?.bytesWritten ?? 0;
     if (bytesWritten !== (session[kTimeoutWrittenSnapshot] ?? 0)) {
       session[kTimeoutWrittenSnapshot] = bytesWritten;
       session[kTimeout]?.refresh();

@@ -175,7 +175,19 @@ function failWrite(self, negErrno, callback) {
   if (callback) {
     callback(er);
   } else if (!self.destroyed) {
-    self.destroy(er);
+    if (self.listenerCount("error") > 0) {
+      // The consumer can detach its listener between now and destroy()'s
+      // deferred 'error' emission - the same last-resort guard
+      // SocketEmitEndNT uses for read errors.
+      self.once("error", () => {});
+      self.destroy(er);
+    } else {
+      // No write callback and no 'error' listener: a failed flush on an
+      // orphaned socket (an h2 teardown racing the peer's reset - routine on
+      // Windows, where the reset completes the send first) is teardown noise.
+      // Same silent-close policy as SocketEmitEndNT's no-listener case.
+      self.destroy();
+    }
   }
 }
 function endNT(socket, callback, err) {

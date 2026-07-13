@@ -230,19 +230,30 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
         }),
       });
 
+      // Isolate the install cache per test so the concurrent tests in this
+      // file don't race on the shared global cache.
+      const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+
       await using installProc = Bun.spawn({
         cmd: [bunExe(), "install"],
         cwd: String(dir),
-        env: bunEnv,
+        env,
         stdout: "pipe",
         stderr: "pipe",
       });
-      expect(await installProc.exited).toBe(0);
+      const [installStdout, installStderr, installExitCode] = await Promise.all([
+        installProc.stdout.text(),
+        installProc.stderr.text(),
+        installProc.exited,
+      ]);
+      expect({ stdout: installStdout, stderr: installStderr, exitCode: installExitCode }).toMatchObject({
+        exitCode: 0,
+      });
 
       await using updateProc = Bun.spawn({
         cmd: [bunExe(), "update", "--interactive"],
         cwd: String(dir),
-        env: { ...bunEnv, FORCE_COLOR: "1" },
+        env: { ...env, FORCE_COLOR: "1" },
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -316,14 +327,25 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
         }),
       });
 
+      // Isolate the install cache per test so the concurrent tests in this
+      // file don't race on the shared global cache.
+      const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+
       await using installProc = Bun.spawn({
         cmd: [bunExe(), "install"],
         cwd: String(dir),
-        env: bunEnv,
+        env,
         stdout: "pipe",
         stderr: "pipe",
       });
-      expect(await installProc.exited).toBe(0);
+      const [installStdout, installStderr, installExitCode] = await Promise.all([
+        installProc.stdout.text(),
+        installProc.stderr.text(),
+        installProc.exited,
+      ]);
+      expect({ stdout: installStdout, stderr: installStderr, exitCode: installExitCode }).toMatchObject({
+        exitCode: 0,
+      });
 
       const decoder = new TextDecoder();
       let output = "";
@@ -359,7 +381,7 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
       const proc = Bun.spawn({
         cmd: [bunExe(), "update", "--interactive"],
         cwd: String(dir),
-        env: { ...bunEnv, FORCE_COLOR: "1" },
+        env: { ...env, FORCE_COLOR: "1" },
         terminal,
       });
 
@@ -422,14 +444,25 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
       }),
     });
 
+    // Isolate the install cache per test so the concurrent tests in this
+    // file don't race on the shared global cache.
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(await installProc.exited).toBe(0);
+    const [installStdout, installStderr, installExitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    expect({ stdout: installStdout, stderr: installStderr, exitCode: installExitCode }).toMatchObject({
+      exitCode: 0,
+    });
 
     const decoder = new TextDecoder();
     let output = "";
@@ -465,7 +498,7 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     const proc = Bun.spawn({
       cmd: [bunExe(), "update", "--interactive"],
       cwd: String(dir),
-      env: { ...bunEnv, FORCE_COLOR: "1" },
+      env: { ...env, FORCE_COLOR: "1" },
       terminal,
     });
 

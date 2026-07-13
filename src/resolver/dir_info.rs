@@ -439,39 +439,33 @@ pub(crate) unsafe fn put_slot(
     map: *mut HashMap,
     result: &mut allocators::Result,
     value: DirInfo,
-) -> core::result::Result<*mut DirInfo, bun_core::Error> {
+) -> core::result::Result<*mut DirInfo, crate::Error> {
     debug_assert!(core::ptr::eq(
         map.cast_const(),
         hash_map_instance().cast_const()
     ));
     // SAFETY: `map` is the live singleton; resolver mutex held. The auto-ref
     // `&mut *map` ends when `put` returns, before `slot_ptr_at` runs.
-    unsafe { (*map).put(result, value) }.map_err(bun_core::Error::from)?;
+    unsafe { (*map).put(result, value) }.map_err(crate::Error::from)?;
     // SAFETY: `put` just assigned a non-sentinel, initialized index.
     Ok(unsafe { slot_ptr_at(result.index) }.expect("put assigned a non-sentinel index"))
 }
 
 /// Resolver-side extension trait adapting `BSSMapInner`'s inherent surface to
-/// the resolver's error type (`bun_core::Error`) and pointer-return shape, plus
+/// the resolver's error type (`crate::Error`) and pointer-return shape, plus
 /// `values_mut` which has no inherent equivalent. The name-colliding
 /// methods are shadowed by inherent methods under dot-syntax (Rust resolves
 /// inherent before trait), so the bodies below delegate without recursing.
 /// (`put` is NOT here: it must not take `&mut self` — see [`put_slot`].)
 pub trait HashMapExt {
-    fn get_or_put(
-        &mut self,
-        key: &[u8],
-    ) -> core::result::Result<allocators::Result, bun_core::Error>;
+    fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<allocators::Result, crate::Error>;
     fn mark_not_found(&mut self, result: allocators::Result);
     fn remove(&mut self, key: &[u8]) -> bool;
     fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo>;
 }
 impl HashMapExt for HashMap {
     #[inline]
-    fn get_or_put(
-        &mut self,
-        key: &[u8],
-    ) -> core::result::Result<allocators::Result, bun_core::Error> {
+    fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<allocators::Result, crate::Error> {
         // Dot-syntax picks inherent `BSSMapInner::get_or_put` (inherent > trait); not recursive.
         self.get_or_put(key).map_err(Into::into)
     }

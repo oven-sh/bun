@@ -195,9 +195,9 @@ pub enum EscapeError {
     EscapeCalledTwice,
 }
 
-impl From<EscapeError> for bun_core::Error {
+impl From<EscapeError> for crate::Error {
     fn from(_: EscapeError) -> Self {
-        bun_core::err!("EscapeCalledTwice")
+        crate::Error::EscapeCalledTwice
     }
 }
 
@@ -647,11 +647,10 @@ pub(super) extern "C" fn napi_create_string_latin1(
         return env.ok();
     }
 
-    let (string, bytes) = bun_core::String::create_uninitialized_latin1(slice.len());
-    // `string` derefs on Drop.
+    let (mut string, bytes) = bun_core::String::create_uninitialized_latin1(slice.len());
     bytes.copy_from_slice(slice);
 
-    let js = match string.to_js(env.to_js()) {
+    let js = match string.transfer_to_js(env.to_js()) {
         Ok(v) => v,
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
     };
@@ -2524,7 +2523,7 @@ impl ThreadSafeFunction {
 
     pub fn dispatch_one(&mut self, is_first: bool) -> bool {
         let mut queue_finalizer_after_call = false;
-        let (has_more, task) = 'brk: {
+        let task = 'brk: {
             // `MutexGuard` holds the lock by raw pointer, so it does not borrow
             // `*self` across the `&mut self` calls below.
             let _g = self.lock.lock_guard();
@@ -2555,7 +2554,7 @@ impl ThreadSafeFunction {
                 self.blocking_condvar.signal();
             }
 
-            break 'brk (!self.is_closing(), t);
+            break 'brk t;
         };
 
         if self.call(task, !is_first).is_err() {
@@ -2566,7 +2565,9 @@ impl ThreadSafeFunction {
             self.maybe_queue_finalizer();
         }
 
-        has_more
+        // An item was dequeued: keep on_dispatch looping so remaining queued
+        // items drain and the empty-queue thread_count==0 path can finalize.
+        true
     }
 
     /// This function can be called multiple times in one tick of the event loop.
@@ -2618,7 +2619,7 @@ impl ThreadSafeFunction {
     pub fn enqueue(&mut self, ctx: *mut c_void, block: bool) -> napi_status {
         let _g = self.lock.lock_guard();
         if block {
-            while self.queue.is_blocked() {
+            while self.queue.is_blocked() && !self.is_closing() {
                 self.blocking_condvar.wait(&self.lock);
             }
         } else {
@@ -2729,9 +2730,16 @@ impl ThreadSafeFunction {
                         .store(ClosingState::Closing as u8, Ordering::SeqCst);
                     self.aborted.store(true, Ordering::SeqCst);
                     if self.queue.max_queue_size > 0 {
-                        self.blocking_condvar.signal();
+                        // Wake all producers blocked in enqueue()'s bounded
+                        // queue wait so they observe is_closing and release.
+                        self.blocking_condvar.broadcast();
                     }
                 }
+                self.schedule_dispatch();
+            } else if prev_remaining == 1 {
+                // Already closing from an earlier abort. The last release must
+                // still reach dispatch_one's thread_count==0 path so the
+                // finalizer runs and the event-loop keepalive is dropped.
                 self.schedule_dispatch();
             }
         }

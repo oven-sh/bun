@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   canBuildNodeAddons,
+  isASAN,
   isCI,
   isMacOS,
   isMusl,
@@ -38,33 +39,37 @@ function needsInstall(): boolean {
   return false;
 }
 
-describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
-  beforeAll(async () => {
-    // Resolve (and possibly download) the ABI-matching node here, under the
-    // generous hook timeout, instead of inside the first test that needs it.
-    await nodeExeMatchingAbi();
-    // build gyp
-    if (needsInstall()) {
-      console.time("Building node-gyp");
-      const install = spawnSync({
-        cmd: [bunExe(), "install", "--verbose"],
-        cwd: join(__dirname, "napi-app"),
-        stderr: "inherit",
-        env: bunEnv,
-        stdout: "inherit",
-        stdin: "inherit",
-      });
-      if (!install.success) {
-        console.error("build failed, bailing out!");
-        process.exit(1);
-      }
-      console.timeEnd("Building node-gyp");
+// File-scoped so every describe block below (including the non-concurrent
+// `napi_create_string_latin1` and `cleanup hooks` blocks) gets a built addon
+// even when `-t` filters out every test in describe.concurrent("napi").
+beforeAll(async () => {
+  if (!canBuildNodeAddons()) return;
+  // Resolve (and possibly download) the ABI-matching node here, under the
+  // generous hook timeout, instead of inside the first test that needs it.
+  await nodeExeMatchingAbi();
+  // build gyp
+  if (needsInstall()) {
+    console.time("Building node-gyp");
+    const install = spawnSync({
+      cmd: [bunExe(), "install", "--verbose"],
+      cwd: join(__dirname, "napi-app"),
+      stderr: "inherit",
+      env: bunEnv,
+      stdout: "inherit",
+      stdin: "inherit",
+    });
+    if (!install.success) {
+      console.error("build failed, bailing out!");
+      process.exit(1);
     }
-    // node-gyp rebuild can take a while under a debug/ASAN binary (and the
-    // hook may first download an ABI-matching node); default 5s hook timeout
-    // kills the install subprocess mid-build.
-  }, 300_000);
+    console.timeEnd("Building node-gyp");
+  }
+  // node-gyp rebuild can take a while under a debug/ASAN binary (and the
+  // hook may first download an ABI-matching node); default 5s hook timeout
+  // kills the install subprocess mid-build.
+}, 300_000);
 
+describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
       it("Bun.build", async () => {
@@ -410,6 +415,19 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("does not hang on finalize", async () => {
       const result = await checkSameOutput("test_napi_threadsafe_function_does_not_hang_after_finalize", []);
       expect(result).toBe("success!");
+    });
+
+    it.each([0, 3])(
+      "runs the finalizer and exits when the last reference is released after abort (%d queued items)",
+      async queued => {
+        const result = await checkSameOutput("test_threadsafe_function_abort_then_last_release", [queued]);
+        expect(result).toContain("finalized: true");
+      },
+    );
+
+    it("wakes blocked producers, runs the finalizer and exits when aborted with a bounded queue", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_blocked_producers", []);
+      expect(result).toContain("finalized: true");
     });
   });
 
@@ -916,6 +934,46 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     },
     25_000,
   );
+});
+
+// Kept outside describe.concurrent("napi") so RSS measurement isn't skewed by
+// the other tests' subprocesses and doesn't add load to the --compile tests.
+describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {
+  it("does not leak the WTFStringImpl", async () => {
+    const fixture = /* js */ `
+      const nativeTests = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
+      const size = 256 * 1024;
+      for (let i = 0; i < 20; i++) {
+        const s = nativeTests.create_latin1_string(size);
+        if (s.length !== size) throw new Error("wrong length: " + s.length);
+      }
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 300; i++) {
+        const s = nativeTests.create_latin1_string(size);
+        if (s.length !== size) throw new Error("wrong length: " + s.length);
+      }
+      Bun.gc(true);
+      const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+      console.error("RSS growth: " + growthMB.toFixed(1) + " MB");
+      process.exit(growthMB > Number(process.env.THRESHOLD_MB) ? 1 : 0);
+    `;
+    // 300 iterations * 256 KiB = 75 MB if every WTFStringImpl leaks.
+    // ASAN's quarantine inflates RSS; widen the threshold there.
+    const thresholdMB = isASAN ? 48 : 24;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", fixture],
+      env: { ...bunEnv, THRESHOLD_MB: String(thresholdMB) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("RSS growth:"),
+      exitCode: 0,
+    });
+  });
 });
 
 async function checkSameOutput(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {

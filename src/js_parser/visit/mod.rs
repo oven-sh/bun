@@ -406,7 +406,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.visit_decl(
                     decl,
                     was_anonymous_named_expr,
-                    was_const && !is_after,
+                    was_const,
+                    is_after,
                     if Self::ALLOW_MACROS {
                         prev_macro_call_count != self.macro_call_count
                     } else {
@@ -429,7 +430,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
                             let is_after = self.vis_scope().is_after_const_local_prefix;
-                            self.visit_decl(decl, false, was_const && !is_after, false);
+                            self.visit_decl(decl, false, was_const, is_after, false);
                         } else {
                             continue 'outer;
                         }
@@ -540,20 +541,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         decl: &mut G::Decl,
         was_anonymous_named_expr: bool,
-        could_be_const_value: bool,
+        was_const: bool,
+        is_after_const_local_prefix: bool,
         could_be_macro: bool,
     ) {
+        let could_be_const_value = was_const && !is_after_const_local_prefix;
         // Optionally preserve the name
         match decl.binding.data {
             BData::BIdentifier(id) => {
                 let id_ref = id.r#ref;
-                if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
+                // When the file imports macros, also track `const` literals that
+                // appear after the leading declaration prefix so they can be
+                // substituted into macro arguments. Visiting is top-down, so an
+                // entry only becomes visible to textually-later uses.
+                let track_for_macro_args =
+                    Self::ALLOW_MACROS && was_const && self.macro_.refs.count() > 0;
+                if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) || track_for_macro_args
+                {
                     if let Some(val) = decl.value {
                         if val.can_be_const_value() {
                             self.const_values.put(id_ref, val).expect("oom");
                         }
                     }
-                } else {
+                }
+                if !could_be_const_value && !(Self::ALLOW_MACROS && could_be_macro) {
                     self.vis_scope().is_after_const_local_prefix = true;
                 }
                 // SAFETY: original_name is arena-owned, valid for 'a.

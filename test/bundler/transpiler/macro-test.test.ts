@@ -1,5 +1,5 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import defaultMacro, {
   addStrings,
@@ -119,13 +119,138 @@ test("namespace import", () => {
   expect(macros.escape()).toBe("\\\f\n\r\t\v\0'\"`$\x00\x0B\x0C");
 });
 
-// test("template string ascii", () => {
-//   expect(identity(`A${""}`)).toBe("A");
-// });
+test("template string ascii", () => {
+  expect(identity(`A${""}`)).toBe("A");
+});
 
-// test("template string latin1", () => {
-//   expect(identity(`©${""}`)).toBe("©");
-// });
+test("template string latin1", () => {
+  expect(identity(`©${""}`)).toBe("©");
+});
+
+// The docs (bundler/macros.mdx, "Arguments") promise that a macro argument may
+// reference a `const` whose value is statically known, including the result of
+// another macro. Each shape is spawned as a fresh process so statement
+// ordering at module scope is exactly what's written.
+describe("const folding into macro arguments", () => {
+  const macroModule =
+    "export function identity(x) { return x; }\n" + "export function getText() { return 'foo'; }\n";
+
+  async function runShape(name: string, entry: string, cmd: "run" | "build" = "run") {
+    using dir = tempDir(name, {
+      "m.ts": macroModule,
+      "entry.ts": entry,
+    });
+    await using proc = Bun.spawn({
+      cmd: cmd === "run" ? [bunExe(), "run", "entry.ts"] : [bunExe(), "build", "--target=bun", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const importLine = 'import { identity, getText } from "./m.ts" with { type: "macro" };\n';
+
+  test.concurrent("leading const", async () => {
+    const r = await runShape("macro-const-a", importLine + "const N = 5;\nconsole.log(identity(N));\n");
+    expect({ stdout: r.stdout, stderr: r.stderr }).toMatchObject({ stdout: expect.stringMatching(/5\n$/) });
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.concurrent("const after an unrelated statement", async () => {
+    const r = await runShape(
+      "macro-const-b",
+      importLine + 'console.log("x");\nconst N = 5;\nconsole.log(identity(N));\n',
+    );
+    expect({ stdout: r.stdout, stderr: r.stderr }).toMatchObject({ stdout: expect.stringMatching(/x\n5\n$/) });
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.concurrent("const after an unrelated statement inside a function", async () => {
+    const r = await runShape(
+      "macro-const-b-fn",
+      importLine + 'function go() {\n  console.log("x");\n  const N = 5;\n  console.log(identity(N));\n}\ngo();\n',
+    );
+    expect({ stdout: r.stdout, stderr: r.stderr }).toMatchObject({ stdout: expect.stringMatching(/x\n5\n$/) });
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.concurrent("const from macro result", async () => {
+    const r = await runShape("macro-const-c", importLine + "const foo = getText();\nconsole.log(identity(foo));\n");
+    expect({ stdout: r.stdout, stderr: r.stderr }).toMatchObject({ stdout: expect.stringMatching(/foo\n$/) });
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.concurrent("template literal with macro-result const", async () => {
+    const r = await runShape(
+      "macro-const-d",
+      importLine + "const foo = getText();\nconsole.log(identity(`https://example.com/${foo}`));\n",
+    );
+    expect({ stdout: r.stdout, stderr: r.stderr }).toMatchObject({
+      stdout: expect.stringMatching(/https:\/\/example\.com\/foo\n$/),
+    });
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.concurrent("template literal with non-ascii literal const", async () => {
+    const r = await runShape(
+      "macro-const-nonascii",
+      importLine + 'const foo = "αβγ";\nconsole.log(identity(`prefix/${foo}`));\n',
+    );
+    expect({ stdout: r.stdout, stderr: r.stderr }).toMatchObject({ stdout: expect.stringMatching(/prefix\/αβγ\n$/) });
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.concurrent("template literal with numeric const", async () => {
+    const r = await runShape(
+      "macro-const-number",
+      importLine + "const n = 42;\nconsole.log(identity(`n=${n}`));\n",
+    );
+    expect({ stdout: r.stdout, stderr: r.stderr }).toMatchObject({ stdout: expect.stringMatching(/n=42\n$/) });
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.concurrent("template literal after an unrelated statement, with macro-result const", async () => {
+    const r = await runShape(
+      "macro-const-combined",
+      importLine + 'console.log("x");\nconst foo = getText();\nconsole.log(identity(`p/${foo}`));\n',
+    );
+    expect({ stdout: r.stdout, stderr: r.stderr }).toMatchObject({ stdout: expect.stringMatching(/x\np\/foo\n$/) });
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.concurrent("let bindings are still rejected", async () => {
+    const r = await runShape("macro-const-let", importLine + "let N = 5;\nconsole.log(identity(N));\n");
+    expect(r.stderr).toContain("Cannot convert identifier to JS");
+    expect(r.exitCode).not.toBe(0);
+  });
+
+  test.concurrent("bun build: const after an unrelated statement", async () => {
+    const r = await runShape(
+      "macro-const-build-b",
+      importLine + 'console.log("x");\nconst N = 5;\nconsole.log(identity(N));\n',
+      "build",
+    );
+    expect({ stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode }).toMatchObject({
+      stdout: expect.stringContaining("console.log(5)"),
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("bun build: template literal with macro-result const", async () => {
+    const r = await runShape(
+      "macro-const-build-d",
+      importLine + "const foo = getText();\nconsole.log(identity(`https://example.com/${foo}`));\n",
+      "build",
+    );
+    expect({ stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode }).toMatchObject({
+      stdout: expect.stringContaining('"https://example.com/foo"'),
+      exitCode: 0,
+    });
+  });
+});
 
 test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");

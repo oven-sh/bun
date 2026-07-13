@@ -294,15 +294,19 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
         // outside the lock; they may hold the last ref to pipes whose
         // destructors also take locks.
 
-        // Notify each closed pipe's entangled peer so it can fire 'close' and
-        // release its event-loop ref — including nested in-transit ports drained
-        // from the worklist, not just the originally-closed side.
-        // Always notify, even for a collected wrapper. Node never collects an entangled
-        // port so it never faces this; bun does, and a peer that is never told is
-        // stranded -- its loop ref is never released and the process hangs. A 'close'
-        // fired at GC timing is the lesser evil. (jsRef() still ignores a collected
-        // peer: it keys on ClosedByRequest, not on Closed.)
-        pipe->notifyPeerClosed(1 - sd);
+        // Notify each explicitly-closed pipe's entangled peer so it can fire
+        // 'close' and release its event-loop ref — including nested in-transit
+        // ports drained from the worklist, not just the originally-closed side.
+        // A Collected close (GC of an unreferenced wrapper) must NOT notify:
+        // node never closes a channel because a port was collected, so a
+        // listening peer keeps the process alive exactly as if the collected
+        // port were still reachable. Notifying here made the canonical
+        // "port1.on('message', ...); port2.postMessage(...)" pattern exit at GC
+        // timing while node stays alive. The resulting "stranded" peer is node
+        // parity, not a leak: node retains even more (it never collects an
+        // entangled port at all).
+        if (sdKind == CloseKind::Explicit)
+            pipe->notifyPeerClosed(1 - sd);
     }
 }
 

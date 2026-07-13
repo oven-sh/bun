@@ -434,6 +434,7 @@ function parseArgs(argv: string[]): CliArgs {
     "webkit",
     "buildDir",
     "cacheDir",
+    "downloadCacheDir",
     "nodejsVersion",
     "nodejsAbiVersion",
     "webkitVersion",

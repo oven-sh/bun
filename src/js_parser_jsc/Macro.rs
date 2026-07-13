@@ -585,10 +585,7 @@ impl<'a> Run<'a> {
         let result = match result {
             Ok(v) => v,
             Err(e) => {
-                let exception = global.take_exception(e);
-                if !exception.is_termination_exception() {
-                    let _ = vm.as_mut().uncaught_exception(global, exception, false);
-                }
+                global.report_active_exception_as_unhandled(e);
                 return Err(MacroError::MacroFailed);
             }
         };

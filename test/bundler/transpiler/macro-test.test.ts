@@ -155,10 +155,14 @@ export function syncThrowString() { throw "this is the real reason the build bro
       cmd: [bunExe(), cmd, "index.ts"],
       env: {
         ...bunEnv,
-        // detect_leaks=0 (last wins): printing the macro's stack trace caches an
-        // Arc<ParsedSourceMap> on the bundler-worker macro VM, which `bun build` never tears
-        // down on the failure-exit path; LSan would abort with 134 on the ASAN lane.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+        // detect_leaks=0 (last wins) for `bun build` only: printing the macro's stack trace
+        // caches an Arc<ParsedSourceMap> on the bundler-worker macro VM, which `bun build`
+        // never tears down on the failure-exit path; LSan would abort with 134 on the ASAN
+        // lane. `bun run` uses the main-thread VM and keeps leak detection.
+        ASAN_OPTIONS:
+          cmd === "build"
+            ? [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":")
+            : bunEnv.ASAN_OPTIONS,
       },
       cwd: String(dir),
       stdout: "pipe",

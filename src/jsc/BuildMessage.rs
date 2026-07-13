@@ -155,7 +155,7 @@ impl BuildMessage {
         object.put(
             global,
             b"namespace",
-            ZigString::init(location.namespace).to_js(global),
+            ZigString::init_utf8(location.namespace).to_js(global),
         );
         object.put(global, b"line", JSValue::from(location.line));
         object.put(global, b"column", JSValue::from(location.column));

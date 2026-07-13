@@ -353,5 +353,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_BUFFER_SIZE", RangeError],
   ["ERR_TRACE_EVENTS_CATEGORY_REQUIRED", TypeError],
   ["ERR_TRACE_EVENTS_UNAVAILABLE", Error],
+  // llhttp reports a missing CRLF after a chunk's data as HPE_STRICT,
+  // distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE).
+  ["HPE_STRICT", Error],
 ];
 export default errors;

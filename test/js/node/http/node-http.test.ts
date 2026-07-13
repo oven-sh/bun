@@ -1667,10 +1667,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
       server.on("clientError", (err: any, socket) => {
         replyBadRequest(socket);
         try {
-          // Divergence: Node (llhttp) reports HPE_STRICT "Expected LF after chunk
-          // data" here. uWS collapses every chunked-framing failure into one
-          // parser error, so Bun cannot tell it apart from a bad chunk size.
-          expect(err.code).toBe("HPE_INVALID_CHUNK_SIZE");
+          expect(err.code).toBe("HPE_STRICT");
+          expect(err.message).toBe("Parse Error: Expected LF after chunk data");
           resolve();
         } catch (err) {
           reject(err);

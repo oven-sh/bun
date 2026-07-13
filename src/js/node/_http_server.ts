@@ -1267,6 +1267,7 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_PAUSED_H2_UPGRADE = 13,
   HTTP_PARSER_ERROR_CLOSED_CONNECTION = 14,
   HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE = 15,
+  HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED = 16,
 }
 // Native callback fired when the HTTP parser rejects incoming bytes. Builds
 // the same error object Node's parser produces and routes it through
@@ -1336,6 +1337,9 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
       break;
     case HttpParserError.HTTP_PARSER_ERROR_CLOSED_CONNECTION:
       err = $HPE_CLOSED_CONNECTION("Parse Error: Data after `Connection: close`");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED:
+      err = $HPE_STRICT("Parse Error: Expected LF after chunk data");
       break;
     default:
       err = $HPE_INTERNAL("Parse Error");

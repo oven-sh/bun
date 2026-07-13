@@ -98,6 +98,10 @@ struct HttpResponseData;
         /* A captured trailer section exceeded the max-header-size limit
          * (Node/llhttp reports HPE_HEADER_OVERFLOW → 431). */
         HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE = 15,
+        /* The CRLF that must follow a chunk's data was missing or malformed.
+         * llhttp reports this as HPE_STRICT "Expected LF after chunk data",
+         * distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE). */
+        HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED = 16,
     };
 
 
@@ -1290,6 +1294,9 @@ struct HttpResponseData;
                         if (isTrailerOverflow(remainingStreamingBytes)) {
                             return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE);
                         }
+                        if (isChunkTerminatorError(remainingStreamingBytes)) {
+                            return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED);
+                        }
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING);
                     }
                     unsigned int consumed = (length - (unsigned int) dataToConsume.length());
@@ -1364,6 +1371,9 @@ public:
                 if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
                     if (isTrailerOverflow(remainingStreamingBytes)) {
                         return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE);
+                    }
+                    if (isChunkTerminatorError(remainingStreamingBytes)) {
+                        return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED);
                     }
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING);
                 }
@@ -1444,6 +1454,9 @@ public:
                         if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
                             if (isTrailerOverflow(remainingStreamingBytes)) {
                                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE);
+                            }
+                            if (isChunkTerminatorError(remainingStreamingBytes)) {
+                                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED);
                             }
                             return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING);
                         }

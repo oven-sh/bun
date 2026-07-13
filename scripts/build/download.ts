@@ -283,7 +283,7 @@ function prebuiltDownloadError(name: string, url: string, cause: unknown): Error
   const message = cause instanceof Error ? cause.message : String(cause);
   // 404 only: a 403/429 is GitHub rate-limiting us, not a deleted release.
   const missing = message.includes("HTTP 404");
-  if (name === "webkit" && missing && url.includes("/autobuild-preview-pr-")) {
+  if (name === "WebKit" && missing && url.includes("/autobuild-preview-pr-")) {
     return new BuildError(`WebKit preview release is gone: ${message}`, {
       cause,
       file: "scripts/build/deps/webkit.ts",
@@ -297,7 +297,7 @@ function prebuiltDownloadError(name: string, url: string, cause: unknown): Error
   if (missing) {
     return new BuildError(`Prebuilt ${name} is not published at that URL: ${message}`, {
       cause,
-      hint: `Check the version pin for '${name}' in scripts/build/deps/${name}.ts.`,
+      hint: `Check the version pin for '${name}' in scripts/build/deps/.`,
     });
   }
   return cause instanceof Error ? cause : new BuildError(message);

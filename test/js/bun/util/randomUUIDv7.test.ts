@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("randomUUIDv7", () => {
   test("basic", () => {
@@ -33,28 +34,107 @@ describe("randomUUIDv7", () => {
     console.log(uuid.toString("hex"));
   });
 
-  test("custom timestamp", () => {
-    const customTimestamp = 1625097600000; // 2021-07-01T00:00:00.000Z
-    const uuid = Bun.randomUUIDv7("hex", customTimestamp);
-    expect(uuid).toStartWith("017a5f5d-");
-    expect(Bun.randomUUIDv7()).not.toStartWith("017a5f5d-");
-    expect(Bun.randomUUIDv7("hex", new Date(customTimestamp))).toStartWith("017a5f5d-");
-    console.log({ uuid });
-    console.log({ uuid: Bun.randomUUIDv7("hex", new Date(customTimestamp)) });
-    console.log({ uuid: Bun.randomUUIDv7("hex", new Date(customTimestamp)) });
-  });
-
   test("monotonic", () => {
     const customTimestamp = 1625097600000; // 2021-07-01T00:00:00.000Z
-    let input = Array.from({ length: 100 }, () => Bun.randomUUIDv7("hex", customTimestamp));
-    let sorted = input.slice().sort();
-
-    // If we get unlucky, it will rollover.
-    if (!Bun.deepEquals(sorted, input)) {
-      input = Array.from({ length: 100 }, () => Bun.randomUUIDv7("hex", customTimestamp));
-      sorted = input.slice().sort();
-    }
-
+    const input = Array.from({ length: 100 }, () => Bun.randomUUIDv7("hex", customTimestamp));
+    const sorted = input.slice().sort();
     expect(sorted).toEqual(input);
+  });
+
+  test("monotonic across 12-bit counter rollover", () => {
+    // 10000 UUIDs at a pinned millisecond forces at least two rollovers of the
+    // 12-bit rand_a counter. The sequence must still be strictly increasing.
+    const ts = 1750000000000;
+    let prev = "";
+    let firstBreak = -1;
+    for (let i = 0; i < 10000; i++) {
+      const u = Bun.randomUUIDv7("hex", ts);
+      if (i > 0 && u <= prev && firstBreak === -1) firstBreak = i;
+      prev = u;
+    }
+    expect(firstBreak).toBe(-1);
+  });
+
+  // The remaining tests pass far-future timestamps. UUID_V7_LAST_TIMESTAMP is a
+  // process-global that never moves backward, so run each in a fresh subprocess
+  // to avoid leaving the test process parked in the year 2100+.
+
+  test("custom timestamp", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const ts = 4099680000000; // 2099-11-30T00:00:00.000Z
+          console.log(Bun.randomUUIDv7("hex", ts));
+          console.log(Bun.randomUUIDv7("hex", new Date(ts + 1)));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const [a, b] = stdout.trim().split("\n");
+    expect(a).toStartWith("03ba87f8-5800-");
+    expect(b).toStartWith("03ba87f8-5801-");
+    expect(exitCode).toBe(0);
+  });
+
+  test("older explicit timestamps do not move UUIDs backward", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const latest = Bun.randomUUIDv7("hex", 4_500_000_000_000);
+          const stale  = Bun.randomUUIDv7("hex", 1);
+          console.log(JSON.stringify({
+            increasing: stale > latest,
+            latestPrefix: latest.slice(0, 13),
+            stalePrefix:  stale.slice(0, 13),
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      increasing: true,
+      latestPrefix: "0417bce6-c800",
+      stalePrefix: "0417bce6-c800",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("counter is seeded pseudo-randomly on a new millisecond", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          // Sample the first UUID of several fresh milliseconds. The 12-bit rand_a
+          // field (bytes 6-7, low 12 bits) should not be the same constant every time.
+          const seen = new Set();
+          let ts = 5_000_000_000_000;
+          for (let i = 0; i < 64; i++) {
+            ts += 1_000_000;
+            const buf = Bun.randomUUIDv7("buffer", ts);
+            seen.add(((buf[6] & 0x0f) << 8) | buf[7]);
+          }
+          console.log(seen.size);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // With an 11-bit random seed, 64 independent draws collapsing to one value
+    // has probability 2^-693. A fixed reset (the old behavior) yields size 1.
+    expect(Number(stdout.trim())).toBeGreaterThan(1);
+    expect(exitCode).toBe(0);
   });
 });

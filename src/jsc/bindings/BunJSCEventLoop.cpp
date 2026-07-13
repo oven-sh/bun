@@ -78,8 +78,10 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
 
 #if USE(MIMALLOC)
             // Collect retired pages, punch free-block holes, hand the arena purge to
-            // the scavenger. Rate-limited: a busy server parks between every request,
-            // and unthrottled sweeps cost ~25% of express throughput for no memory gain.
+            // the scavenger. Rate-limited because a busy server parks between every
+            // request: with the sweep's per-page skip in place this measures as noise
+            // (89.6k vs 88.5k rps on express, medians of 5), so this is a bound on
+            // per-park work for heaps far larger than that benchmark's, not a fix.
             static thread_local MonotonicTime lastIdleSweep;
             const auto now = MonotonicTime::now();
             if ((now - lastIdleSweep) >= Seconds::fromMilliseconds(100)) {

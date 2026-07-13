@@ -432,8 +432,9 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
           context,
         );
         expect({ name, ...result }).toEqual({ name, value: name, writable: false, configurable: false });
+        expect(Object.prototype.hasOwnProperty.call(context, name)).toBe(false);
       }
-      expect(Object.keys(context)).toEqual([]);
+      expect(Object.getOwnPropertyNames(context)).toEqual([]);
     });
     test("strict assignment to read-only globals throws and does not mutate the sandbox", () => {
       const context = createContext({});
@@ -443,7 +444,8 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
       );
       expect(result).toBe("TypeError");
       expect(fn("String(globalThis.NaN)", context)).toBe("NaN");
-      expect(Object.keys(context)).toEqual([]);
+      expect(Object.prototype.hasOwnProperty.call(context, "NaN")).toBe(false);
+      expect(Object.getOwnPropertyNames(context)).toEqual([]);
     });
     test("cannot access `process`", () => {
       const context = createContext({});

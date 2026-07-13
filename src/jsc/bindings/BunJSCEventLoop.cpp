@@ -6,6 +6,9 @@
 
 #if USE(MIMALLOC)
 #include <bmalloc/mimalloc.h>
+// bmalloc's vendored mimalloc.h predates this API; bun links oven-sh/mimalloc,
+// which defines it.
+extern "C" void mi_purge_holes(void);
 #endif
 
 extern "C" int Bun__defaultRemainingRunsUntilSkipReleaseAccess;
@@ -74,6 +77,11 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             // returns promptly. Shares the release-access throttle above so
             // steady-idle parks stay free of per-park work.
             mi_theap_collect(mi_theap_get_default(), /* force */ false);
+
+            // A mimalloc page is only returned to the arena once every block in
+            // it is free, so one surviving object keeps the whole page dirty.
+            // This discards the free blocks inside still-used pages.
+            mi_purge_holes();
 #endif
         }
     }

@@ -619,7 +619,7 @@ impl<'a> Run<'a> {
             let bytes: &[u8] = self.bump.alloc_slice_copy(&bun_str.to_owned_slice());
             let flags_offset = strings::last_index_of_char(bytes, b'/')
                 .filter(|&i| i + 1 < bytes.len())
-                .map(|i| (i + 1) as u16);
+                .and_then(|i| u16::try_from(i + 1).ok());
             return Ok(Expr::init(
                 E::RegExp {
                     value: E::Str::new(bytes),

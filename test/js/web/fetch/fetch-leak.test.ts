@@ -760,8 +760,10 @@ test("should not leak using readable stream", async () => {
 // `ondrain` never fires and the JS `drainReaderIntoSink` continuation (which
 // captures the reader/stream graph) plus the FetchTasklet's startRequestStream
 // ref used to leak forever — one ReadableStream/Controller/Reader per fetch.
-test("should not leak request-body ReadableStream when server ignores the body", async () => {
-  const script = `
+test(
+  "should not leak request-body ReadableStream when server ignores the body",
+  async () => {
+    const script = `
     const { heapStats } = require("bun:jsc");
     const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
     const url = "http://localhost:" + server.port;
@@ -799,17 +801,19 @@ test("should not leak request-body ReadableStream when server ignores the body",
     process.exit(0);
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout + stderr).toContain('"after"');
-  expect(stderr).not.toContain("LEAK");
-  expect(exitCode).toBe(0);
-  // The scenario itself takes ~100 ms; under ASAN the spawned child's startup
-  // (shadow-memory init) plus suite load overruns the 5 s default. Standalone
-  // ASAN runs pass in well under a second.
-}, isASAN ? 30_000 : 5_000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain('"after"');
+    expect(stderr).not.toContain("LEAK");
+    expect(exitCode).toBe(0);
+    // The scenario itself takes ~100 ms; under ASAN the spawned child's startup
+    // (shadow-memory init) plus suite load overruns the 5 s default. Standalone
+    // ASAN runs pass in well under a second.
+  },
+  isASAN ? 30_000 : 5_000,
+);

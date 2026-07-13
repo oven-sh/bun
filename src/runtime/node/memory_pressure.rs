@@ -27,6 +27,7 @@
 
 use bun_event_loop::ConcurrentTask::{Task, task_tag};
 use bun_jsc::JSGlobalObject;
+#[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use core::ptr::NonNull;
@@ -53,13 +54,6 @@ pub fn emit(global: &JSGlobalObject, lvl: i32) {
     };
     // SAFETY: FFI; `global` is the live per-thread global.
     unsafe { Process__emitMemoryPressureEvent(core::ptr::from_ref(global).cast_mut(), lvl) };
-
-    // Emitting only *tells* JS about the pressure. Sweep this thread's heaps now and ask
-    // the GC heuristic to look at the heap at the next park -- by then the listeners'
-    // microtasks have drained, so what a dropped cache freed is collectable and returnable.
-    bun_alloc::mimalloc::mi_on_thread_idle();
-    // SAFETY: JS thread (this runs as a dispatched task); the VM is live.
-    unsafe { (*VirtualMachine::get().event_loop()).request_gc_hint() };
 }
 
 pub(crate) fn pressure_task(lvl: i32) -> Task {

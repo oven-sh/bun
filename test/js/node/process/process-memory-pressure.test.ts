@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 // process.on("memoryPressure") is a Bun extension. These tests drive the
 // emit path synthetically via bun:internal-for-testing since real OS memory
@@ -91,38 +91,6 @@ describe.concurrent("process.on('memoryPressure')", () => {
       process.stdout.write("done");
     `);
     expect(stdout).toBe("done");
-    expect(exitCode).toBe(0);
-  });
-
-  // macOS purges with MADV_FREE_REUSABLE, which keeps the range committed in
-  // mimalloc's accounting, so currentCommit stays byte-identical there (held
-  // 140771328 -> 140771328 in CI). Linux and Windows decommit and see the drop.
-  test.skipIf(isMacOS)("hands committed memory back to the OS, not just an event", async () => {
-    // Emitting the event used to be all that happened: listeners were told about the
-    // pressure and nothing gave the pages back. Free a large native buffer, then assert
-    // the pressure handler actually drops mimalloc's committed bytes.
-    const { stdout, exitCode } = await run(/* js */ `
-      const { emitMemoryPressure } = require("bun:internal-for-testing");
-      const { memoryUsage } = require("bun:jsc");
-      process.on("memoryPressure", () => {});
-
-      let hold = [];
-      for (let i = 0; i < 400; i++) hold.push(Buffer.allocUnsafe(256 * 1024));
-      const peak = memoryUsage().currentCommit;
-      hold = null;
-      Bun.gc(true);
-
-      emitMemoryPressure("critical");
-      // The hint is drained and the sweep runs on later parks, and the park
-      // sweep is rate-limited (100ms), so poll until the commit drops.
-      let after = memoryUsage().currentCommit;
-      for (let i = 0; i < 100 && after >= peak; i++) {
-        await Bun.sleep(50);
-        after = memoryUsage().currentCommit;
-      }
-      process.stdout.write(after < peak ? "returned" : "held " + peak + " -> " + after);
-    `);
-    expect(stdout).toBe("returned");
     expect(exitCode).toBe(0);
   });
 

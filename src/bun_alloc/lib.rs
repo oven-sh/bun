@@ -964,7 +964,6 @@ pub fn page_size() -> usize {
     })
 }
 
-// ── wtf (FastMalloc thread-cache release) ─────────────────────────────────
 // ── String — TYPE_ONLY landing ─────────────────────────────────────────────
 // Layout-only (#[repr(C)]) so T0/T1 crates can name the type; rich methods
 // (toJS, toUTF8, WTF refcounting) remain in bun_str via extension traits.

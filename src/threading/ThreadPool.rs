@@ -1413,22 +1413,9 @@ impl Event {
             // Acquiring to WAITING will make the next notify() or shutdown() wake a sleeping futex thread
             // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
             // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
-            // Park on a deadline so an idle worker gives its memory back, and act only when the
-            // wait actually TIMED OUT -- i.e. this thread really was asleep that long, and is not
-            // merely parking between tasks. That distinction is the whole point: sweeping on every
-            // park cost ~13% of `vite preview`'s throughput (a pool worker wakes once per request
-            // there, so it swept once per request) and returned no memory at all.
-            //
-            // Runs at most once per idle period: `has_swept` is a local, so a notify() resets it by
-            // returning from wait(). The futex supplies the atomicity -- a notify() racing the
-            // timeout leaves the state NOTIFIED and the loop consumes it on the next turn, so the
-            // wakeup is delayed by the sweep, never lost.
-            //
-            // `mi_on_thread_idle()` supersedes both of the things this used to do here: it collects
-            // this thread's heaps (the old `mi_collect(false)`), discards the free-block holes
-            // inside still-used pages, and hands the arena purge to the scavenger. WTF's
-            // `releaseFastMallocFreeMemoryForThisThread` is gone with them -- under USE_MIMALLOC
-            // bmalloc routes into this same allocator, so it was collecting the heaps a second time.
+            // Sweep only when the wait TIMED OUT: genuinely idle for 100ms, not parking
+            // between tasks (that cost ~13% of vite preview rps). `has_swept` is a local,
+            // reset when notify() returns; a racing notify() stays NOTIFIED, never lost.
             let timeout_ns: Option<u64> = if !has_swept {
                 Some(100_000_000) // 100ms
             } else {

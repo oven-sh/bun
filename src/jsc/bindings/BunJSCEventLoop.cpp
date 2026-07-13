@@ -90,13 +90,9 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             // steady-idle parks stay free of per-park work.
             mi_theap_collect(mi_theap_get_default(), /* force */ false);
 
-            // A mimalloc page is only returned to the arena once every block in
-            // it is free, so one surviving object keeps the whole page dirty.
-            // mi_purge_holes() discards the free blocks inside still-used pages,
-            // but it walks every page queue plus the abandoned pages, so it is
-            // far more expensive than the collect above. A busy loop re-enters JS
-            // constantly and would otherwise run it on nearly every park; rate-
-            // limit it so the cost lands on genuine idle, not on throughput.
+            // mi_purge_holes() discards free-block holes inside still-used pages
+            // but walks every page queue plus abandoned pages (far costlier than
+            // the collect above); rate-limit so busy loops keep their throughput.
             static thread_local MonotonicTime lastPurgeHoles;
             const auto now = MonotonicTime::now();
             if ((now - lastPurgeHoles) >= Seconds::fromMilliseconds(Bun__mimallocPurgeHolesIntervalMs)) {

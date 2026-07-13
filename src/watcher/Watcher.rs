@@ -895,10 +895,12 @@ impl Watcher {
         self.mutex.lock();
 
         if let Some(index) = self.index_of(hash) {
-            if feature_flags::ATOMIC_FILE_WATCHER {
-                // On Linux, the file descriptor might be out of date.
-                if fd.is_valid() {
-                    let fds = self.watchlist.items_fd_mut();
+            // The caller has transferred ownership of `fd`. Adopt it when the
+            // stored slot is empty so Windows does not leak the transpiler's
+            // handle into a slot pre-seeded by `wrap_package_json`.
+            if fd.is_valid() {
+                let fds = self.watchlist.items_fd_mut();
+                if feature_flags::ATOMIC_FILE_WATCHER || !fds[index as usize].is_valid() {
                     fds[index as usize] = fd;
                 }
             }

@@ -445,6 +445,11 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
       });
       expect(result).toContain("foo.js");
     });
+    test("assigning this.__proto__ changes the vm global's prototype", () => {
+      const context = createContext({});
+      const result = fn("this.__proto__ = {marker: 1}; [Object.getPrototypeOf(this).marker, 'marker' in this]", context);
+      expect(result).toEqual([1, true]);
+    });
     describe("var/function declarations over existing sandbox properties", () => {
       test("`var x` over a non-writable non-configurable data property reads through to the sandbox value", () => {
         const sandbox = {};

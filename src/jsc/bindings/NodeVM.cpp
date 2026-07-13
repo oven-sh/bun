@@ -1183,9 +1183,11 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     RETURN_IF_EXCEPTION(scope, false);
     if (!result) return false;
 
-    // The sandbox setter handled the write; don't forward to Base as any direct
-    // property there is the read-only placeholder materialised for the accessor.
-    if (isDeclaredOnSandbox && (getter.isAccessor() || getter.isCustom())) {
+    // The sandbox's own setter handled the write; don't forward to Base as any
+    // direct property there is the read-only placeholder materialised for the
+    // accessor. Own-only so inherited accessors (Object.prototype.__proto__ &c.)
+    // still fall through and update the vm global.
+    if (isDeclaredOnSandbox && (getter.isAccessor() || getter.isCustom()) && getter.slotBase() == sandbox) {
         return true;
     }
 

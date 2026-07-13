@@ -518,6 +518,32 @@ describe("createHash", () => {
     expect(copy.digest("hex")).toBe(hash.digest("hex"));
   });
 
+  it("treats a view over a detached ArrayBuffer as empty input", () => {
+    const detachedView = () => {
+      const ab = new ArrayBuffer(8);
+      const v = new Uint8Array(ab);
+      ab.transfer();
+      return v;
+    };
+
+    const emptyHash = crypto.createHash("sha256").digest("hex");
+    expect(crypto.createHash("sha256").update(detachedView()).digest("hex")).toBe(emptyHash);
+
+    const emptyDataHmac = crypto.createHmac("sha256", "k").digest("hex");
+    expect(crypto.createHmac("sha256", "k").update(detachedView()).digest("hex")).toBe(emptyDataHmac);
+
+    const emptyKeyHmac = crypto.createHmac("sha256", Buffer.alloc(0)).update("m").digest("hex");
+    expect(crypto.createHmac("sha256", detachedView()).update("m").digest("hex")).toBe(emptyKeyHmac);
+
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+
+    const sig = crypto.createSign("sha256").update(detachedView()).sign(privateKey);
+    expect(crypto.createVerify("sha256").verify(publicKey, sig)).toBe(true);
+
+    const emptySig = crypto.createSign("sha256").sign(privateKey);
+    expect(crypto.createVerify("sha256").update(detachedView()).verify(publicKey, emptySig)).toBe(true);
+  });
+
   it("uses the Transform options object", () => {
     const hasher = crypto.createHash("sha256", { defaultEncoding: "binary" });
     hasher.on("readable", () => {

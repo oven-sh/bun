@@ -265,12 +265,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
 
         auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buf);
 
-        // Update the digest context with the buffer data
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
         size_t byteLength = view->byteLength();
         if (byteLength > INT_MAX) {
             throwRangeError(globalObject, scope, "data is too long"_s);
@@ -296,11 +290,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
 
     // Handle ArrayBufferView input
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
         size_t byteLength = view->byteLength();
         if (byteLength > INT_MAX) {
             throwRangeError(globalObject, scope, "data is too long"_s);

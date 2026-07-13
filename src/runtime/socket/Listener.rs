@@ -67,6 +67,11 @@ fn with_ssl_ctx_cache<R>(
 // `to_js(self)` impl does would invalidate that link).
 use crate::generated_classes::js_Listener;
 
+/// `HotMapEntry.tag` discriminant for `Listener`. Must not collide with
+/// `crate::server::AnyServerTag` (0..=3) — those are the `Bun.serve` server
+/// variants sharing the same hot-reload registry.
+const HOT_MAP_TAG_LISTENER: u8 = 4;
+
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut Listener` — `&mut T` auto-derefs to `&T`
@@ -93,6 +98,11 @@ pub struct Listener {
     /// Reference to this listener's JS wrapper. Strong while it is listening or
     /// has connections, downgraded to weak once idle so GC can reclaim it.
     pub this_value: JsCell<JsRef>,
+    /// `--hot` registry key. Non-empty iff this listener is registered in
+    /// `VirtualMachine::hot_map()`; cleared on [`do_stop`](Self::do_stop) so a
+    /// subsequent `Bun.listen` on the same address re-binds instead of
+    /// reusing a stopped listener.
+    pub hot_id: JsCell<Box<[u8]>>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -190,6 +200,70 @@ impl Listener {
         let ssl_enabled = socket_config.ssl.is_some();
         let socket_flags = socket_config.socket_flags();
 
+        // `--hot` reuse: if a previous evaluation of the entry module already
+        // has a listener bound to this address, swap its handlers in place
+        // and return the existing JS wrapper instead of re-binding (which
+        // would fail EADDRINUSE). Matches what `Bun.serve` does via
+        // `ServerConfig::compute_id`/`on_reload_from_zig`. `id: null`/`""`
+        // opts out (same as `Bun.serve`). User-supplied ids are namespaced
+        // with `[listen]-` so they can't collide with `Bun.serve`'s entries
+        // in the shared `HotMap` — a listen and a serve can never reuse
+        // each other (different tags), so sharing a key only causes
+        // whichever registers second to go untracked.
+        let hot_id: Box<[u8]> = match opts.get(global, "id")? {
+            None => compute_hot_id(socket_config.hostname_or_unix.slice(), port, ssl_enabled),
+            Some(id) if id.is_null() => Box::default(),
+            Some(id) => {
+                let slice = id.to_slice(global)?;
+                let user = slice.slice();
+                if user.is_empty() {
+                    Box::default()
+                } else {
+                    let mut buf = Vec::with_capacity(user.len() + 9);
+                    buf.extend_from_slice(b"[listen]-");
+                    buf.extend_from_slice(user);
+                    buf.into_boxed_slice()
+                }
+            }
+        };
+        if !hot_id.is_empty() {
+            if let Some(hot) = global.bun_vm().as_mut().hot_map() {
+                if let Some(entry) = hot.get_entry(&hot_id) {
+                    if entry.tag == HOT_MAP_TAG_LISTENER {
+                        // SAFETY: tag matched; ptr was inserted below as
+                        // `*mut Listener` and is removed in `do_stop`/`deinit`
+                        // before the allocation is freed, so it is live here.
+                        let existing: &Listener = unsafe { &*entry.ptr.cast::<Listener>() };
+                        let this_ref = existing.this_value.get();
+                        if this_ref.is_strong() {
+                            if let Some(this_value) = this_ref.try_get() {
+                                // Write the new callbacks into the existing
+                                // listener's shared cell so every accepted
+                                // socket picks them up in place — same path as
+                                // `listener.reload()`.
+                                existing
+                                    .handlers
+                                    .copy_callbacks_from(global, &socket_config.handlers);
+                                let default_data = socket_config.default_data;
+                                existing.strong_data.with_mut(|s| {
+                                    if default_data.is_empty() {
+                                        s.deinit();
+                                    } else {
+                                        s.set(global, default_data);
+                                    }
+                                });
+                                return Ok(this_value);
+                            }
+                        }
+                        // Weak (prev listener was `unref()`d) or Finalized:
+                        // a Weak JSValue may be GC-dead, so close the old
+                        // socket and fall through to a fresh bind instead.
+                        Listener::do_stop(existing, false);
+                    }
+                }
+            }
+        }
+
         #[cfg(windows)]
         if port.is_none() {
             // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
@@ -235,6 +309,7 @@ impl Listener {
                     secure_ctx: None,
                     strong_data: JsCell::new(Strong::empty()),
                     this_value: JsCell::new(JsRef::empty()),
+                    hot_id: JsCell::new(Box::default()),
                 }));
                 // SAFETY: just allocated, non-null, exclusive
                 let this_ref = unsafe { &mut *this };
@@ -284,6 +359,7 @@ impl Listener {
                     .this_value
                     .with_mut(|r| r.set_strong(this_value, global));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+                Listener::register_for_hot_reload(this, hot_id);
                 return Ok(this_value);
             }
         }
@@ -320,6 +396,7 @@ impl Listener {
             secure_ctx: None,
             strong_data: JsCell::new(Strong::empty()),
             this_value: JsCell::new(JsRef::empty()),
+            hot_id: JsCell::new(Box::default()),
         }));
         // SAFETY: just allocated, non-null, exclusive
         let this_ref = unsafe { &mut *this };
@@ -534,6 +611,18 @@ impl Listener {
             .this_value
             .with_mut(|r| r.set_strong(this_value, global));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+
+        // Register for `--hot` reuse and `--watch` fd cleanup (mirrors
+        // `NewServer::on_listen` in `runtime/server/mod.rs`).
+        Listener::register_for_hot_reload(this, hot_id);
+        if !ssl_enabled {
+            // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+            let fd = bun_opaque::opaque_deref_mut(listen_socket).fd();
+            global
+                .bun_vm()
+                .as_mut()
+                .add_listening_socket_for_watch_mode(fd);
+        }
 
         Ok(this_value)
     }
@@ -757,13 +846,23 @@ impl Listener {
     }
 
     fn do_stop(this: &Self, force_close: bool) {
+        Self::unregister_for_hot_reload(this);
         if matches!(this.listener.get(), ListenerType::None) {
             return;
         }
         let listener = this.listener.replace(ListenerType::None);
 
-        if matches!(listener, ListenerType::Uws(_)) {
+        if let ListenerType::Uws(socket) = listener {
             Self::unlink_unix_socket_path(this);
+            if !this.ssl {
+                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                let fd = bun_opaque::opaque_deref_mut(socket).fd();
+                this.handlers
+                    .global_object
+                    .bun_vm()
+                    .as_mut()
+                    .remove_listening_socket_for_watch_mode(fd);
+            }
         }
 
         if this.handlers.active_connections.get() == 0 {
@@ -798,6 +897,19 @@ impl Listener {
         match listener {
             ListenerType::Uws(socket) => {
                 Self::unlink_unix_socket_path(&self);
+                if !self.ssl {
+                    // Mirror `do_stop`: drop the `--watch` registration
+                    // before closing so a later `--watch` restart doesn't
+                    // SO_LINGER-close whatever unrelated fd the OS reused
+                    // this number for.
+                    // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                    let fd = bun_opaque::opaque_deref_mut(socket).fd();
+                    self.handlers
+                        .global_object
+                        .bun_vm()
+                        .as_mut()
+                        .remove_listening_socket_for_watch_mode(fd);
+                }
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(socket).close();
             }
@@ -818,6 +930,49 @@ impl Listener {
         Self::deinit(Box::into_raw(self));
     }
 
+    /// Registers `this` in `VirtualMachine::hot_map()` under `hot_id` so a
+    /// subsequent `Bun.listen` call with the same address (after a `--hot`
+    /// re-evaluation of the entry module) reuses this listener instead of
+    /// re-binding. No-op outside `--hot` (`hot_map()` returns `None`).
+    fn register_for_hot_reload(this: *mut Self, hot_id: Box<[u8]>) {
+        if hot_id.is_empty() {
+            return;
+        }
+        // SAFETY: `this` is the freshly-allocated Listener owned by the JS
+        // wrapper; single JS thread, no aliasing `&mut` outstanding.
+        let this_ref = unsafe { &*this };
+        let vm = this_ref.handlers.global_object.bun_vm().as_mut();
+        let Some(hot) = vm.hot_map() else { return };
+        // `insert_raw` panics on a duplicate key. The lookup in `listen()`
+        // either returns early (reusable same-tag entry) or `do_stop`s the
+        // stale one (unref'd listener), and listener keys are namespaced
+        // (`[tcp]-`/`[tls]-`/`[listen]-`) so `Bun.serve` can't hold one.
+        // This check is belt-and-suspenders in case a caller somehow
+        // constructs a colliding key — skip registration rather than panic.
+        if hot.get_entry(&hot_id).is_some() {
+            return;
+        }
+        hot.insert_raw(
+            &hot_id,
+            bun_jsc::rare_data::HotMapEntry {
+                tag: HOT_MAP_TAG_LISTENER,
+                ptr: this.cast::<()>(),
+            },
+        );
+        this_ref.hot_id.set(hot_id);
+    }
+
+    fn unregister_for_hot_reload(this: &Self) {
+        let hot_id = this.hot_id.with_mut(core::mem::take);
+        if hot_id.is_empty() {
+            return;
+        }
+        let vm = this.handlers.global_object.bun_vm().as_mut();
+        if let Some(hot) = vm.hot_map() {
+            hot.remove(&hot_id);
+        }
+    }
+
     /// Match Node.js/libuv: unlink the unix socket file before closing the listening fd.
     /// Unlinking after close would race with another process creating a socket at the same path.
     fn unlink_unix_socket_path(this: &Self) {
@@ -836,6 +991,10 @@ impl Listener {
         log!("deinit");
         // SAFETY: `this` is a Box<Listener> leaked via into_raw; sole owner here
         let this_ref = unsafe { &mut *this };
+        // Normally cleared in `do_stop`, but `finalize()` can reach `deinit`
+        // without going through `do_stop` (e.g. GC after `unref()`), so make
+        // sure no hot-map entry is left pointing at freed memory.
+        Self::unregister_for_hot_reload(this_ref);
         this_ref.this_value.with_mut(|r| r.finalize());
         this_ref.strong_data.with_mut(|s| s.deinit());
         this_ref.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
@@ -1557,6 +1716,31 @@ pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> 
         return Listener::add_server_name(this, global, arguments.ptr[1], arguments.ptr[2]);
     }
     Err(global.throw(format_args!("Expected a Listener instance")))
+}
+
+/// `--hot` registry key for a `Bun.listen` call. Uses the *requested* address
+/// (host/port or unix path) so repeated evaluations of the same source under
+/// `--hot` produce the same key even when `port: 0` resolves to a random
+/// port. The `[tcp]`/`[tls]` prefix keeps these disjoint from `Bun.serve`'s
+/// `[http]-...` keys in the shared `HotMap` (see `ServerConfig::compute_id`).
+fn compute_hot_id(hostname_or_unix: &[u8], port: Option<u16>, ssl: bool) -> Box<[u8]> {
+    use std::io::Write as _;
+    // Callers that pass an fd (connect path) or an empty address would
+    // produce a non-unique key; skip hot-reload reuse for those.
+    if hostname_or_unix.is_empty() && port.is_none() {
+        return Box::default();
+    }
+    let mut buf: Vec<u8> = Vec::with_capacity(hostname_or_unix.len() + 24);
+    let _ = buf.write_all(if ssl { b"[tls]-" } else { b"[tcp]-" });
+    match port {
+        Some(p) => {
+            let _ = write!(&mut buf, "tcp:{}:{}", bstr::BStr::new(hostname_or_unix), p);
+        }
+        None => {
+            let _ = write!(&mut buf, "unix:{}", bstr::BStr::new(hostname_or_unix));
+        }
+    }
+    buf.into_boxed_slice()
 }
 
 #[cfg(windows)]

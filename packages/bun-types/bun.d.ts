@@ -6425,6 +6425,18 @@ declare module "bun" {
      * @default false
      */
     allowHalfOpen?: boolean;
+    /**
+     * Uniquely identify this listener for hot reloading.
+     *
+     * When Bun is started with the `--hot` flag, `Bun.listen()` calls that
+     * resolve to the same `id` reuse the existing listening socket (swapping
+     * handlers in place) instead of re-binding, which would fail with
+     * `EADDRINUSE`. If not provided, an id is derived from `hostname`,
+     * `port`, and `tls`. Pass `null` to opt out of hot-reload reuse.
+     *
+     * When Bun is not started with `--hot`, this value is currently unused.
+     */
+    id?: string | null;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
@@ -6468,6 +6480,21 @@ declare module "bun" {
     tls?: TLSOptions | boolean;
   }
 
+  interface UnixSocketListenOptions<Data = undefined> extends UnixSocketOptions<Data> {
+    /**
+     * Uniquely identify this listener for hot reloading.
+     *
+     * When Bun is started with the `--hot` flag, `Bun.listen()` calls that
+     * resolve to the same `id` reuse the existing listening socket (swapping
+     * handlers in place) instead of re-binding. If not provided, an id is
+     * derived from `unix` and `tls`. Pass `null` to opt out of hot-reload
+     * reuse.
+     *
+     * When Bun is not started with `--hot`, this value is currently unused.
+     */
+    id?: string | null;
+  }
+
   interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
     /**
      * TLS configuration with which to create the socket
@@ -6503,7 +6530,7 @@ declare module "bun" {
    *
    * @category HTTP & Networking
    */
-  function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
+  function listen<Data = undefined>(options: UnixSocketListenOptions<Data>): UnixSocketListener<Data>;
 
   /**
    * @category HTTP & Networking

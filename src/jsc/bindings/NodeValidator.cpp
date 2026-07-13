@@ -297,6 +297,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalO
             if (c >= 0x2029 && c <= 0x2029) return true;
             if (c >= 0x202F && c <= 0x202F) return true;
             if (c >= 0x205F && c <= 0x205F) return true;
+            if (c >= 0x3000 && c <= 0x3000) return true;
 
             // LineTerminator ::
             if (c == 0x000A) return true; // <LF>

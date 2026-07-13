@@ -471,7 +471,7 @@ describe("net.createServer events", () => {
     );
   });
 
-  it.each(["", " ", "   ", "\t"])(
+  it.each(["", " ", "   ", "\t", "\u3000"])(
     "should throw ERR_SOCKET_BAD_PORT synchronously for listen(%j) instead of binding an ephemeral TCP port",
     port => {
       const server = createServer();

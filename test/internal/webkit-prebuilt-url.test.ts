@@ -57,18 +57,22 @@ function prebuiltUrlOf(cfg: Config): string {
 }
 
 describe("WebKit prebuilt URL", () => {
+  // Mirrors prebuiltUrl(): 40-hex shas get the autobuild- prefix, tags pass
+  // through, so these assertions hold for both WEBKIT_VERSION forms.
+  const defaultTag = WEBKIT_VERSION.startsWith("autobuild-") ? WEBKIT_VERSION : `autobuild-${WEBKIT_VERSION}`;
+
   test("default webkitVersion is used as the release tag", () => {
     const cfg = resolveLinuxRelease();
     expect(cfg.webkitVersion).toBe(WEBKIT_VERSION);
     expect(prebuiltUrlOf(cfg)).toBe(
-      `https://github.com/oven-sh/WebKit/releases/download/${WEBKIT_VERSION}/bun-webkit-linux-amd64.tar.gz`,
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64.tar.gz`,
     );
   });
 
   test("lto picks the -lto artifact from the same release tag", () => {
     const cfg = resolveLinuxRelease({ lto: true });
     expect(prebuiltUrlOf(cfg)).toBe(
-      `https://github.com/oven-sh/WebKit/releases/download/${WEBKIT_VERSION}/bun-webkit-linux-amd64-lto.tar.gz`,
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-lto.tar.gz`,
     );
   });
 
@@ -78,7 +82,7 @@ describe("WebKit prebuilt URL", () => {
       mockToolchain(),
     );
     expect(prebuiltUrlOf(cfg)).toBe(
-      `https://github.com/oven-sh/WebKit/releases/download/${WEBKIT_VERSION}/bun-webkit-linux-amd64-debug.tar.gz`,
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-debug.tar.gz`,
     );
   });
 

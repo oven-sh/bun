@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, joinP, tempDir, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -159,6 +159,59 @@ process.send("regular message");
   });
   const { stdout } = bunRun(joinP(dir, "parent.ts"), bunEnv);
   expect(stdout).toContain("P received regular message");
+});
+
+test("worker receives EADDRINUSE via server 'error' when the primary's shared bind fails", async () => {
+  // When a cluster worker calls listen() on a port already held outside the
+  // cluster, the primary's RoundRobinHandle bind fails. Node delivers that
+  // failure to the worker's server as an 'error' event shaped like
+  // ExceptionWithHostPort({ code: 'EADDRINUSE', syscall: 'bind', errno < 0 }).
+  using dir = tempDir("cluster-bind-error", {
+    "index.mjs": `
+      import cluster from "node:cluster";
+      import net from "node:net";
+
+      if (cluster.isPrimary) {
+        const blocker = net.createServer(() => {});
+        blocker.listen(0, "127.0.0.1", () => {
+          const port = blocker.address().port;
+          const w = cluster.fork({ REPRO_PORT: String(port) });
+          let saw = null;
+          w.on("message", m => { if (m && m.err) saw = m.err; });
+          w.on("exit", (code, signal) => {
+            console.log(JSON.stringify({ saw, exit: [code, signal] }));
+            blocker.close();
+            process.exit(saw && saw.code === "EADDRINUSE" && code === 0 ? 0 : 1);
+          });
+        });
+      } else {
+        const srv = net.createServer(() => {});
+        srv.on("error", e => {
+          process.send({ err: { code: e.code, syscall: e.syscall, errno: e.errno } }, () => process.exit(0));
+        });
+        srv.on("listening", () => {
+          process.send({ err: { code: "UNEXPECTED_LISTENING" } }, () => process.exit(1));
+        });
+        srv.listen(Number(process.env.REPRO_PORT), "127.0.0.1");
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const out = JSON.parse(stdout.trim());
+  expect({ stderr: stderr.trim(), ...out }).toEqual({
+    stderr: "",
+    saw: { code: "EADDRINUSE", syscall: "bind", errno: process.binding("uv").UV_EADDRINUSE },
+    exit: [0, null],
+  });
+  expect(exitCode).toBe(0);
 });
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {

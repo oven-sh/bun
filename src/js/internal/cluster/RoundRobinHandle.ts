@@ -6,6 +6,7 @@ let net;
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 
 const ArrayIsArray = Array.isArray;
+const uv = process.binding("uv");
 
 const UV_TCP_IPV6ONLY = 1;
 const assert_fail = () => {
@@ -75,7 +76,10 @@ export default class RoundRobinHandle {
     // Still busy binding.
     this.server.once("listening", done);
     this.server.once("error", err => {
-      send(err.errno, null);
+      // Bun's native listen error carries the positive OS errno; map it to the
+      // negative libuv value the worker feeds into ExceptionWithHostPort.
+      const errno = (err.code && uv["UV_" + err.code]) || (err.errno > 0 ? -err.errno : err.errno);
+      send(errno, null);
     });
   }
 

@@ -3,27 +3,14 @@
 
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
-#include <wtf/MonotonicTime.h>
-#include <wtf/Seconds.h>
 
 #if USE(MIMALLOC)
 #include <bmalloc/mimalloc.h>
-// bmalloc's vendored mimalloc.h predates these; bun links oven-sh/mimalloc,
-// which defines them.
-extern "C" void mi_purge_holes(void);
-typedef struct {
-    size_t purged_bytes, purged_blocks, purged_bytes_total;
-    size_t discard_calls, reuse_calls, pages_freed;
-    size_t ineligible_pages, ineligible_bytes, ineligible_free_bytes;
-} Bun__mi_purge_holes_stats;
-extern "C" void mi_purge_holes_stats_get(Bun__mi_purge_holes_stats*);
+// bmalloc's vendored mimalloc.h predates this; bun links oven-sh/mimalloc.
+extern "C" void mi_on_thread_idle(void);
 #endif
 
 extern "C" int Bun__defaultRemainingRunsUntilSkipReleaseAccess;
-
-// How often the idle hole-purge sweep may run, in milliseconds. Tunable so the
-// throughput-vs-idle-memory tradeoff can be measured rather than guessed.
-extern "C" int Bun__mimallocPurgeHolesIntervalMs;
 
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
 {
@@ -85,30 +72,12 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             vm->didEnterVM = false;
 
 #if USE(MIMALLOC)
-            // Process this thread's retired mimalloc pages so freed memory
-            // returns promptly. Shares the release-access throttle above so
+            // Collect this thread's retired pages, discard the free blocks inside
+            // still-used pages (a page is only returned to the arena once every
+            // block in it is free, so one survivor keeps it dirty), and drain the
+            // arena purge queue. Shares the release-access throttle above so
             // steady-idle parks stay free of per-park work.
-            mi_theap_collect(mi_theap_get_default(), /* force */ false);
-
-            // mi_purge_holes() discards free-block holes inside still-used pages
-            // but walks every page queue plus abandoned pages (far costlier than
-            // the collect above); rate-limit so busy loops keep their throughput.
-            static thread_local MonotonicTime lastPurgeHoles;
-            const auto now = MonotonicTime::now();
-            if ((now - lastPurgeHoles) >= Seconds::fromMilliseconds(Bun__mimallocPurgeHolesIntervalMs)) {
-                lastPurgeHoles = now;
-                mi_purge_holes();
-
-                static const bool logHoleStats = getenv("BUN_MIMALLOC_HOLE_STATS") != nullptr;
-                if (logHoleStats) {
-                    Bun__mi_purge_holes_stats s;
-                    mi_purge_holes_stats_get(&s);
-                    WTFLogAlways("[holes] discarded=%zuMB blocks=%zu total=%zuMB discards=%zu reuses=%zu pagesFreed=%zu | ineligible: pages=%zu bytes=%zuMB free=%zuMB",
-                        s.purged_bytes >> 20, s.purged_blocks, s.purged_bytes_total >> 20,
-                        s.discard_calls, s.reuse_calls, s.pages_freed,
-                        s.ineligible_pages, s.ineligible_bytes >> 20, s.ineligible_free_bytes >> 20);
-                }
-            }
+            mi_on_thread_idle();
 #endif
         }
     }

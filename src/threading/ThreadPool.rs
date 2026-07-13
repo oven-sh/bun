@@ -901,6 +901,11 @@ impl ThreadPool {
                 if stats_enabled() {
                     self.stats.sleeps.fetch_add(1, Ordering::Relaxed);
                 }
+
+                // This worker is about to park. Only the owning thread may sweep its own
+                // mimalloc heaps, so this is the one place its freed memory can be returned.
+                bun_alloc::mimalloc::mi_on_thread_idle();
+
                 self.idle_event.wait();
                 sync = self.sync.load(Ordering::Relaxed);
             }

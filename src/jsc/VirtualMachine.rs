@@ -41,13 +41,6 @@ pub static isBunTest: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 pub(crate) static Bun__defaultRemainingRunsUntilSkipReleaseAccess: core::sync::atomic::AtomicI32 =
     core::sync::atomic::AtomicI32::new(10);
 
-/// Minimum interval between idle mimalloc hole-purge sweeps. The sweep walks
-/// every page queue plus the abandoned pages, so running it on each event-loop
-/// park costs throughput on a busy loop.
-#[unsafe(no_mangle)]
-pub(crate) static Bun__mimallocPurgeHolesIntervalMs: core::sync::atomic::AtomicI32 =
-    core::sync::atomic::AtomicI32::new(100);
-
 // TODO: evaluate if this has any measurable performance impact.
 pub(crate) static SYNTHETIC_ALLOCATION_LIMIT: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(u32::MAX as usize);

@@ -120,15 +120,6 @@ impl GarbageCollectionController {
             }
         }
 
-        if let Some(val) = env.and_then(|e| e.get(b"BUN_MIMALLOC_PURGE_HOLES_INTERVAL_MS")) {
-            if let Some(parsed) = bun_core::fmt::parse_decimal::<c_int>(val) {
-                if parsed >= 0 {
-                    crate::virtual_machine::Bun__mimallocPurgeHolesIntervalMs
-                        .store(parsed, core::sync::atomic::Ordering::Relaxed);
-                }
-            }
-        }
-
         self.disabled = env.is_some_and(|e| e.has(b"BUN_GC_TIMER_DISABLE"));
     }
 

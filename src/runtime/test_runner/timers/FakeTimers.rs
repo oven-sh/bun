@@ -339,7 +339,7 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) {
     let Ok(Some(set_timeout_fn)) = global_this.get(global, "setTimeout") else {
         return;
     };
-    if !set_timeout_fn.is_cell() {
+    if !set_timeout_fn.is_object() {
         return;
     }
     // testing-library/react checks Object.hasOwnProperty.call(setTimeout, 'clock')

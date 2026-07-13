@@ -471,6 +471,29 @@ describe("net.createServer events", () => {
     );
   });
 
+  it.each(["", " ", "   ", "\t"])(
+    "should throw ERR_SOCKET_BAD_PORT synchronously for listen(%j) instead of binding an ephemeral TCP port",
+    port => {
+      const server = createServer();
+      try {
+        let err: any;
+        try {
+          server.listen(port, () => {});
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeDefined();
+        expect({ code: err.code, message: err.message }).toEqual({
+          code: "ERR_SOCKET_BAD_PORT",
+          message: expect.stringContaining("options.port"),
+        });
+        expect(server.listening).toBe(false);
+      } finally {
+        if (server.listening) server.close();
+      }
+    },
+  );
+
   it("should call abort with signal", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 

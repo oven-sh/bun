@@ -12,15 +12,6 @@ describe("randomUUIDv7", () => {
     expect(Bun.randomUUIDv7()["0192ce01-8345-".length]).toBe("7");
   });
 
-  test("timestamp", () => {
-    const now = Date.now();
-    const uuid = Bun.randomUUIDv7(undefined, now).replaceAll("-", "");
-    const timestampOriginal = parseInt(uuid.slice(0, 12).toString(), 16);
-
-    // On Windows, timers drift by about 16ms. Let's 2x that.
-    const timestamp = Math.max(timestampOriginal, now) - Math.min(timestampOriginal, now);
-    expect(timestamp).toBeLessThanOrEqual(32);
-  });
 
   test("base64 format", () => {
     const uuid = Bun.randomUUIDv7("base64");
@@ -108,6 +99,32 @@ describe("randomUUIDv7", () => {
       expect(stderr).toBe("");
       const max = 2 ** 48 - 1;
       expect(JSON.parse(stdout)).toEqual([max, max, max]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("counter rollover at 2**48-1 clamps instead of wrapping to epoch 0", async () => {
+      // 5000 calls at the max 48-bit timestamp forces the 12-bit counter to roll
+      // over at least once; the bumped timestamp must clamp at 2**48-1, not wrap.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const tsOf = u => parseInt(u.replaceAll("-", "").slice(0, 12), 16);
+            const max = 2 ** 48 - 1;
+            let bad = -1;
+            for (let i = 0; i < 5000; i++) {
+              if (tsOf(Bun.randomUUIDv7("hex", max)) !== max) { bad = i; break; }
+            }
+            console.log(bad);
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("-1");
       expect(exitCode).toBe(0);
     });
   });

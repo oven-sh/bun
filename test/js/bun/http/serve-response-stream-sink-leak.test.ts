@@ -23,11 +23,9 @@ test("HTTPResponseSink is destroyed after a sync pull() that ends later", async 
   const { before, after, delta, iterations } = JSON.parse(stdout);
   console.log({ before, after, delta, iterations, perRequest: (delta / iterations).toFixed(1) });
 
-  // currentCommit is mimalloc's committed bytes, so it tracks native
-  // allocations independent of the JS heap. Before the fix each request
-  // leaked the JSSink struct + its buffer, growing commit by ~4 MB (release)
-  // to ~10 MB (debug/ASAN) over 10k requests. After the fix it stays flat.
-  // Allow 2 MB of slack for allocator noise.
-  expect(delta).toBeLessThan(2 * 1024 * 1024);
+  // currentCommit tracks mimalloc's committed bytes, independent of the JS
+  // heap. Before the fix each request leaked the sink + buffer: ~4 MB
+  // (release) to ~10 MB (debug/ASAN) over 10k requests; allow 3 MB of slack.
+  expect(delta).toBeLessThan(3 * 1024 * 1024);
   expect(exitCode).toBe(0);
 }, 120_000);

@@ -5,7 +5,6 @@
 #include <JavaScriptCore/Heap.h>
 
 #if USE(MIMALLOC)
-#include <bmalloc/mimalloc.h>
 // bmalloc's vendored mimalloc.h predates this; bun links oven-sh/mimalloc.
 extern "C" void mi_on_thread_idle(void);
 #endif
@@ -72,11 +71,9 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             vm->didEnterVM = false;
 
 #if USE(MIMALLOC)
-            // Collect this thread's retired pages, discard the free blocks inside
-            // still-used pages (a page is only returned to the arena once every
-            // block in it is free, so one survivor keeps it dirty), and drain the
-            // arena purge queue. Shares the release-access throttle above so
-            // steady-idle parks stay free of per-park work.
+            // Collect retired pages, discard free-block holes in still-used pages,
+            // and drain the arena purge queue. Shares the release-access throttle
+            // above so steady-idle parks stay free of per-park work.
             mi_on_thread_idle();
 #endif
         }

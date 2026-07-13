@@ -37,6 +37,19 @@ async function once() {
   await res.arrayBuffer();
 }
 
+// Commit floor after the idle sweep settles: each sleep parks the event loop
+// (running the sweep), and the min over a few rounds irons out purge-timing
+// jitter. Leaked blocks keep pages committed, so a leak raises the floor.
+async function settledCommit() {
+  let min = Infinity;
+  for (let i = 0; i < 5; i++) {
+    Bun.gc(true);
+    await Bun.sleep(10);
+    min = Math.min(min, memoryUsage().currentCommit);
+  }
+  return min;
+}
+
 // Warm up with the SAME workload as the measured run: JIT, caches, pools,
 // and (on builds where JSC shares mimalloc) the JS heap all reach steady
 // state, so the measured delta isolates the per-request leak.
@@ -45,19 +58,13 @@ for (let i = 0; i < iterations; i++) {
   await once();
   if (i % 1000 === 0) Bun.gc(true);
 }
-Bun.gc(true);
-await Bun.sleep(10);
-Bun.gc(true);
-const before = memoryUsage().currentCommit;
+const before = await settledCommit();
 
 for (let i = 0; i < iterations; i++) {
   await once();
   if (i % 1000 === 0) Bun.gc(true);
 }
-Bun.gc(true);
-await Bun.sleep(10);
-Bun.gc(true);
-const after = memoryUsage().currentCommit;
+const after = await settledCommit();
 
 server.stop(true);
 

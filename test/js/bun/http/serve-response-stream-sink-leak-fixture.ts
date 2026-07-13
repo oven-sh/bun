@@ -35,11 +35,9 @@ async function once() {
   await res.arrayBuffer();
 }
 
-// RSS, not currentCommit: mimalloc's committed counter ratchets under hole purging
-// (a discarded hole stays "committed"), so it is not a live-memory metric here. A
-// leaked sink keeps its block -- and therefore its page -- resident, so RSS is.
-// Floor over several settle rounds: the idle sweep is rate-limited (100ms), so the
-// rounds span past it, and the min drops the transient peaks.
+// RSS, not currentCommit (which ratchets under hole purging, a discarded hole
+// stays "committed"); a leaked sink keeps its page resident, so RSS sees it.
+// Floor over rounds spanning the 100ms sweep rate limit drops transient peaks.
 async function settledRss() {
   let min = Infinity;
   for (let i = 0; i < 5; i++) {
@@ -66,10 +64,9 @@ async function round() {
 await round();
 await round();
 
-// Per-round deltas, then the median: a leak is linear (every round pays it), while
-// what is left of the warmup tail only inflates the first of them and a round in which
-// the allocator hands pages back can dip negative. The median is robust to both ends;
-// a min would be satisfied by a single dipping round even while the sink leaks.
+// Median of per-round deltas: a leak is linear (every round pays it), the warmup
+// tail inflates only the first, and a page-return round can dip negative. Median
+// is robust to both ends; a min would pass on one dip even while the sink leaks.
 let prev = await round();
 const deltas: number[] = [];
 for (let r = 0; r < 3; r++) {

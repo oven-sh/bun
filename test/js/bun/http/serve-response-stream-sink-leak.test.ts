@@ -28,11 +28,8 @@ test("HTTPResponseSink is destroyed after a sync pull() that ends later", async 
   const { delta, deltas, iterations } = JSON.parse(stdout);
   console.log({ deltas, iterations, perRequest: (delta / iterations).toFixed(1) });
 
-  // RSS, not mimalloc's currentCommit: a discarded hole stays "committed", so that
-  // counter ratchets under hole purging and is not a live-memory metric. A leaked sink
-  // keeps its block resident, so RSS sees it. `delta` is the median steady-state growth
-  // per 10k requests. Measured on a macOS debug build: 1.0 MB fixed vs 3.5 MB with the
-  // leak reintroduced (~350 B/request; on Linux release the original #29877 leak showed
-  // +4.1 MB RSS while the fixed build was flat).
+  // `delta` is the median RSS growth per 10k requests (settledRss in the fixture
+  // explains RSS over currentCommit). macOS debug: 1.0 MB fixed vs 3.5 MB leaking
+  // (~350 B/req); Linux release: flat fixed vs +4.1 MB on the original #29877 leak.
   expect(delta).toBeLessThan(2 * 1024 * 1024);
 }, 300_000);

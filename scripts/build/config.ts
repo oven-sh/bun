@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlink
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
-import { WEBKIT_MIMALLOC_PREVIEW, WEBKIT_VERSION } from "./deps/webkit.ts";
+import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
 import { clangTargetArch } from "./tools.ts";
@@ -136,10 +136,6 @@ export interface Config {
   logs: boolean;
   /** x64-only: target nehalem (no AVX) instead of haswell. */
   baseline: boolean;
-  /** Use the `-mimalloc` WebKit prebuilt (JSC on mimalloc instead of libpas);
-   * its undefined `mi_*` symbols resolve against bun's own mimalloc dep at
-   * link time. Linux glibc only. */
-  webkitMimalloc: boolean;
   canary: boolean;
   /** MinSizeRel → optimize for size. */
   smol: boolean;
@@ -340,7 +336,6 @@ export interface PartialConfig {
   assertions?: boolean;
   logs?: boolean;
   baseline?: boolean;
-  webkitMimalloc?: boolean;
   canary?: boolean;
   staticSqlite?: boolean;
   staticLibatomic?: boolean;
@@ -762,19 +757,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // -baseline WebKit prebuilt has no -lto variant).
   const baseline = partial.baseline ?? false;
 
-  // WebKit-uses-mimalloc variant: on by default for Linux glibc release so JSC
-  // and bun share one allocator. Gated to the exact combinations oven-sh/WebKit
-  // ships -mimalloc prebuilts for (amd64/arm64 glibc, release + release-lto).
-  const webkitMimalloc =
-    partial.webkitMimalloc ??
-    (linux &&
-      abi === "gnu" &&
-      release &&
-      !asan &&
-      !baseline &&
-      (partial.webkit ?? "prebuilt") === "prebuilt" &&
-      partial.webkitVersion === undefined);
-
   // LTO: default on for CI release non-asan non-assertions builds on Linux
   // and on darwin cross-compiles. Windows is NOT in the default even though
   // the windows x64 cross toolchain fully supports ThinLTO + cross-language
@@ -927,10 +909,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // ─── Validation ───
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
-  assert(
-    !webkitMimalloc || (linux && abi === "gnu" && !asan && !debug && !baseline),
-    "webkitMimalloc=true requires Linux glibc release non-asan non-baseline (only -mimalloc and -mimalloc-lto WebKit prebuilts exist)",
-  );
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
   assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu, musl, or android)");
@@ -1057,11 +1035,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
-  // -mimalloc prebuilts only exist at the oven-sh/WebKit#283 preview head (a
-  // sha so process.versions.webkit stays a commit hash; deps/webkit.ts maps it
-  // to the release tag).
-  const webkitVersion =
-    partial.webkitVersion ?? (webkitMimalloc ? WEBKIT_MIMALLOC_PREVIEW.commit : versionDefaults.webkitVersion);
+  const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
@@ -1156,7 +1130,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     assertions,
     logs,
     baseline,
-    webkitMimalloc,
     canary,
     smol,
     staticSqlite,
@@ -1487,7 +1460,6 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.assertions) features.push("assertions");
   if (cfg.logs) features.push("logs");
   if (cfg.baseline) features.push("baseline");
-  if (cfg.webkitMimalloc) features.push("webkit-mimalloc");
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
   if (cfg.socketFaultInjection !== cfg.asan) {

@@ -7,15 +7,12 @@
 // -lto variants built with ThinLTO (per-module summaries for cross-language
 // importing), and the Windows ICU data table filtered + per-item zstd
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
-export const WEBKIT_VERSION = "c9ad5813fd23bd8b98b0738abc3d037ec716aa92";
+export const WEBKIT_VERSION = "342334e1176e118ac81136baa76ec3b0015efcdf";
 
-/** oven-sh/WebKit#283 preview head, the only release with -mimalloc prebuilts.
- * Tagged by PR rather than commit; drop once the PR merges and WEBKIT_VERSION
- * is bumped to an autobuild carrying the -mimalloc artifacts. */
-export const WEBKIT_MIMALLOC_PREVIEW = {
-  commit: "f625cc549093f75fda66b4e65401f781767bc6c0",
-  tag: "autobuild-preview-pr-283-f625cc54",
-} as const;
+/** Release tag for WEBKIT_VERSION. Normally `autobuild-<sha>`; temporarily a
+ * preview tag until oven-sh/WebKit#283 merges and produces a regular
+ * autobuild. */
+export const WEBKIT_RELEASE_TAG = "autobuild-preview-pr-283-342334e1";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -75,10 +72,6 @@ function prebuiltSuffix(cfg: Config): string {
   // arm64 or macOS. Suffix order matches the release asset names:
   // bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
   if (cfg.baseline && cfg.x64) s += "-baseline";
-  // -mimalloc: JSC compiled against mimalloc instead of libpas. Linux glibc
-  // only (enforced in resolveConfig). Suffix before -lto to match the release
-  // asset names: bun-webkit-linux-amd64-mimalloc-lto.tar.gz
-  if (cfg.webkitMimalloc) s += "-mimalloc";
   if (cfg.debug) s += "-debug";
   else if (cfg.lto) s += "-lto";
   if (cfg.asan) s += "-asan";
@@ -91,8 +84,8 @@ function prebuiltUrl(cfg: Config): string {
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
   const version = cfg.webkitVersion;
   const tag =
-    version === WEBKIT_MIMALLOC_PREVIEW.commit
-      ? WEBKIT_MIMALLOC_PREVIEW.tag
+    version === WEBKIT_VERSION
+      ? WEBKIT_RELEASE_TAG
       : version.startsWith("autobuild-")
         ? version
         : `autobuild-${version}`;
@@ -358,7 +351,6 @@ export const webkit: Dependency = {
       ENABLE_MEDIA_STREAM: "OFF",
       ENABLE_WEB_RTC: "OFF",
       ...(cfg.asan ? { ENABLE_SANITIZERS: "address" } : {}),
-      ...(cfg.webkitMimalloc ? { USE_MIMALLOC: "ON", USE_EXTERNAL_MIMALLOC: "ON" } : {}),
     };
 
     const spec: NestedCmakeBuild = {

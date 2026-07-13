@@ -1,16 +1,19 @@
-/** Build-config regression tests for WebKit -mimalloc prebuilt selection:
- * the Linux glibc release default and its gating, the preview pin's
- * commit-to-tag mapping, and local-mode CMake options. Configure-time only. */
+/** Build-config regression tests for WebKit prebuilt URL computation: the
+ * default WEBKIT_VERSION maps through WEBKIT_RELEASE_TAG (so every lane
+ * fetches from the same release), and --webkit-version overrides still hit
+ * the plain `autobuild-<sha>` tag. Configure-time only. */
 import { describe, expect, test } from "bun:test";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
-import { webkit, WEBKIT_MIMALLOC_PREVIEW, WEBKIT_VERSION } from "../../scripts/build/deps/webkit.ts";
+import { webkit, WEBKIT_RELEASE_TAG, WEBKIT_VERSION } from "../../scripts/build/deps/webkit.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(): Toolchain {
   return {
     cc: "/fake/llvm/bin/clang",
     cxx: "/fake/llvm/bin/clang++",
+    hostCc: undefined,
+    hostCxx: undefined,
     clangVersion: "21.1.8",
     clangResourceDir: "/fake/llvm/lib/clang/21",
     ar: "/fake/llvm/bin/llvm-ar",
@@ -53,80 +56,55 @@ function prebuiltUrlOf(cfg: Config): string {
   return src.url;
 }
 
-describe("webkitMimalloc default and version pin", () => {
-  test("Linux glibc release on the pinned prebuilt defaults on and pins the preview commit", () => {
+describe("WebKit prebuilt URL", () => {
+  test("default webkitVersion maps through WEBKIT_RELEASE_TAG", () => {
     const cfg = resolveLinuxRelease();
-    expect({ webkitMimalloc: cfg.webkitMimalloc, webkitVersion: cfg.webkitVersion }).toEqual({
-      webkitMimalloc: true,
-      webkitVersion: WEBKIT_MIMALLOC_PREVIEW.commit,
-    });
-  });
-
-  test("prebuilt URL maps the preview commit to its PR-tagged release with the -mimalloc suffix", () => {
-    const cfg = resolveLinuxRelease();
+    expect(cfg.webkitVersion).toBe(WEBKIT_VERSION);
     expect(prebuiltUrlOf(cfg)).toBe(
-      `https://github.com/oven-sh/WebKit/releases/download/${WEBKIT_MIMALLOC_PREVIEW.tag}/bun-webkit-linux-amd64-mimalloc.tar.gz`,
+      `https://github.com/oven-sh/WebKit/releases/download/${WEBKIT_RELEASE_TAG}/bun-webkit-linux-amd64.tar.gz`,
     );
   });
 
-  test("lto picks the -mimalloc-lto artifact (suffix order matches the release assets)", () => {
+  test("lto picks the -lto artifact from the same release tag", () => {
     const cfg = resolveLinuxRelease({ lto: true });
-    expect(prebuiltUrlOf(cfg)).toEndWith("/bun-webkit-linux-amd64-mimalloc-lto.tar.gz");
-  });
-
-  test("prebuilt identity covers the -mimalloc suffix so toggling it re-downloads", () => {
-    const src = webkit.source(resolveLinuxRelease());
-    if (src.kind !== "prebuilt") throw new Error("expected prebuilt source");
-    expect(src.identity).toBe(`${WEBKIT_MIMALLOC_PREVIEW.commit}-mimalloc`);
-  });
-
-  test.each([
-    ["asan", { asan: true }],
-    ["baseline", { baseline: true }],
-    ["musl", { abi: "musl" }],
-    ["debug", { buildType: "Debug" }],
-    ["local WebKit", { webkit: "local" }],
-    ["explicit --webkit-version", { webkitVersion: WEBKIT_VERSION }],
-    ["explicit off", { webkitMimalloc: false }],
-  ] as const)("stays off for %s", (_name, partial) => {
-    const cfg = resolveLinuxRelease(partial as PartialConfig);
-    expect(cfg.webkitMimalloc).toBe(false);
-    expect(cfg.webkitVersion).toBe(WEBKIT_VERSION);
-  });
-
-  test("stays off for darwin targets", () => {
-    const cfg = resolveConfig({ os: "darwin", arch: "aarch64", buildType: "Release" }, mockToolchain());
-    expect(cfg.webkitMimalloc).toBe(false);
-    expect(cfg.webkitVersion).toBe(WEBKIT_VERSION);
-  });
-
-  test("default-off combinations request the plain default-version tarball", () => {
-    const cfg = resolveLinuxRelease({ webkitMimalloc: false });
     expect(prebuiltUrlOf(cfg)).toBe(
-      `https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/bun-webkit-linux-amd64.tar.gz`,
+      `https://github.com/oven-sh/WebKit/releases/download/${WEBKIT_RELEASE_TAG}/bun-webkit-linux-amd64-lto.tar.gz`,
     );
   });
 
-  test("explicit on for an unsupported combination fails validation naming the constraint", () => {
-    expect(() => resolveLinuxRelease({ abi: "musl", webkitMimalloc: true })).toThrow(
-      /webkitMimalloc=true requires Linux glibc release non-asan non-baseline/,
+  test("debug picks the -debug artifact from the same release tag", () => {
+    const cfg = resolveConfig(
+      { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan: false },
+      mockToolchain(),
+    );
+    expect(prebuiltUrlOf(cfg)).toBe(
+      `https://github.com/oven-sh/WebKit/releases/download/${WEBKIT_RELEASE_TAG}/bun-webkit-linux-amd64-debug.tar.gz`,
     );
   });
-});
 
-describe("webkitMimalloc local-mode CMake options", () => {
-  test("explicit on forwards USE_MIMALLOC and USE_EXTERNAL_MIMALLOC to the nested cmake", () => {
-    const cfg = resolveLinuxRelease({ webkit: "local", webkitMimalloc: true });
-    const build = webkit.build(cfg);
-    if (build.kind !== "nested-cmake") throw new Error(`expected nested-cmake build, got ${build.kind}`);
-    expect(build.args.USE_MIMALLOC).toBe("ON");
-    expect(build.args.USE_EXTERNAL_MIMALLOC).toBe("ON");
+  test("--webkit-version=<sha> uses the plain autobuild-<sha> tag", () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    const cfg = resolveLinuxRelease({ webkitVersion: sha });
+    expect(prebuiltUrlOf(cfg)).toBe(
+      `https://github.com/oven-sh/WebKit/releases/download/autobuild-${sha}/bun-webkit-linux-amd64.tar.gz`,
+    );
   });
 
-  test("local default stays on libpas (no mimalloc options)", () => {
-    const cfg = resolveLinuxRelease({ webkit: "local" });
-    const build = webkit.build(cfg);
-    if (build.kind !== "nested-cmake") throw new Error(`expected nested-cmake build, got ${build.kind}`);
-    expect(build.args).not.toContainAnyKeys(["USE_MIMALLOC", "USE_EXTERNAL_MIMALLOC"]);
+  test("--webkit-version=autobuild-* is passed through verbatim", () => {
+    const tag = "autobuild-preview-pr-999-deadbeef";
+    const cfg = resolveLinuxRelease({ webkitVersion: tag });
+    expect(prebuiltUrlOf(cfg)).toBe(
+      `https://github.com/oven-sh/WebKit/releases/download/${tag}/bun-webkit-linux-amd64.tar.gz`,
+    );
+  });
+
+  test("WEBKIT_RELEASE_TAG names the WEBKIT_VERSION commit when it is a preview tag", () => {
+    // Once oven-sh/WebKit#283 merges this becomes `autobuild-<WEBKIT_VERSION>`
+    // and the first branch of this test is the one that matches.
+    if (WEBKIT_RELEASE_TAG === `autobuild-${WEBKIT_VERSION}`) {
+      expect(WEBKIT_RELEASE_TAG).toBe(`autobuild-${WEBKIT_VERSION}`);
+    } else {
+      expect(WEBKIT_RELEASE_TAG).toEndWith(WEBKIT_VERSION.slice(0, 8));
+    }
   });
 });

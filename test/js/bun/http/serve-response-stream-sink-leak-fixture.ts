@@ -37,14 +37,14 @@ async function once() {
   await res.arrayBuffer();
 }
 
-// Commit floor after the idle sweep settles: each sleep parks the event loop
-// (running the sweep), and the min over a few rounds irons out purge-timing
-// jitter. Leaked blocks keep pages committed, so a leak raises the floor.
+// Commit floor once the park-time idle sweep has run: the sweep is
+// rate-limited (100ms), so the settle rounds span past that and take the
+// min. Leaked blocks keep pages committed, so a leak raises the floor.
 async function settledCommit() {
   let min = Infinity;
   for (let i = 0; i < 5; i++) {
     Bun.gc(true);
-    await Bun.sleep(10);
+    await Bun.sleep(50);
     min = Math.min(min, memoryUsage().currentCommit);
   }
   return min;

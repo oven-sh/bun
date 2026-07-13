@@ -80,14 +80,9 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             Bun__drainPendingGCHint();
 
 #if USE(MIMALLOC)
-            // Collect retired pages, discard the free-block holes inside still-used
-            // pages, and hand the arena purge to mimalloc's scavenger.
-            //
-            // Rate-limited. The sweep walks every page of every theap of this thread, and a
-            // busy server parks between requests: profiling express showed mi_on_thread_idle
-            // at 26% of the main thread (_mi_page_purge_holes the #4 leaf frame in the whole
-            // process), costing ~25% throughput, and it bought no memory there. At idle, ten
-            // sweeps a second is far more than enough to hand the memory back.
+            // Collect retired pages, punch free-block holes, hand the arena purge to
+            // the scavenger. Rate-limited: a busy server parks between every request,
+            // and unthrottled sweeps cost ~25% of express throughput for no memory gain.
             static thread_local MonotonicTime lastIdleSweep;
             const auto now = MonotonicTime::now();
             if ((now - lastIdleSweep) >= Seconds::fromMilliseconds(Bun__mimallocIdleSweepIntervalMs)) {

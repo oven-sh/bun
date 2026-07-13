@@ -161,9 +161,8 @@ process.send("regular message");
   expect(stdout).toContain("P received regular message");
 });
 
-// On Windows the primary's RoundRobinHandle binds `::` (listenInCluster forwards
-// address=null) which does not collide with the blocker's 127.0.0.1, so the
-// worker falls through to kRealListen instead of the errno reply path under test.
+// Skipped on Windows: Bun's native listen error there carries a WSA errno (10048)
+// that does not negate to a value getSystemErrorName recognises as EADDRINUSE.
 test.skipIf(isWindows)(
   "worker receives EADDRINUSE via server 'error' when the primary's shared bind fails",
   async () => {
@@ -171,6 +170,8 @@ test.skipIf(isWindows)(
     // cluster, the primary's RoundRobinHandle bind fails. Node delivers that
     // failure to the worker's server as an 'error' event shaped like
     // ExceptionWithHostPort({ code: 'EADDRINUSE', syscall: 'bind', errno < 0 }).
+    // The blocker binds the default host so it collides with RoundRobinHandle,
+    // which listenInCluster always asks for with address=null.
     using dir = tempDir("cluster-bind-error", {
       "index.mjs": `
       import cluster from "node:cluster";
@@ -178,7 +179,7 @@ test.skipIf(isWindows)(
 
       if (cluster.isPrimary) {
         const blocker = net.createServer(() => {});
-        blocker.listen(0, "127.0.0.1", () => {
+        blocker.listen(0, () => {
           const port = blocker.address().port;
           const w = cluster.fork({ REPRO_PORT: String(port) });
           let saw = null;
@@ -197,7 +198,7 @@ test.skipIf(isWindows)(
         srv.on("listening", () => {
           process.send({ err: { code: "UNEXPECTED_LISTENING" } }, () => process.exit(1));
         });
-        srv.listen(Number(process.env.REPRO_PORT), "127.0.0.1");
+        srv.listen(Number(process.env.REPRO_PORT));
       }
     `,
     });

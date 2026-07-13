@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, joinP, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -161,7 +161,10 @@ process.send("regular message");
   expect(stdout).toContain("P received regular message");
 });
 
-test("worker receives EADDRINUSE via server 'error' when the primary's shared bind fails", async () => {
+// On Windows the primary's RoundRobinHandle binds `::` (listenInCluster forwards
+// address=null) which does not collide with the blocker's 127.0.0.1, so the
+// worker falls through to kRealListen instead of the errno reply path under test.
+test.skipIf(isWindows)("worker receives EADDRINUSE via server 'error' when the primary's shared bind fails", async () => {
   // When a cluster worker calls listen() on a port already held outside the
   // cluster, the primary's RoundRobinHandle bind fails. Node delivers that
   // failure to the worker's server as an 'error' event shaped like

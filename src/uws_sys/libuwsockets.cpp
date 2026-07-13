@@ -1338,15 +1338,22 @@ extern "C"
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       auto *data = uwsRes->getHttpResponseData();
+      // Once write() ran, the header section is already terminated and body
+      // bytes are on the wire, so header bytes here would land in the middle
+      // of the body and corrupt the stream - only update the state flags in
+      // that case. (HTTP_WROTE_CONTENT_LENGTH_HEADER does not imply the
+      // section is terminated: the file-route HEAD path sets it for a plain
+      // header line and relies on this function for the terminating CRLF.)
+      bool bodyStarted = data->state & uWS::HttpResponseData<true>::HTTP_WRITE_CALLED;
       if (close_connection)
       {
-        if (!(data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE))
+        if (!bodyStarted && !(data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE))
         {
           uwsRes->writeHeader("Connection", "close");
         }
         data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
       }
-      if (!(data->state & uWS::HttpResponseData<true>::HTTP_END_CALLED))
+      if (!bodyStarted && !(data->state & uWS::HttpResponseData<true>::HTTP_END_CALLED))
       {
         uwsRes->AsyncSocket<true>::write("\r\n", 2);
       }
@@ -1358,15 +1365,17 @@ extern "C"
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       auto *data = uwsRes->getHttpResponseData();
+      // See the SSL branch: never write header bytes mid-body.
+      bool bodyStarted = data->state & uWS::HttpResponseData<false>::HTTP_WRITE_CALLED;
       if (close_connection)
       {
-        if (!(data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE))
+        if (!bodyStarted && !(data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE))
         {
           uwsRes->writeHeader("Connection", "close");
         }
         data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE;
       }
-      if (!(data->state & uWS::HttpResponseData<false>::HTTP_END_CALLED))
+      if (!bodyStarted && !(data->state & uWS::HttpResponseData<false>::HTTP_END_CALLED))
       {
         // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent.
         // If not, they may throw a ConnectionError.

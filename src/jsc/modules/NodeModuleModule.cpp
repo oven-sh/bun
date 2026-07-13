@@ -213,6 +213,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBuiltinModule,
     return JSValue::encode(jsBoolean(Bun::isBuiltinModule(moduleStr)));
 }
 
+static constexpr ASCIILiteral nodeDefaultWrapperStart = "(function (exports, require, module, __filename, __dirname) { "_s;
+static constexpr ASCIILiteral nodeDefaultWrapperEnd = "\n});"_s;
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -223,13 +226,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject, JS
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    JSString* prefix = jsString(
-        vm,
-        String(
-            "(function (exports, require, module, __filename, __dirname) { "_s));
-    JSString* suffix = jsString(vm, String("\n});"_s));
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSString* prefix;
+    JSString* suffix;
+    if (zigGlobalObject->hasOverriddenModuleWrapper) [[unlikely]] {
+        prefix = jsString(vm, zigGlobalObject->m_moduleWrapperStart);
+        suffix = jsString(vm, zigGlobalObject->m_moduleWrapperEnd);
+    } else {
+        prefix = jsString(vm, String(nodeDefaultWrapperStart));
+        suffix = jsString(vm, String(nodeDefaultWrapperEnd));
+    }
 
-    return JSValue::encode(jsString(globalObject, prefix, code, suffix));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(globalObject, prefix, code, suffix)));
 }
 extern "C" void Bun__Node__Path_joinWTF(BunString* lhs, const char* rhs,
     size_t len, BunString* result);
@@ -719,6 +727,7 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
 {
     // This does not cache anything because it is assumed nobody reads it more than once.
     VM& vm = global->vm();
+    auto* zigGlobalObject = defaultGlobalObject(global);
     JSC::JSFunction* cb = JSC::JSFunction::create(vm, global, WebCore::commonJSGetWrapperArrayProxyCodeGenerator(vm), global);
     JSC::CallData callData = JSC::getCallData(cb);
 
@@ -727,6 +736,13 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
         vm, global, 1, "onMutate"_s,
         jsFunctionSetCJSWrapperItem, JSC::ImplementationVisibility::Public,
         JSC::NoIntrinsic));
+    if (zigGlobalObject->hasOverriddenModuleWrapper) [[unlikely]] {
+        args.append(jsString(vm, zigGlobalObject->m_moduleWrapperStart));
+        args.append(jsString(vm, zigGlobalObject->m_moduleWrapperEnd));
+    } else {
+        args.append(jsString(vm, String(nodeDefaultWrapperStart)));
+        args.append(jsString(vm, String(nodeDefaultWrapperEnd)));
+    }
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = JSC::profiledCall(global, JSC::ProfilingReason::API, cb, callData, JSC::jsUndefined(), args, returnedException);

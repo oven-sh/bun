@@ -210,7 +210,8 @@ test.skipIf(isWindows)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const out = JSON.parse(stdout.trim());
+    const trimmed = stdout.trim();
+    const out = trimmed ? JSON.parse(trimmed) : {};
     expect({ stderr: stderr.trim(), ...out }).toEqual({
       stderr: "",
       saw: { code: "EADDRINUSE", syscall: "bind", errno: process.binding("uv").UV_EADDRINUSE },

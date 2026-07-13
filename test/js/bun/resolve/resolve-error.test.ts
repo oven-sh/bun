@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { createRequire } from "node:module";
 
 describe("ResolveMessage", () => {
   it("position object does not segfault", async () => {
@@ -45,6 +46,52 @@ describe("ResolveMessage", () => {
     } catch (e: any) {
       expect(e.code).toBe("MODULE_NOT_FOUND");
     }
+  });
+
+  // resolve_maybe_needs_trailing_slash's ENAMETOOLONG guard (at MAX_PATH_BYTES * 1.5)
+  // used to build a ResolveMessage without .resolve metadata, so one byte over
+  // the threshold dropped .code/.specifier/.importKind entirely.
+  it.each([6144, 6145, 60000])("has code/specifier/importKind for long specifier (len=%d)", async len => {
+    const cjsRequire = createRequire(import.meta.url);
+    const builtin = "node:x" + Buffer.alloc(len - 6, "a").toString();
+    const relative = "./x" + Buffer.alloc(len - 3, "a").toString();
+
+    let e: any;
+    try {
+      cjsRequire(builtin);
+      expect.unreachable();
+    } catch (err) {
+      e = err;
+    }
+    expect({ code: e.code, specifier: e.specifier, importKind: e.importKind }).toEqual({
+      code: "ERR_UNKNOWN_BUILTIN_MODULE",
+      specifier: builtin,
+      importKind: "require-call",
+    });
+
+    try {
+      cjsRequire(relative);
+      expect.unreachable();
+    } catch (err) {
+      e = err;
+    }
+    expect({ code: e.code, specifierLen: e.specifier.length, importKind: e.importKind }).toEqual({
+      code: "MODULE_NOT_FOUND",
+      specifierLen: len,
+      importKind: "require-call",
+    });
+
+    try {
+      await import(builtin);
+      expect.unreachable();
+    } catch (err) {
+      e = err;
+    }
+    expect({ code: e.code, specifier: e.specifier, importKind: e.importKind }).toEqual({
+      code: "ERR_UNKNOWN_BUILTIN_MODULE",
+      specifier: builtin,
+      importKind: "import-statement",
+    });
   });
 
   it("invalid data URL import", async () => {

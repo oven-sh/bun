@@ -4272,7 +4272,12 @@ impl VirtualMachine {
                 import_kind,
             );
             let msg = bun_ast::Msg {
-                data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
+                data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
+                metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
+                    specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
+                    import_kind,
+                    err: bun_ast::Error::ModuleNotFound,
+                }),
                 ..Default::default()
             };
             *res = ErrorableString::err(

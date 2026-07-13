@@ -305,9 +305,6 @@ test.concurrent("stdin should not allow process to exit when not paused", async 
 });
 
 test.concurrent("a throw from a 'data' listener is an uncaughtException, and stdin keeps reading", async () => {
-  // A user 'data' handler throwing is a programming error and must reach
-  // process.on('uncaughtException'); it is not a read failure, so stdin stays
-  // alive and the next chunk is delivered (node compat).
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -331,8 +328,6 @@ test.concurrent("a throw from a 'data' listener is an uncaughtException, and std
   });
   proc.stdin.write("one");
   await proc.stdin.flush();
-  // The second chunk is sent strictly after the handler threw on the first, so
-  // it can only arrive if stdin survived the throw.
   const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
   let stdout = "";
@@ -358,10 +353,6 @@ test.concurrent("a throw from a 'data' listener is an uncaughtException, and std
 });
 
 test.concurrent("a throw from a 'readable' listener is an uncaughtException, including the EOF emission", async () => {
-  // 'readable' fires twice: once for the buffered chunk (via nextTick; already
-  // routed to uncaughtException) and once synchronously from push(null) at EOF.
-  // The EOF-path throw must reach uncaughtException too (node compat); before
-  // this fix internalRead() silently swallowed it.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

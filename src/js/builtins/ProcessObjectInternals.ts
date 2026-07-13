@@ -250,9 +250,6 @@ export function getStdinStream(
       return;
     }
 
-    // push() runs user 'data'/'readable'/'end' listeners synchronously. A throw from
-    // one of them is a programming error, not a read failure: it must surface as an
-    // uncaughtException and must NOT destroy stdin (node keeps delivering input).
     try {
       if (value) {
         stream.push(value);
@@ -268,8 +265,6 @@ export function getStdinStream(
         stream.push(null);
       }
     } catch (err) {
-      // The throw short-circuited addChunk() before maybeReadMore(), so re-arm
-      // the read loop ourselves to keep stdin flowing (libuv does this for node).
       if (value) triggerRead.$call(stream, undefined);
       process.nextTick(rethrowUncaught, err);
     }

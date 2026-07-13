@@ -160,9 +160,7 @@ export function syncThrowString() { throw "this is the real reason the build bro
         // never tears down on the failure-exit path; LSan would abort with 134 on the ASAN
         // lane. `bun run` uses the main-thread VM and keeps leak detection.
         ASAN_OPTIONS:
-          cmd === "build"
-            ? [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":")
-            : bunEnv.ASAN_OPTIONS,
+          cmd === "build" ? [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") : bunEnv.ASAN_OPTIONS,
       },
       cwd: String(dir),
       stdout: "pipe",

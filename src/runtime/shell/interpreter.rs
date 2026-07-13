@@ -2773,6 +2773,147 @@ impl<P: OutputTaskVTable> OutputTask<P> {
     }
 }
 
+/// Stamps out the boilerplate [`OutputTaskVTable`] impl shared by the
+/// task-based builtins (cp/ls/mkdir/touch): bump
+/// `output_waiting`/`output_done` on the `Exec` state, stash the task on the
+/// builtin's `output_queue` when the write goes through the IOWriter, and
+/// fall back to `write_no_io` otherwise. Also stamps out the builtin's
+/// `on_io_writer_chunk`, which pops the queue to route the chunk completion
+/// back to the OutputTask state machine.
+///
+/// The second argument selects where `output_queue` lives:
+/// - `queue_in_exec` — on the `State::Exec` payload (ls/mkdir/touch)
+/// - `queue_on_self` — directly on the builtin struct (cp; see the field
+///   comment there)
+///
+/// Expands in the builtin's module, so `State`, `Builtin`, etc. resolve to
+/// the caller's imports and the builtin's own `state_mut`/`next` are used.
+macro_rules! impl_output_task_vtable {
+    ($builtin:ident, queue_in_exec) => {
+        impl $builtin {
+            #[inline]
+            fn output_queue_push(interp: &Interpreter, cmd: NodeId, child: *mut OutputTask<Self>) {
+                if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                    exec.output_queue.push_back(child);
+                }
+            }
+            #[inline]
+            fn output_queue_pop(interp: &Interpreter, cmd: NodeId) -> Option<*mut OutputTask<Self>> {
+                if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                    exec.output_queue.pop_front()
+                } else {
+                    None
+                }
+            }
+        }
+        crate::shell::interpreter::impl_output_task_vtable!(@impl $builtin);
+    };
+    ($builtin:ident, queue_on_self) => {
+        impl $builtin {
+            #[inline]
+            fn output_queue_push(interp: &Interpreter, cmd: NodeId, child: *mut OutputTask<Self>) {
+                Self::state_mut(interp, cmd).output_queue.push_back(child);
+            }
+            #[inline]
+            fn output_queue_pop(interp: &Interpreter, cmd: NodeId) -> Option<*mut OutputTask<Self>> {
+                Self::state_mut(interp, cmd).output_queue.pop_front()
+            }
+        }
+        crate::shell::interpreter::impl_output_task_vtable!(@impl $builtin);
+    };
+    (@impl $builtin:ident) => {
+        impl $builtin {
+            pub(crate) fn on_io_writer_chunk(
+                interp: &Interpreter,
+                cmd: NodeId,
+                written: usize,
+                e: Option<bun_sys::SystemError>,
+            ) -> Yield {
+                if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
+                    return Builtin::done(interp, cmd, 1);
+                }
+                if let Some(task) = Self::output_queue_pop(interp, cmd) {
+                    // SAFETY: `task` was heap-allocated in `OutputTask::new` and
+                    // pushed by `write_err`/`write_out`; not yet freed.
+                    return unsafe {
+                        OutputTask::<Self>::on_io_writer_chunk(task, interp, written, e)
+                    };
+                }
+                Self::next(interp, cmd)
+            }
+        }
+        impl OutputTaskVTable for $builtin {
+            fn write_err(
+                interp: &Interpreter,
+                cmd: NodeId,
+                child: *mut OutputTask<Self>,
+                errbuf: &[u8],
+            ) -> Option<Yield> {
+                if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                    exec.output_waiting += 1;
+                }
+                if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+                    // OutputTask has no `WriterTag` of its own (it is not
+                    // directly dispatchable as an IOWriter child), so the
+                    // enqueue is tagged `WriterTag::Builtin` and `child` is
+                    // stashed on `output_queue`; the builtin's
+                    // `on_io_writer_chunk` pops it to route the completion
+                    // back to the OutputTask state machine and reclaim the
+                    // box.
+                    Self::output_queue_push(interp, cmd, child);
+                    let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
+                    return Some(
+                        Builtin::of_mut(interp, cmd)
+                            .stderr
+                            .enqueue(childptr, errbuf, safeguard),
+                    );
+                }
+                let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
+                None
+            }
+            fn on_write_err(interp: &Interpreter, cmd: NodeId) {
+                if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                    exec.output_done += 1;
+                }
+            }
+            fn write_out(
+                interp: &Interpreter,
+                cmd: NodeId,
+                child: *mut OutputTask<Self>,
+                output: &mut OutputSrc,
+            ) -> Option<Yield> {
+                if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                    exec.output_waiting += 1;
+                }
+                if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+                    // See write_err — stash `child` so the chunk callback
+                    // routes to OutputTask::on_io_writer_chunk.
+                    Self::output_queue_push(interp, cmd, child);
+                    let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
+                    let buf = output.slice().to_vec();
+                    return Some(
+                        Builtin::of_mut(interp, cmd)
+                            .stdout
+                            .enqueue(childptr, &buf, safeguard),
+                    );
+                }
+                let buf = output.slice().to_vec();
+                let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+                None
+            }
+            fn on_write_out(interp: &Interpreter, cmd: NodeId) {
+                if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                    exec.output_done += 1;
+                }
+            }
+            fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
+                Self::next(interp, cmd)
+            }
+        }
+    };
+}
+pub(crate) use impl_output_task_vtable;
+
 // ────────────────────────────────────────────────────────────────────────────
 // ShellTask
 // ────────────────────────────────────────────────────────────────────────────

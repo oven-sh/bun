@@ -4,7 +4,7 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    ParseFlagResult, ShellTask, impl_output_task_vtable, parse_flags, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -137,25 +137,6 @@ impl Mkdir {
         }
     }
 
-    pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
-        cmd: NodeId,
-        written: usize,
-        e: Option<bun_sys::SystemError>,
-    ) -> Yield {
-        let pending = match &mut Self::state_mut(interp, cmd).state {
-            State::WaitingWriteErr => return Builtin::done(interp, cmd, 1),
-            State::Exec(exec) => exec.output_queue.pop_front(),
-            State::Idle | State::Done => panic!("Invalid state"),
-        };
-        if let Some(task) = pending {
-            // SAFETY: `task` was heap-allocated in `OutputTask::new` and
-            // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Mkdir>::on_io_writer_chunk(task, interp, written, e) };
-        }
-        Self::next(interp, cmd)
-    }
-
     /// The caller ([`ShellMkdirTask::run_from_main_thread`]) owns the heap
     /// allocation and drops it after this returns.
     pub(crate) fn on_shell_mkdir_task_done(
@@ -186,80 +167,7 @@ enum NextAction {
     Schedule(usize),
 }
 
-impl OutputTaskVTable for Mkdir {
-    fn write_err(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        errbuf: &[u8],
-    ) -> Option<Yield> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            // OutputTask has no `WriterTag` of its own (it is not directly
-            // dispatchable as an IOWriter child), so the enqueue is tagged
-            // `WriterTag::Builtin` and `child` is stashed on `output_queue`;
-            // `on_io_writer_chunk` pops it to route the completion back to
-            // the OutputTask state machine and reclaim the box.
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
-            }
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Some(
-                Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(childptr, errbuf, safeguard),
-            );
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        None
-    }
-
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-
-    fn write_out(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        output: &mut OutputSrc,
-    ) -> Option<Yield> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            // See write_err — stash `child` so the chunk callback routes to
-            // OutputTask::on_io_writer_chunk.
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
-            }
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            let buf = output.slice().to_vec();
-            return Some(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
-        }
-        let buf = output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        None
-    }
-
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-
-    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
-        Self::next(interp, cmd)
-    }
-}
+impl_output_task_vtable!(Mkdir, queue_in_exec);
 
 /// Runs `mkdir`/`mkdir -p` on a worker
 /// thread, then bounces back to the main thread.

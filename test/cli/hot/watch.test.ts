@@ -93,7 +93,14 @@ describe.skipIf(!isLinux)("inotify instance limit exhausted", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       cwd: String(dir),
-      env: { ...bunEnv, LD_PRELOAD: existing ? `${shim}:${existing}` : shim },
+      env: {
+        ...bunEnv,
+        LD_PRELOAD: existing ? `${shim}:${existing}` : shim,
+        // Global::exit(1) runs libc exit() under ASAN; LSAN would report the
+        // live bundler/VM state as a "leak" and abort_on_error turns that into
+        // SIGABRT. Last option wins.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

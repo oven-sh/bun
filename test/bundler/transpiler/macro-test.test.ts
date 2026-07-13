@@ -1,5 +1,5 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import defaultMacro, {
   addStrings,
@@ -129,6 +129,87 @@ test("namespace import", () => {
 
 test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
+});
+
+// A macro returning a RegExp must be inlined as a regex literal, not its display
+// string. Run in a subprocess so the transpiler sees the macro result at parse
+// time rather than this test file's own parse.
+describe("RegExp return values", () => {
+  test.concurrent("top-level and nested", async () => {
+    using dir = tempDir("macro-regexp", {
+      "m.ts": await Bun.file(require.resolve("./macro.ts")).text(),
+      "c.ts": `
+        import { reWithFlags, reNoFlags, reEmpty, reUnicode, reNested } from "./m.ts" with { type: "macro" };
+        const a = reWithFlags();
+        const b = reNoFlags();
+        const c = reEmpty();
+        const d = reUnicode();
+        const n = reNested();
+        console.log(JSON.stringify({
+          a: { source: a.source, flags: a.flags, isRegExp: a instanceof RegExp, test: a.test("ABBC") },
+          b: { source: b.source, flags: b.flags, isRegExp: b instanceof RegExp, test: b.test("a/b") },
+          c: { source: c.source, flags: c.flags, isRegExp: c instanceof RegExp },
+          d: { flags: d.flags, isRegExp: d instanceof RegExp, test: d.test("日本語"), testNeg: d.test("xyz") },
+          n: {
+            patternIsRegExp: n.pattern instanceof RegExp,
+            patternSource: n.pattern.source,
+            listIsRegExp: n.list.every(r => r instanceof RegExp),
+            listFlags: n.list.map(r => r.flags),
+          },
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "c.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const last = stdout.trim().split("\n").at(-1) || "";
+    let out: unknown;
+    try {
+      out = JSON.parse(last);
+    } catch {
+      out = { raw: stdout };
+    }
+    expect({ out, stderr, exitCode }).toEqual({
+      out: {
+        a: { source: "ab+c", flags: "gi", isRegExp: true, test: true },
+        b: { source: "a\\/b", flags: "", isRegExp: true, test: true },
+        c: { source: "(?:)", flags: "", isRegExp: true },
+        d: { flags: "u", isRegExp: true, test: true, testNeg: false },
+        n: {
+          patternIsRegExp: true,
+          patternSource: "x[0-9]+",
+          listIsRegExp: true,
+          listFlags: ["", "i"],
+        },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("Bun.build inlines a regex literal", async () => {
+    using dir = tempDir("macro-regexp-build", {
+      "m.ts": `export function re() { return /ab+c/gi; }`,
+      "c.ts": `import { re } from "./m.ts" with { type: "macro" };\nexport const v = re();\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "c.ts", "--target=bun"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({
+      stdout: expect.stringMatching(/var v = \/ab\+c\/gi;/),
+      exitCode: 0,
+    });
+  });
 });
 
 // A numeric key >= 100000 (JSC's MIN_SPARSE_ARRAY_INDEX) makes the property put inside

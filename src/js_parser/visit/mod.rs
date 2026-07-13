@@ -556,7 +556,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // entry only becomes visible to textually-later uses.
                 let track_for_macro_args =
                     Self::ALLOW_MACROS && was_const && self.macro_.refs.count() > 0;
-                if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) || track_for_macro_args
+                if could_be_const_value
+                    || (Self::ALLOW_MACROS && could_be_macro)
+                    || track_for_macro_args
                 {
                     if let Some(val) = decl.value {
                         if val.can_be_const_value() {

@@ -108,7 +108,10 @@ fn append_e_string_utf16(s: &E::String, out: &mut Vec<u16>) {
     }
 }
 
-fn append_template_contents_utf16(c: &TemplateContents, out: &mut Vec<u16>) -> Result<(), ToJSError> {
+fn append_template_contents_utf16(
+    c: &TemplateContents,
+    out: &mut Vec<u16>,
+) -> Result<(), ToJSError> {
     match c {
         TemplateContents::Cooked(s) => {
             append_e_string_utf16(s, out);
@@ -138,7 +141,14 @@ fn append_template_part_value_utf16(
             if v.is_nan() {
                 append_ascii_utf16(b"NaN", out);
             } else if v.is_infinite() {
-                append_ascii_utf16(if v.is_sign_negative() { b"-Infinity" } else { b"Infinity" }, out);
+                append_ascii_utf16(
+                    if v.is_sign_negative() {
+                        b"-Infinity"
+                    } else {
+                        b"Infinity"
+                    },
+                    out,
+                );
             } else {
                 let mut buf = [0u8; 124];
                 let s = bun_core::fmt::FormatDouble::dtoa(&mut buf, v);

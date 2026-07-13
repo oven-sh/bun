@@ -5,8 +5,9 @@
 #include <JavaScriptCore/Heap.h>
 
 #if USE(MIMALLOC)
-// bmalloc's vendored mimalloc.h predates this; bun links oven-sh/mimalloc.
-extern "C" void mi_on_thread_idle(void);
+// Matches oven-sh/mimalloc's mi_attr_noexcept declaration; bmalloc's
+// vendored mimalloc.h predates this entry point.
+extern "C" void mi_on_thread_idle(void) noexcept;
 #endif
 
 extern "C" int Bun__defaultRemainingRunsUntilSkipReleaseAccess;

@@ -12,7 +12,6 @@ describe("randomUUIDv7", () => {
     expect(Bun.randomUUIDv7()["0192ce01-8345-".length]).toBe("7");
   });
 
-
   test("base64 format", () => {
     const uuid = Bun.randomUUIDv7("base64");
     expect(uuid).toMatch(/^[0-9a-zA-Z+/=]+$/);

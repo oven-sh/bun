@@ -2750,9 +2750,13 @@ impl ThreadSafeFunction {
         let self_ = unsafe { &mut *this };
         {
             let _g = self_.lock.lock_guard();
+            // `Closed` (not `Closing`): the finalizer runs below, so release()'s
+            // last-ref-after-abort dispatch (which targets `Closing`) must not
+            // fire here — `event_loop` is about to be freed.
             self_
                 .closing
-                .store(ClosingState::Closing as u8, Ordering::SeqCst);
+                .store(ClosingState::Closed as u8, Ordering::SeqCst);
+            self_.has_queued_finalizer = true;
             self_.aborted.store(true, Ordering::SeqCst);
             // Zero the public count so is_blocked() goes false; together with the
             // `&& !is_closing()` guard on enqueue()'s wait loop this guarantees a
@@ -2825,10 +2829,14 @@ impl ThreadSafeFunction {
                     }
                 }
                 self.schedule_dispatch();
-            } else if prev_remaining == 1 {
+            } else if prev_remaining == 1
+                && self.closing.load(Ordering::SeqCst) == ClosingState::Closing as u8
+            {
                 // Already closing from an earlier abort. The last release must
                 // still reach dispatch_one's thread_count==0 path so the
                 // finalizer runs and the event-loop keepalive is dropped.
+                // `Closing` only: `Closed` means env_cleanup already ran the
+                // finalizer and `event_loop` may be freed.
                 self.schedule_dispatch();
             }
         }

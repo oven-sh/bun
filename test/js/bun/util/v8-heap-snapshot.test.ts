@@ -110,7 +110,7 @@ test("v8.writeHeapSnapshot() with file URL path", async () => {
 });
 
 test("v8.writeHeapSnapshot() rejects invalid paths with node-compatible errors", async () => {
-  // None of these reach snapshot generation, so one subprocess covers them all.
+  // Only the empty-string case reaches snapshot generation (and it isn't parsed), so one subprocess covers them all.
   const script = `
     const v8 = require("node:v8");
     const report = (label, fn) => {

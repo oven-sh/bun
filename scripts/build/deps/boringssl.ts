@@ -20,11 +20,36 @@
  *           console.log("nasm\n",f([...j.bcm.nasm,...j.crypto.nasm]))'
  */
 
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 import { depSourceDir } from "../source.ts";
 
 const BORINGSSL_COMMIT = "1a41b9025c2c0a37edd07ff10f6944f03e028522";
+
+/**
+ * The pre-generated bssl-sys bindings under src/bssl/bindings/
+ * are vendored bindgen output pinned to BORINGSSL_COMMIT (see regenerate.sh
+ * there). Stale bindings against bumped headers are silent ABI drift, so every
+ * configure verifies the stamp regenerate.sh writes into each generated file.
+ */
+function checkBsslBindingsStamp(repoRoot: string): void {
+  const dir = resolve(repoRoot, "src/bssl/bindings");
+  const generated = [...readdirSync(dir).filter(f => /^wrapper_.*\.rs$/.test(f)), "wrapper.c"];
+  for (const file of generated) {
+    const firstLine = readFileSync(resolve(dir, file), "utf8").split("\n", 1)[0] ?? "";
+    const stamped = firstLine.match(/^\/\/ BoringSSL commit: ([0-9a-f]{40}) /)?.[1];
+    if (stamped !== BORINGSSL_COMMIT) {
+      throw new Error(
+        `src/bssl/bindings/${file} was generated for BoringSSL commit ` +
+          `${stamped ?? "<missing stamp>"} but scripts/build/deps/boringssl.ts pins ${BORINGSSL_COMMIT}.\n` +
+          `note: re-run src/bssl/bindings/regenerate.sh after bumping BORINGSSL_COMMIT.`,
+      );
+    }
+  }
+}
 
 export const boringssl: Dependency = {
   name: "boringssl",
@@ -36,7 +61,15 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  // bssl-sys (vendor/boringssl/rust) is a cargo path dep of bun_bssl. Its
+  // upstream build.rs expects CMake-generated bindings + a second BoringSSL
+  // build; the patch points it at the pre-generated bindings committed under
+  // src/bssl/bindings/ instead and emits no link directives.
+  patches: ["patches/boringssl/bssl-sys-prebuilt-bindings.patch"],
+
   build: cfg => {
+    checkBsslBindingsStamp(cfg.cwd);
+
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
     // uses gas .S that clang assembles.
     const asm = cfg.windows && cfg.x64 ? NASM : ASM;
@@ -44,7 +77,17 @@ export const boringssl: Dependency = {
     const spec: DirectBuild = {
       kind: "direct",
       lang: "cxx",
-      sources: [...BCM_SRCS, ...CRYPTO_SRCS, ...SSL_SRCS, ...DECREPIT_SRCS, ...asm],
+      // The last entry is the bssl-sys static-inline shim (bindgen
+      // --wrap-static-fns), committed in-tree next to the pre-generated
+      // bindings (target-independent; see regenerate.sh there).
+      sources: [
+        ...BCM_SRCS,
+        ...CRYPTO_SRCS,
+        ...SSL_SRCS,
+        ...DECREPIT_SRCS,
+        ...asm,
+        "../../src/bssl/bindings/wrapper.c",
+      ],
       includes: ["include"],
       defines: {
         BORINGSSL_IMPLEMENTATION: true,

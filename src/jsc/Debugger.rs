@@ -311,11 +311,12 @@ impl Debugger {
                     {
                         let pending_unref = this.take_pending_unref();
                         if pending_unref > 0 {
-                            this.uws_loop_mut().unref_count(pending_unref);
+                            // Raw-place twin — no `&mut Loop` on a published loop.
+                            bun_usockets::Loop::unref_count_raw(this.uws_loop(), pending_unref);
                         }
                     }
 
-                    this.uws_loop_mut().tick_with_timeout(Some(&deadline));
+                    bun_usockets::Loop::tick_with_timeout(this.uws_loop(), Some(&deadline));
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(

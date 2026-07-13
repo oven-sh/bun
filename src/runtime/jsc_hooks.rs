@@ -47,6 +47,7 @@ use bun_resolve_builtins::Module as HardcodedModule;
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
+use bun_usockets::Loop as UwsLoop;
 
 use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
 use crate::timer;
@@ -227,11 +228,11 @@ pub(crate) unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeSt
 ///
 /// # Safety
 /// `vm` must be the live per-thread VM; called only from the JS thread.
-pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_uws::SslCtx {
+pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_usockets::SslCtx {
     // SAFETY: per fn contract; `rare_data()` lazy-inits the box.
     let rare = unsafe { (*vm).rare_data() };
     if rare.default_client_ssl_ctx.is_none() {
-        let mut err = bun_uws::create_bun_socket_error_t::none;
+        let mut err = bun_usockets::create_bun_socket_error_t::none;
         let state = runtime_state();
         debug_assert!(
             !state.is_null(),
@@ -249,7 +250,8 @@ pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun
         // digest. The +1 ref returned here is held for the VM's lifetime, so
         // the entry never tombstones.
         match cache.get_or_create_opts(&Default::default(), &mut err) {
-            Some(ctx) => rare.default_client_ssl_ctx = Some(ctx),
+            // boringssl-sys vs bssl-sys nominals of the same C struct.
+            Some(ctx) => rare.default_client_ssl_ctx = Some(ctx.cast()),
             None => bun_core::Output::panic(format_args!(
                 "default client SSL_CTX init failed: {}",
                 bun_core::fmt::s(err.message().unwrap_or(b"unknown")),
@@ -267,9 +269,9 @@ pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun
 /// `vm` must be the live per-thread VM; called only from the JS thread.
 unsafe fn ssl_ctx_cache_get_or_create(
     _vm: *mut VirtualMachine,
-    opts: &bun_uws::SocketContext::BunSocketContextOptions,
-    err: &mut bun_uws::create_bun_socket_error_t,
-) -> Option<*mut bun_uws::SslCtx> {
+    opts: &bun_usockets::BunSocketContextOptions,
+    err: &mut bun_usockets::create_bun_socket_error_t,
+) -> Option<*mut bun_usockets::SslCtx> {
     let state = runtime_state();
     debug_assert!(
         !state.is_null(),
@@ -278,7 +280,8 @@ unsafe fn ssl_ctx_cache_get_or_create(
     // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
     // address for the VM's lifetime and is only touched from the JS thread.
     let cache = unsafe { &mut (*state).ssl_ctx_cache };
-    cache.get_or_create_opts(opts, err)
+    // boringssl-sys vs bssl-sys nominals of the same C struct.
+    cache.get_or_create_opts(opts, err).map(|p| p.cast())
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -914,8 +917,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             .pending_unref_counter
             .swap(0, core::sync::atomic::Ordering::Relaxed);
         if pending_unref > 0 {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).unref_count(pending_unref) };
+            // Raw-place twin: `loop_` is the live per-thread uws loop; a
+            // `&mut Loop` would span `pending_wakeups` (foreign fetch_add).
+            bun_usockets::Loop::unref_count_raw(loop_, pending_unref);
         }
     }
 
@@ -942,11 +946,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // poll. The uws loop must always be polled
         // (`tickWithTimeout`/`tickWithoutIdle`); `EventLoop::tick()` would only
         // drain JS tasks and never touch kqueue/epoll.
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        unsafe { (*loop_).tick_without_idle() };
+        UwsLoop::tick_without_idle(loop_);
         // Still run the post-poll hooks.
-        // SAFETY: per fn contract.
-        unsafe { (*vm).on_after_event_loop() };
         // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
         unsafe { (*(*vm).global).handle_rejected_promises() };
         return;
@@ -997,13 +998,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                     vm.cast(),
                 )
             };
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
-            };
+            UwsLoop::tick_with_timeout(loop_, if have_timeout { Some(&timespec) } else { None });
         } else {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).tick_without_idle() };
+            UwsLoop::tick_without_idle(loop_);
         }
     }
 
@@ -1021,8 +1018,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     #[cfg(not(unix))]
     let _ = state;
 
-    // SAFETY: per fn contract.
-    unsafe { (*vm).on_after_event_loop() };
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     unsafe { (*(*vm).global).handle_rejected_promises() };
 }
@@ -1060,8 +1055,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             .pending_unref_counter
             .swap(0, core::sync::atomic::Ordering::Relaxed);
         if pending_unref > 0 {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).unref_count(pending_unref) };
+            // Raw-place twin: `loop_` is the live per-thread uws loop; a
+            // `&mut Loop` would span `pending_wakeups` (foreign fetch_add).
+            bun_usockets::Loop::unref_count_raw(loop_, pending_unref);
         }
     }
 
@@ -1076,10 +1072,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     }
 
     if state.is_null() {
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        unsafe { (*loop_).tick_without_idle() };
-        // SAFETY: per fn contract.
-        unsafe { (*vm).on_after_event_loop() };
+        UwsLoop::tick_without_idle(loop_);
         return;
     }
 
@@ -1111,13 +1104,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                     vm.cast(),
                 )
             };
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
-            };
+            UwsLoop::tick_with_timeout(loop_, if have_timeout { Some(&timespec) } else { None });
         } else {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).tick_without_idle() };
+            UwsLoop::tick_without_idle(loop_);
         }
     }
 
@@ -1129,9 +1118,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     }
     #[cfg(not(unix))]
     let _ = state;
-
-    // SAFETY: per fn contract.
-    unsafe { (*vm).on_after_event_loop() };
 }
 
 /// `printException` / `printErrorlikeObject` — formats `value` to stderr via
@@ -5259,7 +5245,7 @@ pub(crate) fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoop
 /// `dateForHeader`: wrap the header bytes in a
 /// `bun.String`, call `String.parseDate(&s, vm.global)`, return the integer
 /// value if finite and non-negative, else `None`. Lives in this crate (callers
-/// are `server::FileRoute` / `server::StaticRoute`) so `bun_uws_sys` (T0) has
+/// are `server::FileRoute` / `server::StaticRoute`) so `bun_uws_shim` (T0) has
 /// no upward hook into `bun_jsc`.
 pub fn parse_http_date(value: &[u8]) -> Option<u64> {
     let vm = bun_jsc::virtual_machine::VirtualMachine::get();

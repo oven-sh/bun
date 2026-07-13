@@ -1569,7 +1569,7 @@ pub(crate) fn download_to_path(
             let send_result = async_http.send_sync();
 
             progress.end();
-            let status_code = send_result?.status_code as u16;
+            let status_code = send_result?.response().status_code as u16;
 
             match status_code {
                 404 => {

@@ -10,10 +10,10 @@
 //! poll deadline). See PORTING.md §Dispatch.
 
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
 use bun_io::{self as Async, Waker};
-use bun_uws as uws;
+use bun_usockets as uws;
 
 use crate::js_promise::Status as PromiseStatus;
 use crate::virtual_machine::VirtualMachine;
@@ -77,7 +77,7 @@ pub struct EventLoop {
     pub waker: Option<Waker>,
     // see `hold_forever_poll`
     #[cfg(windows)]
-    pub forever_timer: Option<NonNull<uws::Timer>>,
+    pub forever_timer: Option<NonNull<uws::backend::libuv::Timer>>,
     #[cfg(not(windows))]
     pub holds_forever_poll: bool,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
@@ -89,6 +89,14 @@ pub struct EventLoop {
 
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
+    /// Rundown gate: set by worker shutdown right after the VM is unpublished.
+    /// Cross-thread producers that observe it back out without touching the
+    /// queues (the tasks are dropped — the VM will never tick again).
+    pub terminating: AtomicBool,
+    /// Count of in-flight cross-thread posts (`enqueue_task_concurrent`,
+    /// `ref_concurrently`, …). Worker shutdown spins this to 0 after setting
+    /// `terminating` so no producer still touches `*self` when the VM is freed.
+    pub external_posts: AtomicU64,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
     ///
     /// Note (§Dispatch): payload is `*mut ()` — the real
@@ -129,6 +137,8 @@ impl Default for EventLoop {
             uws_loop: (),
             entered_event_loop_count: 0,
             concurrent_ref: AtomicI32::new(0),
+            terminating: AtomicBool::new(false),
+            external_posts: AtomicU64::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
             signal_handler: None,
@@ -342,11 +352,13 @@ impl EventLoop {
         self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
 
-        // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
+        // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
-        // `event_loop_handle` (which is the libuv loop).
+        // `event_loop_handle` (which is the libuv loop). `*mut Loop`, never
+        // `&mut`: the flush can dispatch stream callbacks that re-derive
+        // loop borrows (C17).
         if vm.event_loop_handle.is_some() {
-            vm.uws_loop_mut().drain_quic_if_necessary();
+            uws::Loop::drain_quic_if_necessary(vm.uws_loop());
         }
 
         Ok(())
@@ -380,10 +392,9 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) {
-        // A prior callback's microtasks can tear the worker down
-        // (worker.terminate()), leaving the termination exception pending;
-        // entering JS then trips executeCallImpl's `assertNoException`. Same
-        // gate as `tick_with_count()`; guarding here covers all 50+ callers.
+        // A prior callback's microtasks can tear the worker down, leaving the
+        // termination exception pending; entering JS trips assertNoException.
+        // Same gate as `tick_with_count()`; guarding here covers all callers.
         if global_object.has_exception() {
             return;
         }
@@ -541,12 +552,14 @@ impl EventLoop {
         // Do NOT silently drop the swapped delta when the handle is
         // missing — refs queued via `ref_concurrently()` would be lost forever.
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
-        let loop_ = self
-            .vm_ref()
-            .platform_loop_opt()
-            .expect("event_loop_handle");
         #[cfg(windows)]
         {
+            // Windows: `PlatformEventLoop` is the libuv loop; counters live
+            // in `uv_loop.active_handles` behind its own accessors.
+            let loop_ = self
+                .vm_ref()
+                .platform_loop_opt()
+                .expect("event_loop_handle");
             if delta > 0 {
                 loop_.add_active(u32::try_from(delta).expect("int cast"));
             } else {
@@ -555,16 +568,13 @@ impl EventLoop {
         }
         #[cfg(not(windows))]
         {
+            // Raw-place twins: a `&mut Loop` would span `pending_wakeups`,
+            // which waker threads `fetch_add` concurrently.
+            let loop_ = self.vm_ref().event_loop_handle.expect("event_loop_handle");
             if delta > 0 {
-                loop_.num_polls += delta;
-                loop_.active = loop_
-                    .active
-                    .saturating_add(u32::try_from(delta).expect("int cast"));
+                uws::Loop::ref_count_raw(loop_, delta);
             } else {
-                loop_.num_polls -= -delta;
-                loop_.active = loop_
-                    .active
-                    .saturating_sub(u32::try_from(-delta).expect("int cast"));
+                uws::Loop::unref_count_raw(loop_, -delta);
             }
         }
     }
@@ -900,10 +910,8 @@ impl EventLoop {
             }
         }
         // Note: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
-        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`. The
-        // typed `set_parent_event_loop` extension trait in `bun_uws` expects
-        // a `ParentEventLoopHandle` impl, but `EventLoopHandle` already
-        // exposes `into_tag_ptr()` — go straight to the sys-level setter.
+        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`;
+        // `into_tag_ptr()` erases to the `(tag, ptr)` pair the loop stores.
         // `self` is the live per-thread `jsc::EventLoop` (mut ref) — non-null.
         let self_ptr = core::ptr::from_mut(self).cast::<()>();
         let (tag, ptr) = EventLoopHandle::init(self_ptr).into_tag_ptr();
@@ -957,22 +965,29 @@ impl EventLoop {
     }
 
     pub fn wakeup(&self) {
+        // Cross-thread callers (enqueue_task_concurrent, worker terminate)
+        // reach here while the loop thread may be parked inside a tick —
+        // use the raw `us_wakeup_loop(*mut Loop)`, never a `&mut Loop`.
+        // Liveness contract: the caller's `&self` must pin the VM. vm_lock
+        // readers (notify_need_termination) get that from the lock; pool
+        // producers must not outlive worker shutdown (unenforced today —
+        // a terminate racing an in-flight completion is a known gap).
         #[cfg(windows)]
         {
             if let Some(loop_) = self.uws_loop {
-                // SAFETY: uws_loop is a valid live uws::Loop handle
-                unsafe { (*loop_.as_ptr()).wakeup() };
+                uws::us_wakeup_loop(loop_.as_ptr());
             }
             return;
         }
         #[cfg(not(windows))]
         {
-            // Route through the single audited `platform_loop_opt()` accessor
-            // (set-once `Option<*mut>` deref) instead of open-coding the raw
-            // `(*event_loop_handle).wakeup()` here. Same `&mut Loop` is formed
-            // either way (autoref), so no soundness change vs the prior code.
-            if let Some(loop_) = self.vm_ref().platform_loop_opt() {
-                loop_.wakeup();
+            let vm = self.virtual_machine.expect("virtual_machine").as_ptr();
+            // SAFETY: same raw-place projection as `uv_loop` — no
+            // `&VirtualMachine` is formed; cross-thread callers race with a
+            // JS-thread `&mut VM` held across a tick.
+            let handle = unsafe { core::ptr::addr_of!((*vm).event_loop_handle).read() };
+            if let Some(loop_) = handle {
+                uws::us_wakeup_loop(loop_);
             }
         }
     }
@@ -982,23 +997,44 @@ impl EventLoop {
     /// freshly-allocated or struct-embedded task — never null.
     pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTaskItem>) {
         if cfg!(debug_assertions) {
-            if self.vm_ref().has_terminated {
+            if self.vm_ref().has_terminated.load(Ordering::SeqCst) {
                 panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
         }
+        self.external_posts.fetch_add(1, Ordering::SeqCst);
+        if self.terminating.load(Ordering::SeqCst) {
+            // Shutdown raced this post: the loop never ticks again, so free
+            // the node instead of queueing (payload release needs the JS
+            // thread — deliberately leaked for this terminate window).
+            // SAFETY: ownership was transferred to us; never linked anywhere.
+            if unsafe { task.as_ref() }.auto_delete() {
+                drop(unsafe { bun_core::heap::take(task.as_ptr()) });
+            }
+            self.external_posts.fetch_sub(1, Ordering::SeqCst);
+            return;
+        }
         self.concurrent_tasks.push(task);
         self.wakeup();
+        self.external_posts.fetch_sub(1, Ordering::SeqCst);
     }
 
     pub fn ref_concurrently(&self) {
-        let _ = self.concurrent_ref.fetch_add(1, Ordering::SeqCst);
-        self.wakeup();
+        self.external_posts.fetch_add(1, Ordering::SeqCst);
+        if !self.terminating.load(Ordering::SeqCst) {
+            let _ = self.concurrent_ref.fetch_add(1, Ordering::SeqCst);
+            self.wakeup();
+        }
+        self.external_posts.fetch_sub(1, Ordering::SeqCst);
     }
 
     pub fn unref_concurrently(&self) {
         // TODO maybe this should be AcquireRelease
-        let _ = self.concurrent_ref.fetch_sub(1, Ordering::SeqCst);
-        self.wakeup();
+        self.external_posts.fetch_add(1, Ordering::SeqCst);
+        if !self.terminating.load(Ordering::SeqCst) {
+            let _ = self.concurrent_ref.fetch_sub(1, Ordering::SeqCst);
+            self.wakeup();
+        }
+        self.external_posts.fetch_sub(1, Ordering::SeqCst);
     }
 
     // ──────────── private helpers ────────────
@@ -1047,6 +1083,17 @@ impl EventLoop {
     /// `done` must point to a live `bool`; C++ writes `true` through it from a
     /// callback inside `tick()`, so it cannot be a Rust `&mut` (would alias).
     pub unsafe fn tick_while_paused(&mut self, done: *const bool) {
+        #[cfg(not(windows))]
+        {
+            // The tick takes `*mut Loop` (re-entrant callbacks re-fetch the
+            // same loop); no `&mut Loop` is held across it.
+            let loop_ = self.vm_ref().event_loop_handle.expect("event_loop_handle");
+            // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
+            while !unsafe { done.read_volatile() } {
+                uws::Loop::tick(loop_);
+            }
+        }
+        #[cfg(windows)]
         // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
         while !unsafe { done.read_volatile() } {
             self.vm_ref()
@@ -1074,48 +1121,44 @@ impl EventLoop {
     /// Keep one poll registered with the loop so `us_loop_run_bun_tick` parks
     /// instead of returning immediately on `num_polls == 0`.
     #[cfg(not(windows))]
-    fn hold_forever_poll(&mut self, loop_: &mut uws::Loop) {
+    fn hold_forever_poll(&mut self, loop_: *mut uws::Loop) {
         if !self.holds_forever_poll {
-            loop_.inc();
+            uws::Loop::inc_raw(loop_);
             self.holds_forever_poll = true;
         }
     }
 
     #[cfg(windows)]
-    fn hold_forever_poll(&mut self, loop_: &mut uws::Loop) {
+    fn hold_forever_poll(&mut self, loop_: *mut uws::Loop) {
         if self.forever_timer.is_none() {
-            let mut t = uws::Timer::create(
-                loop_,
-                std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
+            let t = uws::backend::libuv::Timer::create(loop_, false, 0);
+            uws::backend::libuv::Timer::set(
+                t,
+                Some(noop_forever_timer),
+                1000 * 60 * 4,
+                1000 * 60 * 4,
             );
-            // SAFETY: t is a fresh non-null timer handle
-            unsafe {
-                t.as_mut().set(
-                    std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
-                    Some(noop_forever_timer),
-                    1000 * 60 * 4,
-                    1000 * 60 * 4,
-                )
-            };
-            self.forever_timer = Some(t);
+            self.forever_timer = NonNull::new(t);
         }
     }
 
     pub fn tick_possibly_forever(&mut self) {
         let loop_ptr = self.usockets_loop();
-        // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
-        let loop_ = unsafe { &mut *loop_ptr };
 
         #[cfg(unix)]
         {
             let pending_unref = self.vm_ref().take_pending_unref();
             if pending_unref > 0 {
-                loop_.unref_count(pending_unref);
+                // Raw-place twin — a `&mut Loop` would span `pending_wakeups`,
+                // which waker threads mutate concurrently.
+                uws::Loop::unref_count_raw(loop_ptr, pending_unref);
             }
         }
 
-        if !loop_.is_active() {
-            self.hold_forever_poll(loop_);
+        // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime;
+        // short-lived shared borrow of loop-thread-owned counters.
+        if !unsafe { (*loop_ptr).is_active() } {
+            self.hold_forever_poll(loop_ptr);
         }
 
         self.process_gc_timer();
@@ -1123,9 +1166,8 @@ impl EventLoop {
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        loop_.tick_with_timeout(Some(&bun_core::Timespec { sec: 1, nsec: 0 }));
+        uws::Loop::tick_with_timeout(loop_ptr, Some(&bun_core::Timespec { sec: 1, nsec: 0 }));
 
-        self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();
         self.tick();
     }
@@ -1166,7 +1208,7 @@ impl EventLoop {
         batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
     ) {
         if cfg!(debug_assertions) {
-            if self.vm_ref().has_terminated {
+            if self.vm_ref().has_terminated.load(Ordering::SeqCst) {
                 panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
         }
@@ -1176,6 +1218,25 @@ impl EventLoop {
             !batch.front.is_null() && !batch.last.is_null(),
             "enqueue_task_concurrent_batch: empty batch",
         );
+        self.external_posts.fetch_add(1, Ordering::SeqCst);
+        if self.terminating.load(Ordering::SeqCst) {
+            // Same rundown rule as `enqueue_task_concurrent`: free the nodes,
+            // never touch the queue of a VM that is being torn down.
+            let mut iter = bun_threading::unbounded_queue::BatchIterator { batch };
+            loop {
+                let node = iter.next();
+                if node.is_null() {
+                    break;
+                }
+                // SAFETY: batch nodes are live and owned by us; the iterator
+                // already advanced past `node`, so freeing it is sound.
+                if unsafe { (*node).auto_delete() } {
+                    drop(unsafe { bun_core::heap::take(node) });
+                }
+            }
+            self.external_posts.fetch_sub(1, Ordering::SeqCst);
+            return;
+        }
         // SAFETY: asserted non-null above; `batch` was produced by `pop_batch`,
         // so `last` is reachable from `front` and every node is live.
         unsafe {
@@ -1185,6 +1246,7 @@ impl EventLoop {
             )
         };
         self.wakeup();
+        self.external_posts.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -1222,7 +1284,7 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
 }
 
 #[cfg(windows)]
-extern "C" fn noop_forever_timer(_: *mut uws::Timer) {
+extern "C" fn noop_forever_timer(_: *mut uws::backend::libuv::Timer) {
     // do nothing
 }
 
@@ -1318,23 +1380,6 @@ bun_event_loop::link_impl_JsEventLoop! {
                 .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
                 .as_mut(),
         ),
-        put_file_poll(poll, was_ever_registered) => {
-            // `Store::put` only needs the VM as an opaque `EventLoopCtx`; reach it
-            // via the JS-ctx hook so we don't form a competing `&mut VirtualMachine`
-            // while holding the store.
-            let store = core::ptr::from_mut(
-                (*this)
-                    .vm_ref()
-                    .as_mut()
-                    .rare_data()
-                    .file_polls_
-                    .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
-                    .as_mut(),
-            );
-            let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
-            // `poll` is a live hive-slot pointer (vtable contract) — non-null.
-            (*store).put(core::ptr::NonNull::new_unchecked(poll), ctx, was_ever_registered);
-        },
         uws_loop() => (*this).usockets_loop(),
         pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
         tick() => (*this).tick(),

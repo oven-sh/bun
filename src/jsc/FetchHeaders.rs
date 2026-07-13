@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
 use bun_core::{String as BunString, StringPointer, ZigString};
-use bun_uws::ResponseKind;
+use bun_uws_shim::ResponseKind;
 
 bun_opaque::opaque_ffi! {
     /// Opaque C++ `WebCore::FetchHeaders` handle (ref-counted on the C++ side; see `deref`).

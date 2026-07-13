@@ -28,7 +28,7 @@ use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_event_loop::{Task, task_tag};
 
-// `FilePoll::on_update` dispatch is POSIX-only (the symbol is declared
+// `__bun_run_file_poll` dispatch is POSIX-only (the symbol is declared
 // `extern "Rust"` in `aio::posix_event_loop` and never referenced on Windows,
 // where libuv drives I/O readiness directly).
 #[cfg(not(windows))]
@@ -626,14 +626,15 @@ pub fn tick_queue_with_count(
 // FilePoll dispatch
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Hot-path dispatcher for `bun_io::FilePoll::on_update`. Declared
+/// Hot-path dispatcher for `bun_io` FilePoll registry events. Declared
 /// `extern "Rust"` in `bun_io::posix_event_loop`; the low-tier `FilePoll`
 /// calls this directly (link-time resolved) so it never names `Subprocess` /
 /// `FileSink` / `DNSResolver` / etc.
 ///
 /// # Safety
-/// `poll` must point at a live [`FilePoll`] for the duration of the call
-/// (guaranteed by `FilePoll::on_update`, the only caller).
+/// `poll` must point at a live [`FilePoll`] at entry (guaranteed by the
+/// registry-shim dispatch in `posix_event_loop`, the only caller). The
+/// per-tag handler may deinit the poll; `poll` is dead after that.
 #[cfg(not(windows))]
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
@@ -755,7 +756,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         }
 
         poll_tag::NULL => {
-            // The low-tier `on_update` already logged before calling the hook
+            // The low-tier dispatch already logged before calling the hook
             // when it was null; here we just no-op the unknown tag.
             let _ = (size_or_offset, hup);
         }

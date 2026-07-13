@@ -19,7 +19,7 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl;
 use bun_jsc::JsClass as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_uws as uws;
+use bun_usockets as uws;
 
 /// Re-export the codegen-emitted module so
 /// `$rust(SecureContext.rs, js.getConstructor)` in
@@ -47,9 +47,9 @@ pub struct SecureContext {
 /// `SSL_CTX_new` was called O(1) times, not O(connections).
 #[bun_jsc::host_fn]
 pub(crate) fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-    // `us_ssl_ctx_live_count` is declared `safe fn` (reads a global atomic
-    // counter, no preconditions).
-    Ok(JSValue::js_number(c::us_ssl_ctx_live_count() as f64))
+    Ok(JSValue::js_number(
+        uws::tls::context::ssl_ctx_live_count() as f64
+    ))
 }
 
 impl SecureContext {
@@ -120,68 +120,28 @@ impl SecureContext {
         if pfx_bytes.is_empty() {
             return Err(global.throw(format_args!("PFX certificate argument is mandatory")));
         }
-        let mut out_key: *mut core::ffi::c_char = core::ptr::null_mut();
-        let mut out_cert: *mut core::ffi::c_char = core::ptr::null_mut();
-        let mut out_ca: *mut core::ffi::c_char = core::ptr::null_mut();
-        let mut key_len = 0usize;
-        let mut cert_len = 0usize;
-        let mut ca_len = 0usize;
-        let mut err_reason: *const core::ffi::c_char = core::ptr::null();
-        // SAFETY: the buffers are live for the call; the out-pointers are
-        // freed below with libc free per the helper's contract.
-        let ok = unsafe {
-            c::us_ssl_parse_pkcs12(
-                pfx_bytes.as_ptr().cast(),
-                pfx_bytes.len(),
-                pass_owned
-                    .as_ref()
-                    .map_or(core::ptr::null(), |v| v.as_ptr().cast()),
-                &raw mut out_key,
-                &raw mut key_len,
-                &raw mut out_cert,
-                &raw mut cert_len,
-                &raw mut out_ca,
-                &raw mut ca_len,
-                &raw mut err_reason,
-            )
+        // Interior NULs truncate the passphrase — same as the old C helper's
+        // `const char*` view of this buffer.
+        let pass_cstr = pass_owned
+            .as_deref()
+            .map(|v| core::ffi::CStr::from_bytes_until_nul(v).expect("NUL appended above"));
+        let pem = match uws::tls::context::parse_pkcs12(pfx_bytes, pass_cstr) {
+            Ok(pem) => pem,
+            Err(reason) => {
+                let message = match reason {
+                    "key" => "Unable to load private key from PFX data",
+                    "cert" => "Unable to load certificate from PFX data",
+                    "mac" => "PFX MAC verification failed - is the passphrase correct?",
+                    _ => "Unable to load PFX certificate",
+                };
+                return Err(global.throw(format_args!("{message}")));
+            }
         };
-        unsafe extern "C" {
-            fn free(ptr: *mut core::ffi::c_void);
-        }
-        if ok == 0 {
-            let reason = if err_reason.is_null() {
-                ""
-            } else {
-                // SAFETY: the helper sets a static NUL-terminated tag on failure.
-                unsafe { core::ffi::CStr::from_ptr(err_reason) }
-                    .to_str()
-                    .unwrap_or("")
-            };
-            let message = match reason {
-                "key" => "Unable to load private key from PFX data",
-                "cert" => "Unable to load certificate from PFX data",
-                "mac" => "PFX MAC verification failed - is the passphrase correct?",
-                _ => "Unable to load PFX certificate",
-            };
-            return Err(global.throw(format_args!("{message}")));
-        }
         let result = JSValue::create_empty_object(global, 0);
-        // SAFETY: the helper returned NUL-terminated PEM strings of the given
-        // lengths; ZigString::to_js copies into the JS heap before `free`.
-        unsafe {
-            let key_slice = core::slice::from_raw_parts(out_key.cast::<u8>(), key_len);
-            result.put(global, b"key", ZigString::init(key_slice).to_js(global));
-            let cert_slice = core::slice::from_raw_parts(out_cert.cast::<u8>(), cert_len);
-            result.put(global, b"cert", ZigString::init(cert_slice).to_js(global));
-            if !out_ca.is_null() && ca_len > 0 {
-                let ca_slice = core::slice::from_raw_parts(out_ca.cast::<u8>(), ca_len);
-                result.put(global, b"ca", ZigString::init(ca_slice).to_js(global));
-            }
-            free(out_key.cast());
-            free(out_cert.cast());
-            if !out_ca.is_null() {
-                free(out_ca.cast());
-            }
+        result.put(global, b"key", ZigString::init(&pem.key).to_js(global));
+        result.put(global, b"cert", ZigString::init(&pem.cert).to_js(global));
+        if let Some(ca) = &pem.ca {
+            result.put(global, b"ca", ZigString::init(ca).to_js(global));
         }
         Ok(result)
     }
@@ -209,7 +169,12 @@ impl SecureContext {
         let d = ctx_opts.digest();
 
         let mut err = uws::create_bun_socket_error_t::none;
-        let Some(ctx) = ctx_opts.create_ssl_context(&mut err) else {
+        // Same C type, distinct Rust nominal (`bssl_sys` vs `bun_boringssl_sys`);
+        // TLS pointers cross the crate boundary as opaque casts.
+        let Some(ctx) = ctx_opts
+            .create_ssl_context(&mut err)
+            .map(|p| p.cast::<boringssl::SSL_CTX>())
+        else {
             if err == uws::create_bun_socket_error_t::none
                 || err == uws::create_bun_socket_error_t::invalid_ciphers
             {
@@ -282,7 +247,7 @@ impl SecureContext {
 
     fn create_with_digest(
         global: &JSGlobalObject,
-        ctx_opts: &uws::socket_context::BunSocketContextOptions,
+        ctx_opts: &uws::BunSocketContextOptions,
         d: [u8; 32],
     ) -> JsResult<Box<SecureContext>> {
         let mut err = uws::create_bun_socket_error_t::none;
@@ -361,14 +326,12 @@ impl SecureContext {
                 global.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
             );
         }
-        // The C side wants a NUL-terminated PEM document.
+        // The helper wants a NUL-terminated PEM document; an interior NUL
+        // truncates it, same as the old C helper's `const char*` view.
         let mut owned = bytes.to_vec();
         owned.push(0);
-        // SAFETY: `this.ctx` is the live SSL_CTX this object owns a reference
-        // to, and `owned` is a NUL-terminated buffer valid for the call.
-        let ok = unsafe {
-            c::us_ssl_ctx_add_ca_cert(this.ctx, owned.as_ptr().cast::<core::ffi::c_char>())
-        };
+        let pem = core::ffi::CStr::from_bytes_until_nul(&owned).expect("NUL appended above");
+        let ok = uws::tls::context::ssl_ctx_add_ca_cert(this.ctx.cast(), pem);
         if ok == 0 {
             return Err(global.throw(format_args!("Invalid CA certificate")));
         }
@@ -393,7 +356,6 @@ const SSL_CTX_BASE_COST: usize = 50 * 1024;
 
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString;
-use bun_uws_sys::socket_context::c;
 
 mod cpp {
     use super::*;

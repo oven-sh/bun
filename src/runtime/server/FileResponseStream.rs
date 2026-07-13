@@ -18,7 +18,7 @@ use bun_io::{BufferedReader, FileType, ReadState};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
 use bun_sys::{self as sys, Fd};
-use bun_uws::{AnyResponse, WriteResult};
+use bun_uws_shim::{AnyResponse, WriteResult};
 
 use crate::server::jsc::{AnyTask, EventLoopHandle, Task, VirtualMachine};
 
@@ -515,7 +515,7 @@ impl FileResponseStream {
         {
             // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`
             // is set by C `us_create_loop` and valid for the loop's lifetime.
-            return unsafe { (*self.event_loop().r#loop()).uv_loop };
+            return unsafe { (*self.event_loop().r#loop()).uv_loop.cast() };
         }
         #[cfg(not(windows))]
         {

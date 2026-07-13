@@ -19,6 +19,9 @@ pub struct JSONLineBuffer {
     pub newline_pos: Option<u32>,
     /// How far we've scanned for newlines relative to head.
     pub scanned_pos: u32,
+    /// Sticky: a position exceeded the u32 design limit (peer buffered a
+    /// >4 GiB line). The buffer is unusable; callers treat it as too-long.
+    overflow: bool,
 }
 
 /// Return type of [`JSONLineBuffer::next`]: a complete message slice plus its newline offset.
@@ -38,7 +41,7 @@ impl JSONLineBuffer {
 
     /// Scan for newline in unscanned portion of the buffer.
     fn scan_for_newline(&mut self) {
-        if self.newline_pos.is_some() {
+        if self.overflow || self.newline_pos.is_some() {
             return;
         }
         let slice = self.active_slice();
@@ -47,13 +50,20 @@ impl JSONLineBuffer {
         }
 
         let unscanned = &slice[self.scanned_pos as usize..];
-        if let Some(local_idx) = strings::index_of_char(unscanned, b'\n') {
-            let pos = self.scanned_pos.saturating_add(local_idx);
-            self.newline_pos = Some(pos);
-            self.scanned_pos = pos.saturating_add(1); // Only scanned up to (and including) the newline
+        if let Some(local_idx) = strings::index_of_char_usize(unscanned, b'\n') {
+            // `pos == u32::MAX` would overflow the `idx + 1` consumers downstream.
+            match u32::try_from(self.scanned_pos as usize + local_idx) {
+                Ok(pos) if pos < u32::MAX => {
+                    self.newline_pos = Some(pos);
+                    self.scanned_pos = pos + 1; // Only scanned up to (and including) the newline
+                }
+                _ => self.overflow = true,
+            }
         } else {
-            debug_assert!((slice.len() as u64) <= u32::MAX as u64);
-            self.scanned_pos = u32::try_from(slice.len()).expect("int cast"); // No newline, scanned everything
+            match u32::try_from(slice.len()) {
+                Ok(n) => self.scanned_pos = n, // No newline, scanned everything
+                Err(_) => self.overflow = true,
+            }
         }
     }
 
@@ -72,8 +82,17 @@ impl JSONLineBuffer {
         self.scan_for_newline();
     }
 
+    /// True once buffered positions exceeded the u32 design limit (a >4 GiB
+    /// line); the pending message can never be decoded.
+    pub fn overflowed(&self) -> bool {
+        self.overflow
+    }
+
     /// Returns the next complete message (up to and including newline) if available.
     pub fn next(&self) -> Option<Next<'_>> {
+        if self.overflow {
+            return None;
+        }
         let pos = self.newline_pos?;
         Some(Next {
             data: &self.active_slice()[0..(pos as usize) + 1],
@@ -84,7 +103,13 @@ impl JSONLineBuffer {
     /// Consume bytes from the front of the buffer after processing a message.
     /// Just advances head offset - no copying until compaction threshold is reached.
     pub fn consume(&mut self, bytes: u32) {
-        self.head = self.head.saturating_add(bytes);
+        self.head = match self.head.checked_add(bytes) {
+            Some(h) => h,
+            None => {
+                self.overflow = true;
+                return;
+            }
+        };
 
         // Adjust scanned_pos (subtract consumed bytes, but don't go negative)
         self.scanned_pos = self.scanned_pos.saturating_sub(bytes);

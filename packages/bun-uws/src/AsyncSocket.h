@@ -30,9 +30,6 @@
 #include <iostream>
 
 #include "libusockets.h"
-#include "bun-usockets/src/internal/internal.h"
-
-
 
 #include "LoopData.h"
 #include "AsyncSocketData.h"

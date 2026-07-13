@@ -33,9 +33,9 @@ test.skipIf(!fault.available())(
       stderr: "pipe",
     });
     const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // `CrashReason::OutOfMemory` phrasing varies with SHOW_CRASH_TRACE, so
-    // match the shared substring (see run-crash-handler.test.ts).
-    const outOfMemory = stderr.toLowerCase().includes("out of memory");
+    // `CrashReason::OutOfMemory` has exactly two phrasings (crash_handler):
+    // "Bun ran out of memory" with SHOW_CRASH_TRACE, else "Bun has run out of memory".
+    const outOfMemory = stderr.includes("Bun ran out of memory") || stderr.includes("Bun has run out of memory");
     expect({
       markers: stdout
         .split("\n")

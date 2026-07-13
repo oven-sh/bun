@@ -155,7 +155,7 @@ impl CryptoHasher {
         drop(unsafe { Box::from_raw(handle) });
     }
 
-    #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]
+    #[bun_uws_shim::uws_callback(export = "Bun__CryptoHasherExtern__update")]
     pub fn extern_update(&self, input: &[u8]) -> bool {
         match self {
             CryptoHasher::Zig(zig) => {
@@ -170,7 +170,7 @@ impl CryptoHasher {
         }
     }
 
-    #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__digest")]
+    #[bun_uws_shim::uws_callback(export = "Bun__CryptoHasherExtern__digest")]
     pub fn extern_digest(&self, global: &JSGlobalObject, digest_buf: &mut [u8]) -> u32 {
         let buf_len = digest_buf.len();
         match self {
@@ -187,7 +187,7 @@ impl CryptoHasher {
         }
     }
 
-    #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__getDigestSize", no_catch)]
+    #[bun_uws_shim::uws_callback(export = "Bun__CryptoHasherExtern__getDigestSize", no_catch)]
     pub fn extern_digest_size(&self) -> u32 {
         match self {
             CryptoHasher::Zig(inner) => inner.get().digest_length as u32,
@@ -196,7 +196,7 @@ impl CryptoHasher {
         }
     }
 
-    #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__isXof", no_catch)]
+    #[bun_uws_shim::uws_callback(export = "Bun__CryptoHasherExtern__isXof", no_catch)]
     pub fn extern_is_xof(&self) -> bool {
         match self {
             CryptoHasher::Zig(inner) => matches!(

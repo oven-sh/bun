@@ -177,10 +177,6 @@ pub(super) mod ffi {
             out_len: &mut c_uint,
         );
         pub(crate) safe fn SSL_get_ex_data(ssl: &SSL, idx: c_int) -> *mut c_void;
-        /// Save/restore the per-loop BIO routing state around in-handshake JS
-        /// callbacks (defined in usockets' openssl.c).
-        pub(crate) safe fn us_internal_ssl_loop_state_save(ssl: &SSL, out5: *mut *mut c_void);
-        pub(crate) safe fn us_internal_ssl_loop_state_restore(saved5: *mut *mut c_void);
         pub(crate) safe fn SSL_renegotiate(ssl: &SSL) -> c_int;
         pub(crate) safe fn SSL_set_renegotiate_mode(
             ssl: &SSL,
@@ -243,9 +239,6 @@ pub(super) mod ffi {
         // object stack and `OPENSSL_sk_num(NULL)` returns 0.
         pub(crate) fn X509_STORE_get0_objects(store: *mut X509_STORE) -> *mut c_void;
         pub(crate) fn OPENSSL_sk_num(sk: *const c_void) -> usize;
-        // The process-wide default root store; up-refs before returning, so
-        // the caller owns a reference it must release with X509_STORE_free.
-        pub(crate) fn us_get_shared_default_ca_store() -> *mut X509_STORE;
         pub(crate) fn X509_STORE_free(store: *mut X509_STORE);
         // X509_STORE_CTX lifecycle for issuer lookups; `new` allocates,
         // `init` borrows the store, `free` releases. Used to extend the peer
@@ -279,12 +272,19 @@ use crate::node::StringOrBuffer;
 // `socket_body` instance.
 type This = super::TLSSocket;
 
+/// `bssl_sys::SSL` (bun_usockets) → `bun_boringssl_sys::SSL` — same C type,
+/// distinct Rust nominals.
+#[inline(always)]
+fn cast_ssl(p: *mut bun_usockets::SSL) -> *mut boringssl::SSL {
+    p.cast()
+}
+
 pub(super) fn get_servername(
     this: &This,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
 
@@ -330,7 +330,7 @@ pub(super) fn set_servername(
 
     let host = this.server_name.get().as_deref().unwrap();
     if !host.is_empty() {
-        let Some(ssl_ptr) = this.socket.get().ssl() else {
+        let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
             return Ok(JSValue::UNDEFINED);
         };
 
@@ -351,7 +351,7 @@ pub(super) fn get_peer_x509_certificate(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
     let cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -366,7 +366,7 @@ pub(super) fn get_x509_certificate(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
     let cert = ffi::SSL_get_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -385,7 +385,7 @@ pub(super) fn get_tls_version(
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::NULL);
     };
     let version = ffi::SSL_get_version(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -425,7 +425,7 @@ pub(super) fn set_max_send_fragment(
         return Err(global.throw(format_args!("Expected size to be less than 16385")));
     }
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::FALSE);
     };
     Ok(JSValue::from(
@@ -453,7 +453,7 @@ pub(super) fn get_peer_certificate(
         abbreviated = arg.to_boolean();
     }
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
 
@@ -555,7 +555,11 @@ pub(super) fn get_peer_certificate(
         // reference is released after the walk.
         let mut shared_store: *mut boringssl::X509_STORE = core::ptr::null_mut();
         if store.is_null() || ffi::OPENSSL_sk_num(ffi::X509_STORE_get0_objects(store)) == 0 {
-            shared_store = ffi::us_get_shared_default_ca_store();
+            // The process-wide default root store (up-refs before returning;
+            // released with X509_STORE_free below). Native successor of the
+            // old `us_get_shared_default_ca_store` C helper.
+            shared_store = bun_usockets::tls::context::shared_default_ca_store()
+                .cast::<boringssl::X509_STORE>();
             if !shared_store.is_null() {
                 store = shared_store;
             }
@@ -623,7 +627,7 @@ pub(super) fn get_certificate(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
     let cert = ffi::SSL_get_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -639,7 +643,7 @@ pub(super) fn get_tls_finished_message(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
     // We cannot just pass nullptr to SSL_get_finished()
@@ -677,7 +681,7 @@ pub(super) fn get_shared_sigalgs(
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::NULL);
     };
 
@@ -778,7 +782,7 @@ pub(super) fn get_cipher(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
     let cipher = ffi::SSL_get_current_cipher(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -831,7 +835,7 @@ pub(super) fn get_tls_peer_finished_message(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
     // We cannot just pass nullptr to SSL_get_peer_finished()
@@ -880,7 +884,7 @@ pub(crate) fn set_key_cert(
     let Some(sc) = SecureContext::from_js(args.ptr[0]) else {
         return Err(global.throw(format_args!("setKeyCert requires a SecureContext")));
     };
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
     // SAFETY: `sc` is a live SecureContext; borrow() hands back an owned
@@ -941,7 +945,7 @@ pub(crate) fn export_keying_material(
 
     let label = label_arg.to_slice_or_null(global)?;
     let label_slice = label.slice();
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
 
@@ -1018,7 +1022,7 @@ pub(super) fn get_ephemeral_key_info(
         return Ok(JSValue::NULL);
     }
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::NULL);
     };
     let result = JSValue::create_empty_object(global, 0);
@@ -1086,7 +1090,7 @@ pub(super) fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResul
     let mut alpn_proto: *const u8 = core::ptr::null();
     let mut alpn_proto_len: u32 = 0;
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::FALSE);
     };
 
@@ -1115,7 +1119,7 @@ pub(super) fn get_session(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
     let session = ffi::SSL_get_session(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -1159,7 +1163,7 @@ pub(super) fn set_session(
 
     if let Some(sb) = StringOrBuffer::from_js(global, session_arg)? {
         let session_slice = sb.slice();
-        let Some(ssl_ptr) = this.socket.get().ssl() else {
+        let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
             return Ok(JSValue::UNDEFINED);
         };
         let mut tmp: *const u8 = session_slice.as_ptr();
@@ -1198,7 +1202,7 @@ pub(super) fn get_tls_ticket(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
     let session = ffi::SSL_get_session(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -1228,7 +1232,7 @@ pub(super) fn renegotiate(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
     boringssl::ERR_clear_error();
@@ -1243,7 +1247,7 @@ pub(super) fn disable_renegotiation(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
     ffi::SSL_set_renegotiate_mode(
@@ -1258,7 +1262,7 @@ pub(super) fn is_session_reused(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::FALSE);
     };
     Ok(JSValue::from(
@@ -1309,7 +1313,7 @@ pub(super) fn set_verify_mode(
             reject_unauthorized && (!acts_as_server || request_cert),
         );
     });
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.socket.get().ssl().map(cast_ssl) else {
         return Ok(JSValue::UNDEFINED);
     };
     // we always allow and check the SSL certificate after the handshake or renegotiation

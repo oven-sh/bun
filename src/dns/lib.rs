@@ -477,9 +477,9 @@ impl Order {
 
 /// The process-wide DNS
 /// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
-/// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via
-/// the link-time `Bun__addrinfo_*` family — same mechanism usockets C uses —
-/// rather than a `bun_runtime` crate dep, which would cycle.
+/// stat counters). Lower-tier crates (`bun_usockets`, `bun_http`,
+/// `bun_install`) reach it via the link-time `Bun__addrinfo_*` family rather
+/// than a `bun_runtime` crate dep, which would cycle.
 pub mod internal {
     use core::ffi::c_void;
 

@@ -2378,6 +2378,10 @@ pub struct ThreadSafeFunction {
     pub blocking_condvar: Condvar,
     pub closing: AtomicU8, // ClosingState
     pub aborted: AtomicBool,
+    /// Cleared (under `lock`) by the VM-exit hook: addon threads may call in
+    /// after a worker frees its VM/`event_loop`. Once false, dispatch is
+    /// dropped and the TSF leaks (Node's best-effort post-teardown semantics).
+    pub event_loop_alive: AtomicBool,
 }
 
 pub enum TsfnCallback {
@@ -2438,11 +2442,17 @@ impl ThreadSafeFunction {
     //
     // Dispatched via the event-loop task table (`dispatch.rs`), which hands us
     // a `*mut ThreadSafeFunction`; the signature is fixed by that registry.
+    //
+    // SAFETY NOTE (whole impl): a TSF is touched concurrently by addon
+    // threads and the JS thread, so no method may form `&Self`/`&mut Self` —
+    // every access is a field projection through `*mut Self` (atomics and
+    // the `lock`-guarded queue for cross-thread state; JS-thread-only fields
+    // like `callback`/`poll_ref` are projected on the JS thread only).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_dispatch(this: *mut ThreadSafeFunction) {
-        // SAFETY: `this` is a live heap allocation owned by the event loop dispatch.
-        let self_ = unsafe { &mut *this };
-        if self_.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8 {
+        // SAFETY: `this` is a live heap allocation owned by the event loop
+        // dispatch; field projections only (see impl SAFETY NOTE).
+        if unsafe { (*this).closing.load(Ordering::SeqCst) } == ClosingState::Closed as u8 {
             // Finalize the ThreadSafeFunction.
             // SAFETY: `this` is the live heap allocation we own; closed state guarantees no other thread will touch it.
             unsafe { ThreadSafeFunction::destroy(this) };
@@ -2453,14 +2463,20 @@ impl ThreadSafeFunction {
 
         // Run the tasks.
         loop {
-            self_
-                .dispatch_state
-                .store(DispatchState::Running as u8, Ordering::SeqCst);
-            if self_.dispatch_one(is_first) {
-                is_first = false;
-                self_
+            // SAFETY: live TSF, field projection.
+            unsafe {
+                (*this)
                     .dispatch_state
-                    .store(DispatchState::Pending as u8, Ordering::SeqCst);
+                    .store(DispatchState::Running as u8, Ordering::SeqCst);
+            }
+            if Self::dispatch_one(this, is_first) {
+                is_first = false;
+                // SAFETY: live TSF, field projection.
+                unsafe {
+                    (*this)
+                        .dispatch_state
+                        .store(DispatchState::Pending as u8, Ordering::SeqCst);
+                }
             } else {
                 // We're done running tasks, for now. Transition Running → Idle
                 // via CAS instead of an unconditional store: between
@@ -2472,15 +2488,16 @@ impl ThreadSafeFunction {
                 // up. If we blindly stored Idle we'd overwrite that Pending
                 // and the callback would be dropped (flaky lost-wakeup under
                 // load). On CAS failure, loop and re-drain.
-                if self_
-                    .dispatch_state
-                    .compare_exchange(
+                // SAFETY: live TSF, field projection.
+                if unsafe {
+                    (*this).dispatch_state.compare_exchange(
                         DispatchState::Running as u8,
                         DispatchState::Idle as u8,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     )
-                    .is_ok()
+                }
+                .is_ok()
                 {
                     break;
                 }
@@ -2494,75 +2511,87 @@ impl ThreadSafeFunction {
         // not add unnecessary event loop ticks.
     }
 
-    pub fn is_closing(&self) -> bool {
-        self.closing.load(Ordering::SeqCst) != ClosingState::NotClosing as u8
+    fn is_closing(this: *mut ThreadSafeFunction) -> bool {
+        // SAFETY: live TSF, field projection.
+        unsafe { (*this).closing.load(Ordering::SeqCst) != ClosingState::NotClosing as u8 }
     }
 
-    fn maybe_queue_finalizer(&mut self) {
-        let prev = self
-            .closing
-            .swap(ClosingState::Closed as u8, Ordering::SeqCst);
-        match prev {
-            x if x == ClosingState::Closing as u8 || x == ClosingState::NotClosing as u8 => {
-                // TODO: is this boolean necessary? Can we rely just on the closing value?
-                if !self.has_queued_finalizer {
-                    self.has_queued_finalizer = true;
-                    // Note: replace callback with a no-op variant to drop Strong now.
-                    self.callback = TsfnCallback::Js(StrongOptional::empty());
-                    self.poll_ref.disable();
-                    let self_ptr: *mut Self = self;
-                    // SAFETY: event_loop is the live JS-thread loop; single JS thread.
-                    unsafe { self.event_loop.get_mut() }.enqueue_task(Task::init(self_ptr));
+    /// JS thread only (`callback`/`poll_ref`/`has_queued_finalizer` are
+    /// JS-thread-owned).
+    fn maybe_queue_finalizer(this: *mut ThreadSafeFunction) {
+        // SAFETY: live TSF; field projections only (see impl SAFETY NOTE).
+        unsafe {
+            let prev = (*this)
+                .closing
+                .swap(ClosingState::Closed as u8, Ordering::SeqCst);
+            match prev {
+                x if x == ClosingState::Closing as u8 || x == ClosingState::NotClosing as u8 => {
+                    // TODO: is this boolean necessary? Can we rely just on the closing value?
+                    if !(*this).has_queued_finalizer {
+                        (*this).has_queued_finalizer = true;
+                        // Note: replace callback with a no-op variant to drop Strong now.
+                        (*this).callback = TsfnCallback::Js(StrongOptional::empty());
+                        (*this).poll_ref.disable();
+                        // SAFETY: event_loop is the live JS-thread loop; single JS thread.
+                        (*this).event_loop.get_mut().enqueue_task(Task::init(this));
+                    }
                 }
-            }
-            _ => {
-                // already scheduled.
+                _ => {
+                    // already scheduled.
+                }
             }
         }
     }
 
-    pub fn dispatch_one(&mut self, is_first: bool) -> bool {
+    pub fn dispatch_one(this: *mut ThreadSafeFunction, is_first: bool) -> bool {
         let mut queue_finalizer_after_call = false;
+        // SAFETY: live TSF; queue access serialized by the guard; field
+        // projections only (see impl SAFETY NOTE).
         let task = 'brk: {
-            // `MutexGuard` holds the lock by raw pointer, so it does not borrow
-            // `*self` across the `&mut self` calls below.
-            let _g = self.lock.lock_guard();
-            let was_blocked = self.queue.is_blocked();
-            let Some(t) = self.queue.data.read_item() else {
+            let _g = unsafe { (*this).lock.lock_guard() };
+            let was_blocked = unsafe { (*this).queue.is_blocked() };
+            let Some(t) = (unsafe { (*this).queue.data.read_item() }) else {
                 // When there are no tasks and the number of threads that have
                 // references reaches zero, we prepare to finalize the
                 // ThreadSafeFunction.
-                if self.thread_count.load(Ordering::SeqCst) == 0 {
-                    if self.queue.max_queue_size > 0 {
-                        self.blocking_condvar.signal();
+                // SAFETY: field projections (see above).
+                unsafe {
+                    if (*this).thread_count.load(Ordering::SeqCst) == 0 {
+                        if (*this).queue.max_queue_size > 0 {
+                            (*this).blocking_condvar.signal();
+                        }
+                        Self::maybe_queue_finalizer(this);
                     }
-                    self.maybe_queue_finalizer();
                 }
                 return false;
             };
 
-            if self.queue.count.fetch_sub(1, Ordering::SeqCst) == 1
-                && self.thread_count.load(Ordering::SeqCst) == 0
-            {
-                self.closing
-                    .store(ClosingState::Closing as u8, Ordering::SeqCst);
-                if self.queue.max_queue_size > 0 {
-                    self.blocking_condvar.signal();
+            // SAFETY: field projections (see above).
+            unsafe {
+                if (*this).queue.count.fetch_sub(1, Ordering::SeqCst) == 1
+                    && (*this).thread_count.load(Ordering::SeqCst) == 0
+                {
+                    (*this)
+                        .closing
+                        .store(ClosingState::Closing as u8, Ordering::SeqCst);
+                    if (*this).queue.max_queue_size > 0 {
+                        (*this).blocking_condvar.signal();
+                    }
+                    queue_finalizer_after_call = true;
+                } else if was_blocked && !(*this).queue.is_blocked() {
+                    (*this).blocking_condvar.signal();
                 }
-                queue_finalizer_after_call = true;
-            } else if was_blocked && !self.queue.is_blocked() {
-                self.blocking_condvar.signal();
             }
 
             break 'brk t;
         };
 
-        if self.call(task, !is_first).is_err() {
+        if Self::call(this, task, !is_first).is_err() {
             return false;
         }
 
         if queue_finalizer_after_call {
-            self.maybe_queue_finalizer();
+            Self::maybe_queue_finalizer(this);
         }
 
         // An item was dequeued: keep on_dispatch looping so remaining queued
@@ -2573,19 +2602,26 @@ impl ThreadSafeFunction {
     /// This function can be called multiple times in one tick of the event loop.
     /// See: https://github.com/nodejs/node/pull/38506
     /// In that case, we need to drain microtasks.
-    fn call(&mut self, task: *mut c_void, is_first: bool) -> Result<(), bun_jsc::JsTerminated> {
-        let env = self.env.get();
+    fn call(
+        this: *mut ThreadSafeFunction,
+        task: *mut c_void,
+        is_first: bool,
+    ) -> Result<(), bun_jsc::JsTerminated> {
+        // SAFETY: live TSF on the JS thread; field projections only.
+        let env = unsafe { (*this).env.get() };
         if !is_first {
             // SAFETY: event_loop is the live JS-thread loop; single JS thread.
-            // SAFETY: event_loop is the live JS-thread loop; single JS thread.
-            unsafe { self.event_loop.get_mut() }.drain_microtasks()?;
+            unsafe { (*this).event_loop.get_mut() }.drain_microtasks()?;
         }
         // SAFETY: env is valid while the TSF is live.
         let global_object = unsafe { &*env }.to_js();
 
-        let _dispatch = self.tracker.dispatch(global_object);
+        // SAFETY: `tracker` is Copy; field projection.
+        let _dispatch = unsafe { (*this).tracker }.dispatch(global_object);
 
-        match &self.callback {
+        // SAFETY: `callback` is JS-thread-owned; only `maybe_queue_finalizer`
+        // (same thread, never re-entered while this borrow is live) writes it.
+        match unsafe { &(*this).callback } {
             TsfnCallback::Js(strong) => {
                 let js: JSValue = strong.get().unwrap_or(JSValue::UNDEFINED);
                 if js.is_empty_or_undefined_or_null() {
@@ -2602,13 +2638,14 @@ impl ThreadSafeFunction {
             } => {
                 let js: JSValue = cb_js.get().unwrap_or(JSValue::UNDEFINED);
 
-                // SAFETY: `env` is held alive by `self.env` (`NapiEnvRef`) for the TSF's lifetime.
+                // SAFETY: `env` is held alive by the TSF's `NapiEnvRef` for its lifetime.
                 let env_ref = unsafe { &*env };
                 let _hs = NapiHandleScope::open_scoped(env_ref);
                 napi_threadsafe_function_call_js(
                     env,
                     napi_value::create(env_ref, js),
-                    self.ctx,
+                    // SAFETY: plain field read.
+                    unsafe { (*this).ctx },
                     task,
                 );
             }
@@ -2616,49 +2653,97 @@ impl ThreadSafeFunction {
         Ok(())
     }
 
-    pub fn enqueue(&mut self, ctx: *mut c_void, block: bool) -> napi_status {
-        let _g = self.lock.lock_guard();
+    pub fn enqueue(this: *mut ThreadSafeFunction, ctx: *mut c_void, block: bool) -> napi_status {
+        // SAFETY (whole fn): live TSF; queue access serialized by the guard;
+        // field projections only (see impl SAFETY NOTE).
+        let _g = unsafe { (*this).lock.lock_guard() };
+        // Dead event loop ⇒ no drainer will ever run this call: report
+        // `napi_closing` on every arm (non-blocking and blocking-with-space
+        // included), instead of queueing into a loop that never ticks again.
+        if !unsafe { (*this).event_loop_alive.load(Ordering::SeqCst) } {
+            return NapiStatus::closing as napi_status;
+        }
         if block {
-            while self.queue.is_blocked() && !self.is_closing() {
-                self.blocking_condvar.wait(&self.lock);
+            while unsafe { (*this).queue.is_blocked() } && !Self::is_closing(this) {
+                // Teardown may kill the drainer while we wait: bail with
+                // `closing` instead of blocking forever on a dead loop.
+                // SAFETY: field projections.
+                unsafe {
+                    if !(*this).event_loop_alive.load(Ordering::SeqCst) {
+                        return NapiStatus::closing as napi_status;
+                    }
+                    (*this).blocking_condvar.wait(&(*this).lock);
+                }
             }
         } else {
-            if self.queue.is_blocked() {
+            if unsafe { (*this).queue.is_blocked() } {
                 // don't set the error on the env as this is run from another thread
                 return NapiStatus::queue_full as napi_status;
             }
         }
 
-        if self.is_closing() {
-            if self.thread_count.load(Ordering::SeqCst) <= 0 {
+        if Self::is_closing(this) {
+            // SAFETY: field projection.
+            if unsafe { (*this).thread_count.load(Ordering::SeqCst) } <= 0 {
                 return NapiStatus::invalid_arg as napi_status;
             }
-            let _ = self.release(napi_threadsafe_function_release_mode::release, true);
+            let _ = Self::release(this, napi_threadsafe_function_release_mode::release, true);
             return NapiStatus::closing as napi_status;
         }
 
-        let _ = self.queue.count.fetch_add(1, Ordering::SeqCst);
-        let _ = self.queue.data.write_item(ctx); // OOM/capacity failures are fire-and-forget
-        self.schedule_dispatch();
+        // SAFETY: queue mutation under the guard; field projections.
+        unsafe {
+            let _ = (*this).queue.count.fetch_add(1, Ordering::SeqCst);
+            let _ = (*this).queue.data.write_item(ctx); // OOM/capacity failures are fire-and-forget
+        }
+        Self::schedule_dispatch(this);
         NapiStatus::ok as napi_status
     }
 
-    fn schedule_dispatch(&mut self) {
-        let prev = self
-            .dispatch_state
-            .swap(DispatchState::Pending as u8, Ordering::SeqCst);
-        match prev {
-            x if x == DispatchState::Idle as u8 => {
-                let self_ptr: *mut Self = self;
-                self.event_loop
-                    .enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
+    fn schedule_dispatch(this: *mut ThreadSafeFunction) {
+        // Callers hold the TSF lock, so this load is ordered against the
+        // cleanup hook's store: once observed false, the VM (and its
+        // event_loop) may already be freed — do not touch it.
+        // SAFETY (whole fn): live TSF; field projections only.
+        unsafe {
+            if !(*this).event_loop_alive.load(Ordering::SeqCst) {
+                return;
             }
-            x if x == DispatchState::Running as u8 => {
-                // it will check if it has more work to do
+            let prev = (*this)
+                .dispatch_state
+                .swap(DispatchState::Pending as u8, Ordering::SeqCst);
+            match prev {
+                x if x == DispatchState::Idle as u8 => {
+                    (*this)
+                        .event_loop
+                        .enqueue_task_concurrent(ConcurrentTask::create_from(this));
+                }
+                x if x == DispatchState::Running as u8 => {
+                    // it will check if it has more work to do
+                }
+                _ => {
+                    // we've already scheduled it to run
+                }
             }
-            _ => {
-                // we've already scheduled it to run
-            }
+        }
+    }
+
+    /// VM-exit cleanup hook (drained by `vm.on_exit()`, which worker shutdown
+    /// runs BEFORE freeing the VM). `destroy()` unregisters it, so `ctx` is
+    /// always a live TSF here.
+    extern "C" fn mark_event_loop_dead(ctx: *mut c_void) {
+        let this = ctx.cast::<ThreadSafeFunction>();
+        // SAFETY: registered with a live TSF pointer, removed in `destroy()`
+        // before the TSF is freed; field projections only — addon threads
+        // may be mutating the lock-guarded queue concurrently.
+        unsafe {
+            // The lock orders this store against a foreign thread mid-release():
+            // in-flight releases finish against the still-alive VM first.
+            let _g = (*this).lock.lock_guard();
+            (*this).event_loop_alive.store(false, Ordering::SeqCst);
+            // No drainer remains: wake every producer blocked on a full queue so
+            // it can observe the dead loop and return `napi_closing`.
+            (*this).blocking_condvar.broadcast();
         }
     }
 
@@ -2666,9 +2751,19 @@ impl ThreadSafeFunction {
     /// SAFETY: `this` must be a live `*mut ThreadSafeFunction` returned from `heap::alloc`
     /// and not aliased; caller transfers ownership.
     pub unsafe fn destroy(this: *mut ThreadSafeFunction) {
-        // SAFETY: caller contract — `this` is a live heap allocation; we consume it here.
+        // destroy() only runs via event-loop dispatch, so the VM is alive;
+        // drop the exit hook that would otherwise fire on freed memory.
+        // SAFETY: `env` holds a ref, so the pointer is live.
+        unsafe { &*(*this).env.get() }
+            .to_js()
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .remove_cleanup_hook(this.cast(), Self::mark_event_loop_dead);
+        Self::unref(this);
+        // SAFETY: caller contract — `this` is a live heap allocation; we
+        // consume it here (closed state: no other thread touches it).
         let self_ = unsafe { &mut *this };
-        self_.unref();
 
         if let Some(fun) = self_.finalizer_fun {
             // Note: ownership transfer of `env` into the Finalizer. We clone (bumps the
@@ -2691,56 +2786,73 @@ impl ThreadSafeFunction {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub fn ref_(&mut self) {
-        self.poll_ref
-            .ref_concurrently_from_event_loop(bun_io::js_vm_ctx());
+    /// JS thread only (`poll_ref` is JS-thread-owned).
+    pub fn ref_(this: *mut ThreadSafeFunction) {
+        // SAFETY: live TSF on the JS thread; field projection.
+        unsafe {
+            (*this)
+                .poll_ref
+                .ref_concurrently_from_event_loop(bun_io::js_vm_ctx());
+        }
     }
 
-    pub fn unref(&mut self) {
-        self.poll_ref
-            .unref_concurrently_from_event_loop(bun_io::js_vm_ctx());
+    /// JS thread only (`poll_ref` is JS-thread-owned).
+    pub fn unref(this: *mut ThreadSafeFunction) {
+        // SAFETY: live TSF on the JS thread; field projection.
+        unsafe {
+            (*this)
+                .poll_ref
+                .unref_concurrently_from_event_loop(bun_io::js_vm_ctx());
+        }
     }
 
-    pub fn acquire(&mut self) -> napi_status {
-        let _g = self.lock.lock_guard();
-        if self.is_closing() {
+    pub fn acquire(this: *mut ThreadSafeFunction) -> napi_status {
+        // SAFETY: live TSF; field projections only.
+        let _g = unsafe { (*this).lock.lock_guard() };
+        if Self::is_closing(this) {
             return NapiStatus::closing as napi_status;
         }
-        let _ = self.thread_count.fetch_add(1, Ordering::SeqCst);
+        // SAFETY: field projection.
+        let _ = unsafe { (*this).thread_count.fetch_add(1, Ordering::SeqCst) };
         NapiStatus::ok as napi_status
     }
 
     pub fn release(
-        &mut self,
+        this: *mut ThreadSafeFunction,
         mode: napi_threadsafe_function_release_mode,
         already_locked: bool,
     ) -> napi_status {
-        let _g = (!already_locked).then(|| self.lock.lock_guard());
+        // SAFETY (whole fn): live TSF; field projections only.
+        let _g = (!already_locked).then(|| unsafe { (*this).lock.lock_guard() });
 
-        if self.thread_count.load(Ordering::SeqCst) < 0 {
+        if unsafe { (*this).thread_count.load(Ordering::SeqCst) } < 0 {
             return NapiStatus::invalid_arg as napi_status;
         }
 
-        let prev_remaining = self.thread_count.fetch_sub(1, Ordering::SeqCst);
+        let prev_remaining = unsafe { (*this).thread_count.fetch_sub(1, Ordering::SeqCst) };
 
         if mode == napi_threadsafe_function_release_mode::abort || prev_remaining == 1 {
-            if !self.is_closing() {
+            if !Self::is_closing(this) {
                 if mode == napi_threadsafe_function_release_mode::abort {
-                    self.closing
-                        .store(ClosingState::Closing as u8, Ordering::SeqCst);
-                    self.aborted.store(true, Ordering::SeqCst);
-                    if self.queue.max_queue_size > 0 {
-                        // Wake all producers blocked in enqueue()'s bounded
-                        // queue wait so they observe is_closing and release.
-                        self.blocking_condvar.broadcast();
+                    // SAFETY: field projections.
+                    unsafe {
+                        (*this)
+                            .closing
+                            .store(ClosingState::Closing as u8, Ordering::SeqCst);
+                        (*this).aborted.store(true, Ordering::SeqCst);
+                        if (*this).queue.max_queue_size > 0 {
+                            // Wake all producers blocked in enqueue()'s bounded
+                            // queue wait so they observe is_closing and release.
+                            (*this).blocking_condvar.broadcast();
+                        }
                     }
                 }
-                self.schedule_dispatch();
+                Self::schedule_dispatch(this);
             } else if prev_remaining == 1 {
                 // Already closing from an earlier abort. The last release must
                 // still reach dispatch_one's thread_count==0 path so the
                 // finalizer runs and the event-loop keepalive is dropped.
-                self.schedule_dispatch();
+                Self::schedule_dispatch(this);
             }
         }
 
@@ -2812,14 +2924,22 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
         blocking_condvar: Condvar::default(),
         closing: AtomicU8::new(ClosingState::NotClosing as u8),
         aborted: AtomicBool::new(true),
+        event_loop_alive: AtomicBool::new(true),
     });
 
-    // SAFETY: function is non-null (just allocated).
-    let function_ref = unsafe { &mut *function };
+    // Sever `event_loop` before the VM frees it: a worker's shutdown drains
+    // these hooks in `vm.on_exit()` while addon threads may still hold this
+    // TSF. `destroy()` removes the hook.
+    vm.rare_data().push_cleanup_hook(
+        env.to_js(),
+        function.cast(),
+        ThreadSafeFunction::mark_event_loop_dead,
+    );
 
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
-    function_ref.ref_();
-    function_ref.tracker.did_schedule(vm.global());
+    ThreadSafeFunction::ref_(function);
+    // SAFETY: function is non-null (just allocated); `tracker` is Copy.
+    unsafe { (*function).tracker }.did_schedule(vm.global());
 
     *result = function;
     env.ok()
@@ -2843,8 +2963,9 @@ pub(super) extern "C" fn napi_call_threadsafe_function(
     is_blocking: napi_threadsafe_function_call_mode,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_call_threadsafe_function");
-    // SAFETY: func is non-null per N-API contract.
-    unsafe { &mut *func }.enqueue(data, is_blocking == NAPI_TSFN_BLOCKING)
+    // Raw pointer through: addon threads call this concurrently, so a
+    // `&mut ThreadSafeFunction` here would alias (methods project fields).
+    ThreadSafeFunction::enqueue(func, data, is_blocking == NAPI_TSFN_BLOCKING)
 }
 
 #[unsafe(no_mangle)]
@@ -2852,8 +2973,8 @@ pub(super) extern "C" fn napi_acquire_threadsafe_function(
     func: napi_threadsafe_function,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_acquire_threadsafe_function");
-    // SAFETY: func is non-null per N-API contract.
-    unsafe { &mut *func }.acquire()
+    // Raw pointer through — same aliasing rule as napi_call_threadsafe_function.
+    ThreadSafeFunction::acquire(func)
 }
 
 #[unsafe(no_mangle)]
@@ -2862,8 +2983,8 @@ pub(super) extern "C" fn napi_release_threadsafe_function(
     mode: napi_threadsafe_function_release_mode,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_release_threadsafe_function");
-    // SAFETY: func is non-null per N-API contract.
-    unsafe { &mut *func }.release(mode, false)
+    // Raw pointer through — same aliasing rule as napi_call_threadsafe_function.
+    ThreadSafeFunction::release(func, mode, false)
 }
 
 #[unsafe(no_mangle)]
@@ -2873,13 +2994,12 @@ pub(super) extern "C" fn napi_unref_threadsafe_function(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_unref_threadsafe_function");
     let env = get_env!(env_);
-    // SAFETY: func is non-null per N-API contract.
-    let func = unsafe { &mut *func };
+    // SAFETY: func is non-null per N-API contract; field projection only.
     debug_assert!(core::ptr::eq(
-        (*func.event_loop).global.unwrap().as_ptr(),
+        unsafe { (*func).event_loop }.global.unwrap().as_ptr(),
         env.to_js()
     ));
-    func.unref();
+    ThreadSafeFunction::unref(func);
     env.ok()
 }
 
@@ -2890,13 +3010,12 @@ pub(super) extern "C" fn napi_ref_threadsafe_function(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_ref_threadsafe_function");
     let env = get_env!(env_);
-    // SAFETY: func is non-null per N-API contract.
-    let func = unsafe { &mut *func };
+    // SAFETY: func is non-null per N-API contract; field projection only.
     debug_assert!(core::ptr::eq(
-        (*func.event_loop).global.unwrap().as_ptr(),
+        unsafe { (*func).event_loop }.global.unwrap().as_ptr(),
         env.to_js()
     ));
-    func.ref_();
+    ThreadSafeFunction::ref_(func);
     env.ok()
 }
 

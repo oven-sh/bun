@@ -24,18 +24,28 @@ pub struct Stream {
 }
 
 impl Stream {
-    /// Mutable access to the JS-side `ThreadSafeStreamBuffer` while attached.
+    /// Shared access to the JS-side `ThreadSafeStreamBuffer` while attached.
     ///
     /// INVARIANT: while `buffer` is `Some`, this `Stream` holds an intrusive
     /// ref on the `ThreadSafeStreamBuffer` (taken on attach, released in
     /// `detach`); the buffer is a separate heap allocation that outlives the
-    /// returned borrow. HTTP-thread-only at the call sites, so the `&mut` is
-    /// the sole live borrow on this side of the lock.
+    /// returned borrow. Shared (never `&mut`) — the JS thread holds
+    /// concurrent borrows; mutation goes through the buffer's own lock.
     #[inline]
-    pub fn buffer_mut(&mut self) -> Option<&mut ThreadSafeStreamBuffer> {
+    pub fn buffer_ref(&self) -> Option<&ThreadSafeStreamBuffer> {
         // Route through the shared `from_attached` accessor (one centralised
         // unsafe); see INVARIANT above.
         self.buffer.map(ThreadSafeStreamBuffer::from_attached)
+    }
+
+    /// Latch end-of-body from the shared buffer's sticky flag: the JS thread
+    /// marks the buffer before scheduling the End wake-up, so a send that starts
+    /// after a missed wake-up (queued task, h2 pending_attach) still terminates.
+    pub fn sync_ended(&mut self) -> bool {
+        if !self.ended && self.buffer_ref().is_some_and(|b| b.is_ended()) {
+            self.ended = true;
+        }
+        self.ended
     }
 
     pub fn detach(&mut self) {

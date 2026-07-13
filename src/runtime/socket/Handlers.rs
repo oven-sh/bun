@@ -10,7 +10,7 @@ use bun_jsc::generated::{
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_sys::Fd;
-use bun_uws as uws;
+use bun_usockets as uws;
 
 use super::Listener as SocketListener;
 use super::SocketMode;

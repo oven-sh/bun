@@ -145,8 +145,8 @@ pub(crate) fn do_send(
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
                     // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
-                    // owned by uSockets; `get_socket` only reinterpret-casts to
-                    // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
+                    // owned by uSockets; `get_socket` borrows the embedded
+                    // header and `get_fd` is a read-only accessor.
                     let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
                     zig_handle = Some(Handle::init(fd, handle));
                 }
@@ -225,8 +225,8 @@ pub(crate) fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> 
     // mutable); `get_ipc_instance` writes `self.ipc` on first call.
     let vm = global.bun_vm().as_mut();
     // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
-    // `None`); the `&mut SendQueue` borrow is scoped to this call and does not
-    // alias `vm` (the instance is heap-allocated, not embedded in `vm`).
-    let ipc = vm.get_ipc_instance().map(|i| unsafe { &mut (*i).data });
+    // `None`); `queue()` is the audited `JsCell` projection and the borrow is
+    // scoped to this call.
+    let ipc = vm.get_ipc_instance().map(|i| unsafe { &*i }.queue());
     do_send(ipc, global, frame, FromEnum::Process)
 }

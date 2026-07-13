@@ -9,7 +9,7 @@ use core::ptr::NonNull;
 
 use bun_bundler::Transpiler;
 use bun_io as Async;
-use bun_uws as uws;
+use bun_usockets as uws;
 
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
@@ -19,8 +19,7 @@ use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
     self as jsc, ErrorCode, ErrorableResolvedSource, ErrorableString, Exception, JSGlobalObject,
-    JSInternalPromise, JSValue, JsResult, OpaqueCallback, PlatformEventLoop, ResolvedSource, VM,
-    ZigException,
+    JSInternalPromise, JSValue, JsResult, PlatformEventLoop, ResolvedSource, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -264,9 +263,6 @@ pub struct VirtualMachine {
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
 
-    pub after_event_loop_callback_ctx: Option<*mut c_void>,
-    pub after_event_loop_callback: Option<OpaqueCallback>,
-
     pub remap_stack_frames_mutex: bun_threading::Mutex,
 
     pub argv: Vec<Box<[u8]>>,
@@ -316,7 +312,9 @@ pub struct VirtualMachine {
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
     pub has_started_debugger: bool,
-    pub has_terminated: bool,
+    /// Atomic: read cross-thread by `EventLoop::enqueue_task_concurrent*`
+    /// debug asserts while the owning thread flips it in `deinit`.
+    pub has_terminated: core::sync::atomic::AtomicBool,
 
     #[cfg(debug_assertions)]
     pub debug_thread_id: std::thread::ThreadId,
@@ -865,16 +863,10 @@ impl VirtualMachine {
         self.as_mut().debugger.as_deref_mut()
     }
 
-    /// Safe `&mut uws::Loop` accessor for the per-VM uSockets loop. Same
-    /// single-JS-thread soundness contract as [`Self::event_loop_mut`].
-    #[inline(always)]
-    #[allow(clippy::mut_from_ref)]
-    pub fn uws_loop_mut(&self) -> &mut uws::Loop {
-        // SAFETY: `uws_loop()` returns the per-VM loop pointer; non-null on
-        // the JS thread once `init()` ran. Single-JS-thread invariant per
-        // `unsafe impl Sync`.
-        unsafe { &mut *self.uws_loop() }
-    }
+    // NOTE: there is deliberately no `&mut uws::Loop` accessor — even a
+    // JS-thread-scoped `&mut Loop` spans `pending_wakeups`, which waker
+    // threads `fetch_add` concurrently. Use `uws_loop()` + the
+    // `Loop::*_raw` twins.
 
     /// Safe `&mut PlatformEventLoop` accessor for `event_loop_handle` (the
     /// uws loop on POSIX, libuv loop on Windows). `None` only before
@@ -882,7 +874,7 @@ impl VirtualMachine {
     /// `self.event_loop_handle.unwrap()` at the `EventLoop::tick*` /
     /// `update_counts` call sites into one SAFETY block.
     ///
-    /// Same single-JS-thread soundness contract as [`Self::uws_loop_mut`] —
+    /// Same single-JS-thread soundness contract as [`Self::event_loop_mut`] —
     /// the `PlatformEventLoop` is a separate heap allocation (uws/uv-owned),
     /// so the returned `&mut` cannot alias any field of `self`.
     #[inline(always)]
@@ -1006,7 +998,7 @@ impl VirtualMachine {
     }
 
     /// Per-callback hot path: `drain_microtasks_with_global` calls
-    /// `uws_loop_mut()` (→ this) every time the microtask queue drains, and
+    /// this accessor every time the microtask queue drains, and
     /// the only call site there is already gated on
     /// `event_loop_handle.is_some()`.
     #[inline(always)]
@@ -1027,19 +1019,13 @@ impl VirtualMachine {
         }
     }
 
-    pub fn on_after_event_loop(&mut self) {
-        if let Some(cb) = self.after_event_loop_callback.take() {
-            let ctx = self.after_event_loop_callback_ctx.take();
-            // SAFETY: `cb` was registered with the matching `ctx`.
-            unsafe { cb(ctx.unwrap_or(core::ptr::null_mut())) };
-        }
-    }
-
     pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
         let el = self.event_loop_shared();
+        // SAFETY: when `Some`, the handle is the live per-VM loop; `is_active`
+        // reads a loop-thread-owned counter through a transient shared borrow.
         let active = self
-            .platform_loop_opt()
-            .map(|h| h.is_active())
+            .event_loop_handle
+            .map(|h| unsafe { (*h).is_active() })
             .unwrap_or(false);
         self.unhandled_error_counter == 0
             && ((active as usize)
@@ -1179,6 +1165,10 @@ impl VirtualMachine {
 
     pub fn enter_uws_loop(&mut self) {
         // event_loop_handle is set in ensure_waker before any caller reaches here.
+        #[cfg(unix)]
+        // `run` takes `*mut Loop` — re-entrant callbacks re-fetch the loop.
+        uws::Loop::run(self.event_loop_handle.expect("event_loop_handle"));
+        #[cfg(not(unix))]
         self.platform_loop_opt().expect("event_loop_handle").run();
     }
 
@@ -1531,10 +1521,10 @@ impl VirtualMachine {
         if self.should_destruct_main_thread_on_exit() {
             #[cfg(windows)]
             if let Some(t) = self.event_loop_mut().forever_timer.take() {
-                // SAFETY: `t` is the live usockets timer created in
-                // `EventLoop::tick_possibly_forever`; `close::<true>()`
-                // (fallthrough) frees it without re-entering the loop.
-                unsafe { uws::Timer::close::<true>(t.as_ptr()) };
+                // Stops the usockets timer created in
+                // `EventLoop::tick_possibly_forever`; the blob is freed by its
+                // uv_close callback.
+                uws::backend::libuv::Timer::close(t.as_ptr());
             }
             // Drain `TimeoutObject`s / `ImmediateObject`s from `All.timers`
             // while `runtime_state`, the event loop, and the JSC heap are all
@@ -1608,7 +1598,7 @@ impl VirtualMachine {
             // socket that was still open at process.exit().
             // SAFETY: `uws::Loop::get()` returns the process-global usockets
             // loop, which is live for the process lifetime.
-            unsafe { (*uws::Loop::get()).drain_closed_sockets() };
+            uws::Loop::drain_closed_sockets(uws::Loop::get());
 
             self.destroy();
         }
@@ -1705,7 +1695,7 @@ pub struct RuntimeHooks {
     /// `bun_runtime::RuntimeState` (b2-cycle).
     pub ssl_ctx_cache_get_or_create: unsafe fn(
         vm: *mut VirtualMachine,
-        opts: &uws::SocketContext::BunSocketContextOptions,
+        opts: &uws::BunSocketContextOptions,
         err: &mut uws::create_bun_socket_error_t,
     ) -> Option<*mut uws::SslCtx>,
     /// Lazy `NodeFS` creation.
@@ -1853,12 +1843,6 @@ bun_io::link_impl_EventLoopCtx! {
         // and `{,un}ref_concurrently` take `&self` (atomic fetch_add + wakeup).
         ref_concurrently()   => (*(*this).event_loop()).ref_concurrently(),
         unref_concurrently() => (*(*this).event_loop()).unref_concurrently(),
-        after_event_loop_callback() => vm_from_owner(this.cast()).after_event_loop_callback,
-        set_after_event_loop_callback(cb, ctx) => {
-            let vm = vm_from_owner(this.cast());
-            vm.after_event_loop_callback = cb;
-            vm.after_event_loop_callback_ctx = ctx.map(|p| p.as_ptr());
-        },
         pipe_read_buffer() => {
             core::ptr::from_mut::<[u8]>(vm_from_owner(this.cast()).rare_data().pipe_read_buffer())
         },
@@ -2827,7 +2811,10 @@ pub struct IPCInstance {
     pub group: *mut uws::SocketGroup,
     #[cfg(not(unix))]
     pub group: (),
-    pub data: crate::ipc::SendQueue,
+    /// Owning handle; `IpcRef::drop` (via `deinit` on the error path) tears
+    /// the socket down and releases the ref. In normal operation the instance
+    /// lives for the process.
+    pub data: crate::ipc::IpcRef,
     pub has_disconnect_called: bool,
 }
 
@@ -2835,8 +2822,15 @@ impl IPCInstance {
     pub fn new(v: IPCInstance) -> *mut IPCInstance {
         bun_core::heap::into_raw(Box::new(v))
     }
-    pub fn ipc(&mut self) -> Option<&mut crate::ipc::SendQueue> {
-        Some(&mut self.data)
+    /// Single audited `JsCell` projection (same discipline as
+    /// `Subprocess::ipc`).
+    ///
+    /// # Safety-adjacent note: single JS thread; callers must not hold the
+    /// borrow across re-entry that touches the same cell.
+    #[allow(clippy::mut_from_ref)]
+    pub fn queue(&self) -> &mut crate::ipc::SendQueue {
+        // SAFETY: see doc above (JsCell::get_mut contract).
+        unsafe { self.data.queue_mut() }
     }
     pub fn get_global_this(&self) -> Option<*mut JSGlobalObject> {
         Some(self.global_this)
@@ -2848,6 +2842,8 @@ impl IPCInstance {
     /// not yet freed or aliased.
     pub unsafe fn deinit(this: *mut IPCInstance) {
         // SAFETY: caller contract — `this` is a live heap::alloc'd box.
+        // `IpcRef::drop` runs the owner teardown before releasing the ref
+        // (the `SendQueue.owner` backref targets `*this`, still live here).
         drop(unsafe { bun_core::heap::take(this) });
     }
 
@@ -4508,7 +4504,8 @@ impl VirtualMachine {
             // once on the same thread; `self` is the live per-thread VM.
             unsafe { (hooks.deinit_runtime_state)(std::ptr::from_mut(self), state) };
         }
-        self.has_terminated = true;
+        self.has_terminated
+            .store(true, core::sync::atomic::Ordering::SeqCst);
     }
     /// Note: takes the concrete
     /// `bun_core::io::Writer` since every call site passes
@@ -6453,54 +6450,48 @@ impl VirtualMachine {
                 (*rare).spawn_ipc_group(&*this)
             };
 
-            // Box the instance first so `data.owner` can name its final
-            // address.
+            // Box the instance first so the queue's `owner` backref can name
+            // its final address.
             let instance = IPCInstance::new(IPCInstance {
                 global_this: self.global,
                 group,
-                data: crate::ipc::SendQueue::init(
+                data: crate::ipc::IpcRef::new(
                     mode,
                     // Patched below once the box address is fixed.
                     core::ptr::null_mut::<IPCInstance>() as *mut dyn crate::ipc::SendQueueOwner,
-                    crate::ipc::SocketUnion::Uninitialized,
                 ),
                 has_disconnect_called: false,
             });
-            // PROVENANCE: `from_fd` STORES the `*mut SendQueue` in the socket
-            // ext slot for the socket's lifetime, so that pointer must derive
-            // from the root raw `instance` (SharedReadWrite tag, never popped),
-            // NOT from a `&mut IPCInstance` reborrow whose Unique tag would be
-            // invalidated by later writes through `instance`. Per-use raw deref
-            // also avoids holding a live `&mut` across `deinit` on the failure
-            // branch.
             // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
+            unsafe { &(*instance).data }
+                .with_queue(|q| q.owner = instance as *mut dyn crate::ipc::SendQueueOwner);
 
             self.ipc = Some(IPCInstanceUnion::Initialized(instance));
 
-            // SAFETY: `group` is the live per-VM SocketGroup; `instance.data`
-            // is the freshly-initialized SendQueue stored inline in `*instance`.
-            let socket = unsafe {
-                crate::ipc::Socket::from_fd::<crate::ipc::SendQueue>(
-                    &mut *group,
-                    uws::SocketKind::SpawnIpc,
-                    fd,
-                    core::ptr::addr_of_mut!((*instance).data),
-                    true,
-                )
-            };
+            // Transfers a strong ref to the socket core (released at the
+            // terminal callback / `detach_owner`).
+            // SAFETY: `group` is the live per-VM SocketGroup; `instance` is
+            // the live boxed IPCInstance.
+            let socket = crate::ipc::Socket::from_fd_owned(
+                unsafe { &mut *group },
+                uws::SocketKind::SpawnIpc,
+                fd,
+                unsafe { &(*instance).data }.dupe_ref(),
+                /*is_ipc=*/ true,
+            );
             let Some(socket) = socket else {
+                self.ipc = None;
                 // SAFETY: `instance` was produced by `IPCInstance::new`
                 // (heap::alloc) above and is not yet aliased.
                 unsafe { IPCInstance::deinit(instance) };
-                self.ipc = None;
                 bun_core::warn!("Unable to start IPC socket");
                 return None;
             };
             socket.set_timeout(0);
 
             // SAFETY: `instance` is the live boxed IPCInstance.
-            unsafe { (*instance).data.socket = crate::ipc::SocketUnion::Open(socket) };
+            unsafe { &(*instance).data }
+                .with_queue(|q| q.socket = crate::ipc::SocketUnion::Open(socket));
 
             instance
         };
@@ -6510,41 +6501,33 @@ impl VirtualMachine {
             let instance = IPCInstance::new(IPCInstance {
                 global_this: self.global,
                 group: (),
-                data: crate::ipc::SendQueue::init(
+                data: crate::ipc::IpcRef::new(
                     mode,
                     // Patched below once the box address is fixed.
                     core::ptr::null_mut::<IPCInstance>() as *mut dyn crate::ipc::SendQueueOwner,
-                    crate::ipc::SocketUnion::Uninitialized,
                 ),
                 has_disconnect_called: false,
             });
-            // Per-use raw deref — do NOT bind a `&mut IPCInstance` here: it
-            // would remain live across `deinit(instance)` on the failure
-            // branch (live `&mut T` to freed memory violates the validity
-            // invariant even if never dereferenced).
             // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
+            unsafe { &(*instance).data }
+                .with_queue(|q| q.owner = instance as *mut dyn crate::ipc::SendQueueOwner);
 
             self.ipc = Some(IPCInstanceUnion::Initialized(instance));
 
             // PROVENANCE: `windows_configure_client` STORES the `*mut SendQueue`
-            // in `uv_handle_t.data` for the pipe's lifetime, so that pointer
-            // must derive from the root raw `instance` (SharedReadWrite tag,
-            // never popped), NOT from a `&mut SendQueue` auto-ref whose Unique
-            // tag would be invalidated by `(*instance).data.write_version_packet`
-            // below — every later libuv read callback would then deref a popped
-            // pointer (UB under Stacked Borrows). Mirror the POSIX branch's
-            // `addr_of_mut!` treatment.
+            // in `uv_handle_t.data` for the pipe's lifetime; `queue_ptr()` is
+            // the root-provenance projection through the heap `IpcData`'s
+            // `JsCell` (UnsafeCell) interior, never popped by later borrows.
             // SAFETY: `instance` is the live boxed IPCInstance.
-            let data_ptr = unsafe { core::ptr::addr_of_mut!((*instance).data) };
-            // SAFETY: `data_ptr` points at the freshly-initialized SendQueue
-            // stored inline in `*instance`; no other live `&mut` aliases it.
+            let data_ptr = unsafe { &(*instance).data }.queue_ptr();
+            // SAFETY: `data_ptr` points at the live SendQueue in the heap
+            // `IpcData`; no other live `&mut` aliases it.
             if let Err(_) = unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }
             {
+                self.ipc = None;
                 // SAFETY: `instance` was produced by `IPCInstance::new`
                 // (heap::alloc) above and is not yet aliased.
                 unsafe { IPCInstance::deinit(instance) };
-                self.ipc = None;
                 bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
                 return None;
             }
@@ -6553,7 +6536,7 @@ impl VirtualMachine {
         };
 
         // SAFETY: `instance` is the live boxed IPCInstance.
-        unsafe { (*instance).data.write_version_packet(self.global()) };
+        unsafe { &(*instance).data }.with_queue(|q| q.write_version_packet(self.global()));
 
         Some(instance)
     }

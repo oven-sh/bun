@@ -493,10 +493,10 @@ fn send_audit_request(
         }
     };
 
-    if res.status_code >= 400 {
+    if res.response().status_code >= 400 {
         bun_core::pretty_errorln!(
             "<red>error<r>: audit request failed (status {})",
-            res.status_code
+            res.response().status_code
         );
         Global::crash();
     }

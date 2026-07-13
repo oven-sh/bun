@@ -2318,7 +2318,7 @@ impl Example {
 
         let response = async_http.send_sync()?;
 
-        match response.status_code {
+        match response.response().status_code {
             404 => return Err(crate::Error::GitHubRepositoryNotFound),
             403 => return Err(crate::Error::HTTPForbidden),
             429 => return Err(crate::Error::HTTPTooManyRequests),
@@ -2327,7 +2327,11 @@ impl Example {
             _ => return Err(crate::Error::HTTPError),
         }
 
-        let content_type: &[u8] = response.headers.get(b"content-type").unwrap_or(b"");
+        let content_type: &[u8] = response
+            .response()
+            .headers
+            .get(b"content-type")
+            .unwrap_or(b"");
         let is_expected_content_type = content_type == b"application/x-gzip";
 
         if !is_expected_content_type {
@@ -2421,7 +2425,7 @@ impl Example {
 
         let mut response = async_http.send_sync()?;
 
-        match response.status_code {
+        match response.response().status_code {
             404 => return Err(crate::Error::ExampleNotFound),
             403 => return Err(crate::Error::HTTPForbidden),
             429 => return Err(crate::Error::HTTPTooManyRequests),
@@ -2519,12 +2523,12 @@ impl Example {
 
         refresher.maybe_refresh();
 
-        if response.status_code != 200 {
+        if response.response().status_code != 200 {
             progress.end();
             refresher.refresh();
             bun_core::pretty_errorln!(
                 "Error fetching tarball: <r><red>{}<r>",
-                response.status_code,
+                response.response().status_code,
             );
             Global::exit(1);
         }
@@ -2580,10 +2584,10 @@ impl Example {
             }
         };
 
-        if response.status_code != 200 {
+        if response.response().status_code != 200 {
             bun_core::pretty_errorln!(
                 "<r><red>{} {}<r> fetching examples :( ",
-                response.status_code,
+                response.response().status_code,
                 bstr::BStr::new(mutable.list.as_slice()),
             );
             Global::exit(1);

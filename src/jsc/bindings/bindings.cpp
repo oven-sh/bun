@@ -103,7 +103,6 @@
 #include <string_view>
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Request.h>
-#include <bun-usockets/src/internal/internal.h>
 #include "IDLTypes.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"

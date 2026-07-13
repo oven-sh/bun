@@ -612,7 +612,7 @@ impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
             Tag::RemoteTarball => writer.write_all(res.remote_tarball().slice(buf)),
             // `Repository::format_as` still goes through `fmt::Write`
             // (and uses `BStr` internally); git/github URLs are ASCII in
-            // practice so byte-exactness is preserved. A follow-up shard owns
+            // practice so byte-exactness is preserved. A follow-up can cover
             // `repository.rs` if that ever needs a byte-level path too.
             Tag::Git => write!(writer, "{}", res.git().fmt("git+", buf)),
             Tag::Github => write!(writer, "{}", res.github().fmt("github:", buf)),

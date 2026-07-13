@@ -4,7 +4,7 @@ use core::sync::atomic::Ordering;
 
 use crate::Error;
 use bun_core::scoped_log;
-use bun_uws as uws;
+use bun_usockets as uws;
 
 use crate::http_cert_error::HTTPCertError;
 use crate::http_context::HTTPSocket;
@@ -39,8 +39,8 @@ type ProxyTunnelWrapper = SSLWrapper<*mut HTTPClient<'static>>;
 
 /// active socket is the socket that is currently being used
 // `HTTPSocket<B>` = `uws::SocketHandler<B>` = `NewSocketHandler<B>`, so the
-// canonical 3-arm enum lives in `bun_uws` next to its payload type.
-pub use bun_uws::MaybeAnySocket as Socket;
+// canonical 3-arm enum lives in the shim crate next to SSLWrapper.
+pub use bun_uws_shim::MaybeAnySocket as Socket;
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ProxyTunnel {

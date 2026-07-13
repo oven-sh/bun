@@ -110,7 +110,7 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         Ok(JSValue::UNDEFINED)
     }
 
-    let good = ipc_instance.data.serialize_and_send(
+    let good = ipc_instance.queue().serialize_and_send(
         global,
         message,
         IsInternal::Internal,

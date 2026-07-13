@@ -28,8 +28,8 @@ use bun_jsc::{
     ZigStackFramePosition, ZigStackTrace,
 };
 use bun_paths::path_buffer_pool;
-use bun_uws::{self as uws, AnyResponse, Request};
-use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
+use bun_uws_shim::body_reader_mixin::{BodyReaderHandler, BodyResponse};
+use bun_uws_shim::{self as uws, AnyResponse, Request};
 
 use super::source_map_store::{self, GetResult, Key as SourceMapKey};
 use super::{CLIENT_PREFIX, DevServer};
@@ -48,7 +48,7 @@ pub(crate) struct ErrorReportRequest {
 
 bun_core::intrusive_field!(ErrorReportRequest, body: uws::BodyReaderMixin<ErrorReportRequest>);
 impl BodyReaderHandler for ErrorReportRequest {
-    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
+    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> bun_uws_shim::Result<()> {
         // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
         // pointer with full-allocation provenance and no live borrows.
         unsafe { ErrorReportRequest::run_with_body(this, body, resp) }.map_err(Into::into)

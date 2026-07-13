@@ -176,12 +176,13 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         }
     };
 
-    if res.status_code >= 400 {
+    if res.response().status_code >= 400 {
         const OTP_RESPONSE: bool = false;
-        response_error::<OTP_RESPONSE>(&req, &res, None, &mut response_buf)?;
+        response_error::<OTP_RESPONSE>(&req, res.response(), None, &mut response_buf)?;
     }
 
     if let Some(notice) = res
+        .response()
         .headers
         .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
     {

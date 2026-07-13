@@ -356,7 +356,7 @@ impl PipeReader {
         #[cfg(windows)]
         {
             // SAFETY: uws loop pointer is live for the VM lifetime.
-            unsafe { (*uws).uv_loop }
+            unsafe { (*uws).uv_loop.cast() }
         }
         #[cfg(not(windows))]
         {

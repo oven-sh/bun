@@ -35,44 +35,46 @@ impl KeepAlive {
         self.status = Status::Done;
     }
 
-    /// Only intended to be used from EventLoop.Pollable
+    /// Only intended to be used from EventLoop.Pollable. Raw-place loop
+    /// accounting — a `&mut Loop` would span `pending_wakeups`, which waker
+    /// threads mutate concurrently.
     #[cfg(not(windows))]
-    pub fn deactivate(&mut self, loop_: &mut crate::Loop) {
+    pub fn deactivate(&mut self, loop_: *mut crate::Loop) {
         if self.status != Status::Active {
             return;
         }
         self.status = Status::Inactive;
-        loop_.sub_active(1);
+        crate::Loop::sub_active_raw(loop_, 1);
     }
     /// Only intended to be used from EventLoop.Pollable
     #[cfg(windows)]
-    pub fn deactivate(&mut self, loop_: &mut crate::Loop) {
+    pub fn deactivate(&mut self, loop_: *mut crate::Loop) {
         if self.status != Status::Active {
             return;
         }
         self.status = Status::Inactive;
-        loop_.dec();
+        crate::Loop::dec_raw(loop_);
     }
 
     /// Only intended to be used from EventLoop.Pollable
     #[cfg(not(windows))]
-    pub fn activate(&mut self, loop_: &mut crate::Loop) {
+    pub fn activate(&mut self, loop_: *mut crate::Loop) {
         if self.status != Status::Inactive {
             return;
         }
         self.status = Status::Active;
-        loop_.add_active(1);
+        crate::Loop::add_active_raw(loop_, 1);
     }
     /// Only intended to be used from EventLoop.Pollable
     #[cfg(windows)]
-    pub fn activate(&mut self, loop_: &mut crate::Loop) {
+    pub fn activate(&mut self, loop_: *mut crate::Loop) {
         // The Windows arm guards on `!= Active` (vs posix `!= Inactive`);
         // preserved verbatim.
         if self.status != Status::Active {
             return;
         }
         self.status = Status::Active;
-        loop_.inc();
+        crate::Loop::inc_raw(loop_);
     }
 
     pub fn init() -> KeepAlive {

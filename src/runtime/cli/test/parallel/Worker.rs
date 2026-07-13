@@ -182,7 +182,7 @@ impl Worker {
                     return Err(crate::Error::ChannelAdoptFailed);
                 }
             } else {
-                this.ipc.done = true;
+                this.ipc.set_done();
             }
         }
         #[cfg(not(unix))]

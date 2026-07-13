@@ -5,10 +5,8 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-// `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
-// uws wrapper — `WindowsLoop` on Windows, `PosixLoop` on POSIX), not
-// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
-// on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
+// `bun_io::Loop` is `BufferedReaderParent::loop_`'s nominal: `bun_usockets::Loop`
+// on POSIX, `uv_loop_t` on Windows. The inherent `loop_()` projects `.uv_loop`
 // on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
 use crate::Error;
 use crate::bun_fs::FileSystem;

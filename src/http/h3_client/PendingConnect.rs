@@ -12,8 +12,8 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_threading::Guarded;
-use bun_uws as uws;
-use bun_uws::quic;
+use bun_usockets as uws;
+use bun_uws_shim::quic;
 
 use super::ClientSession;
 use super::client_session::session_mut;
@@ -124,8 +124,9 @@ impl PendingConnect {
         )
         .r#loop();
         RESOLVED.lock().push(Resolved(this));
-        // SAFETY: `loop_ptr` is a live uws::Loop for as long as the HTTP thread runs.
-        unsafe { (*loop_ptr).wakeup() };
+        // Raw-ptr wakeup: this runs off the HTTP thread, so forming
+        // `&mut Loop` here would alias the loop owner (C16/C17).
+        uws::us_wakeup_loop(loop_ptr);
     }
 
     pub fn drain_resolved() {

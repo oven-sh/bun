@@ -37,8 +37,10 @@ use core::ptr::NonNull;
 use bun_boringssl as boringssl;
 use bun_core::strings;
 use bun_io::StreamBuffer;
-use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
-use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
+// SSLWrapper lives unchanged in `bun_uws_shim`; its `Handlers::on_handshake` fn type pins the verify-error type below.
+use bun_usockets::NewSocketHandler;
+use bun_usockets::us_bun_verify_error_t;
+use bun_uws_shim::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
 
 use super::websocket_upgrade_client::{
     HttpUpgradeClient, HttpsUpgradeClient, NewHttpUpgradeClient,
@@ -138,7 +140,7 @@ pub struct WebSocketProxyTunnel {
     reject_unauthorized: bool,
 }
 
-use bun_uws::MaybeAnySocket as SocketUnion;
+use bun_uws_shim::MaybeAnySocket as SocketUnion;
 
 type SslWrapperType = SslWrapper<*mut WebSocketProxyTunnel>;
 

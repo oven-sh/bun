@@ -3089,7 +3089,7 @@ mod posix_impl {
     }
 
     // ── socket primitives (recv/send/socketpair) ──
-    // Full networking lives in `bun_uws_sys`; these are the bare libc wrappers
+    // Full networking lives in `bun_uws_shim`; these are the bare libc wrappers
     // exposed for shell/pipe IPC.
     pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
@@ -9710,7 +9710,7 @@ bun_core::link_impl_OutputSink! {
 }
 
 // (former `__bun_uws_stat_file` provider deleted — body moved DOWN into
-// `bun_uws_sys::socket_context::stat_for_digest`, which calls `libc::stat`
+// `bun_uws_shim::socket_context::stat_for_digest`, which calls `libc::stat`
 // directly. uws_sys already links libc; the cross-crate hook bought nothing.)
 
 #[cfg(test)]

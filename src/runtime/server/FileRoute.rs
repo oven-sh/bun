@@ -11,7 +11,7 @@ use bun_io::Closer;
 use bun_io::FileType;
 use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd};
-use bun_uws::{AnyRequest, AnyResponse};
+use bun_uws_shim::{AnyRequest, AnyResponse};
 
 use crate::node::types::PathOrFileDescriptor;
 use crate::server::file_response_stream::StartOptions as FileResponseStreamOptions;
@@ -393,7 +393,7 @@ impl FileRoute {
         // unconditionally" — the RFC 9110 §13.1.3-correct behaviour.
         //
         // LAYERING: the parse step lives HERE (T6) because it needs `bun_jsc` —
-        // so `bun_uws_sys` (T0) carries no upward hook.
+        // so `bun_uws_shim` (T0) carries no upward hook.
         let input_if_modified_since_date: Option<u64> = req
             .header(b"if-modified-since")
             .and_then(crate::jsc_hooks::parse_http_date);

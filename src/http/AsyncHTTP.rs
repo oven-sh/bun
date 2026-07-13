@@ -116,10 +116,11 @@ unsafe fn free_owned_href(href: &'static [u8]) {
     }
 }
 
-/// Read the HTTP-thread monotonic timer in nanoseconds.
+/// Read the HTTP-thread monotonic timer in nanoseconds. Callable from any
+/// thread (reads the set-once `START_TIMER` static).
 #[inline]
 fn http_thread_timer_read() -> u64 {
-    crate::http_thread().timer.elapsed().as_nanos() as u64
+    crate::http_thread::timer_read()
 }
 
 /// Build the `Proxy-Authorization: Basic <b64(user[:pass])>` header value.
@@ -671,8 +672,24 @@ fn send_sync_callback(
     }
 }
 
+/// Owns the response metadata backing [`AsyncHTTP::send_sync`]'s `Response`;
+/// header/status slices point into `metadata.owned_buf` (freed on drop), and
+/// `response()` ties their borrow to `&self`.
+pub struct SyncHTTPResponse {
+    metadata: crate::HTTPResponseMetadata,
+}
+
+impl SyncHTTPResponse {
+    pub fn response<'s>(&'s self) -> &'s picohttp::Response<'s> {
+        // Covariant reborrow: the stored `Response<'static>` is only 'static
+        // because `clone_metadata` erased the borrow of `owned_buf`; narrow it
+        // back to `&self`'s lifetime.
+        &self.metadata.response
+    }
+}
+
 impl<'a> AsyncHTTP<'a> {
-    pub fn send_sync(&mut self) -> crate::Result<picohttp::Response<'static>> {
+    pub fn send_sync(&mut self) -> crate::Result<SyncHTTPResponse> {
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
@@ -699,10 +716,11 @@ impl<'a> AsyncHTTP<'a> {
         }
         debug_assert!(result.metadata.is_some());
         // The returned `Response` borrows `metadata.owned_buf` (status text +
-        // header slices); suppress Drop so the borrowed buffer outlives the
-        // call. `send_sync` is one-shot CLI.
-        let metadata = core::mem::ManuallyDrop::new(result.metadata.unwrap());
-        Ok(metadata.response)
+        // header slices); hand the metadata to the caller so the buffers stay
+        // live while the response is read and are freed on drop.
+        Ok(SyncHTTPResponse {
+            metadata: result.metadata.unwrap(),
+        })
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -863,11 +881,11 @@ impl<'a> AsyncHTTP<'a> {
         }
 
         let thread = crate::http_thread();
-        if (!thread.queued_tasks.is_empty() || !thread.deferred_tasks.is_empty())
+        if (!crate::http_thread::QUEUED_TASKS.is_empty() || !thread.deferred_tasks.is_empty())
             && ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed)
                 < MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed)
         {
-            thread.wakeup();
+            crate::HTTPThread::wakeup();
         }
     }
 

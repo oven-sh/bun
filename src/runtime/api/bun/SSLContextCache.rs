@@ -2,7 +2,7 @@
 //!
 //! The map holds **zero** refs on the cached `SSL_CTX*`. An `SSL_CTX` ex_data
 //! slot stores a back-pointer to the heap `Entry`; BoringSSL's `CRYPTO_EX_free`
-//! callback (registered once in `openssl.c`'s `us_ex_idx_init`) tombstones the
+//! callback (registered once in `bun_usockets`' `bssl::ex_indices`) tombstones the
 //! entry (`entry.ctx = null`) when the real refcount hits 0. The next
 //! `get_or_create` for that digest sees the tombstone and rebuilds.
 //!
@@ -25,8 +25,8 @@ use core::ptr;
 use bun_boringssl_sys as boringssl;
 use bun_collections::array_hash_map::{ArrayHashContext, ArrayHashMap};
 use bun_threading::Mutex;
-use bun_uws as uws;
-use bun_uws::create_bun_socket_error_t;
+use bun_usockets::create_bun_socket_error_t;
+use bun_usockets::tls::context::BunSocketContextOptions;
 
 // `jsc.API.ServerConfig.SSLConfig` — re-exported from src/runtime/socket/SSLConfig.rs
 use crate::api::server::server_config::SSLConfig;
@@ -84,7 +84,7 @@ impl SSLContextCache {
     /// (e.g. via `as_usockets_for_client_verification()`).
     pub fn get_or_create_opts(
         &mut self,
-        opts: &uws::SocketContext::BunSocketContextOptions,
+        opts: &BunSocketContextOptions,
         err: &mut create_bun_socket_error_t,
     ) -> Option<*mut boringssl::SSL_CTX> {
         self.get_or_create_digest(opts, opts.digest(), err)
@@ -95,7 +95,7 @@ impl SSLContextCache {
     /// instead of three times on a miss.
     pub fn get_or_create_digest(
         &mut self,
-        opts: &uws::SocketContext::BunSocketContextOptions,
+        opts: &BunSocketContextOptions,
         d: Digest,
         err: &mut create_bun_socket_error_t,
     ) -> Option<*mut boringssl::SSL_CTX> {
@@ -118,7 +118,9 @@ impl SSLContextCache {
         // file I/O / cert parsing and on Windows the system-CA load — none of
         // which has a reason to serialize, and holding a non-reentrant SRWLock
         // across an SSL_CTX_free that *did* tombstone would self-deadlock.
-        let ctx = opts.create_ssl_context(err)?;
+        // Same C type, distinct Rust nominal (`bssl_sys` vs `bun_boringssl_sys`);
+        // TLS pointers cross the crate boundary as opaque casts.
+        let ctx = opts.create_ssl_context(err)?.cast::<boringssl::SSL_CTX>();
 
         let _guard = self.mutex.lock_guard();
 
@@ -150,7 +152,7 @@ impl SSLContextCache {
             if unsafe {
                 boringssl::SSL_CTX_set_ex_data(
                     ctx,
-                    c::us_ssl_ctx_cache_ex_idx(),
+                    cache_ex_idx(),
                     std::ptr::from_mut::<Entry>(entry).cast::<c_void>(),
                 )
             } != 1
@@ -167,13 +169,8 @@ impl SSLContextCache {
         }));
         *gop.value_ptr = entry;
         // SAFETY: ctx is a valid SSL_CTX*; entry is a fresh non-null heap pointer.
-        if unsafe {
-            boringssl::SSL_CTX_set_ex_data(
-                ctx,
-                c::us_ssl_ctx_cache_ex_idx(),
-                entry.cast::<c_void>(),
-            )
-        } != 1
+        if unsafe { boringssl::SSL_CTX_set_ex_data(ctx, cache_ex_idx(), entry.cast::<c_void>()) }
+            != 1
         {
             self.map.swap_remove(&d);
             // SAFETY: entry was just heap-allocated above and not yet published to ex_data.
@@ -254,11 +251,7 @@ impl Drop for SSLContextCache {
             if !e.ctx.is_null() {
                 // SAFETY: ctx non-null; clearing the ex_data slot we set.
                 unsafe {
-                    boringssl::SSL_CTX_set_ex_data(
-                        e.ctx,
-                        c::us_ssl_ctx_cache_ex_idx(),
-                        ptr::null_mut(),
-                    );
+                    boringssl::SSL_CTX_set_ex_data(e.ctx, cache_ex_idx(), ptr::null_mut());
                 }
             }
             // SAFETY: entry was heap-allocated in get_or_create_digest and is removed
@@ -269,11 +262,8 @@ impl Drop for SSLContextCache {
     }
 }
 
-pub mod c {
-    use core::ffi::c_int;
-    unsafe extern "C" {
-        /// Registered alongside the other usockets ex_data slots in
-        /// `us_ex_idx_init` (pthread_once-guarded).
-        pub safe fn us_ssl_ctx_cache_ex_idx() -> c_int;
-    }
+/// Cache ex_data slot index — registered (with `bun_ssl_ctx_cache_on_free` as
+/// its `CRYPTO_EX_free`) by `bun_usockets`' one-time `bssl::ex_indices()` init.
+fn cache_ex_idx() -> c_int {
+    bun_usockets::unsafe_core::bssl::ex_indices().ctx_cache
 }

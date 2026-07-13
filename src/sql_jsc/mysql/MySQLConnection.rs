@@ -1,6 +1,9 @@
 use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
 use bun_collections::{OffsetByteList, StringHashMap, VecExt};
-use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
+use bun_usockets::{self as uws, AnySocket as Socket};
+// `secure` stays on the boringssl nominal (matches `ConnectionCtorArgs` and
+// the `SSLContextCache`); cast to bssl-sys only at the `adopt_tls` boundary.
+use bun_uws_shim::SslCtx;
 
 use bun_sql::mysql::Capabilities;
 use bun_sql::mysql::MySQLQueryResult;
@@ -319,25 +322,27 @@ impl MySQLConnection {
 
     pub fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
         // Only adopt if we're currently a plain TCP socket.
-        let Socket::SocketTcp(tcp) = &self.socket else {
+        let Socket::SocketTcp(tcp) = self.socket else {
             return Ok(());
         };
-        let uws::InternalSocket::Connected(raw) = tcp.socket else {
+        let uws::InternalSocket::Connected(sref) = tcp.socket else {
             return Ok(());
         };
 
         // `as_mut()` is `'static`, so `tls_group` borrows the VM singleton —
         // not `*self` — and stays live across the field reads below.
-        let tls_group: &mut bun_uws::SocketGroup = crate::jsc::VirtualMachine::get()
+        let tls_group: &mut uws::SocketGroup = crate::jsc::VirtualMachine::get()
             .as_mut()
             .mysql_socket_group::<true>();
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before TLS upgrade is
-        // requested.
+        // requested; the cast bridges the boringssl vs bssl-sys nominals of
+        // the same C struct (single cast site — the field stays boringssl-typed).
         let ssl_ctx = unsafe {
             &mut *self
                 .secure
                 .expect("secure SSL_CTX must be set before upgradeToTLS")
+                .cast::<uws::SslCtx>()
         };
         let server_name = self.tls_config.server_name();
         let sni = if server_name.is_null() {
@@ -347,40 +352,27 @@ impl MySQLConnection {
             // `tls_config` for the connection lifetime.
             Some(unsafe { bun_core::ffi::cstr(server_name) })
         };
-        // `Option<NonNull<T>>` is an 8-byte null-niche optional; using
-        // `Option<*mut T>` here would request 16 bytes (separate discriminant)
-        // and desync with the trampoline reader (uws_handlers.rs) which reads
-        // the slot as `Option<NonNull<_>>`.
-        let ext_size = core::mem::size_of::<Option<core::ptr::NonNull<JSMySQLConnection>>>() as i32;
 
-        // SAFETY: `raw` is a live connected `us_socket_t*`; adopt_tls may
-        // realloc and return a different ptr.
-        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-            tls_group,
-            bun_uws::SocketKind::MysqlTls,
+        // Reachable off-dispatch (AutoFlusher -> drain_internal), so C6 does
+        // not cover `sref`: `adopt_tls_owned` refuses stale/closed handles.
+        // The new owner ref is stamped before the old Mysql-kind ref is
+        // released (core swap), so dispatch never sees a stale owner.
+        let owner = self.js_connection_ref().owner_ref();
+        let Some(tls) = uws::SocketTLS::adopt_tls_owned(
+            sref,
+            std::ptr::from_mut(tls_group),
+            uws::SocketKind::MysqlTls,
             ssl_ctx,
             sni,
             true, // is_client
-            ext_size,
-            ext_size,
+            owner,
         ) else {
             return Err(FlushQueueError::AuthenticationFailed);
         };
-
-        let js_connection = self.get_js_connection();
-        let new_socket = new_socket.as_ptr();
-        // SAFETY: `new_socket` is a live us_socket_t freshly returned by
-        // `adopt_tls`; ext storage was sized for
-        // `Option<NonNull<JSMySQLConnection>>` above. One `&mut` reborrow
-        // drives both safe inherent methods (`ext` / `start_tls_handshake`).
-        let sock = unsafe { &mut *new_socket };
-        *sock.ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
-            core::ptr::NonNull::new(js_connection);
-        self.socket = Socket::SocketTls(uws::SocketTLS {
-            socket: uws::InternalSocket::Connected(new_socket),
-        });
-        // ext is now repointed; safe to kick the handshake (any dispatch lands here).
-        sock.start_tls_handshake();
+        self.socket = Socket::SocketTls(tls);
+        // Owner already swapped by core; safe to kick the handshake (any
+        // dispatch lands on the live owner).
+        tls.start_tls_handshake();
         Ok(())
     }
 
@@ -404,7 +396,7 @@ impl MySQLConnection {
 
     pub fn do_handshake(
         &mut self,
-        success: i32,
+        success: bool,
         ssl_error: uws::us_bun_verify_error_t,
     ) -> Result<bool, AnyMySQLError> {
         bun_core::scoped_log!(
@@ -414,9 +406,8 @@ impl MySQLConnection {
             ssl_error.error_no,
             self.ssl_mode
         );
-        let handshake_success = success == 1;
         self.sequence_id = self.sequence_id.wrapping_add(1);
-        if handshake_success {
+        if success {
             self.tls_status = TLSStatus::SslOk;
             if self.tls_config.reject_unauthorized() != 0 {
                 // follow the same rules as postgres

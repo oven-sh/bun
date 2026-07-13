@@ -1,0 +1,40 @@
+[package]
+name = "bun_usockets"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[features]
+default = ["cabi"]
+# cabi.rs exports the `#[no_mangle]` us_* C-ABI symbols; the C core in
+# packages/bun-usockets is deleted, so these are the sole definitions.
+cabi = []
+# Fault-injection API (fault.rs). Enabled by the build via
+# `bun_runtime/socket_fault_injection` (scripts/build/rust.ts, asan profile).
+socket_fault_injection = []
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_errno.workspace = true
+thiserror.workspace = true
+# Protocol v2 owner refcounting (protocol.rs; safe-protocol.md).
+bun_ptr.workspace = true
+# Platform-split `addrinfo` type shared with the DNS bridge (consumers/04).
+bun_dns.workspace = true
+libc.workspace = true
+# Raw BoringSSL bindings (tls-semantics.md Part 2d): re-export of the vendored
+# bssl-sys crate; pre-generated per-target bindings are committed in
+# src/bssl/bindings/ (see the README there).
+bun_bssl.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_libuv_sys.workspace = true
+# Winsock2 surface (sockaddr types, WSAE* codes, getaddrinfo) + kernel32
+# SetHandleInformation for the no-inherit (FD_CLOEXEC parity) path.
+bun_windows_sys.workspace = true

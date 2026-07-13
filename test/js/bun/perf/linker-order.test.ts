@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   mustGenerateOrderFile,
   orderFileEligible,
   shouldGenerateOrderFile,
+  verifyOrderFileApplied,
   type OrderFileContext,
 } from "../../../../scripts/build/ci.ts";
 import type { Config } from "../../../../scripts/build/config.ts";
@@ -205,6 +207,67 @@ async function compile(args: string[]) {
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 }
+
+/**
+ * A canary inherits the previous build's order file, and lld silently skips
+ * every name it cannot resolve (--no-warn-symbol-ordering, above). After a
+ * mass symbol rename the inherited file must be called stale — that verdict is
+ * what makes build.ts retrace instead of republishing the stale file for every
+ * later build to inherit, which would silently forfeit ~MBs of resident .text.
+ */
+describe.skipIf(process.platform !== "linux" || !compiler || !(Bun.which("llvm-nm") || Bun.which("nm")))(
+  "verifying an inherited order file",
+  () => {
+    it("calls mass symbol churn stale, and a file that still matches applied", async () => {
+      // 3000 functions so the 1000-symbol verification sample is available,
+      // with distinct bodies so nothing folds.
+      const functions = Array.from({ length: 3000 }, (_, i) => `int fn${i}(void) { return ${i}; }`);
+      using dir = tempDir("linker-order-verify", {
+        "many.c": functions.join("\n") + "\nint main(void) { return fn0(); }\n",
+      });
+      const buildDir = String(dir);
+      const exe = join(buildDir, "many");
+      await compile(["-o", exe, join(buildDir, "many.c")]);
+
+      // The binary's defined text symbols, in address order — same parse as the verifier.
+      const nm = Bun.spawnSync({ cmd: [Bun.which("llvm-nm") ?? Bun.which("nm")!, "--defined-only", exe] });
+      const symbols = nm.stdout
+        .toString()
+        .split("\n")
+        .map(line => /^([0-9a-f]+) ([tT]) (\S+)$/.exec(line))
+        .filter(m => m !== null)
+        .sort((a, b) => parseInt(a[1]!, 16) - parseInt(b[1]!, 16))
+        .map(m => m[3]!);
+      expect(symbols.length).toBeGreaterThanOrEqual(3000);
+
+      const config = cfg({ buildDir });
+      const orderFile = (names: string[]) => writeFileSync(join(buildDir, "linker.order"), names.join("\n") + "\n");
+      const renamed = (n: number) => Array.from({ length: n }, (_, i) => `gone_fn${i}`);
+
+      // Fresh: the hottest 1000 sit at the front of .text, every name resolves.
+      orderFile(symbols.slice(0, 1000));
+      const applied = verifyOrderFileApplied(config, ctx(), exe, { strict: false });
+
+      // A rename wave took out 60% of the symbol set — inheriting this forever
+      // would be worse than retracing once.
+      orderFile([...symbols.slice(0, 400), ...renamed(600)]);
+      const mostlyRenamed = verifyOrderFileApplied(config, ctx(), exe, { strict: false });
+
+      // Nothing matches at all (wholesale rename, or the wrong target's file).
+      orderFile(renamed(1000));
+      const nothingMatches = verifyOrderFileApplied(config, ctx(), exe, { strict: false });
+
+      expect({ applied, mostlyRenamed, nothingMatches }).toEqual({
+        applied: "applied",
+        mostlyRenamed: "stale",
+        nothingMatches: "stale",
+      });
+
+      // Strict mode — verifying a file traced from this exact binary — still hard-fails.
+      expect(() => verifyOrderFileApplied(config, ctx(), exe)).toThrow(/symbol order/);
+    });
+  },
+);
 
 /**
  * One of the traced workloads runs on a pseudo-terminal, because bun's stdio,

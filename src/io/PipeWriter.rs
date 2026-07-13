@@ -624,7 +624,7 @@ pub trait PosixStreamingWriterParent {
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop;
+    unsafe fn loop_(this: *mut Self) -> *mut bun_usockets::Loop;
 }
 
 pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
@@ -2603,7 +2603,7 @@ pub mod __parent_macro {
     pub use ::bun_sys::Error as SysError;
     #[cfg(windows)]
     pub use ::bun_sys::windows::libuv::Loop as UvLoop;
-    pub use ::bun_uws_sys::Loop as UwsLoop;
+    pub use ::bun_usockets::Loop as UwsLoop;
 }
 
 /// Stamp `PosixStreamingWriterParent` + `WindowsWriterParent` +

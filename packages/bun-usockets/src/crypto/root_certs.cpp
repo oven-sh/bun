@@ -1,6 +1,5 @@
 #include "./root_certs.h"
 #include "./root_certs_header.h"
-#include "./internal/internal.h"
 #include <mutex>
 #include <string.h>
 #include "./default_ciphers.h"
@@ -164,7 +163,7 @@ static void us_internal_init_root_certs(
   });
 }
 
-extern "C" int us_internal_raw_root_certs(struct us_cert_string_t **out) {
+extern "C" int us_raw_root_certs(struct us_cert_string_t **out) {
   *out = root_certs;
   return root_certs_size;
 }

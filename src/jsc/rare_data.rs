@@ -15,7 +15,7 @@ use bun_http::MimeType as mime_type;
 use bun_io::{self as Async};
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self as syscall, Fd, FdExt as _, Mode};
-use bun_uws::{self as uws, SocketGroup, SslCtx};
+use bun_usockets::{SocketGroup, SslCtx};
 
 use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
 
@@ -716,6 +716,14 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
+    /// Unregister a hook whose `ctx` is about to be freed (Node's
+    /// `RemoveCleanupHook` equivalent). No-op if it already ran or was
+    /// never pushed.
+    pub fn remove_cleanup_hook(&mut self, ctx: *mut c_void, func: CleanupHookFunction) {
+        self.cleanup_hooks
+            .retain(|h| !(h.ctx == ctx && core::ptr::fn_addr_eq(h.func, func)));
+    }
+
     pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the
@@ -851,8 +859,10 @@ impl RareData {
         // just drained. Loop until every group is observed empty in the same pass
         // (bounded — each retry only happens if a JS callback opened a *new*
         // socket, and the cap stops a deliberately-spinning on_close from wedging
-        // teardown; the post-close force-drain in close_all handles whatever's
-        // left after the cap).
+        // teardown). Each close_all force-drains its own group (sockets AND
+        // connecting sockets) before returning, so past the cap only sockets a
+        // spinning callback opened after its group's final drain can remain —
+        // those are abandoned, not closed.
         // Walk the loop's linked-group list rather than just our 14 embedded
         // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
         // sockets land *there*, not in RareData. Iterating only the embedded
@@ -862,9 +872,10 @@ impl RareData {
         let _ = self;
         let mut rounds: u8 = 0;
         while rounds < 8 {
-            // `uws_loop_mut()` is the centralised BACKREF accessor for the
-            // per-VM uSockets loop (live for the VM lifetime).
-            if !vm.uws_loop_mut().close_all_groups() {
+            // `*mut Loop`, never `&mut`: on_close dispatches into JS which can
+            // re-derive loop borrows (Bun.connect) — a receiver held across
+            // the dispatch would alias them (C17).
+            if !bun_usockets::Loop::close_all_groups(vm.uws_loop()) {
                 break;
             }
             rounds += 1;
@@ -874,7 +885,7 @@ impl RareData {
         // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
         // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
         // can't trace once we unregister the root region).
-        vm.uws_loop_mut().drain_closed_sockets();
+        bun_usockets::Loop::drain_closed_sockets(vm.uws_loop());
     }
 }
 
@@ -1036,7 +1047,7 @@ fn get_tls_default_ciphers_from_js(
     let rare = global_this.bun_vm().as_mut().rare_data();
     let bytes = match rare.tls_default_ciphers() {
         Some(c) => c,
-        None => uws::get_default_ciphers().as_bytes(),
+        None => bun_usockets::tls::context::default_ciphers().to_bytes(),
     };
     crate::bun_string_jsc::create_utf8_for_js(global_this, bytes)
 }
@@ -1060,7 +1071,7 @@ impl Drop for RareData {
 
         if let Some(s) = self.default_client_ssl_ctx.take() {
             // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.
-            unsafe { boring::SSL_CTX_free(s) };
+            unsafe { boring::SSL_CTX_free(s.cast()) };
         }
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.

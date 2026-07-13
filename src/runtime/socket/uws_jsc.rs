@@ -1,15 +1,14 @@
-//! JSC bridges for `src/uws/` types. Keeps `uws/` free of JSC types.
-//! Exports here are referenced via aliases on the original structs so call
-//! sites do not change.
+//! JSC bridges for `bun_usockets` / `bun_uws_shim` types. Keeps those crates
+//! free of JSC types. Exports here are referenced via aliases on the original
+//! structs so call sites do not change.
 
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_uws::{
-    AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_socket_stream_buffer_t, us_socket_t,
-};
+use bun_usockets::{create_bun_socket_error_t, us_socket_t};
+use bun_uws_shim::{AnyWebSocket, RawWebSocket, us_socket_stream_buffer_t};
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
-// ── local extension: StreamBuffer accessors (upstream `bun_uws_sys::us_socket::StreamBuffer`
+// ── local extension: StreamBuffer accessors (upstream `bun_uws_shim::us_socket::StreamBuffer`
 // is a bare `{ list: Vec<u8>, cursor: usize }`; mirror `bun_io::StreamBuffer` API here) ──
 trait StreamBufferExt {
     fn is_not_empty(&self) -> bool;
@@ -17,7 +16,7 @@ trait StreamBufferExt {
     fn wrote(&mut self, amount: usize);
     fn write(&mut self, buffer: &[u8]);
 }
-impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
+impl StreamBufferExt for bun_uws_shim::us_socket::StreamBuffer {
     #[inline]
     fn is_not_empty(&self) -> bool {
         self.list.len() > self.cursor
@@ -80,13 +79,13 @@ pub fn create_bun_socket_error_to_js(
 pub use bun_jsc::system_error::verify_error_to_js;
 
 // ── AnyWebSocket.getTopicsAsJSArray ────────────────────────────────────────
-// Declared inline; migrate into `bun_uws_sys` with the rest of the
+// Declared inline; migrate into `bun_uws_shim` with the rest of the
 // WebSocket FFI surface.
 unsafe extern "C" {
     // Opaque-handle (`RawWebSocket` is an `opaque_ffi!` ZST — `&mut` carries no
     // `noalias`, dereferences zero bytes) + live `&JSGlobalObject`
     // (UnsafeCell-backed, FFI may mutate VM state). No caller-side precondition;
-    // matches `uws_ws_close` / `uws_ws_get_user_data` in `bun_uws_sys::WebSocket`.
+    // matches `uws_ws_close` / `uws_ws_get_user_data` in `bun_uws_shim::web_socket`.
     safe fn uws_ws_get_topics_as_js_array(
         ssl: i32,
         ws: &mut RawWebSocket,
@@ -179,11 +178,11 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
     // exit path without a scopeguard borrow conflict.
     let result: JSValue = 'body: {
         let data_slice = node_buffer.slice();
-        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        // No JS executes between here and `JSValue::TRUE/FALSE` below, so the
+        // SAFETY: the C++ caller passes a live slab-resident socket. No JS
+        // executes between here and `JSValue::TRUE/FALSE` below, so the
         // single `&mut` does not alias the re-entrant write path documented at
         // the top of this fn (raw `socket` is still kept for that reason).
-        let socket_ref = us_socket_t::opaque_mut(socket);
+        let socket_ref: &mut us_socket_t = unsafe { &mut *socket };
         if stream_buffer.is_not_empty() {
             let to_flush = stream_buffer.slice();
             let to_flush_len = to_flush.len();

@@ -17,7 +17,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, StrongOptional, host_fn};
-use bun_uws::{us_bun_verify_error_t, uws_callback};
+use bun_uws_shim::{us_bun_verify_error_t, uws_callback};
 
 use super::ssl_wrapper::SSLWrapper;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
@@ -637,12 +637,12 @@ fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun_uws::UpgradedDuplex` link-time-dispatch shims (cycle break).
+// `bun_usockets::handle::UpgradedDuplex` link-time-dispatch shims (cycle break).
 //
-// `src/uws_sys/lib.rs` declares `UpgradedDuplex` as an opaque handle and binds
-// these symbols via `extern "C"` so the low-tier socket dispatch can call into
-// the runtime without an upward crate dep. Signatures MUST match the
-// `unsafe extern "C"` block there.
+// `src/usockets/unsafe_core/ffi.rs` declares `UpgradedDuplex` as an opaque
+// handle and binds these symbols via `extern "C"` so the low-tier socket
+// dispatch can call into the runtime without an upward crate dep. Signatures
+// MUST match the `unsafe extern "C"` block there.
 //
 // All but `ssl` are emitted by `#[uws_callback(export = "...")]` on the
 // inherent methods above; `ssl` keeps a hand-written shim because the safe
@@ -652,7 +652,7 @@ fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn UpgradedDuplex__ssl(this: *const c_void) -> *mut bun_boringssl_sys::SSL {
-    // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
+    // SAFETY: `this` is a live `*const UpgradedDuplex` from the bun_usockets opaque handle.
     unsafe {
         (*this.cast::<UpgradedDuplex>())
             .ssl()

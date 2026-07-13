@@ -34,8 +34,10 @@ use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_sys as sys;
 use bun_url::URL;
-use bun_uws::{self as uws, AnyWebSocket, ResponseKind, WebSocketUpgradeContext};
-use bun_uws_sys as uws_sys;
+// ResponseKind stays bun_uws-typed: its only consumers here are unmigrated
+// bun_uws FFI (`FetchHeaders::to_uws_response`, `CookieMap::write`).
+use bun_uws_shim::ResponseKind;
+use bun_uws_shim::{self as uws, AnyWebSocket, WebSocketUpgradeContext};
 use bun_wyhash::hash;
 
 bun_output::declare_scope!(Server, visible);
@@ -76,8 +78,8 @@ impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
 where
     NewRequestContext<ThisServer, SSL, DBG, false>: super::any_request_context::CtxKind,
 {
-    type Req = uws_sys::Request;
-    type Resp = uws_sys::NewAppResponse<SSL>;
+    type Req = uws::Request;
+    type Resp = uws::NewAppResponse<SSL>;
     const IS_H3: bool = false;
 }
 impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
@@ -85,8 +87,8 @@ impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
 where
     NewRequestContext<ThisServer, SSL, DBG, true>: super::any_request_context::CtxKind,
 {
-    type Req = uws_sys::h3::Request;
-    type Resp = uws_sys::h3::Response;
+    type Req = uws::h3::Request;
+    type Resp = uws::h3::Response;
     const IS_H3: bool = true;
 }
 
@@ -284,7 +286,7 @@ where
 
 // NOTE: local request/response trait so generic `Ctx::Req` / `Ctx::Resp`
 // call sites can dispatch to either uWS HTTP/1 or HTTP/3 handle types without
-// touching `bun_uws_sys`. Only the surface `prepare_js_request_context_for`
+// touching `bun_uws_shim`. Only the surface `prepare_js_request_context_for`
 // actually needs is exposed.
 pub trait ReqLike {
     fn header(&mut self, name: &[u8]) -> Option<&[u8]>;
@@ -292,40 +294,40 @@ pub trait ReqLike {
     fn url(&mut self) -> &[u8];
     fn set_yield(&mut self, y: bool);
 }
-impl ReqLike for uws_sys::Request {
+impl ReqLike for uws::Request {
     #[inline]
     fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
-        uws_sys::Request::header(self, name)
+        uws::Request::header(self, name)
     }
     #[inline]
     fn method(&mut self) -> &[u8] {
-        uws_sys::Request::method(self)
+        uws::Request::method(self)
     }
     #[inline]
     fn url(&mut self) -> &[u8] {
-        uws_sys::Request::url(self)
+        uws::Request::url(self)
     }
     #[inline]
     fn set_yield(&mut self, y: bool) {
-        uws_sys::Request::set_yield(self, y)
+        uws::Request::set_yield(self, y)
     }
 }
-impl ReqLike for uws_sys::h3::Request {
+impl ReqLike for uws::h3::Request {
     #[inline]
     fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
-        uws_sys::h3::Request::header(self, name)
+        uws::h3::Request::header(self, name)
     }
     #[inline]
     fn method(&mut self) -> &[u8] {
-        uws_sys::h3::Request::method(self)
+        uws::h3::Request::method(self)
     }
     #[inline]
     fn url(&mut self) -> &[u8] {
-        uws_sys::h3::Request::url(self)
+        uws::h3::Request::url(self)
     }
     #[inline]
     fn set_yield(&mut self, y: bool) {
-        uws_sys::h3::Request::set_yield(self, y)
+        uws::h3::Request::set_yield(self, y)
     }
 }
 
@@ -336,26 +338,26 @@ pub trait RespLike {
     fn on_timeout_warn(&mut self, ud: *mut c_void);
     fn to_any_response(&mut self) -> uws::AnyResponse;
 }
-impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
+impl<const SSL: bool> RespLike for uws::NewAppResponse<SSL> {
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
-        uws_sys::NewAppResponse::<SSL>::write_status(self, s)
+        uws::NewAppResponse::<SSL>::write_status(self, s)
     }
     #[inline]
     fn end_without_body(&mut self, c: bool) {
-        uws_sys::NewAppResponse::<SSL>::end_without_body(self, c)
+        uws::NewAppResponse::<SSL>::end_without_body(self, c)
     }
     #[inline]
     fn timeout(&mut self, s: u8) {
-        uws_sys::NewAppResponse::<SSL>::timeout(self, s)
+        uws::NewAppResponse::<SSL>::timeout(self, s)
     }
     #[inline]
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
         // The dev-mode idle-timeout warning ignores both args; the user-data
         // pointer is an opaque sentinel (any non-null value satisfies uWS).
-        uws_sys::NewAppResponse::<SSL>::on_timeout(
+        uws::NewAppResponse::<SSL>::on_timeout(
             self,
-            |_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>| on_timeout_for_idle_warn(),
+            |_: *mut c_void, _: &mut uws::NewAppResponse<SSL>| on_timeout_for_idle_warn(),
             ud,
         );
     }
@@ -366,33 +368,33 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
         // bool is checked at compile time so only one branch is reachable.
         if SSL {
             uws::AnyResponse::from(
-                std::ptr::from_mut::<Self>(self).cast::<uws_sys::NewAppResponse<true>>(),
+                std::ptr::from_mut::<Self>(self).cast::<uws::NewAppResponse<true>>(),
             )
         } else {
             uws::AnyResponse::from(
-                std::ptr::from_mut::<Self>(self).cast::<uws_sys::NewAppResponse<false>>(),
+                std::ptr::from_mut::<Self>(self).cast::<uws::NewAppResponse<false>>(),
             )
         }
     }
 }
-impl RespLike for uws_sys::h3::Response {
+impl RespLike for uws::h3::Response {
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
-        uws_sys::h3::Response::write_status(self, s)
+        uws::h3::Response::write_status(self, s)
     }
     #[inline]
     fn end_without_body(&mut self, c: bool) {
-        uws_sys::h3::Response::end_without_body(self, c)
+        uws::h3::Response::end_without_body(self, c)
     }
     #[inline]
     fn timeout(&mut self, s: u8) {
-        uws_sys::h3::Response::timeout(self, s)
+        uws::h3::Response::timeout(self, s)
     }
     #[inline]
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
-        uws_sys::h3::Response::on_timeout(
+        uws::h3::Response::on_timeout(
             self,
-            |_: &mut c_void, _: &mut uws_sys::h3::Response| on_timeout_for_idle_warn(),
+            |_: &mut c_void, _: &mut uws::h3::Response| on_timeout_for_idle_warn(),
             ud,
         );
     }
@@ -1298,7 +1300,7 @@ impl<'a, Ctx: RequestCtxOps> PreparedRequestFor<'a, Ctx> {
 
 // `WebSocketUpgradeServer<SSL>` so `ServerWebSocket::behavior::<Self, SSL>` and
 // `app.ws(...)` accept `*mut Self` / `*mut UserRoute<..>` as the upgrade ctx.
-impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::WebSocketUpgradeServer<SSL>
+impl<const SSL: bool, const DEBUG: bool> uws::web_socket::WebSocketUpgradeServer<SSL>
     for NewServer<SSL, DEBUG>
 where
     // NOTE: see the bounded `impl NewServer` below for why these are
@@ -1308,8 +1310,8 @@ where
 {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut uws_sys::NewAppResponse<SSL>,
-        req: &mut uws_sys::Request,
+        res: *mut uws::NewAppResponse<SSL>,
+        req: &mut uws::Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
@@ -1351,7 +1353,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `&mut` accessor for the live uws App. Only call from paths where the
     /// server is running (`self.app` set in `listen()`).
     #[inline]
-    fn app_mut(&self) -> &mut uws_sys::NewApp<SSL> {
+    fn app_mut(&self) -> &mut uws::NewApp<SSL> {
         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref via
         // const-asserted `bun_opaque::opaque_deref_mut`. `self.app` is `Some`
         // for the lifetime of any JS-reachable `Server` (set in `listen()`,
@@ -1685,7 +1687,7 @@ where
                 app,
                 topic_slice.slice(),
                 buffer.slice(),
-                uws_sys::Opcode::Binary,
+                uws::Opcode::Binary,
                 compress,
             );
             return Ok(super::server_web_socket::send_status_to_js(
@@ -1711,7 +1713,7 @@ where
                 app,
                 topic_slice.slice(),
                 buffer,
-                uws_sys::Opcode::Text,
+                uws::Opcode::Text,
                 compress,
             );
             let result = super::server_web_socket::send_status_to_js(
@@ -1960,10 +1962,10 @@ where
             // (RequestContext.rs:82). `server.upgrade()` is HTTP/1-only — H3
             // contexts have a distinct generic param and `request_context.get`
             // above would have returned None — so the concrete `Req` is always
-            // `uws_sys::Request` here.
+            // `uws::Request` here.
             // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref
             // (BACKREF; live while RequestContext.req is Some).
-            let r = bun_opaque::opaque_deref_mut(req_ptr.cast::<uws_sys::Request>());
+            let r = bun_opaque::opaque_deref_mut(req_ptr.cast::<uws::Request>());
             if sec_websocket_key_str.len == 0 {
                 sec_websocket_key_str =
                     ZigString::init(r.header(b"sec-websocket-key").unwrap_or(b""));
@@ -2750,7 +2752,7 @@ where
     pub fn on_bun_info_request(
         &mut self,
         req: &mut uws::Request,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
+        resp: &mut uws::NewAppResponse<SSL>,
     ) {
         jsc::mark_binding!();
         if !matches!(self.config.address, server_config::Address::Unix(_))
@@ -3170,7 +3172,7 @@ where
 
     fn upgrade_web_socket_user_route(
         this: &mut UserRoute<SSL, DEBUG>,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
+        resp: &mut uws::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         method: Option<http::Method>,
@@ -3238,7 +3240,7 @@ where
     /// instant UB regardless of whether it is read).
     pub unsafe fn on_web_socket_upgrade(
         this: *mut Self,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
+        resp: &mut uws::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
@@ -3377,7 +3379,7 @@ where
     pub(super) fn on_chrome_dev_tools_json_request(
         &mut self,
         req: &mut uws::Request,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
+        resp: &mut uws::NewAppResponse<SSL>,
     ) {
         if cfg!(debug_assertions) {
             // NOTE: scoped_log! expands each arg twice (ANSI/no-ANSI branches);
@@ -3465,11 +3467,7 @@ where
         resp.end(&json_string, resp.should_close_connection());
     }
 
-    pub fn on404(
-        _this: &mut Self,
-        req: &mut uws::Request,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
-    ) {
+    pub fn on404(_this: &mut Self, req: &mut uws::Request, resp: &mut uws::NewAppResponse<SSL>) {
         if cfg!(debug_assertions) {
             // NOTE: see on_chrome_dev_tools_json_request — scoped_log! double-evaluates args.
             let m = req.method().to_vec();
@@ -3485,7 +3483,7 @@ where
 
     pub fn on_client_error_callback(
         &mut self,
-        socket: &mut uws::Socket,
+        socket: *mut uws::Socket,
         error_code: u8,
         raw_packet: &[u8],
     ) {
@@ -3498,7 +3496,7 @@ where
             let node_socket = match jsc::from_js_host_call(&global, || {
                 Bun__createNodeHTTPServerSocketForClientError(
                     is_ssl,
-                    std::ptr::from_mut(socket).cast::<c_void>(),
+                    socket.cast::<c_void>(),
                     &global,
                 )
             }) {
@@ -3638,12 +3636,12 @@ pub(super) fn server_set_on_client_error_(
                 if let Some(app) = this.app {
                     this.on_clienterror.deinit();
                     this.on_clienterror = StrongOptional::create(callback, global);
-                    // uws_sys::App::on_client_error takes the raw C-ABI handler shape;
+                    // uws::App::on_client_error takes the raw C-ABI handler shape;
                     // wrap our typed callback in an extern "C" thunk that slices raw_packet.
                     extern "C" fn thunk(
                         user_data: *mut c_void,
                         _ssl: c_int,
-                        socket: *mut uws_sys::us_socket_t,
+                        socket: *mut uws::us_socket_t,
                         error_code: u8,
                         raw_packet: *mut u8,
                         raw_packet_len: c_int,
@@ -3658,8 +3656,9 @@ pub(super) fn server_set_on_client_error_(
                         } else {
                             &[]
                         };
-                        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                        this.on_client_error_callback(bun_opaque::opaque_deref_mut(socket), error_code, packet);
+                        // C17: never form `&mut` over the core's live socket header;
+                        // the pointer only round-trips to C++ as an opaque handle.
+                        this.on_client_error_callback(socket, error_code, packet);
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app).on_client_error(thunk, core::ptr::from_mut::<$T>(this).cast::<c_void>());

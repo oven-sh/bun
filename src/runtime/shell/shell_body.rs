@@ -425,7 +425,7 @@ impl<'a> GlobalMini<'a> {
         // SAFETY: see `MiniEventLoop::loop_ptr()` invariant; `uv_loop` is its
         // embedded libuv loop, set once by `us_create_loop` and immutable.
         unsafe {
-            return &*(*self.mini.loop_ptr()).uv_loop;
+            return &*(*self.mini.loop_ptr()).uv_loop.cast::<PlatformEventLoop>();
         }
         #[cfg(not(windows))]
         // SAFETY: see `MiniEventLoop::loop_ptr()` invariant.

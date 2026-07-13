@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JsResult};
-use bun_uws::ResponseKind;
+use bun_uws_shim::ResponseKind;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle. Always used behind a pointer (`*mut CookieMap`).

@@ -454,6 +454,105 @@ describe("unix domain socket without websocket", () => {
       const path = randomSocketPath();
       await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix:" + path });
     });
+
+    // Replies larger than the kernel socket buffer make the inspectee's framed
+    // transport hit partial vectored writes; the unwritten remainder must be
+    // retransmitted exactly once, in order, with intact 4-byte length headers.
+    test("large replies survive partial writes under backpressure", async () => {
+      const path = randomSocketPath();
+      const REPLIES = 6;
+      const CHUNK = 512 * 1024;
+      const expected = new Map<number, string>();
+      for (let id = 1; id <= REPLIES; id++) {
+        expected.set(id, Buffer.alloc(CHUNK, String.fromCharCode(64 + id)).toString());
+      }
+
+      const { promise, resolve, reject } = Promise.withResolvers<Map<number, any>>();
+      const received = new Map<number, any>();
+      const framer = new SocketFramer(message => {
+        try {
+          const m = JSON.parse(message);
+          if (m.id) {
+            received.set(m.id, m);
+            if (received.size === REPLIES + 1) resolve(received);
+          }
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      let sock: any;
+      const opened = Promise.withResolvers<void>();
+      using listener = Bun.listen({
+        unix: path,
+        socket: {
+          open: socket => {
+            sock = socket;
+            // Stop reading so the inspectee's replies pile up until its
+            // writes go partial and the remainder is buffered natively.
+            socket.pause();
+            opened.resolve();
+          },
+          data: (socket, bytes) => framer.onData(socket, bytes),
+          error: (_socket, error) => reject(error),
+          close: () => reject(new Error("inspector socket closed before all replies arrived")),
+        },
+      });
+
+      const inspectee = spawn({
+        cmd: [bunExe(), join(import.meta.dir, "inspectee.js")],
+        env: { ...bunEnv, BUN_INSPECT: "unix:" + path },
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      try {
+        await opened.promise;
+        for (let id = 1; id <= REPLIES; id++) {
+          framer.send(
+            sock,
+            JSON.stringify({
+              id,
+              method: "Runtime.evaluate",
+              params: {
+                expression: `Buffer.alloc(${CHUNK}, ${JSON.stringify(String.fromCharCode(64 + id))}).toString()`,
+                returnByValue: true,
+              },
+            }),
+          );
+        }
+        // Marker request: evaluations are dispatched in order, so this marker
+        // on stdout means every large reply above was already (partially)
+        // written into the paused socket.
+        framer.send(
+          sock,
+          JSON.stringify({
+            id: REPLIES + 1,
+            method: "Runtime.evaluate",
+            params: { expression: `(process.stdout.write("ALL_EVALUATED\\n"), "ok")`, returnByValue: true },
+          }),
+        );
+
+        let stdout = "";
+        const decoder = new TextDecoder();
+        for await (const chunkBytes of inspectee.stdout as ReadableStream) {
+          stdout += decoder.decode(chunkBytes, { stream: true });
+          if (stdout.includes("ALL_EVALUATED")) break;
+        }
+        expect(stdout).toContain("ALL_EVALUATED");
+
+        sock.resume();
+        const got = await promise;
+        for (let id = 1; id <= REPLIES; id++) {
+          const value = got.get(id)?.result?.result?.value;
+          expect(value?.length).toBe(CHUNK);
+          expect(value).toBe(expected.get(id)!);
+        }
+        expect(got.get(REPLIES + 1)?.result?.result?.value).toBe("ok");
+      } finally {
+        inspectee.kill();
+      }
+    });
   }
 });
 

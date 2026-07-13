@@ -483,19 +483,19 @@ impl From<bun_sys::Error> for Error {
     }
 }
 
-impl From<bun_uws::ConnectError> for Error {
+impl From<bun_uws_shim::ConnectError> for Error {
     #[inline]
-    fn from(_: bun_uws::ConnectError) -> Self {
+    fn from(_: bun_uws_shim::ConnectError) -> Self {
         Self::FailedToOpenSocket
     }
 }
 
-impl From<bun_uws::ssl_wrapper::InitError> for Error {
+impl From<bun_uws_shim::ssl_wrapper::InitError> for Error {
     #[inline]
-    fn from(e: bun_uws::ssl_wrapper::InitError) -> Self {
+    fn from(e: bun_uws_shim::ssl_wrapper::InitError) -> Self {
         match e {
-            bun_uws::ssl_wrapper::InitError::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
-            bun_uws::ssl_wrapper::InitError::InvalidOptions => Self::InvalidOptions,
+            bun_uws_shim::ssl_wrapper::InitError::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
+            bun_uws_shim::ssl_wrapper::InitError::InvalidOptions => Self::InvalidOptions,
         }
     }
 }
@@ -579,13 +579,13 @@ impl From<Error> for bun_jsc::CrateError {
     }
 }
 
-impl From<Error> for bun_uws_sys::Error {
+impl From<Error> for bun_uws_shim::Error {
     #[inline]
     fn from(e: Error) -> Self {
         match e {
-            Error::Alloc(a) => bun_uws_sys::Error::Alloc(a),
-            Error::Sys(s) => bun_uws_sys::Error::Sys(s),
-            _ => bun_uws_sys::Error::RequestBodyTooLarge,
+            Error::Alloc(a) => bun_uws_shim::Error::Alloc(a),
+            Error::Sys(s) => bun_uws_shim::Error::Sys(s),
+            _ => bun_uws_shim::Error::RequestBodyTooLarge,
         }
     }
 }

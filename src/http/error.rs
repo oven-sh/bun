@@ -354,8 +354,8 @@ impl From<bun_zstd::ZstdError> for Error {
     }
 }
 
-impl From<bun_uws::ConnectError> for Error {
-    fn from(_: bun_uws::ConnectError) -> Self {
+impl From<bun_uws_shim::ConnectError> for Error {
+    fn from(_: bun_uws_shim::ConnectError) -> Self {
         Error::FailedToOpenSocket
     }
 }

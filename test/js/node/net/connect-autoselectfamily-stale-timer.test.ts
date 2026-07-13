@@ -46,3 +46,15 @@ test.concurrent(
     expect(stdout).toContain("OK");
   },
 );
+
+test.concurrent(
+  "autoSelectFamily: connect + immediate destroy loops release every connecting socket cleanly",
+  async () => {
+    const { stdout, stderr, exitCode } = await run("connect-autoselectfamily-cancel-loop-fixture.js");
+    expect({ exitCode, stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr.slice(-2000) }).toEqual({
+      exitCode: 0,
+      stdout: "OK 200",
+      stderr: "",
+    });
+  },
+);

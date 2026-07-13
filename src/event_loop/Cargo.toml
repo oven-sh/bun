@@ -27,4 +27,4 @@ bun_paths.workspace = true
 bun_ptr.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
-bun_uws.workspace = true
+bun_usockets.workspace = true

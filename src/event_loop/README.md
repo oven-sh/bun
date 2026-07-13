@@ -89,7 +89,7 @@ This is called when the event loop is active and needs to wait for I/O:
                ▼
 ┌─────────────────────────────────────┐
 │  4. Poll I/O via uSockets            │ ← epoll_wait/kevent with timeout
-│     (epoll_kqueue.c:251-320)        │
+│     (src/usockets/loop_/tick.rs)    │
 │     - Dispatch ready polls          │
 │     - Each I/O event treated as task│
 └──────────────┬──────────────────────┘
@@ -101,12 +101,7 @@ This is called when the event loop is active and needs to wait for I/O:
                │
                ▼
 ┌─────────────────────────────────────┐
-│  6. Call VM.onAfterEventLoop()      │
-└──────────────┬──────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────┐
-│  7. Handle rejected promises        │
+│  6. Handle rejected promises        │
 └─────────────────────────────────────┘
 ```
 
@@ -230,7 +225,7 @@ The queue maintains a map of `(pointer, task_fn)` pairs and runs each task. If a
 
 ## I/O Polling Integration
 
-### uSockets Event Loop (`epoll_kqueue.c:251-320`)
+### uSockets Event Loop (`src/usockets/loop_/tick.rs`)
 
 The I/O poll is integrated into the event loop via `us_loop_run_bun_tick()`:
 
@@ -267,12 +262,12 @@ The I/O poll is integrated into the event loop via `us_loop_run_bun_tick()`:
 
 When I/O becomes ready (socket readable/writable, file descriptor ready):
 
-1. The poll is dispatched via `us_internal_dispatch_ready_poll()` or `Bun__internal_dispatch_ready_poll()`
+1. The poll is dispatched via `us_internal_dispatch_ready_poll()` (non-socket polls go through the `bun_usockets` poll registry to their registered owner)
 2. This triggers the appropriate callback **synchronously during the I/O poll phase**
 3. The callback may:
    - Directly execute JavaScript (must use `EventLoop.enter()/exit()`)
    - Enqueue a task to the concurrent task queue for later processing
-   - Update internal state and return (e.g., `FilePoll.onUpdate()`)
+   - Update internal state and return (e.g., a FilePoll registry event)
 4. If JavaScript is called via `enter()/exit()`, microtasks are drained when `entered_event_loop_count` reaches 0
 
 **Important**: I/O callbacks don't automatically get the microtask draining behavior - they must explicitly wrap JS calls in `enter()/exit()` or use `runCallback()` to ensure proper microtask handling. This is why some I/O operations enqueue tasks to the concurrent queue instead of running JavaScript directly.

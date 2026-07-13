@@ -471,6 +471,13 @@ impl ClientSession {
         };
         client.state.response_stage = HTTPStage::Headers;
 
+        if client.flags.is_streaming_request_body {
+            // Deliver body bytes / end-of-body buffered while this request was
+            // parked (pending_attach / coalesced connect): their Data/End
+            // wake-ups fired before a stream existed and were dropped.
+            encode::drain_send_body(self, stream_mut(stream), usize::MAX);
+        }
+
         if let Err(err) = self.flush() {
             self.fail_all(err);
             return;
@@ -856,7 +863,7 @@ impl ClientSession {
         }
         NewHTTPContext::<true>::mark_socket_as_dead(sock);
         self.on_close(err);
-        sock.close(bun_uws::CloseKind::Failure);
+        sock.close(bun_usockets::CloseKind::Failure);
     }
 
     /// Called from the HTTP thread's shutdown queue when a fetch on this

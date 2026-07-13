@@ -44,6 +44,9 @@ const MIRI_CRATES = [
   "bun_ptr",
   "bun_resolve_builtins",
   "bun_shell_parser",
+  // Slab/generation/decommit unit tests are pure Rust (mmap is Miri-shimmed);
+  // the FFI-heavy rest of the crate has no unit tests, so the run stays clean.
+  "bun_usockets",
   "bun_wyhash",
 ];
 

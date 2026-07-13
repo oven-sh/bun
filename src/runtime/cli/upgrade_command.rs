@@ -306,7 +306,7 @@ impl UpgradeCommand {
         }
         let response = async_http.send_sync()?;
 
-        match response.status_code {
+        match response.response().status_code {
             404 => return Err(crate::Error::HTTP404),
             403 => return Err(crate::Error::HTTPForbidden),
             429 => return Err(crate::Error::HTTPTooManyRequests),
@@ -702,7 +702,7 @@ impl UpgradeCommand {
 
             let response = async_http.send_sync()?;
 
-            match response.status_code {
+            match response.response().status_code {
                 404 => {
                     if use_canary {
                         bun_core::pretty_errorln!(

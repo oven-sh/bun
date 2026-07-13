@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_io::KeepAlive;
 use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsCell, JsResult};
-use bun_uws as uws;
+use bun_usockets as uws;
 
 use crate::node::util::validators;
 use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};

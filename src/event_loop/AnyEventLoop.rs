@@ -1,9 +1,8 @@
 use core::ptr::NonNull;
 
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_io::FilePoll;
 use bun_ptr::BackRef;
-use bun_uws::Loop as UwsLoop;
+use bun_usockets::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use crate::ConcurrentTask::ConcurrentTask;
@@ -246,8 +245,10 @@ impl AnyEventLoop<'static> {
 
     #[inline]
     pub fn wakeup(&mut self) {
-        // SAFETY: `r#loop()` returns a valid live loop pointer.
-        unsafe { (*self.r#loop()).wakeup() };
+        // Raw cross-thread-safe wake path — never forms `&mut Loop`.
+        // Liveness: worker teardown unpublishes the loop pointer under its
+        // lock before `on_thread_exit` frees it — no wake can see a dead loop.
+        bun_usockets::us_wakeup_loop(self.r#loop());
     }
 
     /// Returns the FilePoll store as a raw pointer.
@@ -256,11 +257,6 @@ impl AnyEventLoop<'static> {
     #[inline]
     pub fn file_polls(&mut self) -> *mut bun_io::file_poll::Store {
         EventLoopHandle::from_any(self).file_polls()
-    }
-
-    #[inline]
-    pub fn put_file_poll(&mut self, poll: &mut FilePoll) {
-        EventLoopHandle::from_any(self).put_file_poll(poll)
     }
 
     /// Returns the shared pipe-read scratch buffer as a raw fat ptr.
@@ -449,20 +445,10 @@ impl EventLoopHandle {
     }
 }
 
-/// Carrier-trait impl so `bun_uws::InternalLoopDataExt::set_parent_event_loop`
-/// accepts `EventLoopHandle` directly. Kept here (not in `bun_uws`) because
-/// `bun_uws` is a lower tier than `bun_event_loop` and cannot name this enum.
-impl bun_uws::ParentEventLoopHandle for EventLoopHandle {
-    #[inline]
-    fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
-        EventLoopHandle::into_tag_ptr(self)
-    }
-}
-
 impl EventLoopHandle {
-    /// Convenience wrapper so callers don't need both `bun_uws::InternalLoopDataExt`
-    /// (the trait) and the `*mut Loop` deref dance in scope. `uws_loop` is the
-    /// process-global loop returned by `AnyEventLoop::r#loop()` — never null.
+    /// Convenience wrapper around `into_tag_ptr()` + `set_parent_raw`.
+    /// `uws_loop` is the process-global loop returned by
+    /// `AnyEventLoop::r#loop()` — never null.
     #[inline]
     pub fn set_as_parent_of(self, uws_loop: &mut UwsLoop) {
         let (tag, ptr) = self.into_tag_ptr();
@@ -547,30 +533,6 @@ impl EventLoopHandle {
         }
     }
 
-    pub fn put_file_poll(&mut self, poll: &mut FilePoll) {
-        let was_ever_registered = poll
-            .flags
-            .contains(bun_io::file_poll::Flags::WasEverRegistered);
-        // Decay `poll` to `NonNull` *before* taking any further `&mut` so
-        // `Store::put`'s raw-pointer field touches don't alias a live `&mut`.
-        let poll_ptr = NonNull::from(poll);
-        match self {
-            // `JsEventLoop::put_file_poll` takes a raw `*mut FilePoll`; pass
-            // the decayed `poll_ptr` straight through.
-            EventLoopHandle::Js { owner } => {
-                owner.put_file_poll(poll_ptr.as_ptr(), was_ever_registered)
-            }
-            // ctx only touches `after_event_loop_callback{,_ctx}`, field-disjoint
-            // from `file_polls_` — safe to hold both across `Store::put`.
-            EventLoopHandle::Mini(mini) => {
-                let ctx = MiniEventLoop::as_event_loop_ctx(mini_mut(mini));
-                mini_mut(mini)
-                    .file_polls()
-                    .put(poll_ptr, ctx, was_ever_registered);
-            }
-        }
-    }
-
     pub fn enqueue_task_concurrent(self, task: EventLoopTaskPtr) {
         match self {
             EventLoopHandle::Js { owner } => {
@@ -638,13 +600,14 @@ impl EventLoopHandle {
     }
 
     pub fn ref_(self) {
-        // SAFETY: `r#loop` returns a valid live loop.
-        unsafe { (*self.r#loop()).ref_() };
+        // Raw-place twin: `r#loop` returns the live loop; a `&mut Loop` here
+        // would span `pending_wakeups`, which waker threads mutate.
+        bun_usockets::Loop::ref_raw(self.r#loop());
     }
 
     pub fn unref(self) {
-        // SAFETY: `r#loop` returns a valid live loop.
-        unsafe { (*self.r#loop()).unref() };
+        // See `ref_`.
+        bun_usockets::Loop::unref_raw(self.r#loop());
     }
 
     pub fn env(self) -> *mut DotEnvLoader<'static> {

@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
-use bun_uws as uws;
+use bun_uws_shim as uws;
 
 pub struct WebSocketServerContext {
     // Set provisionally in `on_create`; the server overwrites it on

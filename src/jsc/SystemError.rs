@@ -163,10 +163,10 @@ impl SystemError {
 ///
 /// LAYERING: lives here (not `bun_runtime::socket::uws_jsc`) so both
 /// `bun_runtime` and `bun_sql_jsc` import the single canonical body — both
-/// crates already depend on `bun_jsc` + `bun_uws`, and the body touches
+/// crates already depend on `bun_jsc` + `bun_usockets`, and the body touches
 /// nothing higher-tier.
 pub fn verify_error_to_js(
-    err: &bun_uws::us_bun_verify_error_t,
+    err: &bun_usockets::us_bun_verify_error_t,
     global: &JSGlobalObject,
 ) -> crate::JsResult<JSValue> {
     let code: &[u8] = err.code_bytes();

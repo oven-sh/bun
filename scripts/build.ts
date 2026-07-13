@@ -140,12 +140,11 @@ async function main(): Promise<void> {
     // Trace and relink when we are a release, when a commit asked for it, or when
     // there was nothing to inherit. A failed trace is not fatal: the order file is
     // an optimization, and a flaky workload must not kill a release 40 minutes in.
-    if (mustGenerateOrderFile(result.cfg, orderCtx, inherited)) {
-      if (!inherited && !shouldGenerateOrderFile(result.cfg, orderCtx)) reportOrderFileBootstrap(result.cfg);
+    const traceAndRelink = async (reason?: string) => {
       let traced = true;
       await startGroup("Generate symbol order file", () => {
         try {
-          regenerateOrderFile(result.cfg, orderCtx);
+          regenerateOrderFile(result.cfg, orderCtx, reason);
         } catch (error) {
           traced = false;
           reportOrderFileFailure(error as Error);
@@ -156,9 +155,18 @@ async function main(): Promise<void> {
         // We traced this exact binary: nearly every symbol must resolve. Hard-fail.
         if (result.output.exe) verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe);
       }
+    };
+    if (mustGenerateOrderFile(result.cfg, orderCtx, inherited)) {
+      if (!inherited && !shouldGenerateOrderFile(result.cfg, orderCtx)) reportOrderFileBootstrap(result.cfg);
+      await traceAndRelink();
     } else if (orderFileEligible(result.cfg, orderCtx) && result.output.exe) {
-      // Inherited: a stale file is a slower binary, not a broken one.
-      verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe, { strict: false });
+      // Inherited: a mildly aged file is a slower binary, not a broken one. But
+      // one that lost most of its symbols (a rename wave) would be republished
+      // and inherited forever — treat a stale verdict as if nothing was inherited.
+      const verdict = verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe, { strict: false });
+      if (verdict === "stale" && mustGenerateOrderFile(result.cfg, orderCtx, false)) {
+        await traceAndRelink("inherited order file no longer matches this binary's symbols");
+      }
     }
 
     // cpp-only/rust-only: upload build outputs for downstream link-only.

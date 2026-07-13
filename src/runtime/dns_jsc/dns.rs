@@ -29,7 +29,7 @@ use bun_sys::windows::libuv;
 #[cfg(not(windows))]
 use bun_sys::{self as sys};
 use bun_threading::thread_pool;
-use bun_uws::{ConnectingSocket, Loop};
+use bun_usockets::{ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
 use super::cares_jsc::error_to_deferred;
@@ -289,8 +289,7 @@ pub(super) mod lib_info {
         // SAFETY: see above.
         let machport = unsafe { (*request).backend.as_libinfo().machport };
         let rc = poll.register_with_fd(
-            // SAFETY: JS event loop is live for the resolver's lifetime.
-            unsafe { ctx.platform_event_loop() },
+            ctx.loop_(),
             Async::PollKind::Machport,
             Async::posix_event_loop::OneShotFlag::OneShot,
             // bitcast u32 mach_port → i32 fd
@@ -2521,7 +2520,8 @@ pub mod internal {
     }
 
     // `Request` is passed opaquely to usockets and round-tripped back into
-    // Rust; the C side never dereferences fields, so layout is irrelevant.
+    // this module; the callee (`bun_usockets` cabi.rs) never dereferences it,
+    // so layout is irrelevant.
     #[allow(improper_ctypes)]
     unsafe extern "C" {
         fn us_internal_dns_callback(socket: *mut ConnectingSocket, req: *mut Request);
@@ -2723,10 +2723,20 @@ pub mod internal {
             notify
         };
 
-        // is this correct, or should it go after the loop?
+        // Socket enqueues run under the lock: us_getaddrinfo_cancel linearizes
+        // on it, so a failed cancel proves the loop enqueue already happened —
+        // teardown after a failed cancel can't race a late cross-thread push.
+        let mut deferred = Vec::new();
+        for query in notify {
+            match query {
+                DNSRequestOwner::Socket(_) => query.notify_threadsafe(req),
+                // Prefetch/Quic notify re-acquires this lock (freeRequest).
+                other => deferred.push(other),
+            }
+        }
         drop(guard);
 
-        for query in notify {
+        for query in deferred {
             query.notify_threadsafe(req);
         }
     }
@@ -2835,7 +2845,7 @@ pub mod internal {
             Async::Owner::new(Async::posix_event_loop::poll_tag::REQUEST, req.cast::<()>()),
         );
         // SAFETY: `poll` is a freshly-allocated hive slot; `loop_.r#loop()` is the live uws loop.
-        let rc = unsafe { (*poll).register(&mut *loop_.r#loop(), Async::PollKind::Machport, true) };
+        let rc = unsafe { (*poll).register(loop_.r#loop(), Async::PollKind::Machport, true) };
 
         if rc.is_err() {
             // SAFETY: `poll` is the freshly-allocated hive slot returned by
@@ -2927,7 +2937,7 @@ pub mod internal {
                         let poll = (*req).libinfo.file_poll.unwrap().as_mut();
                         // `as i32` is the same-width bitcast of the u32 mach port.
                         poll.fd = sys::Fd::from_native(machport as i32);
-                        match poll.register(&mut *Loop::get(), Async::PollKind::Machport, true) {
+                        match poll.register(Loop::get(), Async::PollKind::Machport, true) {
                             sys::Result::Err(_) => {
                                 bun_output::scoped_log!(
                                     dns,
@@ -3057,7 +3067,6 @@ pub mod internal {
 
         #[cfg(target_os = "macos")]
         {
-            use bun_uws::InternalLoopDataExt as _;
             if !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO
                 .get()
                 .unwrap_or(false)
@@ -3065,7 +3074,7 @@ pub mod internal {
                 // SAFETY: `loop_` is the live uSockets loop; its parent tag/ptr
                 // was set by `EventLoopHandle::set_as_parent_of` at startup.
                 let handle = unsafe {
-                    let (tag, ptr) = (*loop_).internal_loop_data.get_parent();
+                    let (tag, ptr) = (*loop_).internal_loop_data.get_parent_raw();
                     jsc::EventLoopHandle::from_tag_ptr(tag, ptr)
                 };
                 let res = lookup_libinfo(req, handle);
@@ -4852,7 +4861,11 @@ impl Resolver {
                 // SAFETY: `Loop::get()` is the live per-thread uws loop;
                 // `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
                 if unsafe {
-                    uv::uv_poll_init_socket((*Loop::get()).uv_loop, &mut (*new_poll).poll, fd as _)
+                    uv::uv_poll_init_socket(
+                        (*Loop::get()).uv_loop.cast(),
+                        &mut (*new_poll).poll,
+                        fd as _,
+                    )
                 } < 0
                 {
                     UvDnsPoll::destroy(new_poll);
@@ -4900,8 +4913,9 @@ impl Resolver {
                 Async::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
-            // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
-            let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
+            // `event_loop_handle` is set once VM is initialized; live for VM
+            // lifetime. Raw pointer through — register/unregister take *mut.
+            let loop_ = self.vm().event_loop_handle.unwrap();
             // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
             // any re-entrant call (`FilePoll::register` is a syscall wrapper).
             let polls = unsafe { self.polls.get_mut() };

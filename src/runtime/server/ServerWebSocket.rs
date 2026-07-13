@@ -4,9 +4,9 @@ use core::mem;
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
-use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
-use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
-use bun_uws_sys::{Opcode, SendStatus};
+use bun_uws_shim::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
+use bun_uws_shim::{self as uws, AnyWebSocket, WebSocketBehavior};
+use bun_uws_shim::{Opcode, SendStatus};
 
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{

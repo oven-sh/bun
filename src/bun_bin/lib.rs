@@ -41,6 +41,10 @@ mod c_abi_exports;
 // (`sys_epoll_pwait2`, …) reach the linker.
 use bun_platform as _;
 
+// Force-link `bun_usockets` so the `cabi` feature's `#[no_mangle]` `us_*`
+// exports reach the linker for the surviving C/C++ consumers.
+use bun_usockets as _;
+
 use bun_core::Global;
 use bun_core::StackCheck;
 use bun_core::output;

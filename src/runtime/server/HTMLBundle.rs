@@ -15,7 +15,7 @@ use bun_http::Headers;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, IntrusiveRc, RefCount};
-use bun_uws::{AnyRequest, AnyResponse};
+use bun_uws_shim::{AnyRequest, AnyResponse};
 
 use crate::api::js_bundle_completion_task::{
     JSBundleCompletionTask, create_and_schedule_completion_task,

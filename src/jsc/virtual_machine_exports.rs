@@ -65,7 +65,7 @@ pub fn global_object_connected_ipc(global: &JSGlobalObject) -> bool {
         Some(IPCInstanceUnion::Initialized(inst)) => {
             // SAFETY: `inst` was produced by `IPCInstance::new` (heap::alloc)
             // and remains live until `handleIPCClose` swaps `vm.ipc` to `None`.
-            unsafe { (**inst).data.is_connected() }
+            unsafe { (**inst).data.queue().is_connected() }
         }
         Some(IPCInstanceUnion::Waiting { .. }) => true,
         None => false,

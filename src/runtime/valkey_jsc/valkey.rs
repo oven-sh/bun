@@ -6,7 +6,7 @@ use bun_collections::VecExt;
 use bun_collections::OffsetByteList;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
-use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
+use bun_usockets::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
@@ -195,27 +195,28 @@ impl Address {
         }
     }
 
-    /// Open a TCP/TLS/Unix socket via
-    /// `uws::Socket{TLS,TCP}::connect_*_group`.
-    ///
-    /// `Owner` is the userdata pointer stashed in the socket ext (the
-    /// `JSValkeyClient` parent in practice — that's what `SocketHandler<SSL>`
-    /// pulls back out on event dispatch). Generic so the caller controls the
-    /// stored type; this fn only forwards it opaquely to `connect_*_group`.
-    pub(crate) fn connect<Owner>(
+    /// Open a TCP/TLS/Unix socket via `uws::Socket{TLS,TCP}::connect_*_owned`
+    /// (Protocol v2). `owner` transfers one strong ref to the core, which
+    /// releases it exactly once at the socket's terminal (on_close /
+    /// on_connect_error / silent SEMI_SOCKET close). On failure the core
+    /// releases it before returning.
+    pub(crate) fn connect<O>(
         &self,
-        owner: *mut Owner,
+        owner: uws::OwnerRef<O>,
         group: &mut SocketGroup,
         ssl_ctx: Option<*mut SslCtx>,
         is_tls: bool,
-    ) -> Result<AnySocket, crate::Error> {
+    ) -> Result<AnySocket, crate::Error>
+    where
+        O: bun_ptr::RefCounted<DestructorCtx: Default> + 'static,
+    {
         if is_tls {
             let kind = SocketKind::ValkeyTls;
             let sock = match self {
                 Address::Unix(path) => {
-                    uws::SocketTLS::connect_unix_group(group, kind, ssl_ctx, path, owner, false)?
+                    uws::SocketTLS::connect_unix_owned(group, kind, ssl_ctx, path, owner, false)?
                 }
-                Address::Host { host, port } => uws::SocketTLS::connect_group(
+                Address::Host { host, port } => uws::SocketTLS::connect_owned(
                     group,
                     kind,
                     ssl_ctx,
@@ -230,9 +231,9 @@ impl Address {
             let kind = SocketKind::Valkey;
             let sock = match self {
                 Address::Unix(path) => {
-                    uws::SocketTCP::connect_unix_group(group, kind, ssl_ctx, path, owner, false)?
+                    uws::SocketTCP::connect_unix_owned(group, kind, ssl_ctx, path, owner, false)?
                 }
-                Address::Host { host, port } => uws::SocketTCP::connect_group(
+                Address::Host { host, port } => uws::SocketTCP::connect_owned(
                     group,
                     kind,
                     ssl_ctx,
@@ -417,8 +418,6 @@ impl ValkeyClient {
             return false;
         }
 
-        self.ref_();
-
         // Start draining the command queue
         let mut total_bytelength: usize = 0;
 
@@ -461,8 +460,6 @@ impl ValkeyClient {
 
         let have_more = self.queue.readable_length() > 0;
         self.auto_flusher.registered.set(have_more);
-
-        self.deref();
 
         // Return true if we should schedule another flush
         have_more
@@ -642,16 +639,9 @@ impl ValkeyClient {
         if socket.is_closed() {
             return;
         }
-        // usockets does not dispatch `on_close`/`on_connect_error` when an
-        // application explicitly closes a `us_socket_t` whose TCP connect
-        // hasn't resolved yet (`POLL_TYPE_SEMI_SOCKET` — DNS resolved
-        // synchronously so `connect()` got a real `us_socket_t*` rather than
-        // a `us_connecting_socket_t*`). See `us_internal_socket_close_raw`.
-        // The valkey client relies on one of those callbacks (via
-        // `on_valkey_close`/`on_valkey_reconnect`) to release the `+1`
-        // keep-alive ref `connect()` took, so without one the
-        // `JSValkeyClient` box leaks. Detect a SEMI_SOCKET before closing
-        // and run the close path ourselves afterwards.
+        // Explicitly closing a SEMI_SOCKET dispatches no on_close (contract
+        // C1). The core releases its owner ref on that silent close; the
+        // behavioral half (settle promises, fire onclose) is replayed here.
         let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
             && !socket.is_established();
         socket.close(uws::CloseCode::Normal);
@@ -749,8 +739,6 @@ impl ValkeyClient {
     }
 
     /// Process data received from socket
-    ///
-    /// Caller refs / derefs.
     pub fn on_data(&mut self, data: &[u8]) -> JsTerminated<()> {
         debug!(
             "Low-level onData called with {} bytes: {}",
@@ -1354,9 +1342,7 @@ impl ValkeyClient {
     }
 
     pub fn on_writable(&mut self) {
-        self.ref_();
         self.send_next_command();
-        self.deref();
     }
 
     fn enqueue(
@@ -1507,19 +1493,6 @@ impl ValkeyClient {
             .write(data)
             .map_err(|_| RedisError::OutOfMemory)?;
         Ok(data.len())
-    }
-
-    /// Increment reference count
-    pub fn ref_(&mut self) {
-        self.parent().ref_();
-    }
-
-    pub fn deref(&mut self) {
-        let parent = std::ptr::from_ref(self.parent()).cast_mut();
-        // SAFETY: only called in balanced `ref_()`/`deref()` pairs
-        // (`on_auto_flush`, `on_writable`), so the count stays > 0 and the
-        // outer `&mut self` protector is never invalidated by deallocation.
-        unsafe { JSValkeyClient::deref(parent) };
     }
 
     #[inline]

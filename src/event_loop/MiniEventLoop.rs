@@ -28,7 +28,7 @@ use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 use bun_io::file_poll::Store as FilePollStore;
 use bun_sys::{self as sys, Fd, Mode};
 use bun_threading::UnboundedQueue;
-use bun_uws::Loop as UwsLoop;
+use bun_usockets::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New};
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
@@ -93,9 +93,6 @@ pub struct MiniEventLoop<'a> {
     pub env: Option<NonNull<DotEnvLoader<'a>>>,
     // Never freed in `deinit`. Use Box<[u8]> and dupe on assign.
     pub top_level_dir: Box<[u8]>,
-    // Opaque ctx assigned externally; only read/cleared here.
-    pub after_event_loop_callback_ctx: Option<NonNull<c_void>>,
-    pub after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
     pub pipe_read_buffer: Option<Box<PipeReadBuffer>>,
     // SAFETY: erased `*mut webcore::blob::Store` (tier-6). Constructed via
     // `__bun_stdio_blob_store_new` with ref_count=2: one owning intrusive ref
@@ -257,17 +254,6 @@ impl<'a> MiniEventLoop<'a> {
             .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)[..]
     }
 
-    pub fn on_after_event_loop(&mut self) {
-        if let Some(cb) = self.after_event_loop_callback {
-            let ctx = self.after_event_loop_callback_ctx;
-            self.after_event_loop_callback = None;
-            self.after_event_loop_callback_ctx = None;
-            // SAFETY: `cb` is a C-ABI callback registered by the owner of `ctx`; the owner
-            // guarantees `ctx` is valid until the callback fires.
-            unsafe { cb(ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr())) };
-        }
-    }
-
     pub fn file_polls(&mut self) -> &mut FilePollStore {
         if self.file_polls_.is_none() {
             self.file_polls_ = Some(Box::new(FilePollStore::init()));
@@ -316,8 +302,6 @@ impl<'a> MiniEventLoop<'a> {
             file_polls_: None,
             env: None,
             top_level_dir: Box::default(),
-            after_event_loop_callback_ctx: None,
-            after_event_loop_callback: None,
             pipe_read_buffer: None,
             stdout_store: None,
             stderr_store: None,
@@ -367,13 +351,12 @@ impl<'a> MiniEventLoop<'a> {
     #[inline]
     pub fn tick_once(&mut self, context: *mut c_void) {
         if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-            // SAFETY: see `loop_ptr()` invariant.
-            unsafe {
-                (*self.loop_ptr()).inc();
-                (*self.loop_ptr()).tick();
-                (*self.loop_ptr()).dec();
-            }
-            self.on_after_event_loop();
+            // Raw-place inc/dec: a `&mut UwsLoop` here would span bytes
+            // (`pending_wakeups`) that enqueue_task_concurrent threads
+            // `fetch_add` concurrently.
+            UwsLoop::inc_raw(self.loop_ptr());
+            UwsLoop::tick(self.loop_ptr());
+            UwsLoop::dec_raw(self.loop_ptr());
         }
 
         while let Some(task) = self.tasks.read_item() {
@@ -390,14 +373,12 @@ impl<'a> MiniEventLoop<'a> {
                 unsafe { (*task).run(context) };
             }
 
-            // SAFETY: see `loop_ptr()` invariant.
-            unsafe { (*self.loop_ptr()).tick_without_idle() };
+            UwsLoop::tick_without_idle(self.loop_ptr());
 
             if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
                 break;
             }
         }
-        self.on_after_event_loop();
     }
 
     pub fn tick<F>(&mut self, context: *mut c_void, is_done: F)
@@ -435,8 +416,9 @@ impl<'a> MiniEventLoop<'a> {
     /// node stays with the caller until the callback runs.
     pub fn enqueue_task_concurrent(&mut self, task: NonNull<AnyTaskWithExtraContext>) {
         self.concurrent_tasks.push(task);
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        // Raw cross-thread wake path — never forms `&mut UwsLoop`. Liveness:
+        // the MiniEventLoop and its loop live until process exit.
+        bun_usockets::us_wakeup_loop(self.loop_ptr());
     }
 
     /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
@@ -461,8 +443,9 @@ impl<'a> MiniEventLoop<'a> {
         self.concurrent_tasks
             .push(unsafe { NonNull::new_unchecked(task) });
 
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        // Raw cross-thread wake path — never forms `&mut UwsLoop`. Liveness:
+        // the MiniEventLoop and its loop live until process exit.
+        bun_usockets::us_wakeup_loop(self.loop_ptr());
     }
 
     /// Lazy-init helper shared by [`stderr`]/[`stdout`]: `fstat → __bun_stdio_blob_store_new → cache`.
@@ -521,11 +504,6 @@ bun_io::link_impl_EventLoopCtx! {
         // mutating uws counters off-thread.
         ref_concurrently()   => unreachable!("KeepAlive::refConcurrently is JS-VM-only"),
         unref_concurrently() => unreachable!("KeepAlive::unrefConcurrently is JS-VM-only"),
-        after_event_loop_callback() => (*this).after_event_loop_callback,
-        set_after_event_loop_callback(cb, ctx) => {
-            (*this).after_event_loop_callback = cb;
-            (*this).after_event_loop_callback_ctx = ctx;
-        },
         pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
     }
 }

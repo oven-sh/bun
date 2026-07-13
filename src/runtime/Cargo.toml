@@ -94,8 +94,8 @@ bun_tcc_sys.workspace = true
 bun_threading.workspace = true
 bun_transpiler.workspace = true
 bun_url.workspace = true
-bun_uws.workspace = true
-bun_uws_sys.workspace = true
+bun_usockets.workspace = true
+bun_uws_shim.workspace = true
 bun_valkey.workspace = true
 bun_watcher.workspace = true
 bun_which.workspace = true
@@ -116,3 +116,6 @@ show_crash_trace = ["bun_bundler/show_crash_trace"]
 error_return_tracing = []
 # Mirrors Zig `bun.FeatureFlags.bake_debugging_features` — DevServer dump flags.
 bake_debugging_features = []
+# Socket syscall fault injection: the `bun:internal-for-testing` control
+# surface here plus the hooks in bun_usockets — enabled together.
+socket_fault_injection = ["bun_usockets/socket_fault_injection"]

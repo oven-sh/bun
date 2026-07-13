@@ -936,6 +936,74 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   );
 });
 
+describe.skipIf(!canBuildNodeAddons())("napi_threadsafe_function", () => {
+  it("can be released after the Worker that created it exited", async () => {
+    // next-swc shape: an addon creates an unref'd TSFN on a Worker's env, the
+    // Worker exits (freeing its VM and event loop), and only then does another
+    // thread release the TSFN — the release must not touch the dead loop.
+    const fixture = /* js */ `
+      const path = ${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))};
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(
+        "require(" + JSON.stringify(path) + ").create_orphaned_tsfn(() => {});",
+        { eval: true },
+      );
+      await new Promise((resolve, reject) => {
+        worker.on("exit", resolve);
+        worker.on("error", reject);
+      });
+      const status = require(path).release_orphaned_tsfn();
+      console.log("release_status=" + status);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // 0 == napi_ok; a UAF aborts the process (empty stdout, nonzero exit).
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "release_status=0", exitCode: 0 });
+  });
+
+  it("napi_call_threadsafe_function returns napi_closing after the Worker that created it exited", async () => {
+    // With the owning event loop dead nothing will ever drain the queue:
+    // both the non-blocking arm and the blocking-with-space arm must report
+    // napi_closing (Node semantics) instead of napi_ok on a silently
+    // stranded item. The queue has room (max_queue_size 1, empty), so
+    // pre-fix both arms skipped the dead-loop check and returned 0.
+    const fixture = /* js */ `
+      const path = ${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))};
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(
+        "require(" + JSON.stringify(path) + ").create_orphaned_tsfn(() => {});",
+        { eval: true },
+      );
+      await new Promise((resolve, reject) => {
+        worker.on("exit", resolve);
+        worker.on("error", reject);
+      });
+      const addon = require(path);
+      const nonblocking = addon.call_orphaned_tsfn(false);
+      const blocking = addon.call_orphaned_tsfn(true);
+      const release = addon.release_orphaned_tsfn();
+      console.log(JSON.stringify({ nonblocking, blocking, release }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // 16 == napi_closing, 0 == napi_ok.
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: JSON.stringify({ nonblocking: 16, blocking: 16, release: 0 }),
+      exitCode: 0,
+    });
+  });
+});
+
 // Kept outside describe.concurrent("napi") so RSS measurement isn't skewed by
 // the other tests' subprocesses and doesn't add load to the --compile tests.
 describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {

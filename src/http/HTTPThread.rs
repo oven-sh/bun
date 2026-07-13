@@ -1,16 +1,15 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::time::Instant;
 
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
 
-use bun_threading::{Mutex, UnboundedQueue};
-use bun_uws as uws;
+use bun_threading::{Guarded, UnboundedQueue};
+use bun_usockets as uws;
 
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
-use crate::http_context::ActiveSocketExt;
 use crate::proxy_tunnel::ProxyTunnel;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h3};
@@ -83,13 +82,43 @@ fn custom_ssl_context_map() -> &'static mut ArrayHashMap<*const SSLConfig, SslCo
 use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
+// ── Cross-thread state (module statics, NOT `HttpThread` fields) ────────────
+// The HTTP thread holds `&mut HttpThread` for its whole life
+// (`process_events`), so JS-thread producers must never touch that struct —
+// not even via `&HttpThread` — or they'd be foreign accesses under the
+// `&mut`'s protector. All producer-visible state lives here instead
+// (in-repo precedent: h3_client/PendingConnect::RESOLVED).
+pub(crate) static QUEUED_TASKS: Queue = Queue::new();
+static QUEUED_SHUTDOWNS: Guarded<Vec<ShutdownMessage>> = Guarded::new(Vec::new());
+static QUEUED_WRITES: Guarded<Vec<WriteMessage>> = Guarded::new(Vec::new());
+static QUEUED_RECEIVE_RESUMES: Guarded<Vec<u32>> = Guarded::new(Vec::new());
+static QUEUED_CERT_CHECK_RESUMES: Guarded<Vec<CertCheckResumeMessage>> = Guarded::new(Vec::new());
+/// The HTTP thread's uws loop, published (Release) by `on_start` once the
+/// loop exists; null before that. Cross-thread `wakeup()` Acquire-loads it,
+/// which also publishes the loop's initialization.
+static UWS_LOOP: AtomicPtr<uws::Loop> = AtomicPtr::new(core::ptr::null_mut());
+/// Start instant for `elapsed` timestamps; set on the JS thread in `init`
+/// before the HTTP thread spawns (never mutated afterwards).
+static START_TIMER: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// Nanoseconds since HTTP-thread init. `Instant::elapsed().as_nanos()` is
+/// u128; checked narrow to u64 — overflows only after ~584 years of uptime.
+#[inline]
+pub(crate) fn timer_read() -> u64 {
+    u64::try_from(
+        START_TIMER
+            .get()
+            .expect("HTTPThread::init")
+            .elapsed()
+            .as_nanos(),
+    )
+    .expect("int cast")
+}
+
 pub struct HttpThread {
     /// Per-thread `MiniEventLoop` singleton — published by
     /// `MiniEventLoop::init_global()` in [`on_start`]; outlives the thread.
     pub loop_: *const MiniEventLoop<'static>,
-    /// The raw uSockets loop inside `loop_.loop` — split out so HTTPContext
-    /// can `SocketGroup::init` without naming MiniEventLoop.
-    pub uws_loop: *mut uws::Loop,
     pub http_context: NewHttpContext<false>,
     pub https_context: NewHttpContext<true>,
     /// Stashed `InitOpts` for the default HTTPS context. When the user passed
@@ -106,8 +135,7 @@ pub struct HttpThread {
     /// reentrant).
     lazy_https_init: Option<InitOpts>,
 
-    pub queued_tasks: Queue,
-    /// Tasks popped from `queued_tasks` that couldn't start because
+    /// Tasks popped from `QUEUED_TASKS` that couldn't start because
     /// `active_requests_count >= max_simultaneous_requests`. Kept in FIFO order
     /// and processed before `queued_tasks` on the next `drainEvents`. Owned by
     /// the HTTP thread; never accessed concurrently.
@@ -120,20 +148,8 @@ pub struct HttpThread {
     /// path stays O(1). Owned by the HTTP thread.
     pub has_pending_queued_abort: bool,
 
-    pub queued_shutdowns: Vec<ShutdownMessage>,
-    pub queued_writes: Vec<WriteMessage>,
-    pub queued_receive_resumes: Vec<u32>,
-    pub queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
-
-    pub queued_shutdowns_lock: Mutex,
-    pub queued_writes_lock: Mutex,
-    pub queued_receive_resumes_lock: Mutex,
-    pub queued_cert_check_resumes_lock: Mutex,
-
     pub queued_threadlocal_proxy_derefs: Vec<*mut ProxyTunnel>,
 
-    pub has_awoken: AtomicBool,
-    pub timer: Instant,
     pub lazy_libdeflater: Option<Box<LibdeflateState>>,
     pub lazy_request_body_buffer: Option<Box<HeapRequestBodyBuffer>>,
 
@@ -148,13 +164,13 @@ pub struct HttpThread {
 }
 
 impl HttpThread {
-    /// `loop_`/`uws_loop` are filled in by
-    /// `on_start` on the spawned thread; `timer` is started on the calling
+    /// `loop_` (and the `UWS_LOOP` static) are filled in by
+    /// `on_start` on the spawned thread; `START_TIMER` is set on the calling
     /// thread.
     fn new() -> Self {
+        let _ = START_TIMER.set(Instant::now());
         Self {
             loop_: core::ptr::null(),
-            uws_loop: core::ptr::null_mut(),
             http_context: NewHttpContext::<false> {
                 ref_count: Cell::new(1),
                 pending_sockets: bun_collections::HiveArray::init(),
@@ -172,20 +188,9 @@ impl HttpThread {
                 pending_h2_connects: Vec::new(),
             },
             lazy_https_init: None,
-            queued_tasks: Queue::new(),
             deferred_tasks: Vec::new(),
             has_pending_queued_abort: false,
-            queued_shutdowns: Vec::new(),
-            queued_writes: Vec::new(),
-            queued_receive_resumes: Vec::new(),
-            queued_cert_check_resumes: Vec::new(),
-            queued_shutdowns_lock: Mutex::new(),
-            queued_writes_lock: Mutex::new(),
-            queued_receive_resumes_lock: Mutex::new(),
-            queued_cert_check_resumes_lock: Mutex::new(),
             queued_threadlocal_proxy_derefs: Vec::new(),
-            has_awoken: AtomicBool::new(false),
-            timer: Instant::now(),
             lazy_libdeflater: None,
             lazy_request_body_buffer: None,
             in_flight: Vec::new(),
@@ -381,30 +386,15 @@ fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
 impl HttpThread {
     /// Raw uSockets loop for `SocketGroup::init`. Split from `loop_` so
     /// HTTPContext doesn't need to name the higher-tier MiniEventLoop type.
+    /// Relaxed: HTTP-thread callers read the value this thread stored.
     #[inline]
     pub fn uws_loop(&self) -> *mut uws::Loop {
-        self.uws_loop
+        UWS_LOOP.load(Ordering::Relaxed)
     }
 
-    /// Mutable access to the live uSockets event loop.
-    ///
-    /// INVARIANT: `uws_loop` is set once in [`on_start`] (published via the
-    /// `has_awoken` Release store) and outlives the HTTP thread. The loop is a
-    /// separate C heap allocation disjoint from `self`. HTTP-thread-only at
-    /// every caller — `wakeup()` is the sole cross-thread entry and uses the
-    /// raw FFI call instead. Centralises the raw `&mut *self.uws_loop`
-    /// upgrade repeated in `process_events`.
-    #[inline]
-    fn uws_loop_mut<'a>(&self) -> &'a mut uws::Loop {
-        // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.uws_loop }
-    }
-
-    /// `Instant::elapsed().as_nanos()` is u128; checked narrow to u64 —
-    /// overflows only after ~584 years of process uptime.
     #[inline]
     fn timer_read(&self) -> u64 {
-        u64::try_from(self.timer.elapsed().as_nanos()).expect("int cast")
+        timer_read()
     }
 
     #[inline]
@@ -500,6 +490,15 @@ impl HttpThread {
                 }
                 let requested_config: *const SSLConfig = tls.get();
 
+                // Validate the proxy scheme before the cache is touched: the
+                // hit path connects without re-checking, and a miss must not
+                // cache a context for a request that fails anyway.
+                if let Some(url) = client.http_proxy.clone()
+                    && !is_supported_proxy_protocol(url.protocol)
+                {
+                    return Err(crate::Error::UnsupportedProxyProtocol);
+                }
+
                 // Evict stale entries from the cache
                 self.evict_stale_ssl_contexts();
 
@@ -570,14 +569,7 @@ impl HttpThread {
                 client.set_custom_ssl_ctx(ctx_nn);
                 // Keepalive is now supported for custom SSL contexts
                 let result = if let Some(url) = client.http_proxy.clone() {
-                    if url.protocol.is_empty()
-                        || url.protocol == b"https"
-                        || url.protocol == b"http"
-                    {
-                        custom_context.connect(client, url.hostname, url.get_port_auto())
-                    } else {
-                        return Err(crate::Error::UnsupportedProxyProtocol);
-                    }
+                    custom_context.connect(client, url.hostname, url.get_port_auto())
                 } else {
                     let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
                     custom_context.connect(client, hn, pt)
@@ -589,7 +581,7 @@ impl HttpThread {
         if let Some(url) = client.http_proxy.clone() {
             if !url.href.is_empty() {
                 // https://github.com/oven-sh/bun/issues/11343
-                if url.protocol.is_empty() || url.protocol == b"https" || url.protocol == b"http" {
+                if is_supported_proxy_protocol(url.protocol) {
                     return self.context::<IS_SSL>().connect(
                         client,
                         url.hostname,
@@ -635,10 +627,7 @@ impl HttpThread {
         loop {
             // socket.close() can potentially be slow
             // Let's not block other threads while this runs.
-            let queued_shutdowns = {
-                let _guard = self.queued_shutdowns_lock.lock_guard();
-                core::mem::take(&mut self.queued_shutdowns)
-            };
+            let queued_shutdowns = core::mem::take(&mut *QUEUED_SHUTDOWNS.lock());
 
             for http in &queued_shutdowns {
                 let tracker = abort_tracker();
@@ -706,10 +695,7 @@ impl HttpThread {
 
     fn drain_queued_writes(&mut self) {
         loop {
-            let queued_writes = {
-                let _guard = self.queued_writes_lock.lock_guard();
-                core::mem::take(&mut self.queued_writes)
-            };
+            let queued_writes = core::mem::take(&mut *QUEUED_WRITES.lock());
             for write in &queued_writes {
                 let message = write.kind;
                 let ended = message == WriteMessageType::End;
@@ -766,10 +752,7 @@ impl HttpThread {
 
     fn drain_queued_cert_check_resumes(&mut self) {
         loop {
-            let queued_cert_check_resumes = {
-                let _guard = self.queued_cert_check_resumes_lock.lock_guard();
-                core::mem::take(&mut self.queued_cert_check_resumes)
-            };
+            let queued_cert_check_resumes = core::mem::take(&mut *QUEUED_CERT_CHECK_RESUMES.lock());
             for resume in &queued_cert_check_resumes {
                 // Both arms are required: an HTTPS target behind a plaintext
                 // proxy parks behind a SocketTcp tracker entry.
@@ -811,10 +794,7 @@ impl HttpThread {
 
     fn drain_queued_receive_resumes(&mut self) {
         loop {
-            let queued = {
-                let _guard = self.queued_receive_resumes_lock.lock_guard();
-                core::mem::take(&mut self.queued_receive_resumes)
-            };
+            let queued = core::mem::take(&mut *QUEUED_RECEIVE_RESUMES.lock());
             if queued.is_empty() {
                 return;
             }
@@ -928,7 +908,7 @@ impl HttpThread {
         }
 
         loop {
-            let Some(http) = NonNull::new(self.queued_tasks.pop()) else {
+            let Some(http) = NonNull::new(QUEUED_TASKS.pop()) else {
                 break;
             };
             // AsyncHttp is heap-owned by the caller and alive until its
@@ -957,57 +937,55 @@ impl HttpThread {
         }
     }
 
-    pub fn schedule_receive_resume(&mut self, async_http_id: u32) {
+    // Producer entry points: associated fns (no `self`) callable from ANY
+    // thread — they touch only the module statics above, never the struct
+    // the HTTP thread mutably owns.
+
+    pub fn schedule_receive_resume(async_http_id: u32) {
         {
-            let _guard = self.queued_receive_resumes_lock.lock_guard();
-            if self.queued_receive_resumes.last() == Some(&async_http_id) {
+            let mut q = QUEUED_RECEIVE_RESUMES.lock();
+            if q.last() == Some(&async_http_id) {
                 return;
             }
-            self.queued_receive_resumes.push(async_http_id);
+            q.push(async_http_id);
         }
-        self.wakeup();
+        Self::wakeup();
     }
 
-    pub fn schedule_shutdown(&mut self, http: &AsyncHttp) {
-        self.schedule_shutdown_by_id(http.async_http_id);
+    pub fn schedule_shutdown(http: &AsyncHttp) {
+        Self::schedule_shutdown_by_id(http.async_http_id);
     }
 
-    pub fn schedule_shutdown_by_id(&mut self, async_http_id: u32) {
+    pub fn schedule_shutdown_by_id(async_http_id: u32) {
         bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", async_http_id);
-        {
-            let _guard = self.queued_shutdowns_lock.lock_guard();
-            self.queued_shutdowns
-                .push(ShutdownMessage { async_http_id });
-        }
-        self.wakeup();
+        QUEUED_SHUTDOWNS
+            .lock()
+            .push(ShutdownMessage { async_http_id });
+        Self::wakeup();
     }
 
-    pub fn schedule_cert_check_resume(&mut self, http: &AsyncHttp) {
+    pub fn schedule_cert_check_resume(http: &AsyncHttp) {
         bun_core::scoped_log!(HTTPThread, "scheduleCertCheckResume {}", http.async_http_id);
-        {
-            let _guard = self.queued_cert_check_resumes_lock.lock_guard();
-            self.queued_cert_check_resumes.push(CertCheckResumeMessage {
+        QUEUED_CERT_CHECK_RESUMES
+            .lock()
+            .push(CertCheckResumeMessage {
                 async_http_id: http.async_http_id,
             });
-        }
-        self.wakeup();
+        Self::wakeup();
     }
 
-    pub fn schedule_request_write(&mut self, http: &AsyncHttp, kind: WriteMessageType) {
-        {
-            let _guard = self.queued_writes_lock.lock_guard();
-            self.queued_writes.push(WriteMessage {
-                async_http_id: http.async_http_id,
-                kind,
-            });
-        }
-        self.wakeup();
+    pub fn schedule_request_write(http: &AsyncHttp, kind: WriteMessageType) {
+        QUEUED_WRITES.lock().push(WriteMessage {
+            async_http_id: http.async_http_id,
+            kind,
+        });
+        Self::wakeup();
     }
 
     pub fn schedule_proxy_deref(&mut self, proxy: *mut ProxyTunnel) {
         // this is always called on the http thread,
         self.queued_threadlocal_proxy_derefs.push(proxy);
-        self.wakeup();
+        Self::wakeup();
     }
 
     /// Called from [`crate::shutdown_for_exit`] on the HTTP thread once
@@ -1068,17 +1046,15 @@ impl HttpThread {
         }
     }
 
-    pub fn wakeup(&self) {
-        // Acquire (not Relaxed): pairs with the Release store in `on_start`
-        // so the read of `self.uws_loop` (a non-atomic field set there)
-        // observes the published value. This is the canonical "Relaxed gives
-        // no happens-before for the init it guards" case.
-        if self.has_awoken.load(Ordering::Acquire) {
-            // SAFETY: uws_loop is the live HTTP-thread loop set in on_start.
-            // Call the raw extern (not `Loop::wakeup(&mut self)`) — this runs
-            // cross-thread while the HTTP thread owns the loop, so forming
-            // `&mut Loop` here would alias.
-            unsafe { uws::us_wakeup_loop(self.uws_loop) };
+    /// Callable from ANY thread. Acquire pairs with the Release store in
+    /// `on_start` so a non-null pointer implies the loop is initialized.
+    pub fn wakeup() {
+        let loop_ = UWS_LOOP.load(Ordering::Acquire);
+        if !loop_.is_null() {
+            // Raw-ptr wakeup — this runs cross-thread while the HTTP thread
+            // owns the loop, so forming `&mut Loop` here would alias.
+            // `us_wakeup_loop` is the one documented thread-safe entry point.
+            uws::us_wakeup_loop(loop_);
         }
     }
 
@@ -1091,29 +1067,16 @@ impl HttpThread {
         if batch.len == 0 {
             return;
         }
-        // Release-mode guard: `HttpThread` has niche-bearing fields, so
-        // dereffing `as_mut_ptr()` below on an uninitialized static is UB.
         // The "every caller goes through `init`" invariant was unenforced
-        // (e.g. `async_http::preconnect` did not), so check it here. The
-        // `Acquire` load pairs with `init_once`'s `Release` store to publish
-        // the `HTTP_THREAD.write(..)` to this thread.
+        // (e.g. `async_http::preconnect` did not), so check it here — a
+        // pre-init schedule would strand tasks in `QUEUED_TASKS` with no
+        // thread to drain them.
         assert!(
             crate::HTTP_THREAD_INIT.load(Ordering::Acquire),
             "HTTPThread::schedule() called before HTTPThread::init()"
         );
-        // SAFETY: `HTTP_THREAD_INIT == true` (checked above) ⇒ `HTTP_THREAD`
-        // is fully written. `get_unchecked` (no owner assert) so the
-        // `ThreadCell` debug-owner check is skipped on this cross-thread
-        // caller. Wrap the result in a `ParentRef` (process-lifetime backref)
-        // so the `&self`-only calls below — `queued_tasks.push` (lock-free
-        // MPSC) and `wakeup` (atomics + raw uws ptr) — go through the safe
-        // `Deref` impl instead of open-coded `(*this_p)` raw derefs. Only a
-        // shared `&HttpThread` is ever materialised; the HTTP thread itself
-        // never holds a long-lived `&mut HttpThread` across the points these
-        // touch (both fields are designed for cross-thread shared access).
-        let this = unsafe {
-            bun_ptr::ParentRef::<Self>::from_raw((*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr())
-        };
+        // Statics only — never touch the `HttpThread` struct from here (the
+        // HTTP thread holds `&mut` over it for its whole life).
         {
             let mut batch_ = batch;
             while let Some(task) = batch_.pop() {
@@ -1122,11 +1085,18 @@ impl HttpThread {
                     unsafe { bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr()) };
                 // SAFETY: `http` recovered from a live batch node (non-null); valid until popped.
                 let http = unsafe { core::ptr::NonNull::new_unchecked(http) };
-                this.queued_tasks.push(http);
+                QUEUED_TASKS.push(http);
             }
         }
-        this.wakeup();
+        Self::wakeup();
     }
+}
+
+/// Only `http`/`https` proxies are supported (empty = scheme-relative);
+/// anything else (socks5, …) must fail with UnsupportedProxyProtocol
+/// before any socket is opened. https://github.com/oven-sh/bun/issues/11343
+fn is_supported_proxy_protocol(protocol: &[u8]) -> bool {
+    protocol.is_empty() || protocol == b"https" || protocol == b"http"
 }
 
 /// Evict the least-recently-used SSL context cache entry.
@@ -1183,19 +1153,22 @@ fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
     crate::abort_tracker()
 }
 
-/// Debug+ASAN invariant check: every socket pointer in the abort tracker must
-/// point at live (unfreed) memory. A stale entry here means some socket-close
-/// path forgot `unregister_abort_tracker`, which later manifests as a
-/// use-after-free in `drain_queued_shutdowns`/`drain_queued_writes` when the
-/// JS thread aborts that request id. Runs before and after each loop tick so
-/// the report fires at the tick that leaked, not at the eventual abort.
+/// Debug invariant check: every abort-tracker entry must still resolve to a
+/// live (generation-matching) socket. A stale entry means some socket-close
+/// path forgot `unregister_abort_tracker` — with generation-checked handles
+/// that is no longer a use-after-free (stale handles are safe no-ops in
+/// `drain_queued_shutdowns`/`drain_queued_writes`), but it still silently
+/// drops a later abort for that request id. Runs before and after each loop
+/// tick so the report fires at the tick that leaked, not at the eventual
+/// abort. `ext()` is the generation-validated probe (None == stale/recycled).
 #[inline]
 fn assert_abort_tracker_sockets_alive() {
     if cfg!(debug_assertions) {
-        for socket in abort_tracker().values() {
-            if let Some(usocket) = socket.socket().get() {
-                bun_core::asan::assert_unpoisoned(usocket);
-            }
+        for (async_http_id, socket) in abort_tracker().iter() {
+            assert!(
+                socket.ext::<core::ffi::c_void>().is_some(),
+                "stale abort-tracker entry for async_http_id {async_http_id}: a close path skipped unregister_abort_tracker"
+            );
         }
     }
 }
@@ -1256,6 +1229,10 @@ mod _event_loop_draft {
     }
 
     pub(super) fn on_start(opts: InitOpts) {
+        // Latch the ThreadCell to this thread: any later JS-thread
+        // `http_thread()` (debug) panics instead of forming a cross-thread
+        // `&mut HttpThread` — cross-thread entries use the module statics only.
+        crate::HTTP_THREAD.claim();
         Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
 
         // Normalising once here (see `normalize_idle_timeout_seconds`) keeps
@@ -1304,7 +1281,9 @@ mod _event_loop_draft {
 
         let thread = crate::http_thread_mut();
         thread.loop_ = loop_;
-        thread.uws_loop = uws_loop;
+        // Release: publishes the fully-initialized loop to cross-thread
+        // `wakeup()` readers (Acquire load; null = not started yet).
+        UWS_LOOP.store(uws_loop, Ordering::Release);
         thread.http_context.init();
         // `https_context.init_with_thread_opts` eagerly builds the BoringSSL
         // `SSL_CTX` and parses the bundled root-CA store
@@ -1329,26 +1308,28 @@ mod _event_loop_draft {
             // none).
             thread.lazy_https_init = Some(opts);
         }
-        // Release: publishes `uws_loop`/`loop_` to cross-thread `wakeup()`
-        // readers (which Acquire-load `has_awoken`).
-        thread.has_awoken.store(true, Ordering::Release);
         thread.process_events();
     }
 
     impl HttpThread {
         fn process_events(&mut self) -> ! {
-            let uws_loop = self.uws_loop_mut();
+            let uws_loop = self.uws_loop();
+            // Raw-place accounting (no `&mut Loop`): JS-thread `wakeup()`
+            // calls `us_wakeup_loop` on this loop concurrently (C17).
             #[cfg(unix)]
             {
-                uws_loop.num_polls = uws_loop.num_polls.max(2);
+                uws::Loop::raise_num_polls_to(uws_loop, 2);
             }
             #[cfg(windows)]
             {
-                uws_loop.inc();
+                uws::Loop::inc_raw(uws_loop);
             }
 
             loop {
                 if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
+                    // Published to the JS thread via the SHUTDOWN_DONE ack
+                    // below (reclaim drains there can also drop contexts).
+                    EXIT_TEARDOWN.store(true, Ordering::Release);
                     self.dealloc_in_flight_for_exit();
                     {
                         let mut done = SHUTDOWN_DONE.0.lock();
@@ -1366,10 +1347,11 @@ mod _event_loop_draft {
                 assert_abort_tracker_sockets_alive();
                 Output::flush();
 
-                let uws_loop = self.uws_loop_mut();
-                uws_loop.inc();
-                uws_loop.tick();
-                uws_loop.dec();
+                uws::Loop::inc_raw(uws_loop);
+                // Raw-ptr tick: no `&mut Loop` may span the tick — wakeup
+                // threads touch `pending_wakeups` concurrently (C17).
+                uws::Loop::tick(uws_loop);
+                uws::Loop::dec_raw(uws_loop);
                 assert_abort_tracker_sockets_alive();
 
                 if cfg!(debug_assertions) {
@@ -1381,6 +1363,16 @@ mod _event_loop_draft {
 }
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Set on the HTTP thread right before [`HttpThread::dealloc_in_flight_for_exit`];
+/// the loop never ticks again after that point. `HTTPContext::drop` reads it to
+/// skip `close_all` — dispatching on_close mid-exit would re-enter clients the
+/// exit teardown has already freed (or is tearing down).
+static EXIT_TEARDOWN: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn exit_teardown_active() -> bool {
+    EXIT_TEARDOWN.load(Ordering::Acquire)
+}
 static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
     bun_threading::Guarded::new(false),
     bun_threading::Condvar::new(),
@@ -1416,23 +1408,13 @@ pub fn shutdown_for_exit() {
     if !crate::HTTP_THREAD_INIT.load(Ordering::Acquire) {
         return;
     }
-    // SAFETY: `HTTP_THREAD_INIT == true` ⇒ `HTTP_THREAD` is fully written.
-    // `get_unchecked` so the `ThreadCell` owner assert is skipped on this
-    // cross-thread caller; `ParentRef` so only a shared `&HttpThread` is
-    // materialised — `process_events(&mut self)` is live on the HTTP thread,
-    // so a `&mut` here would alias. Same shape as `schedule()` above.
-    let thread = unsafe {
-        bun_ptr::ParentRef::<HttpThread>::from_raw(
-            (*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr(),
-        )
-    };
-    if !thread.has_awoken.load(Ordering::Acquire) {
+    if UWS_LOOP.load(Ordering::Acquire).is_null() {
         // `on_start` hasn't published the loop yet — no `start_queued_task`
         // can have run, so no boxes exist.
         return;
     }
     SHUTDOWN_REQUESTED.store(true, Ordering::Release);
-    thread.wakeup();
+    HttpThread::wakeup();
     let mut done = SHUTDOWN_DONE.0.lock();
     // 1s upper bound: a stuck HTTP thread shouldn't deadlock process exit.
     let deadline = Instant::now() + std::time::Duration::from_secs(1);

@@ -159,9 +159,9 @@ impl From<bun_sys::Error> for Error {
     }
 }
 
-impl From<bun_uws::ConnectError> for Error {
+impl From<bun_uws_shim::ConnectError> for Error {
     #[inline]
-    fn from(_: bun_uws::ConnectError) -> Self {
+    fn from(_: bun_uws_shim::ConnectError) -> Self {
         Self::FailedToOpenSocket
     }
 }

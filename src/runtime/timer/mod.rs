@@ -396,10 +396,9 @@ impl DateHeaderTimer {
     /// reschedule for 1s later iff there are active connections.
     pub(crate) fn run(&mut self, vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
         self.event_loop_timer.state = EventLoopTimerState::FIRED;
-        // `uws_loop_mut` is the audited safe accessor (loop owned by the VM,
-        // separate allocation from `RuntimeState.timer` so no aliasing with
-        // `&mut self`).
-        let loop_ = vm.uws_loop_mut();
+        // Raw loop pointer — no `&mut Loop` may be formed on a published loop
+        // (waker threads mutate `pending_wakeups` concurrently).
+        let loop_ = vm.uws_loop();
         let now = Timespec::now(TimespecMockMode::AllowMockedTime);
 
         // Record when we last ran it.
@@ -409,9 +408,10 @@ impl DateHeaderTimer {
         };
 
         // updateDate() is an expensive function.
-        loop_.update_date();
+        bun_usockets::Loop::update_date(loop_);
 
-        if loop_.internal_loop_data.sweep_timer_count > 0 {
+        // SAFETY: `loop_` is the live per-VM uws loop; loop-thread-only field.
+        if unsafe { (*loop_).internal_loop_data.sweep_timer_count } > 0 {
             // Reschedule it automatically for 1 second later.
             let next = now.add_ms(1000);
             self.event_loop_timer.next = ElTimespec {
@@ -1059,14 +1059,14 @@ impl All {
     // documented in `# Safety` above. Cannot be `&mut` without breaking the
     // out-of-file call sites that hold raw pointers.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    pub fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_usockets::Loop) {
         let old = self.immediate_ref_count;
         let new = old + delta;
         self.immediate_ref_count = new;
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
-            // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.ref_();
+            // Raw-place twin: caller passes the VM's live uws loop.
+            bun_usockets::Loop::ref_raw(uws_loop);
             #[cfg(windows)]
             {
                 // Lazy-init the idle handle and start
@@ -1083,8 +1083,8 @@ impl All {
             }
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
-            // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.unref();
+            // Raw-place twin: caller passes the VM's live uws loop.
+            bun_usockets::Loop::unref_raw(uws_loop);
             #[cfg(windows)]
             if !self.uv_idle.data.is_null() {
                 self.uv_idle.stop();
@@ -1109,15 +1109,15 @@ impl All {
     // documented in `# Safety` above. Cannot be `&mut` without breaking the
     // out-of-file call sites that hold raw pointers.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    pub fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_usockets::Loop) {
         let old = self.active_timer_count;
         let new = old + delta;
         debug_assert!(new >= 0);
         self.active_timer_count = new;
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
-            // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.ref_();
+            // Raw-place twin: caller passes the VM's live uws loop.
+            bun_usockets::Loop::ref_raw(uws_loop);
             // `uv_timer.ref()` is intentionally unconditional (no `data !=
             // null` guard). Invariant: every path that reaches a positive
             // `active_timer_count` first inserts a timer, and `insert`
@@ -1127,8 +1127,8 @@ impl All {
             self.uv_timer.ref_();
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
-            // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.unref();
+            // Raw-place twin: caller passes the VM's live uws loop.
+            bun_usockets::Loop::unref_raw(uws_loop);
             #[cfg(windows)]
             self.uv_timer.unref();
         }

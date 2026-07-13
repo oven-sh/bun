@@ -8,7 +8,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_picohttp as picohttp;
-use bun_uws::quic;
+use bun_uws_shim::quic;
 
 use super::ClientSession;
 use crate::HttpClient;

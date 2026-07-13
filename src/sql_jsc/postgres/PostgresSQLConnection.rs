@@ -1,7 +1,6 @@
 use bun_collections::VecExt;
 use bun_jsc::JsCell;
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::jsc::EventLoopTimer;
@@ -16,7 +15,7 @@ use bun_core::strings;
 use bun_core::{self};
 use bun_io::KeepAlive;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
-use bun_uws as uws;
+use bun_usockets as uws;
 use core::ptr::NonNull;
 
 use crate::jsc::{EventLoopTimerState, EventLoopTimerTag};
@@ -91,14 +90,15 @@ use crate::jsc::verify_error_to_js;
 // impossible (UnsafeCell suppresses `noalias` on `&T`). The codegen shim still
 // emits `this: &mut PostgresSQLConnection`; `&mut T` reborrows to `&T` so the
 // impls below compile against either.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct PostgresSQLConnection {
     pub socket: JsCell<Socket>,
     pub status: Cell<Status>,
-    // Private — intrusive refcount invariant; reach via `ref_()`/`deref()`
-    // (provided by `#[derive(CellRefCounted)]` above).
-    ref_count: Cell<u32>,
+    // Private — intrusive refcount invariant (Protocol v2 Owner). Strong refs
+    // are minted via `owner_ref()` / `RefPtr`; the core's dispatch guard and
+    // ext ref keep the owner alive across every socket callback.
+    ref_count: bun_ptr::RefCount<Self>,
 
     pub write_buffer: JsCell<OffsetByteList>,
     // Private — `JsCell` aliasing invariant; only `Reader` and `on_data`
@@ -150,8 +150,11 @@ pub struct PostgresSQLConnection {
     pub authentication_state: JsCell<AuthenticationState>,
 
     /// `us_ssl_ctx_t` built from `tls_config` at construct time. Applied via
-    /// `us_socket_adopt_tls` when the server replies `S` to the SSLRequest.
-    pub secure: Option<*mut uws::SslCtx>,
+    /// `adopt_tls_owned` when the server replies `S` to the SSLRequest.
+    /// Owned `SSL_CTX*` on the boringssl nominal (matches `ConnectionCtorArgs`
+    /// and the `SSLContextCache`); cast to the bssl-sys nominal only at the
+    /// `adopt_tls` boundary in [`Self::setup_tls`].
+    pub secure: Option<*mut bun_uws_shim::SslCtx>,
     pub tls_config: jsc::api::ServerConfig::SSLConfig,
     pub tls_status: Cell<TLSStatus>,
     pub ssl_mode: SSLMode,
@@ -183,7 +186,46 @@ bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
     from_max_lifetime_timer_ptr => max_lifetime_timer,
 );
 
+/// RAII owner for one intrusive refcount on a `PostgresSQLConnection`.
+/// Dropping calls `deref`, which may free `*self.0` — callers must not hold a
+/// live `&`/`&mut PostgresSQLConnection` across the guard's drop point.
+struct DerefOnDrop(*mut PostgresSQLConnection);
+impl Drop for DerefOnDrop {
+    fn drop(&mut self) {
+        // SAFETY: constructor contract — `self.0` is a live `heap::alloc`
+        // pointer with at least one outstanding ref owned by this guard.
+        unsafe { PostgresSQLConnection::deref(self.0) }
+    }
+}
+
 impl PostgresSQLConnection {
+    /// Bump the intrusive refcount (`&self` proves liveness).
+    #[inline]
+    fn ref_(&self) {
+        // SAFETY: `&self` is a live borrow of the pointee.
+        unsafe { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) }
+    }
+
+    /// Release one intrusive ref; runs `deinit` at zero.
+    ///
+    /// # Safety
+    /// `this` must point to a live `Self` and the caller must own one ref;
+    /// `this` may be dangling afterwards.
+    #[inline]
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: forwarded caller contract.
+        unsafe { bun_ptr::RefCount::<Self>::deref(this) }
+    }
+
+    /// RAII pair for `ref_()` / `deref()`: bumps the intrusive refcount now
+    /// and releases it on drop. The guard stashes a raw pointer (not `&Self`)
+    /// so no Rust reference is held across the potential free in `deref()`.
+    #[inline]
+    fn ref_guard(&self) -> DerefOnDrop {
+        self.ref_();
+        DerefOnDrop(self.as_ctx_ptr())
+    }
+
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
 
     /// Read-modify-write the packed `Cell<ConnectionFlags>` through `&self`.
@@ -240,6 +282,12 @@ impl PostgresSQLConnection {
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
         bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
+    }
+
+    /// Strong owner ref minted for the core's Protocol v2 attach APIs
+    /// (transferred to core; released exactly once at the socket terminal).
+    fn owner_ref(&self) -> uws::OwnerRef<Self> {
+        uws::owner_ref_of(self)
     }
 
     // ---- self-referential connection-string slices ----------------------------
@@ -319,8 +367,11 @@ impl PostgresSQLConnection {
             // if we have backpressure, wait for onWritable
             return false;
         }
-        self.ref_();
         debug!("onAutoFlush: draining");
+        // The flusher fires off-dispatch (deferred microtask, raw ctx ptr, no
+        // dispatch guard), so a re-entrant close in `drain_internal` could
+        // otherwise free `self` mid-call — hold our own ref for the body.
+        let _ref = self.ref_guard();
         // drain as much as we can
         self.drain_internal();
 
@@ -333,8 +384,6 @@ impl PostgresSQLConnection {
         );
         self.auto_flusher
             .with_mut(|a| a.registered = keep_flusher_registered);
-        // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
         keep_flusher_registered
     }
 
@@ -426,33 +475,36 @@ impl PostgresSQLConnection {
 
     pub fn setup_tls(&self) {
         debug!("setupTLS");
+        if !self.try_setup_tls() {
+            self.fail(
+                b"Failed to upgrade to TLS",
+                AnyPostgresError::TLSUpgradeFailed,
+            );
+        }
+    }
+
+    fn try_setup_tls(&self) -> bool {
         // `vm_mut()` is `'static`, so `tls_group` borrows the VM singleton —
         // not `*self` — and stays live across the field reads below.
-        let tls_group: &mut bun_uws::SocketGroup = self.vm_mut().postgres_socket_group::<true>();
+        let tls_group: &mut uws::SocketGroup = self.vm_mut().postgres_socket_group::<true>();
 
         // At this point we are
         // a plain TCP socket in the Connected state.
         let Socket::SocketTcp(tcp) = self.socket.get() else {
-            self.fail(
-                b"Failed to upgrade to TLS",
-                AnyPostgresError::TLSUpgradeFailed,
-            );
-            return;
+            return false;
         };
-        let uws::InternalSocket::Connected(raw) = tcp.socket else {
-            self.fail(
-                b"Failed to upgrade to TLS",
-                AnyPostgresError::TLSUpgradeFailed,
-            );
-            return;
+        let uws::InternalSocket::Connected(sref) = tcp.socket else {
+            return false;
         };
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before `setup_tls` is
-        // reached.
+        // reached; the cast bridges the boringssl vs bssl-sys nominals of the
+        // same C struct (single cast site — the field stays boringssl-typed).
         let ssl_ctx = unsafe {
             &mut *self
                 .secure
                 .expect("secure SSL_CTX must be set before setupTLS")
+                .cast::<uws::SslCtx>()
         };
         let server_name = self.tls_config.server_name();
         let sni = if server_name.is_null() {
@@ -462,45 +514,25 @@ impl PostgresSQLConnection {
             // `tls_config` for the connection lifetime.
             Some(unsafe { bun_core::ffi::cstr(server_name) })
         };
-        // The ext slot is an 8-byte null-niche
-        // optional pointer, `Option<NonNull<T>>`; using
-        // `Option<*mut T>` here would request 16 bytes (separate discriminant)
-        // and desync with the trampoline reader (uws_handlers.rs) which reads
-        // the slot as `Option<NonNull<_>>`.
-        let ext_size =
-            core::mem::size_of::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() as i32;
 
-        // SAFETY: `raw` is a live connected `us_socket_t*`; adopt_tls may
-        // realloc and return a different ptr.
-        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-            tls_group,
-            bun_uws::SocketKind::PostgresTls,
+        // Owner-swap adopt (Protocol v2): the new owner ref is stamped before
+        // the old kind's ref is released — no dispatch window sees a stale
+        // owner — and the handshake is kicked only after the swap.
+        let Some(tls) = uws::SocketTLS::adopt_tls_owned(
+            sref,
+            core::ptr::from_mut(tls_group),
+            uws::SocketKind::PostgresTls,
             ssl_ctx,
             sni,
             true, // is_client
-            ext_size,
-            ext_size,
+            self.owner_ref(),
         ) else {
-            self.fail(
-                b"Failed to upgrade to TLS",
-                AnyPostgresError::TLSUpgradeFailed,
-            );
-            return;
+            return false;
         };
-        let new_socket = new_socket.as_ptr();
-        // SAFETY: `new_socket` is a live us_socket_t freshly returned by
-        // `adopt_tls`; ext slot is sized for `Option<NonNull<PostgresSQLConnection>>`
-        // above. One `&mut` reborrow drives both safe inherent methods
-        // (`ext` / `start_tls_handshake`).
-        let sock = unsafe { &mut *new_socket };
-        *sock.ext::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() =
-            core::ptr::NonNull::new(self.as_ctx_ptr());
-        self.socket.set(Socket::SocketTls(uws::SocketTLS {
-            socket: uws::InternalSocket::Connected(new_socket),
-        }));
-        // ext is now repointed; safe to kick the handshake (any dispatch lands here).
-        sock.start_tls_handshake();
+        self.socket.set(Socket::SocketTls(tls));
+        tls.start_tls_handshake();
         self.start();
+        true
     }
 
     fn setup_max_lifetime_timer_if_necessary(&self) {
@@ -657,14 +689,12 @@ impl PostgresSQLConnection {
 
     pub fn finalize(self: Box<Self>) {
         debug!("PostgresSQLConnection finalize");
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount
-        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
-        let this = bun_core::heap::release(self);
-        this.stop_timers();
-        this.js_value.with_mut(|r| r.finalize());
-        // SAFETY: `this` is the live m_ctx allocation; `deref` frees on count==0.
-        unsafe { Self::deref(this) };
+        // Releases the JS wrapper's +1; the allocation may outlive this call
+        // while the core's ext owner ref (Protocol v2) is still outstanding.
+        bun_ptr::finalize_js_box(self, |this| {
+            this.stop_timers();
+            this.js_value.with_mut(|r| r.finalize());
+        });
     }
 
     pub fn flush_data_and_reset_timeout(&self) {
@@ -702,8 +732,10 @@ impl PostgresSQLConnection {
     }
 
     pub fn fail_with_js_value(&self, value: JSValue) {
-        // reshaped for borrowck — `update_has_pending_activity()` + `ref_and_close(value)`
-        // are expanded inline at each return below.
+        // Timer-fired paths dispatch raw with no strong ref, and `ref_and_close`
+        // releases the core ext owner ref at the synchronous close terminal —
+        // hold our own ref so re-entrant JS below cannot free `self`.
+        let _ref = self.ref_guard();
         self.stop_timers();
         if self.status.get() == Status::Failed {
             self.update_has_pending_activity();
@@ -712,7 +744,6 @@ impl PostgresSQLConnection {
 
         self.status.set(Status::Failed);
 
-        self.ref_();
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
         let on_close_opt = self.consume_on_close_callback(self.global());
         if let Some(on_close) = on_close_opt {
@@ -734,8 +765,6 @@ impl PostgresSQLConnection {
             event_loop.exit();
         }
         self.ref_and_close(Some(value));
-        // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
         self.update_has_pending_activity();
     }
 
@@ -873,10 +902,9 @@ impl PostgresSQLConnection {
         self.start();
     }
 
-    pub fn on_handshake(&self, success: i32, ssl_error: uws::us_bun_verify_error_t) {
+    pub fn on_handshake(&self, success: bool, ssl_error: uws::us_bun_verify_error_t) {
         debug!("onHandshake: {} {}", success, ssl_error.error_no);
-        let handshake_success = success == 1;
-        if handshake_success {
+        if success {
             if self.tls_config.reject_unauthorized() != 0 {
                 // only reject the connection if reject_unauthorized == true
                 match self.ssl_mode {
@@ -974,7 +1002,8 @@ impl PostgresSQLConnection {
     }
 
     pub fn on_data(&self, data: &[u8]) {
-        self.ref_();
+        // Protocol v2: the core dispatch guard holds a strong ref for the
+        // whole callback — no consumer ref bracket.
         self.update_flags(|f| f.insert(ConnectionFlags::IS_PROCESSING_DATA));
 
         self.disable_connection_timeout();
@@ -1068,8 +1097,6 @@ impl PostgresSQLConnection {
 
         // reset the connection timeout after we're done processing the data
         self.reset_connection_timeout();
-        // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
     }
 
     pub fn constructor(
@@ -1184,69 +1211,68 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // moved `secure`/`tls_config` for the struct literal below.
     let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(errdefer_guard);
 
-    let ptr: *mut PostgresSQLConnection =
-        bun_core::heap::into_raw(Box::new(PostgresSQLConnection {
-            socket: JsCell::new(Socket::SocketTcp(uws::SocketTCP {
-                socket: uws::InternalSocket::Detached,
-            })),
-            status: Cell::new(Status::Connecting),
-            ref_count: Cell::new(1),
-            write_buffer: JsCell::new(OffsetByteList::default()),
-            read_buffer: JsCell::new(OffsetByteList::default()),
-            last_message_start: Cell::new(0),
-            requests: JsCell::new(PostgresRequest::Queue::init()),
-            pipelined_requests: Cell::new(0),
-            nonpipelinable_requests: Cell::new(0),
-            pending_requests: Cell::new(0),
-            poll_ref: JsCell::new(KeepAlive::default()),
-            global_object: BackRef::new(global_object),
-            // `vm` is the `&mut VirtualMachine` from `bun_vm().as_mut()` above —
-            // the JS-thread singleton with full write provenance. `BackRef::new_mut`
-            // captures the `NonNull` so `vm_mut()` can later route through the same
-            // canonical `VirtualMachine::as_mut()` accessor.
-            vm: BackRef::new_mut(vm),
-            statements: JsCell::new(PreparedStatementsMap::default()),
-            prepared_statement_id: Cell::new(0),
-            pending_activity_count: AtomicU32::new(0),
-            js_value: JsCell::new(crate::jsc::JsRef::empty()),
-            backend_parameters: JsCell::new(StringMap::init(true)),
-            backend_key_data: JsCell::new(protocol::BackendKeyData::default()),
-            database,
-            user: username,
-            password,
-            path,
-            options,
-            options_buf,
-            authentication_state: JsCell::new(AuthenticationState::Pending),
-            secure,
-            tls_config,
-            tls_status: Cell::new(if args.ssl_mode != SSLMode::Disable {
-                TLSStatus::Pending
-            } else {
-                TLSStatus::None
-            }),
-            ssl_mode: args.ssl_mode,
-            idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
-            connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
-            flags: Cell::new(if use_unnamed_prepared_statements {
-                ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS
-            } else {
-                ConnectionFlags::empty()
-            }),
-            timer: JsCell::new(EventLoopTimer::init_paused(
-                EventLoopTimerTag::PostgresSQLConnectionTimeout,
-            )),
-            max_lifetime_interval_ms: u32::try_from(max_lifetime).expect("int cast"),
-            max_lifetime_timer: JsCell::new(EventLoopTimer::init_paused(
-                EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
-            )),
-            auto_flusher: JsCell::new(AutoFlusher::default()),
-        }));
+    // `strong` is the eventual JS wrapper's +1 (transferred at `to_js` below).
+    let strong = bun_ptr::RefPtr::new(PostgresSQLConnection {
+        socket: JsCell::new(Socket::SocketTcp(uws::SocketTCP {
+            socket: uws::InternalSocket::Detached,
+        })),
+        status: Cell::new(Status::Connecting),
+        ref_count: bun_ptr::RefCount::init(),
+        write_buffer: JsCell::new(OffsetByteList::default()),
+        read_buffer: JsCell::new(OffsetByteList::default()),
+        last_message_start: Cell::new(0),
+        requests: JsCell::new(PostgresRequest::Queue::init()),
+        pipelined_requests: Cell::new(0),
+        nonpipelinable_requests: Cell::new(0),
+        pending_requests: Cell::new(0),
+        poll_ref: JsCell::new(KeepAlive::default()),
+        global_object: BackRef::new(global_object),
+        // `vm` is the `&mut VirtualMachine` from `bun_vm().as_mut()` above —
+        // the JS-thread singleton with full write provenance. `BackRef::new_mut`
+        // captures the `NonNull` so `vm_mut()` can later route through the same
+        // canonical `VirtualMachine::as_mut()` accessor.
+        vm: BackRef::new_mut(vm),
+        statements: JsCell::new(PreparedStatementsMap::default()),
+        prepared_statement_id: Cell::new(0),
+        pending_activity_count: AtomicU32::new(0),
+        js_value: JsCell::new(crate::jsc::JsRef::empty()),
+        backend_parameters: JsCell::new(StringMap::init(true)),
+        backend_key_data: JsCell::new(protocol::BackendKeyData::default()),
+        database,
+        user: username,
+        password,
+        path,
+        options,
+        options_buf,
+        authentication_state: JsCell::new(AuthenticationState::Pending),
+        secure,
+        tls_config,
+        tls_status: Cell::new(if args.ssl_mode != SSLMode::Disable {
+            TLSStatus::Pending
+        } else {
+            TLSStatus::None
+        }),
+        ssl_mode: args.ssl_mode,
+        idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
+        connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
+        flags: Cell::new(if use_unnamed_prepared_statements {
+            ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS
+        } else {
+            ConnectionFlags::empty()
+        }),
+        timer: JsCell::new(EventLoopTimer::init_paused(
+            EventLoopTimerTag::PostgresSQLConnectionTimeout,
+        )),
+        max_lifetime_interval_ms: u32::try_from(max_lifetime).expect("int cast"),
+        max_lifetime_timer: JsCell::new(EventLoopTimer::init_paused(
+            EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
+        )),
+        auto_flusher: JsCell::new(AutoFlusher::default()),
+    });
 
-    // `heap::into_raw` is `Box::into_raw` — never null. Sole owner until
-    // `to_js` below. R-2: every field is interior-mutable, so a shared
-    // `ParentRef` deref is sufficient for the writes below.
-    let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
+    // R-2: every field is interior-mutable, so a shared `ParentRef` deref is
+    // sufficient for the writes below.
+    let this = ParentRef::from(strong.data);
 
     {
         let hostname = args.hostname_str.to_utf8();
@@ -1256,23 +1282,26 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         // adopts into `postgres_tls_group` after the server's `S`.
         let group = vm.postgres_socket_group::<false>();
         let path_slice = this.path.slice();
+        // `dupe_ref` is the owner ref TRANSFERRED to core (Protocol v2);
+        // core releases it exactly once at the socket terminal, or
+        // synchronously right here when the connect itself fails.
         let result = if !path_slice.is_empty() {
-            uws::SocketTCP::connect_unix_group(
+            uws::SocketTCP::connect_unix_owned(
                 group,
                 uws::SocketKind::Postgres,
                 None,
                 path_slice,
-                ptr,
+                strong.dupe_ref(),
                 false,
             )
         } else {
-            uws::SocketTCP::connect_group(
+            uws::SocketTCP::connect_owned(
                 group,
                 uws::SocketKind::Postgres,
                 None,
                 hostname.slice(),
                 args.port,
-                ptr,
+                strong.dupe_ref(),
                 false,
             )
         };
@@ -1280,7 +1309,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         this.socket.set(Socket::SocketTcp(match result {
             Ok(s) => s,
             Err(err) => {
-                PostgresSQLConnection::deinit(ptr);
+                // Last ref: releases the ctor's +1 and runs `deinit`.
+                strong.deref();
                 return Err(global_object.throw_error(
                     bun_jsc::CrateError::from(err),
                     "failed to connect to postgresql",
@@ -1293,7 +1323,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     this.update_has_pending_activity();
     this.reset_connection_timeout();
     this.poll_ref.with_mut(|r| r.ref_(this.vm_ctx()));
-    let js_value = js::to_js(ptr, global_object);
+    let js_value = js::to_js(strong.into_raw(), global_object);
     js_value.ensure_still_alive();
     this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
     js::onconnect_set_cached(js_value, global_object, on_connect);
@@ -1302,80 +1332,69 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     Ok(js_value)
 }
 
-pub struct SocketHandler<const SSL: bool>;
+/// Protocol v2 handler set: one registration covers the plain-TCP kind and
+/// its TLS sibling (`setup_tls` adopts the socket across the pair).
+pub struct PostgresProtocol;
 
-// Inherent associated types are unstable; use a free type alias instead.
-pub type SocketType<const SSL: bool> = uws::NewSocketHandler<SSL>;
+/// VM-shutdown guard shared by the socket-event handlers below. `on_close`
+/// and `on_end` intentionally do NOT route through this — they forward
+/// unconditionally.
+#[inline]
+fn guarded(this: &PostgresSQLConnection, f: impl FnOnce(&PostgresSQLConnection)) {
+    if this.vm().is_shutting_down() {
+        bun_core::hint::cold();
+        this.close();
+        return;
+    }
+    f(this)
+}
 
-impl<const SSL: bool> SocketHandler<SSL> {
-    fn _socket(s: SocketType<SSL>) -> Socket {
-        // `NewSocketHandler<SSL>` has identical layout for any `SSL`; rebuild the
-        // monomorphic variant from the inner `InternalSocket`.
-        if SSL {
-            Socket::SocketTls(uws::SocketTLS { socket: s.socket })
-        } else {
-            Socket::SocketTcp(uws::SocketTCP { socket: s.socket })
-        }
+impl uws::Protocol for PostgresProtocol {
+    type Owner = PostgresSQLConnection;
+    const KIND: uws::SocketKind = uws::SocketKind::Postgres;
+    const KIND_TLS: Option<uws::SocketKind> = Some(uws::SocketKind::PostgresTls);
+
+    fn on_open(this: &PostgresSQLConnection, socket: uws::AnySocket, _is_client: bool, _ip: &[u8]) {
+        guarded(this, |t| t.on_open(socket));
     }
 
-    /// VM-shutdown guard shared by the 6 socket-event shims below
-    /// (on_open / on_handshake / on_connect_error / on_timeout / on_data / on_writable). `on_close` and `on_end`
-    /// intentionally do NOT route through this — they forward unconditionally.
-    #[inline]
-    fn guarded(this: &PostgresSQLConnection, f: impl FnOnce(&PostgresSQLConnection)) {
-        if this.vm().is_shutting_down() {
-            bun_core::hint::cold();
-            this.close();
-            return;
-        }
-        f(this)
+    fn on_data(this: &PostgresSQLConnection, _socket: uws::AnySocket, data: &mut [u8]) {
+        guarded(this, |t| t.on_data(data));
     }
 
-    pub fn on_open(this: &PostgresSQLConnection, socket: SocketType<SSL>) {
-        Self::guarded(this, |t| t.on_open(Self::_socket(socket)));
+    fn on_writable(this: &PostgresSQLConnection, _socket: uws::AnySocket) {
+        guarded(this, |t| t.on_drain());
     }
 
-    fn on_handshake_(
+    fn on_close(
         this: &PostgresSQLConnection,
-        _: SocketType<SSL>,
-        success: i32,
-        ssl_error: uws::us_bun_verify_error_t,
-    ) {
-        Self::guarded(this, |t| t.on_handshake(success, ssl_error));
-    }
-
-    // pub const onHandshake = if (ssl) onHandshake_ else null;
-    pub const ON_HANDSHAKE: Option<
-        fn(&PostgresSQLConnection, SocketType<SSL>, i32, uws::us_bun_verify_error_t),
-    > = if SSL { Some(Self::on_handshake_) } else { None };
-
-    pub fn on_close(
-        this: &PostgresSQLConnection,
-        _socket: SocketType<SSL>,
-        _: i32,
-        _: Option<*mut c_void>,
+        _socket: uws::AnySocket,
+        _code: uws::CloseCode2,
+        _errno: i32,
     ) {
         this.on_close();
     }
 
-    pub fn on_end(this: &PostgresSQLConnection, _socket: SocketType<SSL>) {
+    fn on_end(this: &PostgresSQLConnection, _socket: uws::AnySocket) {
         this.on_close();
     }
 
-    pub fn on_connect_error(this: &PostgresSQLConnection, _socket: SocketType<SSL>, _: i32) {
-        Self::guarded(this, |t| t.on_connect_error());
+    fn on_timeout(this: &PostgresSQLConnection, _socket: uws::AnySocket) {
+        guarded(this, |t| t.on_timeout());
     }
 
-    pub fn on_timeout(this: &PostgresSQLConnection, _socket: SocketType<SSL>) {
-        Self::guarded(this, |t| t.on_timeout());
+    fn on_connect_error(this: &PostgresSQLConnection, _err: uws::ConnectFailure) {
+        guarded(this, |t| t.on_connect_error());
     }
 
-    pub fn on_data(this: &PostgresSQLConnection, _socket: SocketType<SSL>, data: &[u8]) {
-        Self::guarded(this, |t| t.on_data(data));
-    }
-
-    pub fn on_writable(this: &PostgresSQLConnection, _socket: SocketType<SSL>) {
-        Self::guarded(this, |t| t.on_drain());
+    // Only TLS sockets emit handshake events; the plain kind never sees this.
+    fn on_handshake(
+        this: &PostgresSQLConnection,
+        _socket: uws::AnySocket,
+        ok: bool,
+        ssl_error: uws::VerifyError,
+    ) {
+        guarded(this, |t| t.on_handshake(ok, ssl_error));
     }
 }
 
@@ -1392,13 +1411,11 @@ impl PostgresSQLConnection {
     }
 
     fn close(&self) {
-        // A close while the connect/handshake is still in flight gets no
-        // socket event: uws skips the on_close dispatch for sockets whose
-        // connect never completed, and `disconnect()` only tears down
-        // connected sockets. Fail the connection directly so the JS onclose
-        // callback fires, pending queries are rejected, and the in-flight
-        // socket is torn down instead of completing the handshake after
-        // close.
+        // A TCP-stage in-flight close gets no socket event (C1), but a
+        // DNS-stage close dispatches on_connecting_error synchronously (C4).
+        // Fail directly so the JS onclose callback fires and pending queries
+        // are rejected on both variants; `ref_and_close` settles the
+        // keepalive per-variant and core releases its owner ref itself.
         if !self.vm().is_shutting_down()
             && matches!(
                 self.status.get(),
@@ -1406,10 +1423,6 @@ impl PostgresSQLConnection {
             )
         {
             self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
-            // closing an in-flight connect dispatches no socket event, so the
-            // poll ref taken at creation is released here rather than in a
-            // socket callback
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
         } else {
             self.disconnect();
         }
@@ -1480,8 +1493,10 @@ impl PostgresSQLConnection {
         // user `.catch()` → new query enqueue) that mutate `self.requests`
         // through a fresh `&Self` from `m_ctx` are sound. The previous
         // black_box launder (b818e70e1c57-style) is no longer needed.
-        // The connection is kept alive by the caller's `ref_and_close` ref
-        // bracket for the duration of this loop, so re-entry never frees `*self`.
+        // The connection is kept alive for the duration of this loop by the
+        // caller's outstanding strong ref (`ref_guard` in `fail_with_js_value`,
+        // or the JS-stack receiver on `disconnect`), so re-entry never frees
+        // `*self`.
         while self.requests.get().readable_length() > 0 {
             let request_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(0);
             // Queue invariant: every stored pointer is non-null and live
@@ -1538,11 +1553,20 @@ impl PostgresSQLConnection {
     fn ref_and_close(&self, js_reason: Option<JSValue>) {
         // refAndClose is always called when we wanna to disconnect or when we are closed
 
-        if !self.socket.get().is_closed() {
-            // event loop need to be alive to close the socket
-            self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
-            // will unref on socket close
-            self.socket.get().close(uws::CloseKind::Normal);
+        let socket = self.socket.get();
+        if !socket.is_closed() {
+            if socket.is_established() {
+                // on_close will fire (possibly ticks later for TLS
+                // close_notify): keep the loop alive until
+                // `handle_socket_failure` unrefs.
+                self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
+            } else {
+                // Never-established connect: a TCP-stage close dispatches
+                // nothing (C1) and a DNS-stage close errors synchronously
+                // (C4) — settle the creation-time keepalive now (idempotent).
+                self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+            }
+            socket.close(uws::CloseKind::Normal);
         }
 
         // cleanup requests

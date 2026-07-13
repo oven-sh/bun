@@ -442,8 +442,7 @@ impl Process {
             let fd = unsafe { &mut *poll };
             fd.enable_keeping_process_alive(ctx);
 
-            // SAFETY: `platform_event_loop` returns the live uws loop.
-            let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
+            let loop_ = self.event_loop.platform_event_loop();
             match fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT) {
                 Ok(()) => {
                     self.ref_();
@@ -473,8 +472,7 @@ impl Process {
         }
 
         if let Some(fd) = self.poller.fd_poll_mut() {
-            // SAFETY: `platform_event_loop` returns the live uws loop.
-            let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
+            let loop_ = self.event_loop.platform_event_loop();
             let maybe = fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT);
             if maybe.is_ok() {
                 self.ref_();
@@ -2673,10 +2671,10 @@ mod spawn_process_body {
 
             // SAFETY: read-only field access between uv ticks; the uv exit
             // callback's `&mut Process` does not overlap this `&Process`.
+            // `loop_` is the live `uws::WindowsLoop*` from
+            // `EventLoopHandle::platform_event_loop`.
             while !unsafe { (*process).has_exited() } {
-                // SAFETY: `loop_` is the live `uws::WindowsLoop*` from
-                // `EventLoopHandle::platform_event_loop`.
-                unsafe { (*loop_).run() };
+                bun_usockets::Loop::run(loop_);
             }
 
             Ok(Ok(Result {
@@ -2770,9 +2768,9 @@ mod spawn_process_body {
 
             // SAFETY: read-only field access between uv ticks; callbacks fired
             // inside `tick()` write through the same `this_ptr` root.
+            // `loop_` wraps a live `uws::WindowsLoop*`.
             while unsafe { (*this_ptr).waiting_count } > 0 {
-                // SAFETY: `loop_` wraps a live `uws::WindowsLoop*`.
-                unsafe { (*loop_.platform_event_loop()).tick() };
+                bun_usockets::Loop::tick(loop_.platform_event_loop());
             }
 
             // SAFETY: loop drained (waiting_count == 0); no further uv callback

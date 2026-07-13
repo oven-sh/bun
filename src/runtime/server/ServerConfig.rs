@@ -4,7 +4,7 @@ use bun_core::ZBox;
 
 use bun_collections::StringHashMap;
 use bun_core::strings;
-use bun_uws_sys as uws;
+use bun_uws_shim as uws;
 use bun_wyhash::Wyhash;
 
 use bun_http_types::Method as http_method;
@@ -352,14 +352,14 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
         // `Response<SSL>` is a `#[repr(C)]` opaque over `uws_res`; pointer cast
         // selects the matching `AnyResponse` variant for the const-generic SSL flag.
         let any_resp = if SSL {
-            bun_uws_sys::AnyResponse::SSL(resp.cast())
+            bun_uws_shim::AnyResponse::SSL(resp.cast())
         } else {
-            bun_uws_sys::AnyResponse::TCP(resp.cast())
+            bun_uws_shim::AnyResponse::TCP(resp.cast())
         };
         // SAFETY: `route`, `req`, and `resp` are non-null and valid for the
         // duration of this uWS callback (see invariants established above);
         // `on_request` only dereferences them while this frame is live.
-        unsafe { T::on_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
+        unsafe { T::on_request(route, bun_uws_shim::AnyRequest::H1(req), any_resp) };
     }
 
     extern "C" fn head<const SSL: bool, T: StaticRouteLike<SSL>>(
@@ -371,13 +371,13 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
         let route = user_data.cast::<T>();
         let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
         let any_resp = if SSL {
-            bun_uws_sys::AnyResponse::SSL(resp.cast())
+            bun_uws_shim::AnyResponse::SSL(resp.cast())
         } else {
-            bun_uws_sys::AnyResponse::TCP(resp.cast())
+            bun_uws_shim::AnyResponse::TCP(resp.cast())
         };
         // SAFETY: `route`, `req`, and `resp` validity is guaranteed by uWS for
         // the callback's duration — same invariants as `handler` above.
-        unsafe { T::on_head_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
+        unsafe { T::on_head_request(route, bun_uws_shim::AnyRequest::H1(req), any_resp) };
     }
 
     let user_data = entry.cast::<core::ffi::c_void>();
@@ -440,8 +440,8 @@ pub(crate) fn apply_static_route_h3<T>(
         unsafe {
             T::on_request(
                 route,
-                bun_uws_sys::AnyRequest::H3(req),
-                bun_uws_sys::AnyResponse::H3(resp),
+                bun_uws_shim::AnyRequest::H3(req),
+                bun_uws_shim::AnyResponse::H3(resp),
             )
         };
     }
@@ -454,8 +454,8 @@ pub(crate) fn apply_static_route_h3<T>(
         unsafe {
             T::on_head_request(
                 route,
-                bun_uws_sys::AnyRequest::H3(req),
-                bun_uws_sys::AnyResponse::H3(resp),
+                bun_uws_shim::AnyRequest::H3(req),
+                bun_uws_shim::AnyResponse::H3(resp),
             )
         };
     }
@@ -486,22 +486,22 @@ pub(crate) trait StaticRouteLike<const SSL: bool>: 'static {
     /// valid for the duration of the uWS callback.
     unsafe fn on_request(
         this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
+        req: bun_uws_shim::AnyRequest,
+        resp: bun_uws_shim::AnyResponse,
     );
     /// SAFETY: see `on_request`.
     unsafe fn on_head_request(
         this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
+        req: bun_uws_shim::AnyRequest,
+        resp: bun_uws_shim::AnyResponse,
     );
 }
 
 // NOTE (layering): the original `RequestUnion`/`ResponseUnion` placeholders
-// were duplicates of `bun_uws_sys::AnyRequest`/`AnyResponse`. Re-export the
+// were duplicates of `bun_uws_shim::AnyRequest`/`AnyResponse`. Re-export the
 // real types so any straggler reference resolves to the canonical opaque.
-pub use bun_uws_sys::AnyRequest as RequestUnion;
-pub use bun_uws_sys::AnyResponse as ResponseUnion;
+pub use bun_uws_shim::AnyRequest as RequestUnion;
+pub use bun_uws_shim::AnyResponse as ResponseUnion;
 
 impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
     unsafe fn set_server(this: *mut Self, server: AnyServer) {
@@ -511,16 +511,16 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
     }
     unsafe fn on_request(
         this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
+        req: bun_uws_shim::AnyRequest,
+        resp: bun_uws_shim::AnyResponse,
     ) {
         // SAFETY: forwarded to the inherent impl with the same contract.
         unsafe { Self::on_request(this, req, resp) }
     }
     unsafe fn on_head_request(
         this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
+        req: bun_uws_shim::AnyRequest,
+        resp: bun_uws_shim::AnyResponse,
     ) {
         // SAFETY: forwarded to the inherent impl with the same contract.
         unsafe { Self::on_head_request(this, req, resp) }
@@ -534,15 +534,15 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::FileRoute {
     }
     unsafe fn on_request(
         this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
+        req: bun_uws_shim::AnyRequest,
+        resp: bun_uws_shim::AnyResponse,
     ) {
         Self::on_request(this, req, resp)
     }
     unsafe fn on_head_request(
         this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
+        req: bun_uws_shim::AnyRequest,
+        resp: bun_uws_shim::AnyResponse,
     ) {
         Self::on_head_request(this, req, resp)
     }
@@ -555,15 +555,15 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::html_bundle::Route {
     }
     unsafe fn on_request(
         this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
+        req: bun_uws_shim::AnyRequest,
+        resp: bun_uws_shim::AnyResponse,
     ) {
         Self::on_request(this, req, resp)
     }
     unsafe fn on_head_request(
         this: *mut Self,
-        req: bun_uws_sys::AnyRequest,
-        resp: bun_uws_sys::AnyResponse,
+        req: bun_uws_shim::AnyRequest,
+        resp: bun_uws_shim::AnyResponse,
     ) {
         Self::on_head_request(this, req, resp)
     }
@@ -598,13 +598,13 @@ impl ServerConfig {
     pub fn get_usockets_options(&self) -> i32 {
         // Unlike Node.js, we set exclusive port in case reuse port is not set
         let mut out: i32 = if self.reuse_port {
-            bun_uws_sys::LIBUS_LISTEN_REUSE_PORT | bun_uws_sys::LIBUS_LISTEN_REUSE_ADDR
+            bun_uws_shim::LIBUS_LISTEN_REUSE_PORT | bun_uws_shim::LIBUS_LISTEN_REUSE_ADDR
         } else {
-            bun_uws_sys::LIBUS_LISTEN_EXCLUSIVE_PORT
+            bun_uws_shim::LIBUS_LISTEN_EXCLUSIVE_PORT
         };
 
         if self.ipv6_only {
-            out |= bun_uws_sys::LIBUS_SOCKET_IPV6_ONLY;
+            out |= bun_uws_shim::LIBUS_SOCKET_IPV6_ONLY;
         }
 
         out

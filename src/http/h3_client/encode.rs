@@ -3,9 +3,9 @@
 //! a JS streaming sink) onto the lsquic stream. Mirrors `h2_client/encode.rs`.
 
 use bun_core::strings;
-use bun_uws::quic;
-use bun_uws::quic::Qpack;
-use bun_uws::quic::header::Class as QpackClass;
+use bun_uws_shim::quic;
+use bun_uws_shim::quic::Qpack;
+use bun_uws_shim::quic::header::Class as QpackClass;
 
 use super::client_session::ClientSession;
 use super::stream::Stream;
@@ -160,11 +160,11 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         let HTTPRequestBody::Stream(body) = &mut client.state.original_request_body else {
             unreachable!()
         };
-        let ended = body.ended;
-        let Some(sb) = body.buffer_mut() else {
+        let ended = body.sync_ended();
+        let Some(sb) = body.buffer_ref() else {
             return;
         };
-        let buffer = sb.acquire();
+        let mut buffer = sb.lock();
         let data_len = buffer.slice().len();
         let mut written: usize = 0;
         while written < data_len {
@@ -186,9 +186,9 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         } else if !drained {
             qs.want_write(true);
         } else if data_len > 0 {
-            sb.report_drain();
+            sb.report_drain(&buffer);
         }
-        sb.release();
+        drop(buffer);
         if stream.request_body_done {
             body.detach();
         }

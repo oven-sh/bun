@@ -13,7 +13,7 @@ use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, Pol
 // Public so trait implementors in `bun_runtime` can name the same type in
 // their `loop_` signature without duplicating the cfg-split.
 #[cfg(not(windows))]
-pub type Loop = bun_uws_sys::Loop;
+pub type Loop = bun_usockets::Loop;
 #[cfg(windows)]
 pub type Loop = bun_sys::windows::libuv::Loop;
 

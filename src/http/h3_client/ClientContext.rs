@@ -6,9 +6,9 @@ use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_uws::Loop as UwsLoop;
-use bun_uws::quic;
-use bun_uws::quic::context::ConnectResult;
+use bun_uws_shim::Loop as UwsLoop;
+use bun_uws_shim::quic;
+use bun_uws_shim::quic::context::ConnectResult;
 
 use super::callbacks;
 use super::client_session::{ClientSession, quic_socket_mut, session_mut};

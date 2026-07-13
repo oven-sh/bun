@@ -82,7 +82,7 @@ trait CronJobBase: Sized {
     fn loop_(&self) -> *mut AsyncLoop {
         // `VirtualMachine::uv_loop` already returns the native loop on both
         // targets (jsc/VirtualMachine.rs:2975); the prior POSIX arm's
-        // `bun_uws::Loop::get()` named the same per-thread singleton.
+        // `bun_uws_shim::Loop::get()` named the same per-thread singleton.
         vm_mut().uv_loop()
     }
 

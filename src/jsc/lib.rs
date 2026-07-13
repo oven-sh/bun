@@ -941,6 +941,8 @@ pub mod __macro_support {
 // the expansions type-check against the real `JSGlobalObject`/`CallFrame`/
 // `JSValue`/`JsResult` shapes and that the `JsClass` trait impl wires up).
 #[cfg(test)]
+// Type-check-only: nothing constructs `Smoke` or calls its methods at runtime.
+#[allow(dead_code, unreachable_pub)]
 mod __macro_smoke {
     use super::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
@@ -1560,7 +1562,7 @@ pub use self::event_loop::{
     Task, WorkPool, WorkPoolTask, WorkTask, WorkTaskContext,
 };
 #[cfg(unix)]
-pub type PlatformEventLoop = bun_uws::Loop;
+pub type PlatformEventLoop = bun_usockets::Loop;
 #[cfg(not(unix))]
 pub type PlatformEventLoop = bun_io::Loop;
 

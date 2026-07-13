@@ -118,6 +118,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bssl-macros"
+version = "0.1.0"
+
+[[package]]
+name = "bssl-sys"
+version = "0.1.0"
+dependencies = [
+ "bssl-macros",
+]
+
+[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -270,6 +281,7 @@ dependencies = [
  "bun_platform",
  "bun_runtime",
  "bun_sys",
+ "bun_usockets",
  "libc",
 ]
 
@@ -340,6 +352,13 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
+]
+
+[[package]]
+name = "bun_bssl"
+version = "0.0.0"
+dependencies = [
+ "bssl-sys",
 ]
 
 [[package]]
@@ -749,7 +768,7 @@ dependencies = [
  "bun_ptr",
  "bun_sys",
  "bun_threading",
- "bun_uws",
+ "bun_usockets",
  "const_format",
  "enum-map",
  "enumset",
@@ -846,7 +865,8 @@ dependencies = [
  "bun_sys",
  "bun_threading",
  "bun_url",
- "bun_uws",
+ "bun_usockets",
+ "bun_uws_shim",
  "bun_wyhash",
  "bun_zlib",
  "bun_zstd",
@@ -882,8 +902,8 @@ dependencies = [
  "bun_picohttp",
  "bun_ptr",
  "bun_sha_hmac",
- "bun_uws",
- "bun_uws_sys",
+ "bun_usockets",
+ "bun_uws_shim",
  "bun_zlib",
  "const_format",
  "enum-map",
@@ -985,7 +1005,6 @@ dependencies = [
  "bun_threading",
  "bun_transpiler",
  "bun_url",
- "bun_uws",
  "bun_which",
  "bun_wyhash",
  "bun_zlib",
@@ -1063,7 +1082,7 @@ dependencies = [
  "bun_spawn_sys",
  "bun_sys",
  "bun_threading",
- "bun_uws_sys",
+ "bun_usockets",
  "const_format",
  "enum-map",
  "enumset",
@@ -1212,7 +1231,8 @@ dependencies = [
  "bun_threading",
  "bun_transpiler",
  "bun_url",
- "bun_uws",
+ "bun_usockets",
+ "bun_uws_shim",
  "bun_watcher",
  "bun_wyhash",
  "bytemuck",
@@ -1705,8 +1725,8 @@ dependencies = [
  "bun_threading",
  "bun_transpiler",
  "bun_url",
- "bun_uws",
- "bun_uws_sys",
+ "bun_usockets",
+ "bun_uws_shim",
  "bun_valkey",
  "bun_watcher",
  "bun_which",
@@ -1942,6 +1962,7 @@ dependencies = [
  "bun_spawn_sys",
  "bun_sys",
  "bun_threading",
+ "bun_usockets",
  "bun_which",
  "libc",
  "scopeguard",
@@ -2007,8 +2028,8 @@ dependencies = [
  "bun_ptr",
  "bun_sha_hmac",
  "bun_sql",
- "bun_uws",
- "bun_uws_sys",
+ "bun_usockets",
+ "bun_uws_shim",
  "const_format",
  "enum-map",
  "enumset",
@@ -2169,47 +2190,37 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_uws"
+name = "bun_usockets"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
- "bun_boringssl",
+ "bun_alloc",
+ "bun_bssl",
  "bun_core",
- "bun_jsc_macros",
- "bun_opaque",
+ "bun_dns",
+ "bun_errno",
+ "bun_libuv_sys",
  "bun_ptr",
- "bun_uws_sys",
- "const_format",
- "enum-map",
- "enumset",
+ "bun_windows_sys",
  "libc",
- "scopeguard",
- "strum",
+ "thiserror",
 ]
 
 [[package]]
-name = "bun_uws_sys"
+name = "bun_uws_shim"
 version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
- "bun_boringssl_sys",
+ "bun_boringssl",
  "bun_core",
- "bun_errno",
  "bun_http_types",
- "bun_libuv_sys",
+ "bun_jsc_macros",
  "bun_opaque",
- "bun_paths",
- "bun_windows_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
+ "bun_ptr",
+ "bun_usockets",
  "scopeguard",
  "strum",
- "thiserror",
 ]
 
 [[package]]

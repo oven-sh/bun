@@ -477,6 +477,24 @@ impl Loop {
         log!("dec");
         self.active_handles = self.active_handles.saturating_sub(1);
     }
+    /// Raw-place twins of `inc`/`dec` for callers holding only `*mut Loop`
+    /// (a `&mut Loop` on a published loop would alias; see bun_usockets).
+    #[inline]
+    pub fn inc_raw(this: *mut Self) {
+        log!("inc_raw");
+        unsafe {
+            let p = &raw mut (*this).active_handles;
+            *p = (*p).saturating_add(1);
+        }
+    }
+    #[inline]
+    pub fn dec_raw(this: *mut Self) {
+        log!("dec_raw");
+        unsafe {
+            let p = &raw mut (*this).active_handles;
+            *p = (*p).saturating_sub(1);
+        }
+    }
     /// `ref`/`unref` aliases for `inc`/`dec`.
     #[inline]
     pub fn ref_(&mut self) {

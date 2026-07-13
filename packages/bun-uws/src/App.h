@@ -22,6 +22,8 @@
 #include <charconv>
 #include <string_view>
 
+#include <libusockets_cabi.h>
+
 namespace uWS {
     /* Safari 15.0 - 15.3 has a completely broken compression implementation (client_no_context_takeover not
      * properly implemented) - so we fully disable compression for this browser :-(
@@ -388,11 +390,11 @@ public:
     /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket. */
     TemplatedApp &&closeIdle() {
         auto *group = httpContext->getSocketGroup();
-        struct us_socket_t *s = group->head_sockets;
+        struct us_socket_t *s = us_socket_group_head_socket(group);
         while (s) {
             // no matter the type of socket will always contain the AsyncSocketData
             auto *data = ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
-            struct us_socket_t *next = s->next;
+            struct us_socket_t *next = us_socket_next(s);
             if (data->isIdle) {
                 us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
             }

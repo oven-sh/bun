@@ -22,7 +22,7 @@ use core::ffi::c_int;
 
 use bun_core::{Timespec, TimespecMockMode};
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
-use bun_uws as uws;
+use bun_usockets as uws;
 
 use crate::VM;
 use crate::virtual_machine::VirtualMachine;

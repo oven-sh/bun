@@ -67,10 +67,10 @@ pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
 #[path = "ssl_config.rs"]
 pub mod ssl_config;
 pub use ssl_config::SSLConfig;
-// SSLWrapper was MOVE_DOWN to bun_uws (tier 4); re-export here so
+// SSLWrapper lives in the shim crate; re-export here so
 // `crate::ssl_wrapper::SSLWrapper` resolves for ProxyTunnel/HTTPContext.
-pub use bun_uws::ssl_wrapper;
-pub use bun_uws::ssl_wrapper::SSLWrapper;
+pub use bun_uws_shim::ssl_wrapper;
+pub use bun_uws_shim::ssl_wrapper::SSLWrapper;
 
 // ── naming aliases ──
 // Submodules use both `HTTPClient`/`HttpClient` and the older name
@@ -595,10 +595,6 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
 }
 
 // ───────────────────────────── HTTPClient struct ─────────────────────────────
-// The heavy `impl HTTPClient` (socket dispatch / state machine) remains
-// gated below until the missing
-// `bun_uws::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
-// `shutdown`/`connect_group`/…) land.
 
 use bun_core::ZigStringSlice;
 use bun_url::URL;
@@ -902,10 +898,10 @@ impl Drop for HTTPClient<'_> {
 // every process.
 //
 // `ThreadCell` (not `RacyCell`) to encode "HTTP-thread-only after init" in the
-// type. `claim()` is invoked from `HTTPThread::on_start`. JS-side callers that
-// only touch the lock-free `queued_tasks` + `wakeup` (e.g. `schedule()`) go
-// through [`http_thread_shared`] / `get_unchecked` until those fields are
-// hoisted out of the thread-confined struct.
+// type. `claim()` is invoked from `HTTPThread::on_start`, so any JS-thread
+// `http_thread()` panics in debug builds. Cross-thread callers (schedule_*,
+// timer reads, wakeup) never touch the struct at all — they use the module
+// statics in `http_thread` (QUEUED_*, UWS_LOOP, START_TIMER).
 pub static HTTP_THREAD: bun_core::ThreadCell<core::mem::MaybeUninit<HTTPThread>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
 pub(crate) static HTTP_THREAD_INIT: core::sync::atomic::AtomicBool =
@@ -939,7 +935,7 @@ pub fn http_thread_mut() -> &'static mut HTTPThread {
 // TODO: this needs to be freed when Worker Threads are implemented
 // HTTP-thread-only; `RacyCell` is the alias-safe static cell.
 pub static SOCKET_ASYNC_HTTP_ABORT_TRACKER: bun_core::RacyCell<
-    Option<bun_collections::ArrayHashMap<u32, bun_uws::AnySocket>>,
+    Option<bun_collections::ArrayHashMap<u32, bun_usockets::AnySocket>>,
 > = bun_core::RacyCell::new(None);
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -957,7 +953,7 @@ use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
-use bun_uws as uws;
+use bun_usockets as uws;
 // the std Wyhash algorithm, not Wyhash11.
 use bun_wyhash::Wyhash;
 
@@ -1175,11 +1171,11 @@ pub(crate) fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> 
 /// Remove every abort-tracker entry whose stored socket is `socket`.
 ///
 /// Backstop for the per-client `unregister_abort_tracker()` calls: when
-/// `Handler::on_close` fires on a socket whose ext has already been retagged
-/// to `DeadSocket`/`PooledSocket`, the client/session dispatch is skipped and
-/// any stale entry would survive into `us_internal_free_closed_sockets`,
-/// leaving `drain_queued_shutdowns` to dereference freed memory on a later
-/// abort. O(n) over live abortable requests; no-op on a `Detached` socket.
+/// `Handler::on_close` fires on a socket whose owner has already been
+/// retagged `Dead`/`Pooled`, the client/session dispatch is skipped and any
+/// stale entry would silently swallow a later abort for that request id in
+/// `drain_queued_shutdowns`. O(n) over live abortable requests; no-op on a
+/// `Detached` socket.
 pub(crate) fn unregister_abort_tracker_for_socket(socket: uws::InternalSocket) {
     if socket.is_detached() {
         return;
@@ -2775,7 +2771,7 @@ impl<'a> HTTPClient<'a> {
                     // SAFETY: runs on the HTTP thread after `HTTPThread::init`
                     // set `uws_loop` to its live `us_loop_t`.
                     let h3_ctx = h3::ClientContext::get_or_create(unsafe {
-                        NonNull::new_unchecked(http_thread().uws_loop)
+                        NonNull::new_unchecked(http_thread().uws_loop())
                     });
                     if let Some(ctx) = h3_ctx {
                         if !h3::ClientContext::as_mut(ctx).connect(
@@ -2828,7 +2824,7 @@ impl<'a> HTTPClient<'a> {
             // SAFETY: runs on the HTTP thread after `HTTPThread::init` set
             // `uws_loop` to its live `us_loop_t`.
             let Some(ctx) = h3::ClientContext::get_or_create(unsafe {
-                NonNull::new_unchecked(http_thread().uws_loop)
+                NonNull::new_unchecked(http_thread().uws_loop())
             }) else {
                 self.fail(crate::Error::HTTP3Unsupported);
                 self.complete_connecting_process();
@@ -3184,18 +3180,18 @@ impl<'a> HTTPClient<'a> {
                 return;
             };
             let Some(buf) = stream.buffer else { return };
-            (buf, stream.ended)
+            (buf, stream.sync_ended())
         };
         // ThreadSafeStreamBuffer is owned by the JS-side request body stream
         // and outlives this call (intrusive-refcounted; independent heap
-        // allocation, so `&mut` here does not alias `self`). Route through the
-        // shared `from_attached` accessor (one centralised unsafe).
+        // allocation). Shared borrow only — the JS thread accesses the same
+        // allocation concurrently; the byte buffer is behind its own lock.
         let stream_buffer = ThreadSafeStreamBuffer::from_attached(stream_buffer_ptr);
         if upgrade_state == HTTPUpgradeState::Pending {
             // cannot drain yet, upgrade is waiting for upgrade
             return;
         }
-        let buffer = stream_buffer.acquire();
+        let mut buffer = stream_buffer.lock();
         let was_empty = buffer.is_empty() && data.is_empty();
         if was_empty && ended {
             // nothing is buffered and the stream is done so we just release and detach
@@ -3205,7 +3201,7 @@ impl<'a> HTTPClient<'a> {
             // keep-alive / redirect pooling gates, matching the
             // `ended && !has_backpressure` exit below.
             self.state.request_stage = RequestStage::Done;
-            stream_buffer.release();
+            drop(buffer);
             self.request_stream_detach();
             if upgrade_state == HTTPUpgradeState::Upgraded {
                 // for upgraded connections we need to shutdown the socket to signal the end of the connection
@@ -3219,11 +3215,11 @@ impl<'a> HTTPClient<'a> {
         // `write_to_stream_using_buffer` touches only `state.request_sent_len`,
         // disjoint from `original_request_body` and `stream_buffer`.
         let has_backpressure =
-            match self.write_to_stream_using_buffer::<IS_SSL>(socket, buffer, data) {
+            match self.write_to_stream_using_buffer::<IS_SSL>(socket, &mut buffer, data) {
                 Ok(b) => b,
                 Err(err) => {
                     // we got some critical error so we need to fail and close the connection
-                    stream_buffer.release();
+                    drop(buffer);
                     self.request_stream_detach();
                     self.close_and_fail::<IS_SSL>(err, socket);
                     return;
@@ -3232,12 +3228,12 @@ impl<'a> HTTPClient<'a> {
 
         if has_backpressure {
             // we have backpressure so just release the buffer and wait for onWritable
-            stream_buffer.release();
+            drop(buffer);
         } else {
             if ended {
                 // done sending everything so we can release the buffer and detach the stream
                 self.state.request_stage = RequestStage::Done;
-                stream_buffer.release();
+                drop(buffer);
                 self.request_stream_detach();
                 if upgrade_state == HTTPUpgradeState::Upgraded {
                     // for upgraded connections we need to shutdown the socket to signal the end of the connection
@@ -3247,10 +3243,10 @@ impl<'a> HTTPClient<'a> {
             } else {
                 // only report drain if we send everything and previous we had something to send
                 if !was_empty {
-                    stream_buffer.report_drain();
+                    stream_buffer.report_drain(&buffer);
                 }
                 // release the buffer so main thread can use it to send more data
-                stream_buffer.release();
+                drop(buffer);
             }
         }
     }

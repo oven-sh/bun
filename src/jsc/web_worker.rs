@@ -1232,10 +1232,24 @@ impl WebWorker {
         // vm_lock held; this is the unpublish point.
         let vm_ptr = self.vm.replace(core::ptr::null_mut());
         self.vm_lock.unlock();
-        let mut loop_: Option<*mut bun_uws::Loop> = None;
+        let mut loop_: Option<*mut bun_usockets::Loop> = None;
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr was published under vm_lock; sole owner now.
             loop_ = Some(unsafe { &*vm_ptr }.uws_loop());
+
+            // Rundown gate: producers that already entered a cross-thread
+            // post (enqueue_task_concurrent / ref_concurrently) bumped
+            // `external_posts` before checking `terminating`. Set the flag,
+            // then spin until every in-flight post has left the queues — the
+            // release below (and the VM free at step 5) must not race them.
+            // SAFETY: vm_ptr is live; EventLoop is a value field of the VM,
+            // freed only at step 5 after this drain completes.
+            let el = unsafe { &*vm_ptr }.event_loop_shared();
+            el.terminating
+                .store(true, core::sync::atomic::Ordering::SeqCst);
+            while el.external_posts.load(core::sync::atomic::Ordering::SeqCst) != 0 {
+                core::hint::spin_loop();
+            }
         }
 
         // ---- 2. User exit handlers -----------------------------------------
@@ -1368,7 +1382,7 @@ impl WebWorker {
         // skipped on glibc; under BUN_DESTRUCT_VM_ON_EXIT it would also gate
         // on `!bun_is_exiting()`. Everything that registers polls on the loop
         // (gc_controller, sockets, timers) has been deinit'd above.
-        bun_uws::on_thread_exit();
+        bun_usockets::on_thread_exit();
         drop(arena.take());
 
         // We MUST NOT call `pthread_exit` here —

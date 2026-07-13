@@ -213,10 +213,13 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContextIdentifier ctxI
     }
     if (wakeCtx)
         scheduleDrain(side, wakeCtx);
-    // Peer already closed while this side was in transit (detach() cleared
-    // ContextKnown so notifyPeerClosed() early-returned): re-deliver to the new
-    // owner, or the receiving context's listener loop-ref is never released.
-    if (m_sides[1 - side].state.load(std::memory_order_acquire) & Closed)
+    // Peer already gone while this side was in transit or unregistered
+    // (detach() cleared ContextKnown so notifyPeerClosed() early-returned):
+    // re-deliver to the new owner, or the receiving context's listener
+    // loop-ref is never released. ClosedByRequest (a real close) always
+    // re-delivers; a Collected peer re-delivers only across contexts —
+    // same-context keeps the hold, node parity (see CloseKind in the header).
+    if (peerRequiresCloseNotification(side, ctxId))
         notifyPeerClosed(side);
 }
 
@@ -236,8 +239,18 @@ void MessagePortPipe::registerCloseContext(uint8_t side, ScriptExecutionContextI
     }
     // See attach(): re-deliver a peer-close that fired while this side had no
     // context (in transit or never registered).
-    if (m_sides[1 - side].state.load(std::memory_order_acquire) & Closed)
+    if (peerRequiresCloseNotification(side, ctxId))
         notifyPeerClosed(side);
+}
+
+bool MessagePortPipe::peerRequiresCloseNotification(uint8_t side, ScriptExecutionContextIdentifier ctxId)
+{
+    auto& peer = m_sides[1 - side];
+    Locker locker { peer.lock };
+    uint64_t pst = peer.state.load(std::memory_order_relaxed);
+    if (pst & ClosedByRequest)
+        return true;
+    return (pst & Closed) && peer.ctxId && peer.ctxId != ctxId;
 }
 
 void MessagePortPipe::detach(uint8_t side)
@@ -255,7 +268,7 @@ void MessagePortPipe::detach(uint8_t side)
     s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled), std::memory_order_acq_rel);
 }
 
-void MessagePortPipe::close(uint8_t side, CloseKind kind)
+void MessagePortPipe::close(uint8_t side, CloseKind kind, ScriptExecutionContextIdentifier closingCtx)
 {
     ASSERT(side < 2);
 
@@ -275,7 +288,10 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
         Deque<MessageWithMessagePorts> dropped;
         {
             Locker locker { s.lock };
-            s.ctxId = 0;
+            // A Collected side keeps its owning context id so a later attach()/
+            // registerCloseContext() on the peer can tell same-context (keep the
+            // hold, node parity) from cross-context (release; nothing else will).
+            s.ctxId = sdKind == CloseKind::Collected ? closingCtx : 0;
             s.port = nullptr;
             // Closed is terminal; queued messages are dropped.
             s.state.store(sdKind == CloseKind::Explicit ? (Closed | ClosedByRequest) : Closed, std::memory_order_release);
@@ -297,15 +313,19 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
         // Notify each explicitly-closed pipe's entangled peer so it can fire
         // 'close' and release its event-loop ref — including nested in-transit
         // ports drained from the worklist, not just the originally-closed side.
-        // A Collected close (GC of an unreferenced wrapper) must NOT notify:
-        // node never closes a channel because a port was collected, so a
-        // listening peer keeps the process alive exactly as if the collected
-        // port were still reachable. Notifying here made the canonical
-        // "port1.on('message', ...); port2.postMessage(...)" pattern exit at GC
-        // timing while node stays alive. The resulting "stranded" peer is node
-        // parity, not a leak: node retains even more (it never collects an
-        // entangled port at all).
-        if (sdKind == CloseKind::Explicit)
+        // A Collected close notifies only a cross-context peer (the CloseKind
+        // comment in the header has the full rationale): notifying a
+        // same-context peer made the canonical "port1.on('message', ...);
+        // port2.postMessage(...)" pattern exit at GC timing while node stays
+        // alive, but a cross-context peer left unnotified is stranded forever
+        // once the collected port's context dies with nothing to tear down.
+        bool notify = sdKind == CloseKind::Explicit;
+        if (!notify && closingCtx) {
+            auto& peer = pipe->m_sides[1 - sd];
+            Locker locker { peer.lock };
+            notify = peer.ctxId && peer.ctxId != closingCtx;
+        }
+        if (notify)
             pipe->notifyPeerClosed(1 - sd);
     }
 }

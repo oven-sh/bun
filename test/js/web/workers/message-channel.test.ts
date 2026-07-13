@@ -592,6 +592,60 @@ describe("keeps the event loop alive while a message listener is attached", () =
     expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
   });
 
+  test.concurrent("a second listener added after the peer was GC'd keeps the process alive", async () => {
+    // attach() re-runs on every addEventListener; its retroactive peer-close
+    // check must not treat a same-context collected sibling as a real close.
+    expect(
+      await expectStaysAlive(`
+        const { MessageChannel } = require("node:worker_threads");
+        const { port1 } = (() => {
+          const { port1, port2 } = new MessageChannel();
+          port1.on("message", () => console.log("RECEIVED"));
+          port2.postMessage({ foo: "bar" });
+          return { port1 };
+        })();
+        for (let i = 0; i < 10; i++) Bun.gc(true); // collect port2
+        port1.on("message", () => {});             // re-attach must not release the hold
+      `),
+    ).toEqual({ gotMarker: true, outcome: "alive" });
+  });
+
+  test.concurrent("a listener added after a worker-side port was collected is still released", async () => {
+    // Cross-context late attach: the worker-side port was collected and the
+    // worker is gone, so attaching on main must observe the dead peer and exit.
+    const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
+      const { Worker, MessageChannel } = require("node:worker_threads");
+      const channel = new MessageChannel();
+      const worker = new Worker(\`
+        const { workerData } = require("worker_threads");
+        workerData.messagePort = null;             // drop the only ref
+        for (let i = 0; i < 10; i++) Bun.gc(true); // collect it inside the worker
+      \`, { eval: true, workerData: { messagePort: channel.port2 }, transferList: [channel.port2] });
+      worker.on("exit", () => {
+        channel.port1.on("message", () => {});     // attach only after the worker is gone
+      });
+    `);
+    expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
+  });
+
+  test.concurrent("a worker-side port collected before worker exit still releases the main listener", async () => {
+    // Cross-context: once the worker-side port is collected, the worker's
+    // teardown has nothing left to close, so collection itself must release
+    // the listening peer (node delivers this close at worker exit).
+    const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
+      const { Worker, MessageChannel } = require("node:worker_threads");
+      const channel = new MessageChannel();
+      new Worker(\`
+        const { workerData } = require("worker_threads");
+        workerData.messagePort.postMessage("Meow");
+        workerData.messagePort = null;              // drop the only ref
+        for (let i = 0; i < 10; i++) Bun.gc(true);  // collect it before the worker exits
+      \`, { eval: true, workerData: { messagePort: channel.port2 }, transferList: [channel.port2] });
+      channel.port1.on("message", () => {});
+    `);
+    expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
+  });
+
   test.concurrent("onmessageerror alone does not keep the process alive", async () => {
     const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
       const { MessageChannel } = require("node:worker_threads");

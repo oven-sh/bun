@@ -54,6 +54,15 @@ pub fn emit(global: &JSGlobalObject, lvl: i32) {
     };
     // SAFETY: FFI; `global` is the live per-thread global.
     unsafe { Process__emitMemoryPressureEvent(core::ptr::from_ref(global).cast_mut(), lvl) };
+
+    // Actually give memory back. Emitting the event only *tells* JS about the pressure; the
+    // listeners that just ran may have dropped a cache, and nothing was handing those pages
+    // to the OS. Sweep this thread's heaps now, and ask the GC heuristic to look at the heap
+    // at the next park -- by then the listeners' microtasks have drained, so what they freed
+    // is collectable and the following sweep can return it.
+    bun_alloc::mimalloc::mi_on_thread_idle();
+    // SAFETY: JS thread (this runs as a dispatched task); the VM is live.
+    unsafe { (*VirtualMachine::get().event_loop()).request_gc_hint() };
 }
 
 pub(crate) fn pressure_task(lvl: i32) -> Task {

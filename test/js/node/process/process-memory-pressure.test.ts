@@ -94,6 +94,31 @@ describe.concurrent("process.on('memoryPressure')", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("hands committed memory back to the OS, not just an event", async () => {
+    // Emitting the event used to be all that happened: listeners were told about the
+    // pressure and nothing gave the pages back. Free a large native buffer, then assert
+    // the pressure handler actually drops mimalloc's committed bytes.
+    const { stdout, exitCode } = await run(/* js */ `
+      const { emitMemoryPressure } = require("bun:internal-for-testing");
+      const { memoryUsage } = require("bun:jsc");
+      process.on("memoryPressure", () => {});
+
+      let hold = [];
+      for (let i = 0; i < 400; i++) hold.push(Buffer.allocUnsafe(256 * 1024));
+      const peak = memoryUsage().currentCommit;
+      hold = null;
+      Bun.gc(true);
+
+      emitMemoryPressure("critical");
+      await new Promise(r => setTimeout(r, 50));   // let the loop park so the sweep runs
+
+      const after = memoryUsage().currentCommit;
+      process.stdout.write(after < peak ? "returned" : "held " + peak + " -> " + after);
+    `);
+    expect(stdout).toBe("returned");
+    expect(exitCode).toBe(0);
+  });
+
   test("removing on exit does not crash", async () => {
     const { stdout, exitCode } = await run(/* js */ `
       const h = () => {};

@@ -4479,8 +4479,11 @@ impl<'a> Resolver<'a> {
                             // OHOS: ancestor directories like / or /storage/ may return
                             // EACCES/EPERM due to sandbox restrictions. Skip the unreadable
                             // ancestor and continue processing child directories.
-                            if err == crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                                || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)
+                            // Only on OHOS: on other platforms EACCES/EPERM on a directory
+                            // in the resolve path is a real error that should be reported.
+                            if cfg!(target_env = "ohos")
+                                && (err == crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                                    || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM))
                             {
                                 continue 'queue_walk;
                             }

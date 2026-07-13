@@ -22,3 +22,5 @@ bun_core.workspace = true
 bun_sys.workspace = true
 bun_boringssl_sys.workspace = true
 bun_cares_sys.workspace = true
+bssl-x509.workspace = true
+bssl-tls.workspace = true

@@ -22,13 +22,14 @@
  * build in parallel on separate machines then meet for linking.
  */
 
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { ar, cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
+import { boringssl } from "./deps/boringssl.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { assert } from "./error.ts";
@@ -38,9 +39,10 @@ import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, linkerMapPath, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
-import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
+import { computeDepLibs, depSourceStamp, resolveDep, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
+import { windowsSysrootIncludeDirs } from "./winsysroot.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Executable naming
@@ -223,12 +225,12 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       codegenInputs: codegen.rustInputs,
       codegenOrderOnly: codegen.rustOrderOnly,
       rustSources: sources.rust,
-      // lol-html is a direct path dep of `bun_runtime`/`bun_bundler`
-      // (`lol_html = { path = "vendor/lolhtml" }` in the workspace Cargo.toml),
-      // not built into a separate archive — cargo needs `vendor/lolhtml/` on
-      // disk before it resolves the manifest. The `.ref` stamp's content is
-      // the pinned commit, so a bump re-invokes cargo.
-      vendorStamps: depsByName.get("lolhtml")?.outputs ?? [],
+      // lol-html and bssl-sys/crypto/tls/x509 are direct path deps of the
+      // workspace (`path = "vendor/..."` in Cargo.toml), not built into
+      // separate archives — cargo needs those vendor dirs on disk before it
+      // resolves the manifest. The `.ref` stamp's content is the pinned
+      // commit, so a bump re-invokes cargo.
+      vendorStamps: [...(depsByName.get("lolhtml")?.outputs ?? []), depSourceStamp(cfg, "boringssl")],
     });
   }
 
@@ -392,6 +394,20 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   };
   for (const src of cSources) compileC(src);
 
+  // Generated C sources (bindgen's `--wrap-static-fns` trampolines for
+  // BoringSSL static-inline helpers). Compiled with warnings off: the
+  // functions have no prototypes by construction, and `-Werror` in bun's
+  // C flags would reject that.
+  for (const src of codegen.cSources) {
+    cObjects.push(
+      cc(n, cfg, src, {
+        flags: [...cFlagsFull, "-w"],
+        implicitInputs: depHeaderSignal,
+        orderOnlyInputs: codegenOrderOnly,
+      }),
+    );
+  }
+
   // Deps that contribute source files for bun to compile directly (via
   // provides.sources) instead of building a lib. Compile them here with
   // bun's full flag set and give each a phony so `--target <name>` builds
@@ -551,27 +567,33 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.comment("════════════════════════════════════════════════════════════════");
   n.blank();
 
-  // Only dep: lolhtml, fetched as a cargo path dependency. resolveDep
-  // emits its fetch; emitRust depends on the fetch stamp via vendorStamps.
+  // Vendor path-dep crates cargo resolves from disk: lolhtml, and
+  // vendor/boringssl/rust/bssl-* for the BoringSSL Rust stack. resolveDep
+  // emits their fetch edges; emitRust depends on the stamps via vendorStamps.
+  // fetchOnly: boringssl's DirectBuild cc/nasm edges are dead in this mode
+  // (no C compile) and would otherwise add a spurious nasm requirement on
+  // win-x64; only the fetch matters so bssl-sys's Cargo.toml exists.
   const lolhtmlDep = resolveDep(n, cfg, lolhtml, new Map());
   assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
+  const boringsslDep = resolveDep(n, cfg, boringssl, new Map(), { fetchOnly: true });
+  assert(boringsslDep !== null, "boringssl resolveDep returned null — should never be skipped");
 
   // Codegen: emitted fully, but only the embed-input subset is pulled.
-  // The cpp-related outputs (cppSources, bindgenV2Cpp) have no consumer
-  // in this graph — ninja skips them.
+  // The cpp-related outputs (cppSources, bindgenV2Cpp, cSources) have no
+  // consumer in this graph — ninja skips them.
   const codegen = emitCodegen(n, cfg, sources);
 
   const rustObjects = emitRust(n, cfg, {
     codegenInputs: codegen.rustInputs,
     codegenOrderOnly: codegen.rustOrderOnly,
     rustSources: sources.rust,
-    vendorStamps: lolhtmlDep.outputs,
+    vendorStamps: [...lolhtmlDep.outputs, depSourceStamp(cfg, "boringssl")],
   });
 
   n.phony("bun", rustObjects);
   n.default(["bun"]);
 
-  return { deps: [lolhtmlDep], codegen, rustObjects, objects: [] };
+  return { deps: [lolhtmlDep, boringsslDep], codegen, rustObjects, objects: [] };
 }
 
 /**
@@ -888,36 +910,6 @@ function emitWindowsResources(n: Ninja, cfg: Config): string {
   });
 
   return resFile;
-}
-
-/**
- * Include dirs inside an xwin-style Windows sysroot, for tools that don't
- * understand `/winsysroot` themselves (llvm-rc). Layout:
- *   <root>/VC/Tools/MSVC/<ver>/include
- *   <root>/Windows Kits/10/Include/<sdkver>/{ucrt,shared,um}
- * The SDK "Include" dir is title-case in a real VS/SDK copy and lowercase
- * in an xwin winsysroot-style splat — accept either.
- */
-function windowsSysrootIncludeDirs(winsysroot: string): string[] {
-  const dirs: string[] = [];
-  const msvcRoot = resolve(winsysroot, "VC", "Tools", "MSVC");
-  if (existsSync(msvcRoot)) {
-    for (const ver of readdirSync(msvcRoot)) {
-      const d = resolve(msvcRoot, ver, "include");
-      if (existsSync(d)) dirs.push(d);
-    }
-  }
-  const sdkRoot = resolve(winsysroot, "Windows Kits", "10");
-  const sdkInclude = ["Include", "include"].map(name => resolve(sdkRoot, name)).find(existsSync);
-  if (sdkInclude !== undefined) {
-    for (const ver of readdirSync(sdkInclude)) {
-      for (const sub of ["ucrt", "shared", "um"]) {
-        const d = resolve(sdkInclude, ver, sub);
-        if (existsSync(d)) dirs.push(d);
-      }
-    }
-  }
-  return dirs;
 }
 
 /**

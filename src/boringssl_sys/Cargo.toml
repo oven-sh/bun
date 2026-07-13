@@ -11,13 +11,5 @@ workspace = true
 
 [dependencies]
 bun_opaque.workspace = true
-strum.workspace = true
-bstr.workspace = true
-scopeguard.workspace = true
-const_format.workspace = true
-enum-map.workspace = true
-enumset.workspace = true
-libc.workspace = true
-bitflags.workspace = true
-bun_core.workspace = true
-
+bssl-sys.workspace = true
+bssl-crypto.workspace = true

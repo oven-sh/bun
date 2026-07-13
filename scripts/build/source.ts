@@ -706,6 +706,16 @@ export function resolveDep(
   cfg: Config,
   dep: Dependency,
   resolved: ReadonlyMap<string, ResolvedDep>,
+  opts?: {
+    /**
+     * Emit only the source-acquisition step (fetch/patch → `.ref` stamp) and
+     * skip the dep's build edges entirely. Used by rust-only mode for
+     * boringssl: cargo needs the `vendor/boringssl/rust/bssl-sys/Cargo.toml`
+     * on disk, but the DirectBuild cc/nasm edges are dead there and would add
+     * a spurious nasm requirement on win-x64.
+     */
+    fetchOnly?: boolean;
+  },
 ): ResolvedDep | null {
   if (dep.enabled && !dep.enabled(cfg)) {
     return null;
@@ -824,7 +834,10 @@ export function resolveDep(
   let objects: string[] = [];
   let outputs: string[];
 
-  if (buildSpec.kind === "nested-cmake") {
+  if (opts?.fetchOnly) {
+    libs = [];
+    outputs = [sourceStamp];
+  } else if (buildSpec.kind === "nested-cmake") {
     const result = emitNestedCmake(n, cfg, dep.name, buildSpec, {
       srcDir,
       sourceStamp,

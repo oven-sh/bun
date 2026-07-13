@@ -27,6 +27,7 @@ use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl_sys;
+use bun_boringssl_sys::BsslOpaqueExt as _;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::String as BunString;
 use bun_event_loop::AnyTask::AnyTask;

@@ -1,0 +1,26 @@
+Let bssl-sys build without a CMake BoringSSL build directory when Bun's own
+build.ts drives bindgen. When BUN_BSSL_SYS_NO_LINK is set the build script
+skips the wrapper_<target>.rs lookup and the rustc-link-lib directives
+(Bun's link step supplies the BoringSSL objects separately). The generated
+bindings are injected via `--cfg bindgen_rs_file` + env!("BINDGEN_RS_FILE"),
+which the upstream lib.rs already supports.
+
+--- a/rust/bssl-sys/build.rs
++++ b/rust/bssl-sys/build.rs
+@@ -95,6 +95,16 @@
+ }
+ 
+ fn main() {
++    // Bun drives bindgen from scripts/build and supplies the generated
++    // bindings via `--cfg bindgen_rs_file` + `BINDGEN_RS_FILE`; BoringSSL
++    // objects are linked in Bun's own link step. Skip the CMake-build-dir
++    // lookup and link directives so this crate builds without a CMake run.
++    println!("cargo:rerun-if-env-changed=BUN_BSSL_SYS_NO_LINK");
++    if env::var_os("BUN_BSSL_SYS_NO_LINK").is_some() {
++        println!("cargo:conf={}", OSSL_CONF_DEFINES.join(","));
++        return;
++    }
++
+     let bssl_build_dir = get_bssl_build_dir();
+     let bssl_sys_build_dir = bssl_build_dir.join("rust/bssl-sys");
+     let target = env::var("TARGET").unwrap();

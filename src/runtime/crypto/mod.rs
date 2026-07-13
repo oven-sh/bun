@@ -54,7 +54,7 @@ pub fn pbkdf2<'a>(
             if password.is_empty() {
                 core::ptr::null()
             } else {
-                password.as_ptr()
+                password.as_ptr().cast()
             },
             password.len(),
             salt.as_ptr(),

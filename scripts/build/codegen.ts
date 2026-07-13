@@ -34,7 +34,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
@@ -43,7 +43,10 @@ import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { generateJsonByteClass } from "./jsonByteClass.ts";
 import type { Ninja } from "./ninja.ts";
+import { rustTarget } from "./rust.ts";
 import { quote, quoteArgs } from "./shell.ts";
+import { depSourceDir, depSourceStamp } from "./source.ts";
+import { windowsSysrootIncludeDirs } from "./winsysroot.ts";
 
 // The individual emit functions take these four params. Bundled to keep
 // signatures short.
@@ -127,6 +130,35 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
     restat: true,
   });
 
+  // rust-bindgen over the BoringSSL headers. Emits a depfile (tracks every
+  // #included header) so bumping any openssl/*.h rebuilds on the next run.
+  // restat: bindgen output is deterministic, so a no-op header change prunes
+  // the downstream cargo rebuild. `--depfile` must precede the `--` clang-arg
+  // separator, hence two var slots. link-only mode never registers this (no
+  // codegen, no cargo) — cfg.bindgen is undefined there.
+  //
+  // LIBCLANG_PATH: bindgen loads libclang dynamically via clang-sys, which
+  // searches standard locations and then LIBCLANG_PATH. CI images install
+  // LLVM at /usr/lib/llvm-N (or a brew/xcode path on darwin) where the .so
+  // is not on the default search path, so point it at <llvm-root>/lib next
+  // to the discovered clang binary. hostCc (not cc) because a windows
+  // cross-compile from unix has cc=clang-cl but bindgen runs on the host.
+  // realpath first: findTool() may return a PATH symlink (e.g. /usr/bin/clang
+  // -> /usr/lib/llvm-21/bin/clang), and the ../lib computation only works
+  // from the real install root.
+  if (cfg.bindgen !== undefined) {
+    const libclangDir = resolve(dirname(realpathSync(cfg.hostCc)), "..", "lib");
+    const envPrefix = hostWin ? `cmd /c "set LIBCLANG_PATH=${libclangDir}&& ` : `LIBCLANG_PATH=${q(libclangDir)} `;
+    const suffix = hostWin ? `"` : "";
+    n.rule("bssl_bindgen", {
+      command: `${envPrefix}${q(cfg.bindgen)} $bindgen_args --depfile $out.d -- $clang_args${suffix}`,
+      description: "bindgen $desc",
+      depfile: "$out.d",
+      deps: "gcc",
+      restat: true,
+    });
+  }
+
   // esbuild invocations. No restat — esbuild always touches outputs.
   // No pool — esbuild is fast and single-threaded per bundle.
   n.rule("esbuild", {
@@ -204,6 +236,12 @@ export interface CodegenOutputs {
   cppSources: string[];
 
   /**
+   * Generated .c files compiled with bun's C flags but warnings suppressed
+   * (bindgen's `--wrap-static-fns` trampolines have no prototypes).
+   */
+  cSources: string[];
+
+  /**
    * Generated headers that are #included by hand-written .cpp files.
    * The PCH order-depends on all of these, and cxx waits on PCH — so
    * they're guaranteed to exist before any compile. Depfile tracking
@@ -258,6 +296,7 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
     rustInputs: [],
     rustOrderOnly: [],
     cppSources: [],
+    cSources: [],
     cppHeaders: [],
     cppAll: [],
     bindgenV2Cpp: [],
@@ -280,6 +319,7 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   o.rustInputs.push(jsonByteClass.rs);
   o.cppHeaders.push(jsonByteClass.h);
 
+  emitBoringsslBindgen(ctx);
   emitBunError(ctx);
   emitStringMaps(ctx);
   emitFallbackDecoder(ctx);
@@ -370,6 +410,117 @@ function shJoin(cfg: Config, args: string[]): string {
 // ───────────────────────────────────────────────────────────────────────────
 // Individual step emitters
 // ───────────────────────────────────────────────────────────────────────────
+
+/** Path to the bindgen-generated bssl-sys bindings, for `BINDGEN_RS_FILE`. */
+export function boringsslBindgenRs(cfg: Config): string {
+  return resolve(cfg.codegenDir, "boringssl_bindgen.rs");
+}
+
+/**
+ * Extra clang args bindgen needs when the rust target is not the host:
+ * libclang composes system include paths from `--target` alone, so a
+ * cross-compile finds no `<stdlib.h>` unless the target's libc headers are
+ * supplied. The C/C++ side already has these sysroots resolved on `cfg`;
+ * forward them here. bindgen parses C (not C++), so only the libc dirs are
+ * needed, not libc++.
+ */
+function bindgenCrossSysrootArgs(cfg: Config): string[] {
+  if (cfg.windows && cfg.winsysroot !== undefined) {
+    // clang (not clang-cl) has no `/winsysroot`; spell out the UCRT + SDK +
+    // MSVC include dirs the flag would expand to. Same dynamic enumeration
+    // llvm-rc uses (winsysroot.ts) so a user-provisioned sysroot at a
+    // different SDK/CRT version still resolves.
+    return [
+      ...windowsSysrootIncludeDirs(cfg.winsysroot).flatMap(d => ["-isystem", d]),
+      // MSVC headers are written for MSVC's lax preprocessor.
+      "-fms-compatibility",
+      "-fms-extensions",
+    ];
+  }
+  if (cfg.darwin && cfg.osxSysroot !== undefined) {
+    return ["-isysroot", cfg.osxSysroot];
+  }
+  if (cfg.abi === "android" && cfg.sysroot !== undefined) {
+    // NDK bionic headers live under per-arch subdirs that --sysroot alone
+    // does not pick up; mirror the -nostdlibinc layout from flags.ts.
+    return [
+      `--sysroot=${cfg.sysroot}`,
+      "-isystem",
+      resolve(cfg.sysroot, "usr", "include", cfg.arm64 ? "aarch64-linux-android" : "x86_64-linux-android"),
+      "-isystem",
+      resolve(cfg.sysroot, "usr", "include"),
+    ];
+  }
+  if (cfg.sysroot !== undefined) {
+    // FreeBSD / musl: --sysroot is enough for the C headers.
+    return [`--sysroot=${cfg.sysroot}`];
+  }
+  return [];
+}
+
+/**
+ * Run rust-bindgen over the in-tree `vendor/boringssl` headers to produce
+ * the FFI surface that the upstream `bssl-sys` crate `include!`s (see
+ * `vendor/boringssl/rust/bssl-sys/src/lib.rs`'s `cfg(bindgen_rs_file)` arm).
+ *
+ * Flags mirror upstream `vendor/boringssl/rust/bssl-sys/CMakeLists.txt`:
+ * same allowlist regex, `--wrap-static-fns` for the typed `sk_<TYPE>_*`
+ * helpers that `bssl-tls`/`bssl-x509` need, `--default-macro-constant-type
+ * signed` so `#define` constants land as `c_int`. The `wrapper.c` it emits
+ * is compiled alongside bun's other C sources so the `*__extern` trampoline
+ * symbols are present at final link.
+ */
+function emitBoringsslBindgen({ n, cfg, o, dirStamp }: Ctx): void {
+  assert(cfg.bindgen !== undefined, "bindgen tool not resolved; install with: cargo install bindgen-cli");
+  const srcDir = depSourceDir(cfg, "boringssl");
+  const wrapperH = resolve(srcDir, "rust", "bssl-sys", "wrapper.h");
+  const include = resolve(srcDir, "include");
+  const ref = depSourceStamp(cfg, "boringssl");
+
+  const outRs = boringsslBindgenRs(cfg);
+  const outC = resolve(cfg.codegenDir, "boringssl_wrapper.c");
+
+  n.build({
+    outputs: [outRs],
+    implicitOutputs: [outC],
+    rule: "bssl_bindgen",
+    // wrapper.h is NOT a declared input: it's a side effect of the boringssl
+    // fetch (tarball extract), not a declared ninja output, so listing it
+    // would be "missing and no known rule to make it" on a clean tree. The
+    // .ref stamp orders this after fetch+patch and re-fires on a commit bump
+    // or patch edit; bindgen's depfile tracks wrapper.h and every transitive
+    // openssl/*.h from the second build onwards.
+    inputs: [],
+    implicitInputs: [ref],
+    orderOnlyInputs: [dirStamp],
+    vars: {
+      desc: "boringssl_bindgen.rs",
+      bindgen_args: shJoin(cfg, [
+        wrapperH,
+        "-o",
+        outRs,
+        "--no-derive-default",
+        "--enable-function-attribute-detection",
+        "--use-core",
+        "--default-macro-constant-type",
+        "signed",
+        "--rustified-enum",
+        "point_conversion_form_t",
+        "--allowlist-file",
+        ".*[/\\\\]include[/\\\\]openssl[/\\\\].*\\.h",
+        "--experimental",
+        "--wrap-static-fns",
+        "--wrap-static-fns-path",
+        outC,
+      ]),
+      clang_args: shJoin(cfg, [`-I${include}`, `--target=${rustTarget(cfg)}`, ...bindgenCrossSysrootArgs(cfg)]),
+    },
+  });
+
+  o.all.push(outRs, outC);
+  o.rustInputs.push(outRs);
+  o.cSources.push(outC);
+}
 
 function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const sourceDir = resolve(cfg.cwd, "packages", "bun-error");

@@ -36,6 +36,12 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  // Let rust/bssl-sys build without a CMake run: Bun's codegen step runs
+  // bindgen itself and the Rust side reads the output via BINDGEN_RS_FILE,
+  // while BoringSSL objects come from this DirectBuild. See
+  // scripts/build/codegen.ts (emitBoringsslBindgen) and rust.ts.
+  patches: ["patches/boringssl/bssl-sys-bun-build.patch"],
+
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
     // uses gas .S that clang assembles.

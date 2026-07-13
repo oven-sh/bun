@@ -630,8 +630,10 @@ export function findBindgen(cargo: string | undefined, cargoHome: string | undef
   if (cargoHome !== undefined) paths.push(join(cargoHome, "bin"));
   const found = findTool({ names: ["bindgen"], paths, required: false });
   if (found !== undefined) {
+    // `bindgen --version` prints exactly `bindgen X.Y.Z\n`; exact match so a
+    // hypothetical 0.72.10 doesn't satisfy a 0.72.1 pin via substring.
     const ver = spawnSync(found.path, ["--version"], { encoding: "utf8" });
-    if (ver.status === 0 && ver.stdout.includes(BINDGEN_VERSION)) return found.path;
+    if (ver.status === 0 && ver.stdout.trim() === `bindgen ${BINDGEN_VERSION}`) return found.path;
     console.log(`bindgen found (${ver.stdout.trim()}) but version ${BINDGEN_VERSION} required; reinstalling`);
   }
 

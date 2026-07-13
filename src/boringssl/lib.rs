@@ -3,8 +3,8 @@ use core::ffi::{c_int, c_void};
 use core::ptr;
 use std::cell::Cell;
 
-pub use bun_boringssl_sys as boring;
 use boring::{BsslSslExt as _, BsslX509Ext as _};
+pub use bun_boringssl_sys as boring;
 use bun_cares_sys as c_ares;
 use bun_core::strings;
 

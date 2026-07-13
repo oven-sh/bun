@@ -429,6 +429,31 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const result = await checkSameOutput("test_threadsafe_function_abort_blocked_producers", []);
       expect(result).toContain("finalized: true");
     });
+
+    // An addon's own threads outlive the worker that created the threadsafe
+    // function (next-swc's tokio pool does this): the last call and the last
+    // release land after the worker's VM, and its event loop, are gone.
+    // MIMALLOC_PURGE_DELAY=0 makes a stale event-loop pointer fault instead of
+    // reading recycled memory that still happens to look intact.
+    it("survives the last call and release after the creating worker is gone", async () => {
+      const proc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/tsfn-orphan.js")],
+        env: { ...bunEnv, MIMALLOC_PURGE_DELAY: "0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      // Matches Node >= 24.14 / 25.4, whose teardown likewise keeps a
+      // threadsafe function alive while other threads still hold references:
+      // the finalizer of both threadsafe functions runs at worker teardown, a
+      // later call reports napi_closing (16), a later release napi_ok (0).
+      expect(stdout).toBe("worker exited with 0\nfinalized=2 call=16 release=0\ndone\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("exception handling", () => {

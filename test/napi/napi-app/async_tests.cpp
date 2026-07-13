@@ -1,8 +1,10 @@
 #include "async_tests.h"
 
 #include "utils.h"
+#include <atomic>
 #include <cassert>
 #include <chrono>
+#include <mutex>
 #include <thread>
 
 namespace napitests {
@@ -322,6 +324,96 @@ napi_value test_cancel_async_work(const Napi::CallbackInfo &info) {
   return result;
 }
 
+// An addon whose native threads are process-global (like next-swc's tokio
+// pool) can outlive the worker env that created a threadsafe function: the
+// worker unrefs the tsfn so its event loop can exit, and the addon makes its
+// last calls from one of its own threads afterwards.
+struct OrphanedTsfns {
+  std::mutex mutex;
+  std::atomic<int> finalized{0};
+  napi_threadsafe_function to_release = nullptr;
+  napi_threadsafe_function to_call = nullptr;
+};
+
+// Process-global, shared by every env in the process, like a dlopen'd addon's
+// statics.
+static OrphanedTsfns orphaned_tsfns;
+
+static void orphaned_tsfn_finalize(napi_env env, void *data, void *hint) {
+  orphaned_tsfns.finalized.fetch_add(1);
+}
+
+static napi_status create_orphaned_tsfn(napi_env env, napi_value js_callback,
+                                        napi_threadsafe_function *result) {
+  napi_value name;
+  NODE_API_CALL_CUSTOM_RETURN(
+      env, napi_generic_failure,
+      napi_create_string_utf8(env, "napitests::orphaned_tsfn", NAPI_AUTO_LENGTH,
+                              &name));
+  NODE_API_CALL_CUSTOM_RETURN(
+      env, napi_generic_failure,
+      napi_create_threadsafe_function(env, js_callback, nullptr, name,
+                                      // max_queue_size, initial_thread_count
+                                      0, 1,
+                                      // thread_finalize_data,
+                                      // thread_finalize_cb
+                                      nullptr, orphaned_tsfn_finalize,
+                                      // context, call_js_cb
+                                      nullptr, nullptr, result));
+  // Unreferenced: the worker's event loop exits while the addon still holds a
+  // thread_count reference.
+  NODE_API_CALL_CUSTOM_RETURN(env, napi_generic_failure,
+                              napi_unref_threadsafe_function(env, *result));
+  return napi_ok;
+}
+
+// Called on a worker thread.
+napi_value
+create_orphaned_threadsafe_functions(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_threadsafe_function to_release = nullptr;
+  napi_threadsafe_function to_call = nullptr;
+  NODE_API_CALL(env, create_orphaned_tsfn(env, info[0], &to_release));
+  NODE_API_CALL(env, create_orphaned_tsfn(env, info[1], &to_call));
+
+  std::lock_guard<std::mutex> guard(orphaned_tsfns.mutex);
+  orphaned_tsfns.to_release = to_release;
+  orphaned_tsfns.to_call = to_call;
+  return info.Env().Undefined();
+}
+
+// Called once the worker that created them is gone. Both N-API calls run on an
+// addon-owned thread, never on a JS thread.
+napi_value use_orphaned_threadsafe_functions(const Napi::CallbackInfo &info) {
+  napi_threadsafe_function to_release, to_call;
+  {
+    std::lock_guard<std::mutex> guard(orphaned_tsfns.mutex);
+    to_release = orphaned_tsfns.to_release;
+    to_call = orphaned_tsfns.to_call;
+    orphaned_tsfns.to_release = nullptr;
+    orphaned_tsfns.to_call = nullptr;
+  }
+
+  napi_status call_status = napi_ok;
+  napi_status release_status = napi_ok;
+  std::thread addon_thread([&] {
+    // A call once the env is gone returns napi_closing and consumes this
+    // thread's reference (the docs forbid using the tsfn afterwards).
+    call_status =
+        napi_call_threadsafe_function(to_call, nullptr, napi_tsfn_nonblocking);
+    // The last release of the other one: nothing may touch the dead loop.
+    release_status =
+        napi_release_threadsafe_function(to_release, napi_tsfn_release);
+  });
+  addon_thread.join();
+
+  char buf[128];
+  snprintf(buf, sizeof(buf), "finalized=%d call=%d release=%d",
+           orphaned_tsfns.finalized.load(), static_cast<int>(call_status),
+           static_cast<int>(release_status));
+  return Napi::String::New(info.Env(), buf);
+}
+
 void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_promise);
   REGISTER_FUNCTION(env, exports, create_promise_with_napi_cpp);
@@ -329,6 +421,8 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_async_work_with_null_execute);
   REGISTER_FUNCTION(env, exports, create_async_work_with_null_complete);
   REGISTER_FUNCTION(env, exports, test_cancel_async_work);
+  REGISTER_FUNCTION(env, exports, create_orphaned_threadsafe_functions);
+  REGISTER_FUNCTION(env, exports, use_orphaned_threadsafe_functions);
 }
 
 } // namespace napitests

@@ -165,6 +165,10 @@ pub struct PooledSocket<const SSL: bool> {
     pub hostname_buf: [u8; MAX_KEEPALIVE_HOSTNAME],
     pub hostname_len: u8,
     pub port: u16,
+    /// AF_UNIX connection. `hostname_buf` holds the socket path, `port` is 0.
+    /// Keeps TCP and unix pool entries from colliding even when the path
+    /// happens to equal some hostname string.
+    pub is_unix: bool,
     /// If you set `rejectUnauthorized` to `false`, the connection fails to verify,
     pub did_have_handshaking_error_while_reject_unauthorized_is_false: bool,
     /// True if the TLS handshake for this socket ran with
@@ -592,6 +596,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         target_port: u16,
         proxy_auth_hash: u64,
         h2_session: Option<NonNull<h2::ClientSession>>,
+        unix_path: &[u8],
     ) {
         // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
@@ -600,8 +605,15 @@ impl<const SSL: bool> HTTPContext<SSL> {
             debug_assert!(!socket.is_shutdown());
             debug_assert!(socket.is_established());
         }
+        let is_unix = !unix_path.is_empty();
+        // Unix sockets key on the path (stored in hostname_buf) with port 0.
+        let (hostname, port) = if is_unix {
+            (unix_path, 0)
+        } else {
+            (hostname, port)
+        };
         debug_assert!(!hostname.is_empty());
-        debug_assert!(port > 0);
+        debug_assert!(is_unix || port > 0);
 
         if hostname.len() <= MAX_KEEPALIVE_HOSTNAME
             && !(socket.is_closed() || socket.is_shutdown() || socket.get_error() != 0)
@@ -637,6 +649,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     hostname_buf,
                     hostname_len: hostname.len() as u8, // @truncate
                     port,
+                    is_unix,
                     did_have_handshaking_error_while_reject_unauthorized_is_false,
                     established_with_reject_unauthorized,
                     // Clone a strong ref for the keepalive pool; the caller retains
@@ -698,6 +711,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         target_port: u16,
         proxy_auth_hash: u64,
         want_h2: AlpnOffer,
+        is_unix: bool,
     ) -> Option<ExistingSocket<SSL>> {
         if hostname.len() > MAX_KEEPALIVE_HOSTNAME {
             return None;
@@ -710,6 +724,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 .pending_sockets
                 .at(u16::try_from(pending_socket_index).expect("int cast"));
             let socket = pooled_socket_mut(socket_ptr);
+            if socket.is_unix != is_unix {
+                continue;
+            }
             if socket.port != port {
                 continue;
             }
@@ -841,6 +858,44 @@ impl<const SSL: bool> HTTPContext<SSL> {
             .http_proxy
             .clone()
             .unwrap_or_else(|| client.url.clone());
+
+        if client.is_keep_alive_possible() {
+            // Match the proxy_auth_hash the completion path stores: for direct TLS
+            // it hashes the Host-header override (see release_socket call site).
+            let proxy_auth_hash = if SSL { client.proxy_auth_hash() } else { 0 };
+            if let Some(found) = self.existing_socket(
+                client.flags.reject_unauthorized,
+                socket_path,
+                0,
+                SSLConfig::raw_ptr(client.tls_props.as_ref()),
+                false,
+                b"",
+                0,
+                proxy_auth_hash,
+                AlpnOffer::H1,
+                true,
+            ) {
+                let sock = found.socket;
+                debug_assert!(found.tunnel.is_none());
+                debug_assert!(found.h2_session.is_none());
+                Self::set_socket_ext(
+                    sock,
+                    ActiveSocket::<SSL>::init(
+                        client
+                            .as_erased_ptr()
+                            .as_ptr()
+                            .cast::<HTTPClient<'static>>(),
+                    ),
+                );
+                client.allow_retry = true;
+                client.on_open::<SSL>(sock)?;
+                if SSL {
+                    client.first_call::<SSL>(sock);
+                }
+                return Ok(Some(sock));
+            }
+        }
+
         let socket = HTTPSocket::<SSL>::connect_unix_group(
             &mut self.group,
             Self::KIND,
@@ -966,6 +1021,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 } else {
                     AlpnOffer::H1
                 },
+                false,
             ) {
                 let sock = found.socket;
                 Self::set_socket_ext(

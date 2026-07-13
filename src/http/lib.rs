@@ -2185,10 +2185,6 @@ impl<'a> HTTPClient<'a> {
 
     pub fn is_keep_alive_possible(&self) -> bool {
         if FeatureFlags::ENABLE_KEEPALIVE {
-            // TODO keepalive for unix sockets
-            if self.unix_socket_path.slice().len() > 0 {
-                return false;
-            }
             // A peer accepted by a per-request JS `checkServerIdentity` callback must
             // not enter or leave the shared pool (same exclusion as `can_offer_h2`).
             if self.signals.get(signals::Field::CertErrors) {
@@ -2576,13 +2572,6 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
-        // There is no struct copy-back
-        // (`sync_progress_from` skips owned fields) and the original retains
-        // its own `Owned(Vec)` aliasing the same allocation (the HTTP-thread
-        // clone was created via `ptr::read`). Dropping it here would
-        // double-free when the original later runs `clear_data()`. Forget the
-        // clone's view; the original is the sole owner.
-        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         // TODO: what we do with stream body?
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
@@ -2646,10 +2635,18 @@ impl<'a> HTTPClient<'a> {
                 0,
                 0,
                 None,
+                self.unix_socket_path.slice(),
             );
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
         }
+        // There is no struct copy-back
+        // (`sync_progress_from` skips owned fields) and the original retains
+        // its own `Owned(Vec)` aliasing the same allocation (the HTTP-thread
+        // clone was created via `ptr::read`). Dropping it here would
+        // double-free when the original later runs `clear_data()`. Forget the
+        // clone's view; the original is the sole owner.
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         self.connected_url = URL::default();
         // connected_url was the last borrower of the previous hop's URL buffer
         // (handleResponseMetadata already repointed this.url at the new one).
@@ -4335,6 +4332,7 @@ impl<'a> HTTPClient<'a> {
                         0
                     },
                     None,
+                    self.unix_socket_path.slice(),
                 );
             } else {
                 if self.proxy_tunnel.is_some() {
@@ -4573,6 +4571,7 @@ impl<'a> HTTPClient<'a> {
             0,
             0,
             None,
+            b"",
         );
 
         self.state.reset();

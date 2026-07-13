@@ -957,6 +957,7 @@ impl ClientSession {
                 0,
                 self.host_header_hash,
                 Some(self_ptr),
+                b"",
             );
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);

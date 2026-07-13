@@ -23,9 +23,21 @@ test("HTTPResponseSink is destroyed after a sync pull() that ends later", async 
   const { before, after, delta, iterations } = JSON.parse(stdout);
   console.log({ before, after, delta, iterations, perRequest: (delta / iterations).toFixed(1) });
 
+<<<<<<< HEAD
   // currentCommit tracks mimalloc's committed bytes (JSC's heap included on
   // mimalloc builds; the equal-workload warmup cancels its steady state).
   // Leak before the fix: ~4 MB release, ~10 MB debug/ASAN; allow 3 MB slack.
   expect(delta).toBeLessThan(3 * 1024 * 1024);
+||||||| parent of 305d4f2f3f (mimalloc: fix a use-after-free in the idle sweep, and stop double-counting committed)
+  // currentCommit tracks mimalloc's committed bytes, independent of the JS
+  // heap. Before the fix each request leaked the sink + buffer: ~4 MB
+  // (release) to ~10 MB (debug/ASAN) over 10k requests; allow 3 MB of slack.
+  expect(delta).toBeLessThan(3 * 1024 * 1024);
+=======
+  // currentCommit tracks mimalloc's committed bytes, independent of the JS
+  // heap. Before the fix each request leaked the sink + buffer: ~4 MB
+  // (release) to ~10 MB (debug/ASAN) over 10k requests; allow 2 MB of slack.
+  expect(delta).toBeLessThan(2 * 1024 * 1024);
+>>>>>>> 305d4f2f3f (mimalloc: fix a use-after-free in the idle sweep, and stop double-counting committed)
   expect(exitCode).toBe(0);
 }, 120_000);

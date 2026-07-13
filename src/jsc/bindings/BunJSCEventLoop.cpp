@@ -72,9 +72,9 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             vm->didEnterVM = false;
 
 #if USE(MIMALLOC)
-            // Collect retired pages, discard free-block holes in still-used pages,
-            // and drain the arena purge queue. Shares the release-access throttle
-            // above so steady-idle parks stay free of per-park work.
+            // Collect retired pages, discard the free-block holes inside still-used
+            // pages, and hand the arena purge to mimalloc's scavenger.
+            //
             mi_on_thread_idle();
 #endif
         }

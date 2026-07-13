@@ -902,6 +902,10 @@ impl ThreadPool {
                     self.stats.sleeps.fetch_add(1, Ordering::Relaxed);
                 }
 
+                // Only the owning thread may sweep its own mimalloc heaps, so a worker's
+                // park is the one place its freed memory can go back.
+                bun_alloc::mimalloc::mi_on_thread_idle();
+
                 self.idle_event.wait();
                 sync = self.sync.load(Ordering::Relaxed);
             }

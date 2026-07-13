@@ -991,7 +991,7 @@ _set_remove() {
 _bun_add_param_package_completion() {
 
     IFS=$'\n' inexact=($(history -n bun | grep -E "^bun add " | cut -c 9- | uniq))
-    IFS=$'\n' exact=($($inexact | grep -E "^$words[$CURRENT]"))
+    IFS=$'\n' exact=($(print -l -- $inexact | grep -E "^$words[$CURRENT]"))
     IFS=$'\n' packages=($(SHELL=zsh bun getcompletes a $words[$CURRENT]))
 
     to_print=$inexact

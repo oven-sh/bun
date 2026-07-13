@@ -4673,6 +4673,14 @@ class ServerHttp2Session extends Http2Session {
         if (typeof socket.destroySoon === "function") socket.destroySoon();
         else socket.destroy();
       } else {
+        // Node's finishSessionClose: "If we're gracefully closing the socket,
+        // call resume() so we can detect the peer closing in case
+        // binding.Http2Session is already gone." Without a reader, unread
+        // inbound bytes (a late GOAWAY from the peer) turn the close into an
+        // RST, which the peer surfaces as read ECONNRESET (routine on Windows
+        // loopback - the same reason Node delays the error-path destroy).
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
+        socket.resume();
         socket.end();
       }
     }
@@ -5633,6 +5641,11 @@ class ClientHttp2Session extends Http2Session {
         if (typeof socket.destroySoon === "function") socket.destroySoon();
         else socket.destroy();
       } else {
+        // See the client session's destroy: Node's finishSessionClose resumes
+        // the socket on a graceful close so unread inbound bytes cannot turn
+        // the FIN teardown into an RST.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
+        socket.resume();
         socket.end();
       }
     }

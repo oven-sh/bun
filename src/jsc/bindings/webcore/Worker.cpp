@@ -281,6 +281,9 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 template<typename Dispatch>
 static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
     size_t limit;
     Deque<MessageWithMessagePorts> batch;
     {
@@ -295,6 +298,13 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
 
     while (true) {
         while (!batch.isEmpty()) {
+            // entanglePorts / MessageEvent::create / dispatch all enter JS; any
+            // of them can fire the termination trap. Bail before the next one
+            // runs with an exception already pending or the trap still armed.
+            if (scope.exception() || vm.hasTerminationRequest()) [[unlikely]] {
+                scope.clearException();
+                return false;
+            }
             if (limit-- == 0) {
                 // Yield to the rest of the event loop. Return the undrained
                 // tail to the front of the inbox so it stays ahead of
@@ -538,9 +548,11 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     // A TerminatedExecutionError can be live on entry (this runs after the
     // worker's termination trap fired); drop it so the serializer is never
-    // entered with a pending exception.
+    // entered with a pending exception, and bail outright if the trap is
+    // still armed since serialization would just re-raise it on the first
+    // property read.
     CLEAR_IF_EXCEPTION(scope);
-    if (vm.hasPendingTerminationException())
+    if (vm.hasTerminationRequest())
         return false;
 
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
@@ -707,7 +719,7 @@ extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
     // path scope.exception() is null and this is a no-op.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     CLEAR_IF_EXCEPTION(scope);
-    if (vm.hasPendingTerminationException())
+    if (vm.hasTerminationRequest())
         return;
     JSC::MarkedArgumentBuffer args;
     JSC::call(globalObject, hook, args, "entryEvaluated hook"_s);
@@ -729,6 +741,13 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 {
     JSValue error = JSC::JSValue::decode(errorValue);
     WTF::String messageStr = message->transferToWTFString();
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    CLEAR_IF_EXCEPTION(scope);
+    if (vm.hasTerminationRequest())
+        return worker->dispatchErrorWithMessage(WTF::move(messageStr));
+
     ErrorEvent::Init init;
     init.message = messageStr.isolatedCopy();
     init.error = error;
@@ -736,6 +755,7 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.bubbles = false;
 
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    CLEAR_IF_EXCEPTION(scope);
     switch (worker->options().kind) {
     case WorkerOptions::Kind::Web:
         return worker->dispatchErrorWithMessage(WTF::move(messageStr));

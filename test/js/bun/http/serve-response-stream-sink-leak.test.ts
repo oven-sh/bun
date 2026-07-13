@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isMacOS } from "harness";
 import { join } from "node:path";
 
 // Regression: doRenderStream allocates a ResponseStream.JSSink on the heap
@@ -23,9 +23,9 @@ test("HTTPResponseSink is destroyed after a sync pull() that ends later", async 
   const { before, after, delta, iterations } = JSON.parse(stdout);
   console.log({ before, after, delta, iterations, perRequest: (delta / iterations).toFixed(1) });
 
-  // currentCommit tracks mimalloc's committed bytes (JSC's heap included on
-  // mimalloc builds; the equal-workload warmup cancels its steady state).
-  // Leak before the fix: ~4 MB release, ~10 MB debug/ASAN; allow 2 MB slack.
-  expect(delta).toBeLessThan(2 * 1024 * 1024);
+  // currentCommit tracks mimalloc's committed bytes. Leak before the fix: ~4 MB
+  // release, ~10 MB debug/ASAN over 10k requests. macOS REUSABLE purges never
+  // decrement the stat, so transient commits ratchet it: 3 MB slack there.
+  expect(delta).toBeLessThan((isMacOS ? 3 : 2) * 1024 * 1024);
   expect(exitCode).toBe(0);
 }, 120_000);

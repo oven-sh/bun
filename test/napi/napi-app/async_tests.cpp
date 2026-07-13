@@ -333,6 +333,9 @@ struct OrphanedTsfns {
   std::atomic<int> finalized{0};
   napi_threadsafe_function to_release = nullptr;
   napi_threadsafe_function to_call = nullptr;
+  // Called and then released, on the same handle: what node-addon-api's
+  // ThreadSafeFunction wrapper does when a call reports napi_closing.
+  napi_threadsafe_function to_call_then_release = nullptr;
 };
 
 // Process-global, shared by every env in the process, like a dlopen'd addon's
@@ -373,32 +376,33 @@ create_orphaned_threadsafe_functions(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_threadsafe_function to_release = nullptr;
   napi_threadsafe_function to_call = nullptr;
+  napi_threadsafe_function to_call_then_release = nullptr;
   NODE_API_CALL(env, create_orphaned_tsfn(env, info[0], &to_release));
   NODE_API_CALL(env, create_orphaned_tsfn(env, info[1], &to_call));
+  NODE_API_CALL(env, create_orphaned_tsfn(env, info[2], &to_call_then_release));
 
   std::lock_guard<std::mutex> guard(orphaned_tsfns.mutex);
   orphaned_tsfns.to_release = to_release;
   orphaned_tsfns.to_call = to_call;
+  orphaned_tsfns.to_call_then_release = to_call_then_release;
   return info.Env().Undefined();
 }
 
-// Called once the worker that created them is gone. Both N-API calls run on an
-// addon-owned thread, never on a JS thread.
+// Called once the worker that created them is gone. Every N-API call runs on an
+// addon-owned thread, never on a JS thread. The lock is held for the whole
+// function so nothing else can hand these handles out while they are in use.
 napi_value use_orphaned_threadsafe_functions(const Napi::CallbackInfo &info) {
-  napi_threadsafe_function to_release, to_call;
-  {
-    std::lock_guard<std::mutex> guard(orphaned_tsfns.mutex);
-    to_release = orphaned_tsfns.to_release;
-    to_call = orphaned_tsfns.to_call;
-    orphaned_tsfns.to_release = nullptr;
-    orphaned_tsfns.to_call = nullptr;
-  }
+  std::lock_guard<std::mutex> guard(orphaned_tsfns.mutex);
+  napi_threadsafe_function to_release = orphaned_tsfns.to_release;
+  napi_threadsafe_function to_call = orphaned_tsfns.to_call;
+  orphaned_tsfns.to_release = nullptr;
+  orphaned_tsfns.to_call = nullptr;
 
   napi_status call_status = napi_ok;
   napi_status release_status = napi_ok;
   std::thread addon_thread([&] {
     // A call once the env is gone returns napi_closing and consumes this
-    // thread's reference (the docs forbid using the tsfn afterwards).
+    // thread's reference.
     call_status =
         napi_call_threadsafe_function(to_call, nullptr, napi_tsfn_nonblocking);
     // The last release of the other one: nothing may touch the dead loop.
@@ -414,6 +418,89 @@ napi_value use_orphaned_threadsafe_functions(const Napi::CallbackInfo &info) {
   return Napi::String::New(info.Env(), buf);
 }
 
+// What node-addon-api's ThreadSafeFunction wrapper (and most worker-pool
+// addons) do: call, and release the same handle afterwards. The call reports
+// napi_closing and consumes this thread's reference, so the release reports
+// napi_invalid_arg -- but the call must not have freed the threadsafe function
+// under us. Node deletes it inside the call and aborts on the release, so this
+// is deliberately not compared against node.
+napi_value
+call_then_release_orphaned_threadsafe_function(const Napi::CallbackInfo &info) {
+  std::lock_guard<std::mutex> guard(orphaned_tsfns.mutex);
+  napi_threadsafe_function tsfn = orphaned_tsfns.to_call_then_release;
+  orphaned_tsfns.to_call_then_release = nullptr;
+
+  napi_status call_status = napi_ok;
+  napi_status release_status = napi_ok;
+  std::thread addon_thread([&] {
+    call_status =
+        napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_nonblocking);
+    release_status =
+        napi_release_threadsafe_function(tsfn, napi_tsfn_release);
+  });
+  addon_thread.join();
+
+  char buf[128];
+  snprintf(buf, sizeof(buf), "call=%d release=%d",
+           static_cast<int>(call_status), static_cast<int>(release_status));
+  return Napi::String::New(info.Env(), buf);
+}
+
+static void late_tsfn_call_js(napi_env env, napi_value js_callback,
+                              void *context, void *data) {}
+
+// Runs from env cleanup, after the env has torn its threadsafe functions down:
+// there is no event loop left to schedule onto, so creating one must fail
+// instead of handing back a handle whose finalizer has already run.
+static void late_cleanup_hook(void *arg) {
+  napi_env env = static_cast<napi_env>(arg);
+  napi_value name = nullptr;
+  napi_threadsafe_function tsfn = nullptr;
+  napi_status name_status =
+      napi_create_string_utf8(env, "late_tsfn", NAPI_AUTO_LENGTH, &name);
+  napi_status create_status = napi_create_threadsafe_function(
+      env, /* JavaScript function */ nullptr,
+      /* async resource */ nullptr, name,
+      /* max queue size (unlimited) */ 0,
+      /* initial thread count */ 1, /* finalize data */ nullptr,
+      /* finalize callback */ nullptr, /* context */ nullptr,
+      &late_tsfn_call_js, &tsfn);
+  printf("late cleanup hook: name=%d create=%d handle=%s\n",
+         static_cast<int>(name_status), static_cast<int>(create_status),
+         tsfn == nullptr ? "null" : "non-null");
+  fflush(stdout);
+}
+
+// Registers the cleanup hook above from a threadsafe function's teardown
+// finalizer, i.e. after the cleanup-hook queue has already been drained once.
+static void teardown_tsfn_finalize(napi_env env, void *data, void *hint) {
+  printf("tsfn finalizer at teardown\n");
+  fflush(stdout);
+  napi_add_env_cleanup_hook(env, late_cleanup_hook, env);
+}
+
+napi_value
+create_threadsafe_function_after_teardown(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value name;
+  napi_threadsafe_function tsfn;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "teardown_tsfn",
+                                             NAPI_AUTO_LENGTH, &name));
+  NODE_API_CALL(env, napi_create_threadsafe_function(
+                         env, /* JavaScript function */ nullptr,
+                         /* async resource */ nullptr, name,
+                         /* max queue size (unlimited) */ 0,
+                         /* initial thread count */ 1,
+                         /* finalize data */ nullptr, teardown_tsfn_finalize,
+                         /* context */ nullptr, &late_tsfn_call_js, &tsfn));
+  // Unreferenced and never released: the process exits with it still alive, so
+  // env cleanup is what finalizes it.
+  NODE_API_CALL(env, napi_unref_threadsafe_function(env, tsfn));
+  printf("registered\n");
+  fflush(stdout);
+  return info.Env().Undefined();
+}
+
 void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_promise);
   REGISTER_FUNCTION(env, exports, create_promise_with_napi_cpp);
@@ -423,6 +510,9 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_cancel_async_work);
   REGISTER_FUNCTION(env, exports, create_orphaned_threadsafe_functions);
   REGISTER_FUNCTION(env, exports, use_orphaned_threadsafe_functions);
+  REGISTER_FUNCTION(env, exports,
+                    call_then_release_orphaned_threadsafe_function);
+  REGISTER_FUNCTION(env, exports, create_threadsafe_function_after_teardown);
 }
 
 } // namespace napitests

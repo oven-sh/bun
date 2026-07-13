@@ -987,4 +987,45 @@ nativeTests.test_create_tsfn_with_async_context = async () => {
   });
 };
 
+// An addon's own threads outlive the worker that created the threadsafe
+// functions (next-swc's tokio pool does this): the last call and the last
+// release land after the worker's VM, and the event loop they point at, are
+// gone.
+async function runOrphanWorker() {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const worker = new Worker(path.join(__dirname, "tsfn-orphan-worker.js"));
+  const code = await new Promise((resolve, reject) => {
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+  });
+  console.log("worker exited with", code);
+}
+
+nativeTests.test_threadsafe_function_orphaned_by_worker = async () => {
+  await runOrphanWorker();
+  console.log(nativeTests.use_orphaned_threadsafe_functions());
+};
+
+// A call that reports napi_closing must not free the threadsafe function: the
+// addon releases the same handle right after.
+nativeTests.test_threadsafe_function_orphaned_call_then_release = async () => {
+  await runOrphanWorker();
+  console.log(nativeTests.call_then_release_orphaned_threadsafe_function());
+};
+
+// Microtasks queued by one threadsafe-function callback must be drained before
+// the next callback in the same dispatch, and not before the first one.
+nativeTests.test_threadsafe_function_microtask_order = async () => {
+  let n = 0;
+  nativeTests.test_napi_threadsafe_function_microtask_order(null, () => {
+    const i = ++n;
+    console.log("callback", i);
+    Promise.resolve().then(() => console.log("microtask", i));
+  });
+  for (let i = 0; i < 1000 && n < 3; i++) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+};
+
 module.exports = nativeTests;

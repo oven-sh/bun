@@ -222,6 +222,14 @@ public:
         clearExceptionsBetweenFinalizers();
         abortThreadSafeFunctions();
 
+        // A threadsafe function's finalizer can register a cleanup hook of its
+        // own, and the loop above has already run: drain again so it is not
+        // dropped on the floor.
+        while (!m_cleanupHooks.empty()) {
+            drain();
+        }
+        clearExceptionsBetweenFinalizers();
+
         // Defer GC during entire finalizer cleanup to prevent iterator invalidation.
         // This prevents any GC-triggered finalizer execution while m_finalizers is being iterated.
         JSC::DeferGCForAWhile deferGC(m_vm);
@@ -254,8 +262,10 @@ public:
     }
 
     // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
-    // by the Rust side; they are added on the JS thread and removed either
-    // when the TSFN is destroyed (any thread) or by teardown.
+    // by the Rust side, added and removed on the JS thread only: at creation,
+    // by the destroy path (an event-loop task), and by teardown below. The
+    // lock guards the torn-down flag so the "created after teardown" case is
+    // decided in one critical section.
     bool registerThreadSafeFunction(void* tsfn)
     {
         WTF::Locker locker { m_threadSafeFunctionsLock };

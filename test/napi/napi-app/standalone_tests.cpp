@@ -198,6 +198,31 @@ test_napi_threadsafe_function_abort_blocked_producers_finalized(
   return Napi::Boolean::New(info.Env(), tsfn_abort_blocked_finalized);
 }
 
+// Queue several items while the JS thread is parked here, so all of them run in
+// one dispatch. Microtasks queued by one callback must be drained before the
+// next callback runs (https://github.com/nodejs/node/pull/38506), and must not
+// be drained before the first one.
+static napi_value test_napi_threadsafe_function_microtask_order(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "microtask_order");
+  napi_threadsafe_function tsfn;
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, /* JavaScript function */ info[1],
+                    /* async resource */ nullptr, resource_name,
+                    /* max queue size (unlimited) */ 0,
+                    /* initial thread count */ 1, /* finalize data */ nullptr,
+                    /* finalize callback */ nullptr, /* context */ nullptr,
+                    /* call_js_cb: default, calls info[1] */ nullptr, &tsfn));
+  for (int i = 0; i < 3; i++) {
+    NODE_API_CALL(env, napi_call_threadsafe_function(tsfn, nullptr,
+                                                     napi_tsfn_nonblocking));
+  }
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn, napi_tsfn_release));
+  return env.Undefined();
+}
+
 static napi_value
 test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
@@ -2618,6 +2643,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(
       env, exports,
       test_napi_threadsafe_function_abort_blocked_producers_finalized);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_microtask_order);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_string);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_bigint);
   REGISTER_FUNCTION(env, exports, test_napi_delete_property);

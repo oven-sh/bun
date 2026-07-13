@@ -4715,6 +4715,7 @@ function emitTimeout(session: ClientHttp2Session) {
 // Outbound-progress snapshot taken the last time the session's idle timer expired while writes
 // were still pending (see sessionTimerExpired / node's chunksSentSinceLastWrite).
 const kTimeoutBytesSnapshot = Symbol("timeoutBytesSnapshot");
+const kTimeoutWrittenSnapshot = Symbol("timeoutWrittenSnapshot");
 let sessionHasPendingWrite = false;
 function checkStreamWritePending(stream: Http2Stream) {
   if (stream.writableLength > 0) sessionHasPendingWrite = true;
@@ -4733,6 +4734,10 @@ function setSessionTimeout(this: Http2Session, msecs, callback) {
       this.removeListener("timeout", callback);
     }
   } else {
+    // Snapshot the monotonic written counter at arm time so the first expiry
+    // only refreshes if bytes actually went out during the period (see
+    // sessionTimerExpired).
+    this[kTimeoutWrittenSnapshot] = this[bunHTTP2Socket]?.bytesWritten ?? 0;
     this[kTimeout] = setTimeout(sessionTimerExpired, msecs, this).unref();
     if (callback !== undefined) {
       validateFunction(callback, "callback");
@@ -4749,6 +4754,18 @@ function sessionTimerExpired(session: Http2Session) {
   if (session.destroyed) return;
   const parser = session[bunHTTP2Native];
   if (parser) {
+    // Node compares a monotonic chunks-sent counter, not instantaneous buffer
+    // levels: a write that filled and fully drained between two expiries is
+    // still progress, and sampling the (empty) buffer would misread it as an
+    // idle session. bytesWritten is the socket's cumulative counter, advanced
+    // by the native h2 writes too.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (callTimeout)
+    const bytesWritten = session[bunHTTP2Socket]?.bytesWritten ?? 0;
+    if (bytesWritten !== (session[kTimeoutWrittenSnapshot] ?? 0)) {
+      session[kTimeoutWrittenSnapshot] = bytesWritten;
+      session[kTimeout]?.refresh();
+      return;
+    }
     sessionHasPendingWrite = false;
     parser.forEachStream(checkStreamWritePending);
     // Bytes still queued natively (flow-control or socket backpressure). A change since the

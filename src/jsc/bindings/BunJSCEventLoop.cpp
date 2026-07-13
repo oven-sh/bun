@@ -11,6 +11,7 @@ extern "C" void mi_on_thread_idle(void) noexcept;
 #endif
 
 extern "C" int Bun__defaultRemainingRunsUntilSkipReleaseAccess;
+extern "C" int Bun__mimallocIdleSweepIntervalMs;
 
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
 {
@@ -75,7 +76,17 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             // Collect retired pages, discard the free-block holes inside still-used
             // pages, and hand the arena purge to mimalloc's scavenger.
             //
-            mi_on_thread_idle();
+            // Rate-limited. The sweep walks every page of every theap of this thread, and a
+            // busy server parks between requests: profiling express showed mi_on_thread_idle
+            // at 26% of the main thread (_mi_page_purge_holes the #4 leaf frame in the whole
+            // process), costing ~25% throughput, and it bought no memory there. At idle, ten
+            // sweeps a second is far more than enough to hand the memory back.
+            static thread_local MonotonicTime lastIdleSweep;
+            const auto now = MonotonicTime::now();
+            if ((now - lastIdleSweep) >= Seconds::fromMilliseconds(Bun__mimallocIdleSweepIntervalMs)) {
+                lastIdleSweep = now;
+                mi_on_thread_idle();
+            }
 #endif
         }
     }

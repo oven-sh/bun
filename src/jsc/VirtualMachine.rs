@@ -41,6 +41,13 @@ pub static isBunTest: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 pub(crate) static Bun__defaultRemainingRunsUntilSkipReleaseAccess: core::sync::atomic::AtomicI32 =
     core::sync::atomic::AtomicI32::new(10);
 
+/// Minimum gap between idle mimalloc sweeps. The sweep walks every page of every theap,
+/// and a busy server parks between every request; profiling express put it at 26% of the
+/// main thread for no memory gain there.
+#[unsafe(no_mangle)]
+pub(crate) static Bun__mimallocIdleSweepIntervalMs: core::sync::atomic::AtomicI32 =
+    core::sync::atomic::AtomicI32::new(100);
+
 // TODO: evaluate if this has any measurable performance impact.
 pub(crate) static SYNTHETIC_ALLOCATION_LIMIT: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(u32::MAX as usize);

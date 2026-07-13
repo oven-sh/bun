@@ -56,6 +56,83 @@ test("node:dgram close() inside 'message' handler stops remaining batch datagram
   expect(exitCode).toBe(0);
 });
 
+// Node rejects an interface address that doesn't parse as an IP with EINVAL
+// (uv_udp_set_membership → uv_ip4_addr/uv_ip6_addr). Previously bun silently
+// dropped the argument and joined on the kernel-default interface.
+describe("node:dgram membership with unparseable interface", () => {
+  const ifaces = ["eth0", "i", Buffer.alloc(15, "i").toString(), Buffer.alloc(300, "i").toString(), ""];
+
+  test("addMembership throws EINVAL", async () => {
+    const s = dgram.createSocket("udp4");
+    try {
+      await new Promise((resolve, reject) => {
+        s.once("error", reject);
+        s.bind(0, "0.0.0.0", resolve);
+      });
+      const results = ifaces.map(iface => {
+        try {
+          s.addMembership("224.0.7.40", iface);
+          return { len: iface.length, code: null };
+        } catch (e) {
+          return { len: iface.length, code: e.code };
+        }
+      });
+      expect(results).toEqual(ifaces.map(iface => ({ len: iface.length, code: "EINVAL" })));
+    } finally {
+      s.close();
+    }
+  });
+
+  test("dropMembership throws EINVAL", async () => {
+    const s = dgram.createSocket("udp4");
+    try {
+      await new Promise((resolve, reject) => {
+        s.once("error", reject);
+        s.bind(0, "0.0.0.0", resolve);
+      });
+      const results = ifaces.map(iface => {
+        try {
+          s.dropMembership("224.0.7.40", iface);
+          return { len: iface.length, code: null };
+        } catch (e) {
+          return { len: iface.length, code: e.code };
+        }
+      });
+      expect(results).toEqual(ifaces.map(iface => ({ len: iface.length, code: "EINVAL" })));
+    } finally {
+      s.close();
+    }
+  });
+
+  test("addSourceSpecificMembership/dropSourceSpecificMembership throw EINVAL", async () => {
+    const s = dgram.createSocket("udp4");
+    try {
+      await new Promise((resolve, reject) => {
+        s.once("error", reject);
+        s.bind(0, "0.0.0.0", resolve);
+      });
+      const results = [];
+      for (const fn of ["addSourceSpecificMembership", "dropSourceSpecificMembership"]) {
+        for (const iface of ifaces) {
+          try {
+            s[fn]("10.0.0.1", "232.1.1.1", iface);
+            results.push({ fn, len: iface.length, code: null });
+          } catch (e) {
+            results.push({ fn, len: iface.length, code: e.code });
+          }
+        }
+      }
+      expect(results).toEqual(
+        ["addSourceSpecificMembership", "dropSourceSpecificMembership"].flatMap(fn =>
+          ifaces.map(iface => ({ fn, len: iface.length, code: "EINVAL" })),
+        ),
+      );
+    } finally {
+      s.close();
+    }
+  });
+});
+
 describe.skipIf(!isIPv6())("node:dgram", () => {
   it("adds membership successfully (IPv6)", () => {
     const socket = makeSocket6();

@@ -3750,9 +3750,7 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   expect(d.outputData.length).toBe(0);
 });
 
-// https://github.com/oven-sh/bun/issues/34064 (unmasked by routing listener
-// throws to uncaughtException): aborting a chunked response used to inject
-// "Connection: close\r\n\r\n" into the middle of the body.
+// https://github.com/oven-sh/bun/issues/34064
 it("destroying a chunked response mid-stream writes no header bytes into the body", async () => {
   const chunkFrame = "f\r\nPart of my res.\r\n";
   const { promise, resolve, reject } = Promise.withResolvers<Buffer>();

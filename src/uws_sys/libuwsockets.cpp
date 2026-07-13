@@ -1338,12 +1338,9 @@ extern "C"
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       auto *data = uwsRes->getHttpResponseData();
-      // Once write() ran, the header section is already terminated and body
-      // bytes are on the wire, so header bytes here would land in the middle
-      // of the body and corrupt the stream - only update the state flags in
-      // that case. (HTTP_WROTE_CONTENT_LENGTH_HEADER does not imply the
-      // section is terminated: the file-route HEAD path sets it for a plain
-      // header line and relies on this function for the terminating CRLF.)
+      // Once write() ran the header section is terminated and body bytes are
+      // on the wire; header bytes here would corrupt the body. Not gated on
+      // WROTE_CONTENT_LENGTH: the file-route HEAD path still needs the CRLF.
       bool bodyStarted = data->state & uWS::HttpResponseData<true>::HTTP_WRITE_CALLED;
       if (close_connection)
       {

@@ -1064,7 +1064,7 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
 });
 
 // https://github.com/oven-sh/bun/issues/34064
-describe("exceptions thrown from socket event listeners", () => {
+describe.concurrent("exceptions thrown from socket event listeners", () => {
   async function run(fixture: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],

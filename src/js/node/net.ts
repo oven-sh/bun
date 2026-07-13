@@ -260,14 +260,9 @@ function rethrowUncaught(err) {
   throw err;
 }
 
-// An exception escaping a native socket callback (a throwing user listener,
-// e.g. 'data') must surface as an uncaughtException like in Node. The native
-// dispatch would instead route it to this table's `error` handler, which is
-// the documented behavior for the public Bun.listen/Bun.connect API but makes
-// node:net deliver it to the socket's 'error' listeners as if it were a
-// socket error. The socket is torn down afterwards: the callback was
-// interrupted mid-dispatch, so its stream state is unreliable (and this
-// matches the teardown the previous error routing performed).
+// Reroute exceptions escaping a handler to uncaughtException like in Node,
+// instead of the socket's 'error' event (Bun.listen/Bun.connect's documented
+// behavior), then tear the socket down: it was interrupted mid-dispatch.
 function protectHandler(fn) {
   return function (socket, a, b) {
     try {

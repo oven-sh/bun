@@ -1,5 +1,5 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import defaultMacro, {
   addStrings,
@@ -129,6 +129,45 @@ test("namespace import", () => {
 
 test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
+});
+
+// A macro that throws synchronously must surface the user's error message, not
+// "cannot coerce Exception (JSType(0)) to Bun's AST". Async rejections already did; sync throws
+// should report identically.
+describe("macro that throws reports the user's error message", () => {
+  const throwMacros = `
+export function syncThrow() { throw new Error("this is the real reason the build broke"); }
+export async function asyncThrow() { throw new Error("this is the real reason the build broke"); }
+export function syncThrowString() { throw "this is the real reason the build broke"; }
+`;
+
+  test.concurrent.each([
+    ["sync throw via bun build", "build", "syncThrow"],
+    ["async throw via bun build", "build", "asyncThrow"],
+    ["sync throw of non-Error via bun build", "build", "syncThrowString"],
+    ["sync throw via bun run", "run", "syncThrow"],
+  ])("%s", async (_, cmd, fn) => {
+    using dir = tempDir("macro-throw", {
+      "throw.ts": throwMacros,
+      "index.ts": `import { ${fn} } from "./throw.ts" with { type: "macro" };\nconsole.log(${fn}());\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), cmd, "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds emit a "[macro] call <fn>" line to stdout; ignore stdout here and assert on
+    // stderr, which carries the printed exception and the bundler log entries.
+    expect({ stdout, stderr, exitCode }).toMatchObject({
+      stderr: expect.stringContaining("this is the real reason the build broke"),
+      exitCode: 1,
+    });
+    expect(stderr).not.toContain("cannot coerce");
+    expect(stderr).toContain("macro threw exception");
+  });
 });
 
 // A numeric key >= 100000 (JSC's MIN_SPARSE_ARRAY_INDEX) makes the property put inside

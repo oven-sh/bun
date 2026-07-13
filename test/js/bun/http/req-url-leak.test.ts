@@ -46,4 +46,8 @@ test("req.url doesn't leak memory", async () => {
   //  44 MB on Bun 1.3
   // ASAN's quarantine + shadow memory raise the absolute RSS floor; widen there.
   expect(maxRSS).toBeLessThan(1024 * 1024 * (isASAN ? 450 : 150));
-}, 10_000);
+  // Same calibration for the deadline: the 16K fetches that finish in ~3s on a
+  // release build run ~10x slower under ASAN's instrumentation (observed
+  // ~12-13s), and the run used to die on this timeout with the RSS assertion
+  // itself passing.
+}, isASAN ? 90_000 : 10_000);

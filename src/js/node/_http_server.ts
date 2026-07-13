@@ -923,6 +923,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res[kPipelinedQueuedState] = {
             ops: [],
             bytes: 0,
+            headerBytes: 0,
             needDrain: false,
             ended: false,
             isAncient: !!isAncientHTTP,
@@ -2636,11 +2637,55 @@ function emitPipelinedDrainNT(res) {
 // pipelined response: buffer the call (Node.js buffers through outputData
 // while no socket is assigned) and report backpressure against the high water
 // mark so 'drain' semantics match.
+// Node's _storeHeader pushes the serialized header block through outputData, so a
+// queued response's outputSize - and the connection's outgoingData that gates
+// pipelined reads - counts header bytes, not just body chunks. Bun renders the
+// block natively at replay, so account its size when the first buffered op fixes
+// the headers. Without it every queued response contributes only its chunk
+// length; power-of-two chunks can then land outgoingData exactly on
+// writableHighWaterMark and pause reads one request earlier than Node would,
+// deadlocking clients that pipeline the unblocking request behind the crossing
+// one (test-http-pipeline-socket-parser-typeerror).
+function accountQueuedHeaderBytes(res, queued) {
+  if (queued.headerBytes !== 0) {
+    return;
+  }
+  // Status line: "HTTP/1.1 NNN <message>\r\n".
+  let bytes = 15 + String(res.statusMessage ?? STATUS_CODES[res.statusCode] ?? "unknown").length;
+  const outHeaders = res[kOutHeaders];
+  if (outHeaders !== null && outHeaders !== undefined) {
+    for (const key in outHeaders) {
+      const entry = outHeaders[key];
+      if (!entry) continue;
+      const value = entry[1];
+      if ($isJSArray(value)) {
+        for (let i = 0; i < value.length; i++) {
+          bytes += entry[0].length + 4 + String(value[i]).length;
+        }
+      } else {
+        bytes += entry[0].length + 4 + String(value).length;
+      }
+    }
+  }
+  // Headers the native writer adds when absent, with their literal serialized
+  // lengths: "Date: <29-byte IMF-fixdate>\r\n" (37), "Connection: keep-alive\r\n"
+  // (24), "Transfer-Encoding: chunked\r\n" (28), plus the terminating "\r\n".
+  if (!res.hasHeader("date")) bytes += 37;
+  if (!res.hasHeader("connection")) bytes += 24;
+  if (!res.hasHeader("content-length") && !res.hasHeader("transfer-encoding")) bytes += 28;
+  bytes += 2;
+  queued.headerBytes = bytes;
+  queued.bytes += bytes;
+  res.outputSize += bytes;
+  addPipelineOutgoingData(queued, bytes);
+}
+
 function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol]);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
     updateHasBody(res, res.statusCode);
   }
+  accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
     if (res[kRejectNonStandardBodyWrites]) {
       throw $ERR_HTTP_BODY_NOT_ALLOWED();
@@ -2669,6 +2714,7 @@ function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
     updateHasBody(res, res.statusCode);
   }
+  accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
     if (res[kRejectNonStandardBodyWrites]) {
       throw $ERR_HTTP_BODY_NOT_ALLOWED();

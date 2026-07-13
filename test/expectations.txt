@@ -73,7 +73,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # Tests failed due to ASAN: use-after-poison
 [ ASAN ] test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js [ CRASH ]
 [ ASAN ] test/napi/napi.test.ts [ CRASH ] # can throw an exception from an async_complete_callback
-[ ASAN ] test/js/node/http/node-http-uaf.test.ts [ CRASH ] # should not crash on abort (node-http-uaf-fixture.ts)
 [ ASAN ] test/js/node/test/parallel/test-fs-watch.js [ CRASH ]
 [ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js [ CRASH ]
 [ ASAN ] test/js/node/test/parallel/test-fs-promises-watch.js [ CRASH ]
@@ -92,9 +91,7 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/node/url/pathToFileURL.test.ts [ LEAK ] # pathToFileURL doesn't leak memory
 [ ASAN ] test/js/node/fs/abort-signal-leak-read-write-file.test.ts [ LEAK ] # should not leak memory with already aborted signals
 [ ASAN ] test/js/web/streams/streams-leak.test.ts [ LEAK ] # Absolute memory usage remains relatively constant when reading and writing to a pipe
-[ ASAN ] test/js/web/fetch/fetch-leak.test.ts [ LEAK ]
 [ ASAN ] test/cli/run/require-cache.test.ts [ LEAK ] # files transpiled and loaded don't leak file paths > via require()
-[ ASAN ] test/js/bun/http/req-url-leak.test.ts [ LEAK ] # req.url doesn't leak memory
 [ ASAN ] test/js/bun/io/bun-write-leak.test.ts [ LEAK ] # Bun.write should not leak the output data
 
 # Windows-only gaps in named-pipe / socket teardown for ported Node net tests
@@ -114,7 +111,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # readable side on Windows, so the accepted connection never ends and
 # server.close() (via `await using`) waits forever. The assertion itself passes;
 # only the teardown hangs. Passes on Linux and macOS.
-[ WINDOWS ] test/js/bun/test/parallel/test-http-should-not-emit-or-throw-error-when-writing-after-socket.end.ts [ FAIL ] # half-close + client RST not surfaced on Windows; server.close() waits forever
 
 # The 10 MB socket write in this test is an order of magnitude slower under
 # AddressSanitizer and exceeds the per-test timeout; it passes on regular builds.
@@ -148,8 +144,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # contacting external hosts) using a deterministic local hanging connect.
 [ DARWIN ] test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts [ FLAKY ] # connect-during-abort race depends on host routing of 192.0.2.1; darwin CI agents return an immediate routing error
 
-[ ASAN ] test/js/third_party/grpc-js/test-server.test.ts [ SKIP ] # connect-race socket lifetime report under investigation
-[ WINDOWS ] test/js/third_party/grpc-js/test-server.test.ts [ FAIL ] # http2 teardown gap on Windows
 
 # node:http servers cannot listen on Windows named pipes yet (ENOENT from
 # uv_pipe bind), so common.PIPE-based http tests cannot run there.

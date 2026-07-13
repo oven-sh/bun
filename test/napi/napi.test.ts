@@ -430,6 +430,14 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("finalized: true");
     });
 
+    // A full bounded queue must not hide that the function is closing: the call
+    // reports napi_closing (16) and consumes the caller's thread reference, so
+    // the finalizer still runs. napi_queue_full (17) would strand it forever.
+    it("reports napi_closing, not napi_queue_full, on an aborted full queue", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_full_queue", []);
+      expect(result).toContain("call after abort: 16\nfinalized: true");
+    });
+
     it("drains microtasks between callbacks of one dispatch, not before the first", async () => {
       const result = await checkSameOutput("test_threadsafe_function_microtask_order", []);
       expect(result).toContain("callback 1\nmicrotask 1\ncallback 2\nmicrotask 2\ncallback 3");
@@ -441,28 +449,23 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     // MIMALLOC_PURGE_DELAY=0 makes a stale event-loop pointer fault instead of
     // reading recycled memory that still happens to look intact.
     it("survives the last call and release after the creating worker is gone", async () => {
-      // Every threadsafe function is finalized at worker teardown; a later call
+      // Both threadsafe functions are finalized at worker teardown; a later call
       // reports napi_closing (16), a later release napi_ok (0).
       const result = await checkSameOutput("test_threadsafe_function_orphaned_by_worker", [], {
         MIMALLOC_PURGE_DELAY: "0",
       });
-      expect(result).toContain("worker exited with 0\nfinalized=3 call=16 release=0");
+      expect(result).toContain("worker exited with 0\nfinalized=2 call=16 release=0");
     });
 
-    // node-addon-api's ThreadSafeFunction wrapper releases the handle it just
-    // called, even when the call reported napi_closing. A call must therefore
-    // never free the threadsafe function. Not compared against node: node
-    // deletes it inside the call and aborts in uv_mutex_lock on the release
-    // (checked against node v26.3.0), so bun is deliberately more forgiving
-    // and reports napi_invalid_arg instead.
-    it("does not free the threadsafe function when a call reports napi_closing", async () => {
+    // A call that reports napi_closing consumes the calling thread's reference
+    // (node's ThreadSafeFunction::Push), so on an orphaned threadsafe function
+    // it can drop the last one -- and then it must free it, or every worker that
+    // leaves one behind leaks. An addon that uses the handle after napi_closing
+    // (a release, say) therefore touches freed memory, in node as well: the docs
+    // say to make no further use of it. Bun-only: reads bun's live tsfn count.
+    it("frees an orphaned threadsafe function whose last reference a call consumed", async () => {
       await using proc = spawn({
-        cmd: [
-          bunExe(),
-          join(__dirname, "napi-app/main.js"),
-          "test_threadsafe_function_orphaned_call_then_release",
-          "[]",
-        ],
+        cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "test_threadsafe_function_orphan_leak", "[]"],
         env: { ...bunEnv, MIMALLOC_PURGE_DELAY: "0" },
         stdout: "pipe",
         stderr: "pipe",
@@ -472,13 +475,17 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         new Response(proc.stderr).text(),
         proc.exited,
       ]);
+      // Each iteration: the dead worker leaves 5 orphaned threadsafe functions,
+      // all 5 calls report napi_closing (16), and none is still alive after. A
+      // leak shows up as orphaned=10 on the second iteration.
+      const iteration = "orphaned=5 closing=5 leaked=0";
       expect({
         stdout: stdout.replaceAll(/^\[\w+\].+$/gm, "").trim(),
         stderr,
         exitCode,
         signalCode: proc.signalCode,
       }).toMatchObject({
-        stdout: "worker exited with 0\ncall=16 release=1\nresolved to undefined",
+        stdout: `${Array(5).fill(iteration).join("\n")}\nresolved to undefined`,
         exitCode: 0,
         signalCode: null,
       });
@@ -487,9 +494,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     // napi_create_threadsafe_function once the env has torn its threadsafe
     // functions down (here: from a cleanup hook that a threadsafe function's
     // teardown finalizer registered). There is no event loop left, so it must
-    // fail instead of handing back a handle whose finalizer already ran. Also
-    // covers the late-registered cleanup hook running at all. Node creates one
-    // and returns napi_ok, so this is bun-only.
+    // fail instead of handing back a handle whose finalizer already ran. The
+    // failed creation must not run the addon's finalizer either -- the addon's
+    // own error handling owns those resources. Node creates one and returns
+    // napi_ok, so this is bun-only.
     it("fails when created after the env is torn down", async () => {
       await using proc = spawn({
         cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "create_threadsafe_function_after_teardown", "[]"],

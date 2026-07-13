@@ -94,6 +94,17 @@ nativeTests.test_threadsafe_function_abort_then_last_release = async (_, queued 
   // keepalive would hang it forever
 };
 
+nativeTests.test_threadsafe_function_abort_full_queue = async () => {
+  // abort a tsfn whose bounded queue is full, then call it without blocking:
+  // napi_closing (16), not napi_queue_full (17), and it must still finalize
+  console.log("call after abort:", nativeTests.test_napi_threadsafe_function_abort_full_queue());
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_full_queue_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_full_queue_finalized());
+};
+
 nativeTests.test_threadsafe_function_abort_blocked_producers = async () => {
   // create (max_queue_size=1, thread_count=3), fill the queue, spawn two
   // producers that block on the condvar, then abort
@@ -991,27 +1002,35 @@ nativeTests.test_create_tsfn_with_async_context = async () => {
 // functions (next-swc's tokio pool does this): the last call and the last
 // release land after the worker's VM, and the event loop they point at, are
 // gone.
-async function runOrphanWorker() {
+async function runOrphanWorker(workerData) {
   const { Worker } = require("node:worker_threads");
   const path = require("node:path");
-  const worker = new Worker(path.join(__dirname, "tsfn-orphan-worker.js"));
+  const worker = new Worker(path.join(__dirname, "tsfn-orphan-worker.js"), { workerData });
   const code = await new Promise((resolve, reject) => {
     worker.on("error", reject);
     worker.on("exit", resolve);
   });
-  console.log("worker exited with", code);
+  return code;
 }
 
 nativeTests.test_threadsafe_function_orphaned_by_worker = async () => {
-  await runOrphanWorker();
+  console.log("worker exited with", await runOrphanWorker());
   console.log(nativeTests.use_orphaned_threadsafe_functions());
 };
 
-// A call that reports napi_closing must not free the threadsafe function: the
-// addon releases the same handle right after.
-nativeTests.test_threadsafe_function_orphaned_call_then_release = async () => {
-  await runOrphanWorker();
-  console.log(nativeTests.call_then_release_orphaned_threadsafe_function());
+// Bun-only: an orphaned threadsafe function is freed by whichever thread drops
+// its last reference, including a call that reports napi_closing. Every
+// iteration must end with as many live threadsafe functions as it started with.
+nativeTests.test_threadsafe_function_orphan_leak = async () => {
+  const { napiThreadsafeFunctionLiveCount } = require("bun:internal-for-testing");
+  const before = napiThreadsafeFunctionLiveCount();
+  for (let i = 0; i < 5; i++) {
+    const code = await runOrphanWorker({ leak: 5 });
+    if (code !== 0) throw new Error(`worker exited with ${code}`);
+    const orphaned = napiThreadsafeFunctionLiveCount() - before;
+    const closing = nativeTests.call_leaked_threadsafe_functions();
+    console.log(`orphaned=${orphaned} closing=${closing} leaked=${napiThreadsafeFunctionLiveCount() - before}`);
+  }
 };
 
 // Microtasks queued by one threadsafe-function callback must be drained before

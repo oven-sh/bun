@@ -198,6 +198,49 @@ test_napi_threadsafe_function_abort_blocked_producers_finalized(
   return Napi::Boolean::New(info.Env(), tsfn_abort_blocked_finalized);
 }
 
+static napi_threadsafe_function tsfn_abort_full = nullptr;
+static bool tsfn_abort_full_finalized = false;
+
+static void tsfn_abort_full_finalize(napi_env env, void *finalize_data,
+                                     void *finalize_hint) {
+  tsfn_abort_full_finalized = true;
+}
+
+// Abort a tsfn whose bounded queue is full, then call it without blocking. A
+// full queue must not hide that it is closing: the call has to report
+// napi_closing and consume this thread's reference, or nothing is left to
+// finalize it and the event-loop keepalive pins the process forever. Returns
+// the call's status.
+static napi_value
+test_napi_threadsafe_function_abort_full_queue(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "abort_full_queue");
+  tsfn_abort_full_finalized = false;
+  NODE_API_CALL(env, napi_create_threadsafe_function(
+                         env, /* JavaScript function */ nullptr,
+                         /* async resource */ nullptr, resource_name,
+                         /* max queue size */ 1,
+                         /* initial thread count */ 2,
+                         /* finalize data */ nullptr, tsfn_abort_full_finalize,
+                         /* context */ nullptr, &noop_callback,
+                         &tsfn_abort_full));
+  // The JS thread is parked in here, so nothing drains the queue: it is still
+  // full at the abort and at the call below.
+  NODE_API_CALL(env, napi_call_threadsafe_function(tsfn_abort_full, nullptr,
+                                                   napi_tsfn_nonblocking));
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_full,
+                                                      napi_tsfn_abort));
+  napi_status status = napi_call_threadsafe_function(tsfn_abort_full, nullptr,
+                                                     napi_tsfn_nonblocking);
+  tsfn_abort_full = nullptr;
+  return Napi::Number::New(env, static_cast<double>(status));
+}
+
+static napi_value test_napi_threadsafe_function_abort_full_queue_finalized(
+    const Napi::CallbackInfo &info) {
+  return Napi::Boolean::New(info.Env(), tsfn_abort_full_finalized);
+}
+
 // Queue several items while the JS thread is parked here, so all of them run in
 // one dispatch. Microtasks queued by one callback must be drained before the
 // next callback runs (https://github.com/nodejs/node/pull/38506), and must not
@@ -2643,6 +2686,9 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(
       env, exports,
       test_napi_threadsafe_function_abort_blocked_producers_finalized);
+  REGISTER_FUNCTION(env, exports, test_napi_threadsafe_function_abort_full_queue);
+  REGISTER_FUNCTION(
+      env, exports, test_napi_threadsafe_function_abort_full_queue_finalized);
   REGISTER_FUNCTION(env, exports,
                     test_napi_threadsafe_function_microtask_order);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_string);

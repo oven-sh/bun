@@ -1059,6 +1059,7 @@ impl ClientSession {
                 0,
                 0,
                 Some(self_ref),
+                b"",
             );
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);

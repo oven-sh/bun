@@ -518,10 +518,19 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
          * polling writable - retrying can never succeed. */
         if (fatal_write_error) *fatal_write_error = errno;
 #else
-        /* Windows: no WSA-to-errno mapping yet; signal generic fatal so
-         * node:net fails the write instead of stalling. See a5e7ba5905
-         * before mapping (drain-into-RST on test-http-no-content-length). */
-        if (fatal_write_error) *fatal_write_error = 1;
+        /* Windows: report the raw (positive) WSA code. The JS layer already
+         * traffics in raw negative WSA values on this platform (see
+         * SocketEmitEndNT / failWrite, which shape unnameable ones as
+         * ECONNRESET), and a real code keeps fatal sends distinguishable from
+         * the legacy -1 closed/shutdown sentinel so the h2 parser can latch
+         * them (flood tests hung on Windows because a fatal send looked like
+         * backpressure). Keep 1 as the floor for a zero/garbage WSA value.
+         * See a5e7ba5905 before widening what counts as fatal
+         * (drain-into-RST on test-http-no-content-length). */
+        if (fatal_write_error) {
+            int wsa_send_error = WSAGetLastError();
+            *fatal_write_error = wsa_send_error > 1 ? wsa_send_error : 1;
+        }
 #endif
         return 0;
     }

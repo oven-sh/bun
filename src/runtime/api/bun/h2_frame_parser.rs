@@ -1462,6 +1462,9 @@ pub struct H2FrameParser {
     hpack: JsCell<Option<lshpack::HpackHandle>>,
 
     has_nonnative_backpressure: Cell<bool>,
+    /// A native write returned a terminal result (socket closed, shut down, or the kernel
+    /// rejected the send). Latched once; the deferred tick closes the transport.
+    transport_write_fatal: Cell<bool>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
     /// Number of live `Keepalive` guards: the `+1`s held by native frames currently on the stack.
     /// Read only by `release_refs_stranded_by_exit()`.
@@ -3004,6 +3007,9 @@ impl H2FrameParser {
                 &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
             );
             let written: u32 = if result < 0 {
+                if result < -1 {
+                    self.note_transport_write_fatal();
+                }
                 0
             } else {
                 u32::try_from(result).expect("int cast")
@@ -3043,8 +3049,11 @@ impl H2FrameParser {
                     &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
                 );
                 let written: u32 = if result < 0 {
-                    0
-                } else {
+                        if result < -1 {
+                            self.note_transport_write_fatal();
+                        }
+                        0
+                    } else {
                     u32::try_from(result).expect("int cast")
                 };
                 if (written as usize) < buffered_len {
@@ -3070,8 +3079,11 @@ impl H2FrameParser {
             {
                 let result: i32 = socket.write_maybe_corked(bytes);
                 let written: u32 = if result < 0 {
-                    0
-                } else {
+                        if result < -1 {
+                            self.note_transport_write_fatal();
+                        }
+                        0
+                    } else {
                     u32::try_from(result).expect("int cast")
                 };
                 if (written as usize) < bytes.len() {
@@ -3098,6 +3110,9 @@ impl H2FrameParser {
         }
         let result: i32 = socket.write_maybe_corked(bytes);
         let written: u32 = if result < 0 {
+            if result < -1 {
+                self.note_transport_write_fatal();
+            }
             0
         } else {
             u32::try_from(result).expect("int cast")
@@ -3334,8 +3349,53 @@ impl H2FrameParser {
         self.deref();
     }
 
+    /// A `write_maybe_corked` in `_generic_write`/`_generic_flush` returned a fatal
+    /// errno (< -1: the kernel rejected the send - peer gone). No retry can succeed,
+    /// and when the failure is only visible on the write side (a peer reset the read
+    /// path has not observed yet - routine on Windows, where the RST completes the
+    /// send first), nothing else ever closes the socket: the parser would re-buffer
+    /// and wait forever for a drain (observed as the http2 flood tests hanging on the
+    /// Windows CI agents). -1 (socket closed/shut down/not writable yet) is NOT
+    /// latched: those are routine during setup and teardown and the close path that
+    /// produced them owns the lifecycle. Latch the fatal and let the deferred tick
+    /// close the transport - the failing write can be deep inside frame emission, so
+    /// the close must not run under the caller's stack.
+    fn note_transport_write_fatal(&self) {
+        if !self.transport_write_fatal.get() {
+            self.transport_write_fatal.set(true);
+            self.register_auto_flush();
+        }
+    }
+
+    /// Runs from the deferred tick (never under a write): closes the native socket so the
+    /// normal socket-close teardown runs (native callback detach, JS 'close', session
+    /// destroy) - the same path a peer disconnect takes.
+    fn close_transport_after_fatal_write(&self) {
+        match self.native_socket.get() {
+            BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
+                socket.get().close_and_detach(bun_uws::CloseCode::Normal);
+            }
+            BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => {
+                socket.get().close_and_detach(bun_uws::CloseCode::Normal);
+            }
+            BunSocket::None => {}
+        }
+    }
+
     pub(crate) fn on_auto_flush(&self) -> bool {
         let _keepalive = self.keepalive();
+        if self.transport_write_fatal.get() {
+            // Returning `false` makes DeferredTaskQueue::run remove the entry
+            // itself, so only the registration's flag and ref are released here
+            // - never a re-entrant map mutation from inside run(). The flag is
+            // cleared before the close so the teardown paths the close re-enters
+            // (detach -> unregister_auto_flush) see an unregistered flusher and
+            // early-return instead of removing a map entry run() still owns.
+            self.auto_flusher.get().registered.set(false);
+            self.deref();
+            self.close_transport_after_fatal_write();
+            return false;
+        }
         let _ = self.flush();
         // we will unregister ourselves when the buffer is empty
         true
@@ -9672,6 +9732,7 @@ impl H2FrameParser {
             streams: JsCell::new(BunHashMap::default()),
             hpack: JsCell::new(None),
             has_nonnative_backpressure: Cell::new(false),
+            transport_write_fatal: Cell::new(false),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             padding_strategy: Cell::new(PaddingStrategy::None),
             engine: core::cell::RefCell::new(None),

@@ -161,7 +161,15 @@ const kSocketClass = Symbol("kSocketClass");
 // callback as errnoException(status, 'write') and destroys the stream when no
 // callback is pending. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L92
 function failWrite(self, negErrno, callback) {
-  const er = new ErrnoException(negErrno, "write");
+  let er = new ErrnoException(negErrno, "write") as Error & { code?: string; errno?: number; syscall?: string };
+  if (typeof er.code !== "string" || !/^E[A-Z0-9]+$/.test(er.code)) {
+    // A raw WSA value the errno table cannot name (Windows delivers fatal
+    // send errors this way): shape it like SocketEmitEndNT shapes reads,
+    // keeping the original errno.
+    er = new ConnResetException("write ECONNRESET") as Error & { code: string; errno?: number; syscall?: string };
+    er.errno = negErrno;
+    er.syscall = "write";
+  }
   self._pendingData = null;
   self[kwriteCallback] = null;
   if (callback) {

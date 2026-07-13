@@ -480,7 +480,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // leak shows up as orphaned=10 on the second iteration.
       const iteration = "orphaned=5 closing=5 leaked=0";
       expect({
-        stdout: stdout.replaceAll("\r\n", "\n").replaceAll(/^\[\w+\].+$/gm, "").trim(),
+        stdout: stdout
+          .replaceAll("\r\n", "\n")
+          .replaceAll(/^\[\w+\].+$/gm, "")
+          .trim(),
         stderr,
         exitCode,
         signalCode: proc.signalCode,
@@ -513,7 +516,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // napi_generic_failure = 9, and no handle is written back. stderr is part
       // of the compared object so a crash or assert prints with the failure.
       expect({
-        stdout: stdout.replaceAll("\r\n", "\n").replaceAll(/^\[\w+\].+$/gm, "").trim(),
+        stdout: stdout
+          .replaceAll("\r\n", "\n")
+          .replaceAll(/^\[\w+\].+$/gm, "")
+          .trim(),
         stderr,
         exitCode,
       }).toMatchObject({

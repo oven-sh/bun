@@ -3369,17 +3369,31 @@ impl H2FrameParser {
 
     /// Runs from the deferred tick (never under a write): closes the native socket so the
     /// normal socket-close teardown runs (native callback detach, JS 'close', session
-    /// destroy) - the same path a peer disconnect takes.
+    /// destroy) - the same path a peer disconnect takes. Closes WITHOUT detaching: a
+    /// close_and_detach here severed the JS wrapper before on_close could dispatch, so
+    /// the session saw neither 'error' nor 'close' and callers waiting on the failure
+    /// hung (grpc-js against a refused server). Not-yet-established sockets are left
+    /// alone entirely - the connect-error path owns their failure delivery, and closing
+    /// a semi-connected socket runs no terminal callback (stranding its refs, see the
+    /// close host_fn in socket_body).
     fn close_transport_after_fatal_write(&self) {
         match self.native_socket.get() {
             BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
-                socket.get().close_and_detach(bun_uws::CloseCode::Normal);
+                Self::close_socket_for_dead_transport::<true>(socket.get());
             }
             BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => {
-                socket.get().close_and_detach(bun_uws::CloseCode::Normal);
+                Self::close_socket_for_dead_transport::<false>(socket.get());
             }
             BunSocket::None => {}
         }
+    }
+
+    fn close_socket_for_dead_transport<const SSL: bool>(socket: &crate::socket::NewSocket<SSL>) {
+        let handler = socket.socket.get();
+        if !handler.is_established() {
+            return;
+        }
+        handler.close(bun_uws::CloseCode::Normal);
     }
 
     pub(crate) fn on_auto_flush(&self) -> bool {

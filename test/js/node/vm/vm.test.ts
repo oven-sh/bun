@@ -1137,21 +1137,16 @@ describe("createContext with a non-extensible sandbox", () => {
       expect(runInContext("function f1(){ return 7 }; typeof f1", sandbox)).toBe("function");
       expect(runInContext("f1()", sandbox)).toBe(7);
       expect(
-        runInContext(
-          "Object.defineProperty(globalThis,'d1',{value:4,configurable:true}); typeof d1",
-          sandbox,
-        ),
+        runInContext("Object.defineProperty(globalThis,'d1',{value:4,configurable:true}); typeof d1", sandbox),
       ).toBe("number");
       expect(
-        runInContext(
-          "Object.defineProperty(globalThis,'ac1',{get(){return 42},configurable:true}); ac1",
-          sandbox,
-        ),
+        runInContext("Object.defineProperty(globalThis,'ac1',{get(){return 42},configurable:true}); ac1", sandbox),
       ).toBe(42);
       expect(runInContext("'use strict'; globalThis.s1 = 5; typeof s1", sandbox)).toBe("number");
-      expect(
-        runInContext("[Object.isFrozen(globalThis), Object.isExtensible(globalThis)]", sandbox),
-      ).toEqual([false, true]);
+      expect(runInContext("[Object.isFrozen(globalThis), Object.isExtensible(globalThis)]", sandbox)).toEqual([
+        false,
+        true,
+      ]);
 
       // The sandbox is non-extensible, so nothing is copied out.
       expect(Object.getOwnPropertyDescriptor(sandbox, "a1")).toBeUndefined();
@@ -1163,14 +1158,9 @@ describe("createContext with a non-extensible sandbox", () => {
     const sandbox = Object.freeze({ f0: 1 });
     createContext(sandbox);
     expect(runInContext("f0 = 99; f0", sandbox)).toBe(1);
+    expect(runInContext("'use strict'; try{f0 = 99; 'ok'}catch(e){e.constructor.name}", sandbox)).toBe("TypeError");
     expect(
-      runInContext("'use strict'; try{f0 = 99; 'ok'}catch(e){e.constructor.name}", sandbox),
-    ).toBe("TypeError");
-    expect(
-      runInContext(
-        "try{Object.defineProperty(globalThis,'f0',{value:99}); 'ok'}catch(e){e.constructor.name}",
-        sandbox,
-      ),
+      runInContext("try{Object.defineProperty(globalThis,'f0',{value:99}); 'ok'}catch(e){e.constructor.name}", sandbox),
     ).toBe("TypeError");
   });
 

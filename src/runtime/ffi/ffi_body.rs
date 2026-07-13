@@ -2170,7 +2170,7 @@ impl Function {
             //    impossible
             // 2. other throwable functions arent called, so their errors
             //    aren't possible
-            Err(e) => return Err(e),
+            Err(_e) => return Err(crate::Error::TCCMissing),
         };
         self.state = Some(state);
         let _guard = scopeguard::guard(std::ptr::from_mut::<Function>(self), |this_ptr| {

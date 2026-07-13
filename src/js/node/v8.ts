@@ -128,13 +128,7 @@ let fs;
 
 function writeHeapSnapshot(path, _options) {
   if (path !== undefined) {
-    if (typeof path !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("path", "string", path);
-    }
-
-    if (!path) {
-      throw $ERR_INVALID_ARG_VALUE("path", path, "must be a non-empty string");
-    }
+    path = require("internal/validators").getValidatedFsPath(path);
   } else {
     path = getDefaultHeapSnapshotPath();
   }

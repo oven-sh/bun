@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const fixture = join(import.meta.dir, "v8-heap-snapshot-fixture.ts");
 
@@ -87,6 +88,60 @@ test("v8.writeHeapSnapshot() with path", async () => {
   using dir = tempDir("v8-heap-snapshot", {});
   const path = join(String(dir), "test.heapsnapshot");
   expect(await runFixture("write-path", { args: [path] })).toEqual({ returnedPath: path, ...structure });
+});
+
+test("v8.writeHeapSnapshot() with Buffer path", async () => {
+  using dir = tempDir("v8-heap-snapshot", {});
+  const path = join(String(dir), "test.heapsnapshot");
+  expect(await runFixture("write-buffer", { args: [path] })).toEqual({
+    returnedIsBuffer: true,
+    returnedString: path,
+    ...structure,
+  });
+});
+
+test("v8.writeHeapSnapshot() with file URL path", async () => {
+  using dir = tempDir("v8-heap-snapshot", {});
+  const path = join(String(dir), "test.heapsnapshot");
+  expect(await runFixture("write-url", { args: [pathToFileURL(path).href] })).toEqual({
+    returnedPath: path,
+    ...structure,
+  });
+});
+
+test("v8.writeHeapSnapshot() rejects invalid paths with node-compatible errors", async () => {
+  // None of these reach snapshot generation, so one subprocess covers them all.
+  const script = `
+    const v8 = require("node:v8");
+    const report = (label, fn) => {
+      try { fn(); console.log(JSON.stringify({ label, threw: false })); }
+      catch (e) { console.log(JSON.stringify({ label, code: e.code })); }
+    };
+    report("number", () => v8.writeHeapSnapshot(123));
+    report("null", () => v8.writeHeapSnapshot(null));
+    report("nul-string", () => v8.writeHeapSnapshot("a\\u0000b"));
+    report("nul-buffer", () => v8.writeHeapSnapshot(Buffer.from("a\\u0000b")));
+    report("empty", () => v8.writeHeapSnapshot(""));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const results = stdout.trim().split("\n").map(line => JSON.parse(line));
+  expect({ stderr, results }).toEqual({
+    stderr: "",
+    results: [
+      { label: "number", code: "ERR_INVALID_ARG_TYPE" },
+      { label: "null", code: "ERR_INVALID_ARG_TYPE" },
+      { label: "nul-string", code: "ERR_INVALID_ARG_VALUE" },
+      { label: "nul-buffer", code: "ERR_INVALID_ARG_VALUE" },
+      { label: "empty", code: "ENOENT" },
+    ],
+  });
+  expect(exitCode).toBe(0);
 });
 
 test("v8 heap snapshot labels Web Streams internal edges", async () => {

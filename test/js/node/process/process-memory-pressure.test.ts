@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isMacOS } from "harness";
 
 // process.on("memoryPressure") is a Bun extension. These tests drive the
 // emit path synthetically via bun:internal-for-testing since real OS memory
@@ -94,7 +94,10 @@ describe.concurrent("process.on('memoryPressure')", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("hands committed memory back to the OS, not just an event", async () => {
+  // macOS purges with MADV_FREE_REUSABLE, which keeps the range committed in
+  // mimalloc's accounting, so currentCommit stays byte-identical there (held
+  // 140771328 -> 140771328 in CI). Linux and Windows decommit and see the drop.
+  test.skipIf(isMacOS)("hands committed memory back to the OS, not just an event", async () => {
     // Emitting the event used to be all that happened: listeners were told about the
     // pressure and nothing gave the pages back. Free a large native buffer, then assert
     // the pressure handler actually drops mimalloc's committed bytes.

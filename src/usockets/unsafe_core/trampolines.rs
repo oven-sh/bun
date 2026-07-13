@@ -705,7 +705,20 @@ impl<P: PollProtocol> MakePollOps<P> {
     const OPS: PollOwnerOps = PollOwnerOps {
         dispatch: Self::dispatch_erased,
         deref: owner_deref_erased::<P::Owner>,
+        teardown: Self::teardown_erased,
     };
+
+    /// # Safety
+    /// `word` must point to a live `P::Owner` whose slot-transferred strong
+    /// ref is still outstanding (released by the caller afterwards).
+    unsafe fn teardown_erased(word: *mut c_void) {
+        let Some(p) = NonNull::new(word.cast::<P::Owner>()) else {
+            return;
+        };
+        // SAFETY: forwarded caller contract — the outstanding ref keeps the
+        // owner alive for this shared borrow.
+        P::on_loop_teardown(unsafe { &*p.as_ptr() });
+    }
 
     /// # Safety
     /// `word` must point to a live `P::Owner` holding the slot-transferred
@@ -745,6 +758,17 @@ pub(crate) fn release_poll_owner(ops: &PollOwnerOps, word: *mut c_void) {
     // SAFETY: sole release of the register-transferred strong ref — every
     // caller nulls the slot's word before (or while) handing it here.
     unsafe { (ops.deref)(word) }
+}
+
+/// Loop-teardown release: invalidate the owner's consumer-side handles (its
+/// `PollRef` dangles once the slab unmaps), THEN release the transferred ref.
+pub(crate) fn teardown_poll_owner(ops: &PollOwnerOps, word: *mut c_void) {
+    if word.is_null() {
+        return;
+    }
+    // SAFETY: teardown caller contract — live owner, ref still outstanding.
+    unsafe { (ops.teardown)(word) };
+    release_poll_owner(ops, word);
 }
 
 /// Produce the `&'static VTable` for a Protocol v2 registration — every slot

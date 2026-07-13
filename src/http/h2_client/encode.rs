@@ -325,7 +325,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             }
         }
         HTTPRequestBody::Stream(body) => {
-            let ended = body.ended;
+            let ended = body.sync_ended();
             let Some(sb) = body.buffer_mut() else {
                 return;
             };

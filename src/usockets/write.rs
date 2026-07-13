@@ -238,9 +238,9 @@ pub(crate) fn sendfile_needs_more(s: *mut SocketHeader) {
     mark_backpressure(s);
 }
 
-/// Write + SCM_RIGHTS fd pass (SpawnIpc; C14). Contract (R4.10): if the
-/// return value < data.len() the fd was NOT transferred and the caller must
-/// retry the whole (data, fd) pair.
+/// Write + SCM_RIGHTS fd pass (SpawnIpc; C14). Contract (R4.10): a return of
+/// 0 means nothing (fd included) was sent; a return > 0 means the fd was
+/// delivered with the first byte, so any retry must be data-only.
 #[cfg(not(windows))]
 pub(crate) fn write_fd(s: *mut SocketHeader, data: &[u8], fd: Fd) -> i32 {
     if ext::header_mut(s).is_closed() || is_shut_down_full(s) {

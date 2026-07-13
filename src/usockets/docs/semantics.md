@@ -669,6 +669,12 @@ close_raw(head_sockets, RESET, 0)` — TLS sockets whose graceful close
      parked socket belonging to this group call `us_socket_close(q, CLEAN,
 0)` (close_raw's low-prio branch unlinks + decrements the counter);
      assert count reaches 0.
+  Rust deviation: steps 3-5 do not use C's cached-`next` walks. With
+  in-place adoption there is no relocation tombstone, so a re-entrant
+  adopt/close can relink a cached `next` into a foreign group or the closed
+  chain; each walk instead restarts from its list head after every dispatch,
+  skipping sockets a §1.4/§5.2-deferred close left linked (bounding the
+  force-drain, which otherwise spins on an in-use head socket).
 
 ---
 
@@ -960,6 +966,11 @@ result->error`, `c->error_is_dns = 1` (the two error namespaces overlap
      invalidate = `(c->error == ECONNREFUSED || c->error_is_dns)` (refused →
      stale addresses; DNS failure → never cache negatives; socket.c:247-252).
      `us_dispatch_connecting_error(c, c->error)`; `us_connecting_socket_free(c)`.
+  Rust deviation (steps 4-5): for static-vtable (owner-carrying) kinds the
+  detach runs BEFORE the connecting_error dispatch — the dispatch releases
+  the core-held owner ref, whose Drop can free the owner storage embedding
+  the group, so the group unlink must complete first. Group-vtable kinds
+  keep the C order (their vtable is resolved through `c->group`).
 - **R6.11** `us_connecting_socket_free(c)` (socket.c:184-190): detach
   (group unlink + ssl_ctx unref) then push onto
   `loop->data.closed_connecting_head` via `c->next`; actual `us_free` happens

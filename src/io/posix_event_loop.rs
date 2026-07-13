@@ -198,6 +198,9 @@ pub struct FilePoll {
 #[cfg(not(windows))]
 struct Registration {
     poll_ref: bun_usockets::PollRef,
+    /// The fd (or pid/port token) the slot was armed for; a re-arm with a
+    /// different fd must re-register, not mutate the old fd's interest.
+    fd: Fd,
     /// Owned strong ref (`RefPtr` has no Drop); discharged in
     /// `drop_registration`. The registry slot + dispatch guard hold their own.
     shim: bun_ptr::RefPtr<RegistryShim>,
@@ -247,6 +250,13 @@ impl bun_usockets::PollProtocol for FilePollProtocol {
         // deinit; `ptr` is never touched after the call.
         unsafe { __bun_run_file_poll(ptr, size_or_offset) };
     }
+
+    fn on_loop_teardown(shim: &RegistryShim) {
+        // The loop freed the slot and is about to unmap the slab; zero the
+        // backpointer so the surviving FilePoll's `drop_registration` knows
+        // its PollRef dangles and must not be resolved.
+        shim.poll.set(0);
+    }
 }
 
 #[cfg(not(windows))]
@@ -295,7 +305,11 @@ impl FilePoll {
     /// core dispatch guard keeps the shim alive until dispatch returns.
     fn drop_registration(&mut self) {
         if let Some(reg) = self.registration.take() {
-            reg.poll_ref.unregister();
+            // Zeroed backpointer = loop teardown already freed the slot (see
+            // on_loop_teardown); the PollRef dangles into an unmapped slab.
+            if reg.shim.data().poll.get() != 0 {
+                reg.poll_ref.unregister();
+            }
             Self::release_shim(reg);
         }
     }
@@ -305,7 +319,10 @@ impl FilePoll {
     /// slot's stored loop pointer would be foreign under its protector.
     fn drop_registration_on(&mut self, loop_: &mut Loop) {
         if let Some(reg) = self.registration.take() {
-            reg.poll_ref.unregister_on(loop_);
+            // Same teardown latch as `drop_registration`.
+            if reg.shim.data().poll.get() != 0 {
+                reg.poll_ref.unregister_on(loop_);
+            }
             Self::release_shim(reg);
         }
     }
@@ -720,31 +737,44 @@ impl FilePoll {
             || (cfg!(any(target_os = "linux", target_os = "android")) && flag == Flags::Process);
 
         if let Some(reg) = &self.registration {
-            // Already armed. Fd sources take the union of the live directions
-            // plus `flag`; single-purpose sources (proc/machport/
-            // memorystatus) are level-armed already — nothing to change.
-            let poll_ref = reg.poll_ref;
-            if is_fd_direction {
-                let readable = matches!(flag, Flags::Readable | Flags::Process)
-                    || self.flags.contains(Flags::PollReadable);
-                let writable = flag == Flags::Writable || self.flags.contains(Flags::PollWritable);
-                if let Err(errno) = poll_ref.change_on(loop_, readable, writable) {
-                    // Failed rearm: fully disarm so the kernel, the registry
-                    // slot, and the interest flags all agree with the failure
-                    // the caller is told (register_with_fd_impl deactivates).
-                    self.drop_registration_on(loop_);
-                    self.flags.remove(Flags::PollReadable);
-                    self.flags.remove(Flags::PollWritable);
-                    self.flags.remove(Flags::PollProcess);
-                    self.flags.remove(Flags::PollMachport);
-                    self.flags.remove(Flags::PollMemoryPressure);
-                    return sys::Result::Err(sys::Error::from_code(
-                        sys::SystemErrno::init(i64::from(errno)).unwrap_or(sys::E::EINVAL),
-                        REGISTER_TAG,
-                    ));
+            if reg.shim.data().poll.get() == 0 {
+                // Loop teardown already freed the slot (on_loop_teardown
+                // zeroed the backpointer): the PollRef dangles — discard our
+                // shim ref and fall through to a fresh registration.
+                Self::release_shim(self.registration.take().expect("checked Some"));
+            } else if reg.fd != fd {
+                // Re-arm on a different fd: the live slot watches the old
+                // one, so an interest change would mutate the wrong fd's
+                // registration. Disarm, then register `fd` fresh below.
+                self.drop_registration_on(loop_);
+            } else {
+                // Already armed for this fd. Fd sources take the union of the
+                // live directions plus `flag`; single-purpose sources (proc/
+                // machport/memorystatus) are level-armed — nothing to change.
+                let poll_ref = reg.poll_ref;
+                if is_fd_direction {
+                    let readable = matches!(flag, Flags::Readable | Flags::Process)
+                        || self.flags.contains(Flags::PollReadable);
+                    let writable =
+                        flag == Flags::Writable || self.flags.contains(Flags::PollWritable);
+                    if let Err(errno) = poll_ref.change_on(loop_, readable, writable) {
+                        // Failed rearm: fully disarm so the kernel, the registry
+                        // slot, and the interest flags all agree with the failure
+                        // the caller is told (register_with_fd_impl deactivates).
+                        self.drop_registration_on(loop_);
+                        self.flags.remove(Flags::PollReadable);
+                        self.flags.remove(Flags::PollWritable);
+                        self.flags.remove(Flags::PollProcess);
+                        self.flags.remove(Flags::PollMachport);
+                        self.flags.remove(Flags::PollMemoryPressure);
+                        return sys::Result::Err(sys::Error::from_code(
+                            sys::SystemErrno::init(i64::from(errno)).unwrap_or(sys::E::EINVAL),
+                            REGISTER_TAG,
+                        ));
+                    }
                 }
+                return sys::Result::Ok(());
             }
-            return sys::Result::Ok(());
         }
 
         let source = match flag {
@@ -792,7 +822,7 @@ impl FilePoll {
         // `Registration` and is discharged in `drop_registration`.
         match loop_.register_poll::<FilePollProtocol>(source, shim.dupe_ref(), false) {
             Ok(poll_ref) => {
-                self.registration = Some(Registration { poll_ref, shim });
+                self.registration = Some(Registration { poll_ref, fd, shim });
                 sys::Result::Ok(())
             }
             Err(errno) => {

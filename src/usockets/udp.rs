@@ -24,7 +24,7 @@ pub struct sockaddr_storage {
 use crate::LIBUS_RECV_BUFFER_LENGTH;
 use crate::backend::Events;
 use crate::loop_::Loop;
-use crate::unsafe_core::io;
+use crate::unsafe_core::{ffi, io};
 use crate::{LIBUS_SOCKET_DESCRIPTOR, LIBUS_SOCKET_ERROR};
 
 /// `LIBUS_SEND_BUFFER_LENGTH` — the loop's shared UDP send scratch (metadata
@@ -162,17 +162,13 @@ impl Socket {
 
         // us_create_poll(fallthrough = 0); libuv counts active handles itself.
         #[cfg(not(windows))]
-        {
-            io::loop_mut(loop_).num_polls += 1;
-        }
+        crate::unsafe_core::poll_access::num_polls_add(loop_, 1);
 
         if io::udp_poll_start(loop_, this, Events::READABLE.0 | Events::WRITABLE.0) != 0 {
             let saved = last_errno();
             io::close(fd, false);
             #[cfg(not(windows))]
-            {
-                io::loop_mut(loop_).num_polls -= 1;
-            }
+            crate::unsafe_core::poll_access::num_polls_add(loop_, -1);
             io::udp_destroy(this);
             if let Some(e) = err.as_deref_mut() {
                 *e = saved;
@@ -212,7 +208,7 @@ impl Socket {
         let mut off = 0usize;
         let mut total_sent: c_int = 0;
         while total_sent < num {
-            let send_buf = io::loop_mut(loop_).internal_loop_data.send_buf;
+            let send_buf = ffi::ld_send_buf(loop_);
             let (count, sent) = io::udp_send_batch(
                 fd,
                 send_buf,
@@ -265,14 +261,14 @@ impl Socket {
         let fd = self.fd;
         let cb = self.close_cb;
         self.closed = true;
-        self.next_closed = io::loop_mut(loop_).internal_loop_data.closed_udp_head;
+        self.next_closed = ffi::ld_closed_udp_head(loop_);
         // Derived after the last direct `self` access so it stays valid
         // through the callback; on_close re-derives the socket from `this`
         // (C15: user data readable during and after the callback).
         let this: *mut Socket = self;
         io::udp_poll_stop(loop_, this);
         io::close(fd, false);
-        io::loop_mut(loop_).internal_loop_data.closed_udp_head = this;
+        ffi::ld_set_closed_udp_head(loop_, this);
         if let Some(cb) = cb {
             cb(this);
         }
@@ -373,7 +369,7 @@ pub(crate) fn dispatch_ready_poll(s: *mut Socket, error: bool, readable: bool, w
     if readable && !io::udp_is_closed(s) {
         let mut recvbuf = io::udp_recvbuf_zeroed();
         loop {
-            let recv_buf = io::loop_mut(m.loop_).internal_loop_data.recv_buf;
+            let recv_buf = ffi::ld_recv_buf(m.loop_);
             let npackets = io::udp_recvmmsg(m.fd, &mut recvbuf, recv_buf);
             if npackets > 0 {
                 if let Some(cb) = m.data_cb {
@@ -440,17 +436,12 @@ pub(crate) fn dispatch_ready_poll(s: *mut Socket, error: bool, readable: bool, w
 /// Tick-postlude sweep of `closed_udp_head` (`us_internal_free_closed_sockets`
 /// UDP half): memory stays readable until here (C6/C15).
 pub(crate) fn free_closed_udp_sockets(loop_: *mut Loop) {
-    let mut s = {
-        let data = &mut io::loop_mut(loop_).internal_loop_data;
-        core::mem::replace(&mut data.closed_udp_head, ptr::null_mut())
-    };
+    let mut s = ffi::ld_take_closed_udp_head(loop_);
     while !s.is_null() {
         let next = io::udp_next_closed(s);
         // us_poll_free parity: each UDP socket owned one non-fallthrough poll.
         #[cfg(not(windows))]
-        {
-            io::loop_mut(loop_).num_polls -= 1;
-        }
+        crate::unsafe_core::poll_access::num_polls_add(loop_, -1);
         io::udp_destroy(s);
         s = next;
     }

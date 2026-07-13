@@ -23,6 +23,8 @@ use crate::socket::us_socket_t;
 use crate::udp;
 use crate::unsafe_core::deref;
 use crate::unsafe_core::ffi;
+#[cfg(not(windows))]
+use crate::unsafe_core::poll_access;
 use crate::unsafe_core::slab::ChunkedSlab;
 
 bun_core::declare_scope!(Loop, visible);
@@ -86,13 +88,6 @@ pub struct InternalLoopData {
 }
 
 impl InternalLoopData {
-    /// 512 KiB shared receive buffer (base-anchored view — consumers apply
-    /// the LIBUS_RECV_BUFFER_PADDING offset themselves; parity with the old
-    /// `uws_sys::InternalLoopData::recv_slice`).
-    pub fn recv_slice(&mut self) -> &mut [u8] {
-        deref::recv_slice(self)
-    }
-
     pub fn should_enable_date_header_timer(&self) -> bool {
         self.sweep_timer_count > 0
     }
@@ -397,6 +392,35 @@ impl PosixLoop {
 
     // ── poll / keep-alive accounting ────────────────────────────────────────
 
+    /// Raw-place twins of `inc`/`dec`/`ref_`/`unref` for `*mut Loop` callers:
+    /// a `&mut Loop` span would cover `pending_wakeups`, which foreign
+    /// threads `fetch_add` concurrently (R10.6, C17).
+    pub fn inc_raw(this: *mut Self) {
+        bun_core::scoped_log!(Loop, "inc_raw -> {}", poll_access::num_polls(this) + 1);
+        poll_access::num_polls_add(this, 1);
+    }
+
+    pub fn dec_raw(this: *mut Self) {
+        bun_core::scoped_log!(Loop, "dec_raw -> {}", poll_access::num_polls(this) - 1);
+        poll_access::num_polls_add(this, -1);
+    }
+
+    pub fn ref_raw(this: *mut Self) {
+        bun_core::scoped_log!(Loop, "ref_raw -> {}", poll_access::num_polls(this) + 1);
+        poll_access::loop_ref_raw(this);
+    }
+
+    pub fn unref_raw(this: *mut Self) {
+        bun_core::scoped_log!(Loop, "unref_raw -> {}", poll_access::num_polls(this) - 1);
+        poll_access::loop_unref_raw(this);
+    }
+
+    /// Raise `num_polls` to at least `min` — same raw-place rule as
+    /// [`Self::inc_raw`] (HTTP daemon keep-alive floor).
+    pub fn raise_num_polls_to(this: *mut Self, min: i32) {
+        poll_access::num_polls_raise(this, min);
+    }
+
     pub fn inc(&mut self) {
         bun_core::scoped_log!(Loop, "inc {} + 1 = {}", self.num_polls, self.num_polls + 1);
         self.num_polls += 1;
@@ -626,6 +650,24 @@ impl WindowsLoop {
 
     // Poll/keep-alive accounting proxies (uv active handles keep the loop
     // alive on Windows).
+
+    /// Raw-pointer twins of `inc`/`dec`/`ref_`/`unref` — parity with the
+    /// POSIX raw twins so cross-platform callers never form `&mut Loop`.
+    pub fn inc_raw(this: *mut Self) {
+        crate::backend::libuv::inc_active(this);
+    }
+
+    pub fn dec_raw(this: *mut Self) {
+        crate::backend::libuv::dec_active(this);
+    }
+
+    pub fn ref_raw(this: *mut Self) {
+        crate::backend::libuv::inc_active(this);
+    }
+
+    pub fn unref_raw(this: *mut Self) {
+        crate::backend::libuv::dec_active(this);
+    }
 
     pub fn inc(&mut self) {
         crate::backend::libuv::inc_active(self);

@@ -898,10 +898,10 @@ impl Drop for HTTPClient<'_> {
 // every process.
 //
 // `ThreadCell` (not `RacyCell`) to encode "HTTP-thread-only after init" in the
-// type. `claim()` is invoked from `HTTPThread::on_start`. JS-side callers that
-// only touch the lock-free `queued_tasks` + `wakeup` (e.g. `schedule()`) go
-// through [`http_thread_shared`] / `get_unchecked` until those fields are
-// hoisted out of the thread-confined struct.
+// type. `claim()` is invoked from `HTTPThread::on_start`, so any JS-thread
+// `http_thread()` panics in debug builds. Cross-thread callers (schedule_*,
+// timer reads) go through [`http_thread_shared`] / `get_unchecked`, which
+// only materialise `&HttpThread` and touch interior-mutable fields.
 pub static HTTP_THREAD: bun_core::ThreadCell<core::mem::MaybeUninit<HTTPThread>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
 pub(crate) static HTTP_THREAD_INIT: core::sync::atomic::AtomicBool =
@@ -930,6 +930,23 @@ pub fn http_thread() -> &'static mut HTTPThread {
 #[inline]
 pub fn http_thread_mut() -> &'static mut HTTPThread {
     http_thread()
+}
+
+/// Cross-thread (JS-thread) view of the HTTP thread singleton. Shared deref
+/// only: `process_events` holds `&mut self` on the HTTP thread for its whole
+/// life, so cross-thread callers must stick to `&self` entry points
+/// (mutex-guarded queue pushes, atomics, `wakeup`) — same shape as
+/// [`HTTPThread::schedule`].
+#[inline]
+pub fn http_thread_shared() -> bun_ptr::ParentRef<HTTPThread> {
+    assert!(
+        HTTP_THREAD_INIT.load(core::sync::atomic::Ordering::Acquire),
+        "http_thread_shared() called before HTTPThread::init()"
+    );
+    // SAFETY: `HTTP_THREAD_INIT == true` ⇒ the `MaybeUninit` is fully
+    // written (Acquire pairs with `init_once`'s Release). `get_unchecked`
+    // skips the ThreadCell owner assert for this cross-thread accessor.
+    unsafe { bun_ptr::ParentRef::from_raw((*HTTP_THREAD.get_unchecked()).as_mut_ptr()) }
 }
 
 // TODO: this needs to be freed when Worker Threads are implemented
@@ -3180,7 +3197,7 @@ impl<'a> HTTPClient<'a> {
                 return;
             };
             let Some(buf) = stream.buffer else { return };
-            (buf, stream.ended)
+            (buf, stream.sync_ended())
         };
         // ThreadSafeStreamBuffer is owned by the JS-side request body stream
         // and outlives this call (intrusive-refcounted; independent heap

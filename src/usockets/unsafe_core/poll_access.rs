@@ -561,6 +561,40 @@ pub(crate) fn num_polls_add(loop_: *mut Loop, delta: i32) {
     unsafe { *(&raw mut (*loop_).num_polls) += delta }
 }
 
+/// Raise `num_polls` to at least `min` (daemon-loop keep-alive floor) —
+/// same raw-place rule as [`num_polls_add`].
+#[cfg(not(windows))]
+pub(crate) fn num_polls_raise(loop_: *mut Loop, min: i32) {
+    // SAFETY: see `num_polls_add`.
+    unsafe {
+        let p = &raw mut (*loop_).num_polls;
+        if *p < min {
+            *p = min;
+        }
+    }
+}
+
+/// `ref_`/`unref` twins of [`num_polls_add`] (`num_polls` + `active`), raw
+/// places only; `unref` saturates `active` at 0 like `PosixLoop::unref`.
+#[cfg(not(windows))]
+pub(crate) fn loop_ref_raw(loop_: *mut Loop) {
+    // SAFETY: see `num_polls_add`; `active` is loop-thread-only too.
+    unsafe {
+        *(&raw mut (*loop_).num_polls) += 1;
+        *(&raw mut (*loop_).active) += 1;
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn loop_unref_raw(loop_: *mut Loop) {
+    // SAFETY: see `loop_ref_raw`.
+    unsafe {
+        *(&raw mut (*loop_).num_polls) -= 1;
+        let a = &raw mut (*loop_).active;
+        *a = (*a).saturating_sub(1);
+    }
+}
+
 /// ACQUIRE swap-to-0 before blocking (R1.10 step 5).
 #[cfg(not(windows))]
 pub(crate) fn pending_wakeups_swap_acquire(loop_: *mut Loop) -> u32 {

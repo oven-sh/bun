@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_io::StreamBuffer;
 use bun_threading::Mutex;
@@ -12,6 +13,10 @@ pub struct ThreadSafeStreamBuffer {
     /// callback will be called passing the context for the http callback
     /// this is used to report when the buffer is drained and only if end chunk was not sent/reported
     pub callback: Option<Callback>,
+    /// Sticky end-of-body flag, set by the JS thread before it schedules the
+    /// End wake-up. Senders latch it via `Stream::sync_ended` so an End that
+    /// arrives while the request has no live stream/socket is never lost.
+    ended: AtomicBool,
 }
 
 pub struct Callback {
@@ -43,6 +48,7 @@ impl Default for ThreadSafeStreamBuffer {
             // .initExactRefs(2) — 1 for main thread and 1 for http thread
             ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
             callback: None,
+            ended: AtomicBool::new(false),
         }
     }
 }
@@ -100,6 +106,17 @@ impl ThreadSafeStreamBuffer {
     pub fn lock(&mut self) -> StreamBufferGuard<'_> {
         self.mutex.lock();
         StreamBufferGuard(self)
+    }
+
+    /// JS thread: mark end-of-body. Release pairs with the Acquire in
+    /// `is_ended` so the final buffered bytes are visible with the flag.
+    pub fn mark_ended(&self) {
+        self.ended.store(true, Ordering::Release);
+    }
+
+    /// HTTP thread: read the sticky end-of-body flag (see `mark_ended`).
+    pub fn is_ended(&self) -> bool {
+        self.ended.load(Ordering::Acquire)
     }
 
     /// Should only be called in the main thread and before scheduling it to the http thread

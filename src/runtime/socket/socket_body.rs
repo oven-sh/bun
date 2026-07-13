@@ -1278,6 +1278,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
             }
         }
+        // The silent close above suppressed dispatch, so the upgradeTLS raw
+        // twin never sees its own on_close — retire it here (same chaining as
+        // on_close; its `on_close` consumes the twin +1). Last: it runs JS.
+        if let Some(raw) = self.twin.with_mut(|t| t.take()) {
+            Self::on_close(raw.into_this_ptr(), old, 0, None).ok();
+        }
     }
 
     pub fn mark_inactive(&self) {
@@ -1613,11 +1619,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !this.has_handlers() {
             return Ok(());
         }
-        this.update_flags(|f| f.insert(Flags::HANDSHAKE_COMPLETE));
-        this.socket.set(s);
+        // Detached check BEFORE the re-stamp: close()/terminate() set DETACHED
+        // deliberately; a late handshake during the deferred-close window must
+        // not resurrect the handle.
         if this.socket.get().is_detached() {
             return Ok(());
         }
+        this.update_flags(|f| f.insert(Flags::HANDSHAKE_COMPLETE));
+        this.socket.set(s);
         // Keep the socket alive across the callbacks below (which re-enter JS)
         // and across `reject_unauthorized_connection`, whose close may
         // otherwise drop the last reference.
@@ -1944,6 +1953,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !this.has_handlers() {
             this.detach_native_callback();
             this.socket.set(SocketHandler::<SSL>::DETACHED);
+            // Still retire the upgradeTLS raw twin: it shares this fd, so this
+            // dispatch is its only close. Its `on_close` consumes the twin +1.
+            if let Some(raw) = this.twin.with_mut(|t| t.take()) {
+                Self::on_close(raw.into_this_ptr(), socket, err, reason).ok();
+            }
             this.get().deref();
             return Ok(());
         }
@@ -2034,10 +2048,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !this.has_handlers() {
             return;
         }
-        this.socket.set(s);
+        // Detached check BEFORE the re-stamp — same invariant as on_handshake.
         if this.socket.get().is_detached() {
             return;
         }
+        this.socket.set(s);
         if this.native_callback.get().on_data(data) {
             return;
         }
@@ -2576,6 +2591,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                             buffer.slice(),
                         );
                         let written: usize = usize::try_from(rc.max(0)).expect("int cast");
+                        self.bytes_written
+                            .set(self.bytes_written.get() + written as u64);
                         let leftover = total_to_write.saturating_sub(written);
                         if leftover == 0 {
                             self.buffered_data_for_node_net
@@ -2583,22 +2600,22 @@ impl<const SSL: bool> NewSocket<SSL> {
                             break 'brk rc;
                         }
 
+                        // writev consumed the buffered prefix first, then the input.
                         let buf_len = self.buffered_data_for_node_net.get().len() as usize;
-                        let remaining_in_buffered_len =
-                            self.buffered_data_for_node_net.get().slice()[written.min(buf_len)..]
-                                .len();
+                        let written_from_buffered = written.min(buf_len);
+                        let remaining_in_buffered_len = buf_len - written_from_buffered;
                         let remaining_in_input_data = &buffer.slice()
-                            [(buf_len.saturating_sub(written)).min(buffer.slice().len())..];
+                            [(written.saturating_sub(buf_len)).min(buffer.slice().len())..];
 
-                        if written > 0 {
-                            if remaining_in_buffered_len > 0 {
-                                self.buffered_data_for_node_net.with_mut(|b| {
-                                    // `remaining_in_buffered_len > 0` ⇒ `written < b.len()`,
-                                    // so `written..` is in-bounds; safe overlapping memmove.
-                                    b.copy_within(written.., 0);
-                                    b.truncate(remaining_in_buffered_len);
-                                });
-                            }
+                        if written_from_buffered > 0 {
+                            self.buffered_data_for_node_net.with_mut(|b| {
+                                if remaining_in_buffered_len > 0 {
+                                    // `written_from_buffered < b.len()` here, so the range
+                                    // is in-bounds; safe overlapping memmove.
+                                    b.copy_within(written_from_buffered.., 0);
+                                }
+                                b.truncate(remaining_in_buffered_len);
+                            });
                         }
 
                         if !remaining_in_input_data.is_empty() {
@@ -3040,16 +3057,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `on_connect_error` synchronously inside `close()`, which runs the
         // full teardown itself.
         let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
-        // `_handle.close()` is the net.Socket `_destroy()` path — Node emits close_notify
-        // once and closes the fd without waiting for the peer's reply. `.fast_shutdown`
-        // makes `ssl_handle_shutdown` take the fast branch so the raw close runs
-        // synchronously (with `.normal` the SSL layer defers waiting for the peer, but we
-        // detach + unref immediately below, orphaning the `us_socket_t`). NOT `.failure`:
-        // that arms SO_LINGER{1,0} → RST and drops any data still in the kernel send
-        // buffer, which `destroy()` after `write()` must not do. The SSL layer may
-        // briefly defer this close behind its own ciphertext write spill
-        // (`ssl_close_after_spill`); that waits only on our fd, not the peer.
-        socket.close(uws::CloseCode::FastShutdown);
+        // DETACH + unref BEFORE the close (same order as close_and_detach /
+        // terminate): the close dispatches its terminal callback synchronously,
+        // whose JS may reconnect this wrapper — the tail must not clobber it.
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         let _ = global;
         this.poll_ref.with_mut(|p| {
@@ -3062,6 +3072,16 @@ impl<const SSL: bool> NewSocket<SSL> {
                 this.this_value.with_mut(|r| r.downgrade());
             }
         }
+        // `_handle.close()` is the net.Socket `_destroy()` path — Node emits close_notify
+        // once and closes the fd without waiting for the peer's reply. `.fast_shutdown`
+        // makes `ssl_handle_shutdown` take the fast branch so the raw close runs
+        // synchronously (with `.normal` the SSL layer defers waiting for the peer, but we
+        // detached + unreffed above, orphaning the `us_socket_t`). NOT `.failure`:
+        // that arms SO_LINGER{1,0} → RST and drops any data still in the kernel send
+        // buffer, which `destroy()` after `write()` must not do. The SSL layer may
+        // briefly defer this close behind its own ciphertext write spill
+        // (`ssl_close_after_spill`); that waits only on our fd, not the peer.
+        socket.close(uws::CloseCode::FastShutdown);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3135,6 +3155,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         let this_ref: &Self = unsafe { &*this };
         this_ref.mark_inactive();
         this_ref.detach_native_callback();
+        // `RefPtr` has no Drop: release the upgradeTLS twin's +1 if no close
+        // dispatch ever retired it (e.g. the fd was closed with dispatch
+        // suppressed), or the raw half leaks for the process lifetime.
+        if let Some(twin) = this_ref.twin.with_mut(|t| t.take()) {
+            twin.deref();
+        }
         // Reset to empty (Strong drops on assign).
         this_ref.this_value.set(JsRef::empty());
 

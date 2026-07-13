@@ -160,7 +160,7 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         let HTTPRequestBody::Stream(body) = &mut client.state.original_request_body else {
             unreachable!()
         };
-        let ended = body.ended;
+        let ended = body.sync_ended();
         let Some(sb) = body.buffer_mut() else {
             return;
         };

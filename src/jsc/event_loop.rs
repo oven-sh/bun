@@ -954,8 +954,10 @@ impl EventLoop {
         // Cross-thread callers (enqueue_task_concurrent, worker terminate)
         // reach here while the loop thread may be parked inside a tick —
         // use the raw `us_wakeup_loop(*mut Loop)`, never a `&mut Loop`.
-        // Liveness: worker teardown unpublishes the loop under its lock
-        // before `on_thread_exit` frees it.
+        // Liveness contract: the caller's `&self` must pin the VM. vm_lock
+        // readers (notify_need_termination) get that from the lock; pool
+        // producers must not outlive worker shutdown (unenforced today —
+        // a terminate racing an in-flight completion is a known gap).
         #[cfg(windows)]
         {
             if let Some(loop_) = self.uws_loop {

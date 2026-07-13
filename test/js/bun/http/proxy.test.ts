@@ -380,6 +380,24 @@ test("unsupported protocol", async () => {
   );
 });
 
+test("unsupported protocol with custom TLS rejects on every request", async () => {
+  // Custom-TLS requests route through the SSL-context cache; the proxy scheme
+  // must be rejected on the cache-hit path too, not just on the first (miss)
+  // request.
+  for (let i = 0; i < 2; i++) {
+    await expect(
+      fetch("https://httpbin.org/get", {
+        proxy: "socks5://127.0.0.1:1080",
+        tls: { ca: tlsCert.cert },
+      }),
+    ).rejects.toThrowError(
+      expect.objectContaining({
+        code: "UnsupportedProxyProtocol",
+      }),
+    );
+  }
+});
+
 /**
  * Creates an HTTP proxy server that captures Proxy-Authorization headers.
  * The server forwards requests to their destination and pipes responses back.

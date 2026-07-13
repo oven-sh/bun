@@ -83,3 +83,38 @@ await Promise.all(promises);
 
 console.log("ok");
 `;
+
+// At process exit (BUN_DESTRUCT_VM_ON_EXIT=1, the ASAN/LSan CI mode),
+// dealloc_in_flight_for_exit releases each in-flight client's
+// custom-SSL-context ref. For a context already evicted from the cache that
+// deref is the LAST one: HTTPContext::drop must not close_all() mid-teardown —
+// dispatching into the half-torn-down (or already freed) clone is a UAF and
+// double-frees the ThreadlocalAsyncHttp box.
+test("exiting with in-flight fetches on evicted custom SSL contexts does not crash", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", exitFixture],
+    env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+}, 120_000);
+
+const exitFixture = /* js */ `
+const N = 65; // > ssl_context_cache_max_size (60): the oldest entries get evicted
+const promises = [];
+for (let i = 0; i < N; i++) {
+  promises.push(
+    fetch("https://192.0.2.1/", {
+      tls: { serverName: "host" + i + ".test" },
+    }).catch(() => {})
+  );
+}
+// Creating 60+ SSL contexts is slow in debug+ASAN builds; the connects to
+// TEST-NET-1 never resolve, so every request is still in flight afterwards.
+await Bun.sleep(5000);
+console.log("ok");
+process.exit(0);
+`;

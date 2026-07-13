@@ -13,6 +13,7 @@ use crate::tls::context::{self, SslCtx};
 use crate::unsafe_core::ext::{deref_mut, header_mut};
 use crate::unsafe_core::ffi;
 use crate::unsafe_core::io;
+use crate::unsafe_core::trampolines;
 
 /// R6.7 (context.c:27): simultaneous happy-eyeballs attempts; the resolver
 /// interleaves AAAA/A so the first 4 alternate families. No per-attempt delay.
@@ -390,7 +391,7 @@ fn start_connections(c: *mut ConnectingSocket, count: usize) -> usize {
 pub(crate) fn attempt_failed(c: *mut ConnectingSocket, s: *mut us_socket_t) {
     attempts_remove(deref_mut(c), s);
     // SEMI_SOCKET close dispatches nothing (C1); RESET matches context.c:775.
-    header_mut(s).close(crate::handle::CloseCode::failure);
+    close_removed_attempt(s);
 
     let remaining = attempts_count(deref_mut(c));
     if remaining <= 1 {
@@ -421,10 +422,20 @@ pub(crate) fn promote_winner(c: *mut ConnectingSocket, winner: *mut us_socket_t)
     let ssl_ctx = cm.ssl_ctx;
     for s in attempts {
         if !s.is_null() && s != winner {
-            header_mut(s).close(crate::handle::CloseCode::failure);
+            close_removed_attempt(s);
         }
     }
     ssl_ctx
+}
+
+/// Close an attempt already removed from `attempts`: sever the borrowed
+/// parent links first so `socket_close`'s live-attempt routing (and the
+/// silent-terminal owner release) cannot fire through this copy.
+fn close_removed_attempt(s: *mut us_socket_t) {
+    let h = header_mut(s);
+    h.connect_state = core::ptr::null_mut();
+    h.ext = core::ptr::null_mut();
+    h.close(crate::handle::CloseCode::failure);
 }
 
 /// Success arm, part 2: release the DNS request (no cache invalidation) and
@@ -484,7 +495,7 @@ pub(crate) fn close_raw(c: *mut ConnectingSocket) {
             ffi::conn_set_pending(c, false);
             ffi::conn_set_addrinfo_req(c, core::ptr::null_mut());
             ffi::addrinfo_free_request(req, false);
-            dispatch::dispatch_connecting_error(c, error);
+            dispatch_terminal_error(c, error);
             free_connecting(c);
         } else {
             // Can't cancel — the resolve callback is already queued. Detach
@@ -492,7 +503,7 @@ pub(crate) fn close_raw(c: *mut ConnectingSocket) {
             // see `closed` and finish without touching the group. Balance the
             // keep-alive here for the same reason (socket.c:229-243).
             keepalive_dec(loop_);
-            dispatch::dispatch_connecting_error(c, error);
+            dispatch_terminal_error(c, error);
             detach(c);
         }
         return;
@@ -505,8 +516,18 @@ pub(crate) fn close_raw(c: *mut ConnectingSocket) {
         let invalidate = error == libc::ECONNREFUSED || ffi::conn_dns_error(c) != 0;
         ffi::addrinfo_free_request(req, invalidate);
     }
-    dispatch::dispatch_connecting_error(c, error);
+    dispatch_terminal_error(c, error);
     free_connecting(c);
+}
+
+/// The terminal dispatch releases the core-held owner ref, whose Drop can
+/// free the owner storage embedding the group — static-vtable kinds detach
+/// FIRST; group-vtable kinds resolve dispatch through `c.group` (no owner ref).
+fn dispatch_terminal_error(c: *mut ConnectingSocket, error: c_int) {
+    if !dispatch::uses_group_vtable(trampolines::connecting_kind(c)) {
+        detach(c);
+    }
+    dispatch::dispatch_connecting_error(c, error);
 }
 
 /// `us_internal_connecting_socket_detach` (socket.c:170-182): group unlink +
@@ -539,7 +560,7 @@ fn free_connecting(c: *mut ConnectingSocket) {
 fn keepalive_inc(loop_: *mut Loop) {
     #[cfg(not(windows))]
     {
-        deref_mut(loop_).num_polls += 1;
+        crate::unsafe_core::poll_access::num_polls_add(loop_, 1);
     }
     #[cfg(windows)]
     {
@@ -550,7 +571,7 @@ fn keepalive_inc(loop_: *mut Loop) {
 fn keepalive_dec(loop_: *mut Loop) {
     #[cfg(not(windows))]
     {
-        deref_mut(loop_).num_polls -= 1;
+        crate::unsafe_core::poll_access::num_polls_add(loop_, -1);
     }
     #[cfg(windows)]
     {

@@ -494,6 +494,15 @@ impl SocketGroup {
 /// owned by a Listener/uWS App holding a raw pointer; closing them here
 /// would UAF at finalize (R3.30).
 pub(crate) fn close_all_ex(group: *mut SocketGroup, also_listeners: bool) {
+    // C6: this walk holds raw socket pointers across dispatch and may run at
+    // tick_depth 0 (owner deinit); hold a depth ref so a handler-pumped nested
+    // tick's postlude cannot drain (and recycle) slots these frames still hold.
+    // Null loop_ = zero-initialized pre-init group (valid state): nothing to walk.
+    let loop_ = deref_mut(group).loop_;
+    if loop_.is_null() {
+        return;
+    }
+    ffi::ld_tick_depth_add(loop_, 1);
     if also_listeners {
         // Listeners first — stops new sockets from being accepted into
         // head_sockets while we drain it.
@@ -516,55 +525,101 @@ pub(crate) fn close_all_ex(group: *mut SocketGroup, also_listeners: bool) {
         c = next;
     }
 
-    let mut s = deref_mut(group).head_sockets;
-    while !s.is_null() {
-        let next = header_mut(s).next;
-        // A callback may close a later same-group socket; its `next` then
-        // links the loop's closed chain (which can hold non-Socket headers).
-        // Closed nodes are never dispatched — skip instead of walking C's UB.
-        if header_mut(s).is_closed() {
-            s = next;
-            continue;
-        }
-        if !header_mut(s).is_established() {
-            // In-flight connect: SEMI_SOCKET close dispatches nothing (C1),
-            // so deliver the connect_error the natural failure path would
-            // have — it detaches the owner wrapper (context.c:100-115).
-            dispatch::dispatch_connect_error(s, libc::ECONNABORTED);
-            if !header_mut(s).is_closed() {
-                close_raw(s, CloseCode::failure, ptr::null_mut());
+    // Graceful walk, restarted from the head after every dispatch: a callback
+    // may close or in-place adopt ANY sibling — including a cached `next`,
+    // whose links get rewritten (unlink / push_closed / foreign link_socket).
+    let mut skip = 0usize;
+    'graceful: loop {
+        let mut s = deref_mut(group).head_sockets;
+        let mut seen = 0usize;
+        while !s.is_null() {
+            if header_mut(s).is_closed() {
+                // Every close path unlinks BEFORE setting IS_CLOSED, so a
+                // closed node here means a corrupt chain (its `next` aims at
+                // the loop's closed list) — stop rather than walk it.
+                debug_assert!(false, "closed socket linked in head_sockets");
+                break 'graceful;
             }
-        } else {
-            socket_close(s, CloseCode::normal, ptr::null_mut());
+            // Deferred TLS closes (§5.2 close_notify / §1.4 in-use) stay
+            // linked and un-closed; skip past them so the restart terminates.
+            if seen < skip {
+                seen += 1;
+                s = header_mut(s).next;
+                continue;
+            }
+            if !header_mut(s).is_established() {
+                // In-flight connect: SEMI_SOCKET close dispatches nothing (C1),
+                // so deliver the connect_error the natural failure path would
+                // have — it detaches the owner wrapper (context.c:100-115).
+                dispatch::dispatch_connect_error(s, libc::ECONNABORTED);
+                // Header reads stay valid after the dispatch: the tick-depth
+                // ref above keeps the slot undrained even across nested ticks.
+                if !header_mut(s).is_closed() {
+                    close_raw(s, CloseCode::failure, ptr::null_mut());
+                }
+            } else {
+                socket_close(s, CloseCode::normal, ptr::null_mut());
+            }
+            if !header_mut(s).is_closed() && header_mut(s).group == group {
+                skip += 1;
+            }
+            continue 'graceful;
         }
-        s = next;
+        break;
     }
 
     // TLS graceful closes may have deferred (close_notify awaiting reply);
     // force-drain survivors so no socket outlives the owner's storage.
     loop {
-        let head = deref_mut(group).head_sockets;
-        if head.is_null() {
+        let mut s = deref_mut(group).head_sockets;
+        let mut progress = false;
+        while !s.is_null() {
+            close_raw(s, CloseCode::failure, ptr::null_mut());
+            if header_mut(s).is_closed() {
+                progress = true;
+                break;
+            }
+            // §1.4 in-use deferral keeps `s` linked (the SSL driver epilogue
+            // on this stack closes it) — step past it instead of spinning.
+            s = header_mut(s).next;
+        }
+        if !progress {
             break;
         }
-        close_raw(head, CloseCode::failure, ptr::null_mut());
     }
 
     // Low-prio-parked sockets reuse prev/next for the loop-wide queue, so
     // they survived the walk above. Leave low_prio_state==1 so close takes
     // its low-prio branch (unlink + low_prio_count--).
     if deref_mut(group).low_prio_count > 0 {
-        let loop_ = deref_mut(group).loop_;
-        let mut q = deref_mut(loop_).internal_loop_data.low_prio_head;
-        while !q.is_null() {
-            let next = header_mut(q).next;
-            if header_mut(q).group == group && !header_mut(q).is_closed() {
+        // Restart from the queue head after every close: a re-entrant close
+        // of the cached next nulls its parked links (unlink_for_death) and
+        // then re-aims `next` at the closed chain (push_closed).
+        'low_prio: loop {
+            let mut q = ffi::ld_low_prio_head(loop_);
+            let mut progress = false;
+            while !q.is_null() {
+                debug_assert!(!header_mut(q).is_closed());
+                if header_mut(q).group != group {
+                    q = header_mut(q).next;
+                    continue;
+                }
                 socket_close(q, CloseCode::normal, ptr::null_mut());
+                if !header_mut(q).is_closed() && header_mut(q).low_prio_state == 1 {
+                    // §1.4 deferral kept it parked — skip so the drain ends.
+                    q = header_mut(q).next;
+                    continue;
+                }
+                progress = true;
+                break;
             }
-            q = next;
+            if !progress {
+                break 'low_prio;
+            }
         }
         debug_assert!(deref_mut(group).low_prio_count == 0);
     }
+    ffi::ld_tick_depth_add(loop_, -1);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -780,11 +835,7 @@ pub(crate) fn close_listen_socket(ls: *mut ListenSocket) {
     unlink_listen_socket(group, ls);
     group_maybe_unlink(group);
 
-    {
-        let ld_data = &mut deref_mut(loop_).internal_loop_data;
-        header_mut(s).next = ld_data.closed_head;
-        ld_data.closed_head = s;
-    }
+    socket::push_closed(s, loop_);
     header_mut(s).flags.set(SocketFlags::IS_CLOSED, true);
 }
 
@@ -799,7 +850,7 @@ fn wipe_listener_backrefs(group: *mut SocketGroup, loop_: *mut Loop, ls: *mut Li
         wipe_one_backref(s, target);
         s = header_mut(s).next;
     }
-    let mut q = deref_mut(loop_).internal_loop_data.low_prio_head;
+    let mut q = ffi::ld_low_prio_head(loop_);
     while !q.is_null() {
         if header_mut(q).group == group {
             wipe_one_backref(q, target);
@@ -1072,7 +1123,7 @@ pub(crate) fn group_maybe_unlink(group: *mut SocketGroup) {
 }
 
 pub(crate) fn loop_link_group(loop_: *mut Loop, group: *mut SocketGroup) {
-    let head = deref_mut(loop_).internal_loop_data.head;
+    let head = ffi::ld_group_head(loop_);
     {
         let g = deref_mut(group);
         g.next = head;
@@ -1081,7 +1132,7 @@ pub(crate) fn loop_link_group(loop_: *mut Loop, group: *mut SocketGroup) {
     if !head.is_null() {
         deref_mut(head).prev = group;
     }
-    deref_mut(loop_).internal_loop_data.head = group;
+    ffi::ld_set_group_head(loop_, group);
 }
 
 /// If the group is the loop's sweep cursor, advance it BEFORE unlinking so a
@@ -1093,13 +1144,12 @@ pub(crate) fn loop_unlink_group(loop_: *mut Loop, group: *mut SocketGroup) {
         (g.prev, g.next)
     };
     let head_is_group = {
-        let ld = &mut deref_mut(loop_).internal_loop_data;
-        if ld.iterator == group {
-            ld.iterator = g_next;
+        if ffi::ld_iterator(loop_) == group {
+            ffi::ld_set_iterator(loop_, g_next);
         }
-        let is_head = ld.head == group;
+        let is_head = ffi::ld_group_head(loop_) == group;
         if is_head {
-            ld.head = g_next;
+            ffi::ld_set_group_head(loop_, g_next);
         }
         is_head
     };
@@ -1241,7 +1291,7 @@ fn stop_poll(loop_: *mut Loop, s: *mut us_socket_t) {
 fn poll_created(loop_: *mut Loop) {
     #[cfg(not(windows))]
     {
-        deref_mut(loop_).num_polls += 1;
+        crate::unsafe_core::poll_access::num_polls_add(loop_, 1);
     }
     #[cfg(windows)]
     let _ = loop_;
@@ -1252,8 +1302,93 @@ fn poll_created(loop_: *mut Loop) {
 fn poll_freed(loop_: *mut Loop) {
     #[cfg(not(windows))]
     {
-        deref_mut(loop_).num_polls -= 1;
+        crate::unsafe_core::poll_access::num_polls_add(loop_, -1);
     }
     #[cfg(windows)]
     let _ = loop_;
+}
+
+// Test-only: raw fd + C-ABI vtable handler need `unsafe` outside unsafe_core.
+#[cfg(all(test, not(miri), any(target_os = "linux", target_os = "android")))]
+#[allow(unsafe_code)]
+mod tests {
+    use super::*;
+    use crate::loop_::tick;
+    use crate::unsafe_core::test_support::{create_test_loop, free_test_loop};
+    use crate::unsafe_core::trampolines::socket_slot_live;
+    use bun_core::Timespec;
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    static SLOT_LIVE_AFTER_NESTED_TICK: AtomicI32 = AtomicI32::new(-1);
+
+    unsafe extern "C" fn close_and_pump_connect_error(
+        s: *mut us_socket_t,
+        _code: c_int,
+    ) -> *mut us_socket_t {
+        let loop_ = deref_mut(header_mut(s).group).loop_;
+        close_raw(s, CloseCode::normal, ptr::null_mut());
+        // Nested tick while the close_all walk (depth-held) still owns `s`.
+        tick::run_bun_tick(loop_, Some(&Timespec::EPOCH));
+        SLOT_LIVE_AFTER_NESTED_TICK.store(socket_slot_live(s) as i32, Ordering::SeqCst);
+        s
+    }
+
+    static VT: VTable = VTable {
+        on_open: None,
+        on_data: None,
+        on_fd: None,
+        on_writable: None,
+        on_close: None,
+        on_timeout: None,
+        on_long_timeout: None,
+        on_end: None,
+        on_connect_error: Some(close_and_pump_connect_error),
+        on_connecting_error: None,
+        on_handshake: None,
+    };
+
+    /// C6: close_all at tick_depth 0 holds raw slot pointers across dispatch;
+    /// a handler-pumped nested tick's postlude must defer the closed drain.
+    #[test]
+    fn close_all_defers_drain_under_nested_tick() {
+        let loop_ = create_test_loop();
+        let mut group = Box::new(SocketGroup::default());
+        group.init(loop_, Some(&VT), ptr::null_mut());
+        let g: *mut SocketGroup = &mut *group;
+
+        // SAFETY: plain fd creation; close_raw closes it during the test.
+        let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+        assert!(fd >= 0);
+        let s = socket::alloc(
+            loop_,
+            PollType::SemiSocket,
+            fd,
+            g,
+            SocketKind::Dynamic,
+            SocketFlags(0),
+            0,
+        );
+        link_socket(g, s);
+        poll_created(loop_); // model the armed connect poll (drain decrements)
+
+        close_all_ex(g, false);
+
+        assert_eq!(
+            SLOT_LIVE_AFTER_NESTED_TICK.load(Ordering::SeqCst),
+            1,
+            "nested tick drained a slot the depth-0 close_all walk still holds"
+        );
+        assert!(
+            socket_slot_live(s),
+            "slot stays queued until an outermost drain"
+        );
+
+        tick::drain_closed_sockets(loop_);
+        assert!(!socket_slot_live(s), "explicit drain frees the queued slot");
+
+        // SAFETY: heads drained above; group unlinks itself from the loop.
+        unsafe { SocketGroup::destroy(g) };
+        drop(group);
+        free_test_loop(loop_);
+    }
 }

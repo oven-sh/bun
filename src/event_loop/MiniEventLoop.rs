@@ -351,12 +351,12 @@ impl<'a> MiniEventLoop<'a> {
     #[inline]
     pub fn tick_once(&mut self, context: *mut c_void) {
         if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-            // SAFETY: see `loop_ptr()` invariant. The tick itself takes the raw
-            // pointer (re-entrant callbacks re-fetch the same loop).
-            unsafe { (*self.loop_ptr()).inc() };
+            // Raw-place inc/dec: a `&mut UwsLoop` here would span bytes
+            // (`pending_wakeups`) that enqueue_task_concurrent threads
+            // `fetch_add` concurrently.
+            UwsLoop::inc_raw(self.loop_ptr());
             UwsLoop::tick(self.loop_ptr());
-            // SAFETY: as above.
-            unsafe { (*self.loop_ptr()).dec() };
+            UwsLoop::dec_raw(self.loop_ptr());
         }
 
         while let Some(task) = self.tasks.read_item() {

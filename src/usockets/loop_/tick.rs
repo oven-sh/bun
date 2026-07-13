@@ -25,8 +25,14 @@ const MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION: i32 = 5;
 
 #[cfg(not(windows))]
 fn timeout_ns(timeout: Option<Timespec>) -> i64 {
+    // An expired (negative) timespec must poll with a zero timeout — the C
+    // passed it raw and epoll_pwait2/kevent64 returned EINVAL immediately;
+    // a negative i64 here would read as "no timeout" and park forever.
     timeout.map_or(-1, |t| {
-        t.sec.saturating_mul(1_000_000_000).saturating_add(t.nsec)
+        t.sec
+            .saturating_mul(1_000_000_000)
+            .saturating_add(t.nsec)
+            .max(0)
     })
 }
 
@@ -215,6 +221,37 @@ pub(crate) fn drain_closed_sockets(loop_: *mut Loop) {
         let next = ffi::conn_next(c);
         crate::loop_::free_connecting(loop_, c);
         c = next;
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_ns_none_parks() {
+        assert_eq!(timeout_ns(None), -1);
+    }
+
+    #[test]
+    fn timeout_ns_zero_and_positive() {
+        assert_eq!(timeout_ns(Some(Timespec::EPOCH)), 0);
+        assert_eq!(
+            timeout_ns(Some(Timespec { sec: 1, nsec: 5 })),
+            1_000_000_005
+        );
+    }
+
+    #[test]
+    fn timeout_ns_expired_timespec_is_immediate() {
+        // Timespec::duration past the deadline yields sec=-1/nsec=999_999_999
+        // (= -1ns); it must map to 0 (immediate), never <0 (park forever).
+        let expired = Timespec {
+            sec: -1,
+            nsec: 999_999_999,
+        };
+        assert_eq!(timeout_ns(Some(expired)), 0);
+        assert_eq!(timeout_ns(Some(Timespec { sec: -5, nsec: 0 })), 0);
     }
 }
 

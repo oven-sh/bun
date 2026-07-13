@@ -23,7 +23,7 @@ use crate::loop_::Loop;
 use crate::tls::context::{SslCtx, us_bun_verify_error_t};
 use crate::tls::state::{HandshakeState, TlsState};
 use crate::tls::{SSL, Transport};
-use crate::unsafe_core::deref::{with_group, with_loop_data, with_socket};
+use crate::unsafe_core::deref::{with_group, with_socket};
 use crate::unsafe_core::ext::{deref_mut, header_mut};
 use crate::unsafe_core::{ffi, io};
 use crate::write::UsIoVec;
@@ -285,7 +285,7 @@ fn unlink_for_death(s: *mut SocketHeader, loop_: *mut Loop) {
     if low_prio == 1 {
         let (prev, next) = with_socket(s, |h| (h.prev, h.next));
         if prev.is_null() {
-            with_loop_data(loop_, |ld| ld.low_prio_head = next);
+            ffi::ld_set_low_prio_head(loop_, next);
         } else {
             with_socket(prev, |h| h.next = next);
         }
@@ -304,10 +304,10 @@ fn unlink_for_death(s: *mut SocketHeader, loop_: *mut Loop) {
     }
 }
 
-fn push_closed(s: *mut SocketHeader, loop_: *mut Loop) {
-    let head = with_loop_data(loop_, |ld| ld.closed_head);
+pub(crate) fn push_closed(s: *mut SocketHeader, loop_: *mut Loop) {
+    let head = ffi::ld_closed_head(loop_);
     with_socket(s, |h| h.next = head);
-    with_loop_data(loop_, |ld| ld.closed_head = s);
+    ffi::ld_set_closed_head(loop_, s);
 }
 
 // ── close / detach (R3.15-R3.18; contracts C1-C6, C12) ───────────────────────
@@ -398,6 +398,16 @@ pub(crate) fn teardown_connecting_attempt(s: *mut SocketHeader) {
 
 /// `us_socket_close` (R3.16): TLS routes to the graceful §5.2 close.
 pub(crate) fn socket_close(s: *mut SocketHeader, code: CloseCode, reason: *mut c_void) {
+    // Live happy-eyeballs attempt: a direct close would strand its entry in
+    // ConnectingSocket::attempts (stale slab pointer at the connecting
+    // terminal) — abort the whole connect instead; it tears down `s` too.
+    if !with_socket(s, |h| h.is_closed()) {
+        let cs = with_socket(s, |h| h.connect_state);
+        if !cs.is_null() && !ffi::conn_closed(cs) {
+            crate::connecting::close_raw(cs);
+            return;
+        }
+    }
     if tls_state(s).is_some() && !with_socket(s, |h| h.is_closed()) {
         tls_close(s, code, reason);
     } else {
@@ -635,8 +645,8 @@ pub(crate) fn on_socket_poll_ready(
             if state == 2 {
                 // Was parked; process one readable dispatch now.
                 with_socket(s, |h| h.low_prio_state = 0);
-            } else if with_loop_data(loop_, |ld| ld.low_prio_budget) > 0 {
-                with_loop_data(loop_, |ld| ld.low_prio_budget -= 1);
+            } else if ffi::ld_low_prio_budget(loop_) > 0 {
+                ffi::ld_set_low_prio_budget(loop_, ffi::ld_low_prio_budget(loop_) - 1);
             } else {
                 let ev = with_socket(s, |h| Events(h.p.events().0 & Events::WRITABLE.0));
                 poll_change_on(s, loop_, ev);
@@ -651,7 +661,7 @@ pub(crate) fn on_socket_poll_ready(
                 with_group(group, |g| g.low_prio_count += 1);
                 crate::group::unlink_socket(group, s);
                 // LIFO push onto the loop's low-prio queue (prev/next reused).
-                let head = with_loop_data(loop_, |ld| ld.low_prio_head);
+                let head = ffi::ld_low_prio_head(loop_);
                 with_socket(s, |h| {
                     h.prev = ptr::null_mut();
                     h.next = head;
@@ -659,7 +669,7 @@ pub(crate) fn on_socket_poll_ready(
                 if !head.is_null() {
                     with_socket(head, |h| h.prev = s);
                 }
-                with_loop_data(loop_, |ld| ld.low_prio_head = s);
+                ffi::ld_set_low_prio_head(loop_, s);
                 with_socket(s, |h| h.low_prio_state = 1);
                 // C `break`: the eof/error tail is skipped for this event.
                 return;

@@ -788,13 +788,14 @@ impl bun_usockets::Protocol for SpawnIpcProtocol {
 
     fn on_fd(o: &IpcData, _s: bun_usockets::AnySocket, fd: Fd) {
         log!("onFd: {:?}", fd);
-        o.with_queue(|q| {
-            if let Some(existing_fd) = q.incoming_fd.take() {
-                log!("onFd: incoming_fd already set; overwriting");
-                FdExt::close(existing_fd);
-            }
-            q.incoming_fd = Some(fd);
-        });
+        // SAFETY: fires on the same readable dispatch as `on_data`, so it can
+        // nest under a live borrow — same audited `queue_mut` discipline.
+        let q = unsafe { o.queue_mut() };
+        if let Some(existing_fd) = q.incoming_fd.take() {
+            log!("onFd: incoming_fd already set; overwriting");
+            FdExt::close(existing_fd);
+        }
+        q.incoming_fd = Some(fd);
     }
 
     fn on_writable(o: &IpcData, _s: bun_usockets::AnySocket) {
@@ -827,7 +828,10 @@ impl bun_usockets::Protocol for SpawnIpcProtocol {
     fn on_end(o: &IpcData, _s: bun_usockets::AnySocket) {
         log!("onEnd");
         // No half-close: a peer FIN closes the socket outright.
-        o.with_queue(|q| q.close_socket(CloseReason::Failure, CloseFrom::User));
+        // SAFETY: can run nested under a live `on_data`/`on_writable` borrow
+        // (peer FIN surfacing while user JS pumps the event loop), so it must
+        // use the audited `queue_mut` projection, not safe `with_mut`.
+        unsafe { o.queue_mut() }.close_socket(CloseReason::Failure, CloseFrom::User);
     }
 
     fn on_timeout(_o: &IpcData, _s: bun_usockets::AnySocket) {
@@ -840,7 +844,8 @@ impl bun_usockets::Protocol for SpawnIpcProtocol {
 
     fn on_connect_error(o: &IpcData, _err: bun_usockets::ConnectFailure) {
         log!("onConnectError");
-        o.with_queue(|q| q.close_socket(CloseReason::Failure, CloseFrom::User));
+        // SAFETY: same audited `queue_mut` discipline as `on_close`/`on_end`.
+        unsafe { o.queue_mut() }.close_socket(CloseReason::Failure, CloseFrom::User);
     }
 }
 
@@ -926,7 +931,8 @@ pub struct SendHandle {
     // when a message has a handle, make sure it has a new SendHandle - so that if we retry sending it,
     // we only retry sending the message with the handle, not the original message.
     pub data: StreamBuffer,
-    /// keep sending the handle until data is drained (assume it hasn't sent until data is fully drained)
+    /// fd is attached only to the message's first write (cursor == 0); the
+    /// Handle is retained afterwards for NACK retransmission from cursor 0.
     pub handle: Option<Handle>,
     pub callbacks: CallbackList,
 }
@@ -1377,6 +1383,9 @@ impl SendQueue {
         }
         // consume the message and continue sending
         let item = self.waiting_for_ack.take().unwrap();
+        // Node parity: the retransmission counter is per pending handle
+        // message, so the next handle send starts fresh.
+        self.retry_count = 0;
         item.complete(global); // call the callback & deinit
         log!("IPC call continueSend() from onAckNack success");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
@@ -1457,7 +1466,14 @@ impl SendQueue {
         }
         debug_assert!(!self.write_in_progress);
         self.write_in_progress = true;
-        let fd = self.queue[0].handle.as_ref().map(|h| h.fd);
+        // SCM_RIGHTS rides the first byte of the message (POSIX sendmsg): once
+        // any bytes are out (cursor > 0) the fd was already delivered, so a
+        // partial-write continuation must be data-only (libuv does the same).
+        let fd = if self.queue[0].data.cursor == 0 {
+            self.queue[0].handle.as_ref().map(|h| h.fd)
+        } else {
+            None
+        };
         // `_write` re-slices `self.queue[0]` internally so we never hand a
         // borrow of `self` into a `&mut self` method (PORTING.md aliased-&mut).
         self._write(fd);
@@ -1498,7 +1514,8 @@ impl SendQueue {
             return;
         } else if n > 0 && n < i32::try_from(first.data.list.len()).expect("int cast") {
             // the item was partially sent; update the cursor and wait for writable to send the rest
-            // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
+            // (for a handle message the fd went out with those first bytes;
+            // continue_send skips the fd once cursor > 0.)
             first.data.cursor += usize::try_from(n).expect("int cast");
             self.update_ref(&global_this);
             return;
@@ -2098,6 +2115,11 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                 let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
                     unreachable!()
                 };
+                if json_buf.overflowed() {
+                    Output::print_errorln("IPC message is too long.");
+                    send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                    return;
+                }
                 let Some(msg) = json_buf.next() else { break };
                 let result = match decode_ipc_message(
                     Mode::Json,
@@ -2289,6 +2311,11 @@ pub mod IPCHandlers {
                         let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
                             unreachable!()
                         };
+                        if json_buf.overflowed() {
+                            Output::print_errorln("IPC message is too long.");
+                            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                            return;
+                        }
                         let Some(msg) = json_buf.next() else { break };
                         let result = match decode_ipc_message(
                             Mode::Json,

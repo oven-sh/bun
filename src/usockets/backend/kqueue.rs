@@ -193,6 +193,18 @@ pub(crate) fn poll_stop(p: *mut PollState, loop_: *mut Loop) {
             Events::NONE,
             0,
         );
+        // Believed-W: the one-shot EVFILT_WRITE (udata = p) may still be armed
+        // and kqueue_change's zero-events branch never deletes it — delete it
+        // so a kept-open fd can't fire into a freed slot (ENOENT if delivered).
+        if old_events.contains(Events::WRITABLE) {
+            let mut wr = [poll_access::make_kev(
+                st.fd(),
+                libc::EVFILT_WRITE,
+                libc::EV_DELETE,
+                0,
+            )];
+            poll_access::kevent_error_events(poll_access::loop_fd(loop_), &mut wr);
+        }
     } else {
         // believed-NONE can still have an armed one-shot EVFILT_WRITE with
         // real slot udata (pause -> raw_shutdown). Detach paths keep the fd

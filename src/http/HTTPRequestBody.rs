@@ -38,6 +38,16 @@ impl Stream {
         self.buffer.map(ThreadSafeStreamBuffer::from_attached)
     }
 
+    /// Latch end-of-body from the shared buffer's sticky flag: the JS thread
+    /// marks the buffer before scheduling the End wake-up, so a send that starts
+    /// after a missed wake-up (queued task, h2 pending_attach) still terminates.
+    pub fn sync_ended(&mut self) -> bool {
+        if !self.ended && self.buffer_mut().is_some_and(|b| b.is_ended()) {
+            self.ended = true;
+        }
+        self.ended
+    }
+
     pub fn detach(&mut self) {
         if let Some(buffer) = self.buffer.take() {
             // Intrusive refcount decrement.

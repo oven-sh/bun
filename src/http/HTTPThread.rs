@@ -6,7 +6,7 @@ use std::time::Instant;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
 
-use bun_threading::{Mutex, UnboundedQueue};
+use bun_threading::{Guarded, UnboundedQueue};
 use bun_usockets as uws;
 
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
@@ -119,15 +119,13 @@ pub struct HttpThread {
     /// path stays O(1). Owned by the HTTP thread.
     pub has_pending_queued_abort: bool,
 
-    pub queued_shutdowns: Vec<ShutdownMessage>,
-    pub queued_writes: Vec<WriteMessage>,
-    pub queued_receive_resumes: Vec<u32>,
-    pub queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
-
-    pub queued_shutdowns_lock: Mutex,
-    pub queued_writes_lock: Mutex,
-    pub queued_receive_resumes_lock: Mutex,
-    pub queued_cert_check_resumes_lock: Mutex,
+    // Cross-thread message queues: data lives INSIDE the mutex so JS-thread
+    // producers push through `&self` interior mutability (never `&mut
+    // HttpThread` — the HTTP thread holds `&mut self` in `process_events`).
+    pub queued_shutdowns: Guarded<Vec<ShutdownMessage>>,
+    pub queued_writes: Guarded<Vec<WriteMessage>>,
+    pub queued_receive_resumes: Guarded<Vec<u32>>,
+    pub queued_cert_check_resumes: Guarded<Vec<CertCheckResumeMessage>>,
 
     pub queued_threadlocal_proxy_derefs: Vec<*mut ProxyTunnel>,
 
@@ -174,14 +172,10 @@ impl HttpThread {
             queued_tasks: Queue::new(),
             deferred_tasks: Vec::new(),
             has_pending_queued_abort: false,
-            queued_shutdowns: Vec::new(),
-            queued_writes: Vec::new(),
-            queued_receive_resumes: Vec::new(),
-            queued_cert_check_resumes: Vec::new(),
-            queued_shutdowns_lock: Mutex::new(),
-            queued_writes_lock: Mutex::new(),
-            queued_receive_resumes_lock: Mutex::new(),
-            queued_cert_check_resumes_lock: Mutex::new(),
+            queued_shutdowns: Guarded::new(Vec::new()),
+            queued_writes: Guarded::new(Vec::new()),
+            queued_receive_resumes: Guarded::new(Vec::new()),
+            queued_cert_check_resumes: Guarded::new(Vec::new()),
             queued_threadlocal_proxy_derefs: Vec::new(),
             has_awoken: AtomicBool::new(false),
             timer: Instant::now(),
@@ -385,20 +379,6 @@ impl HttpThread {
         self.uws_loop
     }
 
-    /// Mutable access to the live uSockets event loop.
-    ///
-    /// INVARIANT: `uws_loop` is set once in [`on_start`] (published via the
-    /// `has_awoken` Release store) and outlives the HTTP thread. The loop is a
-    /// separate C heap allocation disjoint from `self`. HTTP-thread-only at
-    /// every caller — `wakeup()` is the sole cross-thread entry and uses the
-    /// raw FFI call instead. Centralises the raw `&mut *self.uws_loop`
-    /// upgrade repeated in `process_events`.
-    #[inline]
-    fn uws_loop_mut<'a>(&self) -> &'a mut uws::Loop {
-        // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.uws_loop }
-    }
-
     /// `Instant::elapsed().as_nanos()` is u128; checked narrow to u64 —
     /// overflows only after ~584 years of process uptime.
     #[inline]
@@ -499,6 +479,15 @@ impl HttpThread {
                 }
                 let requested_config: *const SSLConfig = tls.get();
 
+                // Validate the proxy scheme before the cache is touched: the
+                // hit path connects without re-checking, and a miss must not
+                // cache a context for a request that fails anyway.
+                if let Some(url) = client.http_proxy.clone()
+                    && !is_supported_proxy_protocol(url.protocol)
+                {
+                    return Err(crate::Error::UnsupportedProxyProtocol);
+                }
+
                 // Evict stale entries from the cache
                 self.evict_stale_ssl_contexts();
 
@@ -569,14 +558,7 @@ impl HttpThread {
                 client.set_custom_ssl_ctx(ctx_nn);
                 // Keepalive is now supported for custom SSL contexts
                 let result = if let Some(url) = client.http_proxy.clone() {
-                    if url.protocol.is_empty()
-                        || url.protocol == b"https"
-                        || url.protocol == b"http"
-                    {
-                        custom_context.connect(client, url.hostname, url.get_port_auto())
-                    } else {
-                        return Err(crate::Error::UnsupportedProxyProtocol);
-                    }
+                    custom_context.connect(client, url.hostname, url.get_port_auto())
                 } else {
                     let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
                     custom_context.connect(client, hn, pt)
@@ -588,7 +570,7 @@ impl HttpThread {
         if let Some(url) = client.http_proxy.clone() {
             if !url.href.is_empty() {
                 // https://github.com/oven-sh/bun/issues/11343
-                if url.protocol.is_empty() || url.protocol == b"https" || url.protocol == b"http" {
+                if is_supported_proxy_protocol(url.protocol) {
                     return self.context::<IS_SSL>().connect(
                         client,
                         url.hostname,
@@ -634,10 +616,7 @@ impl HttpThread {
         loop {
             // socket.close() can potentially be slow
             // Let's not block other threads while this runs.
-            let queued_shutdowns = {
-                let _guard = self.queued_shutdowns_lock.lock_guard();
-                core::mem::take(&mut self.queued_shutdowns)
-            };
+            let queued_shutdowns = core::mem::take(&mut *self.queued_shutdowns.lock());
 
             for http in &queued_shutdowns {
                 let tracker = abort_tracker();
@@ -705,10 +684,7 @@ impl HttpThread {
 
     fn drain_queued_writes(&mut self) {
         loop {
-            let queued_writes = {
-                let _guard = self.queued_writes_lock.lock_guard();
-                core::mem::take(&mut self.queued_writes)
-            };
+            let queued_writes = core::mem::take(&mut *self.queued_writes.lock());
             for write in &queued_writes {
                 let message = write.kind;
                 let ended = message == WriteMessageType::End;
@@ -765,10 +741,8 @@ impl HttpThread {
 
     fn drain_queued_cert_check_resumes(&mut self) {
         loop {
-            let queued_cert_check_resumes = {
-                let _guard = self.queued_cert_check_resumes_lock.lock_guard();
-                core::mem::take(&mut self.queued_cert_check_resumes)
-            };
+            let queued_cert_check_resumes =
+                core::mem::take(&mut *self.queued_cert_check_resumes.lock());
             for resume in &queued_cert_check_resumes {
                 // Both arms are required: an HTTPS target behind a plaintext
                 // proxy parks behind a SocketTcp tracker entry.
@@ -810,10 +784,7 @@ impl HttpThread {
 
     fn drain_queued_receive_resumes(&mut self) {
         loop {
-            let queued = {
-                let _guard = self.queued_receive_resumes_lock.lock_guard();
-                core::mem::take(&mut self.queued_receive_resumes)
-            };
+            let queued = core::mem::take(&mut *self.queued_receive_resumes.lock());
             if queued.is_empty() {
                 return;
             }
@@ -956,50 +927,44 @@ impl HttpThread {
         }
     }
 
-    pub fn schedule_receive_resume(&mut self, async_http_id: u32) {
+    pub fn schedule_receive_resume(&self, async_http_id: u32) {
         {
-            let _guard = self.queued_receive_resumes_lock.lock_guard();
-            if self.queued_receive_resumes.last() == Some(&async_http_id) {
+            let mut q = self.queued_receive_resumes.lock();
+            if q.last() == Some(&async_http_id) {
                 return;
             }
-            self.queued_receive_resumes.push(async_http_id);
+            q.push(async_http_id);
         }
         self.wakeup();
     }
 
-    pub fn schedule_shutdown(&mut self, http: &AsyncHttp) {
+    pub fn schedule_shutdown(&self, http: &AsyncHttp) {
         self.schedule_shutdown_by_id(http.async_http_id);
     }
 
-    pub fn schedule_shutdown_by_id(&mut self, async_http_id: u32) {
+    pub fn schedule_shutdown_by_id(&self, async_http_id: u32) {
         bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", async_http_id);
-        {
-            let _guard = self.queued_shutdowns_lock.lock_guard();
-            self.queued_shutdowns
-                .push(ShutdownMessage { async_http_id });
-        }
+        self.queued_shutdowns
+            .lock()
+            .push(ShutdownMessage { async_http_id });
         self.wakeup();
     }
 
-    pub fn schedule_cert_check_resume(&mut self, http: &AsyncHttp) {
+    pub fn schedule_cert_check_resume(&self, http: &AsyncHttp) {
         bun_core::scoped_log!(HTTPThread, "scheduleCertCheckResume {}", http.async_http_id);
-        {
-            let _guard = self.queued_cert_check_resumes_lock.lock_guard();
-            self.queued_cert_check_resumes.push(CertCheckResumeMessage {
+        self.queued_cert_check_resumes
+            .lock()
+            .push(CertCheckResumeMessage {
                 async_http_id: http.async_http_id,
             });
-        }
         self.wakeup();
     }
 
-    pub fn schedule_request_write(&mut self, http: &AsyncHttp, kind: WriteMessageType) {
-        {
-            let _guard = self.queued_writes_lock.lock_guard();
-            self.queued_writes.push(WriteMessage {
-                async_http_id: http.async_http_id,
-                kind,
-            });
-        }
+    pub fn schedule_request_write(&self, http: &AsyncHttp, kind: WriteMessageType) {
+        self.queued_writes.lock().push(WriteMessage {
+            async_http_id: http.async_http_id,
+            kind,
+        });
         self.wakeup();
     }
 
@@ -1126,6 +1091,13 @@ impl HttpThread {
         }
         this.wakeup();
     }
+}
+
+/// Only `http`/`https` proxies are supported (empty = scheme-relative);
+/// anything else (socks5, …) must fail with UnsupportedProxyProtocol
+/// before any socket is opened. https://github.com/oven-sh/bun/issues/11343
+fn is_supported_proxy_protocol(protocol: &[u8]) -> bool {
+    protocol.is_empty() || protocol == b"https" || protocol == b"http"
 }
 
 /// Evict the least-recently-used SSL context cache entry.
@@ -1258,6 +1230,10 @@ mod _event_loop_draft {
     }
 
     pub(super) fn on_start(opts: InitOpts) {
+        // Latch the ThreadCell to this thread: any later JS-thread
+        // `http_thread()` (debug) panics instead of forming a cross-thread
+        // `&mut HttpThread` — cross-thread entries use `http_thread_shared`.
+        crate::HTTP_THREAD.claim();
         Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
 
         // Normalising once here (see `normalize_idle_timeout_seconds`) keeps
@@ -1339,18 +1315,22 @@ mod _event_loop_draft {
 
     impl HttpThread {
         fn process_events(&mut self) -> ! {
-            let uws_loop = self.uws_loop_mut();
+            // Raw-place accounting (no `&mut Loop`): JS-thread `wakeup()`
+            // calls `us_wakeup_loop` on this loop concurrently (C17).
             #[cfg(unix)]
             {
-                uws_loop.num_polls = uws_loop.num_polls.max(2);
+                uws::Loop::raise_num_polls_to(self.uws_loop, 2);
             }
             #[cfg(windows)]
             {
-                uws_loop.inc();
+                uws::Loop::inc_raw(self.uws_loop);
             }
 
             loop {
                 if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
+                    // Published to the JS thread via the SHUTDOWN_DONE ack
+                    // below (reclaim drains there can also drop contexts).
+                    EXIT_TEARDOWN.store(true, Ordering::Release);
                     self.dealloc_in_flight_for_exit();
                     {
                         let mut done = SHUTDOWN_DONE.0.lock();
@@ -1368,11 +1348,11 @@ mod _event_loop_draft {
                 assert_abort_tracker_sockets_alive();
                 Output::flush();
 
-                self.uws_loop_mut().inc();
+                uws::Loop::inc_raw(self.uws_loop);
                 // Raw-ptr tick: no `&mut Loop` may span the tick — wakeup
                 // threads touch `pending_wakeups` concurrently (C17).
                 uws::Loop::tick(self.uws_loop);
-                self.uws_loop_mut().dec();
+                uws::Loop::dec_raw(self.uws_loop);
                 assert_abort_tracker_sockets_alive();
 
                 if cfg!(debug_assertions) {
@@ -1384,6 +1364,16 @@ mod _event_loop_draft {
 }
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Set on the HTTP thread right before [`HttpThread::dealloc_in_flight_for_exit`];
+/// the loop never ticks again after that point. `HTTPContext::drop` reads it to
+/// skip `close_all` — dispatching on_close mid-exit would re-enter clients the
+/// exit teardown has already freed (or is tearing down).
+static EXIT_TEARDOWN: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn exit_teardown_active() -> bool {
+    EXIT_TEARDOWN.load(Ordering::Acquire)
+}
 static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
     bun_threading::Guarded::new(false),
     bun_threading::Condvar::new(),

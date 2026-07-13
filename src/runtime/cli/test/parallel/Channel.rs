@@ -320,7 +320,7 @@ impl<Owner> Channel<Owner> {
         }
         #[cfg(windows)]
         {
-            return !self.backend.inflight.is_empty();
+            return self.backend.write.is_some();
         }
         #[cfg(not(windows))]
         {
@@ -336,12 +336,31 @@ pub struct WindowsBackend {
     pub pipe: Option<Box<uv::Pipe>>,
     /// Read scratch — libuv asks us to allocate before each read.
     pub read_chunk: [u8; 16 * 1024],
-    /// Payload owned by the in-flight uv_write; must stay stable until the
-    /// callback. New writes go to `out` until this completes, then the buffers
-    /// swap.
-    pub inflight: Vec<u8>,
+    /// Non-owning: the in-flight write req. `heap::into_raw`'d in
+    /// `submit_windows_write`, freed exactly once by the write callback.
+    pub write: Option<*mut ChannelWrite>,
+}
+
+/// Heap-owned uv_write request (same orphaning pattern as `ipc.rs`
+/// `WindowsWrite`): libuv owns it until the callback; `Channel::drop` nulls
+/// `owner` so a post-drop ECANCELED callback never touches the dead channel.
+#[cfg(windows)]
+pub struct ChannelWrite {
     pub write_req: uv::uv_write_t,
     pub write_buf: uv::uv_buf_t,
+    /// Payload; the heap allocation is address-stable until the callback.
+    pub payload: Vec<u8>,
+    /// Type-erased BACKREF to the owning `Channel`; `None` once orphaned.
+    pub owner: Option<*mut ()>,
+}
+
+#[cfg(windows)]
+impl ChannelWrite {
+    fn destroy(this: *mut ChannelWrite) {
+        // SAFETY: `this` was produced by heap::into_raw in
+        // `submit_windows_write`; the write callback fires exactly once.
+        let _ = unsafe { bun_core::heap::take(this) };
+    }
 }
 
 #[cfg(windows)]
@@ -350,9 +369,7 @@ impl Default for WindowsBackend {
         Self {
             pipe: None,
             read_chunk: [0u8; 16 * 1024],
-            inflight: Vec::new(),
-            write_req: bun_core::ffi::zeroed::<uv::uv_write_t>(),
-            write_buf: uv::uv_buf_t::init(b""),
+            write: None,
         }
     }
 }
@@ -527,7 +544,7 @@ impl<Owner: ChannelOwner + 'static> Channel<Owner> {
     #[cfg(windows)]
     fn send_windows(&mut self, frame_bytes: &[u8]) {
         // A uv_write is in flight — queue behind it.
-        if !self.backend.inflight.is_empty() {
+        if self.backend.write.is_some() {
             self.state
                 .out
                 .with_mut(|out| out.extend_from_slice(frame_bytes));
@@ -565,40 +582,63 @@ impl<Owner: ChannelOwner + 'static> Channel<Owner> {
 
     #[cfg(windows)]
     fn submit_windows_write(&mut self) {
-        if self.state.out.get().is_empty()
-            || !self.backend.inflight.is_empty()
-            || self.state.done.get()
+        if self.state.out.get().is_empty() || self.backend.write.is_some() || self.state.done.get()
         {
             return;
         }
-        // Capture the raw self pointer for uv_write's `data` field before
-        // taking any field borrows below (the borrow used by from_mut ends
-        // immediately; raw pointers carry no lifetime).
+        // Capture the raw self pointer for the write req's owner backref
+        // before taking any field borrows below (the borrow used by from_mut
+        // ends immediately; raw pointers carry no lifetime).
         let this: *mut Self = core::ptr::from_mut(self);
-        let Some(pipe) = self.backend.pipe.as_mut() else {
-            return;
+        let stream = match self.backend.pipe.as_mut() {
+            Some(p) => p.as_stream(),
+            None => return,
         };
-        // Swap: out → inflight (stable for uv_write), out becomes empty.
-        self.state
-            .out
-            .with_mut(|out| core::mem::swap(&mut self.backend.inflight, out));
-        self.backend.write_buf = uv::uv_buf_t::init(self.backend.inflight.as_slice());
-        if self
-            .backend
-            .write_req
-            .write(
-                pipe.as_stream(),
-                &self.backend.write_buf,
-                this,
-                // SAFETY: `p` was `this: *mut Self`; libuv invokes on the loop
-                // thread with no other Rust borrow live, so `&mut *p` is unique.
-                |p, s| unsafe { WindowsHandlers::<Owner>::on_write(&mut *p, s) },
-            )
-            .is_err()
-        {
-            self.backend.inflight.clear();
+        let mut wr = Box::new(ChannelWrite {
+            write_req: bun_core::ffi::zeroed(),
+            write_buf: uv::uv_buf_t::init(b""), // re-init below once the payload address is final
+            payload: self.state.out.with_mut(core::mem::take),
+            owner: Some(this.cast::<()>()),
+        });
+        wr.write_buf = uv::uv_buf_t::init(wr.payload.as_slice());
+        // Hand ownership to libuv; reclaimed exactly once by `on_write_complete`.
+        let wr: *mut ChannelWrite = bun_core::heap::into_raw(wr);
+        self.backend.write = Some(wr);
+        // SAFETY: `wr` is a freshly-leaked Box; libuv owns it until the write
+        // callback fires (raw ctx, not `&mut` — the callback frees it).
+        let rc = unsafe {
+            (*wr)
+                .write_req
+                .write(stream, &(*wr).write_buf, wr, Self::on_write_complete)
+        };
+        if rc.is_err() {
+            ChannelWrite::destroy(wr);
+            self.backend.write = None;
             self.state.mark_done();
         }
+    }
+
+    #[cfg(windows)]
+    fn on_write_complete(wr: *mut ChannelWrite, status: uv::ReturnCode) {
+        // SAFETY: `wr` was handed to uv_write as ctx; libuv returns it here
+        // exactly once (including the ECANCELED close path).
+        let owner = unsafe { (*wr).owner };
+        ChannelWrite::destroy(wr);
+        let Some(owner) = owner else {
+            return; // channel dropped while the write was queued
+        };
+        // SAFETY: `Channel::drop` nulls the backref before the channel's
+        // memory goes away, so a non-null owner is live.
+        let this = unsafe { &mut *owner.cast::<Self>() };
+        this.backend.write = None;
+        if this.state.done.get() {
+            return;
+        }
+        if status.is_err() {
+            this.state.mark_done();
+            return;
+        }
+        this.submit_windows_write();
     }
 
     /// Best-effort drain of any buffered writes.
@@ -648,14 +688,17 @@ impl<Owner> Drop for Channel<Owner> {
         self.state.hooks.set(None);
         #[cfg(windows)]
         {
-            // Drop assumes no uv_write is in flight: `submit_windows_write`
-            // stored a raw `*mut Channel` in the write req, and a post-free
-            // ECANCELED callback would dereference it dangling.
+            // Orphan any queued write: libuv still owns the heap req and will
+            // fire its (possibly ECANCELED) callback, which frees the req and
+            // must not touch this dying channel.
+            if let Some(wr) = self.backend.write.take() {
+                // SAFETY: `wr` stays live until its callback fires (libuv owns it).
+                unsafe { (*wr).owner = None };
+            }
             if let Some(p) = self.backend.pipe.take() {
                 // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
                 unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(p)) };
             }
-            // `inflight` Vec drops automatically.
         }
         #[cfg(not(windows))]
         {
@@ -691,17 +734,6 @@ impl<Owner: ChannelOwner + 'static> WindowsHandlers<Owner> {
             unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(p)) };
         }
         self_.state.mark_done();
-    }
-    pub(crate) fn on_write(self_: &mut Channel<Owner>, status: uv::ReturnCode) {
-        self_.backend.inflight.clear();
-        if self_.state.done.get() {
-            return;
-        }
-        if status.is_err() {
-            self_.state.mark_done();
-            return;
-        }
-        self_.submit_windows_write();
     }
 }
 

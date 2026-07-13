@@ -116,10 +116,11 @@ unsafe fn free_owned_href(href: &'static [u8]) {
     }
 }
 
-/// Read the HTTP-thread monotonic timer in nanoseconds.
+/// Read the HTTP-thread monotonic timer in nanoseconds. Callable from any
+/// thread (shared deref of the set-once `timer`; see `http_thread_shared`).
 #[inline]
 fn http_thread_timer_read() -> u64 {
-    crate::http_thread().timer.elapsed().as_nanos() as u64
+    crate::http_thread_shared().timer.elapsed().as_nanos() as u64
 }
 
 /// Build the `Proxy-Authorization: Basic <b64(user[:pass])>` header value.

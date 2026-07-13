@@ -817,7 +817,7 @@ impl FetchTasklet {
             // request slot until the idle timeout.
             if self.result.certificate_info.take().is_some() {
                 if let Some(http_) = self.http.as_mut() {
-                    http::http_thread().schedule_shutdown(http_);
+                    http::http_thread_shared().schedule_shutdown(http_);
                 }
             }
             self.mutex.unlock();
@@ -967,7 +967,7 @@ impl FetchTasklet {
             // the connection already closed/failed the resume is a no-op
             // (keyed through the abort tracker).
             if let Some(http_) = self.http.as_mut() {
-                http::http_thread().schedule_cert_check_resume(http_);
+                http::http_thread_shared().schedule_cert_check_resume(http_);
             }
             // Fall through. The common case (certificate-only update) returns
             // at the metadata-less early return below; the #27275 coalesced
@@ -1223,7 +1223,7 @@ impl FetchTasklet {
         // Empty or unparseable certificate bytes: every false return must have
         // scheduled the parked socket's shutdown, like the paths above.
         if let Some(http_) = self.http.as_mut() {
-            http::http_thread().schedule_shutdown(http_);
+            http::http_thread_shared().schedule_shutdown(http_);
         }
         self.result.fail = Some(http::Error::ERR_TLS_CERT_ALTNAME_INVALID);
         false
@@ -1603,7 +1603,7 @@ impl FetchTasklet {
             // and if the server doesn't close the connection by itself
             // and doesn't send any follow-up data
             // then we must make sure the HTTP thread flushes.
-            http::http_thread().schedule_receive_resume(http_.async_http_id);
+            http::http_thread_shared().schedule_receive_resume(http_.async_http_id);
         }
 
         this.mutex.lock();
@@ -1682,7 +1682,7 @@ impl FetchTasklet {
 
     fn schedule_receive_resume(&self) {
         if let Some(http_) = self.http.as_ref() {
-            http::http_thread().schedule_receive_resume(http_.async_http_id);
+            http::http_thread_shared().schedule_receive_resume(http_.async_http_id);
         }
     }
 
@@ -2235,7 +2235,7 @@ impl FetchTasklet {
 
         if needs_schedule {
             // wakeup the http thread to write the data
-            http::http_thread().schedule_request_write(
+            http::http_thread_shared().schedule_request_write(
                 self.http.as_mut().unwrap(),
                 http::http_thread::WriteMessageType::Data,
             );
@@ -2272,8 +2272,14 @@ impl FetchTasklet {
                     .lock()
                     .write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY); // OOM/capacity: fire-and-forget
             }
+            // Sticky marker before the wake-up: the HTTP thread drops the End
+            // message when the request has no live stream/socket yet (queued
+            // task, h2 pending_attach); senders re-check via Stream::sync_ended.
+            if let Some(buf) = self.stream_buffer_mut() {
+                buf.mark_ended();
+            }
             if let Some(http_) = self.http.as_mut() {
-                http::http_thread()
+                http::http_thread_shared()
                     .schedule_request_write(http_, http::http_thread::WriteMessageType::End);
             }
         }
@@ -2291,7 +2297,7 @@ impl FetchTasklet {
         self.tracker.did_cancel(&self.global_this);
 
         if let Some(http_) = self.http.as_mut() {
-            http::http_thread().schedule_shutdown(http_);
+            http::http_thread_shared().schedule_shutdown(http_);
         }
     }
 
@@ -2463,7 +2469,7 @@ impl FetchTasklet {
             // until the idle timeout.
             if task_ref.result.certificate_info.take().is_some() {
                 if let Some(http_) = task_ref.http.as_mut() {
-                    http::http_thread().schedule_shutdown(http_);
+                    http::http_thread_shared().schedule_shutdown(http_);
                 }
             }
             // We won the `has_schedule_callback` CAS above but are not

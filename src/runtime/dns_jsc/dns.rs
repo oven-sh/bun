@@ -2724,10 +2724,20 @@ pub mod internal {
             notify
         };
 
-        // is this correct, or should it go after the loop?
+        // Socket enqueues run under the lock: us_getaddrinfo_cancel linearizes
+        // on it, so a failed cancel proves the loop enqueue already happened —
+        // teardown after a failed cancel can't race a late cross-thread push.
+        let mut deferred = Vec::new();
+        for query in notify {
+            match query {
+                DNSRequestOwner::Socket(_) => query.notify_threadsafe(req),
+                // Prefetch/Quic notify re-acquires this lock (freeRequest).
+                other => deferred.push(other),
+            }
+        }
         drop(guard);
 
-        for query in notify {
+        for query in deferred {
             query.notify_threadsafe(req);
         }
     }

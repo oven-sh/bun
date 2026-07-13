@@ -1143,6 +1143,16 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
 impl<const SSL: bool> Drop for HTTPContext<SSL> {
     fn drop(&mut self) {
+        // Exit teardown: the HTTP loop is parked forever and sockets may still
+        // be tagged with clients the exit path already freed — `close_all` would
+        // dispatch on_close into them. Leak the sockets; free only the SSL_CTX.
+        if crate::http_thread::exit_teardown_active() {
+            if SSL && let Some(c) = self.secure {
+                // SAFETY: we own one ref on the SSL_CTX.
+                unsafe { bun_boringssl_sys::SSL_CTX_free(c) };
+            }
+            return;
+        }
         // Drain pooled keepalive sockets: deref their ssl_config and force-close.
         // Must force-close (code != 0) because SSL clean shutdown (code=0) requires a
         // shutdown handshake with the peer, which won't complete during eviction.

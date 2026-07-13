@@ -58,3 +58,86 @@ pub extern "C" fn sys_epoll_pwait2(
 ) -> isize {
     -(libc::ENOSYS as isize)
 }
+
+// Runtime hooks reached from group/tick tests (real definitions live in
+// bun_runtime / quic.c / JSC glue): no-ops in the single-threaded test binary.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(_loop: *mut Loop) {}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn us_quic_loop_process(_loop: *mut Loop) {}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__JSC_onBeforeWait(_vm: *const core::ffi::c_void) {}
+
+// Link-only BoringSSL / DNS surface pulled in by the socket close paths;
+// group/tick tests never create TLS transports or DNS lookups, so every one
+// of these is unreachable at runtime.
+macro_rules! link_stub {
+    ($($name:ident),+ $(,)?) => {$(
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $name() {
+            unreachable!(concat!("test binary must not call ", stringify!($name)));
+        }
+    )+};
+}
+
+link_stub!(
+    BIO_clear_retry_flags,
+    BIO_get_data,
+    BIO_get_new_index,
+    BIO_meth_new,
+    BIO_meth_set_create,
+    BIO_meth_set_ctrl,
+    BIO_meth_set_read,
+    BIO_meth_set_write,
+    BIO_set_init,
+    BIO_set_retry_read,
+    BIO_set_retry_write,
+    Bun__addrinfo_cancel,
+    Bun__addrinfo_getRequestResult,
+    SSL_CTX_get_ex_new_index,
+    SSL_get_error,
+    SSL_get_ex_new_index,
+    SSL_in_init,
+    SSL_shutdown,
+    SSL_write,
+    bun_ssl_ctx_cache_on_free,
+    ERR_clear_error,
+    ERR_error_string_n,
+    ERR_peek_last_error,
+    SSL_CIPHER_get_auth_nid,
+    SSL_CTX_get_ex_data,
+    SSL_CTX_get_verify_mode,
+    SSL_SESSION_get_protocol_version,
+    SSL_get_current_cipher,
+    SSL_get_ex_data,
+    SSL_get_peer_certificate,
+    SSL_get_session,
+    SSL_get_verify_result,
+    SSL_session_reused,
+    SSL_set_ex_data,
+    X509_free,
+    X509_verify_cert_error_string,
+    us_get_shared_default_ca_store,
+    BIO_free,
+    BIO_new,
+    BIO_set_data,
+    Bun__addrinfo_freeRequest,
+    SSL_CTX_free,
+    SSL_do_handshake,
+    SSL_get_SSL_CTX,
+    SSL_get_quiet_shutdown,
+    SSL_get_shutdown,
+    SSL_is_init_finished,
+    SSL_new,
+    SSL_read,
+    SSL_renegotiate,
+    SSL_set0_verify_cert_store,
+    SSL_set_accept_state,
+    SSL_set_bio,
+    SSL_set_connect_state,
+    SSL_set_renegotiate_mode,
+    SSL_set_tlsext_host_name,
+    SSL_set_verify,
+);

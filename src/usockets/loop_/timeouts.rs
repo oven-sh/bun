@@ -9,7 +9,7 @@ use crate::LIBUS_TIMEOUT_GRANULARITY;
 use crate::dispatch;
 use crate::group::SocketGroup;
 use crate::loop_::Loop;
-use crate::unsafe_core::deref::{with_group, with_loop_data, with_socket};
+use crate::unsafe_core::deref::{with_group, with_socket};
 use crate::unsafe_core::ffi;
 
 /// `LIBUS_TIMEOUT_GRANULARITY_NS` (loop.c:73).
@@ -27,12 +27,11 @@ fn monotonic_ns() -> i64 {
 /// R1.16's min(timeout, sweep delta)).
 #[cfg(not(windows))]
 pub(crate) fn next_sweep_deadline_ns(loop_: *mut Loop) -> i64 {
-    with_loop_data(loop_, |ld| {
-        if ld.sweep_next_tick_ns < 0 {
-            return -1;
-        }
-        (ld.sweep_next_tick_ns - monotonic_ns()).max(0)
-    })
+    let next = ffi::ld_sweep_next_tick_ns(loop_);
+    if next < 0 {
+        return -1;
+    }
+    (next - monotonic_ns()).max(0)
 }
 
 /// `us_internal_sweep_if_due` (R5.8), called after dispatch in both run
@@ -40,20 +39,16 @@ pub(crate) fn next_sweep_deadline_ns(loop_: *mut Loop) -> i64 {
 /// socket and disarm.
 #[cfg(not(windows))]
 pub(crate) fn sweep_if_due(loop_: *mut Loop) {
-    let due = with_loop_data(loop_, |ld| {
-        if ld.sweep_next_tick_ns < 0 {
-            return false;
-        }
-        let now = monotonic_ns();
-        if now < ld.sweep_next_tick_ns {
-            return false;
-        }
-        ld.sweep_next_tick_ns = now + SWEEP_INTERVAL_NS;
-        true
-    });
-    if due {
-        timer_sweep(loop_);
+    let next = ffi::ld_sweep_next_tick_ns(loop_);
+    if next < 0 {
+        return;
     }
+    let now = monotonic_ns();
+    if now < next {
+        return;
+    }
+    ffi::ld_set_sweep_next_tick_ns(loop_, now + SWEEP_INTERVAL_NS);
+    timer_sweep(loop_);
 }
 
 /// `us_internal_timer_sweep` (R5.9, loop.c:227-290). MUST NOT run
@@ -62,10 +57,8 @@ pub(crate) fn sweep_if_due(loop_: *mut Loop) {
 /// (R5.10 — the handler must re-arm). Survives handler-driven unlink of the
 /// cursor socket (R3.14) and deinit of the current group (R3.12).
 pub(crate) fn timer_sweep(loop_: *mut Loop) {
-    let mut group = with_loop_data(loop_, |ld| {
-        ld.iterator = ld.head;
-        ld.iterator
-    });
+    let mut group = ffi::ld_group_head(loop_);
+    ffi::ld_set_iterator(loop_, group);
     while !group.is_null() {
         // Bump this group's clocks (R5.4): one long tick = 15 sweeps = 60 s.
         let (short_ticks, long_ticks, mut s) = with_group(group, |g| {
@@ -101,7 +94,7 @@ pub(crate) fn timer_sweep(loop_: *mut Loop) {
             }) {
                 dispatch::dispatch_timeout(s);
             }
-            if with_loop_data(loop_, |ld| ld.iterator) != group {
+            if ffi::ld_iterator(loop_) != group {
                 group_alive = false;
                 break 'sockets;
             }
@@ -117,7 +110,7 @@ pub(crate) fn timer_sweep(loop_: *mut Loop) {
             {
                 dispatch::dispatch_long_timeout(s);
             }
-            if with_loop_data(loop_, |ld| ld.iterator) != group {
+            if ffi::ld_iterator(loop_) != group {
                 group_alive = false;
                 break 'sockets;
             }
@@ -135,9 +128,9 @@ pub(crate) fn timer_sweep(loop_: *mut Loop) {
                 g.iterator = core::ptr::null_mut();
                 g.next
             });
-            with_loop_data(loop_, |ld| ld.iterator = next);
+            ffi::ld_set_iterator(loop_, next);
         }
-        group = with_loop_data(loop_, |ld| ld.iterator);
+        group = ffi::ld_iterator(loop_);
     }
 }
 
@@ -145,15 +138,11 @@ pub(crate) fn timer_sweep(loop_: *mut Loop) {
 /// connecting socket bumps the refcount; 0→1 arms the sweep and enables the
 /// Date-header timer. Listen sockets do NOT participate (R5.6).
 pub(crate) fn sweep_enable(loop_: *mut Loop, _group: *mut SocketGroup) {
-    let count = with_loop_data(loop_, |ld| {
-        ld.sweep_timer_count += 1;
-        ld.sweep_timer_count
-    });
+    let count = ffi::ld_sweep_timer_count(loop_) + 1;
+    ffi::ld_set_sweep_timer_count(loop_, count);
     if count == 1 {
         #[cfg(not(windows))]
-        with_loop_data(loop_, |ld| {
-            ld.sweep_next_tick_ns = monotonic_ns() + SWEEP_INTERVAL_NS;
-        });
+        ffi::ld_set_sweep_next_tick_ns(loop_, monotonic_ns() + SWEEP_INTERVAL_NS);
         #[cfg(windows)]
         ffi::arm_libuv_sweep_timer(loop_);
         ffi::ensure_date_header_timer_is_enabled(loop_);
@@ -164,11 +153,10 @@ pub(crate) fn sweep_enable(loop_: *mut Loop, _group: *mut SocketGroup) {
 /// →0 disarms the POSIX deadline. On libuv the timer keeps firing forever
 /// after the first enable (preserved OQ-16 quirk) — decrement only.
 pub(crate) fn sweep_disable(loop_: *mut Loop, _group: *mut SocketGroup) {
-    with_loop_data(loop_, |ld| {
-        ld.sweep_timer_count -= 1;
-        #[cfg(not(windows))]
-        if ld.sweep_timer_count == 0 {
-            ld.sweep_next_tick_ns = -1;
-        }
-    });
+    let count = ffi::ld_sweep_timer_count(loop_) - 1;
+    ffi::ld_set_sweep_timer_count(loop_, count);
+    #[cfg(not(windows))]
+    if count == 0 {
+        ffi::ld_set_sweep_next_tick_ns(loop_, -1);
+    }
 }

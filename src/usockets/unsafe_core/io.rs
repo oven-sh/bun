@@ -2637,17 +2637,7 @@ pub(crate) use imp::*;
 // pointer escapes) or the tick-postlude closed sweep (C6/C15).
 // ─────────────────────────────────────────────────────────────────────────────
 
-use crate::loop_::Loop;
 use crate::udp;
-
-/// Live-loop deref. The borrow must NOT be held across any consumer callback
-/// (C17) — re-derive per use.
-pub(crate) fn loop_mut<'a>(loop_: *mut Loop) -> &'a mut Loop {
-    // SAFETY: loops live from creation to thread exit; callers pass the
-    // owning loop pointer on its own thread and drop the borrow before
-    // re-entering consumer code.
-    unsafe { &mut *loop_ }
-}
 
 // ── udp::Socket raw-pointer access ───────────────────────────────────────────
 
@@ -2765,7 +2755,7 @@ mod udp_imp {
             (*s).poll_events = events;
             (*s).fd
         };
-        let loop_fd = super::loop_mut(loop_).fd;
+        let loop_fd = crate::unsafe_core::poll_access::loop_fd(loop_);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let mut ev = libc::epoll_event {
@@ -2789,7 +2779,7 @@ mod udp_imp {
         }
         // SAFETY: as above.
         unsafe { (*s).poll_events = events };
-        let loop_fd = super::loop_mut(loop_).fd;
+        let loop_fd = crate::unsafe_core::poll_access::loop_fd(loop_);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let _ = old;
@@ -2809,7 +2799,7 @@ mod udp_imp {
     pub(crate) fn udp_poll_stop(loop_: *mut Loop, s: *mut udp::Socket) {
         // SAFETY: as in `udp_poll_change`.
         let (fd, old) = unsafe { ((*s).fd, (*s).poll_events) };
-        let loop_fd = super::loop_mut(loop_).fd;
+        let loop_fd = crate::unsafe_core::poll_access::loop_fd(loop_);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let _ = old;
@@ -3423,7 +3413,9 @@ mod udp_imp {
             (*s).poll_events = events;
             (*s).fd
         };
-        let uv_loop = super::loop_mut(loop_).uv_loop.cast::<sys::Loop>();
+        // SAFETY: raw place read of the set-once `uv_loop` field; no `&mut
+        // Loop` formed (cross-thread wakeups touch sibling fields).
+        let uv_loop = unsafe { (*loop_).uv_loop }.cast::<sys::Loop>();
         // SAFETY: fresh zeroed POD box; init on this thread's loop; on init
         // failure the box is reclaimed here (uv registered nothing). On
         // success it is owned by `s.uv_p` until `udp_poll_stop`.

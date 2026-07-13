@@ -72,8 +72,7 @@ pub(crate) fn ensure_date_header_timer_is_enabled(loop_: *mut Loop) {
 /// early-return per the preserved OQ-16 quirk (timer never actually stops).
 #[cfg(windows)]
 pub(crate) fn arm_libuv_sweep_timer(loop_: *mut Loop) {
-    let sweep_timer = crate::unsafe_core::deref::with_loop_data(loop_, |ld| ld.sweep_timer)
-        .cast::<crate::backend::libuv::Timer>();
+    let sweep_timer = ld_sweep_timer(loop_).cast::<crate::backend::libuv::Timer>();
     crate::backend::libuv::Timer::set(
         sweep_timer,
         Some(crate::backend::libuv::sweep_timer_cb),
@@ -335,7 +334,7 @@ pub(crate) unsafe fn free_loop_raw(loop_: *mut Loop) {
             unsafe { (*loop_).polls.free(p) };
         }
         for (ops, word) in owners {
-            super::trampolines::release_poll_owner(ops, word);
+            super::trampolines::teardown_poll_owner(ops, word);
         }
     }
 
@@ -483,10 +482,39 @@ ld_get! {
     ld_low_prio_head, low_prio_head, *mut us_socket_t;
     ld_low_prio_budget, low_prio_budget, i32;
     ld_group_head, head, *mut crate::group::SocketGroup;
+    ld_closed_head, closed_head, *mut us_socket_t;
+    ld_closed_udp_head, closed_udp_head, *mut crate::udp::Socket;
+    ld_iterator, iterator, *mut crate::group::SocketGroup;
+    ld_sweep_timer_count, sweep_timer_count, i32;
+    ld_send_buf, send_buf, *mut u8;
+    ld_recv_buf, recv_buf, *mut u8;
 }
 ld_set! {
     ld_set_low_prio_head, low_prio_head, *mut us_socket_t;
     ld_set_low_prio_budget, low_prio_budget, i32;
+    ld_set_group_head, head, *mut crate::group::SocketGroup;
+    ld_set_closed_head, closed_head, *mut us_socket_t;
+    ld_set_closed_udp_head, closed_udp_head, *mut crate::udp::Socket;
+    ld_set_iterator, iterator, *mut crate::group::SocketGroup;
+    ld_set_sweep_timer_count, sweep_timer_count, i32;
+}
+
+#[cfg(not(windows))]
+pub(crate) fn ld_sweep_next_tick_ns(loop_: *mut Loop) -> i64 {
+    // SAFETY: see section comment above.
+    unsafe { *core::ptr::addr_of!((*loop_).internal_loop_data.sweep_next_tick_ns) }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn ld_set_sweep_next_tick_ns(loop_: *mut Loop, v: i64) {
+    // SAFETY: see section comment above.
+    unsafe { *core::ptr::addr_of_mut!((*loop_).internal_loop_data.sweep_next_tick_ns) = v }
+}
+
+#[cfg(windows)]
+pub(crate) fn ld_sweep_timer(loop_: *mut Loop) -> *mut c_void {
+    // SAFETY: see section comment above.
+    unsafe { *core::ptr::addr_of!((*loop_).internal_loop_data.sweep_timer) }
 }
 
 pub(crate) fn ld_tick_depth_add(loop_: *mut Loop, delta: core::ffi::c_int) {
@@ -505,6 +533,17 @@ pub(crate) fn ld_take_closed_head(loop_: *mut Loop) -> *mut us_socket_t {
     unsafe {
         core::ptr::replace(
             core::ptr::addr_of_mut!((*loop_).internal_loop_data.closed_head),
+            core::ptr::null_mut(),
+        )
+    }
+}
+
+/// Detach the closed-UDP list (tick postlude drain, C6/C15).
+pub(crate) fn ld_take_closed_udp_head(loop_: *mut Loop) -> *mut crate::udp::Socket {
+    // SAFETY: see section comment above.
+    unsafe {
+        core::ptr::replace(
+            core::ptr::addr_of_mut!((*loop_).internal_loop_data.closed_udp_head),
             core::ptr::null_mut(),
         )
     }

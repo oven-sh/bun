@@ -18,7 +18,6 @@ use core::ptr::NonNull;
 use crate::backend::{PollState, PollType};
 use crate::loop_::Loop;
 use crate::protocol::OwnerRef;
-use crate::unsafe_core::ext::deref_mut;
 use crate::unsafe_core::{ffi, poll_access, slab, trampolines};
 
 /// What a registration watches. `Fd` is cross-platform; the darwin variants
@@ -92,6 +91,11 @@ pub trait PollProtocol: Sized + 'static {
     type Owner: bun_ptr::RefCounted<DestructorCtx: Default> + 'static;
 
     fn on_event(owner: &Self::Owner, poll: PollRef, events: PollEvents);
+
+    /// Loop-teardown notice, fired once per still-registered owner BEFORE the
+    /// transferred ref is released and the polls slab is unmapped: any
+    /// consumer-side `PollRef` for this slot must never be used again.
+    fn on_loop_teardown(_owner: &Self::Owner) {}
 }
 
 /// Type-erased owner ops for a registered poll (monomorphized once per
@@ -102,6 +106,9 @@ pub(crate) struct PollOwnerOps {
     pub(crate) dispatch: unsafe fn(*mut c_void, PollRef, PollEvents),
     /// SAFETY (caller): releases the one outstanding transferred strong ref.
     pub(crate) deref: unsafe fn(*mut c_void),
+    /// SAFETY (caller): loop teardown only; `word` as in `deref`, ref still
+    /// outstanding (invalidation runs before the release).
+    pub(crate) teardown: unsafe fn(*mut c_void),
 }
 
 /// Slab-resident registration. `PollState` is the FIRST field (repr(C)) so
@@ -173,9 +180,9 @@ impl PollRef {
             return;
         }
         if keep_alive {
-            deref_mut(loop_).ref_();
+            Loop::ref_raw(loop_);
         } else {
-            deref_mut(loop_).unref();
+            Loop::unref_raw(loop_);
         }
     }
 
@@ -274,7 +281,7 @@ impl PollRef {
         #[cfg(windows)]
         let _ = armed;
         if keep_alive {
-            deref_mut(loop_).unref();
+            Loop::unref_raw(loop_);
         }
         ffi::slab_free_poll(loop_, p.as_ptr());
         // Owner release LAST, outside every slab/loop borrow — the owner's
@@ -324,6 +331,14 @@ pub(crate) fn register<P: PollProtocol>(
         PollSource::Memorystatus => (ArmedSource::Memorystatus, 0),
     };
 
+    // PollState packs the fd in 27 signed bits; a wider fd would silently
+    // alias a low-numbered descriptor in every later kernel op. Fail loudly.
+    #[cfg(not(windows))]
+    if PollState::init(fd, PollType::Registered).fd() != fd {
+        owner.deref();
+        return Err(libc::EMFILE);
+    }
+
     let p = ffi::slab_alloc_poll(
         loop_,
         RegisteredPoll {
@@ -362,7 +377,7 @@ pub(crate) fn register<P: PollProtocol>(
     }
 
     if keep_alive {
-        deref_mut(loop_).ref_();
+        Loop::ref_raw(loop_);
     }
     Ok(PollRef::from_live(
         NonNull::new(p).expect("slab returned null poll slot"),

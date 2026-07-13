@@ -1493,11 +1493,9 @@ function Socket(options?) {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
-        try {
-          onread.callback(buffer.length, buffer);
-        } catch (e) {
-          self.emit("error", e);
-        }
+        // A throwing callback reaches uncaughtException via protectHandler,
+        // matching Node (onStreamRead does not catch it).
+        onread.callback(buffer.length, buffer);
       }),
     };
   }

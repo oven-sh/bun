@@ -1171,4 +1171,33 @@ describe.concurrent("exceptions thrown from socket event listeners", () => {
     expect(stdout.trim()).toBe("uncaughtException: pool error");
     expect(exitCode).toBe(3);
   });
+
+  it("a throwing onread callback reaches uncaughtException, not the socket 'error' listener", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const net = require("node:net");
+      process.on("uncaughtException", (e) => {
+        console.log("uncaughtException: " + e.message);
+        process.exit(3);
+      });
+      const server = net.createServer((s) => s.end("x"));
+      server.listen(0, "127.0.0.1", () => {
+        const c = net.connect({
+          port: server.address().port,
+          host: "127.0.0.1",
+          onread: {
+            buffer: Buffer.alloc(4096),
+            callback: () => {
+              throw new Error("boom from onread callback");
+            },
+          },
+        });
+        c.on("error", (e) => {
+          console.log("socket error listener: " + e.message);
+          process.exit(7);
+        });
+      });
+    `);
+    expect(stdout.trim()).toBe("uncaughtException: boom from onread callback");
+    expect(exitCode).toBe(3);
+  });
 });

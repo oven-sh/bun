@@ -445,6 +445,59 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
       });
       expect(result).toContain("foo.js");
     });
+    describe("var/function declarations over existing sandbox properties", () => {
+      test("`var x` over a non-writable non-configurable data property reads through to the sandbox value", () => {
+        const sandbox = {};
+        Object.defineProperty(sandbox, "cfg", { value: 42, writable: false, enumerable: true, configurable: false });
+        const context = createContext(sandbox);
+        const result = fn("var cfg; [typeof cfg, cfg, globalThis.cfg]", context);
+        expect(result).toEqual(["number", 42, 42]);
+      });
+      test("`var x = v` over a getter-only accessor still reads from the getter", () => {
+        const sandbox = {};
+        Object.defineProperty(sandbox, "live", { get: () => 7, enumerable: true, configurable: false });
+        const context = createContext(sandbox);
+        const result = fn("var live = 99; [typeof live, live, globalThis.live]", context);
+        expect(result).toEqual(["number", 7, 7]);
+      });
+      test("`var x` over a writable data property does not shadow it with undefined", () => {
+        const sandbox = { w: 10 };
+        const context = createContext(sandbox);
+        const result = fn("var w; [typeof w, w, globalThis.w]", context);
+        expect(result).toEqual(["number", 10, 10]);
+      });
+      test("top-level function declaration over a non-writable non-configurable property throws", () => {
+        const sandbox = {};
+        Object.defineProperty(sandbox, "cfg", { value: 42, writable: false, enumerable: true, configurable: false });
+        const context = createContext(sandbox);
+        expect(() => fn("function cfg(){}", context)).toThrow();
+        expect((sandbox as any).cfg).toBe(42);
+      });
+      test("`var x` over a non-enumerable sandbox property reads through to the sandbox value", () => {
+        const sandbox = {};
+        Object.defineProperty(sandbox, "hidden", { value: "h", writable: true, enumerable: false, configurable: true });
+        const context = createContext(sandbox);
+        const result = fn("var hidden; hidden", context);
+        expect(result).toBe("h");
+      });
+      if (!isNew) {
+        test("a later script in the same context does not see a stale undefined binding", () => {
+          const sandbox = {};
+          Object.defineProperty(sandbox, "cfg", { value: 42, writable: false, enumerable: true, configurable: false });
+          const context = createContext(sandbox);
+          fn("var cfg;", context);
+          const result = fn("[typeof cfg, cfg, globalThis.cfg]", context);
+          expect(result).toEqual(["number", 42, 42]);
+        });
+        test("`var x` over a sandbox property added after createContext reads through to the sandbox value", () => {
+          const sandbox: any = {};
+          const context = createContext(sandbox);
+          Object.defineProperty(sandbox, "late", { value: 77, writable: false, enumerable: true, configurable: false });
+          const result = fn("var late; [typeof late, late]", context);
+          expect(result).toEqual(["number", 77]);
+        });
+      }
+    });
   } else {
     test("can access global context", () => {
       const props = randomProps(2);

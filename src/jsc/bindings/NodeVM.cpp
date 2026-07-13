@@ -1052,6 +1052,67 @@ void NodeVMGlobalObject::clearContextifiedObject()
     m_sandbox.clear();
 }
 
+// JSC's GlobalDeclarationInstantiation calls JSGlobalObject::getOwnPropertySlot
+// directly (not via method table) and so never sees sandbox properties; a program-
+// level `var x` / `function x(){}` over a sandbox prop would add a fresh undefined
+// symbol-table slot that then wins every unqualified lookup for the context's life.
+// Mirror sandbox own-props onto this global (attributes only, placeholder value) so
+// createGlobalVarBinding / canDeclareGlobalFunction observe them; actual reads still
+// resolve through our method-table override, which consults the sandbox first.
+// Best-effort: sandbox traps that throw are swallowed, as Node never surfaces them
+// from var-binding either.
+void NodeVMGlobalObject::materializeSandboxOwnProperties(JSGlobalObject* lexicalGlobalObject)
+{
+    if (m_contextOptions.notContextified)
+        return;
+    JSObject* sandbox = m_sandbox.get();
+    if (!sandbox)
+        return;
+
+    VM& vm = this->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    sandbox->methodTable()->getOwnPropertyNames(sandbox, lexicalGlobalObject, names, DontEnumPropertiesMode::Include);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return;
+    }
+
+    JSC::BatchedTransitionOptimizer optimizer(vm, this);
+
+    for (const auto& name : names) {
+        if (parseIndex(name))
+            continue;
+
+        PropertySlot existing(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool alreadyOnGlobal = JSC::JSGlobalObject::getOwnPropertySlot(this, this, name, existing);
+        existing.disallowVMEntry.reset();
+        if (alreadyOnGlobal)
+            continue;
+
+        PropertySlot sandboxSlot(sandbox, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool found = sandbox->methodTable()->getOwnPropertySlot(sandbox, lexicalGlobalObject, name, sandboxSlot);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            continue;
+        }
+        if (!found)
+            continue;
+
+        unsigned sandboxAttributes = sandboxSlot.attributes();
+        unsigned attributes = 0;
+        if (sandboxAttributes & PropertyAttribute::DontDelete)
+            attributes |= PropertyAttribute::DontDelete;
+        if (sandboxAttributes & PropertyAttribute::DontEnum)
+            attributes |= PropertyAttribute::DontEnum;
+        if (sandboxAttributes & (PropertyAttribute::ReadOnly | PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor))
+            attributes |= PropertyAttribute::ReadOnly;
+
+        putDirect(vm, name, jsUndefined(), attributes);
+    }
+}
+
 void NodeVMGlobalObject::sigintReceived()
 {
     vm().notifyNeedTermination();
@@ -1114,6 +1175,13 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     if (!result) return false;
 
     if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
+        return true;
+    }
+
+    // Sandbox accepted the write. Forward to Base only if a symbol-table slot exists
+    // so it stays in sync; otherwise the only global-side copy is the materialized
+    // (possibly read-only) placeholder, which is never observed.
+    if (isDeclaredOnSandbox && propertyName.uid() && !thisObject->symbolTable()->contains(propertyName.uid())) {
         return true;
     }
 
@@ -1383,6 +1451,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
         contextOptions, globalObjectDynamicImportCallback);
 
     context->setContextifiedObject(sandbox);
+    context->materializeSandboxOwnProperties(globalObject);
 
     JSValue optionsArg = callFrame->argument(2);
     JSValue scriptDynamicImportCallback;

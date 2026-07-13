@@ -347,6 +347,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 
     // Set the contextified object before evaluating
     globalObject->setContextifiedObject(contextifiedObject);
+    globalObject->materializeSandboxOwnProperties(globalObject);
 
     NakedPtr<JSC::Exception> exception;
     JSValue result {};

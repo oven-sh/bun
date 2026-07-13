@@ -1679,6 +1679,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let symbol: &Symbol = &p.symbols[id.inner_index() as usize];
 
+                    // Drop a `const` whose value was already substituted at
+                    // every use via `const_values` (use count now 0). The
+                    // "remove inlined constants" pass above only walks the
+                    // leading declaration prefix, so a past-prefix const that
+                    // `track_for_macro_args` recorded would otherwise be left
+                    // as dead output. Presence in `const_values` already
+                    // implies the binding was `const` and the initialiser is
+                    // side-effect free (`can_be_const_value()`), so no
+                    // separate kind check is needed after `select_local_kind`
+                    // may have rewritten it.
+                    if symbol.use_count_estimate == 0 && p.const_values.contains(&id) {
+                        match local.decls.len_u32() {
+                            1 => {
+                                local.decls.clear();
+                                let new_len = output.len() - 1;
+                                output.truncate(new_len);
+                                continue 'inner;
+                            }
+                            _ => {
+                                let n = local.decls.len() - 1;
+                                local.decls.truncate(n);
+                                continue 'inner;
+                            }
+                        }
+                    }
+
                     // Try to substitute the identifier with the initializer. This will
                     // fail if something with side effects is in between the declaration
                     // and the usage.

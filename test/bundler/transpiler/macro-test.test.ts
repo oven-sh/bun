@@ -134,13 +134,19 @@ test("template string latin1", () => {
 describe("const folding into macro arguments", () => {
   const macroModule = "export function identity(x) { return x; }\n" + "export function getText() { return 'foo'; }\n";
 
-  async function runShape(name: string, entry: string, cmd: "run" | "build" = "run") {
+  async function runShape(name: string, entry: string, cmd: "run" | "build" | "build-minify" = "run") {
     using dir = tempDir(name, {
       "m.ts": macroModule,
       "entry.ts": entry,
     });
+    const argv =
+      cmd === "run"
+        ? [bunExe(), "run", "entry.ts"]
+        : cmd === "build"
+          ? [bunExe(), "build", "--target=bun", "entry.ts"]
+          : [bunExe(), "build", "--target=bun", "--minify-syntax", "entry.ts"];
     await using proc = Bun.spawn({
-      cmd: cmd === "run" ? [bunExe(), "run", "entry.ts"] : [bunExe(), "build", "--target=bun", "entry.ts"],
+      cmd: argv,
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -254,6 +260,22 @@ describe("const folding into macro arguments", () => {
       stdout: expect.stringContaining('"https://example.com/foo"'),
       exitCode: 0,
     });
+  });
+
+  // Tracking a past-prefix const for macro args must not leave a dead
+  // declaration in minified output when all uses were inlined.
+  test.concurrent("bun build --minify: past-prefix const is dropped after inlining", async () => {
+    const r = await runShape(
+      "macro-const-minify-dce",
+      importLine +
+        "export function foo() {\n  console.log(identity('x'));\n  const A = 1;\n  return A;\n}\n",
+      "build-minify",
+    );
+    expect({ stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode }).toMatchObject({
+      stdout: expect.stringContaining("return"),
+      exitCode: 0,
+    });
+    expect(r.stdout).not.toMatch(/\bA\s*=\s*1\b/);
   });
 
   // Regression guard: the macro-argument const folding must not collapse

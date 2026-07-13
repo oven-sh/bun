@@ -267,8 +267,7 @@ describe("const folding into macro arguments", () => {
   test.concurrent("bun build --minify: past-prefix const is dropped after inlining", async () => {
     const r = await runShape(
       "macro-const-minify-dce",
-      importLine +
-        "export function foo() {\n  console.log(identity('x'));\n  const A = 1;\n  return A;\n}\n",
+      importLine + "export function foo() {\n  console.log(identity('x'));\n  const A = 1;\n  return A;\n}\n",
       "build-minify",
     );
     expect({ stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode }).toMatchObject({

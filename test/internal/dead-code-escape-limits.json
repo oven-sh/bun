@@ -27,5 +27,7 @@
   "src/runtime/server/NodeHTTPResponse.rs": 1,
   "src/runtime/shell/IOWriter.rs": 1,
   "src/runtime/test_runner/expect.rs": 1,
-  "src/spawn_sys/posix_spawn.rs": 4
+  "src/spawn_sys/posix_spawn.rs": 4,
+  "src/usockets/socket.rs": 1,
+  "src/usockets/udp.rs": 1
 }

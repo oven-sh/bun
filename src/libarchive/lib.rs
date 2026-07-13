@@ -1255,7 +1255,7 @@ impl BufferReadStream {
         let pos = isize::try_from(this.pos).expect("int cast");
 
         let proposed = pos + isize::try_from(offset).expect("int cast");
-        let new_pos = proposed.max(0).min(buflen - 1);
+        let new_pos = proposed.max(0).min(buflen.saturating_sub(1).max(0));
         this.pos = usize::try_from(new_pos).expect("int cast");
         (new_pos - pos) as lib::la_int64_t
     }
@@ -1286,17 +1286,17 @@ impl BufferReadStream {
         };
         match whence {
             Seek::Current => {
-                let new_pos = (pos + offset).min(buflen - 1).max(0);
+                let new_pos = (pos + offset).min(buflen.saturating_sub(1).max(0)).max(0);
                 this.pos = usize::try_from(new_pos).expect("int cast");
                 new_pos as lib::la_int64_t
             }
             Seek::End => {
-                let new_pos = (buflen - offset).min(buflen).max(0);
+                let new_pos = buflen.saturating_sub(offset).max(0).min(buflen).max(0);
                 this.pos = usize::try_from(new_pos).expect("int cast");
                 new_pos as lib::la_int64_t
             }
             Seek::Set => {
-                let new_pos = offset.min(buflen - 1).max(0);
+                let new_pos = offset.min(buflen.saturating_sub(1).max(0)).max(0);
                 this.pos = usize::try_from(new_pos).expect("int cast");
                 new_pos as lib::la_int64_t
             }

@@ -1121,8 +1121,8 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
         return true;
     }
 
-    if (!result && isDeclaredOnSandbox) {
-        // Existing read-only property rejected the write; keep the strict-mode throw.
+    if (!result && isDeclaredOnSandbox && (getter.attributes() & PropertyAttribute::ReadOnly)) {
+        // Existing read-only own property rejected the write; keep the strict-mode throw.
         return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
     }
 

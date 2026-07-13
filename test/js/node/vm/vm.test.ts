@@ -1170,6 +1170,13 @@ describe("createContext with a non-extensible sandbox", () => {
     expect(runInContext("f0 = 99; f0", sandbox)).toBe(99);
     expect(sandbox.f0).toBe(99);
   });
+
+  test("frozen: writing a name inherited from Object.prototype does not throw in strict mode", () => {
+    const sandbox = Object.freeze({});
+    createContext(sandbox);
+    expect(runInContext("'use strict'; globalThis.toString = 5; typeof toString", sandbox)).toBe("function");
+    expect(runInContext("globalThis.hasOwnProperty = 1; typeof hasOwnProperty", sandbox)).toBe("function");
+  });
 });
 
 describe("node:vm SourceTextModule cyclic graph linking", () => {

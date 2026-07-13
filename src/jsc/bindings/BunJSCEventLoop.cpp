@@ -73,10 +73,9 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             vm->heap.stopIfNecessary();
             vm->didEnterVM = false;
 
-            // A finished HTTP transaction (Bun.serve does this per request; fetch now does it
-            // too) asked for the heap to be looked at. Do it here, not there: by now the
-            // response's microtasks have drained, so the turn's garbage actually exists to be
-            // seen. Must precede the sweep -- the GC is what makes the pages free to hand back.
+            // A finished HTTP transaction asked for the heap to be looked at; act here so
+            // the response's microtasks have drained and the garbage exists to be seen.
+            // Must precede the sweep -- the GC is what makes the pages free to hand back.
             Bun__drainPendingGCHint();
 
 #if USE(MIMALLOC)

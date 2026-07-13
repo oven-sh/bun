@@ -834,6 +834,10 @@ impl FetchTasklet {
             this.mutex.unlock();
             // if we are not done we wait until the next call
             if is_done {
+                // Same GC hint Bun.serve fires per request, for the outbound direction: an
+                // agent loop only makes fetches, so nothing else nudges the heuristic.
+                // SAFETY: process-static VM (checked non-shutting-down above); JS thread.
+                unsafe { (*vm.event_loop()).request_gc_hint() };
                 // The HTTP response has been fully received. If the request body
                 // is still being uploaded through a ResumableSink (e.g. the
                 // underlying source's `pull` awaits a timer, so a chunk arrives
@@ -848,7 +852,6 @@ impl FetchTasklet {
                     sink.cancel(JSValue::UNDEFINED);
                 }
                 let mut poll_ref = core::mem::take(&mut this.poll_ref);
-                let _ = vm;
                 poll_ref.unref(bun_io::js_vm_ctx());
                 // SAFETY: `this` is the live heap tasklet; we hold a ref.
                 FetchTasklet::deref(std::ptr::from_mut(this));
@@ -1127,13 +1130,6 @@ impl FetchTasklet {
                 },
             );
             (*vm.event_loop()).enqueue_task(Task::init(&raw mut (*holder).task));
-        }
-
-        if is_done {
-            // Same GC hint Bun.serve fires per request, for the outbound direction: an
-            // agent loop only makes fetches, so nothing else nudges the heuristic.
-            // SAFETY: process-static VM (checked non-shutting-down above); JS thread.
-            unsafe { (*vm.event_loop()).request_gc_hint() };
         }
 
         dispatch_cleanup(self);

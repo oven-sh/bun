@@ -604,8 +604,9 @@ impl EventLoop {
 
     /// A finished HTTP transaction asks the GC heuristic to look at the heap -- but not yet:
     /// the response's JS handling and microtasks have not run, so the garbage is not there to
-    /// see. Acted on at the next park (`drain_pending_gc_hint`).
-    pub fn request_gc_hint(&mut self) {
+    /// see. Acted on at the next park (`drain_pending_gc_hint`). `&self`: callers run inside
+    /// `tick_queue_with_count`, which already holds the `&mut EventLoop`.
+    pub fn request_gc_hint(&self) {
         self.vm_ref().as_mut().gc_controller.request_hint();
     }
 

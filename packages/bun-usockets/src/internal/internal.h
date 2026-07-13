@@ -284,6 +284,10 @@ struct us_socket_t {
   /* Same as ssl_shutdown_after_spill but for us_internal_ssl_close: the
    * close re-runs from the writable event once the spill drains. */
   unsigned char ssl_close_after_spill : 1;
+  /* The plaintext EOF (peer close_notify or the raw TCP FIN behind it) was
+   * already dispatched to the user layer; both EOF paths can fire for one
+   * connection, and the end handler must run once. */
+  unsigned char ssl_end_delivered : 1;
   /* Set while SSL_do_handshake/SSL_read is on the stack: JS run from inside
    * those calls (ALPN/SNI/keylog callbacks) may destroy the socket, and the
    * SSL must not be freed under BoringSSL's feet - the detach is deferred to

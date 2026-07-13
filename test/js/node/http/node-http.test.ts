@@ -25,6 +25,7 @@ import http, {
 import https, { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import { connect as tlsConnect } from "node:tls";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { PassThrough, Writable } from "node:stream";
@@ -1936,6 +1937,32 @@ describe("HTTP Server Security Tests - Advanced", () => {
       );
       expect(clientError).not.toHaveBeenCalled();
       expect(mockHandler).not.toHaveBeenCalled();
+    });
+
+    test("https server fires clientError with HPE_INVALID_EOF_STATE when the client closes mid-request", async () => {
+      // The TLS layer used to force-close on the peer's EOF without ever
+      // dispatching it to the HTTP layer, so a premature EOF that fires
+      // 'clientError' over plain http was silently swallowed over https.
+      // Node reports HPE_INVALID_EOF_STATE on both transports.
+      const httpsServer = createHttpsServer(tlsCert, () => {});
+      const clientErr = Promise.withResolvers<NodeJS.ErrnoException>();
+      httpsServer.on("clientError", (err, socket) => {
+        socket.destroy();
+        clientErr.resolve(err);
+      });
+      await new Promise<void>(resolve => httpsServer.listen(0, "127.0.0.1", resolve));
+      try {
+        const port = (httpsServer.address() as AddressInfo).port;
+        const socket = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+          socket.write("POST / HTTP/1.1\r\nHost:");
+          socket.end();
+        });
+        socket.on("error", () => {});
+        const err = await clientErr.promise;
+        expect(err.code).toBe("HPE_INVALID_EOF_STATE");
+      } finally {
+        httpsServer.close();
+      }
     });
   });
 

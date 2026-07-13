@@ -696,7 +696,15 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
       return;
     }
     if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => endTest()).catch(error => endTest(error));
+      const promise = result as Promise<unknown>;
+      if (useCallback) {
+        // Callback-style tests complete only when done() is invoked; the
+        // returned promise must not auto-complete the test on resolution.
+        // A rejection is still surfaced as a failure.
+        promise.catch(error => endTest(error));
+      } else {
+        promise.then(() => endTest(), error => endTest(error));
+      }
     } else if (!useCallback) {
       endTest();
     }

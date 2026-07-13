@@ -60,6 +60,13 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should report failure when a callback-style test calls done(error)", async () => {
+    const { exitCode, stderr } = await runTests(["07-callback-done-error.js"]);
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toContain("1 fail");
+    expect(stderr).toContain("boom");
+  });
 });
 
 async function runTests(filenames: string[]) {

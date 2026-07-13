@@ -10,17 +10,31 @@ test("callback test resolves with done()", (t, done) => {
   done();
 });
 
-// Async-but-callback-style test: schedules done() in a setTimeout.
-test("callback test resolves with done() asynchronously", (t, done) => {
-  setTimeout(() => {
-    callCount++;
-    done();
-  }, 5);
+// Async-but-callback-style test: the test function returns a promise that
+// resolves BEFORE done() is called. This proves the runner waits for done()
+// and does not auto-complete on promise resolution: `sawDone` is only true
+// once the deferred done() actually runs, and it is asserted on the next
+// microtask-draining tick via a second callback test below.
+let sawDone = false;
+test("callback test waits for done() even when the body returns a promise", (t, done) => {
+  // Returning a resolved promise must NOT complete the test; only done() may.
+  return Promise.resolve().then(() => {
+    setTimeout(() => {
+      callCount++;
+      sawDone = true;
+      done();
+    }, 5);
+  });
 });
 
-// Callback-style test that signals failure via done(err) must still report
-// failure, but we cannot easily inspect that from inside the same suite.
-// The shape is exercised by the next two tests instead.
+// Runs after the previous test. If the runner had wrongly completed the
+// prior test on promise-resolution (before done()), `sawDone` would still be
+// false here, failing the assertion.
+test("previous callback test only completed via done()", (t, done) => {
+  assert.equal(sawDone, true, "async callback test completed before done() was called");
+  callCount++;
+  done();
+});
 
 // Existing (t) => {...} sync-style signature must keep working.
 test("sync test without done() still passes", t => {
@@ -34,6 +48,14 @@ test("async test without done() still passes", async t => {
   callCount++;
 });
 
+// Calling done() twice (or done() plus a thrown/rejected value) must not
+// double-complete or double-count the test.
+test("done() is idempotent", (t, done) => {
+  callCount++;
+  done();
+  done();
+});
+
 process.on("exit", () => {
-  assert.equal(callCount, 4, `expected 4 test invocations, saw ${callCount}`);
+  assert.equal(callCount, 6, `expected 6 test invocations, saw ${callCount}`);
 });

@@ -4278,6 +4278,14 @@ class ServerHttp2Session extends Http2Session {
     this.destroy();
   }
   #onError(error: Error) {
+    // Node's socketOnError reads `const session = this[kSession]` and does
+    // nothing when it is undefined: destroying the session detaches it from the
+    // socket, so a transport error that lands afterwards (the peer's RST racing
+    // our own teardown - routine on Windows loopback) is not re-reported on an
+    // already-destroyed session.
+    if (this.destroyed) {
+      return;
+    }
     if (isEconnresetAfterGoaway(this, error)) {
       this.destroy();
       return;
@@ -5236,6 +5244,12 @@ class ClientHttp2Session extends Http2Session {
     this[bunHTTP2Socket] = null;
   }
   #onError(error: Error) {
+    // See the client session's #onError: Node's socketOnError is a no-op once
+    // the session has been detached from the socket, so a transport error that
+    // races our own teardown is not re-reported.
+    if (this.destroyed) {
+      return;
+    }
     this[bunHTTP2Socket] = null;
     if (this.#closed) {
       this.destroy();

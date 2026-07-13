@@ -926,8 +926,15 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             needDrain: false,
             ended: false,
             isAncient: !!isAncientHTTP,
+            socket,
           };
           (socket[kPipelinedResponses] ??= []).push(http_res);
+          // Node's parserOnIncoming stops reading the connection once the bytes
+          // queued on responses that do not own the socket yet reach the
+          // socket's high water mark, so pipelined requests cannot flood it.
+          if (!socket._paused && (socket[kOutgoingData] ?? 0) >= socket.writableHighWaterMark) {
+            pausePipelineReads(socket);
+          }
         } else if (!is_upgrade) {
           // Node.js's connectionListener registers socketOnClose, which frees
           // the parser - even a manually emitted 'close' stops parsing of any
@@ -1268,6 +1275,23 @@ enum HttpParserError {
 // and when to destroy the connection.
 function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
   const self = this as Server;
+  // A prior request on this keep-alive connection may already have wrapped
+  // the native handle (the native side returns the existing handle); a second
+  // wrapper would overwrite its onclose/duplex and strand the first one in
+  // kTrackedConnections. Reuse it, and only announce genuinely new
+  // connections - the existing duplex already had its 'connection' event.
+  const existingDuplex = (socket as any).duplex;
+  const nodeSocket = existingDuplex ?? new NodeHTTPServerSocket(self, socket, ssl);
+  if (!existingDuplex) {
+    nodeSocket.parser = createServerParserShim(nodeSocket);
+    self.emit("connection", nodeSocket);
+  }
+
+  if (errorCode === HttpParserError.HTTP_PARSER_ERROR_MISSING_HOST_HEADER) {
+    replyMissingHostHeader(nodeSocket);
+    return;
+  }
+
   let err;
   switch (errorCode) {
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING:
@@ -1318,18 +1342,17 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
       break;
   }
   err.rawPacket = Buffer.from(rawPacket);
-  // A prior request on this keep-alive connection may already have wrapped
-  // the native handle (the native side returns the existing handle); a second
-  // wrapper would overwrite its onclose/duplex and strand the first one in
-  // kTrackedConnections. Reuse it, and only announce genuinely new
-  // connections - the existing duplex already had its 'connection' event.
-  const existingDuplex = (socket as any).duplex;
-  const nodeSocket = existingDuplex ?? new NodeHTTPServerSocket(self, socket, ssl);
-  if (!existingDuplex) {
-    nodeSocket.parser = createServerParserShim(nodeSocket);
-    self.emit("connection", nodeSocket);
-  }
   socketOnError.$call(nodeSocket, err);
+}
+
+// Node answers an HTTP/1.1 request with no Host header from parserOnIncoming
+// (res.writeHead(400, ['Connection', 'close']); res.end()), so no parse error
+// reaches socketOnError and 'clientError' never fires for it.
+function replyMissingHostHeader(socket) {
+  if (!socket.writable) return;
+  socket.end(
+    `HTTP/1.1 400 Bad Request\r\nConnection: close\r\nDate: ${new Date().toUTCString()}\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n`,
+  );
 }
 
 const kBytesWritten = Symbol("kBytesWritten");
@@ -1379,6 +1402,9 @@ const kKeepAliveIdleStart = Symbol("keepAliveIdleStart");
 //   is queued (undefined once it owns the socket)
 const kPipelinedResponses = Symbol("kPipelinedResponses");
 const kPipelinedQueuedState = Symbol("kPipelinedQueuedState");
+// Node's `state.outgoingData`: bytes buffered across this connection's queued
+// responses. Reads are paused while it is at or above the high water mark.
+const kOutgoingData = Symbol("kOutgoingData");
 const kReplayingPipelinedOps = Symbol("kReplayingPipelinedOps");
 const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
 
@@ -1503,6 +1529,9 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   server: Server;
   _httpMessage;
   _secureEstablished = false;
+  // Node's connectionListener sets socket._paused when it stops reading a
+  // connection whose pipelined responses have buffered past the high water mark.
+  _paused = false;
   #pendingCallback = null;
   constructor(server: Server, handle, encrypted) {
     // allowHalfOpen: node's connectionListener sockets never auto-end the
@@ -2463,6 +2492,33 @@ function onSocketCloseStopParsing(this: NodeHTTPServerSocket) {
   this[kHandle]?.stopParsing?.();
 }
 
+// The second half of Node's read gate (lib/_http_server.js): uWS already pauses
+// reads when the transport has unsent bytes (Node's `ws.needDrain`); these bytes
+// sit in the JS queue and never reach the socket while the response is queued.
+function pausePipelineReads(socket) {
+  const response = socket[kHandle]?.response;
+  if (!response) return;
+  socket._paused = true;
+  response.pause();
+}
+
+function addPipelineOutgoingData(queued, bytes) {
+  const socket = queued.socket;
+  socket[kOutgoingData] = (socket[kOutgoingData] ?? 0) + bytes;
+}
+
+// Like Node's socketOnDrain: the buffered bytes are handed to the transport when
+// the response is flushed, so they stop gating reads (_flushOutput calls
+// `_onPendingData(-outputSize)`).
+function releasePipelineOutgoingData(socket, bytes) {
+  const outgoing = (socket[kOutgoingData] ?? 0) - bytes;
+  socket[kOutgoingData] = outgoing > 0 ? outgoing : 0;
+  if (socket._paused && outgoing <= socket.writableHighWaterMark) {
+    socket._paused = false;
+    socket[kHandle]?.response?.resume();
+  }
+}
+
 // Like the tail of Node.js's resOnFinish: when a response finishes and
 // pipelined responses are queued behind it, the next one becomes the
 // connection's current response, is assigned the socket, and its buffered
@@ -2483,6 +2539,7 @@ function advanceResponsePipeline(server, socket) {
   const res = queue.shift();
   const queued = res[kPipelinedQueuedState];
   res[kPipelinedQueuedState] = undefined;
+  releasePipelineOutgoingData(socket, queued.bytes);
   const handle = res[kHandle];
   const socketHandle = socket[kHandle];
 
@@ -2594,6 +2651,7 @@ function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
     // Node buffers these writes through outputData while no socket is
     // assigned, so outputSize reflects them until the response is flushed.
     res.outputSize += bytes;
+    addPipelineOutgoingData(queued, bytes);
   }
   if (queued.bytes >= res.writableHighWaterMark) {
     queued.needDrain = true;
@@ -2620,6 +2678,7 @@ function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
     // Node buffers these writes through outputData while no socket is
     // assigned, so outputSize reflects them until the response is flushed.
     res.outputSize += bytes;
+    addPipelineOutgoingData(queued, bytes);
   }
   queued.ended = true;
   res.finished = true;
@@ -2842,6 +2901,7 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
     const bytes = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
     queued.bytes += bytes;
     this.outputSize += bytes;
+    addPipelineOutgoingData(queued, bytes);
     return queued.bytes < this.writableHighWaterMark;
   }
   // Write through the response handle's AsyncSocket buffer (same path as

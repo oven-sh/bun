@@ -504,15 +504,26 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
             return 0;
         }
 #ifndef _WIN32
-        /* libuv treats ENOBUFS like EAGAIN and reports macOS's racy EPROTOTYPE
-         * as ECONNRESET (vendor/libuv/src/unix/stream.c uv__try_write). */
+        /* libuv treats ENOBUFS like EAGAIN (uv__try_write, unix/stream.c). */
         if (errno == ENOBUFS) {
             s->flags.last_write_failed = 1;
             us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
             return 0;
         }
 #ifdef __APPLE__
-        if (errno == EPROTOTYPE) errno = ECONNRESET;
+        /* macOS returns a racy EPROTOTYPE from send() on perfectly healthy
+         * sockets while the connection is concurrently mutating; libuv
+         * RETRIES the write (RETRY_ON_WRITE_ERROR, unix/stream.c). Classify
+         * it with the transient errors - re-arm writable and retry - instead
+         * of reporting a fatal reset: with fatal-write handling wired
+         * through (h2 tears the transport down, node:net fails the pending
+         * write), the old rename-to-ECONNRESET killed connections that were
+         * still fine. */
+        if (errno == EPROTOTYPE) {
+            s->flags.last_write_failed = 1;
+            us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            return 0;
+        }
 #endif
         /* Fatal send error: report the errno to callers that opt in and stop
          * polling writable - retrying can never succeed. */

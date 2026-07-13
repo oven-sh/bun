@@ -1458,9 +1458,9 @@ impl Event {
         // via the `acquire_with == EMPTY` path (see `wait`). For a normal
         // single `notify()` that is fine, because a later `notify()` re-arms and
         // wakes the sleeper. A teardown wake happens once, so a skipped wake
-        // here strands the parked worker until its 10s idle timeout, which shows
-        // up as a ~10s stall joining the pool. Always wake in that case; the
-        // extra syscall is negligible because these paths run once at teardown.
+        // here strands the parked worker: only its first wait has a timeout (the
+        // 100ms idle sweep), later waits are indefinite. Always wake in that
+        // case; the extra syscall is negligible once at teardown.
         if state == Self::WAITING || wake_threads == u32::MAX {
             Futex::wake(&self.state, wake_threads);
         }

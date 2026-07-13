@@ -19,13 +19,20 @@ test("HTTPResponseSink is destroyed after a sync pull() that ends later", async 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  const { before, after, delta, iterations } = JSON.parse(stdout);
-  console.log({ before, after, delta, iterations, perRequest: (delta / iterations).toFixed(1) });
+  // The fixture prints nothing if it died or timed out; say which, instead of a bare
+  // JSON.parse SyntaxError.
+  expect({ printedResult: stdout.trim().length > 0, exitCode, stderr }).toMatchObject({
+    printedResult: true,
+    exitCode: 0,
+  });
+  const { delta, deltas, iterations } = JSON.parse(stdout);
+  console.log({ deltas, iterations, perRequest: (delta / iterations).toFixed(1) });
 
-  // currentCommit includes JSC's heap on mimalloc builds, and late tier-up in
-  // the measured window drifts it up to ~3 MB on any platform (2.6-3.0 MB seen
-  // in CI). The pre-fix leak is ~4 MB release, ~10 MB debug/ASAN over 10k.
-  expect(delta).toBeLessThan(3.5 * 1024 * 1024);
-  expect(exitCode).toBe(0);
-}, 120_000);
+  // RSS, not mimalloc's currentCommit: a discarded hole stays "committed", so that
+  // counter ratchets under hole purging and is not a live-memory metric. A leaked sink
+  // keeps its block resident, so RSS sees it. `delta` is the median steady-state growth
+  // per 10k requests. Measured on a macOS debug build: 1.0 MB fixed vs 3.5 MB with the
+  // leak reintroduced (~350 B/request; on Linux release the original #29877 leak showed
+  // +4.1 MB RSS while the fixed build was flat).
+  expect(delta).toBeLessThan(2 * 1024 * 1024);
+}, 300_000);

@@ -4,8 +4,6 @@
 // heap HTTPServerWritable/JSSink plus the promise plumbing used to wait for
 // the close, and all of it must be released when end() completes the
 // response; otherwise each request leaks the struct plus its buffer.
-import { memoryUsage } from "bun:jsc";
-
 let controller: any;
 let pulled: { promise: Promise<void>; resolve: () => void };
 
@@ -37,35 +35,50 @@ async function once() {
   await res.arrayBuffer();
 }
 
-// Commit floor once the park-time idle sweep has run: the sweep is
-// rate-limited (100ms), so the settle rounds span past that and take the
-// min. Leaked blocks keep pages committed, so a leak raises the floor.
-async function settledCommit() {
+// RSS, not currentCommit: mimalloc's committed counter ratchets under hole purging
+// (a discarded hole stays "committed"), so it is not a live-memory metric here. A
+// leaked sink keeps its block -- and therefore its page -- resident, so RSS is.
+// Floor over several settle rounds: the idle sweep is rate-limited (100ms), so the
+// rounds span past it, and the min drops the transient peaks.
+async function settledRss() {
   let min = Infinity;
   for (let i = 0; i < 5; i++) {
     Bun.gc(true);
     await Bun.sleep(50);
-    min = Math.min(min, memoryUsage().currentCommit);
+    min = Math.min(min, process.memoryUsage.rss());
   }
   return min;
 }
 
-// Warm up with the SAME workload as the measured run: JIT, caches, pools,
-// and (on builds where JSC shares mimalloc) the JS heap all reach steady
-// state, so the measured delta isolates the per-request leak.
 const iterations = 10000;
-for (let i = 0; i < iterations; i++) {
-  await once();
-  if (i % 1000 === 0) Bun.gc(true);
-}
-const before = await settledCommit();
 
-for (let i = 0; i < iterations; i++) {
-  await once();
-  if (i % 1000 === 0) Bun.gc(true);
+async function round() {
+  for (let i = 0; i < iterations; i++) {
+    await once();
+    if (i % 1000 === 0) Bun.gc(true);
+  }
+  return settledRss();
 }
-const after = await settledCommit();
+
+// Warm up with the SAME workload as the measured rounds: JIT tiering, caches and
+// pools are still growing over the first rounds (~20 MB, then ~7 MB, then ~1 MB on a
+// macOS debug build), and that decaying tail would otherwise swamp the leak.
+await round();
+await round();
+
+// Per-round deltas, then the median: a leak is linear (every round pays it), while
+// what is left of the warmup tail only inflates the first of them and a round in which
+// the allocator hands pages back can dip negative. The median is robust to both ends;
+// a min would be satisfied by a single dipping round even while the sink leaks.
+let prev = await round();
+const deltas: number[] = [];
+for (let r = 0; r < 3; r++) {
+  const rss = await round();
+  deltas.push(rss - prev);
+  prev = rss;
+}
 
 server.stop(true);
 
-process.stdout.write(JSON.stringify({ before, after, delta: after - before, iterations }));
+const delta = [...deltas].sort((a, b) => a - b)[Math.floor(deltas.length / 2)];
+process.stdout.write(JSON.stringify({ delta, deltas, iterations }));

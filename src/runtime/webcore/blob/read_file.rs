@@ -821,8 +821,24 @@ impl ReadFile {
                 // instrumented trace). Always read into the stack buffer first,
                 // then extend_from_slice into self.buffer — this keeps the &mut
                 // self borrow in do_read disjoint from self.buffer's storage.
+                //
+                // The stack buffer's length must still be capped the same way
+                // `remaining_buffer()` caps it (`max_length - read_off`) — using
+                // the raw `stack_buffer.len()` here reads up to the full 64KB
+                // (or whole file, whichever is smaller) regardless of a
+                // caller-requested `max_length`, and nothing downstream
+                // truncates `self.buffer` back down afterward. That silently
+                // broke `Bun.file(path).slice(start, end)`: the loop's
+                // `buffer.len() >= max_length` check still stops iterating at
+                // the right point, but by then this single oversized read
+                // already delivered everything past `end`.
                 #[cfg(target_env = "ohos")]
-                let (buf_ptr, buf_len) = (stack_ptr, stack_buffer.len());
+                let (buf_ptr, buf_len) = {
+                    let cap = stack_buffer
+                        .len()
+                        .min((self.max_length.saturating_sub(self.read_off)) as usize);
+                    (stack_ptr, cap)
+                };
                 #[cfg(not(target_env = "ohos"))]
                 let (buf_ptr, buf_len) = self.remaining_buffer(&mut stack_buffer);
 

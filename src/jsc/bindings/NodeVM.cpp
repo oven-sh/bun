@@ -1185,7 +1185,7 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
 
     // The sandbox setter handled the write; don't forward to Base as any direct
     // property there is the read-only placeholder materialised for the accessor.
-    if (isDeclaredOnSandbox && getter.isAccessor()) {
+    if (isDeclaredOnSandbox && (getter.isAccessor() || getter.isCustom())) {
         return true;
     }
 
@@ -1479,7 +1479,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
         options.lineOffset.zeroBasedInt(),
         options.columnOffset.zeroBasedInt());
 
-    context->materializeSandboxPropertiesForDeclarations(globalObject, sourceCode);
+    context->materializeSandboxPropertiesForDeclarations(context, sourceCode);
 
     NakedPtr<JSC::Exception> exception;
     JSValue result = JSC::evaluate(context, sourceCode, context, exception);

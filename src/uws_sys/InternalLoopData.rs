@@ -61,6 +61,12 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    /// Monotonic ns timestamp of the first loop tick, 0 before the loop has
+    /// started (`us_internal_monotonic_ns()` on POSIX, `uv_hrtime()` on Windows).
+    pub loop_start_ns: i64,
+    /// Cumulative ns spent blocked in epoll/kqueue waiting for events. Unused
+    /// with libuv, where `UV_METRICS_IDLE_TIME` tracks this instead.
+    pub idle_time_ns: i64,
 }
 
 impl InternalLoopData {

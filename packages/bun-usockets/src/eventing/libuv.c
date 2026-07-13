@@ -162,6 +162,10 @@ struct us_loop_t *us_create_loop(void *hint,
   loop->uv_loop = hint ? hint : uv_loop_new();
   loop->is_default = hint != 0;
 
+  /* Track time blocked in the event provider so us_loop_idle_time_ns can
+   * report it (eventLoopUtilization). */
+  uv_loop_configure(loop->uv_loop, UV_METRICS_IDLE_TIME);
+
   loop->uv_pre = malloc(sizeof(uv_prepare_t));
   uv_prepare_init(loop->uv_loop, loop->uv_pre);
   uv_prepare_start(loop->uv_pre, prepare_cb);
@@ -215,7 +219,20 @@ void us_loop_run(struct us_loop_t *loop) {
   us_loop_integrate(loop);
   uv_update_time(loop->uv_loop);
 
+  if (loop->data.loop_start_ns == 0)
+    loop->data.loop_start_ns = (long long) uv_hrtime();
+
   uv_run(loop->uv_loop, UV_RUN_ONCE);
+}
+
+long long us_loop_idle_time_ns(struct us_loop_t *loop) {
+  return (long long) uv_metrics_idle_time(loop->uv_loop);
+}
+
+long long us_loop_elapsed_time_ns(struct us_loop_t *loop) {
+  if (loop->data.loop_start_ns == 0)
+    return 0;
+  return (long long) uv_hrtime() - loop->data.loop_start_ns;
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,

@@ -7,6 +7,13 @@ const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp"
   figures: number,
 ) => import("node:perf_hooks").RecordableHistogram;
 
+// Returns [idleMs, activeMs] cumulative since the event loop started, or
+// undefined if the loop has not started yet (e.g. during the initial
+// synchronous run of the main script).
+const getEventLoopUtilizationValues = $newRustFunction("perf_hooks_binding.rs", "eventLoopUtilizationValues", 0) as () =>
+  | [number, number]
+  | undefined;
+
 var {
   Performance,
   PerformanceEntry,
@@ -47,9 +54,7 @@ var constants = {
 class PerformanceNodeTiming {
   bootstrapComplete: number = 0;
   environment: number = 0;
-  idleTime: number = 0;
   loopExit: number = 0;
-  loopStart: number = 0;
   nodeStart: number = 0;
   v8Start: number = 0;
 
@@ -92,16 +97,54 @@ function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
 
   object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.timeOrigin;
-  object.loopStart = object.idleTime = 1;
   object.loopExit = -1;
+  // Own accessors, like Node: $toClass replaces the class prototype, so
+  // getters declared in the class body would be dropped.
+  Object.defineProperty(object, "idleTime", {
+    get() {
+      const times = getEventLoopUtilizationValues();
+      return times === undefined ? 0 : times[0];
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  Object.defineProperty(object, "loopStart", {
+    get() {
+      const times = getEventLoopUtilizationValues();
+      if (times === undefined) return -1;
+      // idle + active == now - loopStart
+      return performance.now() - times[0] - times[1];
+    },
+    enumerable: true,
+    configurable: true,
+  });
   return object;
 }
 
-function eventLoopUtilization(_utilization1, _utilization2) {
+function eventLoopUtilization(utilization1?, utilization2?) {
+  const times = getEventLoopUtilizationValues();
+  if (times === undefined) {
+    return { idle: 0, active: 0, utilization: 0 };
+  }
+
+  if (utilization2) {
+    const idle = utilization1.idle - utilization2.idle;
+    const active = utilization1.active - utilization2.active;
+    return { idle, active, utilization: active / (idle + active) };
+  }
+
+  const idle = times[0];
+  const active = times[1];
+  if (!utilization1) {
+    return { idle, active, utilization: active / (idle + active) };
+  }
+
+  const idleDelta = idle - utilization1.idle;
+  const activeDelta = active - utilization1.active;
   return {
-    idle: 0,
-    active: 0,
-    utilization: 0,
+    idle: idleDelta,
+    active: activeDelta,
+    utilization: activeDelta / (idleDelta + activeDelta),
   };
 }
 

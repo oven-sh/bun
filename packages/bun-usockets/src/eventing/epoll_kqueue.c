@@ -360,6 +360,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (loop->num_polls == 0)
         return;
 
+    if (loop->data.loop_start_ns == 0)
+        loop->data.loop_start_ns = us_internal_monotonic_ns();
+
     loop->data.tick_depth++;
 
     /* Emit pre callback */
@@ -388,6 +391,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
         Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
+    /* Like libuv's UV_METRICS_IDLE_TIME, only waits that can actually block
+     * count as idle time; zero-timeout polls do not. */
+    long long idle_start_ns = will_idle_inside_event_loop ? us_internal_monotonic_ns() : 0;
+
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
@@ -408,6 +415,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
 
+    if (idle_start_ns)
+        loop->data.idle_time_ns += us_internal_monotonic_ns() - idle_start_ns;
+
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);
     us_internal_sweep_if_due(loop);
@@ -415,6 +425,16 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* Emit post callback */
     us_internal_loop_post(loop);
     loop->data.tick_depth--;
+}
+
+long long us_loop_idle_time_ns(struct us_loop_t *loop) {
+    return loop->data.idle_time_ns;
+}
+
+long long us_loop_elapsed_time_ns(struct us_loop_t *loop) {
+    if (loop->data.loop_start_ns == 0)
+        return 0;
+    return us_internal_monotonic_ns() - loop->data.loop_start_ns;
 }
 
 void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct us_poll_t *old_poll, struct us_poll_t *new_poll, int old_events, int new_events) {

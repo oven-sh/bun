@@ -87,6 +87,12 @@ struct us_internal_loop_data_t {
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */
     int tick_depth;
+    /* Monotonic ns timestamp of the first loop tick, 0 before the loop has
+     * started. us_internal_monotonic_ns() on POSIX, uv_hrtime() on Windows. */
+    long long loop_start_ns;
+    /* Cumulative ns spent blocked in epoll/kqueue waiting for events. Unused
+     * with libuv, where UV_METRICS_IDLE_TIME tracks this instead. */
+    long long idle_time_ns;
 };
 
 #endif // LOOP_DATA_H

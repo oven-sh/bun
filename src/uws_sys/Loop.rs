@@ -124,6 +124,18 @@ impl PosixLoop {
         self.internal_loop_data.iteration_nr
     }
 
+    /// Cumulative ns the loop has spent blocked waiting for events.
+    pub fn idle_time_ns(&mut self) -> i64 {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::us_loop_idle_time_ns(self) }
+    }
+
+    /// Monotonic ns since the loop's first tick, or 0 if it has not started.
+    pub fn elapsed_time_ns(&mut self) -> i64 {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::us_loop_elapsed_time_ns(self) }
+    }
+
     /// Copy out the ready-poll event at `current_ready_poll`.
     ///
     /// Safe back-reference accessor consolidating the C-dispatch
@@ -417,6 +429,18 @@ impl WindowsLoop {
         self.internal_loop_data.iteration_nr
     }
 
+    /// Cumulative ns the loop has spent blocked waiting for events.
+    pub fn idle_time_ns(&mut self) -> i64 {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::us_loop_idle_time_ns(self) }
+    }
+
+    /// Monotonic ns since the loop's first tick, or 0 if it has not started.
+    pub fn elapsed_time_ns(&mut self) -> i64 {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::us_loop_elapsed_time_ns(self) }
+    }
+
     /// Shared borrow of the backing libuv loop.
     ///
     /// `uv_loop` is a back-reference set once by C `us_create_loop` and never
@@ -641,6 +665,8 @@ mod c {
         #[cfg(not(windows))]
         pub(super) fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
+        pub(super) fn us_loop_idle_time_ns(loop_: *mut Loop) -> i64;
+        pub(super) fn us_loop_elapsed_time_ns(loop_: *mut Loop) -> i64;
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;

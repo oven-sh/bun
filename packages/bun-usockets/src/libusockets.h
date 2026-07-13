@@ -505,6 +505,12 @@ void us_loop_integrate(us_loop_r loop) nonnull_fn_decl;
 /* Returns the loop iteration number */
 long long us_loop_iteration_number(us_loop_r loop) nonnull_fn_decl;
 
+/* Cumulative ns the loop has spent blocked waiting for events */
+long long us_loop_idle_time_ns(us_loop_r loop) nonnull_fn_decl;
+
+/* Monotonic ns since the loop's first tick, or 0 if it has not started */
+long long us_loop_elapsed_time_ns(us_loop_r loop) nonnull_fn_decl;
+
 /* Public interfaces for polls */
 
 /* A fallthrough poll does not keep the loop running, it falls through */

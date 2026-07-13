@@ -602,6 +602,19 @@ impl EventLoop {
         }
     }
 
+    /// Non-panicking [`Self::usockets_loop`]: `None` before `ensure_waker`
+    /// has initialized the loop.
+    pub fn usockets_loop_opt(&self) -> Option<*mut uws::Loop> {
+        #[cfg(windows)]
+        {
+            self.uws_loop.map(core::ptr::NonNull::as_ptr)
+        }
+        #[cfg(not(windows))]
+        {
+            self.vm_ref().event_loop_handle
+        }
+    }
+
     #[inline]
     pub fn process_gc_timer(&mut self) {
         self.vm_ref().as_mut().gc_controller.process_gc_timer();

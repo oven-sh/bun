@@ -129,6 +129,9 @@ pub mod node_net_binding;
 #[path = "node/node_http_binding.rs"]
 pub mod node_http_binding;
 
+#[path = "node/perf_hooks_binding.rs"]
+pub mod perf_hooks_binding;
+
 #[path = "node/node_util_binding.rs"]
 pub mod node_util_binding;
 

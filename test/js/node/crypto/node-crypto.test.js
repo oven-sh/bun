@@ -534,6 +534,14 @@ describe("createHash", () => {
 
     const emptyKeyHmac = crypto.createHmac("sha256", Buffer.alloc(0)).update("m").digest("hex");
     expect(crypto.createHmac("sha256", detachedView()).update("m").digest("hex")).toBe(emptyKeyHmac);
+
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+
+    const sig = crypto.createSign("sha256").update(detachedView()).sign(privateKey);
+    expect(crypto.createVerify("sha256").verify(publicKey, sig)).toBe(true);
+
+    const emptySig = crypto.createSign("sha256").sign(privateKey);
+    expect(crypto.createVerify("sha256").update(detachedView()).verify(publicKey, emptySig)).toBe(true);
   });
 
   it("uses the Transform options object", () => {

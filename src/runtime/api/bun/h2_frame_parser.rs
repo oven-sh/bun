@@ -3049,11 +3049,11 @@ impl H2FrameParser {
                     &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
                 );
                 let written: u32 = if result < 0 {
-                        if result < -1 {
-                            self.note_transport_write_fatal();
-                        }
-                        0
-                    } else {
+                    if result < -1 {
+                        self.note_transport_write_fatal();
+                    }
+                    0
+                } else {
                     u32::try_from(result).expect("int cast")
                 };
                 if (written as usize) < buffered_len {
@@ -3079,11 +3079,11 @@ impl H2FrameParser {
             {
                 let result: i32 = socket.write_maybe_corked(bytes);
                 let written: u32 = if result < 0 {
-                        if result < -1 {
-                            self.note_transport_write_fatal();
-                        }
-                        0
-                    } else {
+                    if result < -1 {
+                        self.note_transport_write_fatal();
+                    }
+                    0
+                } else {
                     u32::try_from(result).expect("int cast")
                 };
                 if (written as usize) < bytes.len() {

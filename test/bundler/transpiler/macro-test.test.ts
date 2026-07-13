@@ -246,6 +246,23 @@ describe("const folding into macro arguments", () => {
       exitCode: 0,
     });
   });
+
+  // Regression guard: the macro-argument const folding must not collapse
+  // `import()` / `require()` specifiers in the same file. Without minify the
+  // bundler should still see the template as dynamic (`${x}` remains).
+  test.concurrent("bun build: import()/require() specifiers stay dynamic", async () => {
+    const r = await runShape(
+      "macro-const-build-dyn",
+      importLine +
+        "const x = 'foo';\nconsole.log(identity(x));\nexport const p = import(`./a/${x}.js`);\nexport const q = () => require(`./b/${x}.js`);\n",
+      "build",
+    );
+    expect({ stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode }).toMatchObject({
+      stdout: expect.stringMatching(/import\(`\.\/a\/\$\{x\}\.js`\)/),
+      exitCode: 0,
+    });
+    expect(r.stdout).toMatch(/`\.\/b\/\$\{x\}\.js`/);
+  });
 });
 
 test("ireturnapromise", async () => {

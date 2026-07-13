@@ -514,9 +514,10 @@ struct HttpResponseData;
                 char *valueStart = p;
                 while (true) {
                     p = tryConsumeFieldValue(p);
-                    if (p[0] == '\t') { p++; continue; }
+                    const unsigned char stopByte = (unsigned char) p[0];
+                    if (stopByte == '\t') { p++; continue; }
                     /* Same lenient-header-value acceptance as getHeaders. */
-                    if (useInsecureHTTPParser && *(unsigned char *)p != '\0' && !isNewline(*(unsigned char *)p)) { p++; continue; }
+                    if (useInsecureHTTPParser && stopByte != '\0' && !isNewline(stopByte)) { p++; continue; }
                     break;
                 }
                 if (p + 1 >= end || p[0] != '\r' || p[1] != '\n') {
@@ -980,16 +981,17 @@ struct HttpResponseData;
                 /* The goal of this call is to find next "\r\n", or any invalid field value chars, fast */
                 while (true) {
                     postPaddedBuffer = tryConsumeFieldValue(postPaddedBuffer);
+                    const unsigned char stopByte = (unsigned char) postPaddedBuffer[0];
                     /* If this is not CR then we caught some stinky invalid char on the way */
-                    if (postPaddedBuffer[0] != '\r') {
+                    if (stopByte != '\r') {
                         /* If TAB then keep searching */
-                        if (postPaddedBuffer[0] == '\t') {
+                        if (stopByte == '\t') {
                             postPaddedBuffer++;
                             continue;
                         }
                         /* node:http insecureHTTPParser (llhttp lenient headers): control
                          * bytes other than NUL/CR/LF are accepted in field values. */
-                        if (useInsecureHTTPParser && postPaddedBuffer[0] != '\0' && postPaddedBuffer[0] != '\n') {
+                        if (useInsecureHTTPParser && stopByte != '\0' && !isNewline(stopByte)) {
                             postPaddedBuffer++;
                             continue;
                         }

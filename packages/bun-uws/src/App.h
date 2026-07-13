@@ -757,10 +757,9 @@ public:
         httpContext->getSocketContextData()->onSocketUpgraded = onUpgraded;
     }
 
-    /* Marks this app as backing a node:http server, enabling the per-socket
-     * request timing used by headersTimeout/requestTimeout. */
-    void setUsingNodeHttpCompat(bool value) {
-        httpContext->setNodeHttpCompat(value);
+    /* Switch this app into node:http compat mode (see HttpContext::enableNodeHttpCompat). */
+    void enableNodeHttpCompat() {
+        httpContext->enableNodeHttpCompat();
     }
 
     TemplatedApp &&run() {

@@ -187,7 +187,7 @@ private:
         /* Init socket ext. IsNodeHttp contexts carry the bigger
          * HttpResponseData<SSL, true> block; the listen socket was sized for it
          * (see socketExtSize()) and this handler instantiation was installed by
-         * setNodeHttpCompat(). */
+         * enableNodeHttpCompat(). */
         if constexpr (IsNodeHttp) {
             new (us_socket_ext(s)) HttpResponseData<SSL, true>;
         } else {
@@ -316,7 +316,7 @@ private:
 
         /* node:http compat: maintain the headers/request timeout window (see
          * the requestHandler/dataHandler hooks and the post-parse check). */
-        [[maybe_unused]] const bool trackNodeHttpTimings = IsNodeHttp && !httpResponseData->isConnectRequest;
+        const bool trackNodeHttpTimings = IsNodeHttp && !httpResponseData->isConnectRequest;
 
         // clients need to know the cursor after http parse, not servers!
         // how far did we read then? we need to know to continue with websocket parsing data? or?
@@ -372,7 +372,7 @@ private:
             /* Are we not ready for another request yet? Terminate the connection.
              * Important for denying async pipelining until, if ever, we want to support it.
              * Otherwise requests can get mixed up on the same connection. We still support sync pipelining. */
-            [[maybe_unused]] bool hasQueuedPipelinedResponses = false;
+            bool hasQueuedPipelinedResponses = false;
             if constexpr (IsNodeHttp) hasQueuedPipelinedResponses = httpResponseData->nodeHttpQueuedPipelinedCount > 0;
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || hasQueuedPipelinedResponses) {
                 if constexpr (!IsNodeHttp) {
@@ -488,7 +488,7 @@ private:
              * the end of the message reaches the 'upgrade' listener's socket as
              * opaque data. Deferred so the fin itself is not routed to the
              * raw-socket data path. */
-            [[maybe_unused]] bool switchToTunnelAfterThisChunk = false;
+            bool switchToTunnelAfterThisChunk = false;
             if constexpr (IsNodeHttp) {
                 switchToTunnelAfterThisChunk = fin && !httpResponseData->isConnectRequest && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY);
             }
@@ -807,7 +807,7 @@ private:
     }
 
     /* Static .rodata vtables — one per (SSL, IsNodeHttp), shared by every
-     * HttpContext. The IsNodeHttp=true set is swapped in by setNodeHttpCompat()
+     * HttpContext. The IsNodeHttp=true set is swapped in by enableNodeHttpCompat()
      * before listen(), so a Bun.serve context's handler instantiations contain
      * no node:http code at all. */
     template <bool IsNodeHttp>
@@ -915,7 +915,7 @@ public:
     }
 
     /* Whether this context runs the node:http compat instantiation. The installed
-     * vtable is the mode: setNodeHttpCompat() swaps in the IsNodeHttp=true handler
+     * vtable is the mode: enableNodeHttpCompat() swaps in the IsNodeHttp=true handler
      * set, so the choice of template instantiation is the single source of truth
      * and there is no separate flag to keep in sync with it. The few paths that
      * are not templated on IsNodeHttp (socketExtSize, HttpResponse::upgrade - the
@@ -925,7 +925,7 @@ public:
     }
 
     /* The per-socket ext block this context's connections need: node:http
-     * compat contexts (setNodeHttpCompat, called before listen) carry the
+     * compat contexts (enableNodeHttpCompat, called before listen) carry the
      * bigger HttpResponseData<SSL, true>; onOpen<IsNodeHttp> constructs the
      * same type. */
     unsigned int socketExtSize() {
@@ -935,20 +935,21 @@ public:
     /* Switch this context (and every socket it accepts from now on) into node:http
      * compat mode by installing the IsNodeHttp=true handler instantiations; listen()
      * sizes the ext block from the vtable that is in place. Called before listen(),
-     * so no socket exists yet; it is never turned back off. */
-    void setNodeHttpCompat(bool value) {
+     * so no socket exists yet. There is no way back: a context whose sockets were
+     * sized and constructed for one instantiation cannot be handed to the other. */
+    void enableNodeHttpCompat() {
         /* Idempotent: a reload of an existing node:http server (server.reload(),
          * `bun --hot`) re-runs set_routes and lands here again on a context that is
-         * already listening. Same value means same layout and same vtable: nothing
-         * to do, and the no-socket precondition below only applies to a real switch. */
-        if (isNodeHttp() == value) {
+         * already listening - same layout, same vtable, nothing to do. The no-socket
+         * precondition below only applies to a real switch. */
+        if (isNodeHttp()) {
             return;
         }
         /* Swapping the group vtable retargets dispatch for every socket in the
          * group, and the ext block of an already-accepted socket was sized and
          * constructed by the other instantiation. */
         ASSERT(group.head_sockets == nullptr && group.head_listen_sockets == nullptr);
-        group.vtable = value ? &httpVTable<true> : &httpVTable<false>;
+        group.vtable = &httpVTable<true>;
     }
 
     /* Listen to port using this HttpContext. ssl_ctx may be nullptr for plain HTTP. */

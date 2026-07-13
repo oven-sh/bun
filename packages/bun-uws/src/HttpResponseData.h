@@ -216,9 +216,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
 /* Per-connection state that only node:http compat servers need.
  * HttpResponseData<SSL, true> is the IsNodeHttp=true specialization: a context
- * created for node:http (setNodeHttpCompat, called before listen()) sizes its
+ * created for node:http (enableNodeHttpCompat, called before listen()) sizes its
  * sockets' ext block for it and installs the IsNodeHttp=true socket handlers
- * (see HttpContext<SSL>::setNodeHttpCompat), so plain Bun.serve connections
+ * (see HttpContext<SSL>::enableNodeHttpCompat), so plain Bun.serve connections
  * never allocate or touch any of it and their handler instantiations contain
  * none of the node code. It inherits the primary (rather than being an
  * unrelated instantiation) because HttpResponse<SSL> is not templated on

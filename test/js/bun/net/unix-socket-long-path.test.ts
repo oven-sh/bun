@@ -30,11 +30,7 @@ describe.skipIf(!isLinux)("unix domain socket long-path workaround", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // ASan reports are the failure mode of interest; surface the header while
     // keeping benign debug/ASan-option chatter out of the assertion.
     const asan = stderr.includes("AddressSanitizer") ? stderr.split("\n").slice(0, 4).join("\n") : "";

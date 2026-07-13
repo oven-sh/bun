@@ -810,6 +810,22 @@ impl ReadFile {
                 // to `self.buffer`'s spare capacity is ever live alongside
                 // `&mut self`.
                 let stack_ptr = stack_buffer.as_mut_ptr();
+                // OHOS anti-aliasing fix: when spare >= 64KB, the original code
+                // passed self.buffer's spare pointer into do_read while do_read
+                // also holds &mut self. Under Stacked Borrows this is UB and
+                // manifests on OHOS as Vec.len() appearing to grow during do_read
+                // even though do_read never touches self.buffer. Always read
+                // into the stack buffer first, then extend_from_slice into
+                // self.buffer.
+                // The stack buffer's length must still be capped by max_length.
+                #[cfg(target_env = "ohos")]
+                let (buf_ptr, buf_len) = {
+                    let cap = stack_buffer
+                        .len()
+                        .min((self.max_length.saturating_sub(self.read_off)) as usize);
+                    (stack_ptr, cap)
+                };
+                #[cfg(not(target_env = "ohos"))]
                 let (buf_ptr, buf_len) = self.remaining_buffer(&mut stack_buffer);
 
                 if buf_len > 0 && self.errno.is_none() && !self.read_eof {

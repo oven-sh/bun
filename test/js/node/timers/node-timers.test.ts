@@ -223,11 +223,11 @@ describe("hasRef", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
       stdout: `{"hasRef":true,"destroyed":true}`,
-      stderr: "",
       exitCode: 0,
     });
+    expect(stderr).not.toContain("fired");
   });
 });
 

@@ -153,7 +153,13 @@ export function syncThrowString() { throw "this is the real reason the build bro
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), cmd, "index.ts"],
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        // detect_leaks=0 (last wins): printing the macro's stack trace caches an
+        // Arc<ParsedSourceMap> on the bundler-worker macro VM, which `bun build` never tears
+        // down on the failure-exit path; LSan would abort with 134 on the ASAN lane.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

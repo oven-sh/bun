@@ -54,6 +54,9 @@
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/BytecodeCacheError.h"
 #include "JavaScriptCore/CodeCache.h"
+#include "JavaScriptCore/ProgramExecutable.h"
+#include "JavaScriptCore/UnlinkedProgramCodeBlock.h"
+#include "JavaScriptCore/ParserError.h"
 #include "JavaScriptCore/FunctionCodeBlock.h"
 #include "JavaScriptCore/JIT.h"
 #include "JavaScriptCore/ProgramCodeBlock.h"
@@ -1056,12 +1059,12 @@ void NodeVMGlobalObject::clearContextifiedObject()
 // directly (not via method table) and so never sees sandbox properties; a program-
 // level `var x` / `function x(){}` over a sandbox prop would add a fresh undefined
 // symbol-table slot that then wins every unqualified lookup for the context's life.
-// Mirror sandbox own-props onto this global (attributes only, placeholder value) so
-// createGlobalVarBinding / canDeclareGlobalFunction observe them; actual reads still
-// resolve through our method-table override, which consults the sandbox first.
-// Best-effort: sandbox traps that throw are swallowed, as Node never surfaces them
-// from var-binding either.
-void NodeVMGlobalObject::materializeSandboxOwnProperties(JSGlobalObject* lexicalGlobalObject)
+// For each name this program actually declares that the sandbox already owns, mirror
+// the sandbox attributes onto this global as a direct property so createGlobalVarBinding
+// / canDeclareGlobalFunction observe it; reads still resolve through our method-table
+// override, which consults the sandbox first. The UnlinkedProgramCodeBlock is fetched
+// via the code cache, so the evaluate that follows reuses it.
+void NodeVMGlobalObject::materializeSandboxPropertiesForDeclarations(JSGlobalObject* lexicalGlobalObject, const JSC::SourceCode& source)
 {
     if (m_contextOptions.notContextified)
         return;
@@ -1072,18 +1075,24 @@ void NodeVMGlobalObject::materializeSandboxOwnProperties(JSGlobalObject* lexical
     VM& vm = this->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    sandbox->methodTable()->getOwnPropertyNames(sandbox, lexicalGlobalObject, names, DontEnumPropertiesMode::Include);
+    JSC::ProgramExecutable* executable = JSC::ProgramExecutable::create(this, source);
     if (scope.exception()) [[unlikely]] {
         scope.clearException();
         return;
     }
+    JSC::ParserError parserError;
+    JSC::UnlinkedProgramCodeBlock* unlinkedCodeBlock = vm.codeCache()->getUnlinkedProgramCodeBlock(vm, executable, source, defaultCodeGenerationMode(), parserError);
+    if (!unlinkedCodeBlock || parserError.isValid())
+        return;
+
+    const JSC::VariableEnvironment& varDecls = unlinkedCodeBlock->variableDeclarations();
+    if (varDecls.isEmpty())
+        return;
 
     JSC::BatchedTransitionOptimizer optimizer(vm, this);
 
-    for (const auto& name : names) {
-        if (parseIndex(name))
-            continue;
+    for (const auto& entry : varDecls) {
+        JSC::Identifier name = JSC::Identifier::fromUid(vm, entry.key.get());
 
         PropertySlot existing(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
         bool alreadyOnGlobal = JSC::JSGlobalObject::getOwnPropertySlot(this, this, name, existing);
@@ -1174,14 +1183,9 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     RETURN_IF_EXCEPTION(scope, false);
     if (!result) return false;
 
-    if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
-        return true;
-    }
-
-    // Sandbox accepted the write. Forward to Base only if a symbol-table slot exists
-    // so it stays in sync; otherwise the only global-side copy is the materialized
-    // (possibly read-only) placeholder, which is never observed.
-    if (isDeclaredOnSandbox && propertyName.uid() && !thisObject->symbolTable()->contains(propertyName.uid())) {
+    // The sandbox setter handled the write; don't forward to Base as any direct
+    // property there is the read-only placeholder materialised for the accessor.
+    if (isDeclaredOnSandbox && getter.isAccessor()) {
         return true;
     }
 
@@ -1451,7 +1455,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
         contextOptions, globalObjectDynamicImportCallback);
 
     context->setContextifiedObject(sandbox);
-    context->materializeSandboxOwnProperties(globalObject);
 
     JSValue optionsArg = callFrame->argument(2);
     JSValue scriptDynamicImportCallback;
@@ -1475,6 +1478,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
             TextPosition(options.lineOffset, options.columnOffset)),
         options.lineOffset.zeroBasedInt(),
         options.columnOffset.zeroBasedInt());
+
+    context->materializeSandboxPropertiesForDeclarations(globalObject, sourceCode);
 
     NakedPtr<JSC::Exception> exception;
     JSValue result = JSC::evaluate(context, sourceCode, context, exception);

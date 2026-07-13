@@ -470,7 +470,8 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
         const sandbox = {};
         Object.defineProperty(sandbox, "cfg", { value: 42, writable: false, enumerable: true, configurable: false });
         const context = createContext(sandbox);
-        expect(() => fn("function cfg(){}", context)).toThrow();
+        // JSC throws TypeError per ECMA-262 GlobalDeclarationInstantiation; Node/V8 throws SyntaxError.
+        expect(() => fn("function cfg(){}", context)).toThrow(expect.objectContaining({ name: "TypeError" }));
         expect((sandbox as any).cfg).toBe(42);
       });
       test("`var x` over a non-enumerable sandbox property reads through to the sandbox value", () => {
@@ -495,6 +496,29 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
           Object.defineProperty(sandbox, "late", { value: 77, writable: false, enumerable: true, configurable: false });
           const result = fn("var late; [typeof late, late]", context);
           expect(result).toEqual(["number", 77]);
+        });
+        test("a script with no declarations does not keep a host-deleted sandbox property visible", () => {
+          const sandbox: any = { x: 1 };
+          const context = createContext(sandbox);
+          fn("1", context);
+          delete sandbox.x;
+          expect(fn("'x' in this", context)).toBe(false);
+          expect(fn("Object.getOwnPropertyDescriptor(this,'x')", context)).toBeUndefined();
+          expect(() => fn("x", context)).toThrow(expect.objectContaining({ name: "ReferenceError" }));
+        });
+        test("the global-side binding for a `var x = v` over a sandbox property survives host-side sandbox delete", () => {
+          const sandbox: any = { x: 1 };
+          const context = createContext(sandbox);
+          fn("var x = 5;", context);
+          delete sandbox.x;
+          expect(fn("[typeof x, x]", context)).toEqual(["number", 5]);
+        });
+        test("the global-side binding for a `function x(){}` over a sandbox property survives host-side sandbox delete", () => {
+          const sandbox: any = { x: 1 };
+          const context = createContext(sandbox);
+          fn("function x() { return 'f'; }", context);
+          delete sandbox.x;
+          expect(fn("[typeof x, x()]", context)).toEqual(["function", "f"]);
         });
       }
     });

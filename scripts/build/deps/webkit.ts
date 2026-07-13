@@ -7,12 +7,7 @@
 // -lto variants built with ThinLTO (per-module summaries for cross-language
 // importing), and the Windows ICU data table filtered + per-item zstd
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
-export const WEBKIT_VERSION = "342334e1176e118ac81136baa76ec3b0015efcdf";
-
-/** Release tag for WEBKIT_VERSION. Normally `autobuild-<sha>`; temporarily a
- * preview tag until oven-sh/WebKit#283 merges and produces a regular
- * autobuild. */
-export const WEBKIT_RELEASE_TAG = "autobuild-preview-pr-283-342334e1";
+export const WEBKIT_VERSION = "autobuild-preview-pr-283-342334e1";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -83,12 +78,7 @@ function prebuiltUrl(cfg: Config): string {
   const arch = cfg.arm64 ? "arm64" : "amd64";
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
   const version = cfg.webkitVersion;
-  const tag =
-    version === WEBKIT_VERSION
-      ? WEBKIT_RELEASE_TAG
-      : version.startsWith("autobuild-")
-        ? version
-        : `autobuild-${version}`;
+  const tag = version.startsWith("autobuild-") ? version : `autobuild-${version}`;
   return `https://github.com/oven-sh/WebKit/releases/download/${tag}/${name}.tar.gz`;
 }
 

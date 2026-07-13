@@ -536,6 +536,12 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
     // property read must not propagate exceptions out of this function.
     auto& vm = JSC::getVM(workerGlobalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // A TerminatedExecutionError can be live on entry (this runs after the
+    // worker's termination trap fired); drop it so the serializer is never
+    // entered with a pending exception.
+    CLEAR_IF_EXCEPTION(scope);
+    if (vm.hasPendingTerminationException())
+        return false;
 
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     CLEAR_IF_EXCEPTION(scope);

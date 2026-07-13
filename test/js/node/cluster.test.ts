@@ -213,7 +213,9 @@ test.skipIf(isWindows)(
 
     const trimmed = stdout.trim();
     const out = trimmed ? JSON.parse(trimmed) : {};
-    expect({ stderr: stderr.trim(), ...out }).toEqual({
+    // stderr is diagnostic only: surfaced in the diff when the fixture failed,
+    // but not required to be empty on success (ASAN lanes may emit warnings).
+    expect({ stderr: exitCode === 0 ? "" : stderr.trim(), ...out }).toEqual({
       stderr: "",
       saw: { code: "EADDRINUSE", syscall: "bind", errno: process.binding("uv").UV_EADDRINUSE, address: "::" },
       exit: [0, null],

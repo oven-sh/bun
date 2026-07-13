@@ -132,8 +132,7 @@ test("template string latin1", () => {
 // another macro. Each shape is spawned as a fresh process so statement
 // ordering at module scope is exactly what's written.
 describe("const folding into macro arguments", () => {
-  const macroModule =
-    "export function identity(x) { return x; }\n" + "export function getText() { return 'foo'; }\n";
+  const macroModule = "export function identity(x) { return x; }\n" + "export function getText() { return 'foo'; }\n";
 
   async function runShape(name: string, entry: string, cmd: "run" | "build" = "run") {
     using dir = tempDir(name, {
@@ -204,10 +203,7 @@ describe("const folding into macro arguments", () => {
   });
 
   test.concurrent("template literal with numeric const", async () => {
-    const r = await runShape(
-      "macro-const-number",
-      importLine + "const n = 42;\nconsole.log(identity(`n=${n}`));\n",
-    );
+    const r = await runShape("macro-const-number", importLine + "const n = 42;\nconsole.log(identity(`n=${n}`));\n");
     expect({ stdout: r.stdout, stderr: r.stderr }).toMatchObject({ stdout: expect.stringMatching(/n=42\n$/) });
     expect(r.exitCode).toBe(0);
   });

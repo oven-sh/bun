@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import path from "node:path";
 
 describe("ResolveMessage", () => {
   it("position object does not segfault", async () => {
@@ -88,6 +89,21 @@ describe("ResolveMessage", () => {
     }
     expect(err.referrer).toBe(referrer);
     expect(err.message).toContain(referrer);
+  });
+
+  it("preserves non-ASCII in position.lineText and position.file", async () => {
+    const lineText = `const caf\u00e9 = 1; import "./na\u00efve-missing.js"; // \u{1F389}`;
+    const fileName = "entry-caf\u00e9-\u{1F389}.js";
+    using dir = tempDir("resolve-position-utf8", {
+      [fileName]: lineText + "\n",
+    });
+    const result = await Bun.build({ entrypoints: [path.join(String(dir), fileName)], throw: false });
+    expect(result.success).toBe(false);
+    const log: any = result.logs.find(l => l.name === "ResolveMessage");
+    expect(log).toBeDefined();
+    expect(log.position.lineText).toBe(lineText);
+    expect(path.basename(log.position.file)).toBe(fileName);
+    expect(log.specifier).toBe("./na\u00efve-missing.js");
   });
 
   it("invalid data URL import", async () => {

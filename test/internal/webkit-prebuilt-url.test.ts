@@ -1,7 +1,6 @@
-/** Build-config regression tests for WebKit prebuilt URL computation: the
- * default WEBKIT_VERSION is used as the release tag (so every lane fetches
- * from the same release), and --webkit-version overrides still hit the plain
- * `autobuild-<sha>` tag. Configure-time only. */
+/** Build-config regression tests for WebKit prebuilt URL computation: default
+ * WEBKIT_VERSION is used as the release tag; --webkit-version overrides still
+ * hit the plain `autobuild-<sha>` tag. Configure-time only. */
 import { describe, expect, test } from "bun:test";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";

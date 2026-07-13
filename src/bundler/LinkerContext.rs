@@ -2631,6 +2631,10 @@ impl<'a> LinkerContext<'a> {
         entry_points_count: usize,
         distance: u32,
     ) {
+        // Guard against infinite recursion from circular import chains
+        if distance > 4096 {
+            return;
+        }
         if !self.graph.files_live.is_set(source_index as usize) {
             return;
         }

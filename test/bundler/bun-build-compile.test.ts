@@ -9,7 +9,7 @@ describe("Bun.build compile", () => {
       "app.js": `console.log("Cross-compiled app");`,
     });
 
-    const os = isMacOS ? "darwin" : isLinux ? "linux" : isWindows ? "windows" : "unknown";
+    const os = isOhos ? "linux" : isMacOS ? "darwin" : isLinux ? "linux" : isWindows ? "windows" : "linux";
     const arch = isArm64 ? "aarch64" : "x64";
     const libc = isOhos ? "-ohos" : isMusl ? "-musl" : "";
     const target = `bun-${os}-${arch}${libc}` as any;

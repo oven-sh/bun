@@ -1,10 +1,10 @@
 import { serve, ServeOptions, Server } from "bun";
 import { afterAll, expect, it } from "bun:test";
+import { once } from "events";
 import { mkdirSync, rmSync } from "fs";
 import { isWindows, tmpdirSync } from "harness";
 import { request } from "http";
 import { createServer } from "net";
-import { once } from "events";
 import { join } from "path";
 const tmp_dir = tmpdirSync();
 

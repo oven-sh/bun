@@ -29,6 +29,7 @@ extern "C" uint64_t Bun__Os__getAvailableMemory(void)
 #endif
 
 #if OS(LINUX)
+#include <wtf/RAMSize.h>
 #include <sys/sysinfo.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -36,7 +37,6 @@ extern "C" uint64_t Bun__Os__getAvailableMemory(void)
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
-#include <climits>
 
 // Read a numeric field (in kB) from /proc/meminfo, matching libuv's
 // uv__read_proc_meminfo. Returns the value in bytes, or 0 on failure.
@@ -134,29 +134,38 @@ static int bunSlurp(const char* filename, char* buf, size_t len)
     return 0;
 }
 
-// Read a single decimal uint64 from a cgroup control file. cgroup v2's literal
-// "max\n" maps to UINT64_MAX; 0 means "could not read".
+// Read a single decimal uint64 from a cgroup control file. 0 = couldn't read.
 static uint64_t bunReadCgroupUint64(const char* filename)
 {
     char buf[32];
-    if (bunSlurp(filename, buf, sizeof(buf)) != 0) {
-        return 0;
-    }
     uint64_t rc = 0;
-    if (sscanf(buf, "%" SCNu64, &rc) == 1) {
-        return rc;
+    if (bunSlurp(filename, buf, sizeof(buf)) == 0) {
+        sscanf(buf, "%" SCNu64, &rc);
     }
-    if (strcmp(buf, "max\n") == 0) {
-        return UINT64_MAX;
-    }
-    return 0;
+    return rc;
 }
 
-// Locate the :memory: controller's mount path in a cgroup v1 /proc/self/cgroup
-// buffer. Returns a pointer to the path (past its leading '/') and its length
-// via *n, or NULL if the memory controller line wasn't found.
-static char* bunCgroup1FindMemoryController(char* buf, int* n)
+// Current cgroup memory usage for this process. Matches libuv's
+// uv__get_cgroup_current_memory: cgroup v2 reads memory.current under the
+// path from /proc/self/cgroup's "0::/<path>" line; cgroup v1 reads
+// memory.usage_in_bytes under the :memory: controller's mount path.
+static uint64_t bunGetCgroupCurrentMemory(void)
 {
+    char buf[1024];
+    char filename[4097];
+
+    if (bunSlurp("/proc/self/cgroup", buf, sizeof(buf)) != 0) {
+        return 0;
+    }
+
+    if (strncmp(buf, "0::/", 4) == 0) {
+        char* p = buf + strlen("0::/");
+        int n = static_cast<int>(strcspn(p, "\n"));
+        snprintf(filename, sizeof(filename), "/sys/fs/cgroup/%.*s/memory.current", n, p);
+        return bunReadCgroupUint64(filename);
+    }
+
+    // cgroup v1: locate the :memory: controller line.
     char* p = strchr(buf, ':');
     while (p != nullptr && strncmp(p, ":memory:", 8) != 0) {
         p = strchr(p, '\n');
@@ -166,108 +175,7 @@ static char* bunCgroup1FindMemoryController(char* buf, int* n)
     }
     if (p != nullptr) {
         p += strlen(":memory:/");
-        *n = static_cast<int>(strcspn(p, "\n"));
-    }
-    return p;
-}
-
-static void bunGetCgroup1MemoryLimits(char* buf, uint64_t* high, uint64_t* max)
-{
-    char filename[4097];
-    int n;
-
-    *high = 0;
-    *max = 0;
-
-    char* p = bunCgroup1FindMemoryController(buf, &n);
-    if (p != nullptr) {
-        snprintf(filename, sizeof(filename), "/sys/fs/cgroup/memory/%.*s/memory.soft_limit_in_bytes", n, p);
-        *high = bunReadCgroupUint64(filename);
-        snprintf(filename, sizeof(filename), "/sys/fs/cgroup/memory/%.*s/memory.limit_in_bytes", n, p);
-        *max = bunReadCgroupUint64(filename);
-    }
-    if (*high == 0 || *max == 0) {
-        *high = bunReadCgroupUint64("/sys/fs/cgroup/memory/memory.soft_limit_in_bytes");
-        *max = bunReadCgroupUint64("/sys/fs/cgroup/memory/memory.limit_in_bytes");
-    }
-
-    // cgroup v1 reports "unlimited" as LONG_MAX rounded down to a page.
-    uint64_t cgroup1Max = static_cast<uint64_t>(LONG_MAX) & ~static_cast<uint64_t>(sysconf(_SC_PAGESIZE) - 1);
-    if (*high == cgroup1Max) {
-        *high = UINT64_MAX;
-    }
-    if (*max == cgroup1Max) {
-        *max = UINT64_MAX;
-    }
-}
-
-static void bunGetCgroup2MemoryLimits(char* buf, uint64_t* high, uint64_t* max)
-{
-    char path[4097];
-    char filename[4097];
-    char* p = buf + strlen("0::/");
-    int n = static_cast<int>(strcspn(p, "\n"));
-    snprintf(path, sizeof(path), "/sys/fs/cgroup/%.*s", n, p);
-
-    *high = UINT64_MAX;
-    *max = UINT64_MAX;
-
-    // cgroup v2 limits are hierarchical: walk from the leaf to the root and
-    // keep the tightest limit seen at any level.
-    while (strncmp(path, "/sys/fs/cgroup", sizeof("/sys/fs/cgroup") - 1) == 0) {
-        uint64_t v;
-        snprintf(filename, sizeof(filename), "%s/memory.max", path);
-        v = bunReadCgroupUint64(filename);
-        if (v > 0 && v < *max) {
-            *max = v;
-        }
-        snprintf(filename, sizeof(filename), "%s/memory.high", path);
-        v = bunReadCgroupUint64(filename);
-        if (v > 0 && v < *high) {
-            *high = v;
-        }
-        if (strcmp(path, "/sys/fs/cgroup") == 0) {
-            break;
-        }
-        char* lastSlash = strrchr(path, '/');
-        if (lastSlash == nullptr) {
-            break;
-        }
-        *lastSlash = '\0';
-    }
-}
-
-static uint64_t bunGetCgroupConstrainedMemory(char* buf)
-{
-    uint64_t high;
-    uint64_t max;
-    if (strncmp(buf, "0::/", 4) != 0) {
-        bunGetCgroup1MemoryLimits(buf, &high, &max);
-    } else {
-        bunGetCgroup2MemoryLimits(buf, &high, &max);
-    }
-    if (high == 0 || max == 0) {
-        return 0;
-    }
-    uint64_t result = high < max ? high : max;
-    if (result == UINT64_MAX) {
-        return 0;
-    }
-    return result;
-}
-
-static uint64_t bunGetCgroupCurrentMemory(char* buf)
-{
-    char filename[4097];
-    if (strncmp(buf, "0::/", 4) == 0) {
-        char* p = buf + strlen("0::/");
         int n = static_cast<int>(strcspn(p, "\n"));
-        snprintf(filename, sizeof(filename), "/sys/fs/cgroup/%.*s/memory.current", n, p);
-        return bunReadCgroupUint64(filename);
-    }
-    int n;
-    char* p = bunCgroup1FindMemoryController(buf, &n);
-    if (p != nullptr) {
         snprintf(filename, sizeof(filename), "/sys/fs/cgroup/memory/%.*s/memory.usage_in_bytes", n, p);
         uint64_t current = bunReadCgroupUint64(filename);
         if (current != 0) {
@@ -277,32 +185,25 @@ static uint64_t bunGetCgroupCurrentMemory(char* buf)
     return bunReadCgroupUint64("/sys/fs/cgroup/memory/memory.usage_in_bytes");
 }
 
-// Matches libuv's uv_get_available_memory (vendor/libuv/src/unix/linux.c):
-// when the process runs under a cgroup memory limit, return the remaining
-// budget (limit - current usage). When there is no limit, or the limit is
-// larger than physical RAM, fall back to host MemAvailable. This is the
-// value Node.js documents for process.availableMemory().
+// Matches libuv's uv_get_available_memory: when the process runs under a
+// cgroup memory limit, return the remaining budget (limit - current usage);
+// otherwise fall back to host MemAvailable. The limit is WTF::ramSize(),
+// the same cgroup-aware value process.constrainedMemory() returns, so
+// availableMemory() <= constrainedMemory() holds by construction.
 extern "C" uint64_t Bun__Os__getAvailableMemory(void)
 {
-    char buf[1024];
-    if (bunSlurp("/proc/self/cgroup", buf, sizeof(buf)) != 0) {
-        return Bun__Os__getFreeMemory();
-    }
-
-    uint64_t constrained = bunGetCgroupConstrainedMemory(buf);
-    if (constrained == 0) {
-        return Bun__Os__getFreeMemory();
-    }
+    uint64_t constrained = static_cast<uint64_t>(WTF::ramSize());
 
     struct sysinfo info;
-    if (sysinfo(&info) == 0) {
-        uint64_t total = static_cast<uint64_t>(info.totalram) * info.mem_unit;
-        if (constrained > total) {
-            return Bun__Os__getFreeMemory();
-        }
+    if (constrained == 0 || sysinfo(&info) != 0) {
+        return Bun__Os__getFreeMemory();
+    }
+    uint64_t total = static_cast<uint64_t>(info.totalram) * info.mem_unit;
+    if (constrained >= total) {
+        return Bun__Os__getFreeMemory();
     }
 
-    uint64_t current = bunGetCgroupCurrentMemory(buf);
+    uint64_t current = bunGetCgroupCurrentMemory();
     if (constrained < current) {
         return 0;
     }

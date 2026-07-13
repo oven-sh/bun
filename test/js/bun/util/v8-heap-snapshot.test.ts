@@ -130,7 +130,10 @@ test("v8.writeHeapSnapshot() rejects invalid paths with node-compatible errors",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const results = stdout.trim().split("\n").map(line => JSON.parse(line));
+  const results = stdout
+    .trim()
+    .split("\n")
+    .map(line => JSON.parse(line));
   expect({ stderr, results }).toEqual({
     stderr: "",
     results: [

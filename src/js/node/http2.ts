@@ -4667,11 +4667,12 @@ class ServerHttp2Session extends Http2Session {
         this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
       }
       if (error) {
-        // node's finishSessionClose destroys the socket when the session dies with an error
-        // (a misbehaving peer must observe the connection actually going away); a graceful
-        // teardown keeps the FIN-only path.
-        if (typeof socket.destroySoon === "function") socket.destroySoon();
-        else socket.destroy();
+        // node's finishSessionClose destroys the socket when the session dies
+        // with an error (a misbehaving peer must observe the connection going
+        // away) - but it still ends first and destroys a tick later, so the
+        // final GOAWAY flushes behind a FIN instead of an abortive close (see
+        // endThenDestroySessionSocket).
+        endThenDestroySessionSocket(socket, error);
       } else {
         // Node's finishSessionClose: "If we're gracefully closing the socket,
         // call resume() so we can detect the peer closing in case
@@ -4747,6 +4748,21 @@ function setSessionTimeout(this: Http2Session, msecs, callback) {
     }
   }
   return this;
+}
+
+// Node's finishSessionClose error path: socket.end() flushes and sends the FIN
+// first, and the hard destroy runs a tick later - "If session.destroy() was
+// called, destroy the underlying socket. Delay it a bit to try to avoid
+// ECONNRESET on Windows" - so the peer reads our final frames off a FIN'd
+// socket instead of observing an abortive close.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
+function destroySessionSocketDelayedNT(socket, error) {
+  if (!socket.destroyed) {
+    socket.destroy(error);
+  }
+}
+function endThenDestroySessionSocket(socket, error) {
+  socket.end(() => setImmediate(destroySessionSocketDelayedNT, socket, error));
 }
 // node callTimeout (lib/internal/http2/core.js): when the timer expires while writes are still in
 // flight and bytes have reached the wire since the previous expiry, the session is not idle —
@@ -5658,10 +5674,9 @@ class ClientHttp2Session extends Http2Session {
         this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
       }
       if (error) {
-        // node's finishSessionClose destroys the socket when the session dies with an error;
-        // a graceful teardown keeps the FIN-only path.
-        if (typeof socket.destroySoon === "function") socket.destroySoon();
-        else socket.destroy();
+        // See the client session: end first, destroy a tick later (node's
+        // finishSessionClose Windows-ECONNRESET avoidance).
+        endThenDestroySessionSocket(socket, error);
       } else {
         // See the client session's destroy: Node's finishSessionClose resumes
         // the socket on a graceful close so unread inbound bytes cannot turn

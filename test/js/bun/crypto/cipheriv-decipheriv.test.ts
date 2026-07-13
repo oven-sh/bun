@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { BinaryLike, CipherGCM, createCipheriv, createDecipheriv, DecipherGCM, randomBytes } from "crypto";
 
 /**
@@ -247,4 +247,45 @@ it("should ignore authTagLength for non-authenticated cipher modes", () => {
   gcm.update("hi");
   gcm.final();
   expect(gcm.getAuthTag().length).toBe(12);
+});
+
+describe("GCM setAuthTag tag length (DEP0182 end-of-life)", () => {
+  const key = Buffer.alloc(16);
+  const iv = Buffer.alloc(12);
+  const cipher = createCipheriv("aes-128-gcm", key, iv) as CipherGCM;
+  const ct = Buffer.concat([cipher.update("hello world"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+
+  it.each([4, 8, 12, 13, 14, 15])("rejects a %d-byte tag when authTagLength was not specified", len => {
+    const d = createDecipheriv("aes-128-gcm", key, iv) as DecipherGCM;
+    expect(() => d.setAuthTag(tag.subarray(0, len))).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_CRYPTO_INVALID_AUTH_TAG",
+        message: `Invalid authentication tag length: ${len}`,
+      }),
+    );
+  });
+
+  it("accepts a 16-byte tag when authTagLength was not specified", () => {
+    const d = createDecipheriv("aes-128-gcm", key, iv) as DecipherGCM;
+    d.setAuthTag(tag);
+    const pt = Buffer.concat([d.update(ct), d.final()]).toString();
+    expect(pt).toBe("hello world");
+  });
+
+  it.each([4, 8, 12, 13, 14, 15, 16])("accepts a %d-byte tag when authTagLength matches", len => {
+    const d = createDecipheriv("aes-128-gcm", key, iv, { authTagLength: len }) as DecipherGCM;
+    d.setAuthTag(tag.subarray(0, len));
+    const pt = Buffer.concat([d.update(ct), d.final()]).toString();
+    expect(pt).toBe("hello world");
+  });
+
+  it("leaves the decipher usable after a rejected short tag", () => {
+    const d = createDecipheriv("aes-128-gcm", key, iv) as DecipherGCM;
+    expect(() => d.setAuthTag(tag.subarray(0, 12))).toThrow();
+    d.setAuthTag(tag);
+    const pt = Buffer.concat([d.update(ct), d.final()]).toString();
+    expect(pt).toBe("hello world");
+  });
 });

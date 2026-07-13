@@ -176,11 +176,14 @@ pub struct WebWorker {
     /// first, then map — `Loader<'static>` borrows `*map`).
     worker_env_map: Cell<*mut bun_dotenv::Map>,
     worker_env_loader: Cell<*mut bun_dotenv::Loader<'static>>,
-    /// Set by `exit()` so that `spin()`'s error paths don't clobber an explicit
-    /// `process.exit(code)`. Atomic so `exit()` can take `&self` (the struct is
+    /// The exit code is already settled — `exit()` saw an explicit
+    /// `process.exit(code)`, or `on_unhandled_rejection` ran the process
+    /// 'exit' handlers (which may amend `process.exitCode`) — so `spin()`'s
+    /// terminate checkpoints must not overwrite it with the default
+    /// terminate code 1. Atomic so setters can take `&self` (the struct is
     /// observed concurrently by `terminate_all_and_wait` / parent-thread FFI;
     /// producing `&mut WebWorker` while another thread holds `&WebWorker` is UB).
-    exit_called: AtomicBool,
+    exit_code_decided: AtomicBool,
 }
 
 #[repr(u8)]
@@ -566,7 +569,7 @@ impl WebWorker {
             arena: JsCell::new(None),
             worker_env_map: Cell::new(core::ptr::null_mut()),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
-            exit_called: AtomicBool::new(false),
+            exit_code_decided: AtomicBool::new(false),
         }));
         // `worker` is non-null (just heap-allocated). Wrap once for the safe
         // shared reborrows below; the raw `worker` is still used for
@@ -1098,7 +1101,7 @@ impl WebWorker {
             Ok(p) => p,
             Err(_) => {
                 // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                if !self.exit_code_decided.load(Ordering::Relaxed) {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
@@ -1149,10 +1152,10 @@ impl WebWorker {
             // Terminate arrived after the module started running — exit
             // code 1 because evaluation was forcibly interrupted (matches
             // Node.js worker.terminate() semantics, and makes CloseEvent
-            // report wasClean:false on the parent). Don't clobber a
-            // user-chosen exit code from process.exit(N) inside the module
-            // body.
-            if !self.exit_called.load(Ordering::Relaxed) {
+            // report wasClean:false on the parent). Skip when the code is
+            // already settled (process.exit(N), or an unhandled error whose
+            // 'exit' handlers may have amended process.exitCode).
+            if !self.exit_code_decided.load(Ordering::Relaxed) {
                 vm.as_mut().exit_handler.exit_code = 1;
             }
             self.flush_logs(vm);
@@ -1214,14 +1217,13 @@ impl WebWorker {
         // unconditionally; the rejection_dispatched flag prevents the
         // post-TLA check from firing twice on sync-rejection.
         //
-        // Tick/auto_tick until settled or terminated, except for the
-        // drained-loop case: the worker is online here, so a registered
-        // 'message' listener is a live wake source (the parent can post at
-        // any time — incoming messages enqueue a drain task that wakes the
-        // loop). Park on it instead of breaking, matching Node where
-        // parentPort.on('message') keeps a TLA worker alive. With no
-        // listener and a dead loop, the await can never settle — break so
-        // the worker exits with code 13 below (Node semantics).
+        // Tick/auto_tick until settled or terminated. A registered 'message'
+        // listener refs the event loop (WorkerGlobalScope::
+        // onDidChangeListenerImpl), keeping it alive so auto_tick() parks and
+        // a message posted by the parent wakes the loop — matching Node where
+        // parentPort.on('message') keeps a TLA worker alive. With no listener
+        // the loop drains and the await can never settle — break so the
+        // worker exits with code 13 below (Node semantics).
         //
         // SAFETY: `initial_promise` is a live JSC heap cell stored on the VM.
         while !self.has_requested_terminate()
@@ -1234,10 +1236,6 @@ impl WebWorker {
                 break;
             }
             if !vm.is_event_loop_alive() {
-                if WebWorker__hasMessageListener(vm.global()) {
-                    vm.event_loop_mut().tick_possibly_forever();
-                    continue;
-                }
                 break;
             }
             vm.as_mut().event_loop_mut().auto_tick();
@@ -1246,7 +1244,7 @@ impl WebWorker {
         if self.has_requested_terminate() {
             // Terminate arrived while TLA was pending — exit code 1, same
             // reasoning as the pre-online check above.
-            if !self.exit_called.load(Ordering::Relaxed) {
+            if !self.exit_code_decided.load(Ordering::Relaxed) {
                 vm.as_mut().exit_handler.exit_code = 1;
             }
             // Drain any CppTask fireEarlyMessages posted (else-branch of
@@ -1538,7 +1536,7 @@ impl WebWorker {
     /// `notify_need_termination` may concurrently hold `&WebWorker` on another
     /// thread; producing `&mut` here would be aliased-&mut UB.
     pub fn exit(&self) {
-        self.exit_called.store(true, Ordering::Relaxed);
+        self.exit_code_decided.store(true, Ordering::Relaxed);
         let _ = self.set_requested_terminate();
         // Stop subsequent JS at the next safepoint. `this.vm` is null during
         // `vm.onExit()` (shutdown nulls it first), so a re-entrant
@@ -1689,6 +1687,9 @@ fn on_unhandled_rejection(
     // termination exception makes dispatchExitInternal skip 'exit' (as terminate() should),
     // and its processIsExiting guard stops shutdown() from running them twice.
     virtual_machine::ExitHandler::dispatch_on_exit(vm);
+    // The 'exit' handlers just observed (and may have amended) the final
+    // exit code; spin()'s terminate checkpoints must not overwrite it.
+    worker.exit_code_decided.store(true, Ordering::Relaxed);
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy

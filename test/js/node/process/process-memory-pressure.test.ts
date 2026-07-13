@@ -110,9 +110,13 @@ describe.concurrent("process.on('memoryPressure')", () => {
       Bun.gc(true);
 
       emitMemoryPressure("critical");
-      await new Promise(r => setTimeout(r, 50));   // let the loop park so the sweep runs
-
-      const after = memoryUsage().currentCommit;
+      // The hint is drained and the sweep runs on later parks, and the park
+      // sweep is rate-limited (100ms), so poll until the commit drops.
+      let after = memoryUsage().currentCommit;
+      for (let i = 0; i < 100 && after >= peak; i++) {
+        await Bun.sleep(50);
+        after = memoryUsage().currentCommit;
+      }
       process.stdout.write(after < peak ? "returned" : "held " + peak + " -> " + after);
     `);
     expect(stdout).toBe("returned");

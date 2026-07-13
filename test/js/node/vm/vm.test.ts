@@ -481,6 +481,13 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
         const result = fn("var hidden; hidden", context);
         expect(result).toBe("h");
       });
+      test("an idempotent defineProperty on globalThis still validates against the sandbox descriptor", () => {
+        const sandbox = {};
+        Object.defineProperty(sandbox, "cfg", { value: 42, writable: false, enumerable: true, configurable: false });
+        const context = createContext(sandbox);
+        const result = fn("var cfg; Object.defineProperty(this, 'cfg', {value: 42}); cfg", context);
+        expect(result).toBe(42);
+      });
       if (!isNew) {
         test("a later script in the same context does not see a stale undefined binding", () => {
           const sandbox = {};

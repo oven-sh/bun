@@ -47,6 +47,53 @@ describe("ResolveMessage", () => {
     }
   });
 
+  // Node's ESM resolver parses the specifier as a WHATWG URL, so the `node:`
+  // scheme is recognized case-insensitively and after whitespace stripping;
+  // the CJS loader uses an exact prefix match. Verified against Node v26.
+  describe("node: scheme error code", () => {
+    it.each([
+      // ESM: URL-parser scheme recognition → ERR_UNKNOWN_BUILTIN_MODULE
+      ["NODE:fs", "ERR_UNKNOWN_BUILTIN_MODULE"],
+      ["Node:fs", "ERR_UNKNOWN_BUILTIN_MODULE"],
+      ["NODE:sqlite", "ERR_UNKNOWN_BUILTIN_MODULE"],
+      [" node:sqlite", "ERR_UNKNOWN_BUILTIN_MODULE"],
+      ["\tnode:fs", "ERR_UNKNOWN_BUILTIN_MODULE"],
+      ["\rnode:fs", "ERR_UNKNOWN_BUILTIN_MODULE"],
+      ["no\tde:fs", "ERR_UNKNOWN_BUILTIN_MODULE"],
+      ["NODE:", "ERR_UNKNOWN_BUILTIN_MODULE"],
+      ["node:nonexistent", "ERR_UNKNOWN_BUILTIN_MODULE"],
+      // Not a valid URL (space inside scheme) → package resolution
+      ["node :fs", "ERR_MODULE_NOT_FOUND"],
+      ["n ode:fs", "ERR_MODULE_NOT_FOUND"],
+    ])("import(%j) -> %s", async (specifier, code) => {
+      let err: any;
+      try {
+        await import(specifier);
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe(code);
+      if (code === "ERR_UNKNOWN_BUILTIN_MODULE") {
+        expect(err.message).toBe(`No such built-in module: ${specifier}`);
+      }
+    });
+
+    it.each([
+      // CJS: exact-prefix only, matching Node.js
+      ["NODE:fs", "MODULE_NOT_FOUND"],
+      [" node:sqlite", "MODULE_NOT_FOUND"],
+      ["node:nonexistent", "ERR_UNKNOWN_BUILTIN_MODULE"],
+    ])("require(%j) -> %s", (specifier, code) => {
+      let err: any;
+      try {
+        require(specifier);
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe(code);
+    });
+  });
+
   it("invalid data URL import", async () => {
     expect(async () => {
       // @ts-ignore

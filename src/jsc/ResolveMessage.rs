@@ -35,6 +35,27 @@ impl Default for ResolveMessage {
     }
 }
 
+/// Node's ESM resolver parses the specifier as a WHATWG URL; if the protocol
+/// is `node:`, a failed builtin lookup becomes `ERR_UNKNOWN_BUILTIN_MODULE`.
+/// The URL parser strips leading C0/space, strips tab/LF/CR anywhere, and
+/// lowercases the scheme, so e.g. `"NODE:fs"` and `" node:fs"` both qualify.
+fn has_esm_node_scheme(specifier: &[u8]) -> bool {
+    let mut i = 0;
+    while i < specifier.len() && specifier[i] <= 0x20 {
+        i += 1;
+    }
+    for want in *b"node:" {
+        while i < specifier.len() && matches!(specifier[i], b'\t' | b'\n' | b'\r') {
+            i += 1;
+        }
+        if i >= specifier.len() || specifier[i].to_ascii_lowercase() != want {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
 /// `ImportKind.label()` — the canonical table lives in
 /// `bun_ast::ImportKind::label`, but
 /// `bun_ast::MetadataResolve.import_kind` is the type-only `bun_ast::ImportKind`.
@@ -85,7 +106,7 @@ impl ResolveMessage {
                         // require resolve does not have the UNKNOWN_BUILTIN_MODULE error code
                         ImportKind::RequireResolve => b"MODULE_NOT_FOUND",
                         ImportKind::Stmt | ImportKind::Dynamic => {
-                            if specifier.starts_with(b"node:") {
+                            if has_esm_node_scheme(specifier) {
                                 break 'brk b"ERR_UNKNOWN_BUILTIN_MODULE";
                             } else {
                                 break 'brk b"ERR_MODULE_NOT_FOUND";
@@ -138,7 +159,12 @@ impl ResolveMessage {
     ) -> Vec<u8> {
         use bstr::BStr;
         let mut out = Vec::new();
-        if import_kind != ImportKind::RequireResolve && specifier.starts_with(b"node:") {
+        let is_node_builtin = match import_kind {
+            ImportKind::RequireResolve => false,
+            ImportKind::Stmt | ImportKind::Dynamic => has_esm_node_scheme(specifier),
+            _ => specifier.starts_with(b"node:"),
+        };
+        if is_node_builtin {
             // This matches Node.js exactly.
             write!(
                 &mut out,

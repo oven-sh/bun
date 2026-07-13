@@ -2091,6 +2091,51 @@ fn handle_ipc_message(
     }
 }
 
+/// Drain complete newline-delimited JSON messages from `send_queue.incoming`
+/// (must be `IncomingBuffer::Json`). Re-derives the buffer each iteration —
+/// `handle_ipc_message` runs JS that can mutate `send_queue`.
+fn drain_json_messages(send_queue: &mut SendQueue, global_this: &JSGlobalObject) {
+    loop {
+        let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
+            unreachable!()
+        };
+        if json_buf.overflowed() {
+            Output::print_errorln("IPC message is too long.");
+            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+            return;
+        }
+        let Some(msg) = json_buf.next() else { return };
+        let result =
+            match decode_ipc_message(Mode::Json, msg.data, global_this, Some(msg.newline_pos)) {
+                Ok(r) => r,
+                Err(IPCDecodeError::NotEnoughBytes) => {
+                    log!("hit NotEnoughBytes");
+                    return;
+                }
+                Err(
+                    IPCDecodeError::InvalidFormat
+                    | IPCDecodeError::JSError
+                    | IPCDecodeError::JSTerminated,
+                ) => {
+                    send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                    return;
+                }
+                Err(IPCDecodeError::OutOfMemory) => {
+                    Output::print_errorln("IPC message is too long.");
+                    send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                    return;
+                }
+            };
+
+        let bytes_consumed = result.bytes_consumed;
+        handle_ipc_message(send_queue, result.message, global_this);
+        let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
+            unreachable!()
+        };
+        json_buf.consume(bytes_consumed);
+    }
+}
+
 fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
     let mut data = all_data;
 
@@ -2105,55 +2150,12 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
     match &mut send_queue.incoming {
         IncomingBuffer::Json(_) => {
             // JSON mode: append to buffer (scans only new data for newline),
-            // then process complete messages using next().
+            // then process complete messages.
             let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
                 unreachable!()
             };
             json_buf.append(data);
-
-            loop {
-                let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
-                    unreachable!()
-                };
-                if json_buf.overflowed() {
-                    Output::print_errorln("IPC message is too long.");
-                    send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                    return;
-                }
-                let Some(msg) = json_buf.next() else { break };
-                let result = match decode_ipc_message(
-                    Mode::Json,
-                    msg.data,
-                    &global_this,
-                    Some(msg.newline_pos),
-                ) {
-                    Ok(r) => r,
-                    Err(IPCDecodeError::NotEnoughBytes) => {
-                        log!("hit NotEnoughBytes");
-                        return;
-                    }
-                    Err(
-                        IPCDecodeError::InvalidFormat
-                        | IPCDecodeError::JSError
-                        | IPCDecodeError::JSTerminated,
-                    ) => {
-                        send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                        return;
-                    }
-                    Err(IPCDecodeError::OutOfMemory) => {
-                        Output::print_errorln("IPC message is too long.");
-                        send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                        return;
-                    }
-                };
-
-                let bytes_consumed = result.bytes_consumed;
-                handle_ipc_message(send_queue, result.message, &global_this);
-                let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
-                    unreachable!()
-                };
-                json_buf.consume(bytes_consumed);
-            }
+            drain_json_messages(send_queue, &global_this);
         }
         IncomingBuffer::Advanced(_) => {
             // Advanced mode: uses length-prefix, no newline scanning needed.
@@ -2294,62 +2296,15 @@ pub mod IPCHandlers {
 
             match &mut send_queue.incoming {
                 IncomingBuffer::Json(_) => {
-                    // For JSON mode on Windows, use notifyWritten to update length and scan for newlines
                     let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
                         unreachable!()
                     };
                     debug_assert!(json_buf.data.len() + nread <= json_buf.data.capacity());
-                    // libuv wrote `nread` bytes at `data[old_len..]` via the
-                    // slice returned from `on_read_alloc`. Only the *count*
-                    // is forwarded — re-deriving a `&[u8]` over that region
-                    // and handing it to a `&mut self` method would alias
-                    // `json_buf.data`, undoing the Stacked-Borrows fix above.
+                    // Only the *count* is forwarded — re-deriving a `&[u8]` over
+                    // libuv's write region and handing it to a `&mut self` method
+                    // would alias `json_buf.data` (Stacked Borrows, see above).
                     json_buf.notify_written(nread);
-
-                    // Process complete messages using next() - avoids O(n²) re-scanning
-                    loop {
-                        let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
-                            unreachable!()
-                        };
-                        if json_buf.overflowed() {
-                            Output::print_errorln("IPC message is too long.");
-                            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                            return;
-                        }
-                        let Some(msg) = json_buf.next() else { break };
-                        let result = match decode_ipc_message(
-                            Mode::Json,
-                            msg.data,
-                            &global_this,
-                            Some(msg.newline_pos),
-                        ) {
-                            Ok(r) => r,
-                            Err(IPCDecodeError::NotEnoughBytes) => {
-                                log!("hit NotEnoughBytes3");
-                                return;
-                            }
-                            Err(
-                                IPCDecodeError::InvalidFormat
-                                | IPCDecodeError::JSError
-                                | IPCDecodeError::JSTerminated,
-                            ) => {
-                                send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                return;
-                            }
-                            Err(IPCDecodeError::OutOfMemory) => {
-                                Output::print_errorln("IPC message is too long.");
-                                send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                return;
-                            }
-                        };
-
-                        let bytes_consumed = result.bytes_consumed;
-                        handle_ipc_message(send_queue, result.message, &global_this);
-                        let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
-                            unreachable!()
-                        };
-                        json_buf.consume(bytes_consumed);
-                    }
+                    drain_json_messages(send_queue, &global_this);
                 }
                 IncomingBuffer::Advanced(_) => {
                     let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {

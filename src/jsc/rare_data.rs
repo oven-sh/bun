@@ -859,8 +859,10 @@ impl RareData {
         // just drained. Loop until every group is observed empty in the same pass
         // (bounded — each retry only happens if a JS callback opened a *new*
         // socket, and the cap stops a deliberately-spinning on_close from wedging
-        // teardown; the post-close force-drain in close_all handles whatever's
-        // left after the cap).
+        // teardown). Each close_all force-drains its own group (sockets AND
+        // connecting sockets) before returning, so past the cap only sockets a
+        // spinning callback opened after its group's final drain can remain —
+        // those are abandoned, not closed.
         // Walk the loop's linked-group list rather than just our 14 embedded
         // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
         // sockets land *there*, not in RareData. Iterating only the embedded
@@ -883,7 +885,7 @@ impl RareData {
         // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
         // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
         // can't trace once we unregister the root region).
-        vm.uws_loop_mut().drain_closed_sockets();
+        bun_usockets::Loop::drain_closed_sockets(vm.uws_loop());
     }
 }
 

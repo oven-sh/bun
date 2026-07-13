@@ -346,6 +346,17 @@ napi_value create_orphaned_tsfn(const Napi::CallbackInfo &info) {
   return info.Env().Undefined();
 }
 
+// Run this on the main thread AFTER the Worker exited: with the owning event
+// loop dead, both call modes must report napi_closing (Node semantics)
+// instead of queueing into a loop that will never drain the item.
+napi_value call_orphaned_tsfn(const Napi::CallbackInfo &info) {
+  bool blocking = info[0].As<Napi::Boolean>().Value();
+  napi_status status = napi_call_threadsafe_function(
+      orphaned_tsfn, nullptr,
+      blocking ? napi_tsfn_blocking : napi_tsfn_nonblocking);
+  return Napi::Number::New(info.Env(), status);
+}
+
 // Run this on the main thread AFTER the Worker exited: the release must not
 // touch the dead Worker's event loop (heap-use-after-free under ASAN).
 napi_value release_orphaned_tsfn(const Napi::CallbackInfo &info) {
@@ -363,6 +374,7 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_async_work_with_null_complete);
   REGISTER_FUNCTION(env, exports, test_cancel_async_work);
   REGISTER_FUNCTION(env, exports, create_orphaned_tsfn);
+  REGISTER_FUNCTION(env, exports, call_orphaned_tsfn);
   REGISTER_FUNCTION(env, exports, release_orphaned_tsfn);
 }
 

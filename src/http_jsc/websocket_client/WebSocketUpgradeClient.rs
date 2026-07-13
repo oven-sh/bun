@@ -1678,6 +1678,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// return, expecting `connect` to observe it and release the C++ ref.
     /// Terminal: core releases its attach ref exactly once after this returns.
     pub fn handle_connect_error(&self) {
+        // Close through the still-live handle BEFORE detaching it (core
+        // already closed the socket per C5, so this is an idempotent no-op).
+        self.tcp.get().close(uws::CloseCode::Failure);
         self.detach_tcp();
 
         if self.state.get() == State::Reading {

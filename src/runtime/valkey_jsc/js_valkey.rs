@@ -1794,7 +1794,8 @@ impl uws::Protocol for ValkeyProtocol {
     // allowed, so usockets always dispatches on_close afterwards.
 
     fn on_connect_error(this: &JSValkeyClient, _err: uws::ConnectFailure) {
-        // The failed handle is dead; detach the stored socket.
+        // Core closed the failed socket before this notify (C5); drop the
+        // stale handle.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         let _defer = scopeguard::guard(BackRef::new(this), |p| {
             p.client_mut().status = valkey::Status::Disconnected;

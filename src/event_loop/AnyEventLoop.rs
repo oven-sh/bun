@@ -600,13 +600,14 @@ impl EventLoopHandle {
     }
 
     pub fn ref_(self) {
-        // SAFETY: `r#loop` returns a valid live loop.
-        unsafe { (*self.r#loop()).ref_() };
+        // Raw-place twin: `r#loop` returns the live loop; a `&mut Loop` here
+        // would span `pending_wakeups`, which waker threads mutate.
+        bun_usockets::Loop::ref_raw(self.r#loop());
     }
 
     pub fn unref(self) {
-        // SAFETY: `r#loop` returns a valid live loop.
-        unsafe { (*self.r#loop()).unref() };
+        // See `ref_`.
+        bun_usockets::Loop::unref_raw(self.r#loop());
     }
 
     pub fn env(self) -> *mut DotEnvLoader<'static> {

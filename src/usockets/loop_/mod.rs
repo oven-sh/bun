@@ -118,6 +118,7 @@ pub trait LoopHandler {
 }
 
 /// Forces `ready_polls` to the next 16-byte boundary (LIBUS_EXT_ALIGNMENT).
+#[cfg(not(windows))]
 #[repr(C, align(16))]
 struct ReadyPollsAlign {
     _unused: [u8; 0],
@@ -211,12 +212,6 @@ pub(crate) fn free_socket(loop_: *mut Loop, s: *mut us_socket_t) {
     ffi::slab_free_socket(loop_, s);
 }
 
-/// Same as [`free_socket`] — kept under the name group.rs's registration
-/// unwinds use (never-linked, never-polled slots).
-pub(crate) fn free_unstarted_socket(loop_: *mut Loop, s: *mut us_socket_t) {
-    free_socket(loop_, s);
-}
-
 pub(crate) fn alloc_connecting(loop_: *mut Loop, value: ConnectingSocket) -> *mut ConnectingSocket {
     ffi::slab_alloc_connecting(loop_, value)
 }
@@ -226,53 +221,41 @@ pub(crate) fn free_connecting(loop_: *mut Loop, c: *mut ConnectingSocket) {
     ffi::slab_free_connecting(loop_, c);
 }
 
-/// Stores the loop ref and the C-ABI callback so it can be unregistered.
-pub struct Handler {
-    pub loop_: *mut Loop,
-    ctx: *mut c_void,
-    callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-}
-
-impl Handler {
-    pub fn remove_post(&self) {
-        let _ = self.callback;
-        ffi::loop_remove_post_handler(self.loop_, self.ctx);
-    }
-
-    /// Intentionally removes from the POST list (preserved upstream bug:
-    /// the shim never exported a pre-removal).
-    pub fn remove_pre(&self) {
-        ffi::loop_remove_post_handler(self.loop_, self.ctx);
-    }
-}
-
 /// `us_loop_close_all_groups` (R3.30): walk `loop.data.head`; close every
 /// group with live sockets / connecting sockets / low-prio parkees. Listen
 /// sockets are deliberately NOT closed (their owner holds a raw pointer —
-/// closing here would UAF). Cache `next` before each call; if it got
-/// unlinked during the call, restart from the head. Returns whether anything
-/// was closed (rare_data retry loop, C16).
+/// closing here would UAF). Returns whether anything was closed (rare_data
+/// retry loop, C16).
 fn close_all_groups_impl(loop_: *mut Loop) -> bool {
     let mut closed_any = false;
-    let mut g = ffi::ld_group_head(loop_);
-    while !g.is_null() {
-        let (busy, next) = deref::with_group(g, |gr| {
-            (
-                !gr.head_sockets.is_null()
-                    || !gr.head_connecting_sockets.is_null()
-                    || gr.low_prio_count > 0,
-                gr.next,
-            )
-        });
-        if busy {
-            crate::group::close_all_ex(g, false);
-            closed_any = true;
-            if !next.is_null() && deref::with_group(next, |n| n.linked) == 0 {
-                g = ffi::ld_group_head(loop_);
-                continue;
+    // Groups already dispatched this call, compared by address only (never
+    // deref'd — an entry may have been freed by a close callback). A dedup
+    // hit means a callback repopulated the group or a §1.4 deferral kept it
+    // busy: leave it for the caller's retry round rather than spinning.
+    let mut dispatched: Vec<*mut SocketGroup> = Vec::new();
+    'restart: loop {
+        let mut g = ffi::ld_group_head(loop_);
+        while !g.is_null() {
+            let (busy, next) = deref::with_group(g, |gr| {
+                (
+                    !gr.head_sockets.is_null()
+                        || !gr.head_connecting_sockets.is_null()
+                        || gr.low_prio_count > 0,
+                    gr.next,
+                )
+            });
+            if busy && !dispatched.contains(&g) {
+                dispatched.push(g);
+                crate::group::close_all_ex(g, false);
+                closed_any = true;
+                // The dispatch may have unlinked or freed ANY group —
+                // including the cached `next` — so never touch it; restart
+                // from the live head (the list is short, O(G²) is fine).
+                continue 'restart;
             }
+            g = next;
         }
-        g = next;
+        break;
     }
     closed_any
 }
@@ -331,19 +314,6 @@ impl PosixLoop {
 
     // ── wakeup / deferral ───────────────────────────────────────────────────
 
-    /// LOOP-THREAD convenience only. Other threads must call the raw
-    /// [`wakeup::us_wakeup_loop`] — a cross-thread `&mut Loop` here would
-    /// alias the parked tick's access (cross-thread `*mut Loop` contract).
-    pub fn wakeup(&mut self) {
-        wakeup::us_wakeup_loop(self)
-    }
-
-    /// Same loop-thread-only contract as [`Self::wakeup`].
-    #[inline]
-    pub fn wake(&mut self) {
-        self.wakeup();
-    }
-
     /// Run `defer_callback(user_data)` once on the loop thread next iteration;
     /// cross-thread-safe (C++ deferMutex — see loop_/wakeup.rs).
     pub fn next_tick(
@@ -354,47 +324,12 @@ impl PosixLoop {
         wakeup::defer(self, user_data, defer_callback);
     }
 
-    /// # Safety
-    /// `this` must be the live loop pointer from `get`/`create` (not derived
-    /// from a `&mut` reborrow) — the stored `Handler.loop_` inherits its
-    /// provenance.
-    // Item-level allow — the public surface keeps this `unsafe fn`.
-    #[allow(unsafe_code)]
-    pub unsafe fn add_post_handler(
-        this: *mut Self,
-        ctx: *mut c_void,
-        callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler {
-        ffi::loop_add_post_handler(this, ctx, callback);
-        Handler {
-            loop_: this,
-            ctx,
-            callback,
-        }
-    }
-
-    /// # Safety
-    /// Same contract as [`Self::add_post_handler`].
-    // Item-level allow — the public surface keeps this `unsafe fn`.
-    #[allow(unsafe_code)]
-    pub unsafe fn add_pre_handler(
-        this: *mut Self,
-        ctx: *mut c_void,
-        callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler {
-        ffi::loop_add_pre_handler(this, ctx, callback);
-        Handler {
-            loop_: this,
-            ctx,
-            callback,
-        }
-    }
-
     // ── poll / keep-alive accounting ────────────────────────────────────────
+    // Raw-place twins only — no `&mut self` accounting methods exist: any
+    // `&mut Loop` on a published loop spans `pending_wakeups`, which foreign
+    // threads `fetch_add` concurrently (R10.6, C17). Wakeups likewise go
+    // through the raw [`wakeup::us_wakeup_loop`], never a method.
 
-    /// Raw-place twins of `inc`/`dec`/`ref_`/`unref` for `*mut Loop` callers:
-    /// a `&mut Loop` span would cover `pending_wakeups`, which foreign
-    /// threads `fetch_add` concurrently (R10.6, C17).
     pub fn inc_raw(this: *mut Self) {
         bun_core::scoped_log!(Loop, "inc_raw -> {}", poll_access::num_polls(this) + 1);
         poll_access::num_polls_add(this, 1);
@@ -421,83 +356,32 @@ impl PosixLoop {
         poll_access::num_polls_raise(this, min);
     }
 
-    pub fn inc(&mut self) {
-        bun_core::scoped_log!(Loop, "inc {} + 1 = {}", self.num_polls, self.num_polls + 1);
-        self.num_polls += 1;
-    }
-
-    pub fn dec(&mut self) {
-        bun_core::scoped_log!(Loop, "dec {} - 1 = {}", self.num_polls, self.num_polls - 1);
-        self.num_polls -= 1;
-    }
-
-    pub fn ref_(&mut self) {
-        bun_core::scoped_log!(
-            Loop,
-            "ref {} + 1 = {} | {} + 1 = {}",
-            self.num_polls,
-            self.num_polls + 1,
-            self.active,
-            self.active + 1
-        );
-        self.num_polls += 1;
-        self.active += 1;
-    }
-
-    pub fn unref(&mut self) {
-        bun_core::scoped_log!(
-            Loop,
-            "unref {} - 1 = {} | {} - 1 = {}",
-            self.num_polls,
-            self.num_polls - 1,
-            self.active,
-            self.active.saturating_sub(1)
-        );
-        self.num_polls -= 1;
-        self.active = self.active.saturating_sub(1);
-    }
-
     pub fn is_active(&self) -> bool {
         self.active > 0
     }
 
-    pub fn add_active(&mut self, value: u32) {
-        bun_core::scoped_log!(
-            Loop,
-            "add {} + {} = {}",
-            self.active,
-            value,
-            self.active.saturating_add(value)
-        );
-        self.active = self.active.saturating_add(value);
+    /// `add_active`/`sub_active` twins — same raw-place rule as
+    /// [`Self::inc_raw`]; both saturate.
+    pub fn add_active_raw(this: *mut Self, value: u32) {
+        bun_core::scoped_log!(Loop, "add_active_raw + {}", value);
+        poll_access::loop_active_add(this, value);
     }
 
-    pub fn sub_active(&mut self, value: u32) {
-        bun_core::scoped_log!(
-            Loop,
-            "sub {} - {} = {}",
-            self.active,
-            value,
-            self.active.saturating_sub(value)
-        );
-        self.active = self.active.saturating_sub(value);
+    pub fn sub_active_raw(this: *mut Self, value: u32) {
+        bun_core::scoped_log!(Loop, "sub_active_raw - {}", value);
+        poll_access::loop_active_sub(this, value);
     }
 
-    /// Bulk `ref_`: applies `count` queued concurrent refs at once.
-    pub fn ref_count(&mut self, count: i32) {
+    /// Bulk `ref_`: applies `count` queued concurrent refs at once — same
+    /// raw-place rule as [`Self::inc_raw`].
+    pub fn ref_count_raw(this: *mut Self, count: i32) {
         bun_core::scoped_log!(Loop, "ref x {}", count);
-        self.num_polls += count;
-        self.active = self
-            .active
-            .saturating_add(u32::try_from(count).expect("int cast"));
+        poll_access::loop_ref_count_raw(this, count);
     }
 
-    pub fn unref_count(&mut self, count: i32) {
+    pub fn unref_count_raw(this: *mut Self, count: i32) {
         bun_core::scoped_log!(Loop, "unref x {}", count);
-        self.num_polls -= count;
-        self.active = self
-            .active
-            .saturating_sub(u32::try_from(count).expect("int cast"));
+        poll_access::loop_unref_count_raw(this, count);
     }
 
     // ── introspection ───────────────────────────────────────────────────────
@@ -519,9 +403,10 @@ impl PosixLoop {
         ffi::clear_corked_socket(this);
     }
 
-    /// `uws_loop_date_header_timer_update`.
-    pub fn update_date(&mut self) {
-        ffi::date_header_timer_update(self);
+    /// `uws_loop_date_header_timer_update`. Takes `*mut` — same raw-place
+    /// rule as the accounting twins (foreign wakers touch `pending_wakeups`).
+    pub fn update_date(this: *mut Self) {
+        ffi::date_header_timer_update(this);
     }
 
     /// Packetize HTTP/3 stream writes since the last process_conns.
@@ -539,8 +424,8 @@ impl PosixLoop {
     /// Free everything queued on `closed_head`/`closed_connecting_head`.
     /// Normally the tick postlude does this; at process/Worker teardown the
     /// loop has stopped, so shutdown drains explicitly (C6, C16).
-    pub fn drain_closed_sockets(&mut self) {
-        tick::drain_closed_sockets(self);
+    pub fn drain_closed_sockets(this: *mut Self) {
+        tick::drain_closed_sockets(this);
     }
 
     /// `close_all` on every group linked to this loop — the FULL linked list,
@@ -596,18 +481,6 @@ impl WindowsLoop {
         tick::run(this);
     }
 
-    /// LOOP-THREAD convenience only — see `PosixLoop::wakeup`; cross-thread
-    /// wakers use the raw [`wakeup::us_wakeup_loop`].
-    pub fn wakeup(&mut self) {
-        wakeup::us_wakeup_loop(self)
-    }
-
-    /// Same loop-thread-only contract as [`Self::wakeup`].
-    #[inline]
-    pub fn wake(&mut self) {
-        self.wakeup();
-    }
-
     pub fn next_tick(
         &mut self,
         user_data: *mut c_void,
@@ -616,43 +489,10 @@ impl WindowsLoop {
         wakeup::defer(self, user_data, defer_callback);
     }
 
-    /// # Safety
-    /// `this` must be the live loop pointer from `get`/`create`.
-    #[allow(unsafe_code)]
-    pub unsafe fn add_post_handler(
-        this: *mut Self,
-        ctx: *mut c_void,
-        callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler {
-        ffi::loop_add_post_handler(this, ctx, callback);
-        Handler {
-            loop_: this,
-            ctx,
-            callback,
-        }
-    }
-
-    /// # Safety
-    /// Same contract as [`Self::add_post_handler`].
-    #[allow(unsafe_code)]
-    pub unsafe fn add_pre_handler(
-        this: *mut Self,
-        ctx: *mut c_void,
-        callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler {
-        ffi::loop_add_pre_handler(this, ctx, callback);
-        Handler {
-            loop_: this,
-            ctx,
-            callback,
-        }
-    }
-
     // Poll/keep-alive accounting proxies (uv active handles keep the loop
-    // alive on Windows).
+    // alive on Windows). Raw-pointer twins only — parity with the POSIX raw
+    // twins so cross-platform callers never form `&mut Loop`.
 
-    /// Raw-pointer twins of `inc`/`dec`/`ref_`/`unref` — parity with the
-    /// POSIX raw twins so cross-platform callers never form `&mut Loop`.
     pub fn inc_raw(this: *mut Self) {
         crate::backend::libuv::inc_active(this);
     }
@@ -669,37 +509,21 @@ impl WindowsLoop {
         crate::backend::libuv::dec_active(this);
     }
 
-    pub fn inc(&mut self) {
-        crate::backend::libuv::inc_active(self);
-    }
-
-    pub fn dec(&mut self) {
-        crate::backend::libuv::dec_active(self);
-    }
-
-    pub fn ref_(&mut self) {
-        crate::backend::libuv::inc_active(self);
-    }
-
-    pub fn unref(&mut self) {
-        crate::backend::libuv::dec_active(self);
-    }
-
     pub fn is_active(&self) -> bool {
         let this: *const WindowsLoop = self;
         crate::backend::libuv::is_active(this.cast_mut())
     }
 
-    pub fn add_active(&mut self, value: u32) {
-        crate::backend::libuv::add_active(self, value);
+    pub fn add_active_raw(this: *mut Self, value: u32) {
+        crate::backend::libuv::add_active(this, value);
     }
 
-    pub fn sub_active(&mut self, value: u32) {
-        crate::backend::libuv::sub_active(self, value);
+    pub fn sub_active_raw(this: *mut Self, value: u32) {
+        crate::backend::libuv::sub_active(this, value);
     }
 
-    pub fn unref_count(&mut self, count: i32) {
-        crate::backend::libuv::unref_count(self, count);
+    pub fn unref_count_raw(this: *mut Self, count: i32) {
+        crate::backend::libuv::unref_count(this, count);
     }
 
     pub fn iteration_number(&self) -> u64 {
@@ -715,8 +539,9 @@ impl WindowsLoop {
         ffi::clear_corked_socket(this);
     }
 
-    pub fn update_date(&mut self) {
-        ffi::date_header_timer_update(self);
+    /// See `PosixLoop::update_date` — `*mut`, raw-place rule.
+    pub fn update_date(this: *mut Self) {
+        ffi::date_header_timer_update(this);
     }
 
     /// See `PosixLoop::drain_quic_if_necessary` — `*mut`, re-entrant (C17).
@@ -727,8 +552,8 @@ impl WindowsLoop {
         ffi::quic_flush_if_pending(this);
     }
 
-    pub fn drain_closed_sockets(&mut self) {
-        tick::drain_closed_sockets(self);
+    pub fn drain_closed_sockets(this: *mut Self) {
+        tick::drain_closed_sockets(this);
     }
 
     /// See `PosixLoop::close_all_groups` — `*mut`, on_close re-enters (C17).

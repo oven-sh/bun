@@ -783,14 +783,16 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
  * ninja, which relinks and nothing else: `linkDepends()` lists the order file,
  * so it is the only edge whose input changed.
  */
-export function regenerateOrderFile(cfg: Config, ctx: OrderFileContext): void {
+export function regenerateOrderFile(cfg: Config, ctx: OrderFileContext, reason?: string): void {
   const start = Date.now();
   const exeName = bunExeName(cfg); // bun-profile, or bun-assertions on an assertions build
-  const why = !cfg.canary
-    ? "release build"
-    : shouldGenerateOrderFile(cfg, ctx)
-      ? "[generate symbol order] in the commit message"
-      : "nothing to inherit";
+  const why =
+    reason ??
+    (!cfg.canary
+      ? "release build"
+      : shouldGenerateOrderFile(cfg, ctx)
+        ? "[generate symbol order] in the commit message"
+        : "nothing to inherit");
   console.log(`Tracing ${exeName} to build a fresh order file (${why})`);
   console.log("Each workload runs under an LD_PRELOAD page-fault tracer, so it is slower than a normal run.\n");
 
@@ -848,27 +850,40 @@ export function reportOrderFileFailure(error: Error): void {
   });
 }
 
+/** What verifying the order file against the linked binary concluded. */
+export type OrderFileVerdict = "applied" | "stale" | "ineffective" | "skipped";
+
 /**
  * Prove the relink honoured the order file: one lld silently ignores produces a
  * binary indistinguishable from an unordered one. Scale-free — compare where the
- * hot functions landed against where a typical function landed.
+ * hot functions landed against where a typical function landed. Returns "stale"
+ * when the symbol set has churned out from under an inherited file, so the
+ * caller can retrace instead of republishing it for every later build.
  */
-export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: string, { strict = true } = {}): void {
+export function verifyOrderFileApplied(
+  cfg: Config,
+  ctx: OrderFileContext,
+  exe: string,
+  { strict = true } = {},
+): OrderFileVerdict {
   const SAMPLE = 1000;
   /** Ordered, the hot set sits near the front; unordered, at ~100% of the control. */
   const MAX_FRACTION_OF_CONTROL = 0.4;
   /** Strict mode traced this exact binary, so nearly every name must resolve. */
   const MIN_STRICT_MATCH_RATE = 0.75;
+  /** Build-to-build churn on a branch loses a few percent; losing half the hot
+   * set means a symbol rename wave, and the file is stale, not merely aged. */
+  const MIN_INHERITED_MATCH_RATE = 0.5;
 
   const start = Date.now();
-  if (!orderFileEligible(cfg, ctx)) return;
+  if (!orderFileEligible(cfg, ctx)) return "skipped";
   const wanted = readFileSync(orderFilePath(cfg), "utf8")
     .split("\n")
     .filter((line: string) => line && !line.startsWith("#"))
     .slice(0, SAMPLE);
   if (wanted.length < SAMPLE) {
     console.log(`~ symbol order: only ${wanted.length} functions in the order file — nothing to verify`);
-    return;
+    return "skipped";
   }
 
   // Same resolution as generate.ts: honor NM, else llvm-nm, else nm.
@@ -879,7 +894,7 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
   }
   if (nm.status !== 0) {
     console.log("~ symbol order: no working nm — skipping verification");
-    return;
+    return "skipped";
   }
 
   const addresses = new Map<string, number>();
@@ -917,14 +932,21 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
       "not one of the order file's symbols is in the linked binary",
       "the symbol spellings do not match this link — see scripts/orderfile/generate.ts",
     );
-    return;
+    return "stale";
   }
   if (strict && rate < MIN_STRICT_MATCH_RATE) {
     fail(
       `only ${offsets.length}/${wanted.length} of the order file's symbols are in the binary we traced`,
       "the order file and the link disagree on symbol names — most of the win is being silently lost",
     );
-    return;
+    return "stale";
+  }
+  if (!strict && rate < MIN_INHERITED_MATCH_RATE) {
+    fail(
+      `only ${offsets.length}/${wanted.length} of the inherited order file's symbols are in this binary`,
+      "the symbol set has churned since the file was traced — most of the win is silently lost",
+    );
+    return "stale";
   }
 
   const hot = median(offsets);
@@ -933,10 +955,11 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
       `the order file had no effect: hot functions sit at ${mb(hot)}, a typical one at ${mb(control)}`,
       "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
     );
-    return;
+    return "ineffective";
   }
   console.log(
     `+ symbol order: applied — ${offsets.length}/${wanted.length} (${(rate * 100).toFixed(0)}%) of the hottest ` +
       `functions resolved; median ${mb(hot)} into .text vs ${mb(control)} for a typical one (${since(start)})`,
   );
+  return "applied";
 }

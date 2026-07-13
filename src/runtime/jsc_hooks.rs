@@ -917,8 +917,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             .pending_unref_counter
             .swap(0, core::sync::atomic::Ordering::Relaxed);
         if pending_unref > 0 {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).unref_count(pending_unref) };
+            // Raw-place twin: `loop_` is the live per-thread uws loop; a
+            // `&mut Loop` would span `pending_wakeups` (foreign fetch_add).
+            bun_usockets::Loop::unref_count_raw(loop_, pending_unref);
         }
     }
 
@@ -1054,8 +1055,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             .pending_unref_counter
             .swap(0, core::sync::atomic::Ordering::Relaxed);
         if pending_unref > 0 {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).unref_count(pending_unref) };
+            // Raw-place twin: `loop_` is the live per-thread uws loop; a
+            // `&mut Loop` would span `pending_wakeups` (foreign fetch_add).
+            bun_usockets::Loop::unref_count_raw(loop_, pending_unref);
         }
     }
 

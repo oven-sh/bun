@@ -1821,15 +1821,6 @@ mod imp {
         unsafe { win::shutdown(fd, win::SD_RECEIVE) };
     }
 
-    /// No-op on Windows (R8.1): libuv sets FIONBIO at poll init; connect
-    /// paths call `win::set_fionbio` explicitly.
-    pub(crate) fn set_nonblocking(fd: LIBUS_SOCKET_DESCRIPTOR) -> i32 {
-        fd as i32
-    }
-
-    /// No-op off Darwin.
-    pub(crate) fn no_sigpipe(_fd: LIBUS_SOCKET_DESCRIPTOR) {}
-
     /// Mirror of `errno()`: winsock error codes live in the thread's
     /// last-error slot (`WSAGetLastError` == `GetLastError`), so the
     /// save/restore dance around close() round-trips through it.

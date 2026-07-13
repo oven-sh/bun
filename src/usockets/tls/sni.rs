@@ -173,11 +173,6 @@ impl SniMap {
         }
     }
 
-    pub(crate) fn find_userdata(&self, hostname: &CStr) -> *mut c_void {
-        self.lookup(hostname)
-            .map_or(core::ptr::null_mut(), |entry| entry.user)
-    }
-
     /// Wildcard-aware resolution for a negotiated servername (mid-handshake).
     /// The returned ctx is BORROWED from the tree (dispatch does
     /// SSL_set_SSL_CTX, which takes its own ref) — do not unref.

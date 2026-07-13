@@ -189,11 +189,6 @@ impl Timer {
     pub(crate) fn owner_loop(t: *mut Timer) -> *mut Loop {
         uv::timer_loop(t)
     }
-
-    /// `us_timer_ext`.
-    pub(crate) fn ext(t: *mut Timer) -> *mut c_void {
-        uv::timer_ext(t)
-    }
 }
 
 /// Sweep driver: on libuv the 4 s sweep is the repeating uv timer's callback,

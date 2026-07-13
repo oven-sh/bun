@@ -20,6 +20,7 @@ use crate::group::SocketGroup;
 use crate::handle::CloseCode;
 use crate::kind::SocketKind;
 use crate::loop_::Loop;
+use crate::neterr::is_would_block;
 use crate::tls::context::{SslCtx, us_bun_verify_error_t};
 use crate::tls::state::{HandshakeState, TlsState};
 use crate::tls::{SSL, Transport};
@@ -41,6 +42,9 @@ impl SocketFlags {
     pub(crate) const IS_SHUT_DOWN: u8 = 1 << 1;
     pub(crate) const IS_PAUSED: u8 = 1 << 2;
     pub(crate) const ALLOW_HALF_OPEN: u8 = 1 << 3;
+    /// Set on all platforms; only the POSIX read path (SCM_RIGHTS recv)
+    /// tests it — Windows IPC rides named pipes instead.
+    #[cfg_attr(windows, allow(dead_code))]
     pub(crate) const IS_IPC: u8 = 1 << 4;
     pub(crate) const LAST_WRITE_FAILED: u8 = 1 << 7;
 
@@ -151,18 +155,6 @@ pub(crate) fn free_unstarted(loop_: *mut Loop, s: *mut us_socket_t) {
 }
 
 // ── platform errno helpers ────────────────────────────────────────────────────
-
-/// R4.7: POSIX checks EWOULDBLOCK ONLY.
-#[cfg(not(windows))]
-#[inline]
-fn is_would_block(neg_errno: isize) -> bool {
-    neg_errno == -(libc::EWOULDBLOCK as isize)
-}
-#[cfg(windows)]
-#[inline]
-fn is_would_block(neg_errno: isize) -> bool {
-    neg_errno == -10035 // WSAEWOULDBLOCK
-}
 
 #[cfg(not(windows))]
 pub(crate) const ECONNRESET_ERRNO: c_int = libc::ECONNRESET;
@@ -321,6 +313,17 @@ pub(crate) fn close_raw(s: *mut SocketHeader, code: CloseCode, reason: *mut c_vo
 /// `us_internal_socket_close_raw` (socket.c:263-337), exact 10-step order.
 /// `code`: 0..2 = CloseCode, >2 = real errno (contract C3).
 pub(crate) fn close_raw_errno(s: *mut SocketHeader, code: c_int, reason: *mut c_void) {
+    close_raw_impl(s, code, reason, true);
+}
+
+/// SEMI_SOCKET close preceding a direct-connect error dispatch (C5
+/// close-then-notify): as `close_raw(failure)`, but the owner ext ref stays
+/// attached — `dispatch_connect_error` completes the terminal itself.
+pub(crate) fn close_raw_keep_owner(s: *mut SocketHeader) {
+    close_raw_impl(s, CloseCode::failure as c_int, ptr::null_mut(), false);
+}
+
+fn close_raw_impl(s: *mut SocketHeader, code: c_int, reason: *mut c_void, release_owner: bool) {
     // Step 0 (§1.4): a JS callback inside BoringSSL destroyed this socket —
     // defer to the SSL driver's epilogue, preserving the close code.
     if let Some(t) = tls_state(s) {
@@ -349,7 +352,7 @@ pub(crate) fn close_raw_errno(s: *mut SocketHeader, code: c_int, reason: *mut c_
         // TLS §5.3: user on_close first (ALPN/cert still inspectable) — the
         // SSL is freed in step 8, after the dispatch.
         dispatch::dispatch_close(s, code, reason);
-    } else {
+    } else if release_owner {
         // Silent SEMI_SOCKET close: no callback, but core's owner ext ref is
         // still released exactly once (Protocol v2 terminal contract).
         dispatch::release_owner_on_silent_terminal(s);
@@ -396,8 +399,24 @@ pub(crate) fn teardown_connecting_attempt(s: *mut SocketHeader) {
     with_socket(s, |h| h.flags.set(SocketFlags::IS_CLOSED, true));
 }
 
+/// Unit-test stand-in for a §5.2 deferred TLS close (tests can't build a
+/// real handshake): `socket_close` on the target returns leaving it linked
+/// and un-closed, exactly like a close_notify wait; `close_raw` ignores it.
+#[cfg(test)]
+pub(crate) mod test_defer_close {
+    use core::sync::atomic::{AtomicPtr, AtomicUsize};
+    pub(crate) static TARGET: AtomicPtr<super::SocketHeader> =
+        AtomicPtr::new(core::ptr::null_mut());
+    pub(crate) static ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+}
+
 /// `us_socket_close` (R3.16): TLS routes to the graceful §5.2 close.
 pub(crate) fn socket_close(s: *mut SocketHeader, code: CloseCode, reason: *mut c_void) {
+    #[cfg(test)]
+    if s == test_defer_close::TARGET.load(core::sync::atomic::Ordering::Relaxed) {
+        test_defer_close::ATTEMPTS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        return;
+    }
     // Live happy-eyeballs attempt: a direct close would strand its entry in
     // ConnectingSocket::attempts (stale slab pointer at the connecting
     // terminal) — abort the whole connect instead; it tears down `s` too.
@@ -556,7 +575,7 @@ pub(crate) fn on_connect(s: *mut SocketHeader, cs: *mut ConnectingSocket, error:
     };
     if error != 0 {
         if cs.is_null() {
-            // Direct connect: the handler is expected to close the socket.
+            // Direct connect: dispatch closes the socket before the notify (C5).
             dispatch::dispatch_connect_error(s, error);
         } else {
             crate::connecting::attempt_failed(cs, s);
@@ -811,30 +830,10 @@ fn tls_aware_on_end(s: *mut SocketHeader) {
     }
 }
 
-// ── thin loop-facing wrappers ─────────────────────────────────────────────────
-
-pub(crate) fn on_readable(s: *mut SocketHeader) {
-    on_socket_poll_ready(s, false, false, Events::READABLE);
-}
-
-pub(crate) fn on_writable(s: *mut SocketHeader) {
-    on_socket_poll_ready(s, false, false, Events::WRITABLE);
-}
-
-pub(crate) fn on_end(s: *mut SocketHeader) {
-    on_socket_poll_ready(s, false, true, Events::NONE);
-}
-
 // ── handle-facing methods ─────────────────────────────────────────────────────
 
 impl SocketHeader {
     // ── lifecycle ───────────────────────────────────────────────────────────
-
-    /// Fire the open path / kick TLS accept-connect.
-    pub fn open(&mut self, is_client: bool, ip_addr: Option<&[u8]>) {
-        let s: *mut Self = self;
-        socket_open(s, is_client, ip_addr.unwrap_or(&[]));
-    }
 
     /// `us_socket_pause` (R3.23): keep only writable armed.
     pub fn pause(&mut self) {

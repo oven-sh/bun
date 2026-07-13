@@ -159,7 +159,9 @@ pub(crate) fn last_errno() -> i32 {
     unsafe { *libc::__error() }
 }
 
-#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+// macos-only: the sole caller is the ERROR_EVENTS kevent64 wrapper; the
+// FreeBSD shim suppresses eventlist harvesting and never mirrors errno.
+#[cfg(target_os = "macos")]
 fn set_errno(v: i32) {
     // SAFETY: thread-local errno location.
     unsafe { *libc::__error() = v }
@@ -595,6 +597,48 @@ pub(crate) fn loop_unref_raw(loop_: *mut Loop) {
     }
 }
 
+/// `add_active`/`sub_active` twins of [`num_polls_add`] — raw places only;
+/// both saturate like the old `&mut` accessors did.
+#[cfg(not(windows))]
+pub(crate) fn loop_active_add(loop_: *mut Loop, value: u32) {
+    // SAFETY: see `num_polls_add`; `active` is loop-thread-only.
+    unsafe {
+        let a = &raw mut (*loop_).active;
+        *a = (*a).saturating_add(value);
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn loop_active_sub(loop_: *mut Loop, value: u32) {
+    // SAFETY: see `loop_active_add`.
+    unsafe {
+        let a = &raw mut (*loop_).active;
+        *a = (*a).saturating_sub(value);
+    }
+}
+
+/// Bulk `ref_`/`unref` twins ([`loop_ref_raw`] applied `count` times) for the
+/// queued-concurrent-refs drain; same raw-place rule as [`num_polls_add`].
+#[cfg(not(windows))]
+pub(crate) fn loop_ref_count_raw(loop_: *mut Loop, count: i32) {
+    // SAFETY: see `loop_ref_raw`.
+    unsafe {
+        *(&raw mut (*loop_).num_polls) += count;
+        let a = &raw mut (*loop_).active;
+        *a = (*a).saturating_add(u32::try_from(count).expect("int cast"));
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn loop_unref_count_raw(loop_: *mut Loop, count: i32) {
+    // SAFETY: see `loop_ref_raw`.
+    unsafe {
+        *(&raw mut (*loop_).num_polls) -= count;
+        let a = &raw mut (*loop_).active;
+        *a = (*a).saturating_sub(u32::try_from(count).expect("int cast"));
+    }
+}
+
 /// ACQUIRE swap-to-0 before blocking (R1.10 step 5).
 #[cfg(not(windows))]
 pub(crate) fn pending_wakeups_swap_acquire(loop_: *mut Loop) -> u32 {
@@ -607,6 +651,7 @@ pub(crate) fn pending_wakeups_swap_acquire(loop_: *mut Loop) -> u32 {
 /// Erase a loop-taking callback to the `CallbackFn` shape — identical C ABI
 /// (one pointer argument, no return); dispatch passes the loop pointer back
 /// because `cb_expects_the_loop` is set.
+#[cfg(not(windows))]
 pub(crate) fn erase_loop_cb(cb: unsafe extern "C" fn(*mut crate::loop_::Loop)) -> CallbackFn {
     // SAFETY: ABI-identical fn pointer types (pointer arg, unit return).
     unsafe { core::mem::transmute::<unsafe extern "C" fn(*mut crate::loop_::Loop), CallbackFn>(cb) }
@@ -614,11 +659,13 @@ pub(crate) fn erase_loop_cb(cb: unsafe extern "C" fn(*mut crate::loop_::Loop)) -
 
 /// Box-allocate the wakeup async's CALLBACK poll. Owner:
 /// `loop.data.wakeup_async` until [`free_callback_poll`] at loop teardown.
+#[cfg(not(windows))]
 pub(crate) fn alloc_callback_poll(cp: CallbackPoll) -> *mut CallbackPoll {
     bun_core::heap::into_raw(Box::new(cp))
 }
 
 /// Release a poll from [`alloc_callback_poll`] (exactly once, at async close).
+#[cfg(not(windows))]
 pub(crate) fn free_callback_poll(p: *mut CallbackPoll) {
     // SAFETY: `p` came from `alloc_callback_poll`; the async is closed once
     // and nothing references it afterwards.

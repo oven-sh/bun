@@ -1236,6 +1236,20 @@ impl WebWorker {
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr was published under vm_lock; sole owner now.
             loop_ = Some(unsafe { &*vm_ptr }.uws_loop());
+
+            // Rundown gate: producers that already entered a cross-thread
+            // post (enqueue_task_concurrent / ref_concurrently) bumped
+            // `external_posts` before checking `terminating`. Set the flag,
+            // then spin until every in-flight post has left the queues — the
+            // release below (and the VM free at step 5) must not race them.
+            // SAFETY: vm_ptr is live; EventLoop is a value field of the VM,
+            // freed only at step 5 after this drain completes.
+            let el = unsafe { &*vm_ptr }.event_loop_shared();
+            el.terminating
+                .store(true, core::sync::atomic::Ordering::SeqCst);
+            while el.external_posts.load(core::sync::atomic::Ordering::SeqCst) != 0 {
+                core::hint::spin_loop();
+            }
         }
 
         // ---- 2. User exit handlers -----------------------------------------

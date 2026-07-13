@@ -24,6 +24,7 @@ pub struct sockaddr_storage {
 use crate::LIBUS_RECV_BUFFER_LENGTH;
 use crate::backend::Events;
 use crate::loop_::Loop;
+use crate::neterr::{is_would_block, last_errno};
 use crate::unsafe_core::{ffi, io};
 use crate::{LIBUS_SOCKET_DESCRIPTOR, LIBUS_SOCKET_ERROR};
 
@@ -32,13 +33,13 @@ use crate::{LIBUS_SOCKET_DESCRIPTOR, LIBUS_SOCKET_ERROR};
 pub(crate) const LIBUS_SEND_BUFFER_LENGTH: usize = 16384;
 
 /// `LIBUS_UDP_MAX_SIZE` — per-datagram slot in the shared recv buffer.
+/// Windows reads one datagram per recvfrom and never slices the buffer.
+#[cfg(not(windows))]
 pub(crate) const LIBUS_UDP_MAX_SIZE: usize = 64 * 1024;
 
-/// Batch size: 8 on POSIX (512 KiB / 64 KiB), 1 on Windows (plain recvfrom).
+/// Batch size: 8 on POSIX (512 KiB / 64 KiB); Windows is 1 (plain recvfrom).
 #[cfg(not(windows))]
 pub(crate) const LIBUS_UDP_RECV_COUNT: usize = LIBUS_RECV_BUFFER_LENGTH / LIBUS_UDP_MAX_SIZE;
-#[cfg(windows)]
-pub(crate) const LIBUS_UDP_RECV_COUNT: usize = 1;
 
 /// Per-packet ancillary-data capacity (bsd.h `control[..][256]`).
 #[cfg(not(windows))]
@@ -88,21 +89,10 @@ pub(crate) struct Meta {
     pub(crate) loop_: *mut Loop,
     pub(crate) data_cb: Option<extern "C" fn(*mut Socket, *mut PacketBuffer, c_int)>,
     pub(crate) drain_cb: Option<extern "C" fn(*mut Socket)>,
+    /// Only dispatched on Linux/Android (recvmmsg partial-error surface);
+    /// other platforms treat recv errors as fatal and never read it.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
     pub(crate) recv_error_cb: Option<extern "C" fn(*mut Socket, c_int)>,
-}
-
-fn last_errno() -> c_int {
-    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-}
-
-#[cfg(not(windows))]
-fn would_block(errno: c_int) -> bool {
-    errno == libc::EWOULDBLOCK
-}
-#[cfg(windows)]
-fn would_block(errno: c_int) -> bool {
-    // WSAEWOULDBLOCK; std maps WSAGetLastError into last_os_error on Windows.
-    errno == 10035
 }
 
 /// Map the io layer's `0 / -errno` convention back to the raw setsockopt rc
@@ -378,7 +368,7 @@ pub(crate) fn dispatch_ready_poll(s: *mut Socket, error: bool, readable: bool, w
             } else {
                 if npackets == -1 {
                     let errno = last_errno();
-                    if !would_block(errno) {
+                    if !is_would_block(-(errno as isize)) {
                         #[cfg(any(target_os = "linux", target_os = "android"))]
                         {
                             recv_error_surfaced = true;

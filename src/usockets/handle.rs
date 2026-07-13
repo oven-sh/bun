@@ -701,16 +701,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    /// Kick TLS open on an already-connected socket (the `us_socket_open`
-    /// path). Raw entry: dispatches on_open / on_handshake (C17).
-    pub fn start_tls(&self, is_client: bool) {
-        if let InternalSocket::Connected(r) = self.socket {
-            if let Some(p) = r.resolve() {
-                crate::socket::socket_open(p.as_ptr(), is_client, &[]);
-            }
-        }
-    }
-
     /// Kick the deferred post-adopt handshake (C10 split: adopt → repoint
     /// ext → handshake). Raw entry: SSL_do_handshake dispatches on_handshake
     /// and the ALPN/SNI callbacks (C17).
@@ -908,14 +898,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             socket: InternalSocket::UpgradedDuplex(d),
         }
     }
-    #[cfg(windows)]
-    #[inline]
-    pub fn from_named_pipe(p: *mut WindowsNamedPipe) -> Self {
-        Self {
-            socket: InternalSocket::Pipe(p),
-        }
-    }
-
     /// Wrap an already-open fd; ext stores `Option<NonNull<This>>` (8-byte
     /// niche layout). C14: owns the fd only on success.
     pub fn from_fd<This>(
@@ -1647,7 +1629,7 @@ impl ListenSocket {
     }
 
     /// SNI node; `ssl_ctx` is up_ref'd, dropped on close/remove. `user` is
-    /// what `find_server_name_userdata` recovers.
+    /// stashed on the selected CTX for the missing-SNI resolver.
     pub fn add_server_name(
         &mut self,
         hostname: &core::ffi::CStr,
@@ -1683,15 +1665,6 @@ impl ListenSocket {
         if let Some(sni) = crate::group::listener_data(ls).sni.as_mut() {
             sni.remove(hostname);
         }
-    }
-
-    pub fn find_server_name_userdata<T>(
-        &mut self,
-        hostname: &core::ffi::CStr,
-    ) -> Option<NonNull<T>> {
-        let ls: *mut Self = self;
-        let sni = crate::group::listener_data(ls).sni.as_ref()?;
-        NonNull::new(sni.find_userdata(hostname).cast::<T>())
     }
 
     /// Protocol v2 accept hook (`Listener::on_create`, docs/design.md): runs

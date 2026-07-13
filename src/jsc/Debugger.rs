@@ -311,7 +311,8 @@ impl Debugger {
                     {
                         let pending_unref = this.take_pending_unref();
                         if pending_unref > 0 {
-                            this.uws_loop_mut().unref_count(pending_unref);
+                            // Raw-place twin — no `&mut Loop` on a published loop.
+                            bun_usockets::Loop::unref_count_raw(this.uws_loop(), pending_unref);
                         }
                     }
 

@@ -72,8 +72,6 @@ pub use bun_jsc_macros::uws_callback;
 pub use bun_usockets::PosixLoop;
 #[cfg(windows)]
 pub use bun_usockets::WindowsLoop;
-#[cfg(windows)]
-pub use bun_usockets::backend::libuv::Timer;
 pub use bun_usockets::us_wakeup_loop;
 pub use bun_usockets::{
     AnySocket, CloseCode, ConnectError, ConnectResult, ConnectingSocket, ExtSlot, InternalLoopData,
@@ -87,15 +85,7 @@ pub use bun_usockets::{
 pub use bun_usockets::{Error, Result};
 pub use us_socket::us_socket_stream_buffer_t;
 
-/// Alias for the per-group C vtable struct under its pre-merge name.
-pub use bun_usockets::VTable as SocketGroupVTable;
-#[cfg(not(windows))]
-pub type WindowsLoop = bun_usockets::PosixLoop; // unified on non-Windows
-
 pub type Socket = us_socket_t;
-/// Alias used by some callers (`websocket_client`, `sql_jsc`) that named
-/// the dispatch tag `DispatchKind`. Same enum.
-pub type DispatchKind = SocketKind;
 /// Legacy alias — `CloseCode` is the one canonical `#[repr(i32)]` enum.
 pub type CloseKind = CloseCode;
 

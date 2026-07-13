@@ -197,21 +197,6 @@ impl PollRef {
         Self::change_via(p, loop_, readable, writable)
     }
 
-    /// [`Self::change`] with loop mutation routed through the caller-held
-    /// borrow — required when a `&mut Loop` is live in the calling frame
-    /// (a write through the slot's stored loop pointer would be a foreign
-    /// mutation under that borrow's protector).
-    pub fn change_on(self, loop_: &mut Loop, readable: bool, writable: bool) -> Result<(), i32> {
-        let Some(p) = self.resolve() else {
-            return Ok(());
-        };
-        debug_assert!(core::ptr::eq(
-            poll_access::with_registered(p.as_ptr(), |q| q.loop_),
-            loop_
-        ));
-        Self::change_via(p, loop_, readable, writable)
-    }
-
     fn change_via(
         p: NonNull<RegisteredPoll>,
         loop_: *mut Loop,
@@ -249,19 +234,6 @@ impl PollRef {
     pub fn unregister(self) {
         let Some(p) = self.resolve() else { return };
         let loop_ = poll_access::with_registered(p.as_ptr(), |q| q.loop_);
-        Self::unregister_via(p, loop_);
-    }
-
-    /// [`Self::unregister`] with loop mutation routed through the caller-held
-    /// borrow (same protector rule as [`Self::change_on`]). The transferred
-    /// owner ref is released inside: an owner destructor that touches the
-    /// loop other than via `loop_` would still be a foreign access.
-    pub fn unregister_on(self, loop_: &mut Loop) {
-        let Some(p) = self.resolve() else { return };
-        debug_assert!(core::ptr::eq(
-            poll_access::with_registered(p.as_ptr(), |q| q.loop_),
-            loop_
-        ));
         Self::unregister_via(p, loop_);
     }
 
@@ -385,16 +357,18 @@ pub(crate) fn register<P: PollProtocol>(
 }
 
 impl Loop {
-    /// Safe registration entry: see [`register`] for the ownership and
-    /// duplicate-source contract. `&mut self` proves the loop is live and
-    /// that the caller runs on the loop thread.
+    /// Registration entry: see [`register`] for the ownership and duplicate-
+    /// source contract. Raw-place twin shape (like `Loop::inc_raw`): `this`
+    /// is the live loop pointer and the caller runs on the loop thread — a
+    /// `&mut Loop` receiver would span `pending_wakeups`, which foreign
+    /// threads `fetch_add` concurrently (R10.6, C17).
     pub fn register_poll<P: PollProtocol>(
-        &mut self,
+        this: *mut Loop,
         source: PollSource,
         owner: OwnerRef<P::Owner>,
         keep_alive: bool,
     ) -> Result<PollRef, i32> {
-        register::<P>(self, source, owner, keep_alive)
+        register::<P>(this, source, owner, keep_alive)
     }
 }
 

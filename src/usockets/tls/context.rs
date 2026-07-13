@@ -583,20 +583,6 @@ pub(crate) fn mark_ctx_user_ca(ctx: *mut SslCtx) {
     );
 }
 
-pub(crate) fn ctx_has_user_ca(ctx: *const SslCtx) -> bool {
-    !bssl::ctx_get_ex_data(ctx, bssl::ex_indices().ctx_user_ca).is_null()
-}
-
-/// SSLContextCache tombstone back-pointer; its `CRYPTO_EX_free` is the Rust
-/// `bun_ssl_ctx_cache_on_free` (docs/tls.md A.2).
-pub fn ctx_cache_set_entry(ctx: *mut SslCtx, entry: *mut c_void) {
-    bssl::ctx_set_ex_data(ctx, bssl::ex_indices().ctx_cache, entry);
-}
-
-pub fn ctx_cache_entry(ctx: *const SslCtx) -> *mut c_void {
-    bssl::ctx_get_ex_data(ctx, bssl::ex_indices().ctx_cache)
-}
-
 /// Per-domain SNI userdata stashed on the selected CTX so per-socket lookup
 /// works via `SSL_get_SSL_CTX` regardless of which ctx SNI picked.
 pub(crate) fn ctx_set_sni_user(ctx: *mut SslCtx, user: *mut c_void) {
@@ -623,17 +609,6 @@ pub(crate) fn clear_listener_backref(ssl: *mut SSL) {
     bssl::ssl_set_ex_data(ssl, bssl::ex_indices().listener, ptr::null_mut());
 }
 
-/// Session/keylog opt-in marker for SSLs attached to a real socket
-/// (Bun.connect / node:tls only — fetch/serve/postgres/ws never pay session
-/// serialization, openssl.c:169-179).
-pub(crate) fn mark_session_events_socket(ssl: *mut SSL) {
-    bssl::enable_pending_events(ssl);
-}
-
-pub(crate) fn session_events_enabled(ssl: *const SSL) -> bool {
-    bssl::is_socket_marked(ssl)
-}
-
 // ── Pending session/keylog park-then-flush queues (openssl.c:226-439) ───────
 // Both callbacks fire from INSIDE SSL_read/SSL_do_handshake; they only
 // serialize + park (caps above, wire-order preserved). Flushes happen after
@@ -657,14 +632,4 @@ pub fn pop_pending_session(ssl: *mut SSL, out: &mut [u8]) -> usize {
 /// appends before emitting 'keylog'.
 pub fn pop_pending_keylog(ssl: *mut SSL, out: &mut [u8]) -> usize {
     bssl::pop_pending_keylog(ssl, out)
-}
-
-/// Drain ALL parked sessions in arrival order for dispatch (each entry is a
-/// distinct resumable session and gets its own 'session' event).
-pub(crate) fn drain_pending_sessions(ssl: *mut SSL) -> Vec<Box<[u8]>> {
-    bssl::drain_pending_sessions(ssl)
-}
-
-pub(crate) fn drain_pending_keylog(ssl: *mut SSL) -> Vec<Box<[u8]>> {
-    bssl::drain_pending_keylog(ssl)
 }

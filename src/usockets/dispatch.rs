@@ -411,6 +411,10 @@ pub(crate) fn dispatch_fd(s: *mut us_socket_t, fd: c_int) {
 
 pub(crate) fn dispatch_connect_error(s: *mut us_socket_t, code: c_int) {
     if let Some(vt) = vt(s) {
+        // C5 close-then-notify: core closes the never-opened socket itself
+        // (silent SEMI close, C1; a handler re-close is an idempotent no-op)
+        // so a handler that never closes cannot leak a spinning fd.
+        crate::socket::close_raw_keep_owner(s);
         trampolines::invoke_connect_error(vt, s, code);
         // Terminal (C2): release core's owner ref after on_connect_error.
         trampolines::release_owner_ext(s);
@@ -432,31 +436,28 @@ pub(crate) fn dispatch_handshake(s: *mut us_socket_t, ok: bool, err: us_bun_veri
     }
 }
 
-// Only bun_socket_tls ever produces side-channel events (docs/tls.md §6.1);
-// the kind gate below only differs from the old C in unreachable states.
+/// Only bun_socket_tls ever produces side-channel events (docs/tls.md §6.1);
+/// the kind gate only differs from the old C in unreachable states.
+fn tls_side_channel_target(s: *mut us_socket_t) -> bool {
+    trampolines::socket_slot_live(s) && trampolines::socket_kind(s) == SocketKind::BunSocketTls
+}
 
 pub(crate) fn dispatch_ssl_raw_tap(s: *mut us_socket_t, data: &[u8]) {
-    if !trampolines::socket_slot_live(s) || trampolines::socket_kind(s) != SocketKind::BunSocketTls
-    {
-        return;
+    if tls_side_channel_target(s) {
+        (tls_hooks().ssl_raw_tap)(s, data);
     }
-    (tls_hooks().ssl_raw_tap)(s, data);
 }
 
 pub(crate) fn dispatch_session(s: *mut us_socket_t, session: &[u8]) {
-    if !trampolines::socket_slot_live(s) || trampolines::socket_kind(s) != SocketKind::BunSocketTls
-    {
-        return;
+    if tls_side_channel_target(s) {
+        (tls_hooks().session)(s, session);
     }
-    (tls_hooks().session)(s, session);
 }
 
 pub(crate) fn dispatch_keylog(s: *mut us_socket_t, line: &[u8]) {
-    if !trampolines::socket_slot_live(s) || trampolines::socket_kind(s) != SocketKind::BunSocketTls
-    {
-        return;
+    if tls_side_channel_target(s) {
+        (tls_hooks().keylog)(s, line);
     }
-    (tls_hooks().keylog)(s, line);
 }
 
 /// True when `kind` routes through the group vtable instead of a static
@@ -468,4 +469,90 @@ pub(crate) fn dispatch_keylog(s: *mut us_socket_t, line: &[u8]) {
 /// `uses_group_vtable(old) == uses_group_vtable(new)` must hold at adopt.
 pub(crate) fn uses_group_vtable(kind: SocketKind) -> bool {
     kind.is_uws() || matches!(kind, SocketKind::Dynamic)
+}
+
+// Test-only: raw fd + C-ABI vtable handler need `unsafe` outside unsafe_core.
+#[cfg(all(test, not(miri), any(target_os = "linux", target_os = "android")))]
+#[allow(unsafe_code)]
+mod tests {
+    use super::*;
+    use crate::backend::PollType;
+    use crate::group::SocketGroup;
+    use crate::loop_::tick;
+    use crate::socket::{self, SocketFlags};
+    use crate::unsafe_core::ext::header_mut;
+    use crate::unsafe_core::test_support::{create_test_loop, free_test_loop};
+    use crate::unsafe_core::trampolines::socket_slot_live;
+    use core::ptr;
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    static CLOSED_AT_NOTIFY: AtomicI32 = AtomicI32::new(-1);
+
+    unsafe extern "C" fn record_connect_error(
+        s: *mut us_socket_t,
+        _code: c_int,
+    ) -> *mut us_socket_t {
+        CLOSED_AT_NOTIFY.store(header_mut(s).is_closed() as i32, Ordering::SeqCst);
+        s
+    }
+
+    static VT: VTable = VTable {
+        on_open: None,
+        on_data: None,
+        on_fd: None,
+        on_writable: None,
+        on_close: None,
+        on_timeout: None,
+        on_long_timeout: None,
+        on_end: None,
+        on_connect_error: Some(record_connect_error),
+        on_connecting_error: None,
+        on_handshake: None,
+    };
+
+    /// C5 close-then-notify: dispatch_connect_error closes the SEMI_SOCKET
+    /// itself, BEFORE the handler runs — a handler that never closes must not
+    /// leave the failed fd registered.
+    #[test]
+    fn connect_error_closes_before_notify() {
+        let loop_ = create_test_loop();
+        let mut group = Box::new(SocketGroup::default());
+        group.init(loop_, Some(&VT), ptr::null_mut());
+        let g: *mut SocketGroup = &mut *group;
+
+        // SAFETY: plain fd creation; the close under test owns it from here.
+        let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+        assert!(fd >= 0);
+        let s = socket::alloc(
+            loop_,
+            PollType::SemiSocket,
+            fd,
+            g,
+            SocketKind::Dynamic,
+            SocketFlags(0),
+            0,
+        );
+        crate::group::link_socket(g, s);
+        crate::unsafe_core::poll_access::num_polls_add(loop_, 1); // armed connect poll
+
+        dispatch_connect_error(s, libc::ECONNREFUSED);
+
+        assert_eq!(
+            CLOSED_AT_NOTIFY.load(Ordering::SeqCst),
+            1,
+            "on_connect_error must observe the socket already closed (C5)"
+        );
+        assert!(
+            header_mut(s).is_closed(),
+            "dispatch must close a failed direct connect even if the handler does not"
+        );
+
+        tick::drain_closed_sockets(loop_);
+        assert!(!socket_slot_live(s), "closed slot drains at the postlude");
+
+        // SAFETY: heads drained above; group unlinks itself from the loop.
+        unsafe { SocketGroup::destroy(g) };
+        drop(group);
+        free_test_loop(loop_);
+    }
 }

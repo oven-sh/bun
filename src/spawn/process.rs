@@ -442,8 +442,7 @@ impl Process {
             let fd = unsafe { &mut *poll };
             fd.enable_keeping_process_alive(ctx);
 
-            // SAFETY: `platform_event_loop` returns the live uws loop.
-            let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
+            let loop_ = self.event_loop.platform_event_loop();
             match fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT) {
                 Ok(()) => {
                     self.ref_();
@@ -473,8 +472,7 @@ impl Process {
         }
 
         if let Some(fd) = self.poller.fd_poll_mut() {
-            // SAFETY: `platform_event_loop` returns the live uws loop.
-            let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
+            let loop_ = self.event_loop.platform_event_loop();
             let maybe = fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT);
             if maybe.is_ok() {
                 self.ref_();

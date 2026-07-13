@@ -395,7 +395,6 @@ pub struct TlsState {
     pub(crate) handshake_callback_fired: bool,
     /// Tee inbound ciphertext to dispatch_ssl_raw_tap before SSL_read.
     pub(crate) raw_tap: bool,
-    pub(crate) is_server: bool,
     /// SSL_write starved for handshake input; next read re-fires writable.
     write_wants_read: bool,
     /// SSL_read starved for wire capacity; next writable re-enters the read.
@@ -489,7 +488,6 @@ impl TlsState {
             handshake_state: HandshakeState::Pending,
             handshake_callback_fired: false,
             raw_tap: false,
-            is_server: !is_client,
             write_wants_read: false,
             read_wants_write: false,
             shutdown_after_spill: false,

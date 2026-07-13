@@ -3,8 +3,10 @@
 //! refcounted (`sweep_timer_count`). Implements docs/semantics.md §5
 //! (contract C9).
 
+#[cfg(not(windows))]
 use bun_core::{Timespec, TimespecMockMode};
 
+#[cfg(not(windows))]
 use crate::LIBUS_TIMEOUT_GRANULARITY;
 use crate::dispatch;
 use crate::group::SocketGroup;
@@ -12,11 +14,14 @@ use crate::loop_::Loop;
 use crate::unsafe_core::deref::{with_group, with_socket};
 use crate::unsafe_core::ffi;
 
-/// `LIBUS_TIMEOUT_GRANULARITY_NS` (loop.c:73).
+/// `LIBUS_TIMEOUT_GRANULARITY_NS` (loop.c:73). Poll-deadline sweep scheduling
+/// is POSIX-only — libuv drives the sweep from a repeating uv timer.
+#[cfg(not(windows))]
 const SWEEP_INTERVAL_NS: i64 = LIBUS_TIMEOUT_GRANULARITY as i64 * 1_000_000_000;
 
 /// Raw CLOCK_MONOTONIC ns (loop.c `us_internal_monotonic_ns`; never mocked —
 /// the C sweep clock ignored fake timers).
+#[cfg(not(windows))]
 fn monotonic_ns() -> i64 {
     let ts = Timespec::now(TimespecMockMode::ForceRealTime);
     ts.sec.wrapping_mul(1_000_000_000).wrapping_add(ts.nsec)

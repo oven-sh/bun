@@ -11,8 +11,8 @@ default = ["cabi"]
 # cabi.rs exports the `#[no_mangle]` us_* C-ABI symbols; the C core in
 # packages/bun-usockets is deleted, so these are the sole definitions.
 cabi = []
-# Fault-injection API (fault.rs). Mirrors the old `--cfg socket_fault_injection`
-# RUSTFLAGS knob as a cargo feature so `cargo check -p bun_usockets` can gate it.
+# Fault-injection API (fault.rs). Enabled by the build via
+# `bun_runtime/socket_fault_injection` (scripts/build/rust.ts, asan profile).
 socket_fault_injection = []
 
 [lints]

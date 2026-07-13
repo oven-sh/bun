@@ -1279,10 +1279,17 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         }
         // The silent close above suppressed dispatch, so the upgradeTLS raw
-        // twin never sees its own on_close — retire it here (same chaining as
-        // on_close; its `on_close` consumes the twin +1). Last: it runs JS.
+        // twin never saw its own on_close — retire it here. Last: it runs JS.
+        self.retire_twin(old, 0, None);
+    }
+
+    /// Retire the upgradeTLS raw twin: it shares this socket's `us_socket_t`,
+    /// so this dispatch is its only close. `on_close` consumes the twin's +1
+    /// (`RefPtr` has no Drop; `into_this_ptr` hands it over exactly once).
+    fn retire_twin(&self, socket: SocketHandler<SSL>, err: c_int, reason: Option<*mut c_void>) {
         if let Some(raw) = self.twin.with_mut(|t| t.take()) {
-            Self::on_close(raw.into_this_ptr(), old, 0, None).ok();
+            // `raw.twin == None`, so this cannot recurse.
+            Self::on_close(raw.into_this_ptr(), socket, err, reason).ok();
         }
     }
 
@@ -1953,11 +1960,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !this.has_handlers() {
             this.detach_native_callback();
             this.socket.set(SocketHandler::<SSL>::DETACHED);
-            // Still retire the upgradeTLS raw twin: it shares this fd, so this
-            // dispatch is its only close. Its `on_close` consumes the twin +1.
-            if let Some(raw) = this.twin.with_mut(|t| t.take()) {
-                Self::on_close(raw.into_this_ptr(), socket, err, reason).ok();
-            }
+            this.retire_twin(socket, err, reason);
             this.get().deref();
             return Ok(());
         }
@@ -1972,16 +1975,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         this.detach_native_callback();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
-        // The upgradeTLS raw twin shares the same us_socket_t so it never
-        // gets its own dispatch — fire its (pre-upgrade) close handler
-        // here, then retire it. `raw.twin == None` so this doesn't
-        // recurse, and `onClose` derefs the +1 we took at creation.
-        if let Some(raw) = this.twin.with_mut(|t| t.take()) {
-            // `on_close` consumes the twin's +1 via its `CloseTeardown`, so
-            // hand over the raw pointer rather than letting `IntrusiveRc::drop`
-            // release it a second time.
-            Self::on_close(raw.into_this_ptr(), socket, err, reason).ok();
-        }
+        this.retire_twin(socket, err, reason);
         let cleanup = CloseTeardown {
             socket: this,
             entered: Rc::clone(&handlers),
@@ -3072,15 +3066,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 this.this_value.with_mut(|r| r.downgrade());
             }
         }
-        // `_handle.close()` is the net.Socket `_destroy()` path — Node emits close_notify
-        // once and closes the fd without waiting for the peer's reply. `.fast_shutdown`
-        // makes `ssl_handle_shutdown` take the fast branch so the raw close runs
-        // synchronously (with `.normal` the SSL layer defers waiting for the peer, but we
-        // detached + unreffed above, orphaning the `us_socket_t`). NOT `.failure`:
-        // that arms SO_LINGER{1,0} → RST and drops any data still in the kernel send
-        // buffer, which `destroy()` after `write()` must not do. The SSL layer may
-        // briefly defer this close behind its own ciphertext write spill
-        // (`ssl_close_after_spill`); that waits only on our fd, not the peer.
+        // net.Socket `_destroy()`: FastShutdown raw-closes synchronously without
+        // waiting for the peer (we detached + unreffed above); Failure would RST
+        // and drop buffered writes. usockets docs/tls.md §CloseCode semantics.
         socket.close(uws::CloseCode::FastShutdown);
         Ok(JSValue::UNDEFINED)
     }
@@ -4804,7 +4792,7 @@ pub mod testing_apis {
         _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        Ok(JSValue::from(cfg!(socket_fault_injection)))
+        Ok(JSValue::from(cfg!(feature = "socket_fault_injection")))
     }
 
     #[bun_jsc::host_fn]
@@ -4812,13 +4800,13 @@ pub mod testing_apis {
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        #[cfg(socket_fault_injection)]
+        #[cfg(feature = "socket_fault_injection")]
         {
             let _ = global;
             bun_usockets::fault::us_fault_clear_all();
             Ok(JSValue::UNDEFINED)
         }
-        #[cfg(not(socket_fault_injection))]
+        #[cfg(not(feature = "socket_fault_injection"))]
         Err(global.throw(format_args!(
             "socket fault injection was not compiled into this build (build with --socket-fault-injection=on)"
         )))
@@ -4827,14 +4815,14 @@ pub mod testing_apis {
     #[bun_jsc::host_fn]
     pub fn js_set_socket_fault(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        #[cfg(not(socket_fault_injection))]
+        #[cfg(not(feature = "socket_fault_injection"))]
         {
             let _ = frame;
             return Err(global.throw(format_args!(
                 "socket fault injection was not compiled into this build (build with --socket-fault-injection=on)"
             )));
         }
-        #[cfg(socket_fault_injection)]
+        #[cfg(feature = "socket_fault_injection")]
         {
             use bun_usockets::fault as fi;
 
@@ -4983,7 +4971,7 @@ pub mod testing_apis {
         }
     }
 
-    #[cfg(socket_fault_injection)]
+    #[cfg(feature = "socket_fault_injection")]
     fn parse_errno_name(name: &bun_core::OwnedString) -> Option<c_int> {
         macro_rules! map {
             ($($s:literal => $v:expr,)*) => {

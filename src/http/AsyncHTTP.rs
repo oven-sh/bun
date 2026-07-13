@@ -117,10 +117,10 @@ unsafe fn free_owned_href(href: &'static [u8]) {
 }
 
 /// Read the HTTP-thread monotonic timer in nanoseconds. Callable from any
-/// thread (shared deref of the set-once `timer`; see `http_thread_shared`).
+/// thread (reads the set-once `START_TIMER` static).
 #[inline]
 fn http_thread_timer_read() -> u64 {
-    crate::http_thread_shared().timer.elapsed().as_nanos() as u64
+    crate::http_thread::timer_read()
 }
 
 /// Build the `Proxy-Authorization: Basic <b64(user[:pass])>` header value.
@@ -672,10 +672,9 @@ fn send_sync_callback(
     }
 }
 
-/// Owns the response metadata backing the `Response` returned by
-/// [`AsyncHTTP::send_sync`]; the header/status slices point into
-/// `metadata.owned_buf`, freed when this value drops. `response()` ties the
-/// borrow to `&self` so those slices cannot outlive the buffer.
+/// Owns the response metadata backing [`AsyncHTTP::send_sync`]'s `Response`;
+/// header/status slices point into `metadata.owned_buf` (freed on drop), and
+/// `response()` ties their borrow to `&self`.
 pub struct SyncHTTPResponse {
     metadata: crate::HTTPResponseMetadata,
 }
@@ -882,11 +881,11 @@ impl<'a> AsyncHTTP<'a> {
         }
 
         let thread = crate::http_thread();
-        if (!thread.queued_tasks.is_empty() || !thread.deferred_tasks.is_empty())
+        if (!crate::http_thread::QUEUED_TASKS.is_empty() || !thread.deferred_tasks.is_empty())
             && ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed)
                 < MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed)
         {
-            thread.wakeup();
+            crate::HTTPThread::wakeup();
         }
     }
 

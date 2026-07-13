@@ -124,11 +124,6 @@ impl ConnectingSocket {
         self.error
     }
 
-    /// Raw getaddrinfo rc; 0 if the failure was past resolution.
-    pub fn get_dns_error(&self) -> i32 {
-        self.dns_error
-    }
-
     /// `(void*)-1` for connecting sockets (R3.24, R6.13).
     pub fn get_native_handle(&self) -> *mut c_void {
         usize::MAX as *mut c_void

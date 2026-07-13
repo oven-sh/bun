@@ -437,7 +437,9 @@ pub(crate) fn read_wakeup_async(loop_: *mut Loop) -> *mut crate::loop_::WakeupAs
     unsafe { *core::ptr::addr_of!((*loop_).internal_loop_data.wakeup_async) }
 }
 
-/// GC safepoint before an idle park (R1.10 step 7; C16).
+/// GC safepoint before an idle park (R1.10 step 7; C16). POSIX-only: the
+/// libuv tick has no idle-park fold, so Windows never reaches this.
+#[cfg(not(windows))]
 pub(crate) fn jsc_on_before_wait(jsc_vm: *const c_void) {
     unsafe extern "C" {
         fn Bun__JSC_onBeforeWait(vm: *const c_void);
@@ -472,11 +474,17 @@ macro_rules! ld_set {
     )*};
 }
 
+// POSIX-only readers (the poll-deadline tick in loop_/tick.rs; Windows ticks
+// through libuv and never folds quic/GC deadlines itself).
+#[cfg(not(windows))]
+ld_get! {
+    ld_quic_next_tick_us, quic_next_tick_us, i64;
+    ld_jsc_vm, jsc_vm, *const c_void;
+}
+
 ld_get! {
     ld_tick_depth, tick_depth, core::ffi::c_int;
     ld_quic_head, quic_head, *mut c_void;
-    ld_quic_next_tick_us, quic_next_tick_us, i64;
-    ld_jsc_vm, jsc_vm, *const c_void;
     ld_pre_cb, pre_cb, Option<unsafe extern "C" fn(*mut Loop)>;
     ld_post_cb, post_cb, Option<unsafe extern "C" fn(*mut Loop)>;
     ld_low_prio_head, low_prio_head, *mut us_socket_t;
@@ -574,17 +582,6 @@ unsafe extern "C" {
     #[cfg(windows)]
     fn uws_get_loop_with_native(native: *mut c_void) -> *mut Loop;
     fn uws_loop_defer(loop_: *mut Loop, ctx: *mut c_void, cb: unsafe extern "C" fn(*mut c_void));
-    fn uws_loop_addPostHandler(
-        loop_: *mut Loop,
-        ctx: *mut c_void,
-        cb: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    );
-    fn uws_loop_addPreHandler(
-        loop_: *mut Loop,
-        ctx: *mut c_void,
-        cb: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    );
-    fn uws_loop_removePostHandler(loop_: *mut Loop, key: *mut c_void);
     fn uws_res_clear_corked_socket(loop_: *mut Loop);
     fn uws_loop_date_header_timer_update(loop_: *mut Loop);
     fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
@@ -617,31 +614,6 @@ pub(crate) fn loop_defer(
 ) {
     // SAFETY: `cb`/`ctx` outlive the deferred call per the caller's contract.
     unsafe { uws_loop_defer(loop_, ctx, cb) }
-}
-
-pub(crate) fn loop_add_post_handler(
-    loop_: *mut Loop,
-    ctx: *mut c_void,
-    cb: unsafe extern "C" fn(*mut c_void, *mut Loop),
-) {
-    // SAFETY: loop-thread registration; C++ stores (ctx, cb) keyed by ctx.
-    unsafe { uws_loop_addPostHandler(loop_, ctx, cb) }
-}
-
-pub(crate) fn loop_add_pre_handler(
-    loop_: *mut Loop,
-    ctx: *mut c_void,
-    cb: unsafe extern "C" fn(*mut c_void, *mut Loop),
-) {
-    // SAFETY: see `loop_add_post_handler`.
-    unsafe { uws_loop_addPreHandler(loop_, ctx, cb) }
-}
-
-/// Keyed removal. NOTE: `Handler::remove_pre` also routes here — the shim
-/// only exports removePostHandler (preserved upstream bug).
-pub(crate) fn loop_remove_post_handler(loop_: *mut Loop, key: *mut c_void) {
-    // SAFETY: loop-thread removal by key.
-    unsafe { uws_loop_removePostHandler(loop_, key) }
 }
 
 /// `uws_res_clear_corked_socket` — force-drain both C++ cork slots.
@@ -1448,12 +1420,6 @@ pub(crate) mod uv {
         unsafe { (*t.cast::<TimerBlob>()).loop_ }
     }
 
-    /// `us_timer_ext` (libuv.c:272-275): ext bytes follow the blob.
-    pub(crate) fn timer_ext(t: *mut Timer) -> *mut c_void {
-        // SAFETY: pointer stays within the single blob allocation.
-        unsafe { t.cast::<u8>().add(TIMER_EXT_OFFSET).cast() }
-    }
-
     // ── wakeup async (libuv.c:325-366, R10.4 libuv arm) ──────────────────────
 
     /// uv_async, unreffed; the callback receives the LOOP pointer (the
@@ -1607,7 +1573,7 @@ pub(crate) enum SslErr {
     ZeroReturn,
     Ssl,
     Syscall,
-    Other(c_int),
+    Other,
 }
 
 // ── scoped borrows ────────────────────────────────────────────────────────────
@@ -1960,7 +1926,7 @@ pub(crate) fn ssl_get_error(ssl: *mut SSL, ret: c_int) -> SslErr {
         SSL_ERROR_ZERO_RETURN => SslErr::ZeroReturn,
         SSL_ERROR_SSL => SslErr::Ssl,
         SSL_ERROR_SYSCALL => SslErr::Syscall,
-        other => SslErr::Other(other),
+        _ => SslErr::Other,
     }
 }
 

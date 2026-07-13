@@ -2,16 +2,21 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_io::StreamBuffer;
-use bun_threading::Mutex;
+use bun_threading::{Guarded, GuardedLock, Mutex};
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct ThreadSafeStreamBuffer {
-    pub buffer: StreamBuffer,
-    pub mutex: Mutex,
+    /// The shared byte buffer lives INSIDE the lock: both the JS thread and
+    /// the HTTP thread reach it through `&self` + `lock()`, so neither side
+    /// ever forms a `&mut ThreadSafeStreamBuffer` that the other's writes
+    /// would alias.
+    pub buffer: Guarded<StreamBuffer>,
     /// Intrusive atomic refcount. Starts at 2: 1 for main thread and 1 for http thread.
     pub ref_count: bun_ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
     /// callback will be called passing the context for the http callback
     /// this is used to report when the buffer is drained and only if end chunk was not sent/reported
+    /// Set on the JS thread before the buffer is published to the HTTP thread
+    /// (`set_drain_callback`); cleared only after the HTTP side detached.
     pub callback: Option<Callback>,
     /// Sticky end-of-body flag, set by the JS thread before it schedules the
     /// End wake-up. Senders latch it via `Stream::sync_ended` so an End that
@@ -43,8 +48,7 @@ impl Callback {
 impl Default for ThreadSafeStreamBuffer {
     fn default() -> Self {
         Self {
-            buffer: StreamBuffer::default(),
-            mutex: Mutex::default(),
+            buffer: Guarded::new(StreamBuffer::default()),
             // .initExactRefs(2) — 1 for main thread and 1 for http thread
             ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
             callback: None,
@@ -61,19 +65,17 @@ impl ThreadSafeStreamBuffer {
         bun_core::heap::into_raw(Box::new(init))
     }
 
-    /// Upgrade an attached intrusive-ref handle to `&mut Self`.
+    /// Upgrade an attached intrusive-ref handle to `&Self`.
     ///
     /// INVARIANT: while `p` is held, the HTTP side owns one intrusive ref on
     /// the buffer (taken at attach, released in `Stream::detach`); the buffer
-    /// is a separate heap allocation that outlives the returned borrow and is
-    /// disjoint from any `&mut HTTPClient`/`&mut Stream`. HTTP-thread-only at
-    /// every caller, so the `&mut` is the sole live borrow on this side of the
-    /// internal lock. Centralises the SAFETY argument shared by
-    /// `http_request_body::Stream::buffer_mut` and `HTTPClient::write_to_stream`.
+    /// is a separate heap allocation that outlives the returned borrow.
+    /// Shared (never `&mut`): the JS thread holds concurrent `&Self` borrows
+    /// of the same allocation — all mutation goes through `lock()`/atomics.
     #[inline]
-    pub(crate) fn from_attached<'a>(mut p: core::ptr::NonNull<Self>) -> &'a mut Self {
+    pub(crate) fn from_attached<'a>(p: core::ptr::NonNull<Self>) -> &'a Self {
         // SAFETY: see INVARIANT above.
-        unsafe { p.as_mut() }
+        unsafe { p.as_ref() }
     }
 
     pub fn ref_(this: core::ptr::NonNull<Self>) {
@@ -86,26 +88,11 @@ impl ThreadSafeStreamBuffer {
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
     }
 
-    pub fn acquire(&mut self) -> &mut StreamBuffer {
-        self.mutex.lock();
-        // The mutex stays locked until `release()`. Prefer `lock()` (RAII
-        // guard) for simple critical sections; this split form remains for
-        // callers that interleave release with disjoint `self` access.
-        &mut self.buffer
-    }
-
-    pub fn release(&mut self) {
-        self.mutex.unlock();
-    }
-
-    /// RAII spelling of `acquire()`/`release()` — locks the mutex and returns a
-    /// guard that derefs to the inner `StreamBuffer` and unlocks on `Drop`.
-    /// Use this instead of a bare `acquire`/`release` pair so the lock is
-    /// released on every return path.
+    /// Lock the shared buffer. The returned guard derefs to the inner
+    /// `StreamBuffer` and unlocks on `Drop`.
     #[inline]
-    pub fn lock(&mut self) -> StreamBufferGuard<'_> {
-        self.mutex.lock();
-        StreamBufferGuard(self)
+    pub fn lock(&self) -> GuardedLock<'_, StreamBuffer, Mutex> {
+        self.buffer.lock()
     }
 
     /// JS thread: mark end-of-body. Release pairs with the Acquire in
@@ -124,43 +111,20 @@ impl ThreadSafeStreamBuffer {
         self.callback = Some(Callback::init(callback, context));
     }
 
+    /// Main thread only, and only after the HTTP side detached (its ref was
+    /// released in `Stream::detach`), so no concurrent `report_drain` reads.
     pub fn clear_drain_callback(&mut self) {
         self.callback = None;
     }
 
-    /// This is exclusively called from the http thread.
-    /// Buffer should be acquired before calling this.
-    pub fn report_drain(&self) {
-        if self.buffer.is_empty() {
+    /// This is exclusively called from the http thread. `buffer` must be the
+    /// view of this buffer's own `lock()` guard — the drain check has to
+    /// happen while the lock is still held.
+    pub fn report_drain(&self, buffer: &StreamBuffer) {
+        if buffer.is_empty() {
             if let Some(callback) = &self.callback {
                 callback.call();
             }
         }
-    }
-}
-
-/// RAII guard returned by [`ThreadSafeStreamBuffer::lock`]. Derefs to the
-/// protected `StreamBuffer` and releases the mutex on `Drop`.
-pub struct StreamBufferGuard<'a>(&'a mut ThreadSafeStreamBuffer);
-
-impl core::ops::Deref for StreamBufferGuard<'_> {
-    type Target = StreamBuffer;
-    #[inline]
-    fn deref(&self) -> &StreamBuffer {
-        &self.0.buffer
-    }
-}
-
-impl core::ops::DerefMut for StreamBufferGuard<'_> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut StreamBuffer {
-        &mut self.0.buffer
-    }
-}
-
-impl Drop for StreamBufferGuard<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        self.0.mutex.unlock();
     }
 }

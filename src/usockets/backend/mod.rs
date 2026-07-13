@@ -64,6 +64,7 @@ pub(crate) const KIND_REGISTERED: u8 = PollType::Registered as u8;
 /// Low 4 bits of an UNTAGGED udata word: `io::udp_tag` packs
 /// `socket_ptr | PollType::Udp` (udp::Socket is align(16)); every other
 /// udata is an aligned pointer with zero low bits.
+#[cfg(not(windows))]
 pub(crate) const UDP_TAG_MASK: u64 = 0xF;
 
 use crate::socket::ECONNRESET_ERRNO;
@@ -205,47 +206,6 @@ pub(crate) struct CallbackPoll {
     pub machport_buf: *mut c_void,
 }
 
-/// The eventing seam for kernel-ready-list backends, selected by cfg — no
-/// vtables (closed set). libuv (Windows) does not implement it: readiness
-/// dispatches inside uv callbacks and ticking is `libuv::run`/`pump` over
-/// `*mut Loop` (no `&mut` may span a tick — C17).
-#[cfg(not(windows))]
-pub(crate) trait Backend {
-    /// Create the kernel poller; returns its fd (`Loop.fd`).
-    fn create() -> Result<Self, i32>
-    where
-        Self: Sized;
-
-    /// Arm/modify interest for `fd` with a tagged-pointer user word.
-    fn change(&mut self, fd: LIBUS_SOCKET_DESCRIPTOR, events: Events, user: usize) -> i32;
-
-    /// Remove `fd` (tolerates EBADF/ENOENT on teardown).
-    fn remove(&mut self, fd: LIBUS_SOCKET_DESCRIPTOR) -> i32;
-
-    /// Block for up to `timeout_ns` (-1 = forever); fill `loop.ready_polls`,
-    /// return the ready count. Pass 0 when the tick must not idle (pending
-    /// wakeups) — kqueue maps that to KEVENT_FLAG_IMMEDIATE (R1.10 step 8).
-    fn wait(&mut self, loop_: *mut Loop, timeout_ns: i64) -> i32;
-
-    /// poll registry arm. Kqueue implements the darwin filter arms
-    /// (EVFILT_PROC/MACHPORT/MEMORYSTATUS); epoll implements Fd + Pri
-    /// (EPOLLPRI, Linux PSI trigger fds).
-    fn arm_source(
-        &mut self,
-        p: *mut PollState,
-        loop_: *mut Loop,
-        source: crate::loop_::poll_registry::PollSource,
-    ) -> i32;
-
-    /// poll registry disarm (also nulls pending ready-list entries for `p`).
-    fn disarm_source(
-        &mut self,
-        p: *mut PollState,
-        loop_: *mut Loop,
-        armed: crate::loop_::poll_registry::ArmedSource,
-    );
-}
-
 // ── poll registration (R2.7-R2.11; per-platform kernel mechanics) ────────────
 
 /// `us_poll_start_rc`: store polling bits, register with the kernel, return
@@ -253,12 +213,6 @@ pub(crate) trait Backend {
 #[cfg(not(windows))]
 pub(crate) fn poll_start_rc(p: *mut PollState, loop_: *mut Loop, events: Events) -> i32 {
     platform::poll_start_rc(p, loop_, events)
-}
-
-/// `us_poll_start` — same as [`poll_start_rc`] ignoring the rc.
-#[cfg(not(windows))]
-pub(crate) fn poll_start(p: *mut PollState, loop_: *mut Loop, events: Events) {
-    let _ = platform::poll_start_rc(p, loop_, events);
 }
 
 /// `us_poll_change` (R2.8): no-op if unchanged, else re-register and null
@@ -274,14 +228,6 @@ pub(crate) fn poll_stop(p: *mut PollState, loop_: *mut Loop) {
     platform::poll_stop(p, loop_);
 }
 
-/// Registration half of `us_poll_resize` (R2.11): re-point the kernel udata
-/// from `old` to `new` and rewrite pending ready polls. Size checks,
-/// allocation, memcpy, and `num_polls++` are the caller's.
-#[cfg(not(windows))]
-pub(crate) fn poll_resize(old: *mut PollState, new: *mut PollState, loop_: *mut Loop) {
-    platform::poll_resize(old, new, loop_);
-}
-
 /// `us_internal_accept_poll_event`: epoll reads 8 bytes off the eventfd
 /// (EINTR-retried); kqueue user events have no underlying fd (no-op, 0).
 #[cfg(not(windows))]
@@ -292,6 +238,7 @@ pub(crate) fn accept_poll_event(p: *mut PollState) -> u64 {
 // ── poll registry registration (per-source kernel mechanics) ─────────────────
 
 /// Interest-set → platform readiness bits for registry Fd sources.
+#[cfg(not(windows))]
 pub(crate) fn fd_interest(readable: bool, writable: bool) -> Events {
     let mut e = Events::NONE;
     if readable {

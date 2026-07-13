@@ -1420,9 +1420,9 @@ impl<const SSL: bool> Handler<SSL> {
         // that failed after name resolution (v1 parity).
         let dns_error = socket.dns_error();
         if matches!(socket.socket, uws::InternalSocket::Connected(_)) {
-            // Close-before-notify (v1 parity): a pre-open SEMI_SOCKET close
-            // dispatches nothing (C1); the trampoline's dispatch guard keeps
-            // `owner` alive even though the close releases core's ext ref.
+            // C5: dispatch_connect_error already closed the socket before
+            // notifying (close-then-notify at the core), so this close is an
+            // idempotent no-op kept to mirror the other fail paths.
             socket.close(uws::CloseKind::Failure);
         }
         let tagged = owner.state.get();

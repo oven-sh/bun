@@ -312,7 +312,9 @@ pub struct VirtualMachine {
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
     pub has_started_debugger: bool,
-    pub has_terminated: bool,
+    /// Atomic: read cross-thread by `EventLoop::enqueue_task_concurrent*`
+    /// debug asserts while the owning thread flips it in `deinit`.
+    pub has_terminated: core::sync::atomic::AtomicBool,
 
     #[cfg(debug_assertions)]
     pub debug_thread_id: std::thread::ThreadId,
@@ -861,16 +863,10 @@ impl VirtualMachine {
         self.as_mut().debugger.as_deref_mut()
     }
 
-    /// Safe `&mut uws::Loop` accessor for the per-VM uSockets loop. Same
-    /// single-JS-thread soundness contract as [`Self::event_loop_mut`].
-    #[inline(always)]
-    #[allow(clippy::mut_from_ref)]
-    pub fn uws_loop_mut(&self) -> &mut uws::Loop {
-        // SAFETY: `uws_loop()` returns the per-VM loop pointer; non-null on
-        // the JS thread once `init()` ran. Single-JS-thread invariant per
-        // `unsafe impl Sync`.
-        unsafe { &mut *self.uws_loop() }
-    }
+    // NOTE: there is deliberately no `&mut uws::Loop` accessor — even a
+    // JS-thread-scoped `&mut Loop` spans `pending_wakeups`, which waker
+    // threads `fetch_add` concurrently. Use `uws_loop()` + the
+    // `Loop::*_raw` twins.
 
     /// Safe `&mut PlatformEventLoop` accessor for `event_loop_handle` (the
     /// uws loop on POSIX, libuv loop on Windows). `None` only before
@@ -878,7 +874,7 @@ impl VirtualMachine {
     /// `self.event_loop_handle.unwrap()` at the `EventLoop::tick*` /
     /// `update_counts` call sites into one SAFETY block.
     ///
-    /// Same single-JS-thread soundness contract as [`Self::uws_loop_mut`] —
+    /// Same single-JS-thread soundness contract as [`Self::event_loop_mut`] —
     /// the `PlatformEventLoop` is a separate heap allocation (uws/uv-owned),
     /// so the returned `&mut` cannot alias any field of `self`.
     #[inline(always)]
@@ -1002,7 +998,7 @@ impl VirtualMachine {
     }
 
     /// Per-callback hot path: `drain_microtasks_with_global` calls
-    /// `uws_loop_mut()` (→ this) every time the microtask queue drains, and
+    /// this accessor every time the microtask queue drains, and
     /// the only call site there is already gated on
     /// `event_loop_handle.is_some()`.
     #[inline(always)]
@@ -1025,9 +1021,11 @@ impl VirtualMachine {
 
     pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
         let el = self.event_loop_shared();
+        // SAFETY: when `Some`, the handle is the live per-VM loop; `is_active`
+        // reads a loop-thread-owned counter through a transient shared borrow.
         let active = self
-            .platform_loop_opt()
-            .map(|h| h.is_active())
+            .event_loop_handle
+            .map(|h| unsafe { (*h).is_active() })
             .unwrap_or(false);
         self.unhandled_error_counter == 0
             && ((active as usize)
@@ -1600,7 +1598,7 @@ impl VirtualMachine {
             // socket that was still open at process.exit().
             // SAFETY: `uws::Loop::get()` returns the process-global usockets
             // loop, which is live for the process lifetime.
-            unsafe { (*uws::Loop::get()).drain_closed_sockets() };
+            uws::Loop::drain_closed_sockets(uws::Loop::get());
 
             self.destroy();
         }
@@ -4506,7 +4504,8 @@ impl VirtualMachine {
             // once on the same thread; `self` is the live per-thread VM.
             unsafe { (hooks.deinit_runtime_state)(std::ptr::from_mut(self), state) };
         }
-        self.has_terminated = true;
+        self.has_terminated
+            .store(true, core::sync::atomic::Ordering::SeqCst);
     }
     /// Note: takes the concrete
     /// `bun_core::io::Writer` since every call site passes

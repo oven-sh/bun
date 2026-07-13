@@ -289,8 +289,7 @@ pub(super) mod lib_info {
         // SAFETY: see above.
         let machport = unsafe { (*request).backend.as_libinfo().machport };
         let rc = poll.register_with_fd(
-            // SAFETY: JS event loop is live for the resolver's lifetime.
-            unsafe { ctx.platform_event_loop() },
+            ctx.loop_(),
             Async::PollKind::Machport,
             Async::posix_event_loop::OneShotFlag::OneShot,
             // bitcast u32 mach_port → i32 fd
@@ -2846,7 +2845,7 @@ pub mod internal {
             Async::Owner::new(Async::posix_event_loop::poll_tag::REQUEST, req.cast::<()>()),
         );
         // SAFETY: `poll` is a freshly-allocated hive slot; `loop_.r#loop()` is the live uws loop.
-        let rc = unsafe { (*poll).register(&mut *loop_.r#loop(), Async::PollKind::Machport, true) };
+        let rc = unsafe { (*poll).register(loop_.r#loop(), Async::PollKind::Machport, true) };
 
         if rc.is_err() {
             // SAFETY: `poll` is the freshly-allocated hive slot returned by
@@ -2938,7 +2937,7 @@ pub mod internal {
                         let poll = (*req).libinfo.file_poll.unwrap().as_mut();
                         // `as i32` is the same-width bitcast of the u32 mach port.
                         poll.fd = sys::Fd::from_native(machport as i32);
-                        match poll.register(&mut *Loop::get(), Async::PollKind::Machport, true) {
+                        match poll.register(Loop::get(), Async::PollKind::Machport, true) {
                             sys::Result::Err(_) => {
                                 bun_output::scoped_log!(
                                     dns,
@@ -4914,8 +4913,9 @@ impl Resolver {
                 Async::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
-            // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
-            let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
+            // `event_loop_handle` is set once VM is initialized; live for VM
+            // lifetime. Raw pointer through — register/unregister take *mut.
+            let loop_ = self.vm().event_loop_handle.unwrap();
             // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
             // any re-entrant call (`FilePoll::register` is a syscall wrapper).
             let polls = unsafe { self.polls.get_mut() };

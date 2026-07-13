@@ -9,9 +9,6 @@
 //! the handful of `unsafe fn` API items the surface requires carry
 //! item-level allows.
 #![deny(unsafe_code)]
-// dead_code stays allowed: some items are reachable only on other target_os
-// cfgs, others are kept for C-API surface parity (docs/cabi.md).
-#![allow(dead_code)]
 #![allow(non_camel_case_types)]
 
 pub mod backend;
@@ -25,6 +22,7 @@ pub mod handle;
 pub mod kind;
 #[path = "loop_/mod.rs"]
 pub mod loop_;
+mod neterr;
 pub mod protocol;
 pub mod socket;
 pub mod tls;
@@ -116,6 +114,4 @@ pub use write::UsIoVec;
 
 /// Legacy aliases preserved from `bun_uws`.
 pub type CloseKind = CloseCode;
-pub type DispatchKind = SocketKind;
 pub type Socket = us_socket_t;
-pub type SocketGroupVTable = VTable;

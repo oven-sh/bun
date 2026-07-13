@@ -220,7 +220,9 @@ impl SpawnSyncEventLoop {
     #[inline]
     pub fn uws_loop(&self) -> &uws::Loop {
         // SAFETY: see doc invariant above — non-null, owned for `self`'s lifetime,
-        // no `&mut` alias while `&self` is held.
+        // no `&mut` alias while `&self` is held. Cross-thread clause: see
+        // `uws_loop_mut` — no foreign waker ever writes this isolated loop's
+        // `pending_wakeups`, so the shared borrow cannot race one.
         unsafe { self.uws_loop.as_ref() }
     }
 
@@ -239,6 +241,12 @@ impl SpawnSyncEventLoop {
         // SAFETY: `uws_loop` is non-null and exclusively owned by `self` for its
         // entire lifetime (created in `init`, freed in `Drop`). `&mut self`
         // guarantees no other safe borrow of the loop is live.
+        // Cross-thread clause: unlike the published per-VM loop, this isolated
+        // loop must never be handed to foreign wakers — a cross-thread
+        // `us_wakeup_loop` writes `pending_wakeups`, which this `&mut` spans.
+        // Its wakeup handler is a no-op and the pointer never leaves this
+        // struct, so no such waker exists; if that changes, convert callers
+        // to the `Loop::*_raw` twins.
         unsafe { self.uws_loop.as_mut() }
     }
 

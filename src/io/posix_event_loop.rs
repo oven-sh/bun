@@ -314,19 +314,6 @@ impl FilePoll {
         }
     }
 
-    /// [`Self::drop_registration`] for frames holding a `&mut Loop`: the
-    /// registry disarm routes through that borrow — a write through the
-    /// slot's stored loop pointer would be foreign under its protector.
-    fn drop_registration_on(&mut self, loop_: &mut Loop) {
-        if let Some(reg) = self.registration.take() {
-            // Same teardown latch as `drop_registration`.
-            if reg.shim.data().poll.get() != 0 {
-                reg.poll_ref.unregister_on(loop_);
-            }
-            Self::release_shim(reg);
-        }
-    }
-
     fn release_shim(reg: Registration) {
         reg.shim.data().poll.set(0);
         reg.shim.deref();
@@ -435,13 +422,10 @@ impl FilePoll {
     }
 
     fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: bool) {
-        // `loop_mut()` is the crate-private nonnull-asref accessor (single
-        // deref in `EventLoopCtx`); the `&mut Loop` is consumed by `unregister`
-        // and dropped before any `&mut Store` is materialised.
-        let _ = self.unregister(vm.loop_mut(), force_unregister);
+        let _ = self.unregister(vm.loop_(), force_unregister);
         // Belt-and-braces: the needs-rearm skip leaves `registration` None,
         // but a leaked slot here would keep a dangling shim backpointer.
-        self.drop_registration_on(vm.loop_mut());
+        self.drop_registration();
 
         self.owner.clear();
         self.flags = FlagsSet::empty();
@@ -518,29 +502,37 @@ impl FilePoll {
         self.flags.insert(Flags::HasIncrementedActiveCount);
     }
 
-    /// Only intended to be used from EventLoop.Pollable
-    fn deactivate(&mut self, loop_: &mut Loop) {
+    /// Only intended to be used from EventLoop.Pollable. Raw-place loop
+    /// accounting — a `&mut Loop` would span `pending_wakeups`, which waker
+    /// threads mutate concurrently.
+    fn deactivate(&mut self, loop_: *mut Loop) {
         if self.flags.contains(Flags::HasIncrementedPollCount) {
-            loop_.dec();
+            Loop::dec_raw(loop_);
         }
         self.flags.remove(Flags::HasIncrementedPollCount);
 
-        loop_.sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
+        Loop::sub_active_raw(
+            loop_,
+            self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
+        );
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    fn activate(&mut self, loop_: &mut Loop) {
+    fn activate(&mut self, loop_: *mut Loop) {
         self.flags.remove(Flags::Closed);
 
         if !self.flags.contains(Flags::HasIncrementedPollCount) {
-            loop_.inc();
+            Loop::inc_raw(loop_);
         }
         self.flags.insert(Flags::HasIncrementedPollCount);
 
         if self.flags.contains(Flags::KeepsEventLoopAlive) {
-            loop_.add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
+            Loop::add_active_raw(
+                loop_,
+                (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
+            );
             self.flags.insert(Flags::HasIncrementedActiveCount);
         }
     }
@@ -602,9 +594,7 @@ impl FilePoll {
     pub fn on_ended(&mut self, event_loop_ctx: EventLoopCtx) {
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::Closed);
-        // `loop_mut()` — crate-private nonnull-asref accessor; `deactivate` is
-        // a leaf counter op so the `&mut Loop` borrow does not escape.
-        self.deactivate(event_loop_ctx.loop_mut());
+        self.deactivate(event_loop_ctx.loop_());
     }
 
     #[inline]
@@ -612,7 +602,7 @@ impl FilePoll {
         self.fd
     }
 
-    pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
+    pub fn register(&mut self, loop_: *mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
         self.register_with_fd(
             loop_,
             flag,
@@ -627,7 +617,7 @@ impl FilePoll {
 
     pub fn register_with_fd(
         &mut self,
-        loop_: &mut Loop,
+        loop_: *mut Loop,
         flag: Flags,
         one_shot: OneShotFlag,
         fd: Fd,
@@ -659,7 +649,7 @@ impl FilePoll {
     ))]
     fn register_with_fd_impl(
         &mut self,
-        loop_: &mut Loop,
+        loop_: *mut Loop,
         flag: Flags,
         one_shot: OneShotFlag,
         fd: Fd,
@@ -724,7 +714,7 @@ impl FilePoll {
         target_os = "macos",
         target_os = "freebsd"
     ))]
-    fn arm(&mut self, loop_: &mut Loop, flag: Flags, fd: Fd) -> sys::Result<()> {
+    fn arm(&mut self, loop_: *mut Loop, flag: Flags, fd: Fd) -> sys::Result<()> {
         use bun_usockets::PollSource;
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -746,7 +736,7 @@ impl FilePoll {
                 // Re-arm on a different fd: the live slot watches the old
                 // one, so an interest change would mutate the wrong fd's
                 // registration. Disarm, then register `fd` fresh below.
-                self.drop_registration_on(loop_);
+                self.drop_registration();
             } else {
                 // Already armed for this fd. Fd sources take the union of the
                 // live directions plus `flag`; single-purpose sources (proc/
@@ -757,11 +747,11 @@ impl FilePoll {
                         || self.flags.contains(Flags::PollReadable);
                     let writable =
                         flag == Flags::Writable || self.flags.contains(Flags::PollWritable);
-                    if let Err(errno) = poll_ref.change_on(loop_, readable, writable) {
+                    if let Err(errno) = poll_ref.change(readable, writable) {
                         // Failed rearm: fully disarm so the kernel, the registry
                         // slot, and the interest flags all agree with the failure
                         // the caller is told (register_with_fd_impl deactivates).
-                        self.drop_registration_on(loop_);
+                        self.drop_registration();
                         self.flags.remove(Flags::PollReadable);
                         self.flags.remove(Flags::PollWritable);
                         self.flags.remove(Flags::PollProcess);
@@ -820,7 +810,7 @@ impl FilePoll {
         });
         // One strong ref transfers to the registry slot; ours lives in
         // `Registration` and is discharged in `drop_registration`.
-        match loop_.register_poll::<FilePollProtocol>(source, shim.dupe_ref(), false) {
+        match Loop::register_poll::<FilePollProtocol>(loop_, source, shim.dupe_ref(), false) {
             Ok(poll_ref) => {
                 self.registration = Some(Registration { poll_ref, fd, shim });
                 sys::Result::Ok(())
@@ -836,13 +826,13 @@ impl FilePoll {
         }
     }
 
-    pub fn unregister(&mut self, loop_: &mut Loop, force_unregister: bool) -> sys::Result<()> {
+    pub fn unregister(&mut self, loop_: *mut Loop, force_unregister: bool) -> sys::Result<()> {
         self.unregister_with_fd(loop_, self.fd, force_unregister)
     }
 
     pub fn unregister_with_fd(
         &mut self,
-        loop_: &mut Loop,
+        loop_: *mut Loop,
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
@@ -854,7 +844,7 @@ impl FilePoll {
             target_os = "macos",
             target_os = "freebsd"
         ))]
-        let result = self.unregister_with_fd_impl(loop_, fd, force_unregister);
+        let result = self.unregister_with_fd_impl(fd, force_unregister);
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
@@ -875,12 +865,7 @@ impl FilePoll {
         target_os = "macos",
         target_os = "freebsd"
     ))]
-    fn unregister_with_fd_impl(
-        &mut self,
-        loop_: &mut Loop,
-        fd: Fd,
-        force_unregister: bool,
-    ) -> sys::Result<()> {
+    fn unregister_with_fd_impl(&mut self, fd: Fd, force_unregister: bool) -> sys::Result<()> {
         #[cfg(debug_assertions)]
         debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
 
@@ -909,7 +894,7 @@ impl FilePoll {
         // Kernel disarm + slot free happen core-side; already-gone
         // registrations (fd closed while registered, pty knotes reaped on
         // EV_EOF|EV_ONESHOT hangup) are tolerated there, matching libuv.
-        self.drop_registration_on(loop_);
+        self.drop_registration();
 
         self.flags.remove(Flags::NeedsRearm);
         self.flags.remove(Flags::OneShot);

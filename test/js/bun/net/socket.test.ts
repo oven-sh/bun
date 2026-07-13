@@ -916,12 +916,13 @@ console.log("completed", done, "cycles without crashing");
         socket: { open() {}, data() {}, error() {}, close() {}, drain() {} },
       });
       const TOTAL = 2048, CONCURRENCY = 32;
-      let started = 0, completed = 0;
+      let started = 0, completed = 0, upgraded = 0;
 
       function upgradeAndClose(sock) {
         try {
           const pair = sock.upgradeTLS(TLS);
           if (pair) {
+            upgraded++;
             const [raw, tls] = pair;
             try { tls.end(); } catch {}
             try { raw.end(); } catch {}
@@ -965,7 +966,9 @@ console.log("completed", done, "cycles without crashing");
       Bun.gc(true);
       listener.stop(true);
       Bun.gc(true);
-      console.log("completed", completed, "cycles");
+      // The upgrade path is the code under test — a run where every
+      // upgradeTLS threw would pass vacuously without this.
+      console.log("completed", completed, "cycles,", upgraded > 0 ? "with upgrades" : "with zero upgrades");
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
@@ -979,7 +982,7 @@ console.log("completed", done, "cycles without crashing");
       signalCode: proc.signalCode,
       exitCode,
       stderrTail: exitCode === 0 ? "" : stderr.slice(-2000),
-    }).toEqual({ stdout: "completed 2048 cycles", signalCode: null, exitCode: 0, stderrTail: "" });
+    }).toEqual({ stdout: "completed 2048 cycles, with upgrades", signalCode: null, exitCode: 0, stderrTail: "" });
     // 2048 TLS context creations on a debug+ASAN build take a while.
   }, 120_000);
 });

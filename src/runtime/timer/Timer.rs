@@ -479,7 +479,7 @@ impl DateHeaderTimer {
             // updateDate() is an expensive function.
             // SAFETY: `vm` is the live per-thread VM; `uws_loop()` returns its
             // owned uws loop, which outlives this call.
-            unsafe { (*(*vm).uws_loop()).update_date() };
+            unsafe { bun_usockets::Loop::update_date((*vm).uws_loop()) };
 
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: single JS thread; `All::update` only touches `lock`/`timers`/

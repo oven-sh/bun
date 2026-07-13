@@ -8,7 +8,7 @@
 use core::ptr;
 
 use crate::LIBUS_SOCKET_DESCRIPTOR;
-use crate::backend::{self, Backend, Events, MAX_READY_POLLS, PollState};
+use crate::backend::{self, Events, MAX_READY_POLLS, PollState};
 use crate::loop_::Loop;
 use crate::unsafe_core::poll_access;
 
@@ -20,75 +20,6 @@ pub type EventType = libc::kevent;
 
 /// Kqueue may deliver the same poll twice (one kevent per filter, R1.21).
 pub(crate) const READY_DUPES: i32 = 2;
-
-pub(crate) struct Kqueue {
-    kqfd: i32,
-}
-
-impl Kqueue {
-    pub(crate) fn from_fd(kqfd: i32) -> Self {
-        Kqueue { kqfd }
-    }
-}
-
-impl Backend for Kqueue {
-    fn create() -> Result<Self, i32> {
-        let kqfd = poll_access::kqueue_create();
-        if kqfd < 0 {
-            return Err(poll_access::last_errno());
-        }
-        Ok(Kqueue { kqfd })
-    }
-
-    /// Fresh registration (old-events assumed 0). The parity paths are
-    /// `poll_start_rc`/`poll_change`, which carry the real old-events delta.
-    fn change(&mut self, fd: LIBUS_SOCKET_DESCRIPTOR, events: Events, user: usize) -> i32 {
-        kqueue_change(self.kqfd, fd, Events::NONE, events, user as u64)
-    }
-
-    fn remove(&mut self, fd: LIBUS_SOCKET_DESCRIPTOR) -> i32 {
-        // Two SEPARATE submissions (kqueue_change's zero-events branch would
-        // leave an armed one-shot WRITE): FreeBSD's shim suppresses the
-        // eventlist, so a batched ENOENT could abort the WRITE EV_DELETE.
-        let mut read_del = [poll_access::make_kev(
-            fd,
-            libc::EVFILT_READ,
-            libc::EV_DELETE,
-            0,
-        )];
-        let rc_read = poll_access::kevent_error_events(self.kqfd, &mut read_del);
-        let mut write_del = [poll_access::make_kev(
-            fd,
-            libc::EVFILT_WRITE,
-            libc::EV_DELETE,
-            0,
-        )];
-        let rc_write = poll_access::kevent_error_events(self.kqfd, &mut write_del);
-        if rc_read != 0 { rc_read } else { rc_write }
-    }
-
-    fn wait(&mut self, loop_: *mut Loop, timeout_ns: i64) -> i32 {
-        poll_access::kevent_wait_ready(loop_, timeout_ns, timeout_ns == 0)
-    }
-
-    fn arm_source(
-        &mut self,
-        p: *mut PollState,
-        loop_: *mut Loop,
-        source: crate::loop_::poll_registry::PollSource,
-    ) -> i32 {
-        registry_arm(p, loop_, source)
-    }
-
-    fn disarm_source(
-        &mut self,
-        p: *mut PollState,
-        loop_: *mut Loop,
-        armed: crate::loop_::poll_registry::ArmedSource,
-    ) {
-        registry_disarm(p, loop_, armed)
-    }
-}
 
 /// `kqueue_change` (R2.9): ≤2 kevent64 changes. EVFILT_READ is
 /// level-triggered; EVFILT_WRITE is ALWAYS one-shot. Polling for neither
@@ -227,21 +158,6 @@ pub(crate) fn poll_stop(p: *mut PollState, loop_: *mut Loop) {
         poll_access::kevent_error_events(kqfd, &mut wr);
     }
     backend::update_pending_ready_polls(loop_, p, ptr::null_mut(), old_events, Events::NONE);
-}
-
-/// R2.11: forcibly re-add both filters with `new` as udata (one-shot W
-/// included even when not polled for — verbatim C behavior).
-pub(crate) fn poll_resize(old: *mut PollState, new: *mut PollState, loop_: *mut Loop) {
-    let events = poll_access::read_poll(old).events();
-    let st = poll_access::read_poll(new);
-    kqueue_change(
-        poll_access::loop_fd(loop_),
-        st.fd(),
-        Events::NONE,
-        Events::READABLE | Events::WRITABLE,
-        new as usize as u64,
-    );
-    backend::update_pending_ready_polls(loop_, old, new, events, events);
 }
 
 /// Kqueue user events have no underlying fd to drain.

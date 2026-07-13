@@ -102,7 +102,7 @@ impl FilePoll {
         self.deinit()
     }
 
-    pub fn unregister(&mut self, _loop: &mut WindowsLoop) -> bool {
+    pub fn unregister(&mut self, _loop: *mut WindowsLoop) -> bool {
         // TODO: This cast is extremely suspicious. At best, `fd` is
         // the wrong type (it should be a uv handle), at worst this code is a
         // crash due to invalid memory access.
@@ -121,7 +121,7 @@ impl FilePoll {
         true
     }
 
-    fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, loop_: &mut WindowsLoop) {
+    fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, loop_: *mut WindowsLoop) {
         if self.is_registered() {
             let _ = self.unregister(loop_);
         }
@@ -166,12 +166,7 @@ impl FilePoll {
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
-        // `loop_mut()` — crate-private nonnull-asref accessor (single deref in
-        // `EventLoopCtx`); the uws loop is a disjoint allocation from `self`.
-        // Stacked-Borrows: `self` may live inside `Store.hive`'s inline buffer,
-        // so `&mut Store` is materialised only *after* `&mut self` is retired
-        // inside `deinit_possibly_defer` (via `file_polls_mut()`).
-        let loop_ = vm.loop_mut();
+        let loop_ = vm.loop_();
         self.deinit_possibly_defer(vm, loop_);
     }
 
@@ -192,22 +187,26 @@ impl FilePoll {
     // Note: the cycle-broken `EventLoopCtx::platform_event_loop` vtable is typed
     // `*mut bun_usockets::Loop` (the uws `WindowsLoop` wrapper) so the
     // impl-crate bodies (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`)
-    // type-check. `WindowsLoop::sub_active`/`add_active` proxy straight through
-    // to `(*self.uv_loop).{sub,add}_active`, so accept the wrapper here.
-    pub fn deactivate(&mut self, loop_: &mut WindowsLoop) {
+    // type-check. `WindowsLoop::sub_active_raw`/`add_active_raw` proxy straight
+    // through to `(*self.uv_loop).{sub,add}_active`, so accept the wrapper here.
+    pub fn deactivate(&mut self, loop_: *mut WindowsLoop) {
         debug_assert!(self.flags.contains(Flags::HasIncrementedPollCount));
-        loop_.sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
-        bun_core::scoped_log!(FilePoll, "deactivate - active={}", loop_.active_count());
+        WindowsLoop::sub_active_raw(
+            loop_,
+            self.flags.contains(Flags::HasIncrementedPollCount) as u32,
+        );
+        bun_core::scoped_log!(FilePoll, "deactivate");
         self.flags.remove(Flags::HasIncrementedPollCount);
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    pub fn activate(&mut self, loop_: &mut WindowsLoop) {
-        loop_.add_active(
+    pub fn activate(&mut self, loop_: *mut WindowsLoop) {
+        WindowsLoop::add_active_raw(
+            loop_,
             (!self.flags.contains(Flags::Closed)
                 && !self.flags.contains(Flags::HasIncrementedPollCount)) as u32,
         );
-        bun_core::scoped_log!(FilePoll, "activate - active={}", loop_.active_count());
+        bun_core::scoped_log!(FilePoll, "activate");
         self.flags.insert(Flags::HasIncrementedPollCount);
     }
 
@@ -229,7 +228,7 @@ impl FilePoll {
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::Closed);
         // this.deactivate(vm.event_loop_handle.?);
-        self.deactivate(event_loop_ctx.loop_mut());
+        self.deactivate(event_loop_ctx.loop_());
     }
 
     /// Prevent a poll from keeping the process alive.
@@ -239,7 +238,7 @@ impl FilePoll {
         }
         bun_core::scoped_log!(FilePoll, "unref");
         // this.deactivate(vm.event_loop_handle.?);
-        self.deactivate(vm.loop_mut());
+        self.deactivate(vm.loop_());
     }
 
     /// Allow a poll to keep the process alive.
@@ -250,7 +249,7 @@ impl FilePoll {
         }
         bun_core::scoped_log!(FilePoll, "ref");
         // this.activate(vm.event_loop_handle.?);
-        self.activate(event_loop_ctx.loop_mut());
+        self.activate(event_loop_ctx.loop_());
     }
 }
 

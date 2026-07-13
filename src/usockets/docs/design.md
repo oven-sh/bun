@@ -133,7 +133,7 @@ Stale-generation behavior == Detached behavior for every method.
 
 `SocketGroup`: stays repr(C) embedded-by-value (uWS C++ embeds it; sizeof
 static_asserted there). init/destroy/close_all/listen/listen_unix/connect/
-connect_unix/from_fd/pair/owner/is_empty/next_in_loop unchanged.
+connect_unix/from_fd/pair/owner/is_empty unchanged.
 
 `Loop`: native struct. Cross-thread contract: `wakeup` and `defer` take
 `*mut Loop` (never `&mut`); pending_wakeups atomic swap semantics preserved.
@@ -144,7 +144,9 @@ C1. SEMI*SOCKET explicit close dispatches NO callbacks (valkey/sql/ws compensate
 C2. Exactly one of on_close/on_connect_error per successful connect, EXCEPT C1.
 C3. on_close: ext still readable; code 0/1/2 = CloseCode, >2 = real errno; reason ptr passthrough.
 C4. Connecting close: on_connecting_error dispatched synchronously; ext-null ⇒ silent no-op.
-C5. connect*_ may dispatch connect_error synchronously before returning; close-then-notify order.
+C5. connect*_ may dispatch connect_error synchronously before returning; close-then-notify order
+is ENFORCED by the core: dispatch_connect_error closes the SEMI_SOCKET (silent, C1; owner ext ref
+kept for the notify) before invoking on_connect_error, so consumer closes are idempotent no-ops.
 C6. Deferred free: header memory (incl. ext) readable until tick postlude; closed_head drainable
 post-last-tick (drain_closed_sockets).
 C7. write returns bytes accepted; 0 = would-block; <0 fatal; ENOBUFS/ENOMEM => 0; no MSG_MORE.

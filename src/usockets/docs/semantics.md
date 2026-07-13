@@ -650,9 +650,13 @@ NULL, ext, fds[0], 0)`; fds[1] is left for the caller.
   head_connecting_sockets / low_prio_count, call
   `us_socket_group_close_all_ex(g, /*also_listeners*/0)`; listen sockets are
   deliberately NOT closed (owner holds a raw pointer; closing here would
-  UAF — comment loop.c:208-213). Cache `next` before the call; if the cached
-  `next` got unlinked during the call (`!next->linked`), restart from
-  `loop->data.head`. Returns 1 if anything was closed.
+  UAF — comment loop.c:208-213). Returns 1 if anything was closed.
+  Rust deviation: C cached `next` and probed `next->linked` after the call —
+  but a close callback may free the cached group outright (owner deinit), so
+  the probe is a UAF. The walk instead restarts from `loop->data.head` after
+  every dispatch, skipping (by address, never deref'd) groups already
+  dispatched this call so a repopulated or deferral-stuck group cannot spin
+  it; the caller's retry rounds (C16) pick those up.
 - **R3.31** `us_socket_group_close_all_ex(group, also_listeners)`
   (context.c:81-147), exact order:
   1. If also_listeners: close listeners first (`while (head_listen_sockets)
@@ -669,12 +673,19 @@ close_raw(head_sockets, RESET, 0)` — TLS sockets whose graceful close
      parked socket belonging to this group call `us_socket_close(q, CLEAN,
 0)` (close_raw's low-prio branch unlinks + decrements the counter);
      assert count reaches 0.
-  Rust deviation: steps 3-5 do not use C's cached-`next` walks. With
+  Rust deviation: steps 2-5 do not use C's cached-`next` walks. With
   in-place adoption there is no relocation tombstone, so a re-entrant
   adopt/close can relink a cached `next` into a foreign group or the closed
-  chain; each walk instead restarts from its list head after every dispatch,
-  skipping sockets a §1.4/§5.2-deferred close left linked (bounding the
-  force-drain, which otherwise spins on an in-use head socket).
+  chain. Step 2 restarts from `head_connecting_sockets` after every dispatch
+  (close always detaches the node, so each pass shrinks the live prefix) and
+  runs AGAIN after step 4 — a backstop for connecting sockets an on_close
+  opened mid-walk. Step 3 snapshots `head_sockets` once (slot addresses are
+  stable under the walk's tick-depth ref) and revalidates each entry
+  (slot live ∧ not closed ∧ still this group) before closing — single-pass,
+  so a §5.2-deferred close is attempted exactly once and left to step 4.
+  Steps 4-5 keep restart-from-head walks, stepping past sockets a §1.4/§5.2
+  deferral left linked (bounding the force-drain, which otherwise spins on
+  an in-use head socket).
 
 ---
 

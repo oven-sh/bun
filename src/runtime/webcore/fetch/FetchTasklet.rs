@@ -350,19 +350,20 @@ impl FetchTasklet {
         self.sink.map(|p| unsafe { &mut *p })
     }
 
-    /// Mutable access to the request-body streaming buffer while `Some` (this
+    /// Shared access to the request-body streaming buffer while `Some` (this
     /// side holds one of the two initial intrusive refs from
     /// `ThreadSafeStreamBuffer::new`; released in `clear_sink`). Detached
     /// lifetime so the borrow does not conflict with disjoint `&mut self`
     /// access at call sites — the buffer lives in a separate heap allocation
-    /// shared with the HTTP thread (mutex-guarded internally).
+    /// shared with the HTTP thread. Shared (never `&mut`): the HTTP thread
+    /// holds concurrent `&Self` borrows; the byte buffer is behind its lock.
     #[inline]
-    fn stream_buffer_mut<'r>(&self) -> Option<&'r mut ThreadSafeStreamBuffer> {
-        // SAFETY: see doc comment — counted ref keeps pointee live; mutex
-        // inside `ThreadSafeStreamBuffer` serialises cross-thread `buffer`
+    fn stream_buffer_ref<'r>(&self) -> Option<&'r ThreadSafeStreamBuffer> {
+        // SAFETY: see doc comment — counted ref keeps pointee live; the lock
+        // inside `ThreadSafeStreamBuffer` serialises cross-thread buffer
         // access, and `callback` is main-thread-only.
         self.request_body_streaming_buffer
-            .map(|p| unsafe { &mut *p.as_ptr() })
+            .map(|p| unsafe { &*p.as_ptr() })
     }
 
     pub(crate) fn ref_(&self) {
@@ -817,7 +818,7 @@ impl FetchTasklet {
             // request slot until the idle timeout.
             if self.result.certificate_info.take().is_some() {
                 if let Some(http_) = self.http.as_mut() {
-                    http::http_thread_shared().schedule_shutdown(http_);
+                    http::HTTPThread::schedule_shutdown(http_);
                 }
             }
             self.mutex.unlock();
@@ -967,7 +968,7 @@ impl FetchTasklet {
             // the connection already closed/failed the resume is a no-op
             // (keyed through the abort tracker).
             if let Some(http_) = self.http.as_mut() {
-                http::http_thread_shared().schedule_cert_check_resume(http_);
+                http::HTTPThread::schedule_cert_check_resume(http_);
             }
             // Fall through. The common case (certificate-only update) returns
             // at the metadata-less early return below; the #27275 coalesced
@@ -1223,7 +1224,7 @@ impl FetchTasklet {
         // Empty or unparseable certificate bytes: every false return must have
         // scheduled the parked socket's shutdown, like the paths above.
         if let Some(http_) = self.http.as_mut() {
-            http::http_thread_shared().schedule_shutdown(http_);
+            http::HTTPThread::schedule_shutdown(http_);
         }
         self.result.fail = Some(http::Error::ERR_TLS_CERT_ALTNAME_INVALID);
         false
@@ -1603,7 +1604,7 @@ impl FetchTasklet {
             // and if the server doesn't close the connection by itself
             // and doesn't send any follow-up data
             // then we must make sure the HTTP thread flushes.
-            http::http_thread_shared().schedule_receive_resume(http_.async_http_id);
+            http::HTTPThread::schedule_receive_resume(http_.async_http_id);
         }
 
         this.mutex.lock();
@@ -1682,7 +1683,7 @@ impl FetchTasklet {
 
     fn schedule_receive_resume(&self) {
         if let Some(http_) = self.http.as_ref() {
-            http::http_thread_shared().schedule_receive_resume(http_.async_http_id);
+            http::HTTPThread::schedule_receive_resume(http_.async_http_id);
         }
     }
 
@@ -2199,7 +2200,7 @@ impl FetchTasklet {
             Some(sink) => sink.high_water_mark() as usize,
             None => 16384,
         };
-        let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
+        let Some(thread_safe_stream_buffer) = self.stream_buffer_ref() else {
             return ResumableSinkBackpressure::Done;
         };
         // Mutex guards `buffer` against the HTTP thread; released when
@@ -2235,7 +2236,7 @@ impl FetchTasklet {
 
         if needs_schedule {
             // wakeup the http thread to write the data
-            http::http_thread_shared().schedule_request_write(
+            http::HTTPThread::schedule_request_write(
                 self.http.as_mut().unwrap(),
                 http::http_thread::WriteMessageType::Data,
             );
@@ -2261,7 +2262,7 @@ impl FetchTasklet {
         } else {
             if !self.skip_chunked_framing() {
                 // Using chunked transfer encoding, send the terminating chunk
-                let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
+                let Some(thread_safe_stream_buffer) = self.stream_buffer_ref() else {
                     // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
                     FetchTasklet::deref(this_ptr);
                     return;
@@ -2275,12 +2276,14 @@ impl FetchTasklet {
             // Sticky marker before the wake-up: the HTTP thread drops the End
             // message when the request has no live stream/socket yet (queued
             // task, h2 pending_attach); senders re-check via Stream::sync_ended.
-            if let Some(buf) = self.stream_buffer_mut() {
+            if let Some(buf) = self.stream_buffer_ref() {
                 buf.mark_ended();
             }
             if let Some(http_) = self.http.as_mut() {
-                http::http_thread_shared()
-                    .schedule_request_write(http_, http::http_thread::WriteMessageType::End);
+                http::HTTPThread::schedule_request_write(
+                    http_,
+                    http::http_thread::WriteMessageType::End,
+                );
             }
         }
         // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
@@ -2297,7 +2300,7 @@ impl FetchTasklet {
         self.tracker.did_cancel(&self.global_this);
 
         if let Some(http_) = self.http.as_mut() {
-            http::http_thread_shared().schedule_shutdown(http_);
+            http::HTTPThread::schedule_shutdown(http_);
         }
     }
 
@@ -2469,7 +2472,7 @@ impl FetchTasklet {
             // until the idle timeout.
             if task_ref.result.certificate_info.take().is_some() {
                 if let Some(http_) = task_ref.http.as_mut() {
-                    http::http_thread_shared().schedule_shutdown(http_);
+                    http::HTTPThread::schedule_shutdown(http_);
                 }
             }
             // We won the `has_schedule_callback` CAS above but are not

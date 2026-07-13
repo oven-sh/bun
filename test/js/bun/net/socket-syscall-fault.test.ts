@@ -148,7 +148,7 @@ describe.skipIf(skip)("Bun.connect/Bun.listen under injected syscall faults", ()
       );
       expect(rejection).not.toBeNull();
       const err = (await connectErr.promise) as NodeJS.ErrnoException;
-      expect(["ECONNREFUSED", "ConnectionRefused", "FailedToOpenSocket"]).toContain(err.code);
+      expect(["ECONNREFUSED", "ConnectionRefused"]).toContain(err.code);
     } finally {
       listener.stop(true);
     }

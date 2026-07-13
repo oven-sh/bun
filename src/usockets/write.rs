@@ -11,6 +11,7 @@ use core::ffi::c_void;
 use bun_core::Fd;
 
 use crate::backend::Events;
+use crate::neterr::{is_transient_send_error, is_would_block};
 use crate::socket::{SocketFlags, SocketHeader, is_shut_down_full};
 use crate::tls::{TlsState, Transport};
 use crate::unsafe_core::{ext, io};
@@ -36,39 +37,6 @@ fn clamp_len(data: &[u8]) -> (&[u8], bool) {
     } else {
         (data, false)
     }
-}
-
-/// R4.7: POSIX checks EWOULDBLOCK ONLY (the `|| EAGAIN` is commented out
-/// upstream; equal on all currently-supported POSIX targets).
-#[cfg(not(windows))]
-#[inline]
-fn is_would_block(err: isize) -> bool {
-    err == -(libc::EWOULDBLOCK as isize)
-}
-
-/// R4.2: transient kernel resource exhaustion on a healthy connection —
-/// NOT fatal (commit-fc865b39 behavior).
-#[cfg(not(windows))]
-#[inline]
-fn is_transient_send_error(err: isize) -> bool {
-    err == -(libc::ENOBUFS as isize) || err == -(libc::ENOMEM as isize)
-}
-
-#[cfg(windows)]
-const WSAEWOULDBLOCK: isize = 10035;
-#[cfg(windows)]
-const WSAENOBUFS: isize = 10055;
-
-#[cfg(windows)]
-#[inline]
-fn is_would_block(err: isize) -> bool {
-    err == -WSAEWOULDBLOCK
-}
-
-#[cfg(windows)]
-#[inline]
-fn is_transient_send_error(err: isize) -> bool {
-    err == -WSAENOBUFS
 }
 
 /// Raw `*mut TlsState` behind the transport box (stable address; C6). The

@@ -1107,14 +1107,23 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
         RELEASE_AND_RETURN(scope, specialSandbox->putInline(globalObject, propertyName, value, slot));
     }
 
-    slot.setThisValue(sandbox);
-
-    bool result = sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, slot);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!result) return false;
+    // Node's PropertySetterCallback does a sloppy sandbox->Set() then returns
+    // Intercepted::kNo so V8 also stores on the inner global; a non-extensible
+    // sandbox therefore never blocks guest-side global creation.
+    bool result;
+    {
+        PutPropertySlot sandboxSlot(sandbox, false);
+        result = sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, sandboxSlot);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
 
     if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
         return true;
+    }
+
+    if (!result && isDeclaredOnSandbox) {
+        // Existing read-only property rejected the write; keep the strict-mode throw.
+        return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
     }
 
     slot.setThisValue(thisValue);
@@ -1315,23 +1324,28 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    // Dispatch through the method table so exotic sandboxes (e.g. Proxy objects)
-    // observe the [[DefineOwnProperty]] exactly once, like V8's contextify
-    // PropertyDefinerCallback.
+    // Node's PropertyDefinerCallback calls V8's Object::DefineProperty (kDontThrow)
+    // and returns Intercepted::kNo on failure, so the inner global still gets the
+    // define; mirror that with shouldThrow=false and a fall-through on refusal.
     if (descriptor.isAccessorDescriptor()) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        bool did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, false);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (did) return true;
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
     }
 
     bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        bool did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, false);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (did) return true;
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    auto did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
+    contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, false);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!did) return false;
 
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
 }

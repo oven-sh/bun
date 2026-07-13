@@ -1117,6 +1117,71 @@ test("node:vm SourceTextModule.link() rejects holey and mismatched argument arra
   expect(exitCode).toBe(0);
 });
 
+describe("createContext with a non-extensible sandbox", () => {
+  // Node's contextify stores globals on a separate inner global and only
+  // copies out to the sandbox via interceptors, so a frozen/sealed/non-extensible
+  // sandbox never blocks guest-side var/function/property creation.
+  for (const [label, make] of [
+    ["frozen", () => Object.freeze({ f0: 1 })],
+    ["sealed", () => Object.seal({ f0: 1 })],
+    ["non-extensible", () => Object.preventExtensions({ f0: 1 })],
+  ] as const) {
+    test(`${label}: global creation inside the context works`, () => {
+      const sandbox = make();
+      createContext(sandbox);
+
+      expect(runInContext("globalThis.a1 = 2; typeof a1", sandbox)).toBe("number");
+      expect(runInContext("a1", sandbox)).toBe(2);
+      expect(runInContext("var v1 = 3; typeof v1", sandbox)).toBe("number");
+      expect(runInContext("v1", sandbox)).toBe(3);
+      expect(runInContext("function f1(){ return 7 }; typeof f1", sandbox)).toBe("function");
+      expect(runInContext("f1()", sandbox)).toBe(7);
+      expect(
+        runInContext(
+          "Object.defineProperty(globalThis,'d1',{value:4,configurable:true}); typeof d1",
+          sandbox,
+        ),
+      ).toBe("number");
+      expect(
+        runInContext(
+          "Object.defineProperty(globalThis,'ac1',{get(){return 42},configurable:true}); ac1",
+          sandbox,
+        ),
+      ).toBe(42);
+      expect(runInContext("'use strict'; globalThis.s1 = 5; typeof s1", sandbox)).toBe("number");
+      expect(
+        runInContext("[Object.isFrozen(globalThis), Object.isExtensible(globalThis)]", sandbox),
+      ).toEqual([false, true]);
+
+      // The sandbox is non-extensible, so nothing is copied out.
+      expect(Object.getOwnPropertyDescriptor(sandbox, "a1")).toBeUndefined();
+      expect(Object.getOwnPropertyDescriptor(sandbox, "v1")).toBeUndefined();
+    });
+  }
+
+  test("frozen: writing an existing read-only property is still rejected", () => {
+    const sandbox = Object.freeze({ f0: 1 });
+    createContext(sandbox);
+    expect(runInContext("f0 = 99; f0", sandbox)).toBe(1);
+    expect(
+      runInContext("'use strict'; try{f0 = 99; 'ok'}catch(e){e.constructor.name}", sandbox),
+    ).toBe("TypeError");
+    expect(
+      runInContext(
+        "try{Object.defineProperty(globalThis,'f0',{value:99}); 'ok'}catch(e){e.constructor.name}",
+        sandbox,
+      ),
+    ).toBe("TypeError");
+  });
+
+  test("sealed: writing an existing writable property still copies out to the sandbox", () => {
+    const sandbox = Object.seal({ f0: 1 });
+    createContext(sandbox);
+    expect(runInContext("f0 = 99; f0", sandbox)).toBe(99);
+    expect(sandbox.f0).toBe(99);
+  });
+});
+
 describe("node:vm SourceTextModule cyclic graph linking", () => {
   // Building a cyclic SourceTextModule graph and linking + evaluating each
   // module from inside the linker callback (instead of linking the whole graph

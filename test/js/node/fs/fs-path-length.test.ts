@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isPosix, isWindows } from "harness";
+import { isLinux, isMacOS, isPosix, isWindows } from "harness";
 import fs from "node:fs";
 
 // On POSIX systems, MAX_PATH_BYTES is 4096.
@@ -41,6 +41,31 @@ describe.if(isPosix)("path length validation with multi-byte characters", () => 
     // U+00E9 (é) is 2 bytes in UTF-8. 3000 chars = 6000 bytes > 4096
     const accentPath = "\u00e9".repeat(3000);
     expect(() => fs.statSync(accentPath)).toThrow("ENAMETOOLONG");
+  });
+
+  // PATH_MAX (Linux 4096, macOS 1024) includes the NUL terminator, so the
+  // longest usable path string is PATH_MAX-1 bytes. A path of exactly
+  // PATH_MAX bytes used to pass the `0..=MAX_PATH_BYTES` length guard, then
+  // `slice_z_with_force_copy` had no room for the NUL and returned "" — the
+  // syscall ran on the empty path and came back ENOENT instead of
+  // ENAMETOOLONG. PATH_MAX-1 (kernel rejects) and PATH_MAX+1 (guard rejects)
+  // were already correct; only this one length was wrong.
+  describe.each([
+    ["Linux", isLinux, 4096],
+    ["macOS", isMacOS, 1024],
+  ])("PATH_MAX boundary on %s", (_, isHost, PATH_MAX) => {
+    const mk = (n: number) => "/tmp/" + Buffer.alloc(n - 5, "A").toString();
+    it.if(isHost).each([PATH_MAX - 1, PATH_MAX, PATH_MAX + 1])(
+      "returns ENAMETOOLONG for a %i-byte path (sync/promises/Buffer)",
+      async n => {
+        const p = mk(n);
+        expect(() => fs.statSync(p)).toThrow(expect.objectContaining({ code: "ENAMETOOLONG" }));
+        expect(() => fs.openSync(p, "r")).toThrow(expect.objectContaining({ code: "ENAMETOOLONG" }));
+        expect(() => fs.mkdirSync(p)).toThrow(expect.objectContaining({ code: "ENAMETOOLONG" }));
+        expect(() => fs.statSync(Buffer.from(p))).toThrow(expect.objectContaining({ code: "ENAMETOOLONG" }));
+        await expect(fs.promises.stat(p)).rejects.toMatchObject({ code: "ENAMETOOLONG" });
+      },
+    );
   });
 
   // Verify that the process does not crash - the key property is that these

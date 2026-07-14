@@ -864,7 +864,8 @@ impl All {
     }
 
     /// Called from `EventLoop::auto_tick` to compute the epoll/kqueue timeout.
-    /// Returns `true` if `spec` was written.
+    /// Returns `true` if `spec` was written. `now_out` receives the monotonic reading this
+    /// took, if any, for the caller to share with the tick (see `NOW_NS_UNKNOWN`).
     ///
     /// Note (b2): `vm` is erased per §Dispatch (the caller is in
     /// `bun_jsc::event_loop` which can't name `bun_runtime`). The two reads
@@ -883,6 +884,7 @@ impl All {
         has_pending_immediate: bool,
         quic_next_tick_us: Option<i64>,
         vm: *mut (), /* erased *mut VirtualMachine, forwarded to fire() */
+        now_out: &mut Option<Timespec>,
     ) -> bool {
         #[cfg(unix)]
         if has_pending_immediate {
@@ -906,7 +908,7 @@ impl All {
         // still creates a `&mut All` for the call frame; switch the signature
         // to `this: *mut Self` (see the `get_timeout` call sites in jsc_hooks.rs).
         let this: *mut Self = self;
-        let mut maybe_now: Option<Timespec> = None;
+        let maybe_now: &mut Option<Timespec> = now_out;
         loop {
             // SAFETY: `this` derived from `&mut self`; short-lived exclusive
             // borrow scoped to this `peek()` call only.

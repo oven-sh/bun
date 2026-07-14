@@ -81,6 +81,17 @@ NapiHandleScopeImpl::Slot* NapiHandleScopeImpl::reserveSlot()
     return &m_storage.last();
 }
 
+void NapiHandleScopeImpl::releaseHandles()
+{
+    // Match V8: closing a scope releases its handles immediately. Otherwise a
+    // closed scope cell that stays live for any reason (e.g. a conservative-scan
+    // pin) keeps marking every value it ever held, plus its whole parent chain.
+    WTF::Locker locker { cellLock() };
+    m_storage.clear();
+    m_escapeSlot = nullptr;
+    m_parent = nullptr;
+}
+
 NapiHandleScopeImpl* NapiHandleScope::open(Zig::GlobalObject* globalObject, bool escapable)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -118,6 +129,7 @@ void NapiHandleScope::close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl
     } else {
         globalObject->m_currentNapiHandleScopeImpl.clear();
     }
+    current->releaseHandles();
 }
 
 NapiHandleScope::NapiHandleScope(Zig::GlobalObject* globalObject)

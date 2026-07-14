@@ -24,19 +24,23 @@
 /* uv_poll_t->data always (except for most times after calling us_poll_stop)
  * points to the us_poll_t */
 static void poll_cb(uv_poll_t *p, int status, int events) {
-  /* UV_DISCONNECT (Windows AFD): the peer closed or reset the connection while
-   * no ordinary readable event was outstanding - e.g. a client RST after this
-   * side already half-closed and stopped reading, which otherwise never fires
-   * another poll and leaves the socket (and server.close()) waiting forever.
-   * Surface it as readable: the shared read loop's recv() then observes the
-   * FIN (0) or the reset (error) and the normal EOF/error paths take over.
+  int eof = status == UV_EOF;
+  /* UV_DISCONNECT (Windows AFD): the peer gracefully closed its write side.
+   * A client FIN after this side already half-closed and stopped reading
+   * otherwise never fires another poll, and the socket (and server.close())
+   * waits forever. It IS the EOF hint, so hand it to the shared dispatch the
+   * way kqueue hands EV_EOF: readable is added so the read loop drains
+   * whatever is still queued before the EOF handling runs, and the eof flag
+   * routes shut-down sockets straight to the prompt close (loop.c handles
+   * paused/shutdown/half-open states there).
    * https://github.com/libuv/libuv/blob/v1.x/docs/src/poll.rst (UV_DISCONNECT
-   * "is only supported on Windows and may not always be triggered"; readable
-   * polling stays armed as the primary signal). */
+   * is Windows-only and best-effort; readable polling stays the primary
+   * signal). */
   if (events & UV_DISCONNECT) {
+    eof = 1;
     events |= UV_READABLE;
   }
-  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, status < 0 && status != UV_EOF, status == UV_EOF,
+  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, status < 0 && status != UV_EOF, eof,
                                   events);
 }
 
@@ -113,9 +117,10 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   // a `Async.KeepAlive` associated with them, which is used instead of the
   // usockets internals. usockets doesnt have a notion of ref-counted handles.
   uv_unref((uv_handle_t *)p->uv_p);
-  /* Ask for UV_DISCONNECT alongside readable so a peer reset that arrives
-   * with no read outstanding still fires (see poll_cb). */
-  uv_poll_start(p->uv_p, events | ((events & LIBUS_SOCKET_READABLE) ? UV_DISCONNECT : 0), poll_cb);
+  /* Always ask for UV_DISCONNECT: a peer FIN must fire even when the poll is
+   * writable-only at that moment (a half-closed connection whose reads are
+   * paused is exactly the state that otherwise hangs; see poll_cb). */
+  uv_poll_start(p->uv_p, events | UV_DISCONNECT, poll_cb);
 }
 
 int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
@@ -130,7 +135,7 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         us_internal_poll_type(p) |
         ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
         ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
-    uv_poll_start(p->uv_p, events | ((events & LIBUS_SOCKET_READABLE) ? UV_DISCONNECT : 0), poll_cb);
+    uv_poll_start(p->uv_p, events | UV_DISCONNECT, poll_cb);
   }
 }
 

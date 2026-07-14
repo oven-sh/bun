@@ -113,7 +113,7 @@ impl Echo {
         Builtin::done(
             interp,
             cmd,
-            err.map(|e| e.errno as crate::shell::ExitCode).unwrap_or(0),
+            err.map(|e| e.errno.unsigned_abs() as crate::shell::ExitCode).unwrap_or(0),
         )
     }
 }

@@ -142,7 +142,7 @@ pub(crate) fn construct_redirect(
     let ptr = bun_core::heap::into_raw(response);
     // SAFETY: `ptr` is a fresh heap allocation; `Response::to_js` hands it to
     // the C++ wrapper which owns it thereafter.
-    Ok(unsafe { &mut *ptr }.to_js(global_this))
+    Ok(unsafe { (*ptr).to_js(global_this) })
 }
 
 // C++ side declares `extern "C" SYSV_ABI ... JSC_HOST_CALL_ATTRIBUTES`.

@@ -164,7 +164,6 @@ impl PerMessageDeflate {
         in_with_trailer.extend_from_slice(&DEFLATE_TRAILER);
 
         let mut remaining = in_with_trailer.as_slice();
-        let mut saw_stream_end = false;
         loop {
             let (consumed, rc) = self.decompress_stream.step(
                 remaining,
@@ -180,7 +179,6 @@ impl PerMessageDeflate {
             }
 
             if rc == zlib::ReturnCode::StreamEnd {
-                saw_stream_end = true;
                 break;
             }
             if rc != zlib::ReturnCode::Ok {
@@ -196,11 +194,7 @@ impl PerMessageDeflate {
             }
         }
 
-        // RFC 7692 §7.2.3: a sender may end a DEFLATE stream with BFINAL=1 and
-        // begin a fresh one for the next message. Without a reset here the
-        // finished inflater returns Z_STREAM_END with 0 bytes on every later
-        // message, silently delivering empty payloads.
-        if saw_stream_end || self.params.server_no_context_takeover == 1 {
+        if self.params.server_no_context_takeover == 1 {
             self.decompress_stream.reset();
         }
 

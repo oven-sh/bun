@@ -214,8 +214,9 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   }
 
   if (!X509_STORE_set_default_paths(store)) {
-    X509_STORE_free(store);
-    return NULL;
+    // OHOS / musl: no /etc/ssl/cert.pem — not fatal, we have compiled-in CA.
+    // X509_STORE_set_default_paths fails but we continue with the
+    // compiled-in bundle and any loaded system CAs.
   }
 
   us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();

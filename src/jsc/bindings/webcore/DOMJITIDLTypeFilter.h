@@ -35,108 +35,108 @@ template<typename IDLType>
 struct IDLArgumentTypeFilter;
 
 template<> struct IDLArgumentTypeFilter<IDLBoolean> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecBoolean;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecBoolean;
 };
 template<> struct IDLArgumentTypeFilter<IDLByte> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
 };
 template<> struct IDLArgumentTypeFilter<IDLOctet> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
 };
 template<> struct IDLArgumentTypeFilter<IDLShort> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
 };
 template<> struct IDLArgumentTypeFilter<IDLUnsignedShort> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
 };
 template<> struct IDLArgumentTypeFilter<IDLLong> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
 };
 template<> struct IDLArgumentTypeFilter<IDLDOMString> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecString;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecString;
 };
 template<> struct IDLArgumentTypeFilter<IDLAtomStringAdaptor<IDLDOMString>> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecString;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecString;
 };
 template<> struct IDLArgumentTypeFilter<IDLRequiresExistingAtomStringAdaptor<IDLDOMString>> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecString;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecString;
 };
 template<> struct IDLArgumentTypeFilter<IDLUint8Array> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecUint8Array;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecUint8Array;
 };
 
 template<typename IDLType>
 struct IDLResultTypeFilter {
-    static constexpr JSC::SpeculatedType value = JSC::SpecFullTop;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecFullTop;
 };
 
 template<> struct IDLResultTypeFilter<IDLAny> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecHeapTop;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecHeapTop;
 };
 template<> struct IDLResultTypeFilter<IDLBoolean> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecBoolean;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecBoolean;
 };
 template<> struct IDLResultTypeFilter<IDLByte> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
 };
 template<> struct IDLResultTypeFilter<IDLOctet> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
 };
 template<> struct IDLResultTypeFilter<IDLShort> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
 };
 template<> struct IDLResultTypeFilter<IDLUnsignedShort> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
 };
 template<> struct IDLResultTypeFilter<IDLLong> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecInt32Only;
 };
 template<> struct IDLResultTypeFilter<IDLUnsignedLong> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
 };
 template<> struct IDLResultTypeFilter<IDLLongLong> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
 };
 template<> struct IDLResultTypeFilter<IDLUnsignedLongLong> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
 };
 template<> struct IDLResultTypeFilter<IDLFloat> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
 };
 template<> struct IDLResultTypeFilter<IDLUnrestrictedFloat> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
 };
 template<> struct IDLResultTypeFilter<IDLDouble> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
 };
 template<> struct IDLResultTypeFilter<IDLUnrestrictedDouble> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecBytecodeNumber;
 };
 template<> struct IDLResultTypeFilter<IDLDOMString> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecString;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecString;
 };
 template<> struct IDLResultTypeFilter<IDLByteString> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecString;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecString;
 };
 template<> struct IDLResultTypeFilter<IDLUSVString> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecString;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecString;
 };
 template<> struct IDLResultTypeFilter<IDLAtomStringAdaptor<IDLDOMString>> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecString;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecString;
 };
 template<> struct IDLResultTypeFilter<IDLRequiresExistingAtomStringAdaptor<IDLDOMString>> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecString;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecString;
 };
 template<> struct IDLResultTypeFilter<IDLUint8Array> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecUint8Array;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecUint8Array;
 };
 template<> struct IDLResultTypeFilter<IDLObject> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecBytecodeTop;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecBytecodeTop;
 };
 
 template<typename T>
 struct IDLResultTypeFilter<IDLNullable<T>> {
-    static constexpr JSC::SpeculatedType value = JSC::SpecOther | IDLResultTypeFilter<T>::value;
+    static const constexpr JSC::SpeculatedType value = JSC::SpecOther | IDLResultTypeFilter<T>::value;
 };
 
 }

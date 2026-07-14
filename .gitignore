@@ -212,7 +212,6 @@ core.[0-9]*
 # them on disk; keep ignored so they don't show as untracked).
 src/jsc/bindings/GeneratedJS2Native.zig
 src/jsc/bindings/GeneratedBindings.zig
-
-# Web Streams rewrite working notes (design docs, spec transcription, review logs).
-# Kept locally for the ongoing work; not part of the source tree.
-/specs/
+.arts
+src/ohos_sign/target/
+.zig-cache/

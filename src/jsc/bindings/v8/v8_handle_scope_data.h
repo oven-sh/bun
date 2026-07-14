@@ -16,9 +16,16 @@
 namespace v8 {
 namespace shim {
 
-// Use the real V8 struct directly so the layout cannot drift:
-// { Address* next; Address* limit; int level; int sealed_level; } where Address is uintptr_t.
-using HandleScopeData = real_v8::internal::HandleScopeData;
+// Use a manually-defined struct matching V8's HandleScopeData layout.
+// real_v8::internal::HandleScopeData was removed from newer V8 public headers,
+// so we define our own to avoid depending on it.
+// Layout: { Address* next; Address* limit; int level; int sealed_level; }
+struct HandleScopeData {
+    uintptr_t* next;
+    uintptr_t* limit;
+    int level;
+    int sealed_level;
+};
 
 static_assert(std::is_same_v<real_v8::internal::Address, uintptr_t>,
     "V8's Address type is expected to be uintptr_t");

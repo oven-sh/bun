@@ -812,6 +812,7 @@ pub type OpenPtyFn = unsafe extern "C" fn(
 
 /// Dynamic loading of openpty on Linux (it's in libutil which may not be linked)
 #[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(not(target_env = "ohos"))]
 mod lib_util {
     use super::*;
     use bun_core::ZStr;
@@ -831,11 +832,13 @@ mod lib_util {
         }
         LOADED.store(true, Relaxed);
 
-        // Try libutil.so first (most common), then libutil.so.1
-        const LIB_NAMES: [&ZStr; 3] = [
+        // Try libutil.so first (most common), then libutil.so.1,
+        // libc.so.6 (glibc), then libc.so (musl/ohos).
+        const LIB_NAMES: [&ZStr; 4] = [
             bun_core::zstr!("libutil.so"),
             bun_core::zstr!("libutil.so.1"),
             bun_core::zstr!("libc.so.6"),
+            bun_core::zstr!("libc.so"),
         ];
         for lib_name in LIB_NAMES {
             if let Some(h) = sys::dlopen(lib_name, sys::RTLD::LAZY) {
@@ -847,7 +850,15 @@ mod lib_util {
     }
 
     pub(super) fn get_open_pty() -> Option<OpenPtyFn> {
-        sys::dlsym_with_handle!(OpenPtyFn, "openpty", get_handle())
+        // First try the handle from dlopen (specific library)
+        if let Some(f) = sys::dlsym_with_handle!(OpenPtyFn, "openpty", get_handle()) {
+            return Some(f);
+        }
+        // Fallback: RTLD_DEFAULT — covers musl/OHOS where openpty is in libc
+        // but some runtimes may not expose it through a dlopen'd handle.
+        let name = c"openpty";
+        let p = unsafe { libc::dlsym(core::ptr::null_mut(), name.as_ptr()) };
+        if p.is_null() { None } else { Some(unsafe { core::mem::transmute(p) }) }
     }
 }
 
@@ -873,14 +884,30 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
         return Some(openpty);
     }
 
-    // On Linux, openpty is in libutil, which may not be linked
+    // OHOS: openpty is in libc (same as macOS), link directly
+    #[cfg(target_env = "ohos")]
+    {
+        unsafe extern "C" {
+            fn openpty(
+                amaster: *mut c_int,
+                aslave: *mut c_int,
+                name: *mut u8,
+                termp: *const OpenPtyTermios,
+                winp: *const Winsize,
+            ) -> c_int;
+        }
+        return Some(openpty);
+    }
+
+    // On Linux/Android, openpty is in libutil, which may not be linked
     // Load it dynamically via dlopen
     #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(not(target_env = "ohos"))]
     {
         return lib_util::get_open_pty();
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android", target_env = "ohos")))]
     None
 }
 
@@ -916,6 +943,20 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 
     let master_fd_desc = Fd::from_native(master_fd);
     let slave_fd_desc = Fd::from_native(slave_fd);
+
+    // OHOS: openpty may not propagate the initial winsize to the slave.
+    // Set it explicitly on the slave so child's TIOCGWINSZ sees it.
+    #[cfg(target_env = "ohos")]
+    {
+        const TIOCSWINSZ: c_ulong = 0x5414;
+        unsafe {
+            libc::ioctl(
+                slave_fd,
+                TIOCSWINSZ as _,
+                &raw const winsize,
+            );
+        }
+    }
 
     // Configure sensible terminal defaults matching node-pty behavior.
     // These are "cooked mode" defaults that most terminal applications expect.

@@ -1477,7 +1477,12 @@ export function tmpdir() {
     }
   }
 
-  if (isMacOS || isLinux) {
+  if (isMacOS || isLinux || process.platform === "openharmony") {
+    // Check TMPDIR env var first (user override for read-only /tmp, e.g. OHOS)
+    const userTmp = process.env["TMPDIR"] || process.env["TEMP"] || process.env["TMP"];
+    if (userTmp) {
+      return userTmp;
+    }
     if (existsSync("/tmp")) {
       return "/tmp";
     }
@@ -1544,7 +1549,7 @@ export function parseOs(string) {
   if (/darwin|apple|mac/i.test(string)) {
     return "darwin";
   }
-  if (/linux/i.test(string)) {
+  if (/linux|openharmony/i.test(string)) {
     return "linux";
   }
   if (/win/i.test(string)) {
@@ -1952,6 +1957,10 @@ export async function getUser(username) {
 export function getDistro() {
   if (isMacOS) {
     return "macOS";
+  }
+
+  if (process.platform === "openharmony") {
+    return "openharmony";
   }
 
   if (isLinux) {

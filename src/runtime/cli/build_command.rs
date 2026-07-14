@@ -54,6 +54,25 @@ impl BuildCommand {
     /// (those moved the tables, not the bodies).
     #[cold]
     #[inline(never)]
+    /// OHOS: sign a compiled binary ELF using the ohos_sign crate.
+    /// Signs to `<path>.signed` then renames over the original, so a crash
+    /// during signing never corrupts the output binary.
+    #[cfg(target_env = "ohos")]
+    fn ohos_sign_binary(path: &std::path::Path) {
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+        let signed = match ohos_sign::sign_selfsign_with_strip(&bytes) {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+        let signed_path = path.with_extension("signed");
+        if std::fs::write(&signed_path, &signed).is_ok() {
+            let _ = std::fs::rename(&signed_path, path);
+        }
+    }
+
     pub(crate) fn exec(
         ctx: Context,
         fetcher: Option<&bundle_v2::DependenciesScanner>,
@@ -981,6 +1000,36 @@ impl BuildCommand {
                                 Ok(_) => {}
                             }
                         }
+                    }
+                }
+
+                // OHOS: strip stale .codesign (bun payload shifts alignment) and re-sign
+                // in-process so the compiled binary can execute under the seccomp policy.
+                #[cfg(target_env = "ohos")]
+                {
+                    use std::os::unix::ffi::OsStrExt;
+                    let outfile_basename: &[u8] = match outfile.iter().rposition(|&b| b == b'/') {
+                        Some(i) => &outfile[i + 1..],
+                        None => outfile,
+                    };
+                    let outfile_path = if root_path.is_empty() || root_path == b"." {
+                        outfile_basename.to_vec()
+                    } else {
+                        let mut full = root_path.to_vec();
+                        if !full.ends_with(b"/") {
+                            full.push(b'/');
+                        }
+                        full.extend_from_slice(outfile_basename);
+                        full
+                    };
+                    if !outfile_path.is_empty() {
+                        let outfile_os = std::ffi::OsStr::from_bytes(&outfile_path[..]);
+                        let _ = std::fs::File::open(outfile_os).and_then(|f| f.sync_all());
+                        Self::ohos_sign_binary(std::path::Path::new(outfile_os));
+                        let _ = std::process::Command::new("chmod")
+                            .arg("755")
+                            .arg(outfile_os)
+                            .output();
                     }
                 }
 

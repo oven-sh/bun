@@ -165,6 +165,25 @@ pub(crate) fn create_and_schedule_completion_task(
     Ok(completion)
 }
 
+/// OHOS: sign a compiled binary ELF using the ohos_sign crate.
+/// Signs to `<path>.signed` then renames over the original, so a crash
+/// during signing never corrupts the output binary.
+#[cfg(target_env = "ohos")]
+fn ohos_sign_binary(path: &std::path::Path) {
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+    let signed = match ohos_sign::sign_selfsign_with_strip(&bytes) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+    let signed_path = path.with_extension("signed");
+    if std::fs::write(&signed_path, &signed).is_ok() {
+        let _ = std::fs::rename(&signed_path, path);
+    }
+}
+
 /// `BundleV2.generateFromJavaScript` — schedule a build and return its Promise.
 pub fn generate_from_javascript(
     config: JSBundlerConfig,
@@ -435,6 +454,20 @@ impl JSBundleCompletionTask {
             let entry = &mut output_files[entry_point_index];
             entry.dest_path.clone_from(&full_outfile_path);
             entry.is_executable = true;
+
+            // OHOS: strip stale .codesign and re-sign in-process (JS API path).
+            // Mirrors the CLI codepath in src/runtime/cli/build_command.rs.
+            #[cfg(target_env = "ohos")]
+            {
+                use std::os::unix::ffi::OsStrExt;
+                let outfile_os = std::ffi::OsStr::from_bytes(&full_outfile_path[..]);
+                let _ = std::fs::File::open(outfile_os).and_then(|f| f.sync_all());
+                ohos_sign_binary(std::path::Path::new(outfile_os));
+                let _ = std::process::Command::new("chmod")
+                    .arg("755")
+                    .arg(outfile_os)
+                    .output();
+            }
         }
 
         // Write external sourcemap files next to the compiled executable and

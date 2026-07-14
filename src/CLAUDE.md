@@ -339,3 +339,49 @@ unsafe { bun_core::heap::destroy(raw) };
 bun_wyhash::hash(bytes)            // u64
 bun_wyhash::hash_with_seed(seed, bytes)
 ```
+
+## OHOS (HarmonyOS) 移植说明
+
+### 构建方式
+
+```bash
+bun run build:release --target=aarch64-linux-ohos \
+  --sysroot=/path/to/ohos-sdk/sysroot
+```
+
+### 构建配置
+
+- **链接方式**: PIE + 动态链接 `libc.so` + 静态 `libc++.a`
+- **交叉编译器**: `aarch64-linux-ohos-clang`
+
+### 已验证的 OHOS 系统限制（2026-07-03 真机验证）
+
+> 验证程序: `ohos-syscall-verify.c`（详见 `exchanges/ci-test/ohos-syscall-bun-comparison.md`）
+
+| 限制 | 影响 | 验证结果 |
+|:-----|:------|:---------|
+| `link()` 硬链接 EPERM | `bun install` 软链包失败（需 copy fallback）| ✅ EPERM 确认 |
+| `close_range` 被 seccomp 拦截 | `bun_close_range()` 返回 ENOSYS | ✅ SIGSYS(436) |
+| `openat2` 被 seccomp 拦截 | `#[cfg(ohos)]` 提前返回 ENOSYS | ✅ SIGSYS(437) |
+| `fchmodat2` 被 seccomp 拦截 | cfg skip → `fchmodat` fallback | ✅ SIGSYS(452) |
+| `/tmp` 只读 | 临时文件创建失败 | ✅ EROFS（$TMPDIR 回退正常）|
+| 二进制需签名 | 启动前需 `binary-sign-tool sign` | ✅ 已自动化 |
+| `process.dlopen` ABI 不匹配 | 无法加载预编译 .node | ✅ 需 OHOS SDK 重编 |
+
+
+### 已确认被 seccomp 拦截的 syscall
+
+| syscall | 编号 | 验证方式 |
+|:--------|:-----|:---------|
+| `close_range` | 436 | SIGSYS ✅ |
+| `openat2` | 437 | SIGSYS ✅ |
+| `fchmodat2` | 452 | SIGSYS ✅ |
+
+与标准 Linux 不同的 OHOS syscall 编号：`memfd_create`=279（非 319）。Bun 代码中使用 `SYS_*` 宏自动适配。
+
+### spawn 实现说明
+
+- **spawnSync**: OHOS 用 `wait_linux_ohos()`（镜像 `wait_linux_signalfd` 结构，无 signalfd，始终 timeout=100ms）。fork() + poll + wait4。
+- **no_orphans**: 使用 `wait_linux_ohos()`，与 Linux 共享 PDEATHSIG 清除/恢复逻辑，ppid pidfd 检测 parent 死亡。
+- **PIDFD**: pidfd_open 实际可用（2026-07-03 真机验证）。signalfd(SIGCHLD) 不可用。
+

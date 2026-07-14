@@ -300,6 +300,17 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_get_all_property_names", () => {
+    it("own_only with skip_strings/skip_symbols includes non-enumerable own keys", async () => {
+      const result = await checkSameOutput("test_get_all_property_names_own_only", []);
+      expect(result).toContain(`own_only + skip_symbols: status=0 keys=["x", "ne"]`);
+      expect(result).toContain(`own_only + skip_strings: status=0 keys=[Symbol(s), Symbol(nes)]`);
+      expect(result).toContain(`own_only + all_properties: status=0 keys=["x", "ne", Symbol(s), Symbol(nes)]`);
+      expect(result).toContain(`own_only + skip_symbols|enumerable: status=0 keys=["x"]`);
+      expect(result).toContain(`own_only + skip_strings|enumerable: status=0 keys=[Symbol(s)]`);
+    });
+  });
+
   describe("napi_ref", () => {
     it("can recover the value from a weak ref", async () => {
       await checkSameOutput("test_napi_ref", []);

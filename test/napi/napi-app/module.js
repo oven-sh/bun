@@ -784,6 +784,37 @@ nativeTests.test_create_bigint_words = () => {
   console.log(nativeTests.create_weird_bigints());
 };
 
+nativeTests.test_get_all_property_names_own_only = () => {
+  // napi_key_collection_mode
+  const napi_key_own_only = 1;
+  // napi_key_filter
+  const napi_key_all_properties = 0;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_skip_strings = 1 << 3;
+  const napi_key_skip_symbols = 1 << 4;
+  // napi_key_conversion
+  const napi_key_keep_numbers = 0;
+
+  const sym = Symbol("s");
+  const neSym = Symbol("nes");
+  const o = { x: 1, [sym]: 2 };
+  Object.defineProperty(o, "ne", { value: 3, enumerable: false, configurable: true, writable: true });
+  Object.defineProperty(o, neSym, { value: 4, enumerable: false, configurable: true, writable: true });
+
+  const describe = keys => keys.map(k => (typeof k === "symbol" ? k.toString() : JSON.stringify(k)));
+
+  for (const [label, filter] of [
+    ["skip_symbols", napi_key_skip_symbols],
+    ["skip_strings", napi_key_skip_strings],
+    ["all_properties", napi_key_all_properties],
+    ["skip_symbols|enumerable", napi_key_skip_symbols | napi_key_enumerable],
+    ["skip_strings|enumerable", napi_key_skip_strings | napi_key_enumerable],
+  ]) {
+    const { status, keys } = nativeTests.get_all_property_names(o, napi_key_own_only, filter, napi_key_keep_numbers);
+    console.log(`own_only + ${label}: status=${status} keys=[${describe(keys).join(", ")}]`);
+  }
+};
+
 nativeTests.test_bigint_word_count = () => {
   // Test with a 2-word BigInt
   const bigint = 0x123456789abcdef0123456789abcdefn;

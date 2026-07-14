@@ -137,11 +137,12 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/event_loop/` - Event loop and task management
 - `src/bundler/` - JavaScript bundler (tree-shaking, CSS processing, HTML handling)
 - `src/install/` - Package manager (`lockfile/`, `npm.rs` registry client, `lifecycle_script_runner.rs`)
-- `src/shell/` - Cross-platform shell implementation
+- `src/runtime/shell/` - Cross-platform shell implementation
 - `src/css/` - CSS parser and processor
-- `src/http/` - HTTP client + `websocket_client/` (WebSocket, deflate)
+- `src/http/` - HTTP client
+- `src/http_jsc/websocket_client/` - WebSocket client and deflate support
 - `src/sql/` - SQL database integrations (Postgres, MySQL, SQLite)
-- `src/bake/` - Server-side rendering / dev server framework
+- `src/runtime/bake/` - Server-side rendering / dev server framework
 
 #### Vendored Dependencies (`vendor/`)
 

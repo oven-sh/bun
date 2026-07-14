@@ -38,11 +38,15 @@ async function runFloodStages(host: string | undefined) {
     });
   });
 
-  await new Promise<void>(resolve => (host === undefined ? server.listen(0, resolve) : server.listen(0, host, resolve)));
+  await new Promise<void>(resolve =>
+    host === undefined ? server.listen(0, resolve) : server.listen(0, host, resolve),
+  );
   stage("listening");
 
   const client =
-    host === undefined ? net.connect((server.address() as any).port) : net.connect((server.address() as any).port, host);
+    host === undefined
+      ? net.connect((server.address() as any).port)
+      : net.connect((server.address() as any).port, host);
   client.on("error", () => {});
   let interval: ReturnType<typeof setInterval> | undefined;
   const startFlood = () => {

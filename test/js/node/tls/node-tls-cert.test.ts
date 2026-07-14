@@ -729,7 +729,3 @@ describe("tls ciphers should work", () => {
     );
   });
 });
-
-// The "server-side getPeerCertificate() should not leak" RSS test lives in
-// node-tls-getpeercert-leak.test.ts so it runs in its own process without
-// allocator state from the 30 TLS tests above skewing the baseline.

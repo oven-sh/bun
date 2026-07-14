@@ -863,13 +863,37 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_postNodeInspectorControl, (JSGlobalObject * 
     return JSValue::encode(jsBoolean(postNodeInspectorControlMessage(message)));
 }
 
-// Marks the node:inspector server closed so url() reports undefined and
-// further control messages are dropped. The server itself is shut down by a
-// "close" control message sent before this.
-JSC_DEFINE_HOST_FUNCTION(jsFunction_markNodeInspectorClosed, (JSGlobalObject*, CallFrame*))
+// node:inspector's inspector.close(): asks the debugger thread to shut the
+// server down and blocks until it has, then marks the inspector closed so
+// url() reports undefined. Node's close() is synchronous — once it returns,
+// the port no longer accepts connections (test-inspector-open.js asserts a
+// connection to the old port is refused right after close()), so waiting for
+// the debugger thread's acknowledgement here is required, not just tidy.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFrame*))
 {
     auto& state = nodeInspectorState();
+    {
+        Locker<Lock> locker(state.lock);
+        if (state.url.isEmpty())
+            return JSValue::encode(jsUndefined());
+        // The debugger thread re-signals serverStarted once the server is down.
+        state.serverStarted = false;
+    }
+
+    auto controlMessage = JSON::Object::create();
+    controlMessage->setString("type"_s, "close"_s);
+    if (!postNodeInspectorControlMessage(controlMessage->toJSONString())) {
+        // No debugger thread to acknowledge; nothing is listening either.
+        Locker<Lock> locker(state.lock);
+        state.serverStarted = true;
+        state.url = String();
+        return JSValue::encode(jsUndefined());
+    }
+
     Locker<Lock> locker(state.lock);
+    while (!state.serverStarted) {
+        state.condition.wait(state.lock);
+    }
     state.url = String();
     return JSValue::encode(jsUndefined());
 }

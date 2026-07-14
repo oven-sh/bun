@@ -137,11 +137,19 @@ export default function (
       }
       switch (parsed?.type) {
         case "close":
-          sessionBackend?.close();
-          sessionBackend = undefined;
-          sessionAdapter = undefined;
-          sessionRefs = 0;
-          debug?.stop();
+          try {
+            sessionBackend?.close();
+            sessionBackend = undefined;
+            sessionAdapter = undefined;
+            sessionRefs = 0;
+            debug?.stop();
+            debug = undefined;
+          } finally {
+            // inspector.close() blocks until this lands: the port must already
+            // be refused when close() returns. Signalled from a finally so a
+            // failing stop() cannot hang the inspected thread forever.
+            reportNodeInspectorServerStarted("", control, undefined);
+          }
           return;
         case "session-connect":
           sessionRefs++;

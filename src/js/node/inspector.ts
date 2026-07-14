@@ -33,7 +33,7 @@ const waitForNodeInspectorConnection = $newCppFunction(
   0,
 );
 const postNodeInspectorControl = $newCppFunction("BunDebugger.cpp", "jsFunction_postNodeInspectorControl", 1);
-const markNodeInspectorClosed = $newCppFunction("BunDebugger.cpp", "jsFunction_markNodeInspectorClosed", 0);
+const closeNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_closeNodeInspector", 0);
 
 let activeInspectorUrl: string | undefined;
 
@@ -43,7 +43,7 @@ function open(port?: number, host?: string, wait?: boolean) {
   }
   if (!Bun.isMainThread) {
     // Node supports per-worker inspectors; Bun does not yet.
-    throw $ERR_WORKER_UNSUPPORTED_OPERATION("inspector.open()");
+    throw $ERR_WORKER_UNSUPPORTED_OPERATION("inspector.open() is not supported in workers");
   }
 
   if (port !== undefined && port !== null) {
@@ -94,8 +94,9 @@ function close() {
   if (activeInspectorUrl === undefined) {
     return;
   }
-  postNodeInspectorControl(JSON.stringify({ type: "close" }));
-  markNodeInspectorClosed();
+  // Sends the "close" control message and blocks until the debugger thread has
+  // stopped the server, so the port is already refused when close() returns.
+  closeNodeInspector();
   activeInspectorUrl = undefined;
 }
 

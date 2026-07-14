@@ -596,7 +596,7 @@ declare function $ERR_INSPECTOR_NOT_CONNECTED(): Error;
 declare function $ERR_INSPECTOR_NOT_WORKER(): Error;
 declare function $ERR_INSPECTOR_CLOSED(): Error;
 declare function $ERR_INSPECTOR_COMMAND(message: string): Error;
-declare function $ERR_WORKER_UNSUPPORTED_OPERATION(operation: string): TypeError;
+declare function $ERR_WORKER_UNSUPPORTED_OPERATION(message: string): TypeError;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
 declare function $ERR_IPC_CHANNEL_CLOSED(): Error;
 declare function $ERR_SOCKET_BAD_TYPE(): Error;

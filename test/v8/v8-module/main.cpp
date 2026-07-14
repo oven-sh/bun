@@ -1358,6 +1358,19 @@ void test_v8_string_utf8value(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void test_v8_integer_value_out_of_range(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  // Only IntegerValue is compared; V8's Integer::Value() is itself a raw
+  // static_cast<int64_t>(double) whose result for Infinity is platform-
+  // dependent, so ToInteger()->Value() on these inputs can't be checked
+  // against Node portably.
+  int64_t iv = info[0]->IntegerValue(context).FromJust();
+  printf("IntegerValue=%" PRId64 "\n", iv);
+  return ok(info);
+}
+
 void test_v8_throw_exception(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<String> msg =
@@ -1447,6 +1460,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_value_coercions);
   NODE_SET_METHOD(exports, "test_v8_string_utf8value",
                   test_v8_string_utf8value);
+  NODE_SET_METHOD(exports, "test_v8_integer_value_out_of_range",
+                  test_v8_integer_value_out_of_range);
   NODE_SET_METHOD(exports, "test_v8_throw_exception",
                   test_v8_throw_exception);
   NODE_SET_METHOD(exports, "test_v8_exception_constructors",

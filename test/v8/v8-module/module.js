@@ -33,8 +33,24 @@ module.exports = debugMode => {
     },
 
     test_v8_string_utf8value() {
-      for (const v of ["hello", 123, "caf\u00e9", "\u{1f600}"]) {
-        nativeModule.test_v8_string_utf8value(v);
+      const throwing = {
+        toString() {
+          throw new Error("nope");
+        },
+      };
+      for (const v of ["hello", 123, "caf\u00e9", "\u{1f600}", Symbol("s"), throwing]) {
+        try {
+          nativeModule.test_v8_string_utf8value(v);
+          console.log("did not throw");
+        } catch (e) {
+          console.log("threw:", e.constructor.name);
+        }
+      }
+    },
+
+    test_v8_integer_value_out_of_range() {
+      for (const v of [Infinity, -Infinity, 1e300, -1e300, NaN, 0, 42]) {
+        nativeModule.test_v8_integer_value_out_of_range(v);
       }
     },
 

@@ -147,8 +147,16 @@ Maybe<int64_t> Value::IntegerValue(Local<Context> context) const
     auto scope = DECLARE_THROW_SCOPE(vm);
     double d = localToJSValue().toIntegerPreserveNaN(globalObject);
     RETURN_IF_EXCEPTION(scope, Nothing<int64_t>());
+    // Match V8's NumberToInt64: clamp before the cast so Infinity/1e300 don't
+    // hit undefined behavior in static_cast<int64_t>.
     if (std::isnan(d)) {
         return Just(static_cast<int64_t>(0));
+    }
+    if (d >= static_cast<double>(std::numeric_limits<int64_t>::max())) {
+        return Just(std::numeric_limits<int64_t>::max());
+    }
+    if (d <= static_cast<double>(std::numeric_limits<int64_t>::min())) {
+        return Just(std::numeric_limits<int64_t>::min());
     }
     return Just(static_cast<int64_t>(d));
 }

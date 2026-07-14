@@ -331,9 +331,17 @@ String::Utf8Value::Utf8Value(Isolate* isolate, Local<v8::Value> obj)
 
     HandleScope scope(isolate);
     Local<v8::Value> value = obj;
+    // V8 wraps this in a TryCatch: the documented contract is that a failed
+    // ToString (Symbol, throwing toString()) leaves length()==0 and *==nullptr
+    // with no pending exception.
+    auto& vm = isolate->vm();
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     MaybeLocal<String> maybeString = value->ToString(isolate->GetCurrentContext());
     Local<String> str;
-    if (!maybeString.ToLocal(&str)) return;
+    if (!maybeString.ToLocal(&str)) {
+        catchScope.clearException();
+        return;
+    }
 
     size_t capacity = str->Utf8LengthV2(isolate) + 1;
     m_str = static_cast<char*>(malloc(capacity));

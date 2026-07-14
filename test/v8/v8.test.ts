@@ -314,6 +314,9 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("String::Utf8Value converts values to UTF-8", async () => {
       await checkSameOutput("test_v8_string_utf8value");
     });
+    it("IntegerValue clamps Infinity and out-of-range doubles like V8", async () => {
+      await checkSameOutput("test_v8_integer_value_out_of_range");
+    });
   });
 
   describe("Exception", () => {
@@ -653,11 +656,16 @@ try {
       const cwd = String(dir);
       await buildStandaloneAddon(cwd);
       const { lines, err, exitCode } = await runStandaloneAddon(cwd);
-      expect({ lines, err, exitCode }).toEqual({
-        lines: ["u 70000", "u 4000000000", "i -2147483648", "has=1", "call=42", "str=123", "TypeError nope"],
-        err: "",
-        exitCode: 0,
-      });
+      expect(lines, `stderr:\n${err}`).toEqual([
+        "u 70000",
+        "u 4000000000",
+        "i -2147483648",
+        "has=1",
+        "call=42",
+        "str=123",
+        "TypeError nope",
+      ]);
+      expect(exitCode).toBe(0);
     },
     10 * 60 * 1000,
   );

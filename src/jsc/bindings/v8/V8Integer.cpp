@@ -24,7 +24,17 @@ int64_t Integer::Value() const
     if (jsValue.isInt32()) {
         return jsValue.asInt32();
     }
-    return static_cast<int64_t>(jsValue.asNumber());
+    double d = jsValue.asNumber();
+    if (std::isnan(d)) {
+        return 0;
+    }
+    if (d >= static_cast<double>(std::numeric_limits<int64_t>::max())) {
+        return std::numeric_limits<int64_t>::max();
+    }
+    if (d <= static_cast<double>(std::numeric_limits<int64_t>::min())) {
+        return std::numeric_limits<int64_t>::min();
+    }
+    return static_cast<int64_t>(d);
 }
 
 int32_t Int32::Value() const

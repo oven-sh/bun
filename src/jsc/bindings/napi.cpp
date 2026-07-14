@@ -1658,7 +1658,7 @@ extern "C" JS_EXPORT napi_status node_api_create_object_with_properties(napi_env
 
     for (size_t i = 0; i < property_count; i++) {
         JSValue name = toJS(property_names[i]);
-        NAPI_RETURN_EARLY_IF_FALSE(env, name.isString() || name.isSymbol(), napi_name_expected);
+        NAPI_RETURN_EARLY_IF_FALSE(env, !name.isEmpty() && (name.isString() || name.isSymbol()), napi_name_expected);
     }
 
     JSValue prototype = prototype_or_null ? toJS(prototype_or_null) : jsNull();

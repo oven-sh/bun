@@ -8,30 +8,25 @@ pub(crate) const FETCH_ERROR_UNEXPECTED_BODY: &str =
     "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
 pub(crate) const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
 
-// by the C `kJSType*` ordinal until a typed key is available.
-pub const FETCH_TYPE_ERROR_NAMES: [&str; 8] = [
-    /* kJSTypeUndefined */ "Undefined",
-    /* kJSTypeNull      */ "Null",
-    /* kJSTypeBoolean   */ "Boolean",
-    /* kJSTypeNumber    */ "Number",
-    /* kJSTypeString    */ "String",
-    /* kJSTypeObject    */ "Object",
-    /* kJSTypeSymbol    */ "Symbol",
-    /* kJSTypeBigInt    */ "BigInt",
-];
-
-pub(crate) const FETCH_TYPE_ERROR_STRING_VALUES: [&str; 8] = [
-    concat!("fetch() expects a string, but received ", "Undefined"),
-    concat!("fetch() expects a string, but received ", "Null"),
-    concat!("fetch() expects a string, but received ", "Boolean"),
-    concat!("fetch() expects a string, but received ", "Number"),
-    concat!("fetch() expects a string, but received ", "String"),
-    concat!("fetch() expects a string, but received ", "Object"),
-    concat!("fetch() expects a string, but received ", "Symbol"),
-    concat!("fetch() expects a string, but received ", "BigInt"),
-];
-
-pub(crate) const FETCH_TYPE_ERROR_STRINGS: [&str; 8] = FETCH_TYPE_ERROR_STRING_VALUES;
+pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
+    if value.is_undefined() {
+        "fetch() expects a string, but received Undefined"
+    } else if value.is_null() {
+        "fetch() expects a string, but received Null"
+    } else if value.is_boolean() {
+        "fetch() expects a string, but received Boolean"
+    } else if value.is_number() {
+        "fetch() expects a string, but received Number"
+    } else if value.is_symbol() {
+        "fetch() expects a string, but received Symbol"
+    } else if value.is_big_int() {
+        "fetch() expects a string, but received BigInt"
+    } else if value.is_string_literal() {
+        "fetch() expects a string, but received String"
+    } else {
+        "fetch() expects a string, but received Object"
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export: FetchTasklet lives in ./fetch/FetchTasklet.rs
@@ -1453,7 +1448,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ) {
             Ok(n) => n,
             Err(err) => {
-                return Err(global_this.throw_error(err.into(), "Failed to decode file url"));
+                return Err(
+                    global_this.throw_error(bun_url::Error::from(err), "Failed to decode file url")
+                );
             }
         };
         let url_path_decoded = &path_buf2[0..decoded_len as usize];
@@ -1510,8 +1507,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         ) {
                             Ok(p) => p,
                             Err(err) => {
-                                return Err(global_this
-                                    .throw_error(err.into(), "Failed to resolve file url"));
+                                return Err(
+                                    global_this.throw_error(err, "Failed to resolve file url")
+                                );
                             }
                         };
                     }
@@ -1529,9 +1527,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
                     Ok(len) => &cwd_buf[..len],
                     Err(err) => {
-                        return Err(
-                            global_this.throw_error(err.into(), "Failed to resolve file url")
-                        );
+                        return Err(global_this.throw_error(err, "Failed to resolve file url"));
                     }
                 };
                 #[cfg(not(windows))]
@@ -1552,9 +1548,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     ) {
                         Ok(p) => p,
                         Err(err) => {
-                            return Err(
-                                global_this.throw_error(err.into(), "Failed to resolve file url")
-                            );
+                            return Err(global_this.throw_error(err, "Failed to resolve file url"));
                         }
                     };
                 }
@@ -1624,6 +1618,30 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 err,
             ),
         );
+    }
+
+    // Fetch spec step 11: reject synchronously for a pre-aborted signal. Runs
+    // after body/header extraction so Request-constructor errors (GET+body,
+    // already-used body) win and `request.bodyUsed` is set, matching Node.
+    if let Some(sig) = signal.0 {
+        let sig = bun_ptr::BackRef::from(sig);
+        if sig.aborted() {
+            // `abort_reason()` is the stored `m_reason` (same object as
+            // `signal.reason`), not a reconstructed DOMException.
+            let reason = sig.abort_reason();
+            if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
+                if let Some(stream) = stream_ref.get(global_this) {
+                    stream.cancel_with_reason(global_this, reason);
+                }
+            }
+            body.detach();
+            return Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global_this,
+                    reason,
+                ),
+            );
+        }
     }
 
     if headers.is_none() && body.has_body() && body.has_content_type_from_user() {

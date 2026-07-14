@@ -697,6 +697,50 @@ describe("streaming", () => {
         message: "Body object should not be disturbed or locked",
       });
     });
+
+    it.each([
+      ["null", null],
+      ["undefined", undefined],
+      ["false", false],
+      ["0", 0],
+      ["empty string", ""],
+    ])("passes rejection reason %s verbatim on every rejection path", async (_, reason) => {
+      const received: Record<string, unknown> = {};
+      let route = "";
+      await using server = serve({
+        port: 0,
+        development: false,
+        routes: {
+          "/sync": () => {
+            throw reason;
+          },
+          "/presettled": async () => {
+            throw reason;
+          },
+          "/returned-reject": () => Promise.reject(reason),
+          "/awaited": async () => {
+            await Bun.sleep(1);
+            throw reason;
+          },
+        },
+        error(e) {
+          received[route] = e;
+          return new Response("handled", { status: 500 });
+        },
+      });
+      for (const p of ["/sync", "/presettled", "/returned-reject", "/awaited"]) {
+        route = p;
+        const res = await fetch(new URL(p, server.url));
+        expect(res.status).toBe(500);
+        expect(await res.text()).toBe("handled");
+      }
+      expect(received).toStrictEqual({
+        "/sync": reason,
+        "/presettled": reason,
+        "/returned-reject": reason,
+        "/awaited": reason,
+      });
+    });
   });
 
   it("text from JS, one chunk", async () => {
@@ -1601,6 +1645,117 @@ describe("response framing", () => {
       );
       expect(GET).toEqual({ status: 204, contentLength: null, transferEncoding: null, body: "" });
       expect(HEAD).toEqual({ status: 204, contentLength: null, transferEncoding: null, body: "" });
+    });
+  });
+
+  // RFC 9110 §9.3.2: a server MUST NOT send content in response to HEAD.
+  // RFC 9112 §6.3 rule 1: a HEAD response is terminated at the end of the
+  // header section; any octets after it are parsed as the next response on a
+  // keep-alive connection, so a body here desynchronizes the connection.
+  describe("HEAD on the error path writes no body bytes", () => {
+    const boom = () => {
+      throw new Error("boom");
+    };
+
+    // Paths with an error() handler, or no handler throw at all, can be
+    // exercised in-process: the error never reaches on_unhandled_rejection.
+    it.each([
+      ["sync error()", () => new Response("EBODY", { status: 503, headers: { "x-from": "error" } })],
+      ["async error()", async () => new Response("EBODY", { status: 503, headers: { "x-from": "error" } })],
+    ])("%s Response mirrors the normal HEAD path", async (_label, errorHandler) => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        fetch: boom,
+        error: errorHandler,
+      });
+      const head = await rawRequest(server.port, "HEAD");
+      const get = await rawRequest(server.port, "GET");
+      expect({
+        head: {
+          statusLine: head.statusLine,
+          body: head.body,
+          cl: head.headers["content-length"],
+          x: head.headers["x-from"],
+        },
+        get: {
+          statusLine: get.statusLine,
+          body: get.body,
+          cl: get.headers["content-length"],
+          x: get.headers["x-from"],
+        },
+      }).toEqual({
+        head: { statusLine: "HTTP/1.1 503 Service Unavailable", body: "", cl: "5", x: "error" },
+        get: { statusLine: "HTTP/1.1 503 Service Unavailable", body: "EBODY", cl: "5", x: "error" },
+      });
+    });
+
+    it("the dev missing-response page is not sent for HEAD", async () => {
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", development: true, fetch: () => undefined as any });
+      const head = await rawRequest(server.port, "HEAD");
+      const get = await rawRequest(server.port, "GET");
+      expect({
+        head: { statusLine: head.statusLine, body: head.body },
+        get: { statusLine: get.statusLine, body: get.body },
+      }).toEqual({
+        head: { statusLine: "HTTP/1.1 200 OK", body: "" },
+        get: { statusLine: "HTTP/1.1 200 OK", body: "Welcome to Bun! To get started, return a Response object." },
+      });
+    });
+
+    // The default-500 and dev-error-page paths report the thrown error via
+    // on_unhandled_rejection, which would fail an in-process test, so run
+    // them (and the keep-alive desync witness) in a subprocess.
+    it("default 500 / dev error page write no body, and HEAD does not desync a keep-alive connection", async () => {
+      const src = `
+        import net from "node:net";
+        const wire = (port, payload) => new Promise(resolve => {
+          let b = Buffer.alloc(0);
+          const s = net.connect(port, "127.0.0.1", () => s.write(payload));
+          s.on("data", d => { b = Buffer.concat([b, d]); });
+          s.on("error", () => resolve(b));
+          s.on("close", () => resolve(b));
+        });
+        const afterHead = w => w.toString("latin1").split("\\r\\n\\r\\n").slice(1).join("\\r\\n\\r\\n");
+        const boom = req => {
+          if (new URL(req.url).pathname === "/boom") throw new Error("boom");
+          return new Response("OKBODY");
+        };
+        const s1 = Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: boom });
+        const s2 = Bun.serve({ port: 0, hostname: "127.0.0.1", development: true, fetch: boom });
+        const head = m => m + " /boom HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n";
+        const out = {
+          prod_head: afterHead(await wire(s1.port, head("HEAD"))),
+          prod_get: afterHead(await wire(s1.port, head("GET"))),
+          dev_head_len: afterHead(await wire(s2.port, head("HEAD"))).length,
+          dev_get_len: afterHead(await wire(s2.port, head("GET"))).length,
+          pipeline: afterHead(await wire(s1.port,
+            "HEAD /boom HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n" +
+            "GET /ok HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n"
+          )).split("\\r\\n")[0],
+        };
+        console.log(JSON.stringify(out));
+        s1.stop(true); s2.stop(true);
+        process.exit(0);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = JSON.parse(stdout.trim().split("\n").at(-1)!);
+      expect(out).toEqual({
+        prod_head: "",
+        prod_get: "Something went wrong!",
+        dev_head_len: 0,
+        dev_get_len: expect.any(Number),
+        pipeline: "HTTP/1.1 200 OK",
+      });
+      expect(out.dev_get_len).toBeGreaterThan(1000);
+      expect(exitCode).toBe(0);
     });
   });
 });

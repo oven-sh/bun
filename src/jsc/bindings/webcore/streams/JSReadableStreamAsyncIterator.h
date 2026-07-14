@@ -30,6 +30,7 @@ public:
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_reader, m_ongoingPromise.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -45,9 +46,9 @@ public:
     // "ongoing promise" — chains get-the-next-iteration-result / return calls.
     JSC::WriteBarrier<JSC::JSPromise> m_ongoingPromise;
     // "prevent cancel" (values({ preventCancel }))
-    bool m_preventCancel { false };
+    bool m_preventCancel : 1 { false };
     // "is finished"
-    bool m_isFinished { false };
+    bool m_isFinished : 1 { false };
 
 private:
     JSReadableStreamAsyncIterator(JSC::VM&, JSC::Structure*);

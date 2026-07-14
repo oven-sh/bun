@@ -935,12 +935,15 @@ where
         let _ref = RequestContextRef(std::ptr::from_mut::<Self>(ctx));
 
         let err = arguments.ptr[0];
+        // Pass the rejection reason through verbatim (including `null` and
+        // `undefined`) so `error()` sees the same value the already-settled
+        // path delivers. Only an empty JSValue is normalized.
         Self::handle_reject(
             ctx,
-            if !err.is_empty_or_undefined_or_null() {
-                err
-            } else {
+            if err.is_empty() {
                 JSValue::UNDEFINED
+            } else {
+                err
             },
         );
         Ok(JSValue::UNDEFINED)
@@ -954,6 +957,32 @@ where
         let resp = ctx.resp.expect("infallible: resp bound");
         // SAFETY: FFI handle, just checked Some
         let has_responded = resp.has_responded();
+
+        // The status line is already committed (a direct ReadableStream's
+        // pull() threw synchronously after do_render_stream wrote headers).
+        // error() cannot replace a response whose status is on the wire;
+        // report the failure and terminate the body so the client observes an
+        // incomplete message instead of a second header block spliced into
+        // the chunked body.
+        if !has_responded && ctx.flags.has_written_status() {
+            if !value.is_empty_or_undefined_or_null()
+                && let Some(server) = ctx.server
+            {
+                // SAFETY: BACKREF; see drain_microtasks() re: the const→mut cast.
+                unsafe {
+                    (*std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut())
+                        .run_error_handler(value, None);
+                }
+            }
+            let state = resp.state();
+            if state.is_http_write_called() && state.is_response_pending() {
+                ctx.force_close();
+            } else {
+                ctx.end_stream(ctx.should_close_connection());
+            }
+            return;
+        }
+
         if !has_responded {
             let original_state = ctx.defer_deinit_until_callback_completes;
             let should_deinit_context = core::cell::Cell::new(match original_state {
@@ -1025,7 +1054,11 @@ where
                 resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
                 resp.write_header(b"content-encoding", b"gzip");
                 resp.write_header_int(b"content-length", WELCOME_PAGE_HTML_GZ.len() as u64);
-                ctx.end(WELCOME_PAGE_HTML_GZ, ctx.should_close_connection());
+                if ctx.method == Method::HEAD {
+                    ctx.end_without_body(ctx.should_close_connection());
+                } else {
+                    ctx.end(WELCOME_PAGE_HTML_GZ, ctx.should_close_connection());
+                }
                 return;
             }
             const MISSING_CONTENT: &[u8] =
@@ -1034,14 +1067,18 @@ where
             resp.write_header(b"content-type", &bun_http_types::MimeType::TEXT.value);
             resp.write_header_int(b"content-length", MISSING_CONTENT.len() as u64);
             ctx.flags.set_has_written_status(true);
-            ctx.end(MISSING_CONTENT, ctx.should_close_connection());
+            if ctx.method == Method::HEAD {
+                ctx.end_without_body(ctx.should_close_connection());
+            } else {
+                ctx.end(MISSING_CONTENT, ctx.should_close_connection());
+            }
         }
     }
 
     pub fn render_default_error(
         &mut self,
         log: &mut bun_ast::Log,
-        err: bun_core::Error,
+        err: &crate::Error,
         exceptions: &[Api::JsException],
         fmt: core::fmt::Arguments<'_>,
     ) {
@@ -1062,7 +1099,7 @@ where
             reason: Some(Api::FallbackStep::fetch_event_handler),
             cwd: Some(cwd.to_vec().into_boxed_slice()),
             problems: Some(Api::Problems {
-                code: err.as_u16(),
+                code: 500,
                 name: err.name().as_bytes().to_vec().into_boxed_slice(),
                 exceptions: exceptions.to_vec(),
                 build: {
@@ -1084,6 +1121,11 @@ where
             Output::pretty_errorln(fmt);
         }
         Output::flush();
+
+        if self.method == Method::HEAD {
+            self.end_without_body(self.should_close_connection());
+            return;
+        }
 
         // Explicitly use the global allocator and *not* the arena
         let mut bb: Vec<u8> = Vec::new();
@@ -2136,6 +2178,11 @@ where
                 match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                     jsc::PromiseResult::Pending => {
                         stream_log!("promise still Pending");
+                        // The sink now owns a raw `resp` pointer and the pump
+                        // promise holds a ref on this context. Marking pending
+                        // keeps `handle_reject` from ending the response out
+                        // from under the sink while the stream is in flight.
+                        this.flags.set_has_marked_pending(true);
                         if !this.flags.has_written_status() {
                             response_stream.sink.on_first_write = None;
                             response_stream.sink.ctx = None;
@@ -3205,6 +3252,10 @@ where
                                 return;
                             }
                             this.ref_();
+                            // Same as do_render_stream's Pending branch: the
+                            // body is in flight, so `handle_reject` must not
+                            // fall through to render_missing() and end it.
+                            this.flags.set_has_marked_pending(true);
                             byte_stream.pipe.set(WebCore::Wrap::<Self>::init(this));
                             // Deinit the old Strong reference before creating a new one
                             // to avoid leaking the Strong.Impl memory
@@ -3357,13 +3408,18 @@ where
                     self.end_without_body(self.should_close_connection());
                 }
                 _ => {
+                    const BODY: &[u8] = b"Something went wrong!";
                     if !self.flags.has_written_status() {
                         resp.write_status(b"500 Internal Server Error");
                         resp.write_header(b"content-type", b"text/plain");
                         self.flags.set_has_written_status(true);
                     }
-
-                    self.end(b"Something went wrong!", self.should_close_connection());
+                    if self.method == Method::HEAD {
+                        resp.write_header_int(b"content-length", BODY.len() as u64);
+                        self.end_without_body(self.should_close_connection());
+                    } else {
+                        self.end(BODY, self.should_close_connection());
+                    }
                 }
             }
         }
@@ -3438,7 +3494,7 @@ where
             );
             self.render_default_error(
                 log,
-                bun_core::err!("ExceptionOcurred"),
+                &crate::Error::ExceptionOcurred,
                 &exception_list,
                 format_args!("{}", msg),
             );
@@ -3823,6 +3879,21 @@ where
     /// Same contract as [`Self::set_response`].
     pub unsafe fn render(&mut self, response: *mut Response) {
         ctx_log!("render");
+
+        // A HEAD response never carries content (RFC 9110 §9.3.2). The normal
+        // handler path branches to `do_render_head_response` before reaching
+        // here, but the `error()` handler paths call `render()` directly.
+        if self.method == Method::HEAD {
+            if let Some(resp) = self.resp {
+                let mut pair = HeaderResponsePair {
+                    this: self,
+                    response,
+                };
+                resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+            }
+            return;
+        }
+
         // SAFETY: caller contract.
         unsafe { self.set_response(response) };
 

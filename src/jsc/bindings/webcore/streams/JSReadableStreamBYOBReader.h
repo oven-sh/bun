@@ -31,6 +31,7 @@ public:
     // visitChildrenImpl MUST visit: m_stream + m_closedPromise (from the base) and
     // m_readIntoRequests (a barrier container: UNDER cellLock()).
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

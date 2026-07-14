@@ -37,6 +37,7 @@ public:
     // m_textAccumulator.visit(locker, visitor) inside ONE `Locker { cellLock() }` scope
     // taken by THIS visitChildrenImpl — cellLock() is non-recursive; see StreamQueue.h).
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -63,16 +64,22 @@ public:
     int8_t m_deferClose { 0 };
     // -1 = pull in progress, 0 = idle, 1 = flush deferred
     int8_t m_deferFlush { 0 };
+    // which of the 3 sink flavors this controller runs.
+    DirectSinkKind m_sinkKind { DirectSinkKind::ArrayBuffer };
     // Once closed, the five methods are no-ops (there is NO "swap all 5 methods to a
     // throwing stub" trick).
-    bool m_closed { false };
+    bool m_closed : 1 { false };
     // An async pull()'s returned promise has not yet settled; cleared by its settlement
     // reactions. m_pullAgain is set only when a NEW read arrives while m_pullInFlight
     // (edge-triggered, matching the spec default controller's [[pullAgain]]).
-    bool m_pullInFlight { false };
-    bool m_pullAgain { false };
-    // which of the 3 sink flavors this controller runs.
-    DirectSinkKind m_sinkKind { DirectSinkKind::ArrayBuffer };
+    bool m_pullInFlight : 1 { false };
+    bool m_pullAgain : 1 { false };
+    bool m_calledDone : 1 { false };
+    // End-of-tick auto-flush (the JS-facing analogue of the HTTP sink's AutoFlusher):
+    // armed by write() when data is buffered below the HWM while a consumer waits; the
+    // deferred task runs right after the current microtask drain and delivers it.
+    bool m_endOfTickFlushArmed : 1 { false };
+    bool m_finalChunkArmed : 1 { false };
 
     // ArrayBuffer sink: a real Bun.ArrayBufferSink cell (ArrayBuffer kind only).
     JSC::WriteBarrier<JSC::JSObject> m_arrayBufferSink;
@@ -89,18 +96,12 @@ public:
 
     // Text/Array closing capability.
     JSC::WriteBarrier<JSC::JSPromise> m_closingPromise;
-    bool m_calledDone { false };
 
-    // End-of-tick auto-flush (the JS-facing analogue of the HTTP sink's AutoFlusher):
-    // armed by write() when data is buffered below the HWM while a consumer waits; the
-    // deferred task runs right after the current microtask drain and delivers it.
-    bool m_endOfTickFlushArmed { false };
     void armEndOfTickFlush(JSC::JSGlobalObject*);
 
     // Final-chunk-on-close: the NEXT read() delivers m_finalChunk then closes. onPull checks
     // m_finalChunkArmed FIRST.
     JSC::WriteBarrier<JSC::Unknown> m_finalChunk;
-    bool m_finalChunkArmed { false };
 
     // The state machine. All userJS: YES.
     // the READ pump: the default reader's read()/readMany() on a Direct stream lands here.

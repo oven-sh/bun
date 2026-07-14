@@ -4289,9 +4289,32 @@ impl VirtualMachine {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
+        let hardcoded_alias = ModuleLoader::HardcodedModule::Alias::get(
+            specifier_utf8.slice(),
+            bun_ast::Target::Bun,
+            Default::default(),
+        );
+
         if jsc_vm.plugin_runner.is_some() {
             use bun_bundler::transpiler::PluginRunner;
             let spec = specifier_utf8.slice();
+            // A builtin that is already cached keeps its canonical key so a
+            // late-registered onResolve cannot redirect it to a fresh registry
+            // entry and fork module identity. Matches the file-path law where
+            // a cached module is returned regardless of later onLoad plugins.
+            if let Some(hardcoded) = hardcoded_alias {
+                let canonical = hardcoded.path.as_bytes();
+                if global.is_builtin_module_cached(canonical) {
+                    *res = ErrorableString::ok(
+                        if is_user_require_resolve && hardcoded.node_builtin {
+                            specifier.dupe_ref()
+                        } else {
+                            bun_core::String::init(canonical)
+                        },
+                    );
+                    return Ok(());
+                }
+            }
             if PluginRunner::could_be_plugin(spec) {
                 let namespace = PluginRunner::extract_namespace(spec);
                 let after_namespace = if namespace.is_empty() {
@@ -4312,11 +4335,7 @@ impl VirtualMachine {
             }
         }
 
-        if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
-            specifier_utf8.slice(),
-            bun_ast::Target::Bun,
-            Default::default(),
-        ) {
+        if let Some(hardcoded) = hardcoded_alias {
             *res = ErrorableString::ok(if is_user_require_resolve && hardcoded.node_builtin {
                 specifier.dupe_ref()
             } else {

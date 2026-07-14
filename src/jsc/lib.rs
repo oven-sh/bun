@@ -1064,6 +1064,13 @@ pub mod resolved_source_tag {
         /// Signal upwards that the matching value in `require.extensions` should be used.
         pub const CommonJsCustomExtension: Self = Self(10);
 
+        /// Fallible variant of [`Self::from_name`]: returns `None` for
+        /// specifiers without a generated InternalModuleRegistry tag.
+        #[inline]
+        pub fn try_from_name(name: &[u8]) -> Option<Self> {
+            INTERNAL_MODULE_TAG.get(name).copied()
+        }
+
         /// Map a canonical builtin-module specifier (e.g. `b"node:fs"`) to its
         /// InternalModuleRegistry tag (`(1 << 9) | id`).
         ///

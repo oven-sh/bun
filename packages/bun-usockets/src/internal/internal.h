@@ -298,6 +298,11 @@ struct us_socket_t {
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
   unsigned char ssl_pending_close_code;
+  /* Consecutive send() failures with an errno that is neither
+   * would-block/transient nor a known peer-gone error (see
+   * us_socket_write_check_error). Reset by any send that makes progress.
+   * Lives in the pad-to-pointer gap before `group`, so it costs nothing. */
+  unsigned char unclassified_send_failures;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach

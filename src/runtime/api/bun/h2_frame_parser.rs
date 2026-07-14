@@ -3360,34 +3360,19 @@ impl H2FrameParser {
     /// produced them owns the lifecycle. Latch the fatal and let the deferred tick
     /// close the transport - the failing write can be deep inside frame emission, so
     /// the close must not run under the caller's stack.
-    /// Only errnos that mean "the peer or path is gone" close the transport;
-    /// anything else keeps the historical re-buffer behavior. A blanket
-    /// `result < -1` treated every stray kernel errno as connection death,
-    /// and macOS in particular returns racy errnos from send() on healthy
-    /// sockets (EPROTOTYPE is handled as transient upstream, but the class
-    /// exists) - killing a live session over an unclassified errno is far
-    /// worse than buffering until the socket's own close event arrives.
-    /// Windows fatal codes arrive as raw WSA values (>= 10000 before
-    /// negation); the peer-gone subset is listed explicitly.
+    /// Errno classification lives in `us_socket_write_check_error` (socket.c):
+    /// would-block/transient errnos re-arm writable and are never reported
+    /// here, known peer-gone errnos are reported immediately, and every other
+    /// errno gets a bounded retry window through the same rearm machinery
+    /// before it is reported (this is what keeps macOS's racy EPROTOTYPE from
+    /// killing healthy sessions). So any `result < -1` that reaches this
+    /// function is a send failure the socket layer has already decided cannot
+    /// succeed - re-buffering it would wait forever for a writable event that
+    /// the socket layer deliberately stopped polling for (observed as an h2
+    /// session that never writes again and never errors). Windows fatal codes
+    /// arrive as raw negated WSA values and mean the same thing.
     fn is_transport_fatal_write_result(result: i32) -> bool {
-        // POSIX errnos (negated by write_maybe_corked).
-        const EPIPE: i32 = -(libc::EPIPE);
-        const ECONNRESET: i32 = -(libc::ECONNRESET);
-        const ECONNABORTED: i32 = -(libc::ECONNABORTED);
-        const ENOTCONN: i32 = -(libc::ENOTCONN);
-        const ETIMEDOUT: i32 = -(libc::ETIMEDOUT);
-        const ENETDOWN: i32 = -(libc::ENETDOWN);
-        const ENETUNREACH: i32 = -(libc::ENETUNREACH);
-        const EHOSTUNREACH: i32 = -(libc::EHOSTUNREACH);
-        matches!(
-            result,
-            EPIPE | ECONNRESET | ECONNABORTED | ENOTCONN | ETIMEDOUT | ENETDOWN | ENETUNREACH
-                | EHOSTUNREACH
-        ) ||
-        // Raw WSA codes from the Windows write path: WSAECONNABORTED (10053),
-        // WSAECONNRESET (10054), WSAESHUTDOWN (10058), WSAENOTCONN (10057),
-        // WSAENETRESET (10052), WSAETIMEDOUT (10060).
-        matches!(-result, 10052..=10054 | 10057 | 10058 | 10060)
+        result < -1
     }
 
     fn note_transport_write_fatal(&self) {

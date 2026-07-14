@@ -442,6 +442,8 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.is_ipc = ipc;
     s->flags.is_closed = 0;
     s->flags.adopted = 0;
+    s->flags.last_write_failed = 0;
+    s->unclassified_send_failures = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -490,6 +492,36 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
     return written < 0 ? 0 : written;
 }
 
+#ifndef _WIN32
+/* send() errnos that mean the peer or the path to it is gone: no retry can
+ * ever succeed, so they are reported to the caller immediately (libuv fails
+ * the write request for these in uv__try_write, unix/stream.c; only the
+ * EAGAIN/ENOBUFS class waits for another writable event). Mirrored by the
+ * blanket `result < -1` fatal handling in h2_frame_parser's
+ * is_transport_fatal_write_result - classification lives here only. */
+static int us_internal_send_errno_is_peer_gone(int e) {
+    switch (e) {
+    case EPIPE:
+    case ECONNRESET:
+    case ECONNABORTED:
+    case ENOTCONN:
+    case ETIMEDOUT:
+    case ENETDOWN:
+    case ENETUNREACH:
+    case EHOSTUNREACH:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* One retry runs per writable dispatch (one event-loop iteration), so 32
+ * consecutive failures is far beyond any observed transient race window
+ * (the macOS EPROTOTYPE race resolves within a dispatch or two) while still
+ * surfacing a genuinely wedged transport within microseconds. */
+#define US_UNCLASSIFIED_SEND_RETRY_LIMIT 32
+#endif
+
 int us_socket_write_check_error(struct us_socket_t *s, const char *data, int length, int *fatal_write_error) {
     if (fatal_write_error) *fatal_write_error = 0;
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
@@ -513,28 +545,28 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
             return 0;
         }
 #ifndef _WIN32
-        /* libuv treats ENOBUFS like EAGAIN (uv__try_write, unix/stream.c). */
-        if (errno == ENOBUFS) {
+        /* Anything else that is not a known peer-gone errno gets a BOUNDED
+         * retry through the same rearm/writable machinery as would-block.
+         * Kernels return racy, non-terminal errnos from send() on sockets
+         * that are still perfectly usable - macOS EPROTOTYPE while the
+         * connection is concurrently mutating is the canonical case, and
+         * libuv retries it (RETRY_ON_WRITE_ERROR,
+         * https://github.com/libuv/libuv/blob/v1.x/src/unix/stream.c) -
+         * so failing the write on first sight killed live connections.
+         * But the retry must not be unbounded: an errno that persists across
+         * many consecutive writable dispatches with no successful send in
+         * between means the transport is dead in a way the kernel will not
+         * name on the write side, and silently re-arming forever jams the
+         * connection (buffered bytes never drain and no error ever
+         * surfaces). After the limit, report the errno like the peer-gone
+         * class so the caller can fail the write. */
+        if (!us_internal_send_errno_is_peer_gone(errno) &&
+            s->unclassified_send_failures < US_UNCLASSIFIED_SEND_RETRY_LIMIT) {
+            s->unclassified_send_failures++;
             s->flags.last_write_failed = 1;
             us_internal_rearm_writable(s);
             return 0;
         }
-#ifdef __APPLE__
-        /* macOS returns a racy EPROTOTYPE from send() on perfectly healthy
-         * sockets while the connection is concurrently mutating; libuv
-         * RETRIES the write (RETRY_ON_WRITE_ERROR,
-         * https://github.com/libuv/libuv/blob/v1.x/src/unix/stream.c). Classify
-         * it with the transient errors - re-arm writable and retry - instead
-         * of reporting a fatal reset: with fatal-write handling wired
-         * through (h2 tears the transport down, node:net fails the pending
-         * write), the old rename-to-ECONNRESET killed connections that were
-         * still fine. */
-        if (errno == EPROTOTYPE) {
-            s->flags.last_write_failed = 1;
-            us_internal_rearm_writable(s);
-            return 0;
-        }
-#endif
         /* Fatal send error: report the errno to callers that opt in and stop
          * polling writable - retrying can never succeed. */
         if (fatal_write_error) *fatal_write_error = errno;
@@ -555,6 +587,7 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
 #endif
         return 0;
     }
+    s->unclassified_send_failures = 0;
     if (written != length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);

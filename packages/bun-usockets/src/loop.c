@@ -505,6 +505,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.is_ipc = 0;
                         s->flags.is_closed = 0;
                         s->flags.adopted = 0;
+                        s->flags.last_write_failed = 0;
+                        s->unclassified_send_failures = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);

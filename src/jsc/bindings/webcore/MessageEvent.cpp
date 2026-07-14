@@ -105,7 +105,11 @@ auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScrip
 
     auto deserialized = data->deserialize(globalObject, &globalObject, ports, SerializationErrorMode::NonThrowing, &didFail);
     if (topExceptionScope.exception()) [[unlikely]] {
-        topExceptionScope.clearExceptionExceptTermination();
+        // Clear everything, including a termination: the very next call is
+        // toJS(), whose property reads EXCEPTION_ASSERT(!scope.exception()).
+        // The VMTraps termination-request flag survives clearException() and
+        // re-raises at the next JS entry.
+        topExceptionScope.clearException();
         deserialized = jsUndefined();
     }
 

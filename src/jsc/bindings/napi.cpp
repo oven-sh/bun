@@ -2910,7 +2910,8 @@ extern "C" napi_status napi_new_instance(napi_env env, napi_value constructor,
     if (constructData.type == JSC::CallData::Type::None) [[unlikely]] {
         // Callable but not constructible (e.g. arrow functions): Node.js lets V8
         // throw "is not a constructor" and returns napi_pending_exception.
-        napi_preamble_throw_scope__.throwException(globalObject, JSC::createNotAConstructorError(globalObject, constructorValue));
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSC::throwException(globalObject, scope, JSC::createNotAConstructorError(globalObject, constructorValue));
         return napi_set_last_error(env, napi_pending_exception);
     }
 

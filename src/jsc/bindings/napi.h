@@ -20,6 +20,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/Lock.h>
+#include <wtf/Threading.h>
 
 #include <atomic>
 #include <optional>
@@ -663,13 +664,14 @@ private:
         waitForAsyncCleanupHooks();
     }
 
-    // Block until every invoked async cleanup hook has signalled completion via
-    // napi_remove_async_cleanup_hook. Node.js Environment::CleanupHandles spins
-    // uv_run while request_waiting_ > 0; pump the platform loop for parity.
+    // Block until every invoked async cleanup hook has signalled completion
+    // via napi_remove_async_cleanup_hook. Pumps the platform I/O loop so
+    // completions delivered via uv handles can fire; yields between polls.
     void waitForAsyncCleanupHooks()
     {
         while (m_pendingAsyncCleanupHooks.load(std::memory_order_acquire) > 0) {
             napi_internal_tick_platform_loop(this);
+            WTF::Thread::yield();
         }
     }
 };

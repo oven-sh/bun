@@ -13,7 +13,7 @@
 // Two modes driven by the `data` argument to arm():
 //   mode 0: hook synchronously calls napi_remove_async_cleanup_hook
 //   mode 1: hook spawns a thread that sleeps, then calls remove
-// Both modes must observe "hook-invoked" and "hook-completed" on stderr before
+// Both modes must print "hook-invoked" and "hook-completed" on stdout before
 // the process exits, and neither may crash.
 
 struct ctx {

@@ -74,9 +74,11 @@ const config = isWindows
         cwd: undefined,
       };
 
-function isInstructionViolation(exitCode: number | null, output: string): boolean {
+function isInstructionViolation(signalCode: NodeJS.Signals | null, output: string): boolean {
   if (isWindows) return SDE_VIOLATION_PATTERN.test(output);
-  return exitCode === 132; // SIGILL = 128 + signal 4
+  // qemu-user re-raises the guest's fatal signal on the host, so the process is WIFSIGNALED:
+  // `proc.exitCode` is null and only `proc.signalCode` carries the verdict.
+  return signalCode === "SIGILL";
 }
 
 console.log(`--- Verifying ${basename(binary)} on ${config.cpuDesc}`);
@@ -139,11 +141,11 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
   }
 
   const exitCode = proc.exitCode;
-  const killed = exitCode === null && proc.signalCode === "SIGKILL";
+  const signalCode = proc.signalCode;
   const elapsed = ((performance.now() - start) / 1000).toFixed(1);
   const output = stdout + "\n" + stderr;
 
-  if (killed) {
+  if (exitCode === null && signalCode === "SIGKILL") {
     if (!live && output.trim()) console.log(output.trim());
     console.log(`    WARN: emulated process hung; force-killed after ${elapsed}s (not a CPU instruction issue)`);
     otherFailures++;
@@ -157,7 +159,7 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
     return true;
   }
 
-  if (isInstructionViolation(exitCode, output)) {
+  if (isInstructionViolation(signalCode, output)) {
     if (!live && output.trim()) console.log(output.trim());
     console.log();
     console.log(`    FAIL: CPU instruction violation detected (${elapsed}s)`);
@@ -172,7 +174,8 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
     failedTests.push(label);
   } else {
     if (!live && output.trim()) console.log(output.trim());
-    console.log(`    WARN: exit code ${exitCode} (${elapsed}s, not a CPU instruction issue)`);
+    const how = exitCode === null ? `signal ${signalCode}` : `exit code ${exitCode}`;
+    console.log(`    WARN: ${how} (${elapsed}s, not a CPU instruction issue)`);
     otherFailures++;
   }
   return false;

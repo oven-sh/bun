@@ -523,8 +523,9 @@ public:
         // shutdown case: once is_shutting_down() it either pushes a cleanup hook
         // (if those haven't run yet) or drops the task (if they have). Running a
         // non-EXPERIMENTAL finalizer immediately during the final collectNow() is
-        // never safe — by then on_exit() has already run cleanup hooks (including
-        // the napi_set_instance_data finalizer that frees per-addon state the
+        // never safe — by then run_cleanup_hooks() (via on_exit() or
+        // global_exit()) has already run cleanup hooks (including the
+        // napi_set_instance_data finalizer that frees per-addon state the
         // object finalizer reads), the heap is sweeping (no allocation, no handle
         // scope), and napi_call_function returns the termination exception.
         return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL;

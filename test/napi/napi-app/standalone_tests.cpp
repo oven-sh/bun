@@ -1946,6 +1946,29 @@ static napi_value test_napi_object_coercion(const Napi::CallbackInfo &info) {
   report_status(env, "get_prototype(undefined)",
                 napi_get_prototype(env, v_undef, &out));
 
+  // by-key property siblings: also route through CHECK_TO_OBJECT in Node
+  {
+    napi_value key;
+    NODE_API_CALL(env,
+                  napi_create_string_utf8(env, "k", NAPI_AUTO_LENGTH, &key));
+    report_status(env, "set_property(null)",
+                  napi_set_property(env, v_null, key, v_one));
+    report_status(env, "get_property(null)",
+                  napi_get_property(env, v_null, key, &out));
+    report_status(env, "has_property(null)",
+                  napi_has_property(env, v_null, key, &bresult));
+    report_status(env, "delete_property(null)",
+                  napi_delete_property(env, v_null, key, &bresult));
+    report_status(env, "has_own_property(null)",
+                  napi_has_own_property(env, v_null, key, &bresult));
+    report_status(env, "set_named_property(null)",
+                  napi_set_named_property(env, v_null, "k", v_one));
+    report_status(env, "get_named_property(null)",
+                  napi_get_named_property(env, v_null, "k", &out));
+    report_status(env, "has_named_property(null)",
+                  napi_has_named_property(env, v_null, "k", &bresult));
+  }
+
   // napi_get_all_property_names enum validation
   napi_value obj;
   NODE_API_CALL(env, napi_create_object(env, &obj));

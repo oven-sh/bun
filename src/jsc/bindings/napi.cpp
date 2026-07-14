@@ -414,8 +414,7 @@ extern "C" napi_status napi_set_property(napi_env env, napi_value target,
     JSValue targetValue = toJS(target);
 
     auto globalObject = toJS(env);
-    auto* object = targetValue.toObject(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_CHECK_TO_OBJECT(env, globalObject, object, targetValue);
 
     auto keyProp = toJS(key);
 
@@ -476,8 +475,7 @@ extern "C" napi_status napi_has_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, key);
 
     auto globalObject = toJS(env);
-    auto* target = toJS(object).toObject(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_CHECK_TO_OBJECT(env, globalObject, target, toJS(object));
 
     auto keyProp = toJS(key);
     JSC::PropertyName name = keyProp.toPropertyKey(globalObject);
@@ -514,8 +512,7 @@ extern "C" napi_status napi_get_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
 
-    auto* target = toJS(object).toObject(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_CHECK_TO_OBJECT(env, globalObject, target, toJS(object));
     JSC::EnsureStillAliveScope ensureAlive(target);
 
     auto keyProp = toJS(key);
@@ -551,8 +548,7 @@ extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
 
-    auto* target = toJS(object).toObject(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_CHECK_TO_OBJECT(env, globalObject, target, toJS(object));
 
     auto keyProp = toJS(key);
     auto name = JSC::PropertyName(keyProp.toPropertyKey(globalObject));
@@ -579,8 +575,7 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
 
-    auto* target = toJS(object).toObject(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_CHECK_TO_OBJECT(env, globalObject, target, toJS(object));
 
     JSValue keyProp = toJS(key);
     NAPI_RETURN_EARLY_IF_FALSE(env, keyProp.isString() || keyProp.isSymbol(), napi_name_expected);
@@ -622,8 +617,7 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
-    auto target = toJS(object).toObject(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_CHECK_TO_OBJECT(env, globalObject, target, toJS(object));
 
     JSValue jsValue = toJS(value);
     JSC::EnsureStillAliveScope ensureAlive(jsValue);
@@ -699,8 +693,7 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
     auto globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
 
-    JSObject* target = toJS(object).toObject(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_CHECK_TO_OBJECT(env, globalObject, target, toJS(object));
 
     JSC::Identifier propertyName = identifierFromUtf8(vm, utf8Name);
 
@@ -720,8 +713,7 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     auto globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
 
-    JSObject* target = toJS(object).toObject(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_CHECK_TO_OBJECT(env, globalObject, target, toJS(object));
 
     JSC::Identifier propertyName = identifierFromUtf8(vm, utf8Name);
 

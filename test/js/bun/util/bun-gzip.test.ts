@@ -18,21 +18,18 @@ describe.each(["gzipSync", "deflateSync"] as const)("Bun.%s level option", name 
     expect(fn(payload, { level }).length).toBe(defaultLen);
   });
 
-  test.each([null, {}, "6", "abc", true, false])(
-    "level %p throws ERR_INVALID_ARG_TYPE (not silent STORED)",
-    level => {
-      let thrown: any;
-      try {
-        // @ts-expect-error
-        fn(payload, { level });
-      } catch (e) {
-        thrown = e;
-      }
-      expect(thrown).toBeDefined();
-      expect(thrown.code).toBe("ERR_INVALID_ARG_TYPE");
-      expect(thrown.message).toContain("options.level");
-    },
-  );
+  test.each([null, {}, "6", "abc", true, false])("level %p throws ERR_INVALID_ARG_TYPE (not silent STORED)", level => {
+    let thrown: any;
+    try {
+      // @ts-expect-error
+      fn(payload, { level });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeDefined();
+    expect(thrown.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(thrown.message).toContain("options.level");
+  });
 
   test.each([Infinity, -Infinity, -2, 10, 100])("level %p throws ERR_OUT_OF_RANGE", level => {
     let thrown: any;

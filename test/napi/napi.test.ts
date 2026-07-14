@@ -597,6 +597,19 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_adjust_external_memory", () => {
+    it("applies negative deltas and reports the running total", async () => {
+      const result = await checkSameOutput("test_napi_adjust_external_memory", []);
+      // printf() via the Windows CRT emits \r\n, so split on either ending.
+      expect(result.split(/\r?\n/)).toEqual([
+        "after_add-base=8192",
+        "after_sub-after_add=-8192",
+        "readback-after_sub=0",
+        "readback-base=0",
+      ]);
+    });
+  });
+
   describe("napi_run_script", () => {
     it("evaluates a basic expression", async () => {
       await checkSameOutput("test_napi_run_script", ["5 * (1 + 2)"]);

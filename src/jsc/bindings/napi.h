@@ -513,6 +513,12 @@ public:
     void* instanceData = nullptr;
     Bun::NapiFinalizer instanceDataFinalizer;
     char* filename = nullptr;
+    // Running total reported via napi_adjust_external_memory. JSC's
+    // deprecatedReportExtraMemory has no decrement path, so we keep a signed
+    // accumulator and only forward positive growth to the JSC heap. Tracked
+    // per env (per loaded module), not per isolate as in V8; the documented
+    // +N/-N addon pattern only observes its own deltas.
+    int64_t m_externalMemory = 0;
 
     struct BoundFinalizer {
         napi_finalize callback = nullptr;

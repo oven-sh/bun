@@ -2939,10 +2939,31 @@ test_create_arraybuffer_zeroed(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value
+test_napi_adjust_external_memory(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  const int64_t delta = 8192;
+  int64_t base = 0, after_add = 0, after_sub = 0, readback = 0;
+
+  NODE_API_CALL(env, napi_adjust_external_memory(env, 0, &base));
+  NODE_API_CALL(env, napi_adjust_external_memory(env, delta, &after_add));
+  NODE_API_CALL(env, napi_adjust_external_memory(env, -delta, &after_sub));
+  NODE_API_CALL(env, napi_adjust_external_memory(env, 0, &readback));
+
+  // The absolute baseline can differ between engines; only the deltas are
+  // part of the API contract.
+  printf("after_add-base=%" PRId64 "\n", after_add - base);
+  printf("after_sub-after_add=%" PRId64 "\n", after_sub - after_add);
+  printf("readback-after_sub=%" PRId64 "\n", readback - after_sub);
+  printf("readback-base=%" PRId64 "\n", readback - base);
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_create_arraybuffer_zeroed);
+  REGISTER_FUNCTION(env, exports, test_napi_adjust_external_memory);
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
   REGISTER_FUNCTION(env, exports, test_napi_get_value_string_utf8_with_buffer);

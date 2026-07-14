@@ -1070,12 +1070,14 @@ impl JSGlobalObject {
     }
 
     /// Returns `true` if the canonical builtin-module key `canonical` already
-    /// has a cached instance (ESM registry, InternalModuleRegistry slot, or
-    /// `require.cache`). Used by runtime resolution to preserve module
-    /// identity against late-registered `onResolve` plugins.
+    /// has a cached instance (ESM registry entry or InternalModuleRegistry
+    /// slot). Used by runtime resolution to preserve module identity against
+    /// late-registered `onResolve` plugins.
     pub fn is_builtin_module_cached(&self, canonical: &[u8]) -> bool {
         let tag = crate::ResolvedSourceTag::try_from_name(canonical).map_or(0, |t| t.0);
-        Bun__isBuiltinModuleCached(self, canonical.as_ptr(), canonical.len(), tag)
+        // SAFETY: (ptr, len) borrow the live `canonical: &[u8]` for the
+        // duration of the call.
+        unsafe { Bun__isBuiltinModuleCached(self, canonical.as_ptr(), canonical.len(), tag) }
     }
 
     fn bun_vm_unsafe(&self) -> *mut c_void {
@@ -1724,7 +1726,7 @@ unsafe extern "C" {
         this: &JSGlobalObject,
         name_: &ZigString,
     );
-    safe fn Bun__isBuiltinModuleCached(
+    fn Bun__isBuiltinModuleCached(
         this: &JSGlobalObject,
         key_ptr: *const u8,
         key_len: usize,

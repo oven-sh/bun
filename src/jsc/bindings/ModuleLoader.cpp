@@ -525,9 +525,8 @@ extern "C" bool Bun__isBuiltinModuleCached(Zig::GlobalObject* globalObject, cons
 {
     auto& vm = JSC::getVM(globalObject);
     auto keyString = WTF::String::fromUTF8(std::span { reinterpret_cast<const char*>(keyPtr), keyLen });
-    auto keyIdent = JSC::Identifier::fromString(vm, keyString);
 
-    if (auto* entry = globalObject->moduleLoader()->registryEntry(keyIdent)) {
+    if (auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, keyString))) {
         if (entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched)
             return true;
     }
@@ -538,9 +537,6 @@ extern "C" bool Bun__isBuiltinModuleCached(Zig::GlobalObject* globalObject, cons
         if (!globalObject->internalModuleRegistry()->internalField(field).get().isUndefined())
             return true;
     }
-
-    if (globalObject->requireMap()->has(globalObject, jsString(vm, keyString)))
-        return true;
 
     return false;
 }

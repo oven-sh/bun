@@ -3920,6 +3920,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDrainMicrotaskQueue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    // processTicksAndRejections calls this between tick batches. The
+    // onEachMicrotaskTick hook must not re-enter drain() from here, so set the
+    // same guard the hook checks.
+    WTF::SetForScope drainingGuard(defaultGlobalObject(globalObject)->m_isDrainingNextTickQueue, true);
     JSC::getVM(globalObject).drainMicrotasks();
     return JSValue::encode(jsUndefined());
 }

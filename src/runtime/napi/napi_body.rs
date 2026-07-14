@@ -3314,6 +3314,9 @@ mod v8_api {
         pub(super) fn _ZN2v86String9Utf8ValueC1EPNS_7IsolateENS_5LocalINS_5ValueEEE()
         -> *mut c_void;
         pub(super) fn _ZN2v86String9Utf8ValueD1Ev() -> *mut c_void;
+        pub(super) fn _ZN2v86String9Utf8ValuedeEv() -> *mut c_void;
+        pub(super) fn _ZNK2v86String9Utf8ValuedeEv() -> *mut c_void;
+        pub(super) fn _ZNK2v86String9Utf8Value6lengthEv() -> *mut c_void;
         pub(super) fn _ZN2v87Integer15NewFromUnsignedEPNS_7IsolateEj() -> *mut c_void;
         pub(super) fn _ZN2v87Integer3NewEPNS_7IsolateEi() -> *mut c_void;
         pub(super) fn _ZN2v87Isolate10ThrowErrorENS_5LocalINS_6StringEEE() -> *mut c_void;
@@ -3587,6 +3590,12 @@ mod v8_api {
         pub(super) fn v8_String_Utf8Value_ctor() -> *mut c_void;
         #[link_name = "??1Utf8Value@String@v8@@QEAA@XZ"]
         pub(super) fn v8_String_Utf8Value_dtor() -> *mut c_void;
+        #[link_name = "??DUtf8Value@String@v8@@QEAAPEADXZ"]
+        pub(super) fn v8_String_Utf8Value_deref() -> *mut c_void;
+        #[link_name = "??DUtf8Value@String@v8@@QEBAPEBDXZ"]
+        pub(super) fn v8_String_Utf8Value_deref_const() -> *mut c_void;
+        #[link_name = "?length@Utf8Value@String@v8@@QEBA_KXZ"]
+        pub(super) fn v8_String_Utf8Value_length() -> *mut c_void;
         #[link_name = "?NewFromUnsigned@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@I@Z"]
         pub(super) fn v8_Integer_NewFromUnsigned() -> *mut c_void;
         #[link_name = "?New@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@H@Z"]
@@ -4598,6 +4607,8 @@ pub fn fix_dead_code_elimination() {
             _ZN2v86Object6DeleteENS_5LocalINS_7ContextEEEj,
             _ZN2v86String9Utf8ValueC1EPNS_7IsolateENS_5LocalINS_5ValueEEE,
             _ZN2v86String9Utf8ValueD1Ev,
+            _ZN2v86String9Utf8ValuedeEv, _ZNK2v86String9Utf8ValuedeEv,
+            _ZNK2v86String9Utf8Value6lengthEv,
             _ZN2v87Integer15NewFromUnsignedEPNS_7IsolateEj,
             _ZN2v87Integer3NewEPNS_7IsolateEi,
             _ZN2v87Isolate10ThrowErrorENS_5LocalINS_6StringEEE,
@@ -4739,6 +4750,9 @@ pub fn fix_dead_code_elimination() {
             v8_Object_Delete_index,
             v8_String_Utf8Value_ctor,
             v8_String_Utf8Value_dtor,
+            v8_String_Utf8Value_deref,
+            v8_String_Utf8Value_deref_const,
+            v8_String_Utf8Value_length,
             v8_Integer_NewFromUnsigned,
             v8_Integer_New,
             v8_Integer_Value,

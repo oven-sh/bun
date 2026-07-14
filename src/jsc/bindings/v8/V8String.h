@@ -120,9 +120,11 @@ public:
     public:
         BUN_EXPORT Utf8Value(Isolate* isolate, Local<v8::Value> obj);
         BUN_EXPORT ~Utf8Value();
-        char* operator*() { return m_str; }
-        const char* operator*() const { return m_str; }
-        size_t length() const { return m_length; }
+        // These are inline in V8's headers, but the class is V8_EXPORT (dllimport
+        // from the addon side) so MSVC /Ob0 imports them; export real symbols.
+        BUN_EXPORT char* operator*();
+        BUN_EXPORT const char* operator*() const;
+        BUN_EXPORT size_t length() const;
 
         Utf8Value(const Utf8Value&) = delete;
         void operator=(const Utf8Value&) = delete;

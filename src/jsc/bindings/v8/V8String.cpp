@@ -346,4 +346,19 @@ String::Utf8Value::~Utf8Value()
     free(m_str);
 }
 
+char* String::Utf8Value::operator*()
+{
+    return m_str;
+}
+
+const char* String::Utf8Value::operator*() const
+{
+    return m_str;
+}
+
+size_t String::Utf8Value::length() const
+{
+    return m_length;
+}
+
 } // namespace v8

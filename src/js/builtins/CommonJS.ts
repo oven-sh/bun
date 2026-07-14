@@ -16,7 +16,7 @@ export function require(this: JSCommonJSModule, _: string) {
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
-  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined);
+  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this);
   if (id.startsWith("node:")) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
@@ -155,6 +155,7 @@ export function requireResolve(
     false,
     true,
     options ? options.paths : undefined,
+    this,
   );
 }
 

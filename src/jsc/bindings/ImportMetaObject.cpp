@@ -286,8 +286,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     return result;
 }
 
-extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
-
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -299,6 +297,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     bool isESM = callFrame->argument(2).asBoolean();
     bool isRequireDotResolve = callFrame->argument(3).isTrue();
     JSValue userPathList = callFrame->argument(4);
+    JSValue parentArg = callFrame->argument(5);
 
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -319,30 +318,47 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 auto overrideHandler = uncheckedDowncast<JSObject>(globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(globalObject));
                 if (overrideHandler) [[likely]] {
                     ASSERT(overrideHandler->isCallable());
-                    JSValue parentModuleObject = globalObject->requireMap()->get(globalObject, from);
 
-                    JSValue parentID = jsUndefined();
-                    if (auto* parent = dynamicDowncast<Bun::JSCommonJSModule>(parentModuleObject)) {
-                        parentID = parent->filename();
+                    // Node.js passes the calling Module instance as `parent`. Prefer the
+                    // module object the require/resolve builtin is bound to (arg 6), then
+                    // Module._cache, and fall back to a synthesized Module so hooks always
+                    // observe a real parent (createRequire from ESM, etc).
+                    JSValue parentModuleObject = jsUndefined();
+                    if (parentArg.isObject()) {
+                        parentModuleObject = parentArg;
                     } else {
-                        parentID = from;
+                        JSValue cached = globalObject->requireMap()->get(globalObject, from);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        if (cached && !cached.isUndefinedOrNull()) {
+                            parentModuleObject = cached;
+                        } else if (from.isString()) {
+                            auto fromStr = from.toWTFString(globalObject);
+                            RETURN_IF_EXCEPTION(scope, {});
+                            if (!fromStr.isEmpty()) {
+                                parentModuleObject = Bun::JSCommonJSModule::create(globalObject, fromStr, JSC::constructEmptyObject(globalObject), false, jsNull());
+                            }
+                        }
                     }
 
                     MarkedArgumentBuffer args;
                     args.append(moduleName);
                     args.append(parentModuleObject);
-                    auto parentIdStr = parentID.toWTFString(globalObject);
-                    auto bunStr = Bun::toString(parentIdStr);
-                    args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
+                    // `isMain` means "is the request being resolved the process entry
+                    // point". require()/require.resolve() never resolve the entry.
+                    args.append(jsBoolean(false));
 
-                    // Pass options object with paths if provided
                     if (!userPathList.isUndefinedOrNull()) {
                         JSObject* options = JSC::constructEmptyObject(globalObject);
                         options->putDirect(vm, JSC::Identifier::fromString(vm, "paths"_s), userPathList);
                         args.append(options);
+                    } else if (isRequireDotResolve) {
+                        args.append(JSC::constructEmptyObject(globalObject));
+                    } else {
+                        args.append(jsUndefined());
                     }
 
-                    JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args);
+                    JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+                    JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), thisValue, args);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (!isRequireDotResolve) {
                         JSString* string = result.toString(globalObject);

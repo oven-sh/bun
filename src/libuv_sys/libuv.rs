@@ -2262,6 +2262,7 @@ unsafe impl bun_core::ffi::Zeroable for uv_fs_event_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_getaddrinfo_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_tty_t {}
 unsafe impl bun_core::ffi::Zeroable for fs_t {}
+unsafe impl bun_core::ffi::Zeroable for uv_stat_t {}
 impl ReturnCode {
     pub const ZERO: ReturnCode = ReturnCode(0);
     #[inline]

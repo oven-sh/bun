@@ -43,7 +43,7 @@ impl FallbackEntryPoint {
         entry: &mut FallbackEntryPoint,
         input_path: &[u8],
         transpiler: &mut TranspilerType,
-    ) -> Result<(), bun_core::Error>
+    ) -> crate::Result<()>
     where
         TranspilerType: TranspilerLike,
     {
@@ -176,7 +176,7 @@ impl ClientEntryPoint {
         transpiler: &mut TranspilerType,
         original_path: &Fs::PathName,
         client: &[u8],
-    ) -> Result<(), bun_core::Error>
+    ) -> crate::Result<()>
     where
         TranspilerType: TranspilerLike,
     {
@@ -216,7 +216,7 @@ impl ClientEntryPoint {
                 BStr::new(dir_to_use),
                 BStr::new(original_path.filename),
             )
-            .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             let n = cursor.position() as usize;
             &entry.code_buffer[..n]
         } else {
@@ -231,7 +231,7 @@ impl ClientEntryPoint {
                 BStr::new(dir_to_use),
                 BStr::new(original_path.filename),
             )
-            .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             let n = cursor.position() as usize;
             &entry.code_buffer[..n]
         };
@@ -270,7 +270,7 @@ impl ServerEntryPoint {
         entry: &mut ServerEntryPoint,
         is_hot_reload_enabled: bool,
         path_to_use: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Use the global arena so this buffer's lifetime is decoupled
         // from whichever arena the caller's VM happens to be using; the
         // slice is read later from `getHardcodedModule` which outlives any
@@ -313,7 +313,7 @@ impl ServerEntryPoint {
                      }}\n",
                     strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'\'', ..Default::default() }),
                 )
-                .map_err(|_| bun_core::err!("FormatError"))?;
+                .map_err(|_| crate::Error::FormatError)?;
                 break 'brk v;
             }
             let mut v: Vec<u8> = Vec::new();
@@ -338,7 +338,7 @@ impl ServerEntryPoint {
                  }}\n",
                 strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'"', ..Default::default() }),
             )
-            .map_err(|_| bun_core::err!("FormatError"))?;
+            .map_err(|_| crate::Error::FormatError)?;
             v
         };
 
@@ -417,7 +417,7 @@ impl MacroEntryPoint {
         function_name: &[u8],
         macro_id: i32,
         macro_label_: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let dir_to_use: &[u8] = if import_path.dir.is_empty() {
             b""
         } else {
@@ -452,7 +452,7 @@ impl MacroEntryPoint {
                     BStr::new(function_name),
                     macro_id,
                 )
-                .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+                .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
                 break 'brk cursor.position() as usize;
             }
 
@@ -505,7 +505,7 @@ impl MacroEntryPoint {
                 macro_id,
                 BStr::new(function_name),
             )
-            .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             cursor.position() as usize
         };
 

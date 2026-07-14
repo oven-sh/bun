@@ -62,7 +62,7 @@ pub(crate) fn install_hoisted_packages(
     install_root_dependencies: bool,
     log_level: package_manager::Options::LogLevel,
     packages_to_install: Option<&[PackageID]>,
-) -> Result<package_install::Summary, bun_core::Error> {
+) -> crate::Result<package_install::Summary> {
     analytics::features::hoisted_bun_install.fetch_add(1, Ordering::Relaxed);
 
     // Restore-buffers guard — side-effecting rollback,
@@ -458,7 +458,7 @@ pub(crate) fn install_hoisted_packages(
                         log_level,
                     )?;
                     if !this.options.do_.install_packages() {
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
                 }
                 this.tick_lifecycle_scripts();
@@ -476,7 +476,7 @@ pub(crate) fn install_hoisted_packages(
                 log_level,
             )?;
             if !this.options.do_.install_packages() {
-                return Err(bun_core::err!("InstallFailed"));
+                return Err(crate::Error::InstallFailed);
             }
 
             this.tick_lifecycle_scripts();
@@ -486,7 +486,7 @@ pub(crate) fn install_hoisted_packages(
         while this.pending_task_count() > 0 && this.options.do_.install_packages() {
             struct Closure<'a, 'b> {
                 installer: &'a mut PackageInstaller<'b>,
-                err: Option<bun_core::Error>,
+                err: Option<crate::Error>,
                 // raw `*mut` — `sleep_until`
                 // also receives this pointer, so `&mut` here would alias.
                 manager: *mut PackageManager,
@@ -581,7 +581,7 @@ pub(crate) fn install_hoisted_packages(
         }
 
         if !this.options.do_.install_packages() {
-            return Err(bun_core::err!("InstallFailed"));
+            return Err(crate::Error::InstallFailed);
         }
 
         // `replace` with a fresh empty so `installer` stays whole

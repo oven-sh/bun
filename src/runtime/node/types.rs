@@ -893,32 +893,6 @@ impl PathOrBuffer {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct CallbackTask<Result> {
-    pub callback: jsc::C::JSObjectRef,
-    pub option: CallbackTaskOption<Result>,
-}
-
-pub enum CallbackTaskOption<Result> {
-    Err(Box<bun_sys::SystemError>),
-    Result(Result),
-}
-
-impl<Result> Default for CallbackTask<Result>
-where
-    CallbackTaskOption<Result>: Default,
-{
-    fn default() -> Self {
-        // Zero the callback handle
-        // and lean on the `CallbackTaskOption<Result>: Default` bound.
-        Self {
-            callback: core::ptr::null_mut(),
-            option: Default::default(),
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
 // LAYERING: single nominal `PathLike`/`PathOrFileDescriptor` live in
 // `bun_jsc::node_path` so `bun_jsc::webcore_types::store::File::pathlike`
 // and the `Store`/`Blob` constructors here share one type. This module
@@ -1059,7 +1033,7 @@ impl PathLikeExt for PathLike {
                     // The cwd root + path don't fit `buf` (UNC cwds can push
                     // a near-MAX_PATH_BYTES path over); fall through to the
                     // plain copy / too-long handling below.
-                    Err(e) if e == bun_core::err!("NameTooLong") => None,
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => None,
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
                 if let Some(len) = resolved_len {
@@ -1181,7 +1155,7 @@ impl PathLikeExt for PathLike {
                     // The cwd root + path don't fit the resolution buffer
                     // (UNC cwds can push a near-MAX_PATH_BYTES path over) —
                     // such a path can't exist on NT.
-                    Err(e) if e == bun_core::err!("NameTooLong") => return Err(NameTooLong),
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => return Err(NameTooLong),
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
                 let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(

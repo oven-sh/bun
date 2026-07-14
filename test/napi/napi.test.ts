@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   canBuildNodeAddons,
+  isASAN,
   isCI,
   isMacOS,
   isMusl,
@@ -38,33 +39,37 @@ function needsInstall(): boolean {
   return false;
 }
 
-describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
-  beforeAll(async () => {
-    // Resolve (and possibly download) the ABI-matching node here, under the
-    // generous hook timeout, instead of inside the first test that needs it.
-    await nodeExeMatchingAbi();
-    // build gyp
-    if (needsInstall()) {
-      console.time("Building node-gyp");
-      const install = spawnSync({
-        cmd: [bunExe(), "install", "--verbose"],
-        cwd: join(__dirname, "napi-app"),
-        stderr: "inherit",
-        env: bunEnv,
-        stdout: "inherit",
-        stdin: "inherit",
-      });
-      if (!install.success) {
-        console.error("build failed, bailing out!");
-        process.exit(1);
-      }
-      console.timeEnd("Building node-gyp");
+// File-scoped so every describe block below (including the non-concurrent
+// `napi_create_string_latin1` and `cleanup hooks` blocks) gets a built addon
+// even when `-t` filters out every test in describe.concurrent("napi").
+beforeAll(async () => {
+  if (!canBuildNodeAddons()) return;
+  // Resolve (and possibly download) the ABI-matching node here, under the
+  // generous hook timeout, instead of inside the first test that needs it.
+  await nodeExeMatchingAbi();
+  // build gyp
+  if (needsInstall()) {
+    console.time("Building node-gyp");
+    const install = spawnSync({
+      cmd: [bunExe(), "install", "--verbose"],
+      cwd: join(__dirname, "napi-app"),
+      stderr: "inherit",
+      env: bunEnv,
+      stdout: "inherit",
+      stdin: "inherit",
+    });
+    if (!install.success) {
+      console.error("build failed, bailing out!");
+      process.exit(1);
     }
-    // node-gyp rebuild can take a while under a debug/ASAN binary (and the
-    // hook may first download an ABI-matching node); default 5s hook timeout
-    // kills the install subprocess mid-build.
-  }, 300_000);
+    console.timeEnd("Building node-gyp");
+  }
+  // node-gyp rebuild can take a while under a debug/ASAN binary (and the
+  // hook may first download an ABI-matching node); default 5s hook timeout
+  // kills the install subprocess mid-build.
+}, 300_000);
 
+describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
       it("Bun.build", async () => {
@@ -410,6 +415,117 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("does not hang on finalize", async () => {
       const result = await checkSameOutput("test_napi_threadsafe_function_does_not_hang_after_finalize", []);
       expect(result).toBe("success!");
+    });
+
+    it.each([0, 3])(
+      "runs the finalizer and exits when the last reference is released after abort (%d queued items)",
+      async queued => {
+        const result = await checkSameOutput("test_threadsafe_function_abort_then_last_release", [queued]);
+        expect(result).toContain("finalized: true");
+      },
+    );
+
+    it("wakes blocked producers, runs the finalizer and exits when aborted with a bounded queue", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_blocked_producers", []);
+      expect(result).toContain("finalized: true");
+    });
+
+    // A full bounded queue must not hide that the function is closing: the call
+    // reports napi_closing (16) and consumes the caller's thread reference, so
+    // the finalizer still runs. napi_queue_full (17) would strand it forever.
+    it("reports napi_closing, not napi_queue_full, on an aborted full queue", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_full_queue", []);
+      expect(result).toContain("call after abort: 16\nfinalized: true");
+    });
+
+    it("drains microtasks between callbacks of one dispatch, not before the first", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_microtask_order", []);
+      expect(result).toContain("callback 1\nmicrotask 1\ncallback 2\nmicrotask 2\ncallback 3");
+    });
+
+    // An addon's own threads outlive the worker that created the threadsafe
+    // function (next-swc's tokio pool does this): the last call and the last
+    // release land after the worker's VM, and its event loop, are gone.
+    // MIMALLOC_PURGE_DELAY=0 makes a stale event-loop pointer fault instead of
+    // reading recycled memory that still happens to look intact.
+    it("survives the last call and release after the creating worker is gone", async () => {
+      // Both threadsafe functions are finalized at worker teardown; a later call
+      // reports napi_closing (16), a later release napi_ok (0).
+      const result = await checkSameOutput("test_threadsafe_function_orphaned_by_worker", [], {
+        MIMALLOC_PURGE_DELAY: "0",
+      });
+      expect(result).toContain("worker exited with 0\nfinalized=2 call=16 release=0");
+    });
+
+    // A call that reports napi_closing consumes the calling thread's reference
+    // (node's ThreadSafeFunction::Push), so on an orphaned threadsafe function
+    // it can drop the last one -- and then it must free it, or every worker that
+    // leaves one behind leaks. An addon that uses the handle after napi_closing
+    // (a release, say) therefore touches freed memory, in node as well: the docs
+    // say to make no further use of it. Bun-only: reads bun's live tsfn count.
+    it("frees an orphaned threadsafe function whose last reference a call consumed", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "test_threadsafe_function_orphan_leak", "[]"],
+        env: { ...bunEnv, MIMALLOC_PURGE_DELAY: "0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      // Each iteration: the dead worker leaves 5 orphaned threadsafe functions,
+      // all 5 calls report napi_closing (16), and none is still alive after. A
+      // leak shows up as orphaned=10 on the second iteration.
+      const iteration = "orphaned=5 closing=5 leaked=0";
+      expect({
+        stdout: stdout
+          .replaceAll("\r\n", "\n")
+          .replaceAll(/^\[\w+\].+$/gm, "")
+          .trim(),
+        stderr,
+        exitCode,
+        signalCode: proc.signalCode,
+      }).toMatchObject({
+        stdout: `${Array(5).fill(iteration).join("\n")}\nresolved to undefined`,
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    // napi_create_threadsafe_function once the env has torn its threadsafe
+    // functions down (here: from a cleanup hook that a threadsafe function's
+    // teardown finalizer registered). There is no event loop left, so it must
+    // fail instead of handing back a handle whose finalizer already ran. The
+    // failed creation must not run the addon's finalizer either -- the addon's
+    // own error handling owns those resources. Node creates one and returns
+    // napi_ok, so this is bun-only.
+    it("fails when created after the env is torn down", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "create_threadsafe_function_after_teardown", "[]"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      // napi_generic_failure = 9, and no handle is written back. stderr is part
+      // of the compared object so a crash or assert prints with the failure.
+      expect({
+        stdout: stdout
+          .replaceAll("\r\n", "\n")
+          .replaceAll(/^\[\w+\].+$/gm, "")
+          .trim(),
+        stderr,
+        exitCode,
+      }).toMatchObject({
+        stdout: "registered\ntsfn finalizer at teardown\nlate cleanup hook: name=0 create=9 handle=null",
+        exitCode: 0,
+      });
     });
   });
 
@@ -787,6 +903,70 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("napi_create_error succeeds during env cleanup when a prior finalizer leaked a VM exception (#30286)", async () => {
+    // Reproduces the gitnexus + tree-sitter crash: one finalizer left a
+    // pending JSC exception on the VM, the next finalizer called
+    // napi_create_error, and Bun returned napi_pending_exception. Under
+    // node-addon-api's Error::New that turns into
+    //   NAPI FATAL ERROR: Error::New napi_create_error
+    // during web_worker.exitAndDeinit. After the fix napi_create_error
+    // ignores pre-existing VM exceptions (matching Node.js) so the
+    // finalizer completes cleanly and the process exits 0.
+    const code = `
+      const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_finalizer_create_error.node"))});
+      // A function that throws -- called from the first-to-run finalizer
+      // so the throw leaves a JSC VM exception pending for the next
+      // finalizer (the one that calls napi_create_error).
+      globalThis.keep = addon.setup(() => { throw new Error("from js"); });
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // napi_ok == 0 -- before the fix this was 10 (napi_pending_exception) in
+    // release builds, or an ASAN abort in debug builds. A panic would leave
+    // stdout empty, so the positive assertion covers both crash modes without
+    // relying on stderr-contains-"panic" (which is unreliable per CLAUDE.md).
+    expect(stdout.trim()).toBe("create_error_status=0");
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+  });
+
+  it("the first napi finalizer starts clean when a cleanup hook leaked a VM exception (#30286)", async () => {
+    // The node-canvas shape of #30286 (terminated Workers): a native
+    // teardown callback fails internally, its scheduled exception gets
+    // promoted onto the JSC VM (napi_call_function's prologue does this
+    // before validating arguments), and the exception is still pending
+    // when NapiEnv::cleanup() reaches the FIRST wrap finalizer. That
+    // finalizer's first napi call (napi_create_string_utf8 in
+    // node-addon-api's ObjectWrap teardown) then fails with
+    // napi_pending_exception and the addon escalates to napi_fatal_error
+    // ("Error::Error napi_create_object"). Cleanup hooks run before wrap
+    // finalizers, so the addon's leaking hook reproduces the state
+    // deterministically; the fix clears pending exceptions before the
+    // finalizer phase starts.
+    const code = `
+      const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_finalizer_create_error.node"))});
+      globalThis.keep = addon.setupSingle();
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The wrap finalizer prints the napi_create_error status; 0 == napi_ok.
+    // Before the fix the finalizer's napi_create_string_utf8 failed on the
+    // hook's leaked exception (status -110 on the string step).
+    expect(stdout.trim()).toBe("create_error_status=0");
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+  });
+
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {
     // This test ensures that napi_reference_unref can be called during GC
     // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion for regular modules.
@@ -852,6 +1032,46 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     },
     25_000,
   );
+});
+
+// Kept outside describe.concurrent("napi") so RSS measurement isn't skewed by
+// the other tests' subprocesses and doesn't add load to the --compile tests.
+describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {
+  it("does not leak the WTFStringImpl", async () => {
+    const fixture = /* js */ `
+      const nativeTests = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
+      const size = 256 * 1024;
+      for (let i = 0; i < 20; i++) {
+        const s = nativeTests.create_latin1_string(size);
+        if (s.length !== size) throw new Error("wrong length: " + s.length);
+      }
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 300; i++) {
+        const s = nativeTests.create_latin1_string(size);
+        if (s.length !== size) throw new Error("wrong length: " + s.length);
+      }
+      Bun.gc(true);
+      const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+      console.error("RSS growth: " + growthMB.toFixed(1) + " MB");
+      process.exit(growthMB > Number(process.env.THRESHOLD_MB) ? 1 : 0);
+    `;
+    // 300 iterations * 256 KiB = 75 MB if every WTFStringImpl leaks.
+    // ASAN's quarantine inflates RSS; widen the threshold there.
+    const thresholdMB = isASAN ? 48 : 24;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", fixture],
+      env: { ...bunEnv, THRESHOLD_MB: String(thresholdMB) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("RSS growth:"),
+      exitCode: 0,
+    });
+  });
 });
 
 async function checkSameOutput(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {

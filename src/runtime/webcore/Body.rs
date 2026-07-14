@@ -555,7 +555,7 @@ pub(crate) fn hive_alloc(value: Value) -> BodyHiveHandle {
     debug_assert!(!state.is_null(), "hive_alloc before init_runtime_state");
     // SAFETY: `state` is the live boxed RuntimeState; `body_value_pool` is a
     // heap-stable `Box<HiveAllocator>` for the VM lifetime.
-    let pool = unsafe { &raw const *(*state).body_value_pool };
+    let pool = unsafe { &raw const **(*state).body_value_pool };
     // SAFETY: `pool` outlives every handle (process lifetime).
     unsafe { BodyHiveHandle::new(value, pool) }
 }
@@ -621,7 +621,12 @@ impl ValueError {
     pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JSValue {
         let js_value = match self {
             ValueError::AbortReason(reason) => reason.to_js(global_object),
-            ValueError::SystemError(system_error) => system_error.to_error_instance(global_object),
+            // `to_error_instance` consumes the error's string refs, and `to_js`
+            // takes `&mut self` — take the value out so a second call builds an
+            // empty error rather than releasing those refs twice.
+            ValueError::SystemError(system_error) => {
+                core::mem::take(system_error).to_error_instance(global_object)
+            }
             ValueError::Message(message) => message.to_error_instance(global_object),
             ValueError::TypeError(message) => message.to_type_error_instance(global_object),
             // do an early return in this case we don't need to create a new Strong
@@ -1397,7 +1402,7 @@ impl Value {
         Ok(())
     }
 
-    pub fn to_error(&mut self, err: bun_core::Error, global: &JSGlobalObject) -> JsTerminated<()> {
+    pub fn to_error(&mut self, err: &crate::Error, global: &JSGlobalObject) -> JsTerminated<()> {
         self.to_error_instance(
             ValueError::Message(BunString::create_format(format_args!(
                 "Error reading file {}",
@@ -1588,11 +1593,14 @@ impl Value {
         global_this: &JSGlobalObject,
         readable: Option<&mut ReadableStream>,
     ) -> JsResult<Value> {
-        self.to_blob_if_possible();
-
+        // Tee a Locked body before any blob extraction: `to_blob_if_possible()`
+        // would `.done()` an already-materialized `.body` stream, leaving the
+        // user-visible cached stream empty instead of a live tee branch.
         if matches!(self, Value::Locked(_)) {
             return self.tee(global_this, readable);
         }
+
+        self.to_blob_if_possible();
 
         if let Value::InternalBlob(internal_blob) = self {
             let owned = internal_blob.to_owned_slice();
@@ -1742,20 +1750,32 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         self.check_body_stream_ref(global_this);
     }
 
-    /// Shared `'brk:` block of `clone_into` / `clone_value`: clone the body
-    /// [`Value`], teeing through the JS-side cached stream if one exists.
+    /// Shared body-clone for `clone_into` / `clone_value`: tee through the
+    /// JS-side cached stream when present, then repoint this owner's
+    /// `body`/`stream` cache slots at the fresh branch in `locked.readable`.
     fn clone_body_value_via_cached_stream(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
+        let cloned = 'brk: {
+            if let Some(js_ref) = self.js_ref() {
+                if let Some(stream) = Self::stream_get_cached(js_ref) {
+                    let mut readable = ReadableStream::from_js(stream, global_this)?;
+                    if let Some(r) = readable.as_mut() {
+                        break 'brk self
+                            .get_body_value()
+                            .clone_with_readable_stream(global_this, Some(r))?;
+                    }
+                }
+            }
+            self.get_body_value().clone(global_this)?
+        };
         if let Some(js_ref) = self.js_ref() {
-            if let Some(stream) = Self::stream_get_cached(js_ref) {
-                let mut readable = ReadableStream::from_js(stream, global_this)?;
-                if let Some(r) = readable.as_mut() {
-                    return self
-                        .get_body_value()
-                        .clone_with_readable_stream(global_this, Some(r));
+            if let Value::Locked(locked) = self.get_body_value() {
+                if let Some(readable) = locked.readable.get(global_this) {
+                    Self::body_set_cached(js_ref, global_this, readable.value);
                 }
             }
         }
-        self.get_body_value().clone(global_this)
+        self.check_body_stream_ref(global_this);
+        Ok(cloned)
     }
 
     fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -2265,13 +2285,13 @@ impl<'a> ValueBufferer<'a> {
         &mut self,
         value: &mut Value,
         owned_readable_stream: Option<ReadableStream>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         value.to_blob_if_possible();
 
         match value {
             Value::Used => {
                 bun_core::scoped_log!(BodyValueBufferer, "Used");
-                return Err(bun_core::err!("StreamAlreadyUsed"));
+                return Err(crate::Error::StreamAlreadyUsed);
             }
             Value::Empty | Value::Null => {
                 bun_core::scoped_log!(BodyValueBufferer, "Empty");
@@ -2441,7 +2461,7 @@ impl<'a> ValueBufferer<'a> {
         &mut self,
         value: &mut Value,
         owned_readable_stream: Option<ReadableStream>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         debug_assert!(matches!(value, Value::Locked(_)));
         let Value::Locked(locked) = value else {
             unreachable!()
@@ -2467,12 +2487,12 @@ impl<'a> ValueBufferer<'a> {
             *value = Value::Used;
 
             if stream.is_locked(self.global) {
-                return Err(bun_core::err!("StreamAlreadyUsed"));
+                return Err(crate::Error::StreamAlreadyUsed);
             }
 
             match stream.ptr {
                 webcore::readable_stream::Source::Invalid => {
-                    return Err(bun_core::err!("InvalidStream"));
+                    return Err(crate::Error::InvalidStream);
                 }
                 // toBlobIfPossible should've caught this
                 webcore::readable_stream::Source::Blob(_)
@@ -2481,7 +2501,7 @@ impl<'a> ValueBufferer<'a> {
                 | webcore::readable_stream::Source::Direct => {
                     // this is broken right now
                     // return self.create_js_sink(stream);
-                    return Err(bun_core::err!("UnsupportedStreamType"));
+                    return Err(crate::Error::UnsupportedStreamType);
                 }
                 webcore::readable_stream::Source::Bytes(byte_stream_ptr) => {
                     // BACKREF: see `Source::bytes()` — payload owned by the
@@ -2554,10 +2574,10 @@ impl<'a> ValueBufferer<'a> {
             // someone else is waiting for the stream or waiting for `onStartStreaming`
             let readable = value
                 .to_readable_stream(self.global)
-                .map_err(|_| bun_core::err!("JSError"))?;
+                .map_err(|_| crate::Error::JSError)?;
             // The JS exception value is
             // flattened to a string-coded error because `run`'s callers consume
-            // `bun_core::Error` (the exception itself stays pending on the VM).
+            // `crate::Error` (the exception itself stays pending on the VM).
             readable.ensure_still_alive();
             readable.protect();
             return self.buffer_locked_body_value(value, None);

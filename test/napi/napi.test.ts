@@ -758,30 +758,27 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   describe("node_api experimental", () => {
     it("node_api_set_prototype sets [[Prototype]]", async () => {
       const output = await checkSameOutput("test_node_api_set_prototype", []);
-      expect(output).toBe(
-        ["set_prototype: proto_matches=true inherited=123", "set_prototype: null_proto_type=1"].join("\n"),
-      );
+      expect(output.split(/\r?\n/)).toEqual([
+        "set_prototype: proto_matches=true inherited=123",
+        "set_prototype: null_proto_type=1",
+      ]);
     });
     it("node_api_create_object_with_properties creates an object with the given prototype and properties", async () => {
       const output = await checkSameOutput("test_node_api_create_object_with_properties", []);
-      expect(output).toBe(
-        [
-          "create_object_with_properties: proto_type=1 a=1 b=2 sym=3",
-          "create_object_with_properties: bad_name_status=4",
-          "create_object_with_properties: custom_proto_matches=true",
-        ].join("\n"),
-      );
+      expect(output.split(/\r?\n/)).toEqual([
+        "create_object_with_properties: proto_type=1 a=1 b=2 sym=3",
+        "create_object_with_properties: bad_name_status=4",
+        "create_object_with_properties: custom_proto_matches=true",
+      ]);
     });
     it("node_api_create_sharedarraybuffer / is_sharedarraybuffer / create_external_sharedarraybuffer", async () => {
       const output = await checkSameOutput("test_node_api_sharedarraybuffer", []);
-      expect(output).toBe(
-        [
-          "create_sharedarraybuffer: data_nonnull=true is_sab=true is_ab=false",
-          "create_sharedarraybuffer: info_data_matches=true info_len=16",
-          "is_sharedarraybuffer: plain_ab=false number=false",
-          "create_external_sharedarraybuffer: is_sab=true data_matches=true len=8 first=176 finalized_early=false",
-        ].join("\n"),
-      );
+      expect(output.split(/\r?\n/)).toEqual([
+        "create_sharedarraybuffer: data_nonnull=true is_sab=true is_ab=false",
+        "create_sharedarraybuffer: info_data_matches=true info_len=16",
+        "is_sharedarraybuffer: plain_ab=false number=false",
+        "create_external_sharedarraybuffer: is_sab=true data_matches=true len=8 first=176 finalized_early=false",
+      ]);
     });
   });
 

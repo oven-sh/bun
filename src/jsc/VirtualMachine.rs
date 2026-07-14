@@ -1442,7 +1442,7 @@ impl VirtualMachine {
             global_object,
             err.to_error().unwrap_or(err),
             origin as c_int,
-            &mut substitute,
+            &raw mut substitute,
         ) > 0;
         // A domain 'error' handler or capture callback that throws in a
         // Worker returns its exception here; route that to the parent

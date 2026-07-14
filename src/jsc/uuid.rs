@@ -130,7 +130,7 @@ impl UUID7 {
         };
 
         if count > 0x0FFF {
-            ts = ts.wrapping_add(1);
+            ts = (ts + 1).min((1u64 << 48) - 1);
             count = seed;
         }
 

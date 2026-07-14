@@ -21,7 +21,8 @@ async function readStreamUntil(
   let output = "";
   const timeout = new Promise<never>((_, reject) =>
     setTimeout(
-      () => reject(new Error(`Timeout after ${timeoutMs}ms waiting for stream condition. Got: ${JSON.stringify(output)}`)),
+      () =>
+        reject(new Error(`Timeout after ${timeoutMs}ms waiting for stream condition. Got: ${JSON.stringify(output)}`)),
       timeoutMs,
     ).unref(),
   );

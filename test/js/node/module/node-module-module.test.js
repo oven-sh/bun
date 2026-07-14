@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, ospath } from "harness";
-import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
+import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, registerHooks, wrap } from "module";
 import path from "path";
 
 describe.concurrent("node-module-module", () => {
@@ -299,5 +299,72 @@ describe.concurrent("node-module-module", () => {
    ./j.cjs (seen)
    ./k.cjs (seen)`);
     expect(await proc.exited).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/34171
+  describe("registerHooks", () => {
+    test("is a named ESM export of node:module", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { builtinModules, createRequire, registerHooks } from "node:module"; console.log(typeof registerHooks);`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("function\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("named export, default export, and CJS require agree", () => {
+      expect(registerHooks).toBeFunction();
+      expect(Module.registerHooks).toBe(registerHooks);
+      expect(require("module").registerHooks).toBe(registerHooks);
+    });
+
+    // Shape assertions below verified against Node v26.3.0.
+    test("returns a frozen ModuleHooks object with a deregister method", () => {
+      const resolve = () => {};
+      const load = () => {};
+      const hooks = registerHooks({ resolve, load });
+      expect(hooks.constructor.name).toBe("ModuleHooks");
+      expect(Object.isFrozen(hooks)).toBe(true);
+      expect(Object.getOwnPropertyNames(hooks)).toEqual(["resolve", "load"]);
+      expect(hooks.resolve).toBe(resolve);
+      expect(hooks.load).toBe(load);
+      expect(hooks.deregister()).toBeUndefined();
+      // deregister is idempotent
+      expect(hooks.deregister()).toBeUndefined();
+    });
+
+    test("accepts missing and nullish hook properties", () => {
+      expect(() => registerHooks({})).not.toThrow();
+      expect(() => registerHooks({ resolve: null, load: null })).not.toThrow();
+      expect(() => registerHooks({ resolve: undefined, load: undefined })).not.toThrow();
+    });
+
+    test("rejects non-function hooks with ERR_INVALID_ARG_TYPE", () => {
+      expect(() => registerHooks({ resolve: 1 })).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "hooks.resolve" property must be of type function. Received type number (1)',
+        }),
+      );
+      expect(() => registerHooks({ load: "x" })).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "hooks.load" property must be of type function. Received type string ('x')`,
+        }),
+      );
+    });
+
+    test("rejects nullish hooks argument with TypeError", () => {
+      expect(() => registerHooks()).toThrow(TypeError);
+      expect(() => registerHooks(null)).toThrow(TypeError);
+    });
   });
 });

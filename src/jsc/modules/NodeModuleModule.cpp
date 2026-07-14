@@ -908,6 +908,7 @@ globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1
 prototype               getModulePrototypeObject          PropertyCallback
 register                jsFunctionRegister                Function 1
+registerHooks           JSBuiltin                         Function|Builtin 1
 runMain                 moduleRunMain                        CustomAccessor
 SourceMap               getSourceMapFunction              PropertyCallback
 syncBuiltinESMExports   jsFunctionSyncBuiltinESMExports   Function 0

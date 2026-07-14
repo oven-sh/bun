@@ -309,7 +309,7 @@ impl<'a> ValkeyReader<'a> {
         }
         let len = usize::try_from(len).expect("int cast");
         if self.pos + len > self.buffer.len() {
-            return Err(RedisError::InvalidVerbatimString);
+            return Err(RedisError::InvalidResponse);
         }
 
         let content_with_format = &self.buffer[self.pos..self.pos + len];
@@ -443,7 +443,7 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = usize::try_from(len).expect("int cast");
                 if self.pos + len > self.buffer.len() {
-                    return Err(RedisError::InvalidBlobError);
+                    return Err(RedisError::InvalidResponse);
                 }
                 let str = &self.buffer[self.pos..self.pos + len];
                 self.pos += len;

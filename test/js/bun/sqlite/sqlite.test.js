@@ -1401,16 +1401,31 @@ it("close() should NOT throw an error if the database is in use", () => {
   expect(() => db.close()).not.toThrow("database is locked");
 });
 
-it("should dispose AND throw an error if the database is in use", () => {
+it("should dispose without throwing when a prepared statement is still live", () => {
+  let prepared;
   expect(() => {
-    let prepared;
     {
       using db = new Database(":memory:");
       db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
       db.exec("INSERT INTO foo (name) VALUES ('foo')");
       prepared = db.prepare("SELECT * FROM foo");
+      prepared.get();
     }
-  }).toThrow("database is locked");
+  }).not.toThrow();
+});
+
+it("should not mask an error thrown from a `using db` block with SuppressedError", () => {
+  let caught;
+  try {
+    using db = new Database(":memory:");
+    const stmt = db.prepare("select 1 as x");
+    throw new Error("REAL-BUG");
+  } catch (e) {
+    caught = e;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect(caught).not.toBeInstanceOf(SuppressedError);
+  expect(caught.message).toBe("REAL-BUG");
 });
 
 it("should dispose", () => {

@@ -355,6 +355,31 @@ describe("module", () => {
     expect(mod).toEqual({ fromOnLoad: true });
   });
 
+  it("module() returning CommonJS source does not populate the --isolate provider cache", async () => {
+    using dir = tempDir("plugin-cjs-isolate", {
+      "preload.ts": `
+        Bun.plugin({
+          name: "vcjs",
+          setup(b) {
+            b.module("vcjs", () => ({ contents: "module.exports = 1", loader: "js" }));
+          },
+        });
+      `,
+      "a.test.ts": `import { test, expect } from "bun:test"; test("a", () => { expect(require("vcjs")).toBe(1); });`,
+      "b.test.ts": `import { test, expect } from "bun:test"; test("b", () => { expect(require("vcjs")).toBe(1); });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "--preload", "./preload.ts", "a.test.ts", "b.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/21369
   // https://github.com/oven-sh/bun/issues/22683
   // https://github.com/oven-sh/bun/issues/10083

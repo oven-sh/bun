@@ -1260,11 +1260,10 @@ extern "C" napi_status napi_is_detached_arraybuffer(napi_env env,
     NAPI_CHECK_ARG(env, arraybuffer);
     NAPI_CHECK_ARG(env, result);
 
+    // Node computes IsArrayBuffer() && WasDetached() and always returns
+    // napi_ok; a non-ArrayBuffer (including SharedArrayBuffer) yields false.
     JSC::JSArrayBuffer* jsArrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(toJS(arraybuffer));
-    NAPI_RETURN_EARLY_IF_FALSE(env, jsArrayBuffer, napi_arraybuffer_expected);
-
-    auto* arrayBuffer = jsArrayBuffer->impl();
-    *result = arrayBuffer->isDetached();
+    *result = jsArrayBuffer && !jsArrayBuffer->isShared() && jsArrayBuffer->impl()->isDetached();
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -1277,10 +1276,16 @@ extern "C" napi_status napi_detach_arraybuffer(napi_env env,
     JSC::VM& vm = JSC::getVM(globalObject);
 
     JSC::JSArrayBuffer* jsArrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(toJS(arraybuffer));
-    NAPI_RETURN_EARLY_IF_FALSE(env, jsArrayBuffer, napi_arraybuffer_expected);
+    // V8's IsArrayBuffer() is false for SharedArrayBuffer; JSC uses the same
+    // cell type for both, so reject shared buffers here to match Node instead
+    // of returning napi_ok for a buffer that was never neutralized.
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsArrayBuffer && !jsArrayBuffer->isShared(), napi_arraybuffer_expected);
 
     auto* arrayBuffer = jsArrayBuffer->impl();
-    if (!arrayBuffer->isDetached() && arrayBuffer->isDetachable()) {
+    // Node then requires IsDetachable(). Detaching an already-detached buffer
+    // is a no-op in both engines, so treat that as success.
+    NAPI_RETURN_EARLY_IF_FALSE(env, arrayBuffer->isDetached() || arrayBuffer->isDetachable(), napi_detachable_arraybuffer_expected);
+    if (!arrayBuffer->isDetached()) {
         arrayBuffer->detach(vm);
     }
     NAPI_RETURN_SUCCESS(env);

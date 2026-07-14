@@ -79,7 +79,13 @@ pub fn gc_owns_sigusr1() -> bool {
 /// Called on the main thread from the event loop tick. Handles the idle-VM
 /// case where the JS thread is blocked in epoll/kqueue and the trap never
 /// fires.
+#[inline]
 pub fn check_and_activate_inspector() {
+    // Hot path: one relaxed load of a flag that only the SignalInspector
+    // thread ever writes, so no cacheline bouncing in the common case.
+    if !ACTIVATION_REQUESTED.load(Ordering::Relaxed) {
+        return;
+    }
     if !ACTIVATION_REQUESTED.swap(false, Ordering::AcqRel) {
         return;
     }

@@ -182,8 +182,7 @@ impl Segment {
         let mut bb = BitBuffer::default();
         let mut i = 0;
         while i + 2 <= text.len() {
-            let n =
-                u32::from(alnum_value(text[i])) * 45 + u32::from(alnum_value(text[i + 1]));
+            let n = u32::from(alnum_value(text[i])) * 45 + u32::from(alnum_value(text[i + 1]));
             bb.append_bits(n, 11);
             i += 2;
         }
@@ -737,11 +736,8 @@ fn finder_push(history: &mut [i32; 7], run_len: i32) {
 
 fn finder_count(history: &[i32; 7]) -> i32 {
     let n = history[1];
-    let core = n > 0
-        && history[2] == n
-        && history[3] == n * 3
-        && history[4] == n
-        && history[5] == n;
+    let core =
+        n > 0 && history[2] == n && history[3] == n * 3 && history[4] == n && history[5] == n;
     let mut c = 0;
     if core && history[0] >= n * 4 && history[6] >= n {
         c += 1;
@@ -942,13 +938,7 @@ fn xml_escape_into(out: &mut Vec<u8>, s: &[u8]) {
 }
 
 /// Rasterize to RGBA8 at `scale` px/module, using `light`/`dark` as 0xRRGGBBAA.
-pub fn to_rgba(
-    qr: &QrCode,
-    border: u32,
-    scale: u32,
-    light: u32,
-    dark: u32,
-) -> (Vec<u8>, u32, u32) {
+pub fn to_rgba(qr: &QrCode, border: u32, scale: u32, light: u32, dark: u32) -> (Vec<u8>, u32, u32) {
     let s = i32::from(qr.size());
     let b = border as i32;
     let dim_modules = (s + 2 * b) as u32;
@@ -1014,7 +1004,10 @@ impl fmt::Display for DecodeError {
             DecodeError::InvalidFormatInfo => write!(f, "unable to read format information"),
             DecodeError::InvalidVersionInfo => write!(f, "version information mismatch"),
             DecodeError::ReedSolomonFailure => {
-                write!(f, "too many errors in data (Reed-Solomon correction failed)")
+                write!(
+                    f,
+                    "too many errors in data (Reed-Solomon correction failed)"
+                )
             }
             DecodeError::InvalidStructure => write!(f, "invalid segment structure"),
         }
@@ -1214,11 +1207,7 @@ fn build_function_map(version: u8) -> Vec<bool> {
     f
 }
 
-fn deinterleave_and_correct(
-    version: u8,
-    ecc: Ecc,
-    code: &[u8],
-) -> Result<Vec<u8>, DecodeError> {
+fn deinterleave_and_correct(version: u8, ecc: Ecc, code: &[u8]) -> Result<Vec<u8>, DecodeError> {
     let num_blocks = NUM_ERROR_CORRECTION_BLOCKS[ecc.ordinal()][usize::from(version)] as usize;
     let ecc_len = ECC_CODEWORDS_PER_BLOCK[ecc.ordinal()][usize::from(version)] as usize;
     let raw = raw_codeword_count(version);
@@ -1555,15 +1544,17 @@ mod tests {
         .unwrap();
         assert_eq!(qr.version(), 40);
         let over = vec![b'3'; 7090];
-        assert!(QrCode::encode_segments(
-            &[Segment::make_numeric(&over)],
-            Ecc::Low,
-            VERSION_MIN,
-            VERSION_MAX,
-            None,
-            false
-        )
-        .is_err());
+        assert!(
+            QrCode::encode_segments(
+                &[Segment::make_numeric(&over)],
+                Ecc::Low,
+                VERSION_MIN,
+                VERSION_MAX,
+                None,
+                false
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1592,8 +1583,7 @@ mod tests {
         ] {
             for ecc in [Ecc::Low, Ecc::Medium, Ecc::Quartile, Ecc::High] {
                 let qr = QrCode::encode_text(input, ecc).unwrap();
-                let decoded =
-                    decode_matrix(qr.modules(), usize::from(qr.size())).unwrap();
+                let decoded = decode_matrix(qr.modules(), usize::from(qr.size())).unwrap();
                 assert_eq!(decoded.bytes, input, "input={:?} ecc={:?}", input, ecc);
                 assert_eq!(decoded.version, qr.version());
                 assert_eq!(decoded.mask, qr.mask());

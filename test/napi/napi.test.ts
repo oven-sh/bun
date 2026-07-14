@@ -1177,8 +1177,12 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("bound+hasInstance: status=0 result=true pending=false");
       expect(output).toContain("hasInstance throws: status=9 result=false pending=true errName=RangeError");
       expect(output).toContain("proxy get throws: status=9 result=false pending=true errName=RangeError");
-      expect(output).toContain("number ctor: status=5 result=false pending=true errName=TypeError errCode=ERR_NAPI_CONS_FUNCTION");
-      expect(output).toContain("plain-obj ctor: status=5 result=false pending=true errName=TypeError errCode=ERR_NAPI_CONS_FUNCTION");
+      expect(output).toContain(
+        "number ctor: status=5 result=false pending=true errName=TypeError errCode=ERR_NAPI_CONS_FUNCTION",
+      );
+      expect(output).toContain(
+        "plain-obj ctor: status=5 result=false pending=true errName=TypeError errCode=ERR_NAPI_CONS_FUNCTION",
+      );
     });
   });
 

@@ -21,7 +21,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionQueryObjects, (JSGlobalObject * globalObject,
     if (!prototypeValue.isObject()) {
         // The JS wrapper passes ctor.prototype; a non-object prototype can't
         // appear in any prototype chain.
-        return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
+        JSArray* empty = constructEmptyArray(globalObject, nullptr, 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(empty);
     }
 
     // Like V8's QueryObjects, settle the heap first so already-collectable

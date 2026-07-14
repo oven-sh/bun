@@ -2,6 +2,8 @@ import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
+import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 
 describe("Channel", () => {
   // test-diagnostics-channel-has-subscribers.js
@@ -343,6 +345,36 @@ describe("TracingChannel", () => {
   // Port tests from:
   // https://github.com/search?q=repo%3Anodejs%2Fnode+test-diagnostics-channel+AND+%2Ftracing%2F&type=code
   test.todo("TODO");
+});
+
+describe("node:http server channels", () => {
+  test("http.server.response.created publishes the request and response", async () => {
+    const events: Array<{ request: unknown; response: unknown }> = [];
+    const onCreated = (message: any) => events.push(message);
+    subscribe("http.server.response.created", onCreated);
+
+    const server = createServer((req, res) => res.end("ok"));
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      server.on("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+      await promise;
+
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await response.text()).toBe("ok");
+    } finally {
+      unsubscribe("http.server.response.created", onCreated);
+      server.close();
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0].request).toBeInstanceOf(IncomingMessage);
+    expect(events[0].response).toBeInstanceOf(ServerResponse);
+    // The channel fires while the response is still being constructed, so the
+    // request must already be attached to it.
+    expect((events[0].response as ServerResponse).req).toBe(events[0].request);
+  });
 });
 
 const mocks = new Map();

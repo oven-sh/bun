@@ -654,10 +654,9 @@ function tracingChannel(nameOrChannels) {
   return new TracingChannel(nameOrChannels);
 }
 
-// The module loaders cannot afford to load this module just to discover that
-// nobody subscribed, so hand them the "module.require" / "module.import"
-// tracing channels once this module is loaded (in Node the CJS and ESM
-// loaders own these channels instead).
+// Hand the module loaders their tracing channels; they cannot afford to load
+// this module just to discover that nobody subscribed. In Node the CJS and ESM
+// loaders own these channels instead.
 {
   const moduleTracing = require("internal/module_tracing");
   moduleTracing.requireChannel = tracingChannel("module.require");

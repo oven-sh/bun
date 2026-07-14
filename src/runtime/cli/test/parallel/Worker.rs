@@ -75,7 +75,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn start(&mut self) -> Result<(), bun_core::Error> {
+    pub fn start(&mut self) -> crate::Result<()> {
         debug_assert!(!self.alive);
         let coord_ptr = self.coord;
         // SAFETY: coord backref is valid for the worker's lifetime (Coordinator owns workers slice).
@@ -154,7 +154,7 @@ impl Worker {
             }?
             .map_err(|e| {
                 Output::err(e, "spawnProcess failed for test worker", ());
-                bun_core::err!("SpawnFailed")
+                crate::Error::SpawnFailed
             })?;
             let stdout = spawned.stdout;
             let stderr = spawned.stderr;
@@ -167,19 +167,19 @@ impl Worker {
                 this.out
                     .reader
                     .start(fd, true)
-                    .map_err(|_| bun_core::err!("PipeStartFailed"))?;
+                    .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             if let Some(fd) = stderr {
                 this.err
                     .reader
                     .start(fd, true)
-                    .map_err(|_| bun_core::err!("PipeStartFailed"))?;
+                    .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             if !extra_pipes.is_empty() {
                 // coord.vm backref valid for worker lifetime; adopt() mutates the
                 // loop's socket context via interior mutability on the C side.
                 if !this.ipc.adopt(coord.vm, extra_pipes[0].fd()) {
-                    return Err(bun_core::err!("ChannelAdoptFailed"));
+                    return Err(crate::Error::ChannelAdoptFailed);
                 }
             } else {
                 this.ipc.done = true;
@@ -239,7 +239,7 @@ impl Worker {
             }?
             .map_err(|e| {
                 Output::err(e, "spawnProcess failed for test worker", ());
-                bun_core::err!("SpawnFailed")
+                crate::Error::SpawnFailed
             })?;
             // `WindowsStdioResult::Buffer` holds `Box<uv::Pipe>`, and
             // `spawn_process_windows` does `heap::take(ipc_pipe)` into it — so
@@ -265,7 +265,7 @@ impl Worker {
                         .reader
                         .start_with_pipe(bun_core::heap::into_raw(pipe))
                 }
-                .map_err(|_| bun_core::err!("PipeStartFailed"))?;
+                .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
                 // SAFETY: see stdout above.
@@ -274,7 +274,7 @@ impl Worker {
                         .reader
                         .start_with_pipe(bun_core::heap::into_raw(pipe))
                 }
-                .map_err(|_| bun_core::err!("PipeStartFailed"))?;
+                .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             // `ipc_pipe` was Box-allocated via heap::into_raw above and
             // initialised by spawn_process; ownership of the *mut Pipe transfers
@@ -282,7 +282,7 @@ impl Worker {
             // On failure the caller still owns it (Channel.rs:294) and the
             // `ipc_pipe_guard` errdefer performs `close_and_destroy`.
             if !this.ipc.adopt_pipe(coord.vm, ipc_pipe) {
-                return Err(bun_core::err!("ChannelAdoptFailed"));
+                return Err(crate::Error::ChannelAdoptFailed);
             }
             // Channel now owns the Box; disarm the errdefer so end-of-block
             // doesn't double-close. Any later error (watch_or_reap) is handled
@@ -331,7 +331,7 @@ impl Worker {
                 // SAFETY: see above.
                 unsafe { (*coord_ptr.cast_mut()).live_workers -= 1 };
                 Output::err(e, "watchOrReap failed for test worker", ());
-                return Err(bun_core::err!("ProcessWatchFailed"));
+                return Err(crate::Error::ProcessWatchFailed);
             }
         }
 

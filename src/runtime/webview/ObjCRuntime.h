@@ -47,12 +47,18 @@ struct Ref {
         if (m_id) msg<void>(s_release);
     }
 
+    bool isKindOf(Class c) const
+    {
+        return m_id && c && msg<signed char>(s_isKindOfClass, c) != 0;
+    }
+
     static void *s_msgSend;
     static SEL s_alloc;
     static SEL s_init;
     static SEL s_release;
     static SEL s_retain;
     static SEL s_description;
+    static SEL s_isKindOfClass;
 
     template<typename R, typename... A>
     R msg(SEL op, A... a) const
@@ -142,6 +148,7 @@ struct NSNumber : Ref {
 
 struct NSArray : Ref {
     using Ref::Ref;
+    static Class cls;
     static SEL s_count;
     static SEL s_objectAtIndex;
 

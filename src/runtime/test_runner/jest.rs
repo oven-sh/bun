@@ -159,6 +159,29 @@ impl<'a> TestRunner<'a> {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;
         };
+        // Per-entry deadline, not the (only-advances-sooner) file timer.
+        // `on_stack_entry` pins the caller when still synchronously on stack;
+        // else take the latest running entry so a sibling never terminates early.
+        if let Some(entry) = active_file.execution.on_stack_entry.get() {
+            // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+            return unsafe { entry.as_ref() }.timespec;
+        }
+        if active_file.phase == bun_test::Phase::Execution {
+            if let Some(group) = active_file.execution.active_group_ref() {
+                let mut latest: Option<bun_core::Timespec> = None;
+                for seq in group.sequences_const(&active_file.execution) {
+                    let Some(entry) = seq.active_entry else { continue };
+                    // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+                    let ts = unsafe { entry.as_ref() }.timespec;
+                    if latest.is_none_or(|l| ts.order(&l) == core::cmp::Ordering::Greater) {
+                        latest = Some(ts);
+                    }
+                }
+                if let Some(latest) = latest {
+                    return latest;
+                }
+            }
+        }
         if active_file.timer.state != TimerState::ACTIVE
             || active_file.timer.next == ElTimespec::EPOCH
         {
@@ -416,6 +439,7 @@ pub mod Jest {
         let spy_on = jsc::JSFunction::create(global_object, "spyOn", JSMock__jsSpyOn, 2, Default::default());
         let restore_all_mocks = jsc::JSFunction::create(global_object, "restoreAllMocks", JSMock__jsRestoreAllMocks, 2, Default::default());
         let clear_all_mocks = jsc::JSFunction::create(global_object, "clearAllMocks", JSMock__jsClearAllMocks, 2, Default::default());
+        let reset_all_mocks = jsc::JSFunction::create(global_object, "resetAllMocks", JSMock__jsResetAllMocks, 2, Default::default());
         let mock_module_fn = jsc::JSFunction::create(global_object, "module", JSMock__jsModuleMock, 2, Default::default());
         module.put(global_object, b"mock", mock_fn);
         mock_fn.put(global_object, b"module", mock_module_fn);
@@ -428,7 +452,7 @@ pub mod Jest {
         jest.put(global_object, b"spyOn", spy_on);
         jest.put(global_object, b"restoreAllMocks", restore_all_mocks);
         jest.put(global_object, b"clearAllMocks", clear_all_mocks);
-        jest.put(global_object, b"resetAllMocks", clear_all_mocks);
+        jest.put(global_object, b"resetAllMocks", reset_all_mocks);
         jest.put(global_object, b"setSystemTime", set_system_time);
         jest.put(global_object, b"now", jsc::JSFunction::create(global_object, "now", JSMock__jsNow, 0, Default::default()));
         jest.put(global_object, b"setTimeout", jsc::JSFunction::create(global_object, "setTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()));
@@ -442,7 +466,7 @@ pub mod Jest {
         vi.put(global_object, b"mock", mock_module_fn);
         vi.put(global_object, b"spyOn", spy_on);
         vi.put(global_object, b"restoreAllMocks", restore_all_mocks);
-        vi.put(global_object, b"resetAllMocks", clear_all_mocks);
+        vi.put(global_object, b"resetAllMocks", reset_all_mocks);
         vi.put(global_object, b"clearAllMocks", clear_all_mocks);
         module.put(global_object, b"vi", vi);
 
@@ -459,6 +483,7 @@ pub mod Jest {
         pub(crate) fn JSMock__jsSetSystemTime(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsRestoreAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsClearAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub(crate) fn JSMock__jsResetAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsSpyOn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
     }
 

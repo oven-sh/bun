@@ -19,7 +19,7 @@ const { isAnyArrayBuffer } = require("node:util/types");
 const eos = require("internal/streams/end-of-stream");
 const { kEosNodeSynchronousCallback } = eos;
 
-const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
+const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeMap = Array.prototype.map;
@@ -49,6 +49,7 @@ class ReadableFromWeb extends Readable {
   #closed;
   #pendingChunks;
   #stream;
+  #reading;
 
   constructor(options, stream) {
     const { objectMode, highWaterMark, encoding, signal } = options;
@@ -62,6 +63,7 @@ class ReadableFromWeb extends Readable {
     this.#reader = undefined;
     this.#stream = stream;
     this.#closed = false;
+    this.#reading = false;
   }
 
   #drainPending() {
@@ -93,19 +95,42 @@ class ReadableFromWeb extends Readable {
     return;
   }
 
-  async _read() {
-    $debug("ReadableFromWeb _read()", this.__id);
-    var stream = this.#stream,
-      reader = this.#reader;
-    if (stream) {
-      reader = this.#reader = stream.getReader();
-      this.#stream = undefined;
-    } else if (this.#drainPending()) {
-      return;
+  #handleError(reader, error) {
+    if (reader) {
+      this.#reader = undefined;
+      try {
+        reader.releaseLock();
+      } catch {}
     }
+    this.#closed = true;
+    this.destroy(error);
+  }
 
-    var deferredError: Error | undefined;
+  _read() {
+    $debug("ReadableFromWeb _read()", this.__id);
+    // Readable calls _read() again as soon as push() is called, but #pump()
+    // pushes many chunks per call. Two pumps hold two read requests on the same
+    // reader, and readMany() drains the queue into whichever settles first.
+    if (this.#reading) return;
+    this.#reading = true;
+    return this.#pump();
+  }
+
+  async #pump() {
+    // #reading must be cleared as the body exits, not one microtask later: a
+    // paused-mode read() loop calls _read() again without yielding, and
+    // Readable leaves kReading set when _read() neither pushes nor pumps.
+    var reader;
     try {
+      var stream = this.#stream;
+      reader = this.#reader;
+      if (stream) {
+        reader = this.#reader = stream.getReader();
+        this.#stream = undefined;
+      } else if (this.#drainPending()) {
+        return;
+      }
+
       do {
         var done = false,
           value;
@@ -140,24 +165,38 @@ class ReadableFromWeb extends Readable {
         }
       } while (!this.#closed);
     } catch (e) {
-      deferredError = e as Error;
+      // An error from the web stream must surface on the Readable as an
+      // 'error' event. Rethrowing would only reject #pump()'s promise, which
+      // nothing awaits, turning it into an unhandled rejection instead.
+      this.#handleError(reader, e);
+    } finally {
+      this.#reading = false;
     }
-
-    if (deferredError) throw deferredError;
   }
 
   _destroy(error, callback) {
     if (!this.#closed) {
+      this.#closed = true;
       var reader = this.#reader;
       if (reader) {
         this.#reader = undefined;
-        reader.cancel(error).finally(() => {
-          this.#closed = true;
-          callback(error);
-        });
+        PromisePrototypeThen.$call(
+          reader.cancel(error),
+          () => callback(error),
+          cancelError => callback(error ?? cancelError),
+        );
+        return;
       }
-
-      return;
+      var stream = this.#stream;
+      if (stream) {
+        this.#stream = undefined;
+        PromisePrototypeThen.$call(
+          stream.cancel(error),
+          () => callback(error),
+          cancelError => callback(error ?? cancelError),
+        );
+        return;
+      }
     }
     try {
       callback(error);

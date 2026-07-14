@@ -68,7 +68,7 @@ fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
     }
 }
 
-use bun_core::immutable::ares_inet_pton as inet_pton;
+use bun_core::strings::ares_inet_pton as inet_pton;
 
 unsafe extern "C" {
     // libc byte-order conversions are pure on the integer argument — no
@@ -143,6 +143,13 @@ extern "C" fn on_data(
 
     let mut i: c_int = 0;
     while i < packets {
+        // A prior iteration's callback (or its error handler) may have closed
+        // this socket; stop dispatching the rest of the recvmmsg batch so no
+        // 'data' fires after 'close'. Matches libuv's per-datagram recheck.
+        if udp_socket.closed.get() {
+            break;
+        }
+
         let peer = buf.get_peer(i);
 
         let mut addr_buf = [0u8; INET6_ADDRSTRLEN + 1];
@@ -410,15 +417,16 @@ impl UDPSocketConfig {
                 )));
             };
             let connect_port = connect_port_js.coerce_to_i32(global_this)?;
+            if connect_port < 1 || connect_port > 0xffff {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Expected \"connect.port\" to be an integer between 1 and 65535"
+                )));
+            }
 
             let connect_host = connect_host_js.to_bun_string(global_this)?;
 
             config.connect = Some(ConnectConfig {
-                port: if connect_port < 1 || connect_port > 0xffff {
-                    0
-                } else {
-                    u16::try_from(connect_port).expect("int cast")
-                },
+                port: u16::try_from(connect_port).expect("int cast"),
                 address: connect_host,
             });
         }

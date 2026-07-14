@@ -208,7 +208,6 @@ extern "C" bool JSSink_isSink(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 namespace WebCore {
 using namespace JSC;
 
-JSC_DECLARE_HOST_FUNCTION(functionStartDirectStream);
 `;
 
   const bottom = `
@@ -276,7 +275,6 @@ async function implementation() {
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 
-#include "JSReadableStream.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
@@ -287,66 +285,8 @@ using namespace JSC;
 
 ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).join("\n")}
 ${classes.map(name => `extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue controllerValue);`).join("\n")}
-
-JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
-{
-    
-    auto& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-    JSC::JSValue readableStream = callFrame->argument(0);
-    JSC::JSValue onPull = callFrame->argument(1);
-    JSC::JSValue onClose = callFrame->argument(2);
-    JSC::JSValue asyncContext = callFrame->argument(3);
-
-    if (!readableStream.isObject()) {
-        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ReadableStream"_s));
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    if (!onPull.isObject() || !onPull.isCallable()) {
-        onPull = JSC::jsUndefined();
-    } else if (!asyncContext.isUndefined()) {
-        onPull = AsyncContextFrame::create(globalObject, onPull, asyncContext);
-    }
-
-    if (!onClose.isObject() || !onClose.isCallable()) {
-        onClose = JSC::jsUndefined();
-    } else if (!asyncContext.isUndefined()) {
-        onClose = AsyncContextFrame::create(globalObject, onClose, asyncContext);
-    }
-
 `;
   var templ = head;
-
-  var isFirst = true;
-  for (let name of classes) {
-    const { className, controller, prototypeName, controllerPrototypeName, constructor } = names(name);
-
-    templ += `
-
-    ${isFirst ? "" : "else"} if (WebCore::${controller}* ${name}Controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue())) {
-        if (${name}Controller->wrapped() == nullptr) {
-            scope.throwException(globalObject, JSC::createTypeError(globalObject, "Cannot start stream with closed controller"_s));
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        }
-
-        ${name}Controller->start(globalObject, readableStream, onPull, onClose);
-    }
-`;
-    isFirst = false;
-  }
-
-  templ += `
-    else {
-        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Unknown direct controller. This is a bug in Bun."_s));
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-}
-`;
 
   for (let name of classes) {
     const {
@@ -452,9 +392,33 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
+    // Null the native pointer before running any JS. detach() fires the
+    // onClose callback, which can re-enter the event loop and free the
+    // sink (e.g. handle_resolve_stream -> destroy_sink) while ptr is still
+    // live on our stack. Do the native close first, then let detach() run
+    // the JS callback once we no longer need ptr.
+    ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
+    controller->m_sinkPtr = nullptr;
+
+    ${name}__close(lexicalGlobalObject, ptr);
+
+    // detach() must still fire onClose (it transitions the direct
+    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // even if the native close threw, matching the pre-reorder behaviour.
+    // Stash and rethrow around it; the sink's error wins over any onClose
+    // error.
+    if (JSC::Exception* pending = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException()) {
+            return {};
+        }
+        controller->detach();
+        (void)scope.tryClearException();
+        scope.throwException(lexicalGlobalObject, pending);
+        return {};
+    }
+
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});
-    ${name}__close(lexicalGlobalObject, ptr);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -475,9 +439,34 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
+    // Null the native pointer before running any JS. detach() fires the
+    // onClose callback, which can re-enter the event loop and free the
+    // sink (e.g. handle_resolve_stream -> destroy_sink) while ptr is still
+    // live on our stack. Do the native end first, then let detach() run
+    // the JS callback once we no longer need ptr.
+    ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
+    controller->m_sinkPtr = nullptr;
+
+    auto result = ${name}__endWithSink(ptr, lexicalGlobalObject);
+
+    // detach() must still fire onClose (it transitions the direct
+    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // even if the native end threw, matching the pre-reorder behaviour.
+    // Stash and rethrow around it; the sink's error wins over any onClose
+    // error.
+    if (JSC::Exception* pending = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException()) {
+            return {};
+        }
+        controller->detach();
+        (void)scope.tryClearException();
+        scope.throwException(lexicalGlobalObject, pending);
+        return {};
+    }
+
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});
-    return ${name}__endWithSink(ptr, lexicalGlobalObject);
+    return result;
 }
 
 extern "C" JSC::EncodedJSValue ${name}__getInternalFd(void* sinkPtr);
@@ -651,35 +640,34 @@ JSObject* JS${controllerName}::createPrototype(VM& vm, JSDOMGlobalObject& global
 }
 
 void JS${controllerName}::detach() {
-    if (m_onDestroy) {
-        auto destroy = m_onDestroy;
-        m_onDestroy = 0;
-        Bun__onSinkDestroyed(destroy, m_sinkPtr);
-    }
+    // Prevent re-entrancy.
+    JSC::EnsureStillAliveScope readableStream(m_weakReadableStream.get());
+    JSC::EnsureStillAliveScope onClose(m_onClose.get());
 
-    if (m_sinkPtr) {
-        ${name}__controllerDetached(m_sinkPtr, JSC::JSValue::encode(this));
-    }
+    auto* sinkPtr = std::exchange(m_sinkPtr, nullptr);
+    auto destroy = std::exchange(m_onDestroy, 0);
 
-    m_sinkPtr = nullptr;
     m_onPull.clear();
-
-    auto readableStream = m_weakReadableStream.get();
-    auto onClose = m_onClose.get();
-    
-    if (readableStream && onClose) {
-        auto callData = JSC::getCallData(onClose);
-        if(callData.type != JSC::CallData::Type::None) {
-            JSC::JSGlobalObject *globalObject = this->globalObject();
-            JSC::MarkedArgumentBuffer arguments;
-            arguments.append(readableStream);
-            arguments.append(jsUndefined());
-            call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
-        }
-    }
-
     m_onClose.clear();
     m_weakReadableStream.clear();
+
+    if (destroy) {
+        Bun__onSinkDestroyed(destroy, sinkPtr);
+    }
+
+    if (sinkPtr) {
+        ${name}__controllerDetached(sinkPtr, JSC::JSValue::encode(this));
+    }
+
+    if (readableStream.value() && onClose.value()) {
+        JSC::JSGlobalObject *globalObject = this->globalObject();
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(readableStream.value());
+        arguments.append(jsUndefined());
+        AsyncContextFrame::call(globalObject, onClose.value(), JSC::jsUndefined(), arguments);
+        RELEASE_AND_RETURN(scope, void());
+    }
 }
 `;
 

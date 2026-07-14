@@ -174,7 +174,8 @@ impl<'a> Renderer<'a> {
 }
 
 /// Detail data for span events (links, images, wikilinks).
-/// `href`/`title` borrow from the source text.
+/// `href`/`title` are valid only for the duration of `enter_span`;
+/// renderers that retain them past that call must copy.
 #[derive(Copy, Clone)]
 pub struct SpanDetail<'a> {
     pub href: &'a [u8],
@@ -198,28 +199,6 @@ impl<'a> Default for SpanDetail<'a> {
             autolink_email: false,
             permissive_autolink: false,
             autolink_www: false,
-        }
-    }
-}
-
-impl<'a> SpanDetail<'a> {
-    /// Widen `href`/`title` to `'static` for storage on the renderer stack.
-    /// Field-by-field reconstruction (no bitwise reinterpret).
-    ///
-    /// # Safety
-    /// Caller guarantees the source text the slices borrow outlives every
-    /// read through the returned value.
-    #[inline]
-    pub unsafe fn detach_lifetime(self) -> SpanDetail<'static> {
-        SpanDetail {
-            // SAFETY: caller contract.
-            href: unsafe { &*core::ptr::from_ref::<[u8]>(self.href) },
-            // SAFETY: caller contract.
-            title: unsafe { &*core::ptr::from_ref::<[u8]>(self.title) },
-            autolink: self.autolink,
-            autolink_email: self.autolink_email,
-            permissive_autolink: self.permissive_autolink,
-            autolink_www: self.autolink_www,
         }
     }
 }

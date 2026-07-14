@@ -79,7 +79,10 @@ export function overridableRequireImpl(this: JSCommonJSModule, originalId: strin
     }
   }
 
-  if (id.endsWith(".node")) {
+  // A resolved id may carry a `?query` suffix (part of the module cache key);
+  // match the native-addon extension against the path portion only.
+  const queryIndex = id.indexOf("?");
+  if (queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) {
     return $internalRequire(id, this);
   }
 
@@ -177,10 +180,14 @@ export function requireResolve(
 $visibility = "Private";
 export function internalRequire(id: string, parent: JSCommonJSModule) {
   $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should not be in the map");
-  $assert(id.endsWith(".node"));
+  // `id` keys the module cache and may carry a `?query` suffix;
+  // `process.dlopen` needs the on-disk path.
+  const queryIndex = id.indexOf("?");
+  const filename = queryIndex === -1 ? id : id.substring(0, queryIndex);
+  $assert(filename.endsWith(".node"));
 
   const module = $createCommonJSModule(id, {}, true, parent);
-  process.dlopen(module, id);
+  process.dlopen(module, filename);
   $requireMap.$set(id, module);
   return module.exports;
 }

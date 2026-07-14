@@ -47,7 +47,6 @@ impl From<ScanImportsAndExportsError> for crate::linker_context_mod::LinkError {
         }
     }
 }
-bun_core::named_error_set!(ScanImportsAndExportsError);
 
 /// Short-lived `&mut [T]` deref of a `split_raw()` column pointer at a single
 /// use site.
@@ -1552,7 +1551,7 @@ mod __css_validation {
                         Some(&col_ref!(self.all_sources)[source_index as usize]),
                         range,
                         bun_ast::alloc_print(format_args!(
-                            "<r>The value of <b>{}<r> in the class <b>{}<r> is undefined.",
+                            "The value of {} in the class {} is undefined.",
                             bstr::BStr::new(property_name),
                             bstr::BStr::new(local_original_name),
                         )),

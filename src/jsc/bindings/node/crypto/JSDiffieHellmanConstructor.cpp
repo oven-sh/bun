@@ -153,7 +153,10 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
                 return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid generator"_s));
             }
 
-            if (bn_g.getWord() < 2) {
+            // A generator too wide for BN_get_word is necessarily >= 2, so only
+            // reject when the value actually fits and is below 2.
+            auto generatorWord = bn_g.getWord();
+            if (generatorWord.has_value() && *generatorWord < 2) {
                 ERR_put_error(ERR_LIB_DH, 0, DH_R_BAD_GENERATOR, __FILE__, __LINE__);
                 throwCryptoError(globalObject, scope, ERR_get_error(), "Invalid generator"_s);
                 return {};

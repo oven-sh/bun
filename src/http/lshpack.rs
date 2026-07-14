@@ -40,7 +40,7 @@ pub struct DecodeResult {
     pub next: usize,
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
+#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HpackError {
     #[error("UnableToDecode")]
     UnableToDecode,
@@ -49,7 +49,6 @@ pub enum HpackError {
     #[error("UnableToEncode")]
     UnableToEncode,
 }
-bun_core::named_error_set!(HpackError);
 
 impl HPACK {
     pub const LSHPACK_MAX_HEADER_SIZE: usize = 65536;

@@ -240,11 +240,14 @@ impl Options {
         if name.is_empty() || name[0] != b'@' {
             return &self.scope;
         }
-        self.registries
-            .get(&Npm::registry::Scope::hash(Npm::registry::Scope::get_name(
-                name,
-            )))
-            .unwrap_or(&self.scope)
+        let scope_name = Npm::registry::Scope::get_name(name);
+        // Compare the stored scope name, not just its hash: a different scope
+        // whose hash collides must not inherit this scope's registry or token.
+        // Fall back to the default registry on a mismatch.
+        match self.registries.get(&Npm::registry::Scope::hash(scope_name)) {
+            Some(scope) if *scope.name == *scope_name => scope,
+            _ => &self.scope,
+        }
     }
 }
 
@@ -281,20 +284,22 @@ pub struct Update {
 }
 
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
-pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_core::Error> {
+pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
         return Dir::cwd()
             .make_open_path(home_dir, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
     if !explicit_global_dir.is_empty() {
         return Dir::cwd()
             .make_open_path(explicit_global_dir, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
@@ -303,7 +308,8 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
@@ -315,22 +321,22 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
-    Err(bun_core::err!("No global directory found"))
+    Err(crate::Error::NoGlobalDirectoryFound)
 }
 
-pub(crate) fn open_global_bin_dir(
-    opts_: Option<&Api::BunInstall>,
-) -> Result<bun_sys::Fd, bun_core::Error> {
+pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Result<bun_sys::Fd> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
         return Dir::cwd()
             .make_open_path(home_dir, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
     if let Some(opts) = opts_ {
@@ -338,7 +344,8 @@ pub(crate) fn open_global_bin_dir(
             if !home_dir.is_empty() {
                 return Dir::cwd()
                     .make_open_path(home_dir, OpenDirOptions::default())
-                    .map(|d| d.into_raw());
+                    .map(|d| d.into_raw())
+                    .map_err(Into::into);
             }
         }
     }
@@ -349,7 +356,8 @@ pub(crate) fn open_global_bin_dir(
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
@@ -361,12 +369,11 @@ pub(crate) fn open_global_bin_dir(
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
-    Err(bun_core::err!(
-        "Missing global bin directory: try setting $BUN_INSTALL"
-    ))
+    Err(crate::Error::MissingGlobalBinDirectoryTrySettingBUNINSTALL)
 }
 
 // `BunInstall` owns `Box<[u8]>`; Options stores `&'static [u8]`

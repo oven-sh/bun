@@ -5,6 +5,7 @@ const types = require("node:util/types");
 const {
   validateFunction,
   validateInteger,
+  validateEncoding,
   getValidatedPath,
   throwIfNullBytesInFileName,
 } = require("internal/validators");
@@ -276,7 +277,9 @@ var access = function access(path, mode, callback) {
       callback(null, bytesWritten, buffer);
     }
 
-    if ($isTypedArrayView(buffer)) {
+    // $isTypedArrayView excludes DataView, so a DataView would fall through
+    // to the string signature. Use Node's predicate, like writeSync below.
+    if (types.isArrayBufferView(buffer)) {
       callback ||= position || length || offsetOrOptions;
       ensureCallback(callback);
 
@@ -292,6 +295,10 @@ var access = function access(path, mode, callback) {
       return;
     }
 
+    if (typeof buffer !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+    }
+
     if (!$isCallable(position)) {
       if ($isCallable(offsetOrOptions)) {
         position = offsetOrOptions;
@@ -302,6 +309,8 @@ var access = function access(path, mode, callback) {
       length = "utf8";
     }
 
+    // Node validates the encoding (synchronously) before the callback.
+    validateEncoding(buffer, length);
     callback = position;
     ensureCallback(callback);
 
@@ -499,6 +508,8 @@ var access = function access(path, mode, callback) {
       if (typeof buffer !== "string") {
         throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
       }
+      // writeSync(fd, string[, position[, encoding]]): `length` is the encoding.
+      validateEncoding(buffer, length);
       return fs.writeSync(fd, buffer, offsetOrOptions, length);
     } catch (err) {
       // Node's fs binding reports sync write failures by assigning the error
@@ -664,7 +675,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newZigFunction("runtime/node/types.zig", "jsAssertEncodingValid", 1))(
+            (assertEncodingForWindows ?? $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
               encoding,
             );
           }
@@ -787,7 +798,7 @@ const realpath: typeof import("node:fs").realpath =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newZigFunction("runtime/node/types.zig", "jsAssertEncodingValid", 1))(
+            (assertEncodingForWindows ?? $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
               encoding,
             );
           }
@@ -1176,6 +1187,18 @@ class Dir {
     if (this.#pendingCount > 0) throw this.#dirConcurrentError();
     if (handle > 2) fs.closeSync(handle);
     this.#handle = -1;
+  }
+
+  // Like node, disposing an already-closed Dir is a no-op rather than
+  // ERR_DIR_CLOSED so `using`/`await using` compose with an explicit close().
+  [Symbol.dispose]() {
+    if (this.#handle < 0) return;
+    this.closeSync();
+  }
+
+  async [Symbol.asyncDispose]() {
+    if (this.#handle < 0) return;
+    await this.close();
   }
 
   get path() {

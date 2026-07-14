@@ -91,7 +91,7 @@ using namespace Zig;
     /* You should not use this throw scope directly -- if you need */   \
     /* to throw or clear exceptions, make your own scope */             \
     auto napi_preamble_throw_scope__ = DECLARE_THROW_SCOPE(_env->vm()); \
-    NAPI_RETURN_IF_VM_EXCEPTION(_env)
+    NAPI_RETURN_IF_EXCEPTION(_env)
 
 // Only use this for functions that need their own throw or catch scope. Functions that call into
 // JS code that might throw should use NAPI_RETURN_IF_EXCEPTION.
@@ -100,6 +100,17 @@ using namespace Zig;
         NAPI_LOG_CURRENT_FUNCTION;         \
         NAPI_CHECK_ARG(_env, _env);        \
     } while (0)
+
+// Like NAPI_PREAMBLE but does NOT return napi_pending_exception when the env
+// has a stashed napi_throw* exception. Mirrors Node.js's CHECK_ENV_NOT_IN_GC
+// for pure value constructors/accessors that are safe to call while an
+// exception is pending. Still declares a throw scope so NAPI_RETURN_SUCCESS
+// can assert and VM-level exceptions from JSC internals are caught.
+#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                            \
+    NAPI_LOG_CURRENT_FUNCTION;                                          \
+    NAPI_CHECK_ARG(_env, _env);                                         \
+    auto napi_preamble_throw_scope__ = DECLARE_THROW_SCOPE(_env->vm()); \
+    NAPI_RETURN_IF_VM_EXCEPTION(_env)
 
 // Return an error code if arg is null. Only use for input validation.
 #define NAPI_CHECK_ARG(_env, arg)                               \
@@ -965,7 +976,6 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
     void* data, napi_value* result)
 {
     NAPI_PREAMBLE(env);
-    NAPI_RETURN_IF_EXCEPTION(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, cb);
 
@@ -1390,7 +1400,6 @@ extern "C" napi_status napi_throw(napi_env env, napi_value error)
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
-    NAPI_RETURN_IF_EXCEPTION(env);
     if (env->isFinishingFinalizers()) {
         return napi_set_last_error(env, env->napiModule().nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception);
     }
@@ -1560,13 +1569,13 @@ extern "C" JS_EXPORT napi_status node_api_create_buffer_from_arraybuffer(napi_en
 {
     NAPI_LOG_CURRENT_FUNCTION;
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    auto* globalObject = toJS(env);
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope);
     NAPI_CHECK_ARG(env, result);
 
     JSC::JSArrayBuffer* jsArrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(toJS(arraybuffer));
     NAPI_RETURN_EARLY_IF_FALSE(env, jsArrayBuffer, napi_arraybuffer_expected);
-
-    auto* globalObject = toJS(env);
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
 
     auto* impl = jsArrayBuffer->impl();
 
@@ -1687,7 +1696,7 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     Zig::GlobalObject* globalObject = toJS(env);
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
+    NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope);
     NAPI_CHECK_ARG(env, arraybuffer);
     NAPI_CHECK_ARG(env, result);
     JSValue arraybufferValue = toJS(arraybuffer);
@@ -1780,7 +1789,6 @@ extern "C" napi_status napi_create_typedarray(
 {
     NAPI_PREAMBLE(env);
     Zig::GlobalObject* globalObject = toJS(env);
-    NAPI_RETURN_IF_EXCEPTION(env);
     NAPI_CHECK_ARG(env, arraybuffer);
     NAPI_CHECK_ARG(env, result);
     JSValue arraybufferValue = toJS(arraybuffer);
@@ -2082,13 +2090,6 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
-    // Match Node.js: reject while a napi exception is pending before
-    // adopting data. NAPI_RETURN_IF_EXCEPTION below also consults
-    // hasPendingException(), so without this early return a stashed
-    // napi_throw* exception would pass the preamble, let createFromBytes
-    // adopt data, then bail after JSUint8Array::create succeeded but
-    // before arm(), orphaning a GC cell with a disarmed destructor.
-    NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -2134,11 +2135,6 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
-    // Match Node.js: reject while a napi exception is pending before
-    // adopting external_data, so the caller cleanly retains ownership.
-    // Checking after JSArrayBuffer::create would orphan a GC cell that
-    // still points at external_data with a disarmed destructor.
-    NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -2169,7 +2165,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
 extern "C" napi_status napi_create_double(napi_env env, double value,
     napi_value* result)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     // The addon controls every bit of `value`; an impure NaN must not be
@@ -2181,7 +2177,7 @@ extern "C" napi_status napi_create_double(napi_env env, double value,
 extern "C" napi_status napi_get_value_double(napi_env env, napi_value value,
     double* result)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, value);
@@ -2194,7 +2190,7 @@ extern "C" napi_status napi_get_value_double(napi_env env, napi_value value,
 
 extern "C" napi_status napi_get_value_int32(napi_env env, napi_value value, int32_t* result)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, value);
@@ -2207,7 +2203,7 @@ extern "C" napi_status napi_get_value_int32(napi_env env, napi_value value, int3
 
 extern "C" napi_status napi_get_value_uint32(napi_env env, napi_value value, uint32_t* result)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, value);
@@ -2220,7 +2216,7 @@ extern "C" napi_status napi_get_value_uint32(napi_env env, napi_value value, uin
 
 extern "C" napi_status napi_get_value_int64(napi_env env, napi_value value, int64_t* result)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, value);
@@ -2266,7 +2262,7 @@ struct BufferElement<NapiStringEncoding::utf16> {
 template<NapiStringEncoding EncodeTo>
 napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValue, typename BufferElement<EncodeTo>::Type* buf, size_t bufsize, size_t* writtenPtr)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ARG(env, napiValue);
     JSValue jsValue = toJS(napiValue);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isString(), napi_string_expected);
@@ -2392,7 +2388,7 @@ extern "C" napi_status napi_get_value_string_utf16(napi_env env, napi_value napi
 
 extern "C" napi_status napi_get_value_bool(napi_env env, napi_value value, bool* result)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, value);
     NAPI_CHECK_ARG(env, result);
@@ -2437,7 +2433,7 @@ extern "C" napi_status napi_delete_element(napi_env env, napi_value objectValue,
 
 extern "C" napi_status napi_create_object(napi_env env, napi_value* result)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
 
@@ -2695,15 +2691,14 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     napi_value* result)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    Zig::GlobalObject* globalObject = toJS(env);
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, throwScope);
     NAPI_CHECK_ARG(env, script);
     NAPI_CHECK_ARG(env, result);
     JSValue scriptValue = toJS(script);
     NAPI_RETURN_EARLY_IF_FALSE(env, scriptValue.isString(), napi_string_expected);
-
-    Zig::GlobalObject* globalObject = toJS(env);
-
-    auto& vm = JSC::getVM(globalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     WTF::String code = scriptValue.getString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_pending_exception));
@@ -2768,14 +2763,14 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     napi_value* result)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    Zig::GlobalObject* globalObject = toJS(env);
+    auto& vm = env->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, words);
     // JSBigInt::createWithLength's size argument is unsigned int.
     NAPI_RETURN_EARLY_IF_FALSE(env, word_count <= UINT_MAX, napi_invalid_arg);
-
-    Zig::GlobalObject* globalObject = toJS(env);
-    auto& vm = env->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     // we check INT_MAX here because it won't reject any bigints that should be able to be created
     // (as the true limit is much lower), and one Node.js test expects an exception instead of
@@ -2862,15 +2857,14 @@ extern "C" napi_status napi_new_instance(napi_env env, napi_value constructor,
 extern "C" napi_status napi_instanceof(napi_env env, napi_value object, napi_value constructor, bool* result)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
-    NAPI_CHECK_ARG(env, result);
-
     Zig::GlobalObject* globalObject = toJS(env);
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope);
+    NAPI_CHECK_ARG(env, result);
 
     JSValue objectValue = toJS(object);
     JSValue constructorValue = toJS(constructor);
     JSC::JSObject* constructorObject = constructorValue.getObject();
-
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
 
     if (!constructorObject || !constructorValue.isConstructor()) {
         throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "Constructor must be a function"_s));
@@ -3057,6 +3051,15 @@ extern "C" void napi_internal_remove_finalizer(napi_env env, napi_finalize callb
 extern "C" void napi_internal_check_gc(napi_env env)
 {
     env->checkGC();
+}
+
+extern "C" bool NapiEnv__hasPendingException(napi_env env)
+{
+    if (env->hasPendingException()) {
+        return true;
+    }
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(env->vm());
+    return scope.exception() != nullptr;
 }
 
 extern "C" uint32_t napi_internal_get_version(napi_env env)

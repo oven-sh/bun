@@ -2374,6 +2374,129 @@ static napi_value test_external_buffer_with_pending_exception(
   return ok(env);
 }
 
+// With an exception pending (via napi_throw_error), every napi call that
+// Node.js gates with NAPI_PREAMBLE must return napi_pending_exception and
+// perform NO side effects. Before the fix, NAPI_PREAMBLE only consulted the
+// JSC VM throw scope, but napi_throw* stashes the exception on the env
+// without raising a VM exception, so the gate never fired: napi_run_script
+// ran the script, napi_object_freeze froze the object, etc.
+static int pending_gate_script_ran = 0;
+
+static napi_value pending_gate_mark_script_ran(napi_env env,
+                                               napi_callback_info) {
+  pending_gate_script_ran++;
+  return nullptr;
+}
+
+static napi_value test_pending_exception_gate(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  pending_gate_script_ran = 0;
+
+  // Set up inputs BEFORE arming the exception.
+  napi_value obj, arr, five, script, global, fn_ctor, arraybuffer;
+  napi_value date_in;
+  void *ab_data;
+  NODE_API_CALL(env, napi_create_object(env, &obj));
+  NODE_API_CALL(env, napi_create_array_with_length(env, 3, &arr));
+  NODE_API_CALL(env, napi_create_int32(env, 5, &five));
+  NODE_API_CALL(env, napi_create_string_utf8(
+                         env, "globalThis.__napiGateMark()", NAPI_AUTO_LENGTH,
+                         &script));
+  NODE_API_CALL(env, napi_get_global(env, &global));
+  NODE_API_CALL(env,
+                napi_get_named_property(env, global, "Function", &fn_ctor));
+  NODE_API_CALL(env,
+                napi_create_arraybuffer(env, 16, &ab_data, &arraybuffer));
+  NODE_API_CALL(env, napi_create_date(env, 1234.0, &date_in));
+
+  // Install a global the script would call so we can observe it running.
+  napi_value mark_fn;
+  NODE_API_CALL(env, napi_create_function(env, "mark", NAPI_AUTO_LENGTH,
+                                          pending_gate_mark_script_ran,
+                                          nullptr, &mark_fn));
+  NODE_API_CALL(env,
+                napi_set_named_property(env, global, "__napiGateMark",
+                                        mark_fn));
+
+  // Create a real deferred/promise BEFORE throwing so resolve_deferred has
+  // a valid handle to refuse.
+  napi_deferred deferred_pre;
+  napi_value promise_pre;
+  NODE_API_CALL(env,
+                napi_create_promise(env, &deferred_pre, &promise_pre));
+
+  // Arm: exception now pending on the env (not the VM).
+  NODE_API_CALL(env, napi_throw_error(env, "EGATE", "armed"));
+
+  napi_status st;
+  napi_value out;
+  bool bool_out;
+  uint32_t u32_out;
+  double f64_out;
+  napi_deferred deferred_out = nullptr;
+
+  st = napi_object_freeze(env, obj);
+  printf("napi_object_freeze: status=%d\n", (int)st);
+  st = napi_object_seal(env, obj);
+  printf("napi_object_seal: status=%d\n", (int)st);
+  st = napi_set_element(env, arr, 7, five);
+  printf("napi_set_element: status=%d\n", (int)st);
+  st = napi_run_script(env, script, &out);
+  printf("napi_run_script: status=%d\n", (int)st);
+  st = napi_instanceof(env, obj, fn_ctor, &bool_out);
+  printf("napi_instanceof: status=%d\n", (int)st);
+  st = napi_strict_equals(env, five, five, &bool_out);
+  printf("napi_strict_equals: status=%d\n", (int)st);
+  st = napi_wrap(env, obj, nullptr, nullptr, nullptr, nullptr);
+  printf("napi_wrap: status=%d\n", (int)st);
+  st = napi_get_prototype(env, obj, &out);
+  printf("napi_get_prototype: status=%d\n", (int)st);
+  st = napi_get_date_value(env, date_in, &f64_out);
+  printf("napi_get_date_value: status=%d\n", (int)st);
+  st = napi_get_array_length(env, arr, &u32_out);
+  printf("napi_get_array_length: status=%d\n", (int)st);
+  st = napi_create_date(env, 42.0, &out);
+  printf("napi_create_date: status=%d\n", (int)st);
+  st = napi_create_dataview(env, 8, arraybuffer, 0, &out);
+  printf("napi_create_dataview: status=%d\n", (int)st);
+  st = napi_create_promise(env, &deferred_out, &out);
+  printf("napi_create_promise: status=%d\n", (int)st);
+  napi_status resolve_st = napi_resolve_deferred(env, deferred_pre, five);
+  printf("napi_resolve_deferred: status=%d\n", (int)resolve_st);
+
+  // Clear the pending exception so we can inspect side effects.
+  napi_value exc;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+
+  // Side-effect checks (the part a status-only test can't catch).
+  napi_value frozen_obj, is_frozen;
+  NODE_API_CALL(env,
+                napi_get_named_property(env, global, "Object", &frozen_obj));
+  NODE_API_CALL(env, napi_get_named_property(env, frozen_obj, "isFrozen",
+                                             &frozen_obj));
+  NODE_API_CALL(env, napi_call_function(env, global, frozen_obj, 1, &obj,
+                                        &is_frozen));
+  bool frozen;
+  NODE_API_CALL(env, napi_get_value_bool(env, is_frozen, &frozen));
+  printf("side_effect frozen=%s\n", frozen ? "true" : "false");
+
+  bool has7;
+  NODE_API_CALL(env, napi_has_element(env, arr, 7, &has7));
+  printf("side_effect arr[7]=%s\n", has7 ? "set" : "undefined");
+
+  printf("side_effect script_ran=%s\n",
+         pending_gate_script_ran ? "true" : "false");
+
+  // The pre-created promise must still be pending: resolve_deferred was
+  // refused, so the deferred is still valid. Conclude it now so we don't
+  // leak the handle. Skip if a buggy runtime already consumed it.
+  if (resolve_st != napi_ok) {
+    NODE_API_CALL(env, napi_resolve_deferred(env, deferred_pre, five));
+  }
+
+  return ok(env);
+}
+
 // Regression test: PROPERTY_NAME_FROM_UTF8 must copy string data.
 // Previously it used StringImpl::createWithoutCopying for ASCII strings,
 // which could leave dangling pointers in JSC's atom string table.
@@ -2725,6 +2848,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
                     test_external_arraybuffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports,
                     test_external_buffer_with_pending_exception);
+  REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);

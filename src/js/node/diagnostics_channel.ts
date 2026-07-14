@@ -54,16 +54,16 @@ class WeakRefMap extends SafeMap {
   #finalizers = new SafeFinalizationRegistry(key => {
     // Check that the key doesn't have any value before deleting, as the WeakRef for the key
     // may have been replaced since finalization callbacks aren't synchronous with GC.
-    if (!this.has(key)) this.delete(key);
+    if (!this.has(key)) this.$delete(key);
   });
 
   set(key, value) {
     this.#finalizers.register(value, key);
-    return super.set(key, new WeakReference(value));
+    return this.$set(key, new WeakReference(value));
   }
 
   get(key) {
-    return super.get(key)?.get();
+    return this.$get(key)?.get();
   }
 
   has(key) {
@@ -71,11 +71,11 @@ class WeakRefMap extends SafeMap {
   }
 
   incRef(key) {
-    return super.get(key)?.incRef();
+    return this.$get(key)?.incRef();
   }
 
   decRef(key) {
-    return super.get(key)?.decRef();
+    return this.$get(key)?.decRef();
   }
 }
 
@@ -166,17 +166,17 @@ class ActiveChannel {
   }
 
   bindStore(store, transform) {
-    const replacing = this._stores.has(store);
+    const replacing = this._stores.$has(store);
     if (!replacing) channels.incRef(this.name);
-    this._stores.set(store, transform);
+    this._stores.$set(store, transform);
   }
 
   unbindStore(store) {
-    if (!this._stores.has(store)) {
+    if (!this._stores.$has(store)) {
       return false;
     }
 
-    this._stores.delete(store);
+    this._stores.$delete(store);
 
     channels.decRef(this.name);
     maybeMarkInactive(this);

@@ -4,6 +4,7 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
+const workerThreadsChannel = require("node:diagnostics_channel").channel("worker_threads");
 const { SafeMap } = require("internal/primordials");
 const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
@@ -100,7 +101,6 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
-let workerThreadsChannel;
 
 function injectFakeEmitter(Class) {
   // Per-instance registry mapping each event to (user listener -> wrapper), so
@@ -1090,9 +1090,6 @@ class Worker extends EventEmitter {
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
 
-    if (!workerThreadsChannel) {
-      workerThreadsChannel = require("node:diagnostics_channel").channel("worker_threads");
-    }
     if (workerThreadsChannel.hasSubscribers) {
       workerThreadsChannel.publish({
         worker: this,

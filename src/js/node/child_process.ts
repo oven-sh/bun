@@ -22,15 +22,9 @@ var BufferIsEncoding = Buffer.isEncoding;
 var kEmptyObject = ObjectCreate(null);
 var signals = OsModule.constants.signals;
 
-let childProcessChannel;
-let childProcessSpawn;
-function ensureChildProcessDiagnosticsChannels() {
-  if (!childProcessChannel) {
-    const dc = require("node:diagnostics_channel");
-    childProcessChannel = dc.channel("child_process");
-    childProcessSpawn = dc.tracingChannel("child_process.spawn");
-  }
-}
+const dc = require("node:diagnostics_channel");
+const childProcessChannel = dc.channel("child_process");
+const childProcessSpawn = dc.tracingChannel("child_process.spawn");
 
 var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeIncludes = Array.prototype.includes;
@@ -1115,7 +1109,6 @@ class ChildProcess extends EventEmitter {
 
   constructor() {
     super();
-    ensureChildProcessDiagnosticsChannels();
     if (childProcessChannel.hasSubscribers) {
       childProcessChannel.publish({
         process: this,
@@ -1419,7 +1412,6 @@ class ChildProcess extends EventEmitter {
     // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
     // so we have to set argv0 to spawnargs[0] and cmd[0] to file
 
-    ensureChildProcessDiagnosticsChannels();
     if (childProcessSpawn.hasSubscribers) {
       childProcessSpawn.start.publish({ process: this, options });
     }

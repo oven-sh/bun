@@ -463,6 +463,7 @@ static JSValue handleVirtualModuleResult(
         auto specifierString = specifier->toWTFString(BunString::ZeroCopy);
         auto referrerString = referrer->toWTFString(BunString::ZeroCopy);
         PendingVirtualModuleResult* pendingModule = PendingVirtualModuleResult::create(globalObject, specifierString, referrerString, wasModuleMock);
+        pendingModule->wasRequire = commonJSModule != nullptr;
         JSC::JSPromise* internalPromise = pendingModule->internalPromise();
         MarkedArgumentBuffer arguments;
         arguments.append(promise);
@@ -1265,6 +1266,20 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     bool wasModuleMock = pendingModule->wasModuleMock;
+
+    // require() of an async plugin module already threw "async module unsupported"
+    // and removed its requireMap entry. Don't re-process the orphaned result;
+    // createCommonJSModule would otherwise insert a ghost entry into require.cache.
+    if (pendingModule->wasRequire) {
+        auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
+        bool stillInRequireMap = zigGlobal->requireMap()->has(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
+        if (!stillInRequireMap) {
+            promise->resolve(globalObject, vm, jsUndefined());
+            pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
+            return JSValue::encode(jsUndefined());
+        }
+    }
 
     JSC::JSValue result = handleVirtualModuleResult<false>(static_cast<Zig::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer, wasModuleMock);
     if (!scope.exception() && !res.success) [[unlikely]] {

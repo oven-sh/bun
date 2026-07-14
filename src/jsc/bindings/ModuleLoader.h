@@ -89,6 +89,7 @@ public:
     void finishCreation(JSC::VM&, const WTF::String& specifier, const WTF::String& referrer);
 
     bool wasModuleMock = false;
+    bool wasRequire = false;
 };
 
 JSValue fetchESMSourceCodeSync(

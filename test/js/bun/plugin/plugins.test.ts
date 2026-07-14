@@ -329,6 +329,18 @@ describe("module", () => {
     delete require.cache["my-virtual-module-cjs-async"];
   });
 
+  it("require() of an async module() returning CommonJS throws and leaves require.cache clean", async () => {
+    globalThis.__cjsAsyncSideEffect = 0;
+    expect(() => require("my-virtual-module-cjs-async")).toThrow("async module");
+    expect("my-virtual-module-cjs-async" in require.cache).toBe(false);
+    // Wait for the plugin's promise (which awaits Bun.sleep(1)) to settle and
+    // its orphaned then-reaction to run.
+    await Bun.sleep(5);
+    expect("my-virtual-module-cjs-async" in require.cache).toBe(false);
+    expect(globalThis.__cjsAsyncSideEffect).toBe(0);
+    expect(() => require("my-virtual-module-cjs-async")).toThrow("async module");
+  });
+
   it("module() returning `exports.x = ...` works", async () => {
     // @ts-expect-error
     const mod = await import("my-virtual-module-cjs-exports-dot");

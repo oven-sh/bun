@@ -1300,12 +1300,14 @@ describe("unhandledRejection async context", () => {
   test.each([
     ["bun", bunExe()],
     ["node", nodeExe()],
-  ])("a throwing unhandledRejection listener reaches uncaughtException without the promise's context (%s)", async (_name, exe) => {
-    await using proc = Bun.spawn({
-      cmd: [
-        exe,
-        "-e",
-        `const { AsyncLocalStorage } = require("node:async_hooks");
+  ])(
+    "a throwing unhandledRejection listener reaches uncaughtException without the promise's context (%s)",
+    async (_name, exe) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          exe,
+          "-e",
+          `const { AsyncLocalStorage } = require("node:async_hooks");
         const als = new AsyncLocalStorage();
         process.on("unhandledRejection", () => {
           console.log("unhandledRejection store:", JSON.stringify(als.getStore() ?? null));
@@ -1316,15 +1318,16 @@ describe("unhandledRejection async context", () => {
           process.exit(0);
         });
         als.run(7, () => Promise.reject(new Error("e")));`,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
 
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("unhandledRejection store: 7\nuncaughtException store: null\n");
-    expect(exitCode).toBe(0);
-  });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("unhandledRejection store: 7\nuncaughtException store: null\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // `bun test` (isBunTest) doesn't dispatch the process event at all; the test
   // runner's handler receives the rejection instead, and that path must not let

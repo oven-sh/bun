@@ -143,7 +143,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     // object.
     JSC::JSObject* jscThis = globalObject->globalThis();
     if (!callFrame->thisValue().isUndefinedOrNull()) {
-        // TODO(@190n) throwscope, assert no exception
+        // toObject only throws for undefined/null, which is guarded above
         jscThis = callFrame->thisValue().toObject(globalObject);
     }
 

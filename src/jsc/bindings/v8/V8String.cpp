@@ -337,11 +337,9 @@ String::Utf8Value::Utf8Value(Isolate* isolate, Local<v8::Value> obj)
     auto& vm = isolate->vm();
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     MaybeLocal<String> maybeString = value->ToString(isolate->GetCurrentContext());
+    CLEAR_AND_RETURN_IF_EXCEPTION(catchScope, );
     Local<String> str;
-    if (!maybeString.ToLocal(&str)) {
-        catchScope.clearException();
-        return;
-    }
+    if (!maybeString.ToLocal(&str)) return;
 
     size_t capacity = str->Utf8LengthV2(isolate) + 1;
     m_str = static_cast<char*>(malloc(capacity));

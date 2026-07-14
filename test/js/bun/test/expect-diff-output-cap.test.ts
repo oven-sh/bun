@@ -24,29 +24,26 @@ test("dag", () => {
   test.each([
     ["received", "expect(o).toEqual(1)"],
     ["expected", "expect(1).toEqual(o)"],
-  ])(
-    "truncates the %s side of a shared-reference object graph",
-    async (_side, assertion) => {
-      using dir = tempDir("diff-output-cap", {
-        "dag.test.ts": dagFixture(assertion),
-      });
+  ])("truncates the %s side of a shared-reference object graph", async (_side, assertion) => {
+    using dir = tempDir("diff-output-cap", {
+      "dag.test.ts": dagFixture(assertion),
+    });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "dag.test.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-        stdout: "ignore",
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "dag.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "ignore",
+    });
 
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      // 1 MB cap per side plus diff framing; far below the ~8 MB the
-      // uncapped formatter emits for this graph.
-      expect(stderr.length).toBeLessThan(3 * 1024 * 1024);
-      expect(stderr).toContain("expect(received).toEqual(expected)");
-      expect(stderr).toContain("[value too large, output truncated]");
-      expect(exitCode).toBe(1);
-    },
-  );
+    // 1 MB cap per side plus diff framing; far below the ~8 MB the
+    // uncapped formatter emits for this graph.
+    expect(stderr.length).toBeLessThan(3 * 1024 * 1024);
+    expect(stderr).toContain("expect(received).toEqual(expected)");
+    expect(stderr).toContain("[value too large, output truncated]");
+    expect(exitCode).toBe(1);
+  });
 });

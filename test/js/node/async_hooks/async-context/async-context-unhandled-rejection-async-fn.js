@@ -13,6 +13,10 @@ const expected = {
   "await-throw": "await-throw",
   "await-native-reject": "await-native-reject",
   "escaped-async-fn": "escaped-async-fn",
+  "asyncgen-await-throw": "asyncgen-await-throw",
+  "asyncgen-for-await": "asyncgen-for-await",
+  "finally-throw": "finally-throw",
+  "finally-returns-rejected": "finally-returns-rejected",
 };
 const observed = {};
 let remaining = Object.keys(expected).length;
@@ -40,6 +44,37 @@ const failsAfterAwait = async () => {
   throw new Error("escaped-async-fn");
 };
 asyncLocalStorage.run({ test: "escaped-async-fn" }, () => failsAfterAwait());
+
+// Each AsyncGenerator* microtask installs the async context before driving the
+// generator body, so a throw after an await reports its rejection with the
+// generator's context.
+asyncLocalStorage.run({ test: "asyncgen-await-throw" }, () => {
+  (async function* () {
+    await 0;
+    throw new Error("asyncgen-await-throw");
+  })().next();
+});
+
+asyncLocalStorage.run({ test: "asyncgen-for-await" }, async () => {
+  for await (const _ of (async function* () {
+    await 0;
+    throw new Error("asyncgen-for-await");
+  })());
+});
+
+// A .finally() callback that throws rejects inside PromiseFinallyReactionJob
+// (phase 1), with the context installed.
+asyncLocalStorage.run({ test: "finally-throw" }, () => {
+  Promise.resolve().finally(() => {
+    throw new Error("finally-throw");
+  });
+});
+
+// A .finally() callback that *returns* a rejected thenable settles later from
+// PromiseFinallyAwaitJob (phase 2), which must carry the context across.
+asyncLocalStorage.run({ test: "finally-returns-rejected" }, () => {
+  Promise.resolve().finally(() => Promise.reject(new Error("finally-returns-rejected")));
+});
 
 let polls = 0;
 (function probe() {

@@ -1431,6 +1431,12 @@ impl BunxCommand {
             },
         };
 
+        // `Run::run_binary` below execs the installed tool with this same
+        // `env_loader`; the tool (e.g. a scaffolder that runs `bun install`)
+        // must not inherit the internal marker, or that grandchild install
+        // would skip the configured security scanner.
+        env_loader.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
+
         match &spawn_result.status {
             SpawnStatus::Exited(exited) => {
                 // Any non-zero byte (incl. RT signals >31) is a valid signal.

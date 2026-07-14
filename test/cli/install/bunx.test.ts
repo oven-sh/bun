@@ -1189,7 +1189,7 @@ describe("package name aliases", () => {
 // registry via its bunfig.toml, `bunx <tool>` silently resolved and executed
 // the package from the wrong registry.
 describe("bunx honors the project-local bunfig.toml [install] registry", () => {
-  async function makePkgTarball(tag: string) {
+  async function makePkgTarball(tag: string, cli = `console.log("SERVED-BY-${tag}");`) {
     const root = tmpdirSync();
     const pkgDir = join(root, "package");
     await mkdir(pkgDir, { recursive: true });
@@ -1197,7 +1197,7 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
       join(pkgDir, "package.json"),
       JSON.stringify({ name: "px-probe", version: "1.0.0", bin: { "px-probe": "cli.js" } }),
     );
-    await writeFile(join(pkgDir, "cli.js"), `#!/usr/bin/env node\nconsole.log("SERVED-BY-${tag}");\n`);
+    await writeFile(join(pkgDir, "cli.js"), `#!/usr/bin/env node\n${cli}\n`);
     const tgzDir = tmpdirSync();
     const tgz = join(tgzDir, "px-probe-1.0.0.tgz");
     await Bun.$`tar -czf ${tgz} -C ${root} package`;
@@ -1454,6 +1454,38 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
       hitsA: ["/px-probe", "/px-probe-1.0.0.tgz"],
       hitsB: ["/px-probe", "/px-probe-1.0.0.tgz"],
     });
+  });
+
+  // BUN_INTERNAL_BUNX_INSTALL is set for the internal `bun add` (so it can,
+  // among other things, skip the [install.security] scanner) but must not
+  // leak into the environment of the tool bunx executes: a scaffolder that
+  // spawns `bun install` in the new project would otherwise inherit it and
+  // bypass the configured scanner for the real dependency tree.
+  it("does not leak BUN_INTERNAL_BUNX_INSTALL into the executed tool's environment", async () => {
+    const hits: string[] = [];
+    await using srv = registry(
+      await makePkgTarball("ENV", `console.log("marker=" + (process.env.BUN_INTERNAL_BUNX_INSTALL ?? "<unset>"));`),
+      hits,
+    );
+
+    const { x_dir, env } = setup();
+    const home = tmpdirSync();
+    await writeFile(join(x_dir, "bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:${srv.port}/"\n`);
+    await writeFile(join(home, ".bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:1/"\n`);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "x", "px-probe"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: bunxEnv(env, home),
+    });
+    const [err, out, exited] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+    expect(out.trim()).toBe("marker=<unset>");
+    expect(err).not.toContain("error:");
+    expect(exited).toBe(0);
   });
 });
 

@@ -931,6 +931,14 @@ impl PosixBufferedReader {
                                 {
                                     return;
                                 }
+                                // The callback may synchronously close the
+                                // reader (FileReader does on max_size /
+                                // re-entrant cancel); `fd` was captured at
+                                // the top of `on_poll` and is now racing
+                                // the async `Closer`.
+                                if parent.is_done() {
+                                    return;
+                                }
                                 head_start = 0;
                             }
                         }
@@ -978,6 +986,9 @@ impl PosixBufferedReader {
                         },
                     ) && !received_hup
                     {
+                        return;
+                    }
+                    if parent.is_done() {
                         return;
                     }
                 }

@@ -619,9 +619,15 @@ describe.skipIf(isASAN || process.arch !== "x64")("long double varargs inside cc
 // in-memory relocation and would alias the host's own thread block; it must be
 // rejected up front instead of silently corrupting Bun's thread-locals.
 describe.skipIf(isASAN)("thread-local storage inside cc()-compiled C", () => {
-  it.each(["_Thread_local", "__thread"])("%s is a compile error", keyword => {
+  it.each([
+    ["_Thread_local", " = 0"],
+    ["__thread", " = 0"],
+    // No initializer: lands in .tbss, so the guard's tbss/SHF_TLS arm is covered too.
+    ["_Thread_local", ""],
+    ["__thread", ""],
+  ])("%s int x%s; is a compile error", (keyword, init) => {
     using dir = tempDir("bun-ffi-cc-tls", {
-      "tls.c": `${keyword} int bun_test_tls_counter = 0;\nint bump(void) { return ++bun_test_tls_counter; }\n`,
+      "tls.c": `${keyword} int bun_test_tls_counter${init};\nint bump(void) { return ++bun_test_tls_counter; }\n`,
     });
     expect(() => {
       cc({

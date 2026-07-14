@@ -19,20 +19,27 @@ async function readStreamUntil(
 ): Promise<string> {
   const decoder = new TextDecoder();
   let output = "";
-  const timeout = new Promise<never>((_, reject) =>
-    setTimeout(
+  let timer!: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
       () =>
         reject(new Error(`Timeout after ${timeoutMs}ms waiting for stream condition. Got: ${JSON.stringify(output)}`)),
       timeoutMs,
-    ).unref(),
-  );
+    );
+    timer.unref();
+  });
+  timeout.catch(() => {});
 
-  while (!condition(output)) {
-    const { value, done } = await Promise.race([reader.read(), timeout]);
-    if (done) break;
-    output += decoder.decode(value, { stream: true });
+  try {
+    while (!condition(output)) {
+      const { value, done } = await Promise.race([reader.read(), timeout]);
+      if (done) break;
+      output += decoder.decode(value, { stream: true });
+    }
+    return output;
+  } finally {
+    clearTimeout(timer);
   }
-  return output;
 }
 
 // Helper: wait for the full inspector banner (header + footer = 2 occurrences of "Bun Inspector")

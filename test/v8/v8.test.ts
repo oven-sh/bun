@@ -286,6 +286,10 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("correctly receives the this value from JS", async () => {
       await checkSameOutput("call_function_with_weird_this_values");
     });
+
+    it("SetName updates the JS-visible .name", async () => {
+      await checkSameOutput("test_v8_function_set_name");
+    });
   });
 
   describe("error handling", () => {

@@ -27,6 +27,13 @@ module.exports = debugMode => {
       console.log(f());
     },
 
+    test_v8_function_set_name() {
+      const f = nativeModule.create_and_name_function();
+      console.log("fn.name =", JSON.stringify(f.name));
+      // functions registered via NODE_SET_METHOD are named through v8::Function::SetName
+      console.log("exported.name =", JSON.stringify(nativeModule.test_v8_native_call.name));
+    },
+
     print_native_function() {
       nativeModule.print_values_from_js(nativeModule.create_function_with_data());
     },

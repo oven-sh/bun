@@ -207,6 +207,12 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait"
     ),
     parse_param!(
+        "--inspect-port <STR>              Set inspector port for runtime debugger activation (0 for random)"
+    ),
+    parse_param!(
+        "--disable-sigusr1                 Disable SIGUSR1 handler for runtime debugger activation"
+    ),
+    parse_param!(
         "--cpu-prof                        Start CPU profiler and write profile to disk on exit"
     ),
     parse_param!("--cpu-prof-name <STR>             Specify the name of the CPU profile file"),
@@ -1105,6 +1111,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");
+        ctx.runtime_options.disable_sigusr1 = args.flag(b"--disable-sigusr1");
+        ctx.runtime_options.inspect_port = args.option(b"--inspect-port").map(Box::<[u8]>::from);
         if args.flag(b"--expose-internals") {
             // Same gate the env var `BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING`
             // sets (VirtualMachine::configure_from_env): allows resolving

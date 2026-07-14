@@ -1,5 +1,9 @@
 #include "Semaphore.h"
 
+#if !OS(WINDOWS) && !OS(DARWIN)
+#include <cerrno>
+#endif
+
 namespace Bun {
 
 Semaphore::Semaphore(unsigned int value)
@@ -42,10 +46,42 @@ bool Semaphore::wait()
     uv_sem_wait(&m_semaphore);
     return true;
 #elif OS(DARWIN)
-    return semaphore_wait(m_semaphore) == KERN_SUCCESS;
+    kern_return_t result;
+    while ((result = semaphore_wait(m_semaphore)) != KERN_SUCCESS) {
+        if (result != KERN_ABORTED)
+            return false;
+    }
+    return true;
 #else
-    return sem_wait(&m_semaphore) == 0;
+    while (sem_wait(&m_semaphore) != 0) {
+        if (errno != EINTR)
+            return false;
+    }
+    return true;
 #endif
 }
 
 } // namespace Bun
+
+extern "C" {
+
+Bun::Semaphore* Bun__Semaphore__create(unsigned int value)
+{
+    return new Bun::Semaphore(value);
+}
+
+void Bun__Semaphore__destroy(Bun::Semaphore* sem)
+{
+    delete sem;
+}
+
+bool Bun__Semaphore__signal(Bun::Semaphore* sem)
+{
+    return sem->signal();
+}
+
+bool Bun__Semaphore__wait(Bun::Semaphore* sem)
+{
+    return sem->wait();
+}
+}

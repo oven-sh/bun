@@ -486,9 +486,36 @@ unsafe fn init_runtime_state(
     if opts.worker_ptr.is_null() {
         // SAFETY: `vm` is the freshly-boxed unique VM on this thread.
         unsafe { configure_debugger(vm, &opts.debugger) };
+        // SAFETY: `vm` unique; `jsc_vm`/`debugger` written above.
+        unsafe { configure_sigusr1_handler(vm, opts) };
     }
 
     Ok(state.cast())
+}
+
+/// Install (or suppress) the SIGUSR1 runtime-inspector handler on the main
+/// thread. Must run after [`configure_debugger`] so the `vm.debugger.is_some()`
+/// check reflects `--inspect*` flags.
+///
+/// # Safety
+/// `vm` is the freshly-boxed unique VM on this thread; `jsc_vm` is set.
+unsafe fn configure_sigusr1_handler(vm: *mut VirtualMachine, opts: &InitOptions) {
+    // SAFETY: per fn contract.
+    if !unsafe { (*vm).is_main_thread } {
+        return;
+    }
+    use bun_jsc::runtime_inspector;
+    // SAFETY: per fn contract.
+    unsafe { (*vm).inspect_port = opts.inspect_port };
+    if opts.disable_sigusr1 {
+        runtime_inspector::set_default_sigusr1_action();
+    } else if unsafe { (*vm).debugger.is_some() } {
+        runtime_inspector::ignore_sigusr1();
+    } else {
+        runtime_inspector::install_if_not_already();
+        // SAFETY: `jsc_vm` set in `VirtualMachine::init`; live for process.
+        runtime_inspector::install_debugger_trap_callback(unsafe { (*vm).jsc_vm });
+    }
 }
 
 /// Translate the CLI flag /

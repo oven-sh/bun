@@ -2918,27 +2918,28 @@ extern "C" napi_status napi_new_instance(napi_env env, napi_value constructor,
 
 extern "C" napi_status napi_instanceof(napi_env env, napi_value object, napi_value constructor, bool* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, object);
     NAPI_CHECK_ARG(env, result);
+
+    *result = false;
+
+    NAPI_CHECK_ARG(env, constructor);
 
     Zig::GlobalObject* globalObject = toJS(env);
 
     JSValue objectValue = toJS(object);
     JSValue constructorValue = toJS(constructor);
-    JSC::JSObject* constructorObject = constructorValue.getObject();
+    JSC::JSObject* constructorObject = constructorValue.toObject(globalObject);
+    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_object_expected));
 
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-
-    if (!constructorObject || !constructorValue.isConstructor()) {
-        throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "Constructor must be a function"_s));
-        return napi_set_last_error(env, napi_pending_exception);
+    if (!constructorObject->isCallable()) {
+        napi_throw_type_error(env, "ERR_NAPI_CONS_FUNCTION", "Constructor must be a function");
+        return napi_set_last_error(env, napi_function_expected);
     }
 
-    if (!constructorObject->structure()->typeInfo().implementsHasInstance()) [[unlikely]] {
-        *result = false;
-    } else {
-        *result = constructorObject->hasInstance(globalObject, objectValue);
-    }
+    *result = constructorObject->hasInstance(globalObject, objectValue);
+    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_generic_failure));
 
     return napi_set_last_error(env, napi_ok);
 }

@@ -237,6 +237,41 @@ static napi_value perform_set(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// perform_instanceof(object, constructor) ->
+//   { status, result, pending, exception }
+static napi_value perform_instanceof(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value object = info[0];
+  napi_value constructor = info[1];
+
+  bool instance_result = false;
+  napi_status status = napi_instanceof(env, object, constructor, &instance_result);
+
+  bool pending = false;
+  napi_is_exception_pending(env, &pending);
+
+  napi_value exception;
+  if (pending) {
+    napi_get_and_clear_last_exception(env, &exception);
+  } else {
+    napi_get_undefined(env, &exception);
+  }
+
+  napi_value out;
+  NODE_API_CALL(env, napi_create_object(env, &out));
+
+  napi_value status_val, result_val, pending_val;
+  NODE_API_CALL(env, napi_create_uint32(env, status, &status_val));
+  NODE_API_CALL(env, napi_get_boolean(env, instance_result, &result_val));
+  NODE_API_CALL(env, napi_get_boolean(env, pending, &pending_val));
+
+  NODE_API_CALL(env, napi_set_named_property(env, out, "status", status_val));
+  NODE_API_CALL(env, napi_set_named_property(env, out, "result", result_val));
+  NODE_API_CALL(env, napi_set_named_property(env, out, "pending", pending_val));
+  NODE_API_CALL(env, napi_set_named_property(env, out, "exception", exception));
+  return out;
+}
+
 // create_latin1_string(byte_length): returns a JS string created via
 // napi_create_string_latin1. Used by the leak test in napi.test.ts.
 static napi_value create_latin1_string(const Napi::CallbackInfo &info) {
@@ -488,6 +523,7 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, call_and_get_exception);
   REGISTER_FUNCTION(env, exports, perform_get);
   REGISTER_FUNCTION(env, exports, perform_set);
+  REGISTER_FUNCTION(env, exports, perform_instanceof);
   REGISTER_FUNCTION(env, exports, throw_error);
   REGISTER_FUNCTION(env, exports, create_and_throw_error);
   REGISTER_FUNCTION(env, exports, call_fatal_exception);

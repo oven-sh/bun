@@ -898,7 +898,12 @@ pub(super) extern "C" fn napi_get_prototype(
     if object.is_empty() {
         return env.invalid_arg();
     }
-    if !object.is_object() {
+    // Node's CHECK_TO_OBJECT: ToObject throws on null/undefined; leave the
+    // TypeError pending and return napi_object_expected. Other primitives are
+    // coerced, so `get_prototype` (which synthesizes the prototype for
+    // non-object values) handles them without an allocation.
+    if object.is_undefined_or_null() {
+        let _ = object.to_object(env.to_js());
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     }
 
@@ -2833,6 +2838,7 @@ impl ThreadSafeFunction {
     /// SAFETY: `this` is a live allocation from `new`, the caller holds no
     /// lock on it, and no other thread holds a reference.
     unsafe fn free_orphaned(this: *mut ThreadSafeFunction) {
+        // SAFETY: per this function's contract, `this` is a live allocation from `new`.
         drop(unsafe { bun_core::heap::take(this) });
     }
 

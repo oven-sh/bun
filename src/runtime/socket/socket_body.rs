@@ -3585,10 +3585,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             .set(SocketHandler::<true>::from(new_raw.as_ptr()));
         tls.ref_();
 
-        // `requestCert` is a per-socket option in Node (TLSWrap::SetVerifyMode),
-        // and the SecureContext backing this upgrade is mode-neutral: install
-        // the verify mode on this SSL before any handshake byte is processed
-        // or the server never sends CertificateRequest.
+        // `requestCert` is a per-socket option in Node (TLSWrap::SetVerifyMode):
+        // a SecureContext built without it carries no server verify mode, so
+        // install one on this SSL before any handshake byte is processed or
+        // the server never sends CertificateRequest.
         if is_server {
             if let Some(cfg) = cfg {
                 if cfg.request_cert != 0 {

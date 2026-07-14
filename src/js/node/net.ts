@@ -862,7 +862,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
           // no tlsClientError - Node's onServerSocketSecure never emits it
           // there and test-tls-sni-option asserts mustNotCall on it for the
           // authorized=false cases.
-          server?.emit("tlsClientError", verifyError, self);
+          server.emit("tlsClientError", verifyError, self);
           // if we reject we still need to emit secure
           self.emit("secure", self);
           // No error argument: the socket has no 'error' listener yet, so destroy(err)

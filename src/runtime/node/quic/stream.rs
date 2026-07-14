@@ -376,6 +376,12 @@ impl QuicStream {
     pub(super) fn pre_reset_code(&self) -> Option<u64> {
         self.with_state(|s| (s.reset != 0).then_some(s.reset_code))
     }
+    /// A remote-initiated stream has wire presence the moment lsquic creates
+    /// it — the peer's frame is what created it.
+    pub(super) fn mark_wrote_to_lsquic(&self) {
+        self.wrote_to_lsquic.set(true);
+    }
+
     /// Mark this remote stream as never-surfaced: it arrived already-reset
     /// while its session's close was queued in the same dispatch batch, so
     /// Node never announces it (`onstream` must not fire) and its
@@ -1060,6 +1066,10 @@ impl QuicStream {
         };
         let rv = s.send_headers(&bytes, eos);
         if rv == 0 {
+            // A HEADERS frame is wire presence: `abort_for_destroy` must reset
+            // on the stream itself rather than defer, exactly as `bind_raw`
+            // marks the pending-header flush.
+            self.wrote_to_lsquic.set(true);
             // Headers must precede body writes; mark outbound as started so
             // bind_raw / drain_outbound know FIN follows the body, not the
             // header frame.

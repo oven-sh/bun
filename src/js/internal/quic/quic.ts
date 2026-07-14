@@ -269,7 +269,7 @@ const {
   validateString,
 } = require("internal/validators");
 
-const { buildNgHeaderString, assertValidPseudoHeader } = require("internal/quic/http2util");
+const { buildNgHeaderString, assertValidPseudoHeader, assertValidPseudoHeaderTrailer } = require("internal/quic/http2util");
 
 const kEmptyObject = { __proto__: null };
 
@@ -2316,7 +2316,7 @@ class QuicStream {
       throw new ERR_INVALID_STATE("The negotiated QUIC application protocol does not support headers");
     }
     validateObject(headers, "headers");
-    const headerString = buildNgHeaderString(headers);
+    const headerString = buildNgHeaderString(headers, assertValidPseudoHeaderTrailer);
     return this.#handle.sendHeaders(kHeadersKindTrailing, headerString, kHeadersFlagsNone);
   }
 

@@ -110,6 +110,10 @@ export const lsquic: Dependency = {
     // takes the buffered-packet path -- restarting the close loop over a hash
     // whose elements it is destroying. Applies on top of skip-priority-walk.
     "patches/lsquic/hash-nested-iter.patch",
+    // ci_abort_error() raised IFC_ERROR without making the conn tickable, so
+    // the CONNECTION_CLOSE that session.destroy(err, opts) asks for waited for
+    // an unrelated alarm (up to a whole idle timeout) instead of the next tick.
+    "patches/lsquic/abort-error-tickable.patch",
     "patches/lsquic/disable-gquic.patch",
     // node:quic accessors: lsquic_engine_conn_count, lsquic_conn_get_ssl,
     // lsquic_conn_transport_params, lsquic_conn_make_uni_stream, and the

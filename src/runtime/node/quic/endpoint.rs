@@ -275,6 +275,13 @@ pub struct QuicEndpoint {
     /// Guards re-entry: lsquic forbids `process_conns` while already inside
     /// it, and our `packets_out` runs inside `process_conns`.
     processing: Cell<bool>,
+    /// Set by `schedule_process`, cleared when `process` starts. `process`
+    /// dispatches JS, and a callback can queue work that needs another tick
+    /// (`openStream` pushes onto `pending_local_streams`, which only lsquic's
+    /// next tick binds). `rearm_timer` then runs and would overwrite that 1ms
+    /// request with lsquic's advisory deadline — up to a full idle timeout
+    /// away — stranding the work. Honour the request instead.
+    followup_due: Cell<bool>,
     /// Live sessions for event dispatch and graceful-close tracking.
     sessions: JsCell<Vec<*mut QuicSession>>,
     /// Server sessions whose `onSessionNew` JS callback has not yet fired.
@@ -1060,6 +1067,7 @@ impl QuicEndpoint {
             stateless_reset_rate: Cell::new(0.0),
             client_is_http: Cell::new(false),
             processing: Cell::new(false),
+            followup_due: Cell::new(false),
             sessions: JsCell::new(Vec::new()),
             server_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
             client_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
@@ -1342,6 +1350,9 @@ impl QuicEndpoint {
         if self.processing.replace(true) {
             return;
         }
+        // Consume up-front: the dispatch below can ask for another tick, and
+        // that request must survive this pass's `rearm_timer`.
+        self.followup_due.set(false);
         // Apply (or drop) wire aborts deferred by same-turn stream destroys
         // before the engines tick, so the frames ride this pass's packets.
         for session in self.sessions.get().clone() {
@@ -1445,6 +1456,7 @@ impl QuicEndpoint {
         if self.closed.get() {
             return;
         }
+        self.followup_due.set(true);
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
         timer_all().update(self.event_loop_timer.as_ptr(), &next);
     }
@@ -1467,8 +1479,14 @@ impl QuicEndpoint {
                 earliest_us = Some(earliest_us.map_or(diff, |e| e.min(diff)));
             }
         }
-        if let Some(us) = earliest_us {
-            let ms = (us.max(0) as u64).div_ceil(1000).max(1);
+        let mut ms = earliest_us.map(|us| (us.max(0) as u64).div_ceil(1000).max(1));
+        // A tick someone asked for during dispatch must not be pushed out to
+        // lsquic's advisory deadline (an idle connection's is a whole idle
+        // timeout away).
+        if self.followup_due.get() {
+            ms = Some(ms.map_or(1, |m| m.min(1)));
+        }
+        if let Some(ms) = ms {
             let next = bun_core::Timespec::ms_from_now(
                 bun_core::TimespecMockMode::ForceRealTime,
                 ms as i64,

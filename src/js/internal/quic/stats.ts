@@ -94,6 +94,7 @@ const {
   IDX_STATS_STREAM_BYTES_ACCUMULATED,
   IDX_STATS_STREAM_MAX_BYTES_ACCUMULATED,
   IDX_STATS_STREAM_COUNT,
+  IDX_STATS_SESSION_COUNT,
 } = require("internal/quic/binding");
 
 const kCreateDisconnected = Symbol("kCreateDisconnected");
@@ -781,7 +782,7 @@ class QuicSessionStats {
   }
 
   [kFinishClose]() {
-    const view = TypedArrayPrototypeSubarray(this.#handle, this.#offset, this.#offset + IDX_STATS_STREAM_COUNT);
+    const view = TypedArrayPrototypeSubarray(this.#handle, this.#offset, this.#offset + IDX_STATS_SESSION_COUNT);
     this.#handle = new BigUint64Array(view);
     this.#offset = 0;
     this.#disconnected = true;

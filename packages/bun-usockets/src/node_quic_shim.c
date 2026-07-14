@@ -293,6 +293,14 @@ static int nq_hsi_process_header(void *hset, struct lsxpack_header *hdr) {
     h->total_bytes += (size_t) hdr->name_len + hdr->val_len;
     const char *name = lsxpack_header_get_name(hdr);
     const char *val = lsxpack_header_get_value(hdr);
+    /* The pairs buffer is NUL-delimited, so an embedded NUL in a name or value
+     * would split one field into several on the JS side (a peer sending
+     * `b\0evil\0injected` would forge an `evil` header) and an odd count trips
+     * the reader's pair assertion. RFC 9114 4.1.2 makes such a field invalid:
+     * reject the block rather than parse it. */
+    if ((hdr->name_len && memchr(name, 0, hdr->name_len))
+            || (hdr->val_len && memchr(val, 0, hdr->val_len)))
+        return -1;
     size_t need = h->pairs_len + (size_t) hdr->name_len + 1
                 + (size_t) hdr->val_len + 1;
     if (need > h->pairs_cap) {

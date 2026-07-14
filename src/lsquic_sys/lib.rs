@@ -927,65 +927,6 @@ impl Drop for HeaderSet {
     }
 }
 
-/// Iterator over the `lsquic_out_spec[]` array `ea_packets_out` is given.
-pub struct OutSpecIter {
-    base: *const u8,
-    stride: usize,
-    n: usize,
-    i: usize,
-}
-
-impl OutSpecIter {
-    /// # Safety
-    /// `specs[0..n]` must be the array lsquic passed to `ea_packets_out`,
-    /// valid for the duration of the callback.
-    pub unsafe fn new(specs: *const lsquic_out_spec, n: c_uint) -> Self {
-        // SAFETY: pure constant query.
-        let stride = unsafe { us_nq_spec_stride() };
-        Self {
-            base: specs.cast(),
-            stride,
-            n: n as usize,
-            i: 0,
-        }
-    }
-    /// Returns `(dest_sockaddr, gather_into(buf))` for the next spec.
-    pub fn next_into(&mut self, buf: &mut [u8]) -> Option<(*const sockaddr, usize)> {
-        if self.i >= self.n {
-            return None;
-        }
-        // SAFETY: `i < n` and the array is valid for this callback.
-        let spec = unsafe {
-            self.base
-                .add(self.i * self.stride)
-                .cast::<lsquic_out_spec>()
-        };
-        self.i += 1;
-        let mut iovlen: usize = 0;
-        // SAFETY: as above.
-        let iov = unsafe { us_nq_spec_iov(spec, core::ptr::from_mut(&mut iovlen)) };
-        let mut total = 0usize;
-        for j in 0..iovlen {
-            // SAFETY: as above.
-            let v = unsafe { &*iov.add(j) };
-            let take = v.iov_len.min(buf.len() - total);
-            if take > 0 && !v.iov_base.is_null() {
-                // SAFETY: lsquic guarantees `iov_base[..iov_len]` is valid.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        v.iov_base.cast::<u8>(),
-                        buf.as_mut_ptr().add(total),
-                        take,
-                    )
-                };
-                total += take;
-            }
-        }
-        // SAFETY: as above.
-        Some((unsafe { us_nq_spec_dest(spec) }, total))
-    }
-}
-
 /// One-time global init (idempotent).
 pub fn global_init() {
     // SAFETY: pure library init.
@@ -1100,5 +1041,12 @@ pub fn debug_assert_layout() {
         unsafe { us_nq_vtable_size() },
         core::mem::size_of::<NqVtable>(),
         "us_nq_vtable layout mismatch between node_quic_shim.c and lsquic_sys"
+    );
+    debug_assert_eq!(
+        // SAFETY: pure size query.
+        unsafe { us_nq_tp_size() },
+        core::mem::size_of::<NqTransportParams>(),
+        "us_nq_tp layout mismatch: peer_transport_params passes a stack \
+         NqTransportParams that C fills with sizeof(struct us_nq_tp) bytes"
     );
 }

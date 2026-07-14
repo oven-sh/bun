@@ -894,6 +894,11 @@ impl QuicSession {
         ) {
             Ok((qs, _handle)) => {
                 self.streams.with_mut(|v| v.push(qs));
+                // The peer opened this stream, so it has wire presence even
+                // before we write: `abort_for_destroy` must reset on it rather
+                // than defer as if nothing had reached lsquic.
+                // SAFETY: `qs` was just created.
+                unsafe { (*qs).mark_wrote_to_lsquic() };
                 // SAFETY: `raw` is the live stream lsquic just created.
                 if let Some(s) = unsafe { lsquic::Stream::from_raw(raw) } {
                     self.bump_stream_stat(s.id(), false);

@@ -90,6 +90,12 @@ function assertValidPseudoHeader(key) {
   }
 }
 
+// Trailers carry no pseudo-headers at all (RFC 9114 4.3, and node's
+// assertValidPseudoHeaderTrailer).
+function assertValidPseudoHeaderTrailer(key) {
+  throw $ERR_HTTP2_INVALID_PSEUDOHEADER(key);
+}
+
 const emptyArray = [];
 // NGHTTP2_NV_FLAG_NO_INDEX / NGHTTP2_NV_FLAG_NONE encoded as single chars.
 const kNeverIndexFlag = String.fromCharCode(1);
@@ -198,5 +204,6 @@ function buildNgHeaderString(arrayOrMap, validatePseudoHeaderValue, strictSingle
 
 export default {
   assertValidPseudoHeader,
+  assertValidPseudoHeaderTrailer,
   buildNgHeaderString,
 };

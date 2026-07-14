@@ -191,10 +191,12 @@ class InspectorCDPAdapter {
             uniqueId: String(EXECUTION_CONTEXT_ID),
           },
         });
-        this.#sendToBackend("Runtime.enable", undefined, id, method);
+        this.#sendToBackend("Runtime.enable");
         // Console output arrives as Console.messageAdded and is re-emitted as
-        // Runtime.consoleAPICalled.
-        this.#sendToBackend("Console.enable");
+        // Runtime.consoleAPICalled. Answer the client from this one for the
+        // same reason as Debugger.enable below: a client that runs code once
+        // Runtime.enable resolves expects console events to be flowing.
+        this.#sendToBackend("Console.enable", undefined, id, method);
         return;
 
       case "Runtime.disable":
@@ -320,11 +322,16 @@ class InspectorCDPAdapter {
 
       // ── Debugger ─────────────────────────────────────────────────────────
       case "Debugger.enable":
-        this.#sendToBackend("Debugger.enable", undefined, id, method);
+        this.#sendToBackend("Debugger.enable");
         // V8's Debugger.enable activates breakpoints and pauses on `debugger;`
-        // by default; JSC requires explicit opt-in for both.
+        // by default; JSC requires explicit opt-in for both. A client may run
+        // code as soon as it sees the Debugger.enable response and expects
+        // pausing to already be armed, so answer it from the last of the three
+        // commands instead of the first: the backend replies in order, so that
+        // response is proof all three landed. #translateResult still builds
+        // V8's { debuggerId } shape from the clientMethod passed here.
         this.#sendToBackend("Debugger.setBreakpointsActive", { active: true });
-        this.#sendToBackend("Debugger.setPauseOnDebuggerStatements", { enabled: true });
+        this.#sendToBackend("Debugger.setPauseOnDebuggerStatements", { enabled: true }, id, method);
         return;
 
       case "Debugger.disable":

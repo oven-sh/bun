@@ -876,6 +876,12 @@ export { after };
       paused.resolve();
     }
   };
+  // Report why the pause never came instead of hanging until the test timeout.
+  ws.onerror = () => paused.reject(new Error("inspector websocket errored before Debugger.paused"));
+  ws.onclose = () => paused.reject(new Error("inspector websocket closed before Debugger.paused"));
+  proc.exited.then(code =>
+    paused.reject(new Error(`child exited (code ${code}) before Debugger.paused; stdout so far: ${stdoutText}`)),
+  );
   function send(method: string, params?: unknown) {
     return new Promise((resolve, reject) => {
       const id = nextId++;

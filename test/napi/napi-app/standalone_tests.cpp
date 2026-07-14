@@ -1536,6 +1536,44 @@ test_napi_call_function_recv_null(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// napi_new_instance status codes must match Node.js: non-functions return
+// napi_invalid_arg, callable-but-not-constructible values (arrow functions,
+// bound arrow functions) throw a TypeError and return napi_pending_exception.
+static napi_value
+test_napi_new_instance_status(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  // info[0] is the GC callback; remaining args are the construct targets
+  for (size_t i = 1; i < info.Length(); i++) {
+    napi_value target = info[i];
+    napi_value out = nullptr;
+    napi_status status = napi_new_instance(env, target, 0, nullptr, &out);
+
+    bool pending = false;
+    NODE_API_CALL(env, napi_is_exception_pending(env, &pending));
+
+    bool is_type_error = false;
+    if (pending) {
+      napi_value exc;
+      NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+      napi_value global, type_error;
+      NODE_API_CALL(env, napi_get_global(env, &global));
+      NODE_API_CALL(env, napi_get_named_property(env, global, "TypeError",
+                                                 &type_error));
+      NODE_API_CALL(env, napi_instanceof(env, exc, type_error, &is_type_error));
+    }
+
+    printf("target %zu: status=%d pending=%d type_error=%d\n", i, (int)status,
+           (int)pending, (int)is_type_error);
+  }
+
+  return ok(env);
+}
+
 // Test for napi_strict_equals - should match JavaScript === operator behavior
 // This tests that NaN !== NaN and -0 === 0
 static napi_value test_napi_strict_equals(const Napi::CallbackInfo &info) {
@@ -2909,6 +2947,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_deferred_exceptions);
   REGISTER_FUNCTION(env, exports, test_napi_strict_equals);
   REGISTER_FUNCTION(env, exports, test_napi_call_function_recv_null);
+  REGISTER_FUNCTION(env, exports, test_napi_new_instance_status);
   REGISTER_FUNCTION(env, exports, test_napi_create_array_boundary);
   REGISTER_FUNCTION(env, exports, test_napi_dataview_bounds_errors);
   REGISTER_FUNCTION(env, exports, test_napi_typeof_empty_value);

@@ -39,6 +39,7 @@
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/ExceptionScope.h>
 #include <JavaScriptCore/FunctionConstructor.h>
 #include <JavaScriptCore/Heap.h>
@@ -2894,23 +2895,31 @@ extern "C" napi_status napi_new_instance(napi_env env, napi_value constructor,
     napi_value* result)
 {
     NAPI_PREAMBLE(env);
-    NAPI_CHECK_ARG(env, result);
+    NAPI_CHECK_ARG(env, constructor);
     NAPI_RETURN_EARLY_IF_FALSE(env, argc == 0 || argv, napi_invalid_arg);
+    NAPI_CHECK_ARG(env, result);
     JSValue constructorValue = toJS(constructor);
-    JSC::JSObject* constructorObject = constructorValue.getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, constructorObject, napi_function_expected);
-    JSC::CallData constructData = getConstructData(constructorObject);
-    NAPI_RETURN_EARLY_IF_FALSE(env, constructData.type != JSC::CallData::Type::None, napi_function_expected);
+    // Node.js's CHECK_TO_FUNCTION tests v8::Value::IsFunction() and returns
+    // napi_invalid_arg (not napi_function_expected) for non-callables.
+    NAPI_RETURN_EARLY_IF_FALSE(env, constructorValue.isCallable(), napi_invalid_arg);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
+
+    JSC::CallData constructData = getConstructData(constructorValue);
+    if (constructData.type == JSC::CallData::Type::None) [[unlikely]] {
+        // Callable but not constructible (e.g. arrow functions): Node.js lets V8
+        // throw "is not a constructor" and returns napi_pending_exception.
+        napi_preamble_throw_scope__.throwException(globalObject, JSC::createNotAConstructorError(globalObject, constructorValue));
+        return napi_set_last_error(env, napi_pending_exception);
+    }
 
     JSC::MarkedArgumentBuffer args;
     args.fill(vm, argc, [&](JSValue* buffer) {
         gcSafeMemcpy<JSValue>(buffer, reinterpret_cast<const JSValue*>(argv), sizeof(JSValue) * argc);
     });
 
-    auto value = construct(globalObject, constructorObject, constructData, args);
+    auto value = construct(globalObject, constructorValue, constructData, args);
     *result = toNapi(value, globalObject);
 
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);

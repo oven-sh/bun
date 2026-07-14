@@ -1254,6 +1254,24 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("napi_new_instance", () => {
+    it("returns the same status codes as Node.js for non-constructible targets", async () => {
+      const output = await checkSameOutput(
+        "test_napi_new_instance_status",
+        "[() => {}, (() => {}).bind(null), 42, null, {}, function () {}]",
+      );
+      // arrow + bound arrow: napi_pending_exception with a pending TypeError
+      expect(output).toContain("target 1: status=10 pending=1 type_error=1");
+      expect(output).toContain("target 2: status=10 pending=1 type_error=1");
+      // number / null / plain object: napi_invalid_arg, nothing thrown
+      expect(output).toContain("target 3: status=1 pending=0 type_error=0");
+      expect(output).toContain("target 4: status=1 pending=0 type_error=0");
+      expect(output).toContain("target 5: status=1 pending=0 type_error=0");
+      // regular function: napi_ok
+      expect(output).toContain("target 6: status=0 pending=0 type_error=0");
+    });
+  });
+
   describe("napi_create_array_with_length", () => {
     it("should handle boundary values consistently", async () => {
       const output = await checkSameOutput("test_napi_create_array_boundary", []);

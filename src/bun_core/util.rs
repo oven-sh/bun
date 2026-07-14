@@ -1837,6 +1837,13 @@ pub mod io {
             panic!("io::Write::written_len: writer does not track bytes written");
         }
 
+        /// True once an output-capped sink has started discarding bytes
+        /// (see `bun_io::LimitedWriter`). Unbounded sinks always return false.
+        #[inline]
+        fn is_truncated(&self) -> bool {
+            false
+        }
+
         // ── provided helpers ────────────────────────────────────────────────
 
         /// Write a single byte.

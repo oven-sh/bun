@@ -6,6 +6,14 @@ use bun_jsc::{JSGlobalObject, JSValue};
 use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
+/// Cap on the pretty-printed size of each side of an assertion diff. Shared
+/// (non-circular) references re-expand at every occurrence, so a tiny object
+/// graph can otherwise expand exponentially and allocate until the machine
+/// dies. https://github.com/oven-sh/bun/issues/34178
+const MAX_PRETTY_PRINT_BYTES: usize = 1024 * 1024;
+
+const TRUNCATION_NOTICE: &[u8] = b"\n... [value too large, output truncated]";
+
 #[derive(Default)]
 pub struct DiffFormatter<'a> {
     pub received_string: Option<&'a [u8]>,
@@ -44,23 +52,33 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 flush: false,
                 quote_strings: true,
             };
+            let mut received_writer =
+                bun_io::LimitedWriter::new(&mut received_buf, MAX_PRETTY_PRINT_BYTES);
             let _ = JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global_this,
                 core::slice::from_ref(&received),
                 1,
-                &mut received_buf,
+                &mut received_writer,
                 fmt_options,
             ); // TODO:
+            if received_writer.truncated {
+                received_buf.extend_from_slice(TRUNCATION_NOTICE);
+            }
 
+            let mut expected_writer =
+                bun_io::LimitedWriter::new(&mut expected_buf, MAX_PRETTY_PRINT_BYTES);
             let _ = JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global_this,
                 core::slice::from_ref(&expected),
                 1,
-                &mut expected_buf,
+                &mut expected_writer,
                 fmt_options,
             ); // TODO:
+            if expected_writer.truncated {
+                expected_buf.extend_from_slice(TRUNCATION_NOTICE);
+            }
         }
 
         let mut received_slice: &[u8] = received_buf.as_slice();

@@ -1156,6 +1156,13 @@ impl<'a> Formatter<'a> {
         if self.failed {
             return Ok(());
         }
+        // Once an output-capped writer starts discarding, stop traversing:
+        // shared (non-circular) references re-expand at every occurrence, so
+        // a tiny object graph can otherwise expand exponentially (#34178).
+        if writer_.is_truncated() {
+            self.failed = true;
+            return Ok(());
+        }
         // reshaped for borrowck — `WrappedWriter` borrows both writer_
         // and &mut self.estimated_line_length; we use a local wrapper and sync
         // `failed` at scope exit. estimated_line_length is unused by WrappedWriter

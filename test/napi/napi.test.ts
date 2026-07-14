@@ -631,6 +631,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_define_properties", () => {
+    it("goes through [[DefineOwnProperty]] and validates the name", async () => {
+      await checkSameOutput("test_define_properties", []);
+    });
+  });
+
   describe("napi_get_property_names / napi_get_all_property_names", () => {
     it("does not poison JSC's per-Structure own-keys cache", async () => {
       const output = await checkSameOutput("test_property_names_cache_poisoning", []);

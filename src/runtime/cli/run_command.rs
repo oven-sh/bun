@@ -2955,7 +2955,7 @@ impl RunCommand {
     /// `bun --interactive` — boots the embedded `eval/node-repl.ts` script,
     /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
     /// which is Bun's own native REPL.
-    pub fn exec_node_repl(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+    pub fn exec_node_repl(ctx: &mut ContextData) -> crate::Result<()> {
         // Every caller has already established there's no user script target;
         // any remaining positionals are dispatch artifacts (e.g. RunCommand's
         // leading "run"), not user data — keep them out of `process.argv`.

@@ -2867,6 +2867,8 @@ extern "C" napi_status napi_instanceof(napi_env env, napi_value object, napi_val
 
     *result = false;
 
+    NAPI_CHECK_ARG(env, constructor);
+
     Zig::GlobalObject* globalObject = toJS(env);
 
     JSValue objectValue = toJS(object);

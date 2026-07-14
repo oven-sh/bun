@@ -602,8 +602,10 @@ public:
         if (length > 1024 * 1024) {
             auto &bp = Super::getAsyncSocketData()->buffer;
             size_t need = bp.totalLength() + length + 32;
-            /* libc++ reserve() is exact-fit; keep geometric growth explicit. */
-            bp.buffer.reserve(std::max(bp.buffer.capacity() * 2, need));
+            if (need > bp.buffer.capacity()) {
+                /* libc++ reserve() is exact-fit; keep geometric growth explicit. */
+                bp.buffer.reserve(std::max(bp.buffer.capacity() * 2, need));
+            }
         }
 
         // Special handling for extremely large data (greater than UINT_MAX bytes)

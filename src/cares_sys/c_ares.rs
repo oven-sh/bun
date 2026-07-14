@@ -778,11 +778,18 @@ impl Channel {
             sock_state_cb_data: std::ptr::from_ref::<C>(this).cast_mut().cast::<c_void>(),
             timeout: options.timeout.unwrap_or(-1),
             tries: options.tries.unwrap_or(4),
+            // c-ares >= 1.31 enables a 1h query cache unless ARES_OPT_QUERY_CACHE
+            // is passed with qcache_max_ttl = 0. Node's dns.Resolver re-queries
+            // on every call; match that so resolve*/lookup never replay stale answers.
+            qcache_max_ttl: 0,
             ..Default::default()
         };
 
-        let optmask: c_int =
-            ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
+        let optmask: c_int = ARES_OPT_FLAGS
+            | ARES_OPT_TIMEOUTMS
+            | ARES_OPT_SOCK_STATE_CB
+            | ARES_OPT_TRIES
+            | ARES_OPT_QUERY_CACHE;
 
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
@@ -2052,6 +2059,7 @@ pub const ARES_OPT_EDNSPSZ: c_int = 1 << 15;
 pub const ARES_OPT_NOROTATE: c_int = 1 << 16;
 pub const ARES_OPT_RESOLVCONF: c_int = 1 << 17;
 pub const ARES_OPT_HOSTS_FILE: c_int = 1 << 18;
+pub const ARES_OPT_QUERY_CACHE: c_int = 1 << 21;
 pub const ARES_NI_NOFQDN: c_int = 1 << 0;
 pub const ARES_NI_NUMERICHOST: c_int = 1 << 1;
 pub const ARES_NI_NAMEREQD: c_int = 1 << 2;

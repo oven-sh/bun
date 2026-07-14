@@ -59,14 +59,6 @@ test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs interna
 
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
-# Worker entry-point load races terminate(): debug invariant panic "JavaScript
-# functions were called outside of the microtask queue without draining
-# microtasks" in tick_queue_with_count (load_entry_point_for_web_worker →
-# wait_for_promise_with_termination). Reproduces on unmodified origin/main;
-# timing-dependent (fails reliably on a quiet machine, passes under load).
-# Scoped to ASAN — the panic is `#[cfg(debug_assertions)]`-only; release CI
-# has no assertions-enabled lane other than ASAN.
-[ ASAN ] test/js/node/test/parallel/test-worker-terminate-http2-respond-with-file.js [ FLAKY ]
 
 # Tests failed due to ASAN: attempting free on address which was not malloc()-ed
 [ ASAN ] test/js/node/worker_threads/worker_threads.test.ts [ CRASH ] # After: threadId module and worker property is consistent

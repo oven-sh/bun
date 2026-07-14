@@ -1650,7 +1650,7 @@ pub struct WindowsNamedPipeListeningContext {
 #[cfg(windows)]
 pub(crate) enum ListenPipeError {
     Sys(bun_sys::Error),
-    Other(bun_core::Error),
+    Other(crate::Error),
 }
 
 #[cfg(windows)]
@@ -1767,13 +1767,13 @@ impl WindowsNamedPipeListeningContext {
             // Create SSL context using uSockets to match behavior of node.js
             match ctx_opts.create_ssl_context(&mut err) {
                 Some(ctx) => this_ref.ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
-                None => return Err(ListenPipeError::Other(bun_core::err!("InvalidOptions"))),
+                None => return Err(ListenPipeError::Other(crate::Error::InvalidOptions)),
             }
         }
 
         let init_result = this_ref.uv_pipe.init(this_ref.vm.uv_loop().cast(), false);
         if init_result.is_err() {
-            return Err(ListenPipeError::Other(bun_core::err!("FailedToInitPipe")));
+            return Err(ListenPipeError::Other(crate::Error::FailedToInitPipe));
         }
         cleanup.1 = true;
 
@@ -1806,7 +1806,7 @@ impl WindowsNamedPipeListeningContext {
             return Err(match listen_rc.to_error(bun_sys::Tag::listen) {
                 Some(err) => ListenPipeError::Sys(err),
                 // Unreachable in practice: the uv→errno mapping is total.
-                None => ListenPipeError::Other(bun_core::err!("FailedToBindPipe")),
+                None => ListenPipeError::Other(crate::Error::FailedToBindPipe),
             });
         }
         //TODO: add readableAll and writableAll support if someone needs it

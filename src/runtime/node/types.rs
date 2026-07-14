@@ -1033,7 +1033,7 @@ impl PathLikeExt for PathLike {
                     // The cwd root + path don't fit `buf` (UNC cwds can push
                     // a near-MAX_PATH_BYTES path over); fall through to the
                     // plain copy / too-long handling below.
-                    Err(e) if e == bun_core::err!("NameTooLong") => None,
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => None,
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
                 if let Some(len) = resolved_len {
@@ -1155,7 +1155,7 @@ impl PathLikeExt for PathLike {
                     // The cwd root + path don't fit the resolution buffer
                     // (UNC cwds can push a near-MAX_PATH_BYTES path over) —
                     // such a path can't exist on NT.
-                    Err(e) if e == bun_core::err!("NameTooLong") => return Err(NameTooLong),
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => return Err(NameTooLong),
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
                 let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
@@ -1362,7 +1362,9 @@ pub struct Valid;
 impl Valid {
     pub fn path_slice(zig_str: &ZigStringSlice, ctx: &JSGlobalObject) -> JsResult<()> {
         match zig_str.slice().len() {
-            0..=MAX_PATH_BYTES => Ok(()),
+            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
+            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
+            0..MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
@@ -1376,7 +1378,9 @@ impl Valid {
 
     pub fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
         match len {
-            0..=MAX_PATH_BYTES => Ok(()),
+            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
+            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
+            0..MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
@@ -1398,7 +1402,9 @@ impl Valid {
                 Err(ctx
                     .throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty")))
             }
-            1..=MAX_PATH_BYTES => Ok(()),
+            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
+            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
+            1..MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)

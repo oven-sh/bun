@@ -25,7 +25,7 @@ fn json_stringify_dependency<W>(
     dep_id: DependencyID,
     dep: &Dependency,
     res: PackageID,
-) -> Result<(), bun_core::Error>
+) -> Result<(), crate::Error>
 where
     W: JsonWriter,
 {
@@ -180,7 +180,7 @@ where
     Ok(())
 }
 
-pub fn json_stringify<W>(this: &Lockfile, w: &mut W) -> Result<(), bun_core::Error>
+pub fn json_stringify<W>(this: &Lockfile, w: &mut W) -> Result<(), crate::Error>
 where
     W: JsonWriter,
 {
@@ -547,16 +547,16 @@ fn origin_name(o: Origin) -> &'static str {
 /// bounded over [`JsonScalar`] so the concrete [`WriteStream`] impl can encode
 /// bool / integer / byte-string uniformly.
 pub trait JsonWriter {
-    fn begin_object(&mut self) -> Result<(), bun_core::Error>;
-    fn end_object(&mut self) -> Result<(), bun_core::Error>;
-    fn begin_array(&mut self) -> Result<(), bun_core::Error>;
-    fn end_array(&mut self) -> Result<(), bun_core::Error>;
-    fn object_field(&mut self, name: &[u8]) -> Result<(), bun_core::Error>;
-    fn write<T: JsonScalar>(&mut self, value: T) -> Result<(), bun_core::Error>;
-    fn write_null(&mut self) -> Result<(), bun_core::Error>;
+    fn begin_object(&mut self) -> Result<(), crate::Error>;
+    fn end_object(&mut self) -> Result<(), crate::Error>;
+    fn begin_array(&mut self) -> Result<(), crate::Error>;
+    fn end_array(&mut self) -> Result<(), crate::Error>;
+    fn object_field(&mut self, name: &[u8]) -> Result<(), crate::Error>;
+    fn write<T: JsonScalar>(&mut self, value: T) -> Result<(), crate::Error>;
+    fn write_null(&mut self) -> Result<(), crate::Error>;
     /// Emits the formatted bytes verbatim as a complete value (caller is
     /// responsible for any quoting / escaping).
-    fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error>;
+    fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error>;
 }
 
 /// Each impl emits the JSON encoding of `self` into `out` (no leading/trailing
@@ -699,14 +699,14 @@ impl WriteStream {
 }
 
 impl JsonWriter for WriteStream {
-    fn begin_object(&mut self) -> Result<(), bun_core::Error> {
+    fn begin_object(&mut self) -> Result<(), crate::Error> {
         self.value_start();
         self.out.push(b'{');
         self.depth += 1;
         self.had_element.push(false);
         Ok(())
     }
-    fn end_object(&mut self) -> Result<(), bun_core::Error> {
+    fn end_object(&mut self) -> Result<(), crate::Error> {
         let had = self.had_element.pop().unwrap_or(false);
         self.depth -= 1;
         if had {
@@ -715,14 +715,14 @@ impl JsonWriter for WriteStream {
         self.out.push(b'}');
         Ok(())
     }
-    fn begin_array(&mut self) -> Result<(), bun_core::Error> {
+    fn begin_array(&mut self) -> Result<(), crate::Error> {
         self.value_start();
         self.out.push(b'[');
         self.depth += 1;
         self.had_element.push(false);
         Ok(())
     }
-    fn end_array(&mut self) -> Result<(), bun_core::Error> {
+    fn end_array(&mut self) -> Result<(), crate::Error> {
         let had = self.had_element.pop().unwrap_or(false);
         self.depth -= 1;
         if had {
@@ -731,7 +731,7 @@ impl JsonWriter for WriteStream {
         self.out.push(b']');
         Ok(())
     }
-    fn object_field(&mut self, name: &[u8]) -> Result<(), bun_core::Error> {
+    fn object_field(&mut self, name: &[u8]) -> Result<(), crate::Error> {
         self.value_start();
         encode_json_string(name, &mut self.out);
         self.out
@@ -739,17 +739,17 @@ impl JsonWriter for WriteStream {
         self.after_field = true;
         Ok(())
     }
-    fn write<T: JsonScalar>(&mut self, value: T) -> Result<(), bun_core::Error> {
+    fn write<T: JsonScalar>(&mut self, value: T) -> Result<(), crate::Error> {
         self.value_start();
         value.write_json(&mut self.out, self.opts);
         Ok(())
     }
-    fn write_null(&mut self) -> Result<(), bun_core::Error> {
+    fn write_null(&mut self) -> Result<(), crate::Error> {
         self.value_start();
         self.out.extend_from_slice(b"null");
         Ok(())
     }
-    fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
+    fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
         use std::io::Write as _;
         self.value_start();
         let _ = self.out.write_fmt(args);

@@ -1183,6 +1183,132 @@ describe("package name aliases", () => {
   });
 });
 
+// bunx spawns its internal `bun add` with cwd set to the bunx cache dir under
+// $TMPDIR, so the project-local bunfig.toml was never discovered; only the
+// global ~/.bunfig.toml (or env) was honored. In a project that pins a private
+// registry via its bunfig.toml, `bunx <tool>` silently resolved and executed
+// the package from the wrong registry.
+describe("bunx honors the project-local bunfig.toml [install] registry", () => {
+  async function makePkgTarball(tag: string) {
+    const root = tmpdirSync();
+    const pkgDir = join(root, "package");
+    await mkdir(pkgDir, { recursive: true });
+    await writeFile(
+      join(pkgDir, "package.json"),
+      JSON.stringify({ name: "px-probe", version: "1.0.0", bin: { "px-probe": "cli.js" } }),
+    );
+    await writeFile(join(pkgDir, "cli.js"), `#!/usr/bin/env node\nconsole.log("SERVED-BY-${tag}");\n`);
+    const tgzDir = tmpdirSync();
+    const tgz = join(tgzDir, "px-probe-1.0.0.tgz");
+    await Bun.$`tar -czf ${tgz} -C ${root} package`;
+    return new Uint8Array(await Bun.file(tgz).arrayBuffer());
+  }
+
+  function registry(tag: string, tgz: Uint8Array, hits: string[]) {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        hits.push(path);
+        if (path.endsWith(".tgz")) return new Response(tgz);
+        return Response.json({
+          name: "px-probe",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: "px-probe",
+              version: "1.0.0",
+              bin: { "px-probe": "cli.js" },
+              dist: { tarball: `http://127.0.0.1:${server.port}/px-probe-1.0.0.tgz` },
+            },
+          },
+        });
+      },
+    });
+    return server;
+  }
+
+  it("prefers the project bunfig registry over the global one", async () => {
+    const tgzA = await makePkgTarball("PROJECT");
+    const tgzB = await makePkgTarball("GLOBAL");
+    const hitsA: string[] = [];
+    const hitsB: string[] = [];
+    await using srvA = registry("PROJECT", tgzA, hitsA);
+    await using srvB = registry("GLOBAL", tgzB, hitsB);
+
+    const { x_dir, env } = setup();
+    const home = tmpdirSync();
+    await writeFile(join(x_dir, "package.json"), JSON.stringify({ name: "proj", version: "1.0.0" }));
+    await writeFile(join(x_dir, "bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:${srvA.port}/"\n`);
+    await writeFile(join(home, ".bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:${srvB.port}/"\n`);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "x", "px-probe"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: {
+        ...env,
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: home,
+        PATH: pathWithout("px-probe", env.PATH),
+        npm_config_registry: undefined as any,
+        NPM_CONFIG_REGISTRY: undefined as any,
+        BUN_CONFIG_REGISTRY: undefined as any,
+      },
+    });
+    const [err, out, exited] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+    expect({ out: out.trim(), hitsA, hitsB }).toEqual({
+      out: "SERVED-BY-PROJECT",
+      hitsA: ["/px-probe", "/px-probe-1.0.0.tgz"],
+      hitsB: [],
+    });
+    expect(err).not.toContain("error:");
+    expect(exited).toBe(0);
+  });
+
+  it("honors the cwd bunfig.toml even without a package.json in the project", async () => {
+    const tgz = await makePkgTarball("PROJECT");
+    const hits: string[] = [];
+    await using srv = registry("PROJECT", tgz, hits);
+
+    const { x_dir, env } = setup();
+    const home = tmpdirSync();
+    // No package.json in x_dir; only bunfig.toml.
+    await writeFile(join(x_dir, "bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:${srv.port}/"\n`);
+    // Global bunfig points at an unroutable address so the test never
+    // touches the public npm registry on failure.
+    await writeFile(join(home, ".bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:1/"\n`);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "x", "px-probe"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: {
+        ...env,
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: home,
+        PATH: pathWithout("px-probe", env.PATH),
+        npm_config_registry: undefined as any,
+        NPM_CONFIG_REGISTRY: undefined as any,
+        BUN_CONFIG_REGISTRY: undefined as any,
+      },
+    });
+    const [err, out, exited] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+    expect(out.trim()).toBe("SERVED-BY-PROJECT");
+    expect(hits).toEqual(["/px-probe", "/px-probe-1.0.0.tgz"]);
+    expect(err).not.toContain("error:");
+    expect(exited).toBe(0);
+  });
+});
+
 // Regression test: bunx should not crash on corrupted .bunx files (Windows only)
 // When the .bunx metadata file is corrupted (e.g., missing quote terminator in bin_path),
 // bunx should gracefully fall back to the slow path instead of panicking.

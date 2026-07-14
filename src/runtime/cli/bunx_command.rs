@@ -1220,6 +1220,40 @@ impl BunxCommand {
             Global::exit(1);
         }
 
+        // The spawned `bun add` runs with cwd = `bunx_cache_dir`, so it cannot
+        // discover a project-local bunfig.toml on its own. Resolve it here from
+        // the invoking directory (nearest enclosing package.json dir, else cwd)
+        // and forward it via `--config=<path>` so `[install]` settings such as
+        // `registry` are honored. `--config`'s value is optional in the install
+        // arg parser, so the `=` form is required for the path to be consumed.
+        let bunfig_dir: &[u8] = match root_dir_info.enclosing_package_json {
+            Some(pkg) => bun_paths::dirname(pkg.source.path.text).unwrap_or(top_level_dir),
+            None => top_level_dir,
+        };
+        let mut local_bunfig_buf = PathBuffer::uninit();
+        let local_bunfig_arg: Option<&[u8]> = {
+            const PREFIX: &[u8] = b"--config=";
+            let len = {
+                let total = local_bunfig_buf.len();
+                let mut cursor: &mut [u8] = &mut local_bunfig_buf[..];
+                write!(
+                    cursor,
+                    "--config={dir}{sep}bunfig.toml",
+                    dir = BStr::new(strings::without_trailing_slash(bunfig_dir)),
+                    sep = bun_paths::SEP as char,
+                )
+                .map_err(|_| crate::Error::PathTooLong)?;
+                total - cursor.len()
+            };
+            local_bunfig_buf[len] = 0;
+            let path_z = ZStr::from_buf(&local_bunfig_buf[PREFIX.len()..], len - PREFIX.len());
+            if bun_sys::exists_z(path_z) {
+                Some(&local_bunfig_buf[..len])
+            } else {
+                None
+            }
+        };
+
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
         'create_package_json: {
@@ -1241,8 +1275,12 @@ impl BunxCommand {
             install_param.as_slice(),
             b"--no-summary",
         ];
-        let mut args: BoundedArray<&[u8], 8> =
+        let mut args: BoundedArray<&[u8], 9> =
             BoundedArray::from_slice(&install_args).expect("unreachable"); // upper bound is known
+
+        if let Some(config_arg) = local_bunfig_arg {
+            args.append(config_arg).expect("unreachable"); // upper bound is known
+        }
 
         if do_cache_bust {
             // disable the manifest cache when a tag is specified

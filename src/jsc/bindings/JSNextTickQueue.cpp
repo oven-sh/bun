@@ -10,11 +10,9 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
-#include <wtf/SetForScope.h>
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "BunClientData.h"
-#include "ZigGlobalObject.h"
 
 namespace Bun {
 
@@ -78,7 +76,6 @@ bool JSNextTickQueue::isEmpty()
 
 void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
-    auto* zigGlobal = defaultGlobalObject(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool mustResetContext = false;
     if (isEmpty()) {
@@ -89,12 +86,6 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     }
 
     if (!isEmpty()) {
-        // The onEachMicrotaskTick hook calls drain() between microtasks, and
-        // processTicksAndRejections calls vm.drainMicrotasks(); guard so the
-        // hook does not re-enter processTicksAndRejections while it is running.
-        if (zigGlobal->m_isDrainingNextTickQueue)
-            return;
-        SetForScope drainingGuard(zigGlobal->m_isDrainingNextTickQueue, true);
         RETURN_IF_EXCEPTION(throwScope, );
         if (mustResetContext) {
             globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());

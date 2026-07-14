@@ -266,7 +266,7 @@ nativeTests.test_property_names_cache_poisoning = () => {
   console.log("Reflect.ownKeys after get_all_property_names(own_only):", Reflect.ownKeys(mkD()).join(","));
 
   // The napi result itself should still include inherited keys.
-  const apnResult = nativeTests.get_all_property_names(mkA(), 0, 0, 0).keys;
+  const { keys: apnResult } = nativeTests.get_all_property_names(mkA(), 0, 0, 0);
   console.log("napi include_prototypes result has own a,b:", apnResult.includes("a") && apnResult.includes("b"));
   console.log("napi include_prototypes result has inherited toString:", apnResult.includes("toString"));
   const gpnResult = nativeTests.get_property_names(mkB());

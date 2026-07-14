@@ -37,6 +37,15 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
    * is Windows-only and best-effort; readable polling stays the primary
    * signal). */
   if (events & UV_DISCONNECT) {
+    /* One-shot: AFD keeps reporting DISCONNECT once it is signaled, and when
+     * the EOF is deferred (a paused socket under read backpressure) a
+     * level-triggered re-fire would spin the loop and starve the write side
+     * (observed as byte-count drops in the backpressure suites). Re-arm with
+     * just the ordinary requested events; us_poll_start/us_poll_change add
+     * DISCONNECT back on the next change (e.g. the resume that lifts the
+     * pause), and the FIN itself is not lost - the resumed drain observes it
+     * through recv(). */
+    uv_poll_start(p, us_poll_events((struct us_poll_t *)p->data), poll_cb);
     eof = 1;
     events |= UV_READABLE;
   }

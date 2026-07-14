@@ -327,7 +327,9 @@ describe.concurrent("exit code 0", () => {
     });
 
     test(`eval #${i}: ${JSON.stringify(source)}`, async () => {
-      await using proc = Bun.spawn([bunExe(), "--eval", source], {
+      // `--eval=` because some fixtures start with '-': like Node, a separate
+      // argument that looks like an option is not taken as --eval's value.
+      await using proc = Bun.spawn([bunExe(), `--eval=${source}`], {
         stdout: "inherit",
         env: bunEnv,
         stderr: "inherit",

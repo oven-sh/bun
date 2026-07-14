@@ -108,21 +108,42 @@ macro_rules! maybe_verbose_error_trace {
     };
 }
 
+const BASE_HEAD_PARAMS: &[ParamType] = &[
+    parse_param!(
+        "--env-file <STR>...               Load environment variables from the specified file(s)"
+    ),
+    parse_param!("--no-env-file                     Disable automatic loading of .env files"),
+    parse_param!(
+        "--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."
+    ),
+];
+
+const BASE_TAIL_PARAMS: &[ParamType] = &[parse_param!(
+    "-h, --help                        Display this menu and exit"
+)];
+
+/// Shared by every subcommand that keeps `-c` as the `--config` shorthand.
 pub(crate) const BASE_PARAMS_: &[ParamType] = concat_params!(
     maybe_debug_params!(),
-    &[
-        parse_param!(
-            "--env-file <STR>...               Load environment variables from the specified file(s)"
-        ),
-        parse_param!("--no-env-file                     Disable automatic loading of .env files"),
-        parse_param!(
-            "--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."
-        ),
-        parse_param!(
-            "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
-        ),
-        parse_param!("-h, --help                        Display this menu and exit"),
-    ],
+    BASE_HEAD_PARAMS,
+    &[parse_param!(
+        "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
+    )],
+    BASE_TAIL_PARAMS,
+    maybe_verbose_error_trace!(),
+    &[parse_param!("<POS>...")],
+);
+
+/// Same as [`BASE_PARAMS_`], but `--config` has no `-c` shorthand: the runtime
+/// commands give `-c` to `--check` for Node compatibility, so advertising it
+/// here too would document an alias that never resolves to `--config`.
+pub(crate) const BASE_PARAMS_NO_CONFIG_SHORT_: &[ParamType] = concat_params!(
+    maybe_debug_params!(),
+    BASE_HEAD_PARAMS,
+    &[parse_param!(
+        "--config <PATH>?                  Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
+    )],
+    BASE_TAIL_PARAMS,
     maybe_verbose_error_trace!(),
     &[parse_param!("<POS>...")],
 );
@@ -330,9 +351,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
-    // Declared before BASE_PARAMS_'s "-c, --config" in the concatenated
-    // AUTO/RUN tables, so `-c` means `--check` for the runtime commands
-    // (Node.js compatibility); `--config` keeps its long form everywhere.
+    // `-c` means `--check` for the runtime commands (Node.js compatibility).
+    // The AUTO/RUN tables pair this with BASE_PARAMS_NO_CONFIG_SHORT_ so
+    // `--config` keeps its long form and nothing else claims `-c`.
     parse_param!(
         "-c, --check                       Check the syntax of the entry point (or stdin) without executing it"
     ),
@@ -378,7 +399,7 @@ pub(crate) const AUTO_PARAMS: &[ParamType] = concat_params!(
     AUTO_ONLY_PARAMS,
     RUNTIME_PARAMS_,
     TRANSPILER_PARAMS_,
-    BASE_PARAMS_
+    BASE_PARAMS_NO_CONFIG_SHORT_
 );
 
 pub(crate) const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
@@ -394,7 +415,7 @@ pub(crate) const RUN_PARAMS: &[ParamType] = concat_params!(
     RUN_ONLY_PARAMS,
     RUNTIME_PARAMS_,
     TRANSPILER_PARAMS_,
-    BASE_PARAMS_
+    BASE_PARAMS_NO_CONFIG_SHORT_
 );
 
 const BAKE_DEBUG_PARAMS: &[ParamType] = &[

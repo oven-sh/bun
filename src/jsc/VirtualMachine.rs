@@ -4298,23 +4298,26 @@ impl VirtualMachine {
         if jsc_vm.plugin_runner.is_some() {
             use bun_bundler::transpiler::PluginRunner;
             let spec = specifier_utf8.slice();
-            // A builtin that is already cached keeps its canonical key so a
-            // late-registered onResolve cannot redirect it to a fresh registry
-            // entry and fork module identity. Matches the file-path law where
-            // a cached module is returned regardless of later onLoad plugins.
-            if let Some(hardcoded) = hardcoded_alias {
-                let canonical = hardcoded.path.as_bytes();
-                if global.is_builtin_module_cached(canonical) {
-                    *res =
-                        ErrorableString::ok(if is_user_require_resolve && hardcoded.node_builtin {
-                            specifier.dupe_ref()
-                        } else {
-                            bun_core::String::init(canonical)
-                        });
-                    return Ok(());
-                }
-            }
             if PluginRunner::could_be_plugin(spec) {
+                // A builtin that is already cached keeps its canonical key so
+                // a late-registered onResolve cannot redirect it to a fresh
+                // registry entry and fork module identity. Matches the
+                // file-path law where a cached module is returned regardless
+                // of later onLoad plugins. Bare specifiers (`fs`, `path`)
+                // fail `could_be_plugin` so this probe is skipped for them.
+                if let Some(hardcoded) = hardcoded_alias {
+                    let canonical = hardcoded.path.as_bytes();
+                    if global.is_builtin_module_cached(canonical) {
+                        *res = ErrorableString::ok(
+                            if is_user_require_resolve && hardcoded.node_builtin {
+                                specifier.dupe_ref()
+                            } else {
+                                bun_core::String::init(canonical)
+                            },
+                        );
+                        return Ok(());
+                    }
+                }
                 let namespace = PluginRunner::extract_namespace(spec);
                 let after_namespace = if namespace.is_empty() {
                     spec

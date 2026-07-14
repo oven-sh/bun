@@ -1509,6 +1509,14 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR listenFd,
     if (ai_family == AF_INET6) {
         int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
         if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+            if (err != NULL) {
+#ifdef _WIN32
+                *err = WSAGetLastError();
+#else
+                *err = errno;
+#endif
+            }
+            bsd_close_socket(listenFd);
             return LIBUS_SOCKET_ERROR;
         }
     }

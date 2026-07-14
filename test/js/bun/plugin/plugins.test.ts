@@ -354,6 +354,45 @@ describe("module", () => {
     const mod = require("onload-cjs:m2");
     expect(mod).toEqual({ fromOnLoad: true });
   });
+
+  // https://github.com/oven-sh/bun/issues/21369
+  // https://github.com/oven-sh/bun/issues/22683
+  // https://github.com/oven-sh/bun/issues/10083
+  it("onLoad in the file namespace returning CommonJS source works", async () => {
+    using dir = tempDir("plugin-onload-file-cjs", {
+      "preload.ts": `
+        Bun.plugin({
+          name: "file-cjs",
+          setup(b) {
+            b.onLoad({ filter: /target\\.js$/, namespace: "file" }, () => ({
+              contents: "globalThis.SIDE = 1; module.exports = { fromPlugin: true };",
+              loader: "js",
+            }));
+          },
+        });
+      `,
+      "target.js": "module.exports = { disk: true };",
+      "entry.ts": `
+        globalThis.SIDE = 0;
+        const m = await import("./target.js");
+        const r = require("./target.js");
+        console.log(JSON.stringify({ keys: Object.keys(m).sort(), side: globalThis.SIDE, req: r }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim())).toEqual({
+      keys: ["default", "fromPlugin"],
+      side: 1,
+      req: { fromPlugin: true },
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("dynamic import", () => {

@@ -218,6 +218,28 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       it("encodes an astral character that doesn't fit the same way V8 does", async () => {
         await checkSameOutput("test_v8_string_write_utf8_surrogate");
       });
+      describe("unpaired surrogates", () => {
+        it("writes WTF-8 for a lone lead surrogate without kReplaceInvalidUtf8", async () => {
+          const out = await checkSameOutput("test_v8_string_write_utf8_unpaired_surrogate", `["x\\uD800y"]`);
+          // flags=0 must preserve the surrogate as WTF-8 (ED A0 80), not replace it.
+          expect(out).toContain("flags = 0, size = 16, nchars =  3, returned =  5, data = 78 ed a0 80 79");
+          expect(out).toContain("flags = 2, size = 16, nchars =  3, returned =  5, data = 78 ef bf bd 79");
+        });
+        it("writes WTF-8 for a lone trail surrogate without kReplaceInvalidUtf8", async () => {
+          const out = await checkSameOutput("test_v8_string_write_utf8_unpaired_surrogate", `["x\\uDC00y"]`);
+          expect(out).toContain("flags = 0, size = 16, nchars =  3, returned =  5, data = 78 ed b0 80 79");
+          expect(out).toContain("flags = 2, size = 16, nchars =  3, returned =  5, data = 78 ef bf bd 79");
+        });
+        it("writes WTF-8 for an out-of-order surrogate pair without kReplaceInvalidUtf8", async () => {
+          await checkSameOutput("test_v8_string_write_utf8_unpaired_surrogate", `["\\uDC00\\uD800"]`);
+        });
+        it("encodes a valid surrogate pair the same under both flag modes", async () => {
+          await checkSameOutput("test_v8_string_write_utf8_unpaired_surrogate", `["a\\uD83D\\uDE00b"]`);
+        });
+        it("writes WTF-8 for a string that is only a lone surrogate", async () => {
+          await checkSameOutput("test_v8_string_write_utf8_unpaired_surrogate", `["\\uD800"]`);
+        });
+      });
     });
   });
 

@@ -302,6 +302,53 @@ void test_v8_string_write_utf8_surrogate(const FunctionCallbackInfo<Value> &info
   return ok(info);
 }
 
+// WriteUtf8V2 with and without kReplaceInvalidUtf8 on a JS string that may
+// contain unpaired surrogates. Without the flag V8 writes WTF-8 (the raw
+// 3-byte encoding of the surrogate code point, e.g. ED A0 80 for U+D800),
+// which round-trips through NewFromUtf8; with it V8 writes U+FFFD instead.
+void test_v8_string_write_utf8_unpaired_surrogate(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<String> s = info[0].As<String>();
+
+  constexpr int total = 16;
+  char buf[total];
+  const int flag_modes[] = {String::WriteFlags::kNone,
+                            String::WriteFlags::kReplaceInvalidUtf8};
+  LOG_EXPR(s->Length());
+  LOG_EXPR(s->Utf8LengthV2(isolate));
+  for (int flags : flag_modes) {
+    for (int i = total; i >= 0; i--) {
+      memset(buf, 0xaa, total);
+      size_t nchars;
+      size_t retval =
+          s->WriteUtf8V2(isolate, buf, static_cast<size_t>(i), flags, &nchars);
+      printf("flags = %d, size = %2d, nchars = %2zu, returned = %2zu, data =",
+             flags, i, nchars, retval);
+      for (int j = 0; j < total; j++) {
+        printf("%c%02x", j == i ? '|' : ' ',
+               reinterpret_cast<unsigned char *>(buf)[j]);
+      }
+      printf("\n");
+    }
+  }
+  // kNullTerminate combined with each mode, full capacity only.
+  for (int flags : flag_modes) {
+    memset(buf, 0xaa, total);
+    size_t nchars;
+    size_t retval = s->WriteUtf8V2(isolate, buf, total,
+                                   flags | String::WriteFlags::kNullTerminate,
+                                   &nchars);
+    printf("flags = %d, size = %2d, nchars = %2zu, returned = %2zu, data =",
+           flags | String::WriteFlags::kNullTerminate, total, nchars, retval);
+    for (int j = 0; j < total; j++) {
+      printf(" %02x", reinterpret_cast<unsigned char *>(buf)[j]);
+    }
+    printf("\n");
+  }
+  return ok(info);
+}
+
 void test_v8_external(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   int x = 5;
@@ -1288,6 +1335,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_string_write_utf8);
   NODE_SET_METHOD(exports, "test_v8_string_write_utf8_surrogate",
                   test_v8_string_write_utf8_surrogate);
+  NODE_SET_METHOD(exports, "test_v8_string_write_utf8_unpaired_surrogate",
+                  test_v8_string_write_utf8_unpaired_surrogate);
   NODE_SET_METHOD(exports, "test_v8_external", test_v8_external);
   NODE_SET_METHOD(exports, "test_v8_object", test_v8_object);
   NODE_SET_METHOD(exports, "test_v8_array_new", test_v8_array_new);

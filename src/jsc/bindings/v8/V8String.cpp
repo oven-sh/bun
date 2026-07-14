@@ -226,40 +226,47 @@ size_t String::WriteUtf8V2(Isolate* isolate, char* buffer, size_t capacity, int 
     size_t read = 0;
     size_t written = 0;
     if (!str->isEmpty()) {
-        // TextEncoder__encodeInto never writes partial UTF-8 sequences, and replaces
-        // unpaired surrogates with U+FFFD (same byte length as the WTF-8 encoding V8
-        // uses when kReplaceInvalidUtf8 is not set, so the result size matches either
-        // way).
         if (str->is8Bit()) {
-            // Latin-1 expands at most 2x: 2 * (2^31 - 1) < 2^32, so the packed
-            // 32-bit counts cannot wrap.
+            // Latin-1 contains no surrogates, so kReplaceInvalidUtf8 is moot and the
+            // TextEncoder fast path is correct for either flag mode. Latin-1 expands at
+            // most 2x: 2 * (2^31 - 1) < 2^32, so the packed 32-bit counts cannot wrap.
             const auto span = str->span8();
             uint64_t result = TextEncoder__encodeInto8(span.data(), span.size(), buffer, writableCapacity);
             read = static_cast<uint32_t>(result);
             written = static_cast<uint32_t>(result >> 32);
         } else {
-            // UTF-16 expands up to 3x, which can exceed the 32-bit counts
-            // TextEncoder__encodeInto packs its result into (3 * (2^31 - 1) >
-            // 2^32). Encode in chunks small enough that each chunk's counts
-            // fit, accumulating in size_t.
+            // Without kReplaceInvalidUtf8 V8 emits WTF-8 (the raw 3-byte encoding of the
+            // surrogate code point), which round-trips through NewFromUtf8. Never writes
+            // partial sequences; counts accumulate in size_t so no chunking is needed.
             const auto span = str->span16();
             const size_t total = span.size();
-            constexpr size_t maxChunk = static_cast<size_t>(1) << 30; // <= 3 GiB UTF-8 per chunk
+            const bool replaceInvalid = flags & WriteFlags::kReplaceInvalidUtf8;
             while (read < total) {
-                size_t chunkLength = std::min(maxChunk, total - read);
-                // Never split a surrogate pair across chunks: the encoder
-                // would see two unpaired halves and write U+FFFD twice.
-                if (read + chunkLength < total && U16_IS_LEAD(span[read + chunkLength - 1])) {
-                    chunkLength--;
-                }
-                uint64_t result = TextEncoder__encodeInto16(span.data() + read, chunkLength, buffer + written, writableCapacity - written);
-                const uint32_t chunkRead = static_cast<uint32_t>(result);
-                const uint32_t chunkWritten = static_cast<uint32_t>(result >> 32);
-                read += chunkRead;
-                written += chunkWritten;
-                if (chunkRead < chunkLength) {
-                    // Ran out of output capacity.
-                    break;
+                const char16_t c = span[read];
+                if (c <= 0x7f) {
+                    if (written >= writableCapacity) break;
+                    buffer[written++] = static_cast<char>(c);
+                    read++;
+                } else if (c <= 0x7ff) {
+                    if (written + 2 > writableCapacity) break;
+                    buffer[written++] = static_cast<char>(0xc0 | (c >> 6));
+                    buffer[written++] = static_cast<char>(0x80 | (c & 0x3f));
+                    read++;
+                } else if (U16_IS_LEAD(c) && read + 1 < total && U16_IS_TRAIL(span[read + 1])) {
+                    if (written + 4 > writableCapacity) break;
+                    const char32_t cp = U16_GET_SUPPLEMENTARY(c, span[read + 1]);
+                    buffer[written++] = static_cast<char>(0xf0 | (cp >> 18));
+                    buffer[written++] = static_cast<char>(0x80 | ((cp >> 12) & 0x3f));
+                    buffer[written++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3f));
+                    buffer[written++] = static_cast<char>(0x80 | (cp & 0x3f));
+                    read += 2;
+                } else {
+                    if (written + 3 > writableCapacity) break;
+                    const char16_t out = (replaceInvalid && U16_IS_SURROGATE(c)) ? 0xfffd : c;
+                    buffer[written++] = static_cast<char>(0xe0 | (out >> 12));
+                    buffer[written++] = static_cast<char>(0x80 | ((out >> 6) & 0x3f));
+                    buffer[written++] = static_cast<char>(0x80 | (out & 0x3f));
+                    read++;
                 }
             }
         }

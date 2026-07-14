@@ -76,8 +76,8 @@ public:
 
     /**
      * Returns the number of bytes needed for the Utf8 encoding of this string.
-     * Unpaired surrogates are counted as the 3-byte U+FFFD replacement
-     * character, matching the Write*V2 replacement behavior.
+     * Unpaired surrogates are counted as 3 bytes, matching both WriteUtf8V2
+     * modes (U+FFFD under kReplaceInvalidUtf8, WTF-8 otherwise).
      */
     BUN_EXPORT size_t Utf8LengthV2(Isolate* isolate) const;
 

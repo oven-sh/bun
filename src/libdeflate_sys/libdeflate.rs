@@ -484,7 +484,7 @@ impl Decompressor {
                 return result;
             }
             let new_cap = out.capacity().max(1).saturating_mul(2).min(max_capacity);
-            out.reserve(new_cap.saturating_sub(out.len()));
+            out.reserve_exact(new_cap.saturating_sub(out.len()));
         }
     }
 }

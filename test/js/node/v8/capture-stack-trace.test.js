@@ -1003,3 +1003,27 @@ test("printing an error whose message getter calls Error.captureStackTrace on it
 
   expect({ lastLine: stdout.trimEnd().split("\n").pop(), exitCode }).toEqual({ lastLine: "after", exitCode: 0 });
 });
+
+// https://github.com/oven-sh/bun/issues/34095
+test("lazy error-info materialization does not store an empty stack value when the compute hook throws", async () => {
+  const src = `
+    Error.prepareStackTrace = (e, s) => "custom-stack";
+    const e = new Error("x");
+    Object.defineProperty(e, "message", { get() { throw new TypeError("msg-boom"); } });
+    let first = "no-throw";
+    try { void e.stack; } catch (err) { first = err.message; }
+    console.log(JSON.stringify({ first, secondType: typeof e.stack }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
+    stdout: JSON.stringify({ first: "msg-boom", secondType: "undefined" }),
+    signalCode: null,
+  });
+  expect(exitCode).toBe(0);
+});

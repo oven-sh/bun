@@ -1185,7 +1185,9 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
         "plain-obj ctor: status=5 result=false pending=true errName=TypeError errCode=ERR_NAPI_CONS_FUNCTION",
       );
       expect(output).toContain("null ctor: status=2 result=false pending=true errName=TypeError errCode=undefined");
-      expect(output).toContain("undefined ctor: status=2 result=false pending=true errName=TypeError errCode=undefined");
+      expect(output).toContain(
+        "undefined ctor: status=2 result=false pending=true errName=TypeError errCode=undefined",
+      );
     });
   });
 

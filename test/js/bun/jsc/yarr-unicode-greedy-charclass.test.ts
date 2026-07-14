@@ -105,11 +105,9 @@ test("greedy /u character class backtracking is not O(n^3)", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
   const { r, dt } = JSON.parse(stdout);
-  expect(r).toBe(false);
+  expect({ r, stderr, exitCode }).toEqual({ r: false, stderr: "", exitCode: 0 });
   // Prior to the fix this ran ~2300ms in a release build; the fixed JIT and the YARR
   // interpreter both finish this in well under 50ms. 1000ms leaves >20x headroom.
   expect(dt).toBeLessThan(1000);
-  expect(exitCode).toBe(0);
 });

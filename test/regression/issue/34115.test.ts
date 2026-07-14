@@ -2,7 +2,7 @@
 // A preload script that touches process.nextTick (directly, or via a module that
 // does) must not change the relative order of process.nextTick vs microtasks
 // scheduled at the top level of the entry module.
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 const orderFixture = `
@@ -29,11 +29,7 @@ describe("process.nextTick ordering is preserved with --preload", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe(preloadOutput + "nextTick\nmicrotask\npromise\n");
     expect(exitCode).toBe(0);
@@ -52,11 +48,7 @@ describe("process.nextTick ordering is preserved with --preload", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("a\nb\nnextTick\nmicrotask\npromise\n");
     expect(exitCode).toBe(0);
@@ -84,11 +76,7 @@ test("Writable.toWeb() close rejects with ABORT_ERR when preload requires node:s
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toBe("rejected: ABORT_ERR\n");
   expect(exitCode).toBe(0);

@@ -119,9 +119,7 @@ fn parse_options(global: &JSGlobalObject, value: JSValue) -> JsResult<Options> {
                 }
             };
         } else if !ec.is_undefined_or_null() {
-            return Err(
-                global.throw_type_error(format_args!("errorCorrection must be a string"))
-            );
+            return Err(global.throw_type_error(format_args!("errorCorrection must be a string")));
         }
     }
 
@@ -361,9 +359,9 @@ pub fn generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
                 Ok(e) => e,
                 Err(codecs::Error::OutOfMemory) => return Err(global.throw_out_of_memory()),
                 Err(_) => {
-                    return Err(global.throw_type_error(format_args!(
-                        "Failed to encode QR code as PNG"
-                    )));
+                    return Err(
+                        global.throw_type_error(format_args!("Failed to encode QR code as PNG"))
+                    );
                 }
             };
             // SAFETY: `enc.bytes` is valid for `len` bytes while `enc` is live.

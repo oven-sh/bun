@@ -1313,12 +1313,11 @@ extern "C" napi_status napi_adjust_external_memory(napi_env env,
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, adjusted_value);
 
-    JSC::Heap& heap = toJS(env)->vm().heap;
-
+    env->m_externalMemory += change_in_bytes;
     if (change_in_bytes > 0) {
-        heap.deprecatedReportExtraMemory(change_in_bytes);
+        toJS(env)->vm().heap.deprecatedReportExtraMemory(static_cast<size_t>(change_in_bytes));
     }
-    *adjusted_value = heap.extraMemorySize();
+    *adjusted_value = env->m_externalMemory;
     NAPI_RETURN_SUCCESS(env);
 }
 

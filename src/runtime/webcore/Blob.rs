@@ -3566,18 +3566,14 @@ impl BlobExt for Blob {
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
                                         // A later part may run user JS that drops the
-                                        // last ref to this Blob's Store before `done()`.
-                                        if parts_can_run_js {
-                                            joiner.push_cloned(blob.shared_view());
-                                        } else {
-                                            // SAFETY: the prescan above proved no
-                                            // remaining part can run user JS, so this
-                                            // Blob (rooted via `_keep`/`arg`) keeps its
-                                            // Store alive until `joiner.done()` below.
-                                            joiner.push(unsafe {
-                                                bun_ptr::detach_lifetime(blob.shared_view())
-                                            });
-                                        }
+                                        // last ref to this Blob's Store before `done()`;
+                                        // borrow only when the prescan proved otherwise.
+                                        push_blob_part_bytes(
+                                            blob,
+                                            &mut joiner,
+                                            global,
+                                            !parts_can_run_js,
+                                        )?;
                                         continue;
                                     } else {
                                         let sliced = item.to_slice_clone(global)?;
@@ -3604,8 +3600,8 @@ impl BlobExt for Blob {
                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
                         // This arm only handles entries deferred onto the walk
                         // stack; other pending entries may still run user JS and
-                        // free this Blob's Store before `done()`, so always copy.
-                        joiner.push_cloned(blob.shared_view());
+                        // free this Blob's Store before `done()`, so never borrow.
+                        push_blob_part_bytes(blob, &mut joiner, global, false)?;
                     } else {
                         let sliced = current.to_slice_clone(global)?;
                         could_have_non_ascii = could_have_non_ascii || sliced.is_allocated();
@@ -3847,6 +3843,130 @@ impl BlobExt for Blob {
         result.set_not_heap_allocated();
         result
     }
+}
+
+/// Push a Blob part's bytes into `joiner` for `new Blob([...])`'s multi-part
+/// join. In-memory stores use `shared_view()`; file-backed stores are read
+/// synchronously (the constructor is sync and the spec's "process blob parts"
+/// requires the bytes). S3 stores throw rather than silently contribute zero
+/// bytes. `borrow_bytes` controls whether an in-memory view is borrowed past
+/// the call (only safe when the caller's prescan proved no later part runs JS).
+fn push_blob_part_bytes(
+    blob: &Blob,
+    joiner: &mut bun_core::string_joiner::StringJoiner,
+    global: &JSGlobalObject,
+    borrow_bytes: bool,
+) -> JsResult<()> {
+    let Some(store) = blob.store.get() else {
+        return Ok(());
+    };
+    match &store.data {
+        store::Data::Bytes(_) => {
+            if borrow_bytes {
+                // SAFETY: caller's prescan proved no remaining part runs user
+                // JS, so this Blob (rooted via the constructor's `_keep`/`arg`)
+                // keeps its Store alive until `joiner.done()`.
+                joiner.push(unsafe { bun_ptr::detach_lifetime(blob.shared_view()) });
+            } else {
+                joiner.push_cloned(blob.shared_view());
+            }
+        }
+        store::Data::File(file) => {
+            let size = blob.size.get();
+            let offset = blob.offset.get();
+            match &file.pathlike {
+                PathOrFileDescriptor::Path(_) => {
+                    // Fresh fd per read: `read_file` opens, reads from `offset`,
+                    // and closes, so repeated use of the same path part is stable.
+                    let mut node_fs = crate::node::fs::NodeFS::default();
+                    let mut rf_args = crate::node::fs::args::ReadFile::default();
+                    rf_args.encoding = crate::node::types::Encoding::Buffer;
+                    rf_args.path = file.pathlike.clone();
+                    rf_args.offset = offset;
+                    rf_args.max_size = if size == MAX_SIZE { None } else { Some(size) };
+                    match node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync) {
+                        Err(err) => return Err(global.throw_value(err.to_js(global))),
+                        Ok(mut result) => {
+                            joiner.push_cloned(result.slice());
+                            if let crate::node::types::StringOrBuffer::Buffer(buf) = &mut result {
+                                buf.destroy();
+                            }
+                        }
+                    }
+                }
+                PathOrFileDescriptor::Fd(fd) => {
+                    // `read_file` on a caller-owned fd uses cursor-advancing
+                    // `read` and only seeks when `offset > 0`, so a second use
+                    // of the same fd part would read from EOF. Read via `pread`
+                    // at the Blob's absolute offset instead so each part reads
+                    // the correct window regardless of the fd's cursor. On POSIX
+                    // this also leaves the cursor untouched; on Windows
+                    // `ReadFile`+`OVERLAPPED` on a synchronous handle advances
+                    // it (a libuv quirk Node inherits), so no position guarantee
+                    // is made there.
+                    let stat = match bun_sys::fstat(*fd) {
+                        bun_sys::Result::Ok(s) => s,
+                        bun_sys::Result::Err(err) => {
+                            return Err(global.throw_value(err.with_fd(*fd).to_js(global)));
+                        }
+                    };
+                    let file_len = stat.st_size.max(0) as SizeType;
+                    // `st_size == 0` can mean either an empty file or a virtual
+                    // file that reports 0 but yields data (Linux procfs); match
+                    // the Path arm's grow-until-EOF for the latter by not
+                    // capping an unresolved Blob size at 0.
+                    let cap = if size != MAX_SIZE {
+                        size as usize
+                    } else if file_len > 0 {
+                        file_len.saturating_sub(offset) as usize
+                    } else {
+                        usize::MAX
+                    };
+                    if cap == 0 {
+                        return Ok(());
+                    }
+                    let mut buf: Vec<u8> = Vec::new();
+                    let mut total = 0usize;
+                    loop {
+                        if total == buf.len() {
+                            if total == cap {
+                                break;
+                            }
+                            let new_len = buf
+                                .len()
+                                .max(4096)
+                                .saturating_mul(2)
+                                .min(cap)
+                                .max(total + 1);
+                            buf.resize(new_len, 0);
+                        }
+                        let n = match bun_sys::pread(
+                            *fd,
+                            &mut buf[total..],
+                            (offset as i64).saturating_add(total as i64),
+                        ) {
+                            bun_sys::Result::Ok(n) => n,
+                            bun_sys::Result::Err(err) => {
+                                return Err(global.throw_value(err.with_fd(*fd).to_js(global)));
+                            }
+                        };
+                        if n == 0 {
+                            break;
+                        }
+                        total += n;
+                    }
+                    buf.truncate(total);
+                    joiner.push_owned(buf.into_boxed_slice());
+                }
+            }
+        }
+        store::Data::S3(_) => {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Blob parts backed by S3 cannot be read synchronously; await .bytes() or .arrayBuffer() first"
+            )));
+        }
+    }
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

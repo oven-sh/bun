@@ -432,6 +432,7 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    bool m_isDrainingNextTickQueue = false;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 

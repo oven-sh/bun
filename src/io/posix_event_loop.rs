@@ -695,8 +695,14 @@ impl FilePoll {
 
         debug_assert!(fd != INVALID_FD);
 
+        // The kernel one-shot bit is derived from `self.flags`, not from
+        // `one_shot`, so a level-triggered re-register on a poll that was
+        // previously registered one-shot (e.g. a `FilePoll` moved from a
+        // `SubprocessPipeReader` into a `FileReader`) must clear the flag.
         if one_shot != OneShotFlag::None {
             self.flags.insert(Flags::OneShot);
+        } else {
+            self.flags.remove(Flags::OneShot);
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]

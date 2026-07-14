@@ -439,6 +439,17 @@ impl ReadableStream {
             .context
             .reader()
             .from(buffered_reader, ctx_ptr.cast::<c_void>());
+        // See the matching insert in `FileReader::on_start`. `from()` moves a
+        // FilePoll already registered one-shot by `SubprocessPipeReader`; set
+        // the flag before any `register_poll()` so the next `CTL_MOD` flips it
+        // to level-triggered (now that `register_with_fd_impl` clears the
+        // sticky `Flags::OneShot` when asked for `OneShotFlag::None`).
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        source
+            .context
+            .reader()
+            .flags
+            .insert(bun_io::pipe_reader::PosixFlags::LEVEL_TRIGGERED);
 
         let stream = source.to_readable_stream(global_this)?;
 

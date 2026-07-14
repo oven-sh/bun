@@ -428,7 +428,10 @@ impl FileReader {
         // harmless: the next `epoll_wait` reports it again. `on_read_chunk`
         // drains to EAGAIN on every dispatch and only returns `false` after
         // `close()`, so it cannot busy-loop. `pause()` unregisters the poll.
-        #[cfg(unix)]
+        // Linux-only: macOS/FreeBSD keep `EV_DISPATCH` (the re-arm path there
+        // is `EV_ADD|EV_ENABLE`, and a plain level-triggered kqueue read
+        // filter on a regular fd has different readiness semantics).
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use bun_io::pipe_reader::PosixFlags;
             self.reader().flags.insert(PosixFlags::LEVEL_TRIGGERED);
@@ -623,6 +626,11 @@ impl FileReader {
             if let Some(max_size) = self.max_size {
                 let total_readed = self.total_readed.get();
                 if total_readed >= max_size {
+                    // Close so the level-triggered poll is unregistered; the
+                    // caller's `read_with_fn` returns here without re-arm or
+                    // unregister, and a still-armed fd would re-fire every
+                    // epoll_wait reading bytes the slice boundary discards.
+                    self.reader().close();
                     return false;
                 }
                 let len = (max_size - total_readed).min(buf.len());

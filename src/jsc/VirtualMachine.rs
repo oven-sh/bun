@@ -4422,10 +4422,12 @@ impl VirtualMachine {
                         err,
                         import_kind,
                     );
+                    let spec = specifier_utf8.slice();
+                    let spec = &spec[..spec.len().min(u16::MAX as usize)];
                     bun_ast::Msg {
                         data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
                         metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
-                            specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
+                            specifier: bun_ast::BabyString::r#in(&printed, spec),
                             import_kind,
                             err: bun_ast::Error::ModuleNotFound,
                         }),

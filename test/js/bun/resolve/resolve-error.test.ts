@@ -108,6 +108,20 @@ describe("ResolveMessage", () => {
       });
       expectSpecifier(e.specifier, relative);
     }
+
+    // Bun.resolveSync uses IS_A_FILE_PATH=false, so the length guard never
+    // fires and the specifier reaches the post-_resolve fallback at any length.
+    try {
+      Bun.resolveSync(builtin, import.meta.dir);
+      expect.unreachable();
+    } catch (err) {
+      e = err;
+    }
+    expect({ code: e.code, importKind: e.importKind }).toEqual({
+      code: "ERR_UNKNOWN_BUILTIN_MODULE",
+      importKind: "import-statement",
+    });
+    expectSpecifier(e.specifier, builtin);
   });
 
   it("invalid data URL import", async () => {

@@ -8,7 +8,7 @@
 //! `NODE_OPTIONS` is surfaced instead of silently ignored.
 
 use bstr::BStr;
-use bun_core::{Global, Output, env_var, strings};
+use bun_core::{Global, Output, strings};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TokenizeError {
@@ -437,23 +437,17 @@ fn fail_tokenize(detail: &str) -> ! {
     Global::exit(9);
 }
 
-/// Read, tokenize and validate `NODE_OPTIONS`. Preload flags (`--import`,
+/// Tokenize and validate a `NODE_OPTIONS` value. Preload flags (`--import`,
 /// `--require`, `-r`) are collected into `Parsed.preloads` in declaration
 /// order; other allowed flags are currently accepted without effect.
 /// Validation failures and tokenizer errors print a diagnostic to stderr and
 /// exit with status 9 (matching Node.js).
+///
+/// `#[cold]`: only reached when the env var is set; the caller checks
+/// `env_var::NODE_OPTIONS.get()` on the hot path so the common unset case
+/// never faults this page.
 #[cold]
 #[inline(never)]
-pub fn parse_env() -> Parsed {
-    let Some(raw) = env_var::NODE_OPTIONS.get() else {
-        return Parsed::default();
-    };
-    if raw.is_empty() {
-        return Parsed::default();
-    }
-    parse(raw)
-}
-
 pub fn parse(raw: &[u8]) -> Parsed {
     let tokens = match tokenize(raw) {
         Ok(t) => t,

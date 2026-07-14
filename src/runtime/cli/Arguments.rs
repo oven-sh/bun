@@ -936,7 +936,12 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             | CommandTag::RunAsNodeCommand
     ) {
         {
-            let node_options = crate::cli::node_options::parse_env();
+            // Hot-path env read; the actual tokenize/validate stays `#[cold]`
+            // and is only entered when NODE_OPTIONS is set and non-empty.
+            let node_options = match env_var::NODE_OPTIONS.get() {
+                Some(raw) if !raw.is_empty() => crate::cli::node_options::parse(raw),
+                _ => crate::cli::node_options::Parsed::default(),
+            };
             let preloads = args.options(b"--preload");
             let preloads2 = args.options(b"--require");
             let preloads3 = args.options(b"--import");

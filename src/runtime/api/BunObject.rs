@@ -2715,6 +2715,23 @@ pub mod JSZlib {
                 library = Library::Zlib;
             }
 
+            let _ = get_i32_option(
+                global_this,
+                options_val,
+                b"memLevel",
+                b"options.memLevel",
+                1,
+                9,
+            )?;
+            let _ = get_i32_option(
+                global_this,
+                options_val,
+                b"strategy",
+                b"options.strategy",
+                0,
+                4,
+            )?;
+
             if let Some(library_value) = options_val.get_truthy(global_this, "library")? {
                 if !library_value.is_string() {
                     return Err(global_this

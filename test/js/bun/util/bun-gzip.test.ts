@@ -50,6 +50,25 @@ describe.each(["gzipSync", "deflateSync"] as const)("Bun.%s level option", name 
     expect(Buffer.from(back).equals(payload)).toBe(true);
   });
 
+  test.each(["windowBits", "memLevel", "strategy"] as const)("%s: non-number throws ERR_INVALID_ARG_TYPE", key => {
+    for (const bad of [null, {}, "6", true]) {
+      let thrown: any;
+      try {
+        fn(payload, { [key]: bad } as any);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown?.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(thrown.message).toContain(`options.${key}`);
+    }
+  });
+
+  test("valid memLevel/strategy are accepted", () => {
+    const out = fn(payload, { memLevel: 8, strategy: 0 });
+    const back = name === "gzipSync" ? Bun.gunzipSync(out) : Bun.inflateSync(out);
+    expect(Buffer.from(back).equals(payload)).toBe(true);
+  });
+
   describe("library: libdeflate", () => {
     test("level NaN falls back to the default", () => {
       // @ts-expect-error

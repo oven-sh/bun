@@ -1,7 +1,12 @@
 #include "V8String.h"
 #include "V8HandleScope.h"
+#include "V8Value.h"
 #include "wtf/SIMDUTF.h"
 #include "v8_compatibility_assertions.h"
+
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::String::Utf8Value)
+ASSERT_V8_TYPE_FIELD_OFFSET_MATCHES(v8::String::Utf8Value, m_str, str_)
+ASSERT_V8_TYPE_FIELD_OFFSET_MATCHES(v8::String::Utf8Value, m_length, length_)
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::String)
 
@@ -316,6 +321,29 @@ int String::Length() const
 {
     auto jsString = localToObjectPointer<JSString>();
     return static_cast<int>(jsString->length());
+}
+
+String::Utf8Value::Utf8Value(Isolate* isolate, Local<v8::Value> obj)
+    : m_str(nullptr)
+    , m_length(0)
+{
+    if (obj.IsEmpty()) return;
+
+    HandleScope scope(isolate);
+    Local<v8::Value> value = obj;
+    MaybeLocal<String> maybeString = value->ToString(isolate->GetCurrentContext());
+    Local<String> str;
+    if (!maybeString.ToLocal(&str)) return;
+
+    size_t capacity = str->Utf8LengthV2(isolate) + 1;
+    m_str = static_cast<char*>(malloc(capacity));
+    if (!m_str) return;
+    m_length = str->WriteUtf8V2(isolate, m_str, capacity, WriteFlags::kNullTerminate | WriteFlags::kReplaceInvalidUtf8) - 1;
+}
+
+String::Utf8Value::~Utf8Value()
+{
+    free(m_str);
 }
 
 } // namespace v8

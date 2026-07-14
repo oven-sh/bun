@@ -3296,6 +3296,72 @@ mod v8_api {
         pub(super) fn _ZNK2v85Value7IsInt32Ev() -> *mut c_void;
         pub(super) fn _ZNK2v85Value8IsBigIntEv() -> *mut c_void;
         pub(super) fn _ZN2v812api_internal17FromJustIsNothingEv() -> *mut c_void;
+        pub(super) fn _ZN2v811ArrayBuffer3NewEPNS_7IsolateEmNS_30BackingStoreInitializationModeE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal10EternalizeEPNS_7IsolateEPNS_5ValueE() -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal19CopyGlobalReferenceEPm() -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal19MoveGlobalReferenceEPPmS2_() -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal22AnnotateStrongRetainerEPmPKc() -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal8MakeWeakEPPm() -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal8MakeWeakEPmPvPFvRKNS_16WeakCallbackInfoIvEEENS_16WeakCallbackTypeE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal9ClearWeakEPm() -> *mut c_void;
+        pub(super) fn _ZN2v86Object3HasENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN2v86Object3HasENS_5LocalINS_7ContextEEEj() -> *mut c_void;
+        pub(super) fn _ZN2v86Object6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86Object6DeleteENS_5LocalINS_7ContextEEEj() -> *mut c_void;
+        pub(super) fn _ZN2v86String9Utf8ValueC1EPNS_7IsolateENS_5LocalINS_5ValueEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86String9Utf8ValueD1Ev() -> *mut c_void;
+        pub(super) fn _ZN2v87Integer15NewFromUnsignedEPNS_7IsolateEj() -> *mut c_void;
+        pub(super) fn _ZN2v87Integer3NewEPNS_7IsolateEi() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate10ThrowErrorENS_5LocalINS_6StringEEE() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate14ThrowExceptionENS_5LocalINS_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN2v88Function4CallENS_5LocalINS_7ContextEEENS1_INS_5ValueEEEiPS5_()
+        -> *mut c_void;
+        pub(super) fn _ZN2v88Function4CallEPNS_7IsolateENS_5LocalINS_7ContextEEENS3_INS_5ValueEEEiPS7_()
+        -> *mut c_void;
+        pub(super) fn _ZN2v88TryCatch10SetVerboseEb() -> *mut c_void;
+        pub(super) fn _ZN2v88TryCatch17SetCaptureMessageEb() -> *mut c_void;
+        pub(super) fn _ZN2v88TryCatch5ResetEv() -> *mut c_void;
+        pub(super) fn _ZN2v88TryCatch7ReThrowEv() -> *mut c_void;
+        pub(super) fn _ZN2v88TryCatchC1EPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZN2v88TryCatchD1Ev() -> *mut c_void;
+        pub(super) fn _ZN2v89Exception10RangeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v89Exception11SyntaxErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v89Exception14ReferenceErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v89Exception5ErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v89Exception9TypeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE()
+        -> *mut c_void;
+        pub(super) fn _ZNK2v811ArrayBuffer10ByteLengthEv() -> *mut c_void;
+        pub(super) fn _ZNK2v811ArrayBuffer4DataEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Int325ValueEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value10Int32ValueENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value11NumberValueENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value12BooleanValueEPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value12IntegerValueENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value14ToDetailStringENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value8ToNumberENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value8ToObjectENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value8ToStringENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value8ToUint32ENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value9ToBooleanEPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value9ToIntegerENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v86Uint325ValueEv() -> *mut c_void;
+        pub(super) fn _ZNK2v87Integer5ValueEv() -> *mut c_void;
+        pub(super) fn _ZNK2v88TryCatch10StackTraceENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v88TryCatch11CanContinueEv() -> *mut c_void;
+        pub(super) fn _ZNK2v88TryCatch13HasTerminatedEv() -> *mut c_void;
+        pub(super) fn _ZNK2v88TryCatch7MessageEv() -> *mut c_void;
+        pub(super) fn _ZNK2v88TryCatch9ExceptionEv() -> *mut c_void;
+        pub(super) fn _ZNK2v88TryCatch9HasCaughtEv() -> *mut c_void;
+        pub(super) fn _ZNK2v88TryCatch9IsVerboseEv() -> *mut c_void;
         // NOTE: return type omitted to match the `uv_functions_to_export` declarations
         // below (avoids `clashing_extern_declarations`); only the symbol address is used.
         pub(super) fn uv_os_getpid();
@@ -3489,6 +3555,116 @@ mod v8_api {
         pub(super) fn v8_Value_IsBigInt() -> *mut c_void;
         #[link_name = "?FromJustIsNothing@api_internal@v8@@YAXXZ"]
         pub(super) fn v8_api_internal_FromJustIsNothing() -> *mut c_void;
+        #[link_name = "?New@ArrayBuffer@v8@@SA?AV?$Local@VArrayBuffer@v8@@@2@PEAVIsolate@2@_KW4BackingStoreInitializationMode@2@@Z"]
+        pub(super) fn v8_ArrayBuffer_New() -> *mut c_void;
+        #[link_name = "?ByteLength@ArrayBuffer@v8@@QEBA_KXZ"]
+        pub(super) fn v8_ArrayBuffer_ByteLength() -> *mut c_void;
+        #[link_name = "?Data@ArrayBuffer@v8@@QEBAPEAXXZ"]
+        pub(super) fn v8_ArrayBuffer_Data() -> *mut c_void;
+        #[link_name = "?Eternalize@api_internal@v8@@YAPEA_KPEAVIsolate@2@PEAVValue@2@@Z"]
+        pub(super) fn v8_api_internal_Eternalize() -> *mut c_void;
+        #[link_name = "?CopyGlobalReference@api_internal@v8@@YAPEA_KPEA_K@Z"]
+        pub(super) fn v8_api_internal_CopyGlobalReference() -> *mut c_void;
+        #[link_name = "?MoveGlobalReference@api_internal@v8@@YAXPEAPEA_K0@Z"]
+        pub(super) fn v8_api_internal_MoveGlobalReference() -> *mut c_void;
+        #[link_name = "?AnnotateStrongRetainer@api_internal@v8@@YAXPEA_KPEBD@Z"]
+        pub(super) fn v8_api_internal_AnnotateStrongRetainer() -> *mut c_void;
+        #[link_name = "?MakeWeak@api_internal@v8@@YAXPEAPEA_K@Z"]
+        pub(super) fn v8_api_internal_MakeWeak_addr() -> *mut c_void;
+        #[link_name = "?MakeWeak@api_internal@v8@@YAXPEA_KPEAXP6AXAEBV?$WeakCallbackInfo@X@2@@ZW4WeakCallbackType@2@@Z"]
+        pub(super) fn v8_api_internal_MakeWeak_cb() -> *mut c_void;
+        #[link_name = "?ClearWeak@api_internal@v8@@YAPEAXPEA_K@Z"]
+        pub(super) fn v8_api_internal_ClearWeak() -> *mut c_void;
+        #[link_name = "?Has@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"]
+        pub(super) fn v8_Object_Has_key() -> *mut c_void;
+        #[link_name = "?Has@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@I@Z"]
+        pub(super) fn v8_Object_Has_index() -> *mut c_void;
+        #[link_name = "?Delete@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"]
+        pub(super) fn v8_Object_Delete_key() -> *mut c_void;
+        #[link_name = "?Delete@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@I@Z"]
+        pub(super) fn v8_Object_Delete_index() -> *mut c_void;
+        #[link_name = "??0Utf8Value@String@v8@@QEAA@PEAVIsolate@2@V?$Local@VValue@v8@@@2@@Z"]
+        pub(super) fn v8_String_Utf8Value_ctor() -> *mut c_void;
+        #[link_name = "??1Utf8Value@String@v8@@QEAA@XZ"]
+        pub(super) fn v8_String_Utf8Value_dtor() -> *mut c_void;
+        #[link_name = "?NewFromUnsigned@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@I@Z"]
+        pub(super) fn v8_Integer_NewFromUnsigned() -> *mut c_void;
+        #[link_name = "?New@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@H@Z"]
+        pub(super) fn v8_Integer_New() -> *mut c_void;
+        #[link_name = "?Value@Integer@v8@@QEBA_JXZ"]
+        pub(super) fn v8_Integer_Value() -> *mut c_void;
+        #[link_name = "?Value@Int32@v8@@QEBAHXZ"]
+        pub(super) fn v8_Int32_Value() -> *mut c_void;
+        #[link_name = "?Value@Uint32@v8@@QEBAIXZ"]
+        pub(super) fn v8_Uint32_Value() -> *mut c_void;
+        #[link_name = "?ThrowError@Isolate@v8@@QEAA?AV?$Local@VValue@v8@@@2@V?$Local@VString@v8@@@2@@Z"]
+        pub(super) fn v8_Isolate_ThrowError() -> *mut c_void;
+        #[link_name = "?ThrowException@Isolate@v8@@QEAA?AV?$Local@VValue@v8@@@2@V32@@Z"]
+        pub(super) fn v8_Isolate_ThrowException() -> *mut c_void;
+        #[link_name = "?Call@Function@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@HPEAV52@@Z"]
+        pub(super) fn v8_Function_Call() -> *mut c_void;
+        #[link_name = "?Call@Function@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@HPEAV62@@Z"]
+        pub(super) fn v8_Function_Call_iso() -> *mut c_void;
+        #[link_name = "??0TryCatch@v8@@QEAA@PEAVIsolate@1@@Z"]
+        pub(super) fn v8_TryCatch_ctor() -> *mut c_void;
+        #[link_name = "??1TryCatch@v8@@QEAA@XZ"]
+        pub(super) fn v8_TryCatch_dtor() -> *mut c_void;
+        #[link_name = "?HasCaught@TryCatch@v8@@QEBA_NXZ"]
+        pub(super) fn v8_TryCatch_HasCaught() -> *mut c_void;
+        #[link_name = "?CanContinue@TryCatch@v8@@QEBA_NXZ"]
+        pub(super) fn v8_TryCatch_CanContinue() -> *mut c_void;
+        #[link_name = "?HasTerminated@TryCatch@v8@@QEBA_NXZ"]
+        pub(super) fn v8_TryCatch_HasTerminated() -> *mut c_void;
+        #[link_name = "?ReThrow@TryCatch@v8@@QEAA?AV?$Local@VValue@v8@@@2@XZ"]
+        pub(super) fn v8_TryCatch_ReThrow() -> *mut c_void;
+        #[link_name = "?Exception@TryCatch@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"]
+        pub(super) fn v8_TryCatch_Exception() -> *mut c_void;
+        #[link_name = "?StackTrace@TryCatch@v8@@QEBA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_TryCatch_StackTrace() -> *mut c_void;
+        #[link_name = "?Message@TryCatch@v8@@QEBA?AV?$Local@VMessage@v8@@@2@XZ"]
+        pub(super) fn v8_TryCatch_Message() -> *mut c_void;
+        #[link_name = "?Reset@TryCatch@v8@@QEAAXXZ"]
+        pub(super) fn v8_TryCatch_Reset() -> *mut c_void;
+        #[link_name = "?SetVerbose@TryCatch@v8@@QEAAX_N@Z"]
+        pub(super) fn v8_TryCatch_SetVerbose() -> *mut c_void;
+        #[link_name = "?IsVerbose@TryCatch@v8@@QEBA_NXZ"]
+        pub(super) fn v8_TryCatch_IsVerbose() -> *mut c_void;
+        #[link_name = "?SetCaptureMessage@TryCatch@v8@@QEAAX_N@Z"]
+        pub(super) fn v8_TryCatch_SetCaptureMessage() -> *mut c_void;
+        #[link_name = "?RangeError@Exception@v8@@SA?AV?$Local@VValue@v8@@@2@V?$Local@VString@v8@@@2@V32@@Z"]
+        pub(super) fn v8_Exception_RangeError() -> *mut c_void;
+        #[link_name = "?ReferenceError@Exception@v8@@SA?AV?$Local@VValue@v8@@@2@V?$Local@VString@v8@@@2@V32@@Z"]
+        pub(super) fn v8_Exception_ReferenceError() -> *mut c_void;
+        #[link_name = "?SyntaxError@Exception@v8@@SA?AV?$Local@VValue@v8@@@2@V?$Local@VString@v8@@@2@V32@@Z"]
+        pub(super) fn v8_Exception_SyntaxError() -> *mut c_void;
+        #[link_name = "?TypeError@Exception@v8@@SA?AV?$Local@VValue@v8@@@2@V?$Local@VString@v8@@@2@V32@@Z"]
+        pub(super) fn v8_Exception_TypeError() -> *mut c_void;
+        #[link_name = "?Error@Exception@v8@@SA?AV?$Local@VValue@v8@@@2@V?$Local@VString@v8@@@2@V32@@Z"]
+        pub(super) fn v8_Exception_Error() -> *mut c_void;
+        #[link_name = "?Int32Value@Value@v8@@QEBA?AV?$Maybe@H@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_Int32Value() -> *mut c_void;
+        #[link_name = "?NumberValue@Value@v8@@QEBA?AV?$Maybe@N@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_NumberValue() -> *mut c_void;
+        #[link_name = "?BooleanValue@Value@v8@@QEBA_NPEAVIsolate@2@@Z"]
+        pub(super) fn v8_Value_BooleanValue() -> *mut c_void;
+        #[link_name = "?IntegerValue@Value@v8@@QEBA?AV?$Maybe@_J@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_IntegerValue() -> *mut c_void;
+        #[link_name = "?ToDetailString@Value@v8@@QEBA?AV?$MaybeLocal@VString@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_ToDetailString() -> *mut c_void;
+        #[link_name = "?ToInt32@Value@v8@@QEBA?AV?$MaybeLocal@VInt32@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_ToInt32() -> *mut c_void;
+        #[link_name = "?ToNumber@Value@v8@@QEBA?AV?$MaybeLocal@VNumber@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_ToNumber() -> *mut c_void;
+        #[link_name = "?ToObject@Value@v8@@QEBA?AV?$MaybeLocal@VObject@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_ToObject() -> *mut c_void;
+        #[link_name = "?ToString@Value@v8@@QEBA?AV?$MaybeLocal@VString@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_ToString() -> *mut c_void;
+        #[link_name = "?ToUint32@Value@v8@@QEBA?AV?$MaybeLocal@VUint32@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_ToUint32() -> *mut c_void;
+        #[link_name = "?ToBoolean@Value@v8@@QEBA?AV?$Local@VBoolean@v8@@@2@PEAVIsolate@2@@Z"]
+        pub(super) fn v8_Value_ToBoolean() -> *mut c_void;
+        #[link_name = "?ToInteger@Value@v8@@QEBA?AV?$MaybeLocal@VInteger@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_ToInteger() -> *mut c_void;
     }
 }
 
@@ -4407,7 +4583,54 @@ pub fn fix_dead_code_elimination() {
             _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE,
             _ZNK2v88Function7GetNameEv, _ZNK2v85Value10IsFunctionEv, _ZNK2v85Value5IsMapEv,
             _ZNK2v85Value7IsArrayEv, _ZNK2v85Value7IsInt32Ev, _ZNK2v85Value8IsBigIntEv,
-            _ZN2v812api_internal17FromJustIsNothingEv, uv_os_getpid, uv_os_getppid,
+            _ZN2v812api_internal17FromJustIsNothingEv,
+            _ZN2v811ArrayBuffer3NewEPNS_7IsolateEmNS_30BackingStoreInitializationModeE,
+            _ZN2v812api_internal10EternalizeEPNS_7IsolateEPNS_5ValueE,
+            _ZN2v812api_internal19CopyGlobalReferenceEPm,
+            _ZN2v812api_internal19MoveGlobalReferenceEPPmS2_,
+            _ZN2v812api_internal22AnnotateStrongRetainerEPmPKc,
+            _ZN2v812api_internal8MakeWeakEPPm,
+            _ZN2v812api_internal8MakeWeakEPmPvPFvRKNS_16WeakCallbackInfoIvEEENS_16WeakCallbackTypeE,
+            _ZN2v812api_internal9ClearWeakEPm,
+            _ZN2v86Object3HasENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
+            _ZN2v86Object3HasENS_5LocalINS_7ContextEEEj,
+            _ZN2v86Object6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
+            _ZN2v86Object6DeleteENS_5LocalINS_7ContextEEEj,
+            _ZN2v86String9Utf8ValueC1EPNS_7IsolateENS_5LocalINS_5ValueEEE,
+            _ZN2v86String9Utf8ValueD1Ev,
+            _ZN2v87Integer15NewFromUnsignedEPNS_7IsolateEj,
+            _ZN2v87Integer3NewEPNS_7IsolateEi,
+            _ZN2v87Isolate10ThrowErrorENS_5LocalINS_6StringEEE,
+            _ZN2v87Isolate14ThrowExceptionENS_5LocalINS_5ValueEEE,
+            _ZN2v88Function4CallENS_5LocalINS_7ContextEEENS1_INS_5ValueEEEiPS5_,
+            _ZN2v88Function4CallEPNS_7IsolateENS_5LocalINS_7ContextEEENS3_INS_5ValueEEEiPS7_,
+            _ZN2v88TryCatch10SetVerboseEb, _ZN2v88TryCatch17SetCaptureMessageEb,
+            _ZN2v88TryCatch5ResetEv, _ZN2v88TryCatch7ReThrowEv,
+            _ZN2v88TryCatchC1EPNS_7IsolateE, _ZN2v88TryCatchD1Ev,
+            _ZN2v89Exception10RangeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE,
+            _ZN2v89Exception11SyntaxErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE,
+            _ZN2v89Exception14ReferenceErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE,
+            _ZN2v89Exception5ErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE,
+            _ZN2v89Exception9TypeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE,
+            _ZNK2v811ArrayBuffer10ByteLengthEv, _ZNK2v811ArrayBuffer4DataEv,
+            _ZNK2v85Int325ValueEv, _ZNK2v85Value10Int32ValueENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value11NumberValueENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value12BooleanValueEPNS_7IsolateE,
+            _ZNK2v85Value12IntegerValueENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value14ToDetailStringENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value8ToNumberENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value8ToObjectENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value8ToStringENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value8ToUint32ENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value9ToBooleanEPNS_7IsolateE,
+            _ZNK2v85Value9ToIntegerENS_5LocalINS_7ContextEEE,
+            _ZNK2v86Uint325ValueEv, _ZNK2v87Integer5ValueEv,
+            _ZNK2v88TryCatch10StackTraceENS_5LocalINS_7ContextEEE,
+            _ZNK2v88TryCatch11CanContinueEv, _ZNK2v88TryCatch13HasTerminatedEv,
+            _ZNK2v88TryCatch7MessageEv, _ZNK2v88TryCatch9ExceptionEv,
+            _ZNK2v88TryCatch9HasCaughtEv, _ZNK2v88TryCatch9IsVerboseEv,
+            uv_os_getpid, uv_os_getppid,
         );
     }
     #[cfg(windows)]
@@ -4500,6 +4723,61 @@ pub fn fix_dead_code_elimination() {
             v8_Value_IsInt32,
             v8_Value_IsBigInt,
             v8_api_internal_FromJustIsNothing,
+            v8_ArrayBuffer_New,
+            v8_ArrayBuffer_ByteLength,
+            v8_ArrayBuffer_Data,
+            v8_api_internal_Eternalize,
+            v8_api_internal_CopyGlobalReference,
+            v8_api_internal_MoveGlobalReference,
+            v8_api_internal_AnnotateStrongRetainer,
+            v8_api_internal_MakeWeak_addr,
+            v8_api_internal_MakeWeak_cb,
+            v8_api_internal_ClearWeak,
+            v8_Object_Has_key,
+            v8_Object_Has_index,
+            v8_Object_Delete_key,
+            v8_Object_Delete_index,
+            v8_String_Utf8Value_ctor,
+            v8_String_Utf8Value_dtor,
+            v8_Integer_NewFromUnsigned,
+            v8_Integer_New,
+            v8_Integer_Value,
+            v8_Int32_Value,
+            v8_Uint32_Value,
+            v8_Isolate_ThrowError,
+            v8_Isolate_ThrowException,
+            v8_Function_Call,
+            v8_Function_Call_iso,
+            v8_TryCatch_ctor,
+            v8_TryCatch_dtor,
+            v8_TryCatch_HasCaught,
+            v8_TryCatch_CanContinue,
+            v8_TryCatch_HasTerminated,
+            v8_TryCatch_ReThrow,
+            v8_TryCatch_Exception,
+            v8_TryCatch_StackTrace,
+            v8_TryCatch_Message,
+            v8_TryCatch_Reset,
+            v8_TryCatch_SetVerbose,
+            v8_TryCatch_IsVerbose,
+            v8_TryCatch_SetCaptureMessage,
+            v8_Exception_RangeError,
+            v8_Exception_ReferenceError,
+            v8_Exception_SyntaxError,
+            v8_Exception_TypeError,
+            v8_Exception_Error,
+            v8_Value_Int32Value,
+            v8_Value_NumberValue,
+            v8_Value_BooleanValue,
+            v8_Value_IntegerValue,
+            v8_Value_ToDetailString,
+            v8_Value_ToInt32,
+            v8_Value_ToNumber,
+            v8_Value_ToObject,
+            v8_Value_ToString,
+            v8_Value_ToUint32,
+            v8_Value_ToBoolean,
+            v8_Value_ToInteger,
         );
     }
 

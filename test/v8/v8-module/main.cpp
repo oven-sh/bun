@@ -1271,6 +1271,111 @@ void test_v8_value_type_checks(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void test_v8_return_value_set_uint32(const FunctionCallbackInfo<Value> &info) {
+  // ReturnValue::Set(uint32_t) is inline: values > INT32_MAX call
+  // Integer::NewFromUnsigned, smaller values go the Smi fast path.
+  info.GetReturnValue().Set(
+      static_cast<uint32_t>(info[0].As<Number>()->Value()));
+}
+
+void test_v8_return_value_set_int32(const FunctionCallbackInfo<Value> &info) {
+  // ReturnValue::Set(int32_t) is inline: values outside the Smi range call
+  // Integer::New.
+  info.GetReturnValue().Set(
+      static_cast<int32_t>(info[0].As<Number>()->Value()));
+}
+
+void test_v8_integer(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Integer> small_signed = Integer::New(isolate, -123);
+  LOG_EXPR(small_signed->Value());
+  Local<Integer> large_signed = Integer::New(isolate, -2147483647 - 1);
+  LOG_EXPR(large_signed->Value());
+  Local<Integer> small_unsigned = Integer::NewFromUnsigned(isolate, 123);
+  LOG_EXPR(small_unsigned->Value());
+  Local<Integer> large_unsigned = Integer::NewFromUnsigned(isolate, 4000000000u);
+  LOG_EXPR(large_unsigned->Value());
+  LOG_EXPR(large_unsigned.As<Uint32>()->Value());
+  LOG_EXPR(large_signed.As<Int32>()->Value());
+  return ok(info);
+}
+
+void test_v8_object_has_delete(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Object> obj = info[0].As<Object>();
+  Local<Value> key =
+      String::NewFromUtf8(isolate, "present").ToLocalChecked();
+  Local<Value> missing =
+      String::NewFromUtf8(isolate, "missing").ToLocalChecked();
+  LOG_EXPR(obj->Has(context, key).FromJust());
+  LOG_EXPR(obj->Has(context, missing).FromJust());
+  LOG_EXPR(obj->Has(context, 0).FromJust());
+  LOG_EXPR(obj->Has(context, 99).FromJust());
+  LOG_EXPR(obj->Delete(context, key).FromJust());
+  LOG_EXPR(obj->Has(context, key).FromJust());
+  LOG_EXPR(obj->Delete(context, 0).FromJust());
+  LOG_EXPR(obj->Has(context, 0).FromJust());
+  return ok(info);
+}
+
+void test_v8_function_call(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Function> fn = info[0].As<Function>();
+  Local<Value> argv[2] = {Integer::New(isolate, 3), Integer::New(isolate, 4)};
+  Local<Value> result =
+      fn->Call(context, Undefined(isolate), 2, argv).ToLocalChecked();
+  LOG_EXPR(result.As<Number>()->Value());
+  Local<Value> result2 =
+      fn->Call(isolate, context, Undefined(isolate), 2, argv).ToLocalChecked();
+  LOG_EXPR(result2.As<Number>()->Value());
+  return ok(info);
+}
+
+void test_v8_value_coercions(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Value> v = info[0];
+  LOG_EXPR(describe(isolate, v->ToString(context).ToLocalChecked()));
+  LOG_EXPR(v->ToNumber(context).ToLocalChecked()->Value());
+  LOG_EXPR(v->ToInteger(context).ToLocalChecked()->Value());
+  LOG_EXPR(v->ToInt32(context).ToLocalChecked()->Value());
+  LOG_EXPR(v->ToUint32(context).ToLocalChecked()->Value());
+  LOG_EXPR(v->ToBoolean(isolate)->IsTrue());
+  LOG_EXPR(v->BooleanValue(isolate));
+  LOG_EXPR(v->NumberValue(context).FromJust());
+  LOG_EXPR(v->IntegerValue(context).FromJust());
+  LOG_EXPR(v->Int32Value(context).FromJust());
+  LOG_EXPR(v->ToObject(context).ToLocalChecked()->IsObject());
+  return ok(info);
+}
+
+void test_v8_string_utf8value(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  String::Utf8Value utf8(isolate, info[0]);
+  printf("length=%zu str=%s\n", utf8.length(), *utf8 ? *utf8 : "(null)");
+  return ok(info);
+}
+
+void test_v8_throw_exception(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<String> msg =
+      String::NewFromUtf8(isolate, "boom").ToLocalChecked();
+  isolate->ThrowException(Exception::TypeError(msg));
+}
+
+void test_v8_exception_constructors(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<String> msg = String::NewFromUtf8(isolate, "m").ToLocalChecked();
+  Local<Value> errs[5] = {
+      Exception::Error(msg),          Exception::TypeError(msg),
+      Exception::RangeError(msg),     Exception::ReferenceError(msg),
+      Exception::SyntaxError(msg),
+  };
+  info.GetReturnValue().Set(Array::New(isolate, errs, 5));
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -1330,6 +1435,22 @@ void initialize(Local<Object> exports, Local<Value> module,
                   perform_object_set_by_key);
   NODE_SET_METHOD(exports, "test_v8_value_type_checks",
                   test_v8_value_type_checks);
+  NODE_SET_METHOD(exports, "test_v8_return_value_set_uint32",
+                  test_v8_return_value_set_uint32);
+  NODE_SET_METHOD(exports, "test_v8_return_value_set_int32",
+                  test_v8_return_value_set_int32);
+  NODE_SET_METHOD(exports, "test_v8_integer", test_v8_integer);
+  NODE_SET_METHOD(exports, "test_v8_object_has_delete",
+                  test_v8_object_has_delete);
+  NODE_SET_METHOD(exports, "test_v8_function_call", test_v8_function_call);
+  NODE_SET_METHOD(exports, "test_v8_value_coercions",
+                  test_v8_value_coercions);
+  NODE_SET_METHOD(exports, "test_v8_string_utf8value",
+                  test_v8_string_utf8value);
+  NODE_SET_METHOD(exports, "test_v8_throw_exception",
+                  test_v8_throw_exception);
+  NODE_SET_METHOD(exports, "test_v8_exception_constructors",
+                  test_v8_exception_constructors);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

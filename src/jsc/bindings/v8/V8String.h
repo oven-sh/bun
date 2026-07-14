@@ -115,6 +115,21 @@ public:
     {
         return localToObjectPointer<JSC::JSString>();
     }
+
+    class Utf8Value {
+    public:
+        BUN_EXPORT Utf8Value(Isolate* isolate, Local<v8::Value> obj);
+        BUN_EXPORT ~Utf8Value();
+        char* operator*() { return m_str; }
+        const char* operator*() const { return m_str; }
+        size_t length() const { return m_length; }
+
+        Utf8Value(const Utf8Value&) = delete;
+        void operator=(const Utf8Value&) = delete;
+
+        char* m_str;
+        size_t m_length;
+    };
 };
 
 } // namespace v8

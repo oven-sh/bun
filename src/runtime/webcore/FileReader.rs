@@ -637,9 +637,10 @@ impl FileReader {
                 if buf.len() > len {
                     buf = &buf[0..len];
                 }
-                self.total_readed.set(total_readed + len);
+                let new_total = total_readed + len;
+                self.total_readed.set(new_total);
 
-                if buf.is_empty() {
+                if new_total >= max_size {
                     close = true;
                     has_more = false;
                 }

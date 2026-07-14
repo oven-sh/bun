@@ -7,14 +7,7 @@
 // -lto variants built with ThinLTO (per-module summaries for cross-language
 // importing), and the Windows ICU data table filtered + per-item zstd
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
-//
-// !!! DO NOT LAND WITH AN `autobuild-preview-pr-*` PIN !!!
-// A preview release exists only while its WebKit PR is open: once oven-sh/WebKit#283
-// merges or closes, the release is deleted/re-tagged, every prebuiltUrl() 404s, and
-// every build and CI job fails with no recovery but bumping this line. It also means
-// release binaries are built from an unmerged branch and `process.versions.webkit`
-// is not a sha. Move this to the merged main sha before this PR lands.
-export const WEBKIT_VERSION = "autobuild-preview-pr-283-24c63e7d";
+export const WEBKIT_VERSION = "4895f45dfbd0d1226c4d41799887bc0ecb9f341b";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

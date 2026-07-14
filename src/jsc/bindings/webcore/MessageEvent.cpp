@@ -105,7 +105,7 @@ auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScrip
 
     auto deserialized = data->deserialize(globalObject, &globalObject, ports, SerializationErrorMode::NonThrowing, &didFail);
     if (topExceptionScope.exception()) [[unlikely]] {
-        topExceptionScope.clearException();
+        topExceptionScope.clearExceptionExceptTermination();
         deserialized = jsUndefined();
     }
 

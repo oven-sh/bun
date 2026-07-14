@@ -2,8 +2,9 @@ import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { chmod, cp, mkdir } from "fs/promises";
+import { chmod, cp, mkdir, rename } from "fs/promises";
 import { tmpdirSync } from "harness";
+import { tmpdir } from "os";
 import path, { join } from "path";
 import unzipper from "unzipper";
 
@@ -35,10 +36,30 @@ const packageDefinition = protoLoader.loadSync(join(import.meta.dir, "fixtures/t
 type Server = { address: string; kill: () => Promise<void> };
 
 const cargoBin = Bun.which("cargo") as string;
+
+// Stable per-machine cache so persistent CI agents don't re-download protoc and
+// re-compile the entire tonic/tokio dependency tree (~50s) on every run.
+const cacheDir = join(tmpdir(), "bun-test-tonic-cache");
+
+async function getProtocZipBytes(): Promise<Uint8Array> {
+  const cachedPath = join(cacheDir, `protoc-${protoVersion}-${release}.zip`);
+  const cached = Bun.file(cachedPath);
+  if (await cached.exists()) {
+    return await cached.bytes();
+  }
+  const bytes = await fetch(releases[release]).then(res => res.bytes());
+  await mkdir(cacheDir, { recursive: true });
+  // Write-then-rename so a concurrent/crashed run never leaves a truncated zip behind.
+  const partial = `${cachedPath}.${process.pid}.tmp`;
+  await Bun.write(partial, bytes);
+  await rename(partial, cachedPath);
+  return bytes;
+}
+
 async function startServer(): Promise<Server> {
   const tmpDir = tmpdirSync();
   await cp(join(import.meta.dir, "fixtures/tonic-server"), tmpDir, { recursive: true });
-  const protocZip = await unzipper.Open.buffer(await fetch(releases[release]).then(res => res.bytes()));
+  const protocZip = await unzipper.Open.buffer(await getProtocZipBytes());
 
   const protocPath = join(tmpDir, "protoc");
   await mkdir(protocPath, { recursive: true });
@@ -53,6 +74,9 @@ async function startServer(): Promise<Server> {
       PATH: process.env.PATH,
       CARGO_HOME: process.env.CARGO_HOME,
       RUSTUP_HOME: process.env.RUSTUP_HOME,
+      // Keep cargo's target dir outside the throwaway tmpDir so registry deps
+      // (tonic, tokio, prost, ...) compile once per machine instead of once per run.
+      CARGO_TARGET_DIR: join(cacheDir, "target"),
     },
     stdout: "pipe",
     stdin: "ignore",

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 import crypto from "node:crypto";
 import { PassThrough, Readable } from "node:stream";
@@ -517,6 +518,32 @@ describe("createHash", () => {
     expect(copy.digest("hex")).toBe(hash.digest("hex"));
   });
 
+  it("treats a view over a detached ArrayBuffer as empty input", () => {
+    const detachedView = () => {
+      const ab = new ArrayBuffer(8);
+      const v = new Uint8Array(ab);
+      ab.transfer();
+      return v;
+    };
+
+    const emptyHash = crypto.createHash("sha256").digest("hex");
+    expect(crypto.createHash("sha256").update(detachedView()).digest("hex")).toBe(emptyHash);
+
+    const emptyDataHmac = crypto.createHmac("sha256", "k").digest("hex");
+    expect(crypto.createHmac("sha256", "k").update(detachedView()).digest("hex")).toBe(emptyDataHmac);
+
+    const emptyKeyHmac = crypto.createHmac("sha256", Buffer.alloc(0)).update("m").digest("hex");
+    expect(crypto.createHmac("sha256", detachedView()).update("m").digest("hex")).toBe(emptyKeyHmac);
+
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+
+    const sig = crypto.createSign("sha256").update(detachedView()).sign(privateKey);
+    expect(crypto.createVerify("sha256").verify(publicKey, sig)).toBe(true);
+
+    const emptySig = crypto.createSign("sha256").sign(privateKey);
+    expect(crypto.createVerify("sha256").update(detachedView()).verify(publicKey, emptySig)).toBe(true);
+  });
+
   it("uses the Transform options object", () => {
     const hasher = crypto.createHash("sha256", { defaultEncoding: "binary" });
     hasher.on("readable", () => {
@@ -606,6 +633,33 @@ describe("DiffieHellman", () => {
     expect(dh.getPrivateKey.name).toBe("getPrivateKey");
     expect(dh.setPublicKey.name).toBe("setPublicKey");
     expect(dh.setPrivateKey.name).toBe("setPrivateKey");
+  });
+
+  // BN_get_word reports a BIGNUM too wide for a single BN_ULONG by returning
+  // the all-ones word. The generator-below-2 check must not misread that (or a
+  // truncation of a 33-to-64-bit value on LLP64, where unsigned long is 32
+  // bits) as a small value: any generator that wide is necessarily >= 2.
+  it.each([
+    ["33 bits (wider than a 32-bit unsigned long)", "0100000000"],
+    ["72 bits (wider than any BN_ULONG)", "020000000000000001"],
+  ])("accepts a buffer generator of %s", (_label, hex) => {
+    const p = crypto.getDiffieHellman("modp5").getPrime();
+    const g = Buffer.from(hex, "hex");
+
+    const alice = crypto.createDiffieHellman(p, g);
+    const bob = crypto.createDiffieHellman(p, g);
+    alice.generateKeys();
+    bob.generateKeys();
+
+    expect(alice.getGenerator()).toEqual(g);
+    expect(alice.computeSecret(bob.getPublicKey())).toEqual(bob.computeSecret(alice.getPublicKey()));
+  });
+
+  it("rejects a buffer generator below 2 and accepts exactly 2", () => {
+    const p = crypto.getDiffieHellman("modp5").getPrime();
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x00]))).toThrow(/bad.generator/i);
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x01]))).toThrow(/bad.generator/i);
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x02]))).not.toThrow();
   });
 });
 
@@ -842,6 +896,40 @@ it("cipher.setAAD should not throw if encoding or plaintextLength is undefined #
       plaintextLength: undefined,
     });
   }).not.toThrow();
+});
+
+// Non-AEAD modes must reject setAAD: the AAD pass hands EVP_CipherUpdate a NULL output
+// buffer, which only AEAD modes treat as "discard the output". Runs in a subprocess so
+// the segfault on an unfixed build doesn't take out the test runner.
+it("cipher.setAAD on a non-authenticated cipher throws ERR_CRYPTO_INVALID_STATE", async () => {
+  const cases = [
+    ["createCipheriv", "aes-128-cbc", 16, 16],
+    ["createDecipheriv", "aes-128-cbc", 16, 16],
+    ["createCipheriv", "aes-256-ctr", 32, 16],
+    ["createDecipheriv", "aes-256-ctr", 32, 16],
+    ["createCipheriv", "aes-128-ecb", 16, 0],
+    ["createDecipheriv", "aes-128-ecb", 16, 0],
+  ];
+  const script = `
+    const crypto = require("node:crypto");
+    const aad = Buffer.alloc(64);
+    for (const [fn, algorithm, keyLen, ivLen] of ${JSON.stringify(cases)}) {
+      const cipher = crypto[fn](algorithm, Buffer.alloc(keyLen), ivLen ? Buffer.alloc(ivLen) : null);
+      try {
+        cipher.setAAD(aad);
+        console.log(fn + " " + algorithm + ": returned");
+      } catch (e) {
+        console.log(fn + " " + algorithm + ": " + e.code);
+      }
+    }
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: cases.map(([fn, algorithm]) => `${fn} ${algorithm}: ERR_CRYPTO_INVALID_STATE\n`).join(""),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("generatePrime(Sync) should return an ArrayBuffer", async () => {

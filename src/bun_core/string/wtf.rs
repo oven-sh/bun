@@ -1,5 +1,5 @@
 use crate::string::ZigStringSlice;
-use crate::string::strings;
+use crate::strings;
 
 // Canonical layout lives in `bun_alloc` (lowest-tier crate) so the
 // `is_wtf_allocator` vtable-identity check is a local pointer compare with no
@@ -24,7 +24,7 @@ pub type StringImpl = WTFStringImplStruct;
 
 /// Extension methods on [`WTFStringImplStruct`] that depend on
 /// `bun_string` types ([`ZigStringSlice`], `crate::ZBox`) or
-/// `crate::string::strings::*` transcoding. Kept as a trait because the struct is
+/// `crate::strings::*` transcoding. Kept as a trait because the struct is
 /// defined in `bun_alloc` and an inherent `impl` here would violate the orphan
 /// rule. Glob-imported via `bun_core::WTFStringImplExt` so method-call syntax
 /// keeps working at every existing callsite.

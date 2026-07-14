@@ -3,6 +3,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::io::Write as _;
 
+use crate::Error;
 use crate::bun_fs as fs;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
@@ -11,7 +12,7 @@ use bun_alloc::AllocError;
 use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
 use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
 use bun_core::ZBox;
-use bun_core::{Error, Global, Output, err};
+use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
 use bun_event_loop::MiniEventLoop as mini_event_loop;
@@ -211,7 +212,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
 
 use crate::lockfile_real::package as Package;
 use crate::package_manager_task as Task;
-use crate::resolvers::folder_resolver::FolderResolution;
+use crate::resolvers::folder_resolver::{Entry as FolderResolutionEntry, FolderResolution};
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{
     Dependency, DependencyID, Features, NetworkTask, PackageID, PackageManifestMap,
@@ -314,7 +315,7 @@ type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
 pub(crate) type FolderResolutionMap =
-    HashMap<u64, FolderResolution /* , IdentityContext<u64>, 80 */>;
+    HashMap<u64, FolderResolutionEntry /* , IdentityContext<u64>, 80 */>;
 pub(crate) type NpmAliasMap =
     HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
 
@@ -949,7 +950,7 @@ impl PackageManager {
                     ctx.as_ptr(),
                     dependency,
                     dependency_id,
-                    err,
+                    err.name(),
                 );
             }
         }
@@ -1202,7 +1203,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         .make_open_path(&manager.node_gyp_tempdir_name, Default::default())
     {
         Ok(d) => d,
-        Err(e) if e == bun_core::err!(EEXIST) => {
+        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
             // it should not exist
             bun_core::pretty_errorln!("<r><red>error<r>: node-gyp tempdir already exists");
             Global::crash();
@@ -1210,7 +1211,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         Err(e) => {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
-                e.name(),
+                bstr::BStr::new(e.name()),
             );
             Global::crash();
         }
@@ -1589,7 +1590,7 @@ pub fn init(
                     break 'child attempt_to_create_package_json_and_open()?;
                 }
             }
-            return Err(err!("MissingPackageJSON"));
+            return Err(crate::Error::MissingPackageJSON);
         };
 
         debug_assert!(strings::eql_long(
@@ -1649,15 +1650,14 @@ pub fn init(
                     let json_source =
                         bun_ast::Source::init_path_string(&*json_path, &json_buf[..json_len]);
                     initialize_store();
-                    let json_arena = bun_alloc::Arena::new();
                     // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
                     // duration of `init()` (set by `Command::create()` before any install
                     // entry point runs).
-                    let json = crate::bun_json::parse_package_json_utf8(
-                        &json_source,
-                        unsafe { &mut *ctx.log },
-                        &json_arena,
-                    )?;
+                    let parsed =
+                        crate::bun_json::ParsedJson::parse_package_json(&json_source, unsafe {
+                            &mut *ctx.log
+                        })?;
+                    let json = parsed.root;
                     if subcommand == Subcommand::Pm {
                         if let Some(name) = json.get(b"name").and_then(|e| {
                             if let bun_ast::ExprData::EString(s) = &e.data {
@@ -1670,27 +1670,43 @@ pub fn init(
                         }
                     }
 
-                    use crate::bun_json::ExprData;
                     if let Some(prop) = json.as_property(b"workspaces") {
-                        let json_array = match prop.expr.data {
-                            ExprData::EArray(arr) => arr,
-                            ExprData::EObject(obj) => {
-                                if let Some(packages) = obj.get().get(b"packages") {
-                                    match packages.data {
-                                        ExprData::EArray(arr) => arr,
-                                        _ => break,
+                        let value_loc =
+                            crate::bun_json::property_value_loc(&json_source.contents, prop.loc)
+                                .unwrap_or(prop.loc);
+                        let names = match &prop.expr.data {
+                            bun_ast::ExprData::EArrayJSON(arr) => Some(
+                                Package::WorkspaceMap::NamesArray::Immutable(arr.get(), value_loc),
+                            ),
+                            bun_ast::ExprData::EObjectJSON(obj) => obj
+                                .get()
+                                .properties()
+                                .iter()
+                                .find(|row| row.key.slice() == b"packages")
+                                .and_then(|row| match &row.value {
+                                    bun_ast::E::JsonValue::Array(arr) => {
+                                        let packages_loc = crate::bun_json::property_value_loc(
+                                            &json_source.contents,
+                                            row.key_loc,
+                                        )
+                                        .unwrap_or(row.key_loc);
+                                        Some(Package::WorkspaceMap::NamesArray::Immutable(
+                                            arr.get(),
+                                            packages_loc,
+                                        ))
                                     }
-                                } else {
-                                    break;
-                                }
-                            }
-                            _ => break,
+                                    _ => None,
+                                }),
+                            _ => None,
+                        };
+                        let Some(names) = names else {
+                            break;
                         };
                         let mut log = bun_ast::Log::init();
                         let _ = match workspace_names.process_names_array(
                             &mut workspace_package_json_cache,
                             &mut log,
-                            &*json_array,
+                            names,
                             &json_source,
                             prop.loc,
                             None,
@@ -1796,7 +1812,7 @@ pub fn init(
             // access — sole exclusive borrow is sound.
             unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) }
         }
-        fs::EntriesOption::Err(e) => return Err(e.canonical_error),
+        fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
     };
 
     // SAFETY: `init()` runs once on the main thread before any other access to the singleton.
@@ -2072,7 +2088,10 @@ pub fn init(
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         unsafe { &mut *manager_ptr }.folders.put(
             crate::resolvers::folder_resolver::hash(normalized),
-            crate::resolvers::folder_resolver::FolderResolution::PackageId(0),
+            FolderResolutionEntry {
+                abs_path: Box::<[u8]>::from(&*normalized),
+                resolution: FolderResolution::PackageId(0),
+            },
         )?;
         // normalized.deinit() → Drop (stack buffer)
     }
@@ -2264,24 +2283,22 @@ pub(crate) fn init_with_runtime(
     bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,
     env: &mut dot_env::Loader<'static>,
-) -> Result<*mut PackageManager, bun_core::Error> {
+) -> crate::Result<*mut PackageManager> {
     // NB: not `bun_core::run_once!` — the body is fallible (reading the root
     // directory hits ENOENT/EACCES at runtime when the cwd was deleted or is
     // unreadable), and the failure must be sticky: `holder::RAW_PTR` stays
     // null on failure, so later callers have to see the error instead of a
     // null singleton.
     static ONCE: std::sync::Once = std::sync::Once::new();
-    // `0` = initialized without error; `bun_core::Error` is a `NonZeroU16`, so
-    // every real code round-trips exactly through `as_u16`/`from_raw`.
-    static INIT_ERROR: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(0);
+    static INIT_ERROR: bun_core::Mutex<Option<crate::Error>> = bun_core::Mutex::new(None);
     ONCE.call_once(|| {
         if let Err(err) = init_with_runtime_once(log, bun_install, cli, env) {
-            INIT_ERROR.store(err.as_u16(), core::sync::atomic::Ordering::Release);
+            *INIT_ERROR.lock() = Some(err);
         }
     });
-    match INIT_ERROR.load(core::sync::atomic::Ordering::Acquire) {
-        0 => Ok(get()),
-        code => Err(bun_core::Error::from_raw(code)),
+    match *INIT_ERROR.lock() {
+        None => Ok(get()),
+        Some(code) => Err(code),
     }
 }
 
@@ -2290,7 +2307,7 @@ pub(crate) fn init_with_runtime_once(
     bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,
     env: &mut dot_env::Loader<'static>,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     if env.get(b"BUN_INSTALL_VERBOSE").is_some() {
         PackageManager::set_verbose_install(true);
     }
@@ -2305,7 +2322,7 @@ pub(crate) fn init_with_runtime_once(
         // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
         // and runtime init runs once on the main thread before any other access.
         fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
-        fs::EntriesOption::Err(e) => return Err(e.canonical_error),
+        fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
     };
 
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());

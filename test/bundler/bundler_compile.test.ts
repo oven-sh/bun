@@ -377,19 +377,25 @@ describe("bundler", () => {
       stdout: "Hello, world!\nWorker loaded!\n",
       file: "dist/out",
       setCwd: true,
-      stderr: [
-        "[Disk Cache] Cache hit for sourceCode",
-
-        // TODO: remove this line once bun:main is removed.
-        "[Disk Cache] Cache miss for sourceCode",
-
-        "[Disk Cache] Cache hit for sourceCode",
-
-        // TODO: remove this line once bun:main is removed.
-        "[Disk Cache] Cache miss for sourceCode",
-      ].join("\n"),
       env: {
         BUN_JSC_verboseDiskCache: "1",
+      },
+      // The main thread and the worker each report one hit and one miss (the
+      // miss is bun:main). The two threads interleave, so only the multiset of
+      // lines is stable, not their order.
+      validate({ stderr }) {
+        const lines = stderr
+          .split("\n")
+          .map(line => line.trim())
+          .filter(line => line.startsWith("[Disk Cache]"))
+          .sort();
+        expect(lines).toEqual([
+          "[Disk Cache] Cache hit for sourceCode",
+          "[Disk Cache] Cache hit for sourceCode",
+          // TODO: remove these two lines once bun:main is removed.
+          "[Disk Cache] Cache miss for sourceCode",
+          "[Disk Cache] Cache miss for sourceCode",
+        ]);
       },
     },
   });
@@ -923,17 +929,29 @@ error: Hello World`,
     files: {
       "/entry.ts": /* js */ `
         console.log("This is compiled code");
+        console.log(JSON.stringify({ isStandaloneExecutable: Bun.isStandaloneExecutable }));
       `,
     },
     run: [
       {
-        stdout: "This is compiled code",
+        stdout: `This is compiled code\n{"isStandaloneExecutable":true}`,
       },
       {
         env: { BUN_BE_BUN: "1" },
         validate({ stdout }) {
           expect(stdout).not.toContain("This is compiled code");
         },
+      },
+      {
+        // With BUN_BE_BUN=1 the compiled executable behaves like the plain `bun` CLI:
+        // the embedded standalone module graph is never loaded, so Bun.isStandaloneExecutable
+        // must be false even though the binary itself contains one.
+        env: { BUN_BE_BUN: "1" },
+        args: [
+          "-e",
+          `console.log(JSON.stringify({ isStandaloneExecutable: Bun.isStandaloneExecutable, type: typeof Bun.isStandaloneExecutable }))`,
+        ],
+        stdout: `{"isStandaloneExecutable":false,"type":"boolean"}`,
       },
     ],
   });

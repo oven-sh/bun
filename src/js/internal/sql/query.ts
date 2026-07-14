@@ -289,7 +289,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     // Only mark as handled if there's a rejection handler
     const hasRejectionHandler = arguments.length >= 2 && arguments[1] != null;
     if (hasRejectionHandler) {
-      $markPromiseAsHandled(result);
+      $pokePromiseAsHandled(result);
     }
 
     return result;
@@ -303,7 +303,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this.#runAsyncAndCatch();
 
     const result = super.catch.$apply(this, arguments);
-    $markPromiseAsHandled(result);
+    $pokePromiseAsHandled(result);
 
     return result;
   }

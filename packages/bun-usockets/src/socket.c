@@ -245,7 +245,9 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     }
 
     if (c->addrinfo_req) {
-        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED);
+        /* Invalidate the cache entry for a refused connect (addresses may be
+         * stale) and for a resolver failure (never cache a negative result). */
+        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED || c->error_is_dns);
         c->addrinfo_req = 0;
     }
     us_dispatch_connecting_error(c, c->error);
@@ -492,8 +494,11 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written < 0) {
         /* bsd_send already retries EINTR; bsd_would_block() reads errno on
-         * POSIX and WSAGetLastError() on Windows. */
-        if (bsd_would_block()) {
+         * POSIX and WSAGetLastError() on Windows. ENOBUFS/ENOMEM are
+         * transient kernel resource exhaustion on a healthy connection -
+         * classifying them as fatal made the node:net drain path drop the
+         * buffered bytes on a socket that kept flowing. */
+        if (bsd_would_block() || bsd_send_is_transient_error()) {
             s->flags.last_write_failed = 1;
             us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
             return 0;
@@ -630,6 +635,10 @@ void us_connecting_socket_shutdown(struct us_connecting_socket_t *c) {
 
 int us_connecting_socket_get_error(struct us_connecting_socket_t *c) {
     return c->error;
+}
+
+int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) {
+    return c->error_is_dns ? c->error : 0;
 }
 
 struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length) {

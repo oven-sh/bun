@@ -73,6 +73,7 @@
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"
 #include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include "AsyncContextFrame.h"
 
@@ -639,9 +640,7 @@ extern "C" napi_status napi_create_arraybuffer(napi_env env,
     Zig::GlobalObject* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
 
-    // Node probably doesn't create uninitialized array buffers
-    // but the node-api docs don't specify whether memory is initialized or not.
-    RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreateUninitialized(byte_length, 1);
+    RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreate(byte_length, 1);
     if (!arrayBuffer) {
         return napi_set_last_error(env, napi_generic_failure);
     }
@@ -1066,13 +1065,31 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
 
 // code must be a string or nullptr (no code)
 // msg must be a string
-// never calls toString, never throws
+//
+// Matches Node.js, where napi_create_error is a pure value producer that
+// does not check the VM exception state on entry. Bun previously used a
+// throw scope + RETURN_IF_EXCEPTION here, so a *pre-existing* VM exception
+// made napi_create_error return napi_pending_exception. That broke
+// node-addon-api's `Error::New(env)` during env cleanup: the helper calls
+// napi_is_exception_pending (which Bun deliberately skips the VM check for
+// during cleanup, so it reports "no pending exception"), then falls through
+// to napi_create_error; when a prior finalizer left a VM exception on the
+// scope, the mismatch tripped NAPI_FATAL_IF_FAILED -> napi_fatal_error ->
+// panic. See #30286 and #22259.
+//
+// We use a TopExceptionScope (not a throw scope) so a pre-existing exception
+// does not force an early return. But we must NOT leave a *new* exception
+// pending either: getString() resolves rope strings and can throw
+// OutOfMemoryError, and returning napi_ok with an unchecked exception on the
+// VM crashes later. So we clear only what our own string resolution / error
+// construction raised, leaving any pre-existing exception untouched (matching
+// Node.js, which never disturbs the caller's pending exception) and never
+// clearing a termination exception (which must keep unwinding).
 static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi_value message, JSC::ErrorType type, napi_value* result)
 {
     auto* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, message);
@@ -1082,15 +1099,16 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
         js_message.isString() && (js_code.isEmpty() || js_code.isString()),
         napi_string_expected);
 
+    JSC::Exception* preExisting = scope.exception();
     auto wtf_code = js_code.isEmpty() ? WTF::String() : js_code.getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     auto wtf_message = js_message.getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
 
     *result = toNapi(
         createErrorWithCode(vm, globalObject, wtf_code, wtf_message, type),
         globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
+
+    if (scope.exception() && scope.exception() != preExisting)
+        scope.clearExceptionExceptTermination();
     return napi_set_last_error(env, napi_ok);
 }
 
@@ -2154,7 +2172,9 @@ extern "C" napi_status napi_create_double(napi_env env, double value,
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
-    *result = toNapi(jsNumber(value), toJS(env));
+    // The addon controls every bit of `value`; an impure NaN must not be
+    // NaN-boxed as-is or it decodes as a forged JSValue (see PureNaN.h).
+    *result = toNapi(jsNumber(purifyNaN(value)), toJS(env));
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -3019,6 +3039,16 @@ extern "C" void napi_internal_cleanup_env_cpp(napi_env env)
     env->cleanup();
 }
 
+extern "C" bool NapiEnv__registerThreadSafeFunction(napi_env env, void* tsfn)
+{
+    return env->registerThreadSafeFunction(tsfn);
+}
+
+extern "C" void NapiEnv__unregisterThreadSafeFunction(napi_env env, void* tsfn)
+{
+    env->unregisterThreadSafeFunction(tsfn);
+}
+
 extern "C" void napi_internal_remove_finalizer(napi_env env, napi_finalize callback, void* hint, void* data)
 {
     env->removeFinalizer(callback, hint, data);
@@ -3060,4 +3090,17 @@ extern "C" void NapiEnv__deref(napi_env env)
     env->deref();
 }
 
+}
+
+// Defined out-of-line so its uses of DECLARE_TOP_EXCEPTION_SCOPE (whose
+// ctor/dtor are JS_EXPORT_PRIVATE when ENABLE_EXCEPTION_SCOPE_VERIFICATION
+// is on) are confined to a single TU instead of inlined into every
+// translation unit that includes napi.h.
+void NapiEnv::clearExceptionsBetweenFinalizers()
+{
+    // VM::clearException (via TopExceptionScope::clearException) also
+    // resets m_needExceptionCheck bookkeeping, so a leaked exception
+    // from one finalizer does not trip debug asserts in the next.
+    DECLARE_TOP_EXCEPTION_SCOPE(m_vm).clearException();
+    m_pendingException.clear();
 }

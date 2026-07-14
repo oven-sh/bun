@@ -2,6 +2,10 @@
 
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
+
+pub mod error;
+pub use error::{Error, Result};
+
 use core::mem;
 
 use bun_collections::bit_set::ArrayBitSet;
@@ -154,13 +158,19 @@ impl<'a> PatchFile<'a> {
                     let Some(hunk) = &file_creation.hunk else {
                         continue;
                     };
+                    // A crafted `@@ -0,0 +0,0 @@` header with no body parses to a
+                    // hunk with zero parts; treat it as an empty file rather than
+                    // indexing `parts[0]`.
+                    let Some(first_part) = hunk.parts.first() else {
+                        continue;
+                    };
 
-                    let last_line = hunk.parts[0].lines.len().saturating_sub(1);
-                    let no_newline_at_end_of_file = hunk.parts[0].no_newline_at_end_of_file;
+                    let last_line = first_part.lines.len().saturating_sub(1);
+                    let no_newline_at_end_of_file = first_part.no_newline_at_end_of_file;
 
                     let count = {
                         let mut total: usize = 0;
-                        for (i, line) in hunk.parts[0].lines.iter().enumerate() {
+                        for (i, line) in first_part.lines.iter().enumerate() {
                             total += line.len();
                             total += (i < last_line) as usize;
                         }
@@ -175,7 +185,7 @@ impl<'a> PatchFile<'a> {
                     let file_contents: Vec<u8> = {
                         let mut contents = vec![0u8; count];
                         let mut i: usize = 0;
-                        for (idx, line) in hunk.parts[0].lines.iter().enumerate() {
+                        for (idx, line) in first_part.lines.iter().enumerate() {
                             contents[i..i + line.len()].copy_from_slice(line);
                             i += line.len();
                             if idx < last_line || !no_newline_at_end_of_file {
@@ -306,22 +316,22 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         }
         file_line_count = count;
 
-        // Adjust to account for the changes
+        // Adjust to account for the changes. This is only a capacity hint for
+        // `lines` below; saturate so a header that claims more deletions than
+        // the file has cannot panic (bounds are enforced during the splice).
         for hunk in &patch.hunks {
-            count = usize::try_from(
-                i64::try_from(count).expect("int cast") + i64::from(hunk.header.patched.len)
-                    - i64::from(hunk.header.original.len),
-            )
-            .unwrap();
+            count = count
+                .saturating_add(hunk.header.patched.len as usize)
+                .saturating_sub(hunk.header.original.len as usize);
             for part in &hunk.parts {
                 let part: &PatchMutationPart = part;
                 match part.ty {
                     PartType::Deletion => {
                         // deleting the no newline pragma so we are actually adding a line
-                        count += if part.no_newline_at_end_of_file { 1 } else { 0 };
+                        count = count.saturating_add(part.no_newline_at_end_of_file as usize);
                     }
                     PartType::Insertion => {
-                        count -= if part.no_newline_at_end_of_file { 1 } else { 0 };
+                        count = count.saturating_sub(part.no_newline_at_end_of_file as usize);
                     }
                     PartType::Context => {}
                 }
@@ -878,12 +888,6 @@ pub enum ParseErr {
     no_path_given_for_file_creation,
     #[error("bad_file_mode")]
     bad_file_mode,
-}
-
-impl From<ParseErr> for bun_core::Error {
-    fn from(e: ParseErr) -> Self {
-        bun_core::err!(from e)
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1525,8 +1529,7 @@ fn parse_hunk_header_line<'a>(line_: &'a [u8]) -> Result<Hunk<'a>, ParseErr> {
 fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     // index 2de83dd..842652c 100644
     //       ^
-    //       we expect that we are here
-    debug_assert!(!line.starts_with(b"index "));
+    //       the caller has already stripped the leading "index "
 
     // From @pnpm/patch-package the regex is this:
     // const match = line.match(/(\w+)\.\.(\w+)/)
@@ -1722,7 +1725,7 @@ pub fn diff_post_process(
     result: &mut bun_spawn::sync::Result,
     old_folder: &[u8],
     new_folder: &[u8],
-) -> Result<core::result::Result<Vec<u8>, Vec<u8>>, bun_core::Error> {
+) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
 
@@ -1799,7 +1802,7 @@ pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
     loop_: &mut bun_event_loop::AnyEventLoop<'static>,
-) -> Result<core::result::Result<Vec<u8>, Vec<u8>>, bun_core::Error> {
+) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let paths = git_diff_preprocess_paths::<false>(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];
@@ -1813,7 +1816,7 @@ pub fn git_diff_internal(
         b"",
         b"git",
     )
-    .ok_or_else(|| bun_core::err!(FileNotFound))?;
+    .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
 
     const ARGV: &[&[u8]] = &[
         b"-c",
@@ -1929,7 +1932,7 @@ fn git_diff_postprocess(
     stdout: &mut Vec<u8>,
     old_folder: &[u8],
     new_folder: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 

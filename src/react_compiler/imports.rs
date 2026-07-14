@@ -24,9 +24,6 @@ use crate::program::Host;
 /// Corresponds to NonLocalImportSpecifier in the TS compiler.
 #[derive(Debug, Clone, Copy)]
 pub struct NonLocalImportSpecifier {
-    /// Bun symbol for the local binding; minted via `Host::new_generated`
-    /// so codegen emits `EIdentifier { ref_: name_ref }`. The textual name
-    /// is recoverable via `Host::ref_name(name_ref)`.
     pub name_ref: bun_ast::Ref,
     pub module: &'static str,
     pub imported: &'static str,
@@ -185,7 +182,7 @@ impl ProgramContext {
         }
 
         let name = self.new_uid(name_hint.unwrap_or(specifier));
-        let name_ref = host.new_generated(name.as_bytes());
+        let name_ref = host.new_import_item(name.as_bytes());
         let binding = NonLocalImportSpecifier {
             name_ref,
             module,

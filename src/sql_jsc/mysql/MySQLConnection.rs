@@ -1,5 +1,5 @@
 use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
-use bun_collections::{HashMap, IdentityContext, OffsetByteList, VecExt};
+use bun_collections::{OffsetByteList, StringHashMap, VecExt};
 use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
 
 use bun_sql::mysql::Capabilities;
@@ -816,12 +816,10 @@ impl MySQLConnection {
 
                             match response.status {
                                 Auth::caching_sha2_password::FastAuthStatus::SUCCESS => {
-                                    debug!("success auth");
-                                    self.set_status(ConnectionState::Connected);
-
-                                    self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
-                                    self.queue.mark_as_ready_for_query();
-                                    self.advance();
+                                    // fast_auth_success only acknowledges the cached scramble; the
+                                    // server always follows it with the OK/ERR packet that concludes
+                                    // auth, so stay in Authenticating and let the arms above consume it.
+                                    debug!("fast auth success, awaiting OK");
                                 }
                                 Auth::caching_sha2_password::FastAuthStatus::CONTINUE_AUTH => {
                                     bun_core::scoped_log!(MySQLConnection, "continue auth");
@@ -1561,9 +1559,9 @@ pub enum CachingSha2 {
 pub enum FlushQueueError {
     AuthenticationFailed,
 }
-impl From<FlushQueueError> for bun_core::Error {
+impl From<FlushQueueError> for crate::Error {
     fn from(_: FlushQueueError) -> Self {
-        bun_core::err!("AuthenticationFailed")
+        crate::Error::AuthenticationFailed
     }
 }
 
@@ -1725,10 +1723,9 @@ impl ReaderContext for Reader {
 // `JSMySQLConnection::on_query_result(MySQLQueryResult)` without conversion.
 pub use bun_sql::mysql::MySQLQueryResult as QueryResult;
 
-// Keys are already wyhash values, so identity hash avoids re-hashing.
-pub(crate) type PreparedStatementsMap = HashMap<u64, *mut MySQLStatement, IdentityContext<u64>>;
+pub(crate) type PreparedStatementsMap = StringHashMap<*mut MySQLStatement>;
 /// Result of `PreparedStatementsMap::get_or_put` — surfaced for
-/// `JSMySQLConnection::get_statement_from_signature_hash`.
+/// `JSMySQLConnection::get_statement_from_signature_name`.
 pub(crate) type PreparedStatementsMapGetOrPutResult<'a> =
     bun_collections::hash_map::GetOrPutResult<'a, *mut MySQLStatement>;
 

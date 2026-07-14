@@ -20,8 +20,6 @@ pub enum OverflowError {
     Overflow,
 }
 
-crate::named_error_set!(OverflowError);
-
 /// A structure with an array and a length, that can be used as a slice.
 ///
 /// Useful to pass around small arrays whose exact size is only known at
@@ -449,9 +447,9 @@ impl<T, const N: usize> core::ops::DerefMut for BoundedArrayAligned<T, N> {
 // Only defined for `T == u8`.
 impl<const BUFFER_CAPACITY: usize> crate::io::Write for BoundedArrayAligned<u8, BUFFER_CAPACITY> {
     #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+    fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
         self.append_slice(buf)
-            .map_err(|_| crate::err!("NoSpaceLeft"))
+            .map_err(|_| crate::CrateError::NoSpaceLeft)
     }
     #[inline]
     fn written_len(&self) -> usize {

@@ -1293,6 +1293,30 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("object API ToObject coercion", () => {
+    // The element/property-name/prototype family must coerce primitive targets
+    // via ToObject (succeeding for strings/numbers/booleans) and return
+    // napi_object_expected with a pending TypeError for null/undefined.
+    // napi_get_all_property_names must reject out-of-range enum arguments and
+    // honor napi_key_keep_numbers so index keys come back as numbers.
+    it("matches Node's CHECK_TO_OBJECT semantics and validates enums", async () => {
+      const output = await checkSameOutput("test_napi_object_coercion", []);
+      // Spot-check the lines that carry the most signal; checkSameOutput has
+      // already asserted full byte-for-byte parity with Node.
+      expect(output).toContain("set_element(number): status=0 pending=0");
+      expect(output).toContain("set_element(null): status=2 pending=1");
+      expect(output).toContain("get_element(string,1): status=0 pending=0");
+      expect(output).toContain("get_element(string,1) value=b");
+      expect(output).toContain("get_prototype(number): status=0 pending=0");
+      expect(output).toContain("get_prototype(number) is Number.prototype=1");
+      expect(output).toContain("get_prototype(null): status=2 pending=1");
+      expect(output).toContain("get_all_property_names(key_mode=99): status=1 pending=0");
+      expect(output).toContain("get_all_property_names(key_conversion=99): status=1 pending=0");
+      expect(output).toContain("keep_numbers key0 typeof=number");
+      expect(output).toContain("numbers_to_strings key0 typeof=string");
+    });
+  });
+
   describe("napi_object_freeze and napi_object_seal", () => {
     it("should handle arrays with indexed properties", async () => {
       const output = await checkSameOutput("test_napi_freeze_seal_indexed", []);

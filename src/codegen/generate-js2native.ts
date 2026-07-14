@@ -68,6 +68,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "jest.rs": "runtime/test_runner/jest.rs",
   "ipc.rs": "jsc/ipc.rs",
   "mysql.rs": "sql_jsc/mysql.rs",
+  "napi_body.rs": "runtime/napi/napi_body.rs",
   "node_assert_binding.rs": "runtime/node/node_assert_binding.rs",
   "node_cluster_binding.rs": "runtime/node/node_cluster_binding.rs",
   "node_crypto_binding.rs": "runtime/node/node_crypto_binding.rs",

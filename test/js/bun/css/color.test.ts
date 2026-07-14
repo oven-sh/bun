@@ -536,3 +536,49 @@ describe("input forms", () => {
     expect(color("#f00", "[rgb]")).toEqual([255, 0, 0]);
   });
 });
+
+// https://drafts.csswg.org/css-color-5/#color-mix — the grammar is
+// <percentage [0,100]>, so a value outside that range is a parse error.
+describe("color-mix() percentage range", () => {
+  // fuzz repro: -9% drove HSL saturation negative and tripped a debug assertion
+  // in hsl_to_rgb; release builds produced out-of-gamut garbage.
+  test("does not crash on a negative mix percentage", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write(String(Bun.color("color-mix(in hsl,red -9%,color(display-p3 0 0 0)", "lab")))`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr }).toEqual({ stdout: "null", exitCode: 0 });
+  });
+
+  test.each([
+    "color-mix(in hsl, red -9%, blue)",
+    "color-mix(in hsl, red 150%, blue)",
+    "color-mix(in hsl, -10% red, blue)",
+    "color-mix(in hsl, red, blue -9%)",
+    "color-mix(in hsl, red, blue 150%)",
+    "color-mix(in hsl, red, 150% blue)",
+    "color-mix(in srgb, red -1%, blue)",
+    "color-mix(in srgb, red 100.001%, blue)",
+    "color-mix(in lab, red -9%, blue)",
+    "color-mix(in hwb, red -9%, blue)",
+    "color-mix(in oklch, red 150%, blue)",
+  ])("rejects %s", input => {
+    expect(color(input, "css")).toBeNull();
+  });
+
+  test.each([
+    ["color-mix(in hsl, red 0%, blue)", "#00f"],
+    ["color-mix(in hsl, red 100%, blue)", "red"],
+    ["color-mix(in hsl, red 50%, blue 50%)", "#f0f"],
+    ["color-mix(in hsl, red, blue 0%)", "red"],
+    ["color-mix(in hsl, red, blue 100%)", "#00f"],
+  ])("accepts %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});

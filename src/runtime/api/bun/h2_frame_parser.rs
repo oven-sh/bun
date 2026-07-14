@@ -11,6 +11,7 @@
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use crate::api::socket::{TCPSocket, TLSSocket};
@@ -1043,6 +1044,13 @@ impl Handlers {
         self.global_object
     }
 
+    /// A zero/empty arg means a value failed to materialize (e.g. a header
+    /// materializer bailed); skip the callback rather than passing it to JS.
+    /// The pending-termination-exception guard lives in `run_callback`.
+    fn should_skip_dispatch(&self, data: &[JSValue]) -> bool {
+        data.contains(&JSValue::ZERO)
+    }
+
     pub(crate) fn call_event_handler(
         &self,
         event: JSH2FrameParser::Gc,
@@ -1053,6 +1061,12 @@ impl Handlers {
         let Some(callback) = event.get(this_value) else {
             return false;
         };
+        // A zero/empty arg means a value failed to materialize (e.g. the VM is
+        // terminating); skip the callback rather than passing it to JS, which
+        // asserts/crashes in Bun__JSValue__call.
+        if self.should_skip_dispatch(data) {
+            return false;
+        }
         self.vm
             .event_loop_ref()
             .run_callback(callback, &self.global(), context, data);
@@ -1061,6 +1075,9 @@ impl Handlers {
 
     pub(crate) fn call_write_callback(&self, callback: JSValue, data: &[JSValue]) -> bool {
         if !callback.is_callable() {
+            return false;
+        }
+        if self.should_skip_dispatch(data) {
             return false;
         }
         self.vm
@@ -1078,6 +1095,9 @@ impl Handlers {
         let Some(callback) = event.get(this_value) else {
             return JSValue::ZERO;
         };
+        if self.should_skip_dispatch(data) {
+            return JSValue::ZERO;
+        }
         self.vm.event_loop_ref().run_callback_with_result(
             callback,
             &self.global(),
@@ -1228,7 +1248,13 @@ thread_local! {
     // Reused iovec scratch for the vectored flush.
     static BATCH_IOVECS: RefCell<Vec<bun_uws_sys::UsIoVec>> = const { RefCell::new(Vec::new()) };
     static CORKED_H2: Cell<Option<*mut H2FrameParser>> = const { Cell::new(None) };
-    static POOL: RefCell<Option<Box<H2FrameParserHiveAllocator>>> = const { RefCell::new(None) };
+    // `ManuallyDrop` inside the `Box`: the TLS destructor runs after
+    // `WebWorker::destroy` has raw-deallocated the VM, so `HiveArray::Drop`
+    // on any leaked parser would touch freed JSC/uws state. Skip slot
+    // teardown (a leaked parser is a bug anyway) while still freeing the
+    // pool allocation itself.
+    static POOL: RefCell<Option<Box<ManuallyDrop<H2FrameParserHiveAllocator>>>> =
+        const { RefCell::new(None) };
     static SHARED_REQUEST_BUFFER: RefCell<Box<[u8; 16384]>> = RefCell::new(Box::new([0u8; 16384]));
 }
 
@@ -2226,7 +2252,7 @@ impl H2FrameParser {
         name: &[u8],
         value: &[u8],
         never_index: bool,
-    ) -> Result<usize, bun_core::Error> {
+    ) -> crate::Result<usize> {
         let old_len = encoded_headers.len();
         let required = old_len + name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
         // Note: materializing `&mut [u8]` over uninitialized capacity is UB and
@@ -2252,12 +2278,12 @@ impl H2FrameParser {
         }
     }
 
-    pub(crate) fn decode(&self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
+    pub(crate) fn decode(&self, src_buffer: &[u8]) -> crate::Result<HeaderValue> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
-                return hpack.decode(src_buffer).map_err(bun_core::Error::from);
+                return hpack.decode(src_buffer).map_err(crate::Error::from);
             }
-            Err(bun_core::err!("UnableToDecode"))
+            Err(crate::Error::UnableToDecode)
         })
     }
 
@@ -2268,15 +2294,15 @@ impl H2FrameParser {
         name: &[u8],
         value: &[u8],
         never_index: bool,
-    ) -> Result<usize, bun_core::Error> {
+    ) -> crate::Result<usize> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
                 // lets make sure the name is lowercase
                 return hpack
                     .encode(name, value, never_index, dst_buffer, dst_offset)
-                    .map_err(bun_core::Error::from);
+                    .map_err(crate::Error::from);
             }
-            Err(bun_core::err!("UnableToEncode"))
+            Err(crate::Error::UnableToEncode)
         })
     }
 
@@ -5036,6 +5062,12 @@ impl H2FrameParser {
         };
 
         let global = self.handlers.get().global();
+        // A prior frame's callback can drain microtasks that tear the worker
+        // down (worker.terminate()); skip rather than calling JS with the
+        // termination exception pending. Same guard as read_bytes().
+        if global.has_exception() {
+            return Some(stream);
+        }
         match callback.call(
             &global,
             ctx_value,
@@ -5100,6 +5132,14 @@ impl H2FrameParser {
     }
 
     fn read_bytes(&self, bytes: &[u8]) -> JsResult<usize> {
+        // read() loops this per frame. A prior frame's callback can drain
+        // microtasks that tear the worker down (worker.terminate()), leaving a
+        // pending (termination) exception; dispatching further frames then calls
+        // JS with that exception pending (assertNoException) or with torn-down
+        // values. Stop consuming once an exception is pending.
+        if self.handlers.get().global().has_exception() {
+            return Ok(bytes.len());
+        }
         bun_output::scoped_log!(H2FrameParser, "read {}", bytes.len());
         if self.is_server.get() && self.preface_received_len.get() < 24 {
             // Handle Server Preface
@@ -5958,7 +5998,7 @@ impl bun_io::Write for DirectWriterStruct {
         if self.writer.write(data) {
             Ok(())
         } else {
-            Err(bun_core::err!("SocketClosed"))
+            Err(bun_core::Error::WriteFailed)
         }
     }
 }
@@ -7168,12 +7208,9 @@ impl H2FrameParser {
     }
 
     /// validate header name and convert to lowecase if needed
-    fn to_valid_header_name<'a>(
-        in_: &'a [u8],
-        out: &'a mut [u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    fn to_valid_header_name<'a>(in_: &'a [u8], out: &'a mut [u8]) -> crate::Result<&'a [u8]> {
         if in_.len() > 4096 {
-            return Err(bun_core::err!("InvalidHeaderName"));
+            return Err(crate::Error::InvalidHeaderName);
         }
         debug_assert!(out.len() >= in_.len());
         let mut in_slice = in_;
@@ -7212,11 +7249,11 @@ impl H2FrameParser {
                     b':' => {
                         // only allow pseudoheaders at the beginning
                         if i != 0 || any {
-                            return Err(bun_core::err!("InvalidHeaderName"));
+                            return Err(crate::Error::InvalidHeaderName);
                         }
                         continue;
                     }
-                    _ => return Err(bun_core::err!("InvalidHeaderName")),
+                    _ => return Err(crate::Error::InvalidHeaderName),
                 }
             }
 
@@ -7374,7 +7411,7 @@ impl H2FrameParser {
                     never_index,
                 ) {
                     Ok(_) => Ok(None),
-                    Err(err) if err == bun_core::err!("OutOfMemory") => {
+                    Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
                         Err(global_object.throw(format_args!("Failed to allocate header buffer")))
                     }
                     Err(_) => {
@@ -8310,7 +8347,7 @@ impl H2FrameParser {
                         value,
                         never_index,
                     ) {
-                        if err == bun_core::err!("OutOfMemory") {
+                        if matches!(err, crate::Error::Alloc(_)) {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
@@ -8497,7 +8534,7 @@ impl H2FrameParser {
                             value,
                             never_index,
                         ) {
-                            if err == bun_core::err!("OutOfMemory") {
+                            if matches!(err, crate::Error::Alloc(_)) {
                                 return Err(global_object
                                     .throw(format_args!("Failed to allocate header buffer")));
                             }
@@ -8587,7 +8624,7 @@ impl H2FrameParser {
                         value,
                         never_index,
                     ) {
-                        if err == bun_core::err!("OutOfMemory") {
+                        if matches!(err, crate::Error::Alloc(_)) {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
@@ -9255,8 +9292,16 @@ impl H2FrameParser {
                 let pool = pool.get_or_insert_with(|| {
                     // SAFETY: `new_boxed` returns a `Box::leak`ed, fully
                     // initialized allocation; `from_raw` reclaims that exact
-                    // pointer back into an owning `Box`.
-                    unsafe { Box::from_raw(H2FrameParserHiveAllocator::new_boxed().as_ptr()) }
+                    // pointer back into an owning `Box`. `ManuallyDrop<T>` is
+                    // `repr(transparent)` over `T`, so the pointer cast is a
+                    // layout no-op.
+                    unsafe {
+                        Box::from_raw(
+                            H2FrameParserHiveAllocator::new_boxed()
+                                .as_ptr()
+                                .cast::<ManuallyDrop<H2FrameParserHiveAllocator>>(),
+                        )
+                    }
                 });
                 pool.get_init(init).as_ptr()
             })

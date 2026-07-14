@@ -159,6 +159,29 @@ impl<'a> TestRunner<'a> {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;
         };
+        // Per-entry deadline, not the (only-advances-sooner) file timer.
+        // `on_stack_entry` pins the caller when still synchronously on stack;
+        // else take the latest running entry so a sibling never terminates early.
+        if let Some(entry) = active_file.execution.on_stack_entry.get() {
+            // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+            return unsafe { entry.as_ref() }.timespec;
+        }
+        if active_file.phase == bun_test::Phase::Execution {
+            if let Some(group) = active_file.execution.active_group_ref() {
+                let mut latest: Option<bun_core::Timespec> = None;
+                for seq in group.sequences_const(&active_file.execution) {
+                    let Some(entry) = seq.active_entry else { continue };
+                    // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+                    let ts = unsafe { entry.as_ref() }.timespec;
+                    if latest.is_none_or(|l| ts.order(&l) == core::cmp::Ordering::Greater) {
+                        latest = Some(ts);
+                    }
+                }
+                if let Some(latest) = latest {
+                    return latest;
+                }
+            }
+        }
         if active_file.timer.state != TimerState::ACTIVE
             || active_file.timer.next == ElTimespec::EPOCH
         {

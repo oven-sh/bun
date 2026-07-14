@@ -1936,8 +1936,8 @@ interface BunFetchRequestInit extends RequestInit {
 
   /**
    * The proxy to send the request through, overriding the `http_proxy` and
-   * `HTTPS_PROXY` environment variables. Accepts a URL string, or an object
-   * with `url` and optional `headers`.
+   * `HTTPS_PROXY` environment variables. Accepts a URL string, a URL instance,
+   * or an object with `url` and optional `headers`.
    *
    * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
    * precedence over credentials parsed from the proxy URL.
@@ -1965,6 +1965,7 @@ interface BunFetchRequestInit extends RequestInit {
    */
   proxy?:
     | string
+    | URL
     | {
         /**
          * The proxy URL, as a string or a `URL`.

@@ -31,12 +31,13 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_stream, m_underlyingSource, m_pendingRead,
+    // visitChildrenImpl MUST visit: m_stream, m_underlyingSource, m_pull, m_pendingRead,
     // m_deferCloseReason, m_arrayBufferSink, m_array, m_closingPromise, m_finalChunk, and
     // the barrier container m_textAccumulator.pieces (via
     // m_textAccumulator.visit(locker, visitor) inside ONE `Locker { cellLock() }` scope
     // taken by THIS visitChildrenImpl — cellLock() is non-recursive; see StreamQueue.h).
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -50,9 +51,10 @@ public:
     // Core state
     // $controlledReadableStream
     JSC::WriteBarrier<JSReadableStream> m_stream;
-    // the USER underlyingSource object; `pull` / `close` are re-[[Get]] on each use
-    // (deliberate: the direct protocol is NOT the spec's captured-once protocol).
+    // the USER underlyingSource object and its captured `pull` method (captured once at
+    // setUpDirectStreamController, matching the native-sink path's m_onPull).
     JSC::WriteBarrier<JSC::JSObject> m_underlyingSource;
+    JSC::WriteBarrier<JSC::JSObject> m_pull;
     // _pendingRead — the promise the in-flight read() is waiting on. handleError rejects
     // AND CLEARS it.
     JSC::WriteBarrier<JSC::JSPromise> m_pendingRead;
@@ -62,11 +64,22 @@ public:
     int8_t m_deferClose { 0 };
     // -1 = pull in progress, 0 = idle, 1 = flush deferred
     int8_t m_deferFlush { 0 };
-    // Once closed, the five methods are no-ops (there is NO "swap all 5 methods to a
-    // throwing stub" trick).
-    bool m_closed { false };
     // which of the 3 sink flavors this controller runs.
     DirectSinkKind m_sinkKind { DirectSinkKind::ArrayBuffer };
+    // Once closed, the five methods are no-ops (there is NO "swap all 5 methods to a
+    // throwing stub" trick).
+    bool m_closed : 1 { false };
+    // An async pull()'s returned promise has not yet settled; cleared by its settlement
+    // reactions. m_pullAgain is set only when a NEW read arrives while m_pullInFlight
+    // (edge-triggered, matching the spec default controller's [[pullAgain]]).
+    bool m_pullInFlight : 1 { false };
+    bool m_pullAgain : 1 { false };
+    bool m_calledDone : 1 { false };
+    // End-of-tick auto-flush (the JS-facing analogue of the HTTP sink's AutoFlusher):
+    // armed by write() when data is buffered below the HWM while a consumer waits; the
+    // deferred task runs right after the current microtask drain and delivers it.
+    bool m_endOfTickFlushArmed : 1 { false };
+    bool m_finalChunkArmed : 1 { false };
 
     // ArrayBuffer sink: a real Bun.ArrayBufferSink cell (ArrayBuffer kind only).
     JSC::WriteBarrier<JSC::JSObject> m_arrayBufferSink;
@@ -83,18 +96,12 @@ public:
 
     // Text/Array closing capability.
     JSC::WriteBarrier<JSC::JSPromise> m_closingPromise;
-    bool m_calledDone { false };
 
-    // End-of-tick auto-flush (the JS-facing analogue of the HTTP sink's AutoFlusher):
-    // armed by write() when data is buffered below the HWM while a consumer waits; the
-    // deferred task runs right after the current microtask drain and delivers it.
-    bool m_endOfTickFlushArmed { false };
     void armEndOfTickFlush(JSC::JSGlobalObject*);
 
     // Final-chunk-on-close: the NEXT read() delivers m_finalChunk then closes. onPull checks
     // m_finalChunkArmed FIRST.
     JSC::WriteBarrier<JSC::Unknown> m_finalChunk;
-    bool m_finalChunkArmed { false };
 
     // The state machine. All userJS: YES.
     // the READ pump: the default reader's read()/readMany() on a Direct stream lands here.

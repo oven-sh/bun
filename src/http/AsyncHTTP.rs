@@ -59,7 +59,7 @@ pub struct AsyncHTTP<'a> {
     pub client: HTTPClient<'a>,
     pub waiting_deffered: bool,
     pub finalized: bool,
-    pub err: Option<bun_core::Error>,
+    pub err: Option<crate::Error>,
     pub async_http_id: u32,
 
     pub state: AtomicState,
@@ -124,7 +124,7 @@ fn http_thread_timer_read() -> u64 {
 
 /// Build the `Proxy-Authorization: Basic <b64(user[:pass])>` header value.
 /// Returns `None` (and logs) if percent-decoding fails.
-fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
+pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
     if proxy.username.is_empty() {
         return None;
     }
@@ -204,6 +204,7 @@ fn make_client<'a>(
         if_modified_since: b"",
         request_content_len_buf: [0u8; b"-4294967295".len()],
         http_proxy,
+        proxy_settings: None,
         proxy_headers,
         proxy_authorization: None,
         proxy_tunnel: None,
@@ -263,6 +264,7 @@ pub fn load_env(logger: &mut Log, env: &DotEnvLoader) {
 #[derive(Default)]
 pub struct Options<'a> {
     pub http_proxy: Option<URL<'a>>,
+    pub proxy_settings: Option<Box<crate::ProxySettings>>,
     pub proxy_headers: Option<Headers>,
     pub hostname: Option<&'a [u8]>,
     pub signals: Option<Signals>,
@@ -543,12 +545,11 @@ impl<'a> AsyncHTTP<'a> {
             this.client.tls_props = Some(val);
         }
         this.client.compress = options.compress;
+        this.client.proxy_settings = options.proxy_settings;
 
-        if let Some(proxy) = &this.http_proxy {
-            if let Some(auth) = build_proxy_authorization(proxy) {
-                this.client.proxy_authorization = Some(auth);
-            }
-        }
+        // `client.proxy_authorization` stays `None` on the JS-thread original;
+        // `on_start` derives it on the HTTP-thread clone so redirects can
+        // reassign it without double-freeing the `ptr::read`-shared Vec.
         this
     }
 
@@ -671,7 +672,7 @@ fn send_sync_callback(
 }
 
 impl<'a> AsyncHTTP<'a> {
-    pub fn send_sync(&mut self) -> Result<picohttp::Response<'static>, bun_core::Error> {
+    pub fn send_sync(&mut self) -> crate::Result<picohttp::Response<'static>> {
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
@@ -771,7 +772,7 @@ impl<'a> AsyncHTTP<'a> {
                 // (`start_queued_task`), so any owned field that was already
                 // populated at that point — `request_headers`,
                 // `client.header_entries`, `client.proxy_headers`,
-                // `client.proxy_authorization`, `client.tls_props`,
+                // `client.proxy_settings`, `client.tls_props`,
                 // `client.unix_socket_path` — is *shared* with the original
                 // and must NOT be dropped here; the original drops them when
                 // its `Box<AsyncHTTP>` is reclaimed. Only the state the clone
@@ -808,6 +809,7 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.redirect));
                     drop(core::mem::take(&mut client.prev_redirect));
                     drop(core::mem::take(&mut client.compressed_request_body));
+                    drop(core::mem::take(&mut client.proxy_authorization));
                     if let Some(tunnel) = client.proxy_tunnel.take() {
                         // SAFETY: tunnel was created by ProxyTunnel::start
                         // (heap::alloc) and is refcounted; detach the socket
@@ -908,6 +910,14 @@ impl<'a> AsyncHTTP<'a> {
             self.as_erased_ptr(),
             AsyncHTTP::on_async_http_callback_raw,
         );
+
+        // Clone-owned: derived here (post-`ptr::read`) so
+        // `reevaluate_proxy_for_redirect` can freely drop/replace it. The
+        // original's copy stays `None`.
+        debug_assert!(self.client.proxy_authorization.is_none());
+        if let Some(proxy) = &self.client.http_proxy {
+            self.client.proxy_authorization = build_proxy_authorization(proxy);
+        }
 
         self.elapsed = http_thread_timer_read();
 

@@ -4,7 +4,7 @@
 //! tokenizes it (double-quote aware, `\` escape inside quotes), validates each
 //! flag against a fixed allowlist, and applies it before the real command-line
 //! arguments. This module mirrors that behaviour for the subset of flags Bun
-//! understands and rejects anything outside the allowlist so a misconfigured
+//! understands and warns on anything outside the allowlist so a misconfigured
 //! `NODE_OPTIONS` is surfaced instead of silently ignored.
 
 use bstr::BStr;

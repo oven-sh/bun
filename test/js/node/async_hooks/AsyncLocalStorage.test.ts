@@ -1,6 +1,6 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import http2 from "http2";
 
 describe("AsyncLocalStorage", () => {
@@ -1291,5 +1291,74 @@ describe("unhandledRejection async context", () => {
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("uncaughtException store: 7\ndrained microtask store: undefined\n");
     expect(exitCode).toBe(0);
+  });
+
+  // An unhandledRejection listener that throws reaches uncaughtException, but Node's
+  // processPromiseRejections restores the previous frame in a finally before that
+  // throw propagates. The strict-mode direct dispatch above is the only path where
+  // uncaughtException sees the promise's context.
+  test.each([
+    ["bun", bunExe()],
+    ["node", nodeExe()],
+  ])("a throwing unhandledRejection listener reaches uncaughtException without the promise's context (%s)", async (_name, exe) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        exe,
+        "-e",
+        `const { AsyncLocalStorage } = require("node:async_hooks");
+        const als = new AsyncLocalStorage();
+        process.on("unhandledRejection", () => {
+          console.log("unhandledRejection store:", JSON.stringify(als.getStore() ?? null));
+          throw new Error("from-listener");
+        });
+        process.on("uncaughtException", () => {
+          console.log("uncaughtException store:", JSON.stringify(als.getStore() ?? null));
+          process.exit(0);
+        });
+        als.run(7, () => Promise.reject(new Error("e")));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("unhandledRejection store: 7\nuncaughtException store: null\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun test` (isBunTest) doesn't dispatch the process event at all; the test
+  // runner's handler receives the rejection instead, and that path must not let
+  // the promise's context reach a later unwrapped test callback.
+  test("under `bun test`, an in-context rejection doesn't leak the store into the next test callback", async () => {
+    using dir = tempDir("als-unhandled-rejection-buntest", {
+      "probe.test.ts": `
+        import { test } from "bun:test";
+        import { AsyncLocalStorage } from "node:async_hooks";
+        const als = new AsyncLocalStorage();
+
+        test("rejects inside a store", () => {
+          als.run({ id: "leaky" }, () => {
+            Promise.reject(new Error("in-store"));
+          });
+        });
+
+        test("next callback observes no leaked store", () => {
+          console.log("PROBE store:", JSON.stringify(als.getStore() ?? null));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "probe.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("PROBE store: null");
+    expect(stderr).toContain("(pass) next callback observes no leaked store");
+    expect(stderr).toContain("(fail) rejects inside a store");
+    expect(exitCode).not.toBe(0);
   });
 });

@@ -3351,6 +3351,10 @@ impl VirtualMachine {
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             self.unhandled_error_counter += 1;
+            // The test runner's handler may drive the next user callback, and
+            // those are registered unwrapped — don't let one inherit the
+            // promise's context. `handleRejectedPromises` restores afterwards.
+            let _scope = jsc::ClearedAsyncContextScope::new(global_object);
             (self.on_unhandled_rejection)(self, global_object, reason);
             return;
         }

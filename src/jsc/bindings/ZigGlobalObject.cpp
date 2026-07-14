@@ -3457,18 +3457,19 @@ void GlobalObject::handleRejectedPromises()
             }
 
             Bun__handleRejectedPromise(this, promise);
+
+            // Any uncaught exception that leaks out of the dispatch is reported
+            // after restoring, like Node's processPromiseRejections does in its
+            // finally before the throw reaches triggerUncaughtException.
+            if (asyncContextData)
+                asyncContextData->putInternalField(virtual_machine, 0, restoreAsyncContext);
+
             if (auto ex = scope.exception()) {
-                if (virtual_machine.isTerminationException(ex)) [[unlikely]] {
-                    if (asyncContextData)
-                        asyncContextData->putInternalField(virtual_machine, 0, restoreAsyncContext);
+                if (virtual_machine.isTerminationException(ex)) [[unlikely]]
                     return;
-                }
                 (void)scope.tryClearException();
                 this->reportUncaughtExceptionAtEventLoop(this, ex);
             }
-
-            if (asyncContextData)
-                asyncContextData->putInternalField(virtual_machine, 0, restoreAsyncContext);
         }
         // An unhandledRejection handler may itself reject a promise; loop
         // until the list stays empty.

@@ -330,15 +330,31 @@ describe("module", () => {
   });
 
   it("require() of an async module() returning CommonJS throws and leaves require.cache clean", async () => {
-    globalThis.__cjsAsyncSideEffect = 0;
-    expect(() => require("my-virtual-module-cjs-async")).toThrow("async module");
-    expect("my-virtual-module-cjs-async" in require.cache).toBe(false);
-    // Wait for the plugin's promise (which awaits Bun.sleep(1)) to settle and
-    // its orphaned then-reaction to run.
-    await Bun.sleep(5);
-    expect("my-virtual-module-cjs-async" in require.cache).toBe(false);
-    expect(globalThis.__cjsAsyncSideEffect).toBe(0);
-    expect(() => require("my-virtual-module-cjs-async")).toThrow("async module");
+    let factoryDone!: Promise<void>;
+    Bun.plugin({
+      name: "cjs-async-require-ghost",
+      setup(b) {
+        b.module("cjs-async-require-ghost", () => {
+          const { promise, resolve } = Promise.withResolvers<void>();
+          factoryDone = promise;
+          return (async () => {
+            await Promise.resolve();
+            resolve();
+            return { contents: "globalThis.__cjsGhostRan = true; module.exports = 1;", loader: "js" as const };
+          })();
+        });
+      },
+    });
+    globalThis.__cjsGhostRan = false;
+    expect(() => require("cjs-async-require-ghost")).toThrow("async module");
+    expect("cjs-async-require-ghost" in require.cache).toBe(false);
+    // Wait for the factory's promise to settle, then one more microtask turn
+    // for the orphaned then-reaction on it to fire.
+    await factoryDone;
+    await Promise.resolve();
+    expect("cjs-async-require-ghost" in require.cache).toBe(false);
+    expect(globalThis.__cjsGhostRan).toBe(false);
+    expect(() => require("cjs-async-require-ghost")).toThrow("async module");
   });
 
   it("module() returning `exports.x = ...` works", async () => {
@@ -368,17 +384,28 @@ describe("module", () => {
   });
 
   it.concurrent("module() returning CommonJS source does not populate the --isolate provider cache", async () => {
+    const testBody = `
+      import { test, expect } from "bun:test";
+      test("sync require", () => { expect(require("vcjs")).toBe(1); });
+      test("sync import", async () => { expect((await import("vcjs-i")).default).toBe(1); });
+      test("async import", async () => { expect((await import("vcjs-a")).default).toBe(2); });
+    `;
     using dir = tempDir("plugin-cjs-isolate", {
       "preload.ts": `
         Bun.plugin({
           name: "vcjs",
           setup(b) {
             b.module("vcjs", () => ({ contents: "module.exports = 1", loader: "js" }));
+            b.module("vcjs-i", () => ({ contents: "module.exports = 1", loader: "js" }));
+            b.module("vcjs-a", async () => {
+              await Promise.resolve();
+              return { contents: "module.exports = 2", loader: "js" };
+            });
           },
         });
       `,
-      "a.test.ts": `import { test, expect } from "bun:test"; test("a", () => { expect(require("vcjs")).toBe(1); });`,
-      "b.test.ts": `import { test, expect } from "bun:test"; test("b", () => { expect(require("vcjs")).toBe(1); });`,
+      "a.test.ts": testBody,
+      "b.test.ts": testBody,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--isolate", "--preload", "./preload.ts", "a.test.ts", "b.test.ts"],
@@ -387,7 +414,7 @@ describe("module", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("6 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
   });

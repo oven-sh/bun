@@ -2709,7 +2709,7 @@ pub mod JSZlib {
                 b"windowBits",
                 b"options.windowBits",
                 -15,
-                47,
+                31,
             )? {
                 window_bits = window;
                 library = Library::Zlib;

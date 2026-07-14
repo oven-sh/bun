@@ -684,7 +684,11 @@ impl Handle {
         }
     }
 
-    pub fn init_owned(fd: Fd, js: JSValue) -> Self {
+    /// Borrow `fd` for the wire (no dup: `owns_fd` stays false) but close the
+    /// JS handle once the message completes. Windows counterpart of
+    /// `init_dup(fd, js, true)`, where the wire copy is the exported
+    /// `WSAPROTOCOL_INFOW` rather than a duplicated descriptor.
+    pub fn init_close_on_complete(fd: Fd, js: JSValue) -> Self {
         Self {
             fd,
             js: js.protected(),

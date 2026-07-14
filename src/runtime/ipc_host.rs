@@ -227,7 +227,7 @@ pub(crate) fn do_send(
                     zig_handle = Some(if keep_open {
                         Handle::init(fd, handle)
                     } else {
-                        Handle::init_owned(fd, handle)
+                        Handle::init_close_on_complete(fd, handle)
                     });
                 }
             }

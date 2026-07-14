@@ -25,6 +25,9 @@ const streamWebClasses = [
 ];
 
 test.concurrent("node:stream/web classes inspect as [class X], not [class Function]", async () => {
+  // This issue is about the class *name*. Classes with enumerable statics
+  // (ReadableStream.from) also print a trailing { ... } block, matching
+  // Node; strip it so this stays a header-only name check.
   const source = `
     const sw = require("node:stream/web");
     const names = ${JSON.stringify(streamWebClasses)};
@@ -35,7 +38,8 @@ test.concurrent("node:stream/web classes inspect as [class X], not [class Functi
         continue;
       }
       // Bun.inspect() uses the same formatter as console.log.
-      console.log(name + ": " + Bun.inspect(klass));
+      const header = Bun.inspect(klass).split("\\n")[0].replace(/ \\{$/, "");
+      console.log(name + ": " + header);
     }
   `;
 

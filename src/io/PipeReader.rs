@@ -167,6 +167,17 @@ bitflags::bitflags! {
         const MEMFD                    = 1 << 7;
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
+        // Register the poll level-triggered (no EPOLLONESHOT / EV_ONESHOT).
+        // A one-shot readable is disarmed by the kernel the instant
+        // `epoll_wait` returns it; if that slot is then dropped before
+        // `on_update` reaches it (a nested `us_loop_run_bun_tick` overwriting
+        // `ready_polls`), the fd is left permanently disarmed with no re-arm
+        // path. `FileReader` sets this: its `on_read_chunk` drains to EAGAIN
+        // on every dispatch and only returns `false` after `close()`, so
+        // level-triggered cannot busy-loop. Parents whose `on_read_chunk` can
+        // return `false` with bytes still queued (the shell reader) keep
+        // one-shot.
+        const LEVEL_TRIGGERED          = 1 << 10;
     }
 }
 
@@ -428,7 +439,9 @@ impl PosixBufferedReader {
             poll.enable_keeping_process_alive(ev);
         }
 
-        match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {
+        let one_shot = !self.flags.contains(PosixFlags::LEVEL_TRIGGERED);
+        match poll.register_with_fd_one_shot(lp.cast(), FilePollKind::Readable, poll.fd(), one_shot)
+        {
             sys::Result::Err(err) => {
                 self.vtable.on_reader_error(err);
                 false

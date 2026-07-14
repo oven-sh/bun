@@ -419,6 +419,21 @@ impl FileReader {
             ));
         }
 
+        // Register the poll level-triggered. A one-shot readable is disarmed
+        // by the kernel the instant `epoll_wait` returns it; if a nested
+        // `us_loop_run_bun_tick` overwrites `ready_polls` before dispatch
+        // reaches that slot, the fd is left disarmed with no re-arm path and
+        // the pending `reader.read()` never resolves (stdin goes input-deaf
+        // until more bytes arrive). Level-triggered makes a dropped slot
+        // harmless: the next `epoll_wait` reports it again. `on_read_chunk`
+        // drains to EAGAIN on every dispatch and only returns `false` after
+        // `close()`, so it cannot busy-loop. `pause()` unregisters the poll.
+        #[cfg(unix)]
+        {
+            use bun_io::pipe_reader::PosixFlags;
+            self.reader().flags.insert(PosixFlags::LEVEL_TRIGGERED);
+        }
+
         if was_lazy {
             // SAFETY: see `parent()`.
             unsafe { (*self.parent()).increment_count() };

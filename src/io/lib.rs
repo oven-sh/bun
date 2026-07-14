@@ -1886,6 +1886,16 @@ impl FilePollRef {
         kind: FilePollKind,
         fd: Fd,
     ) -> sys::Result<()> {
+        self.register_with_fd_one_shot(loop_, kind, fd, true)
+    }
+    #[inline]
+    pub fn register_with_fd_one_shot(
+        self,
+        loop_: *mut bun_uws_sys::Loop,
+        kind: FilePollKind,
+        fd: Fd,
+        one_shot: bool,
+    ) -> sys::Result<()> {
         let flag = match kind {
             FilePollKind::Readable => PollFlags::Readable,
             FilePollKind::Writable => PollFlags::Writable,
@@ -1895,13 +1905,17 @@ impl FilePollRef {
             self.inner().register_with_fd(
                 Self::uws_loop_mut(loop_),
                 flag,
-                OneShotFlag::Dispatch,
+                if one_shot {
+                    OneShotFlag::Dispatch
+                } else {
+                    OneShotFlag::None
+                },
                 fd,
             )
         }
         #[cfg(windows)]
         {
-            let _ = (loop_, flag, fd);
+            let _ = (loop_, flag, fd, one_shot);
             unreachable!("FilePoll fd registration is POSIX-only");
         }
     }

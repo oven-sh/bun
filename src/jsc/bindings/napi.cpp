@@ -1613,6 +1613,162 @@ extern "C" JS_EXPORT napi_status node_api_get_module_file_name(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
+extern "C" JS_EXPORT napi_status node_api_set_prototype(napi_env env,
+    napi_value object, napi_value value)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, object);
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = JSC::getVM(globalObject);
+
+    JSObject* obj = toJS(object).getObject();
+    NAPI_RETURN_EARLY_IF_FALSE(env, obj, napi_object_expected);
+
+    bool didSet = obj->setPrototype(vm, globalObject, toJS(value), false);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_RETURN_EARLY_IF_FALSE(env, didSet, napi_generic_failure);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" JS_EXPORT napi_status node_api_create_object_with_properties(napi_env env,
+    napi_value prototype_or_null,
+    napi_value* property_names,
+    napi_value* property_values,
+    size_t property_count,
+    napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_CHECK_ARG(env, result);
+    if (property_count > 0) {
+        NAPI_CHECK_ARG(env, property_names);
+        NAPI_CHECK_ARG(env, property_values);
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = JSC::getVM(globalObject);
+
+    for (size_t i = 0; i < property_count; i++) {
+        JSValue name = toJS(property_names[i]);
+        NAPI_RETURN_EARLY_IF_FALSE(env, name.isString() || name.isSymbol(), napi_name_expected);
+    }
+
+    JSValue prototype = prototype_or_null ? toJS(prototype_or_null) : jsNull();
+    JSObject* obj;
+    if (prototype.isObject()) {
+        obj = constructEmptyObject(globalObject, prototype.getObject());
+    } else {
+        obj = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    }
+    JSC::EnsureStillAliveScope ensureAlive(obj);
+
+    for (size_t i = 0; i < property_count; i++) {
+        auto name = JSC::PropertyName(toJS(property_names[i]).toPropertyKey(globalObject));
+        NAPI_RETURN_IF_EXCEPTION(env);
+        JSValue value = toJS(property_values[i]);
+        obj->putDirect(vm, name, value.isEmpty() ? jsUndefined() : value, 0);
+    }
+
+    *result = toNapi(obj, globalObject);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" JS_EXPORT napi_status node_api_is_sharedarraybuffer(napi_env env,
+    napi_value value, bool* result)
+{
+    NAPI_LOG_CURRENT_FUNCTION;
+    NAPI_CHECK_ARG(env, env);
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, result);
+
+    auto* jsArrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(toJS(value));
+    *result = jsArrayBuffer && jsArrayBuffer->isShared();
+    return napi_set_last_error(env, napi_ok);
+}
+
+extern "C" JS_EXPORT napi_status node_api_create_sharedarraybuffer(napi_env env,
+    size_t byte_length, void** data, napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_CHECK_ARG(env, result);
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = JSC::getVM(globalObject);
+
+    RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreate(byte_length, 1);
+    if (!arrayBuffer) {
+        return napi_set_last_error(env, napi_generic_failure);
+    }
+    arrayBuffer->makeShared();
+
+    auto* jsArrayBuffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTF::move(arrayBuffer));
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    if (data && jsArrayBuffer->impl()) [[likely]] {
+        *data = jsArrayBuffer->impl()->data();
+    }
+    *result = toNapi(jsArrayBuffer, globalObject);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+typedef void (*node_api_noenv_finalize)(void* finalize_data, void* finalize_hint);
+
+// SharedArrayBuffer backing stores can outlive the creating napi_env (they
+// may be posted to other agents), so Node-API specifies a finalizer with no
+// env parameter. This destructor mirrors NapiExternalBufferDestructor but
+// calls a (data, hint) callback directly instead of routing through
+// NapiEnv::doFinalizer.
+class NapiNoEnvExternalBufferDestructor final : public SharedTask<void(void*)> {
+public:
+    NapiNoEnvExternalBufferDestructor(node_api_noenv_finalize cb, void* hint)
+        : m_cb(cb)
+        , m_hint(hint)
+    {
+    }
+
+    void run(void* data) override
+    {
+        if (m_armed && m_cb) {
+            m_cb(data, m_hint);
+        }
+    }
+
+    void arm() { m_armed = true; }
+
+private:
+    node_api_noenv_finalize m_cb;
+    void* m_hint;
+    bool m_armed { false };
+};
+
+extern "C" JS_EXPORT napi_status node_api_create_external_sharedarraybuffer(napi_env env,
+    void* external_data, size_t byte_length,
+    node_api_noenv_finalize finalize_cb, void* finalize_hint,
+    napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, result);
+    NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = JSC::getVM(globalObject);
+
+    Ref<NapiNoEnvExternalBufferDestructor> destructor = adoptRef(*new NapiNoEnvExternalBufferDestructor(finalize_cb, finalize_hint));
+    auto* destructorPtr = destructor.ptr();
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, WTF::move(destructor));
+    arrayBuffer->makeShared();
+
+    auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTF::move(arrayBuffer));
+    destructorPtr->arm();
+
+    *result = toNapi(buffer, globalObject);
+    NAPI_RETURN_SUCCESS(env);
+}
+
 extern "C" napi_status napi_create_error(napi_env env, napi_value code,
     napi_value msg,
     napi_value* result)

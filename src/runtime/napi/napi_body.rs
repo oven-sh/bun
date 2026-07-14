@@ -2129,6 +2129,34 @@ unsafe extern "C" {
         result: *mut JSValue,
         copied: *mut bool,
     ) -> napi_status;
+    fn node_api_set_prototype(env: napi_env, object: napi_value, value: napi_value) -> napi_status;
+    fn node_api_create_object_with_properties(
+        env: napi_env,
+        prototype_or_null: napi_value,
+        property_names: *const napi_value,
+        property_values: *const napi_value,
+        property_count: usize,
+        result: *mut napi_value,
+    ) -> napi_status;
+    fn node_api_create_sharedarraybuffer(
+        env: napi_env,
+        byte_length: usize,
+        data: *mut *mut c_void,
+        result: *mut napi_value,
+    ) -> napi_status;
+    fn node_api_create_external_sharedarraybuffer(
+        env: napi_env,
+        external_data: *mut c_void,
+        byte_length: usize,
+        finalize_cb: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
+        finalize_hint: *mut c_void,
+        result: *mut napi_value,
+    ) -> napi_status;
+    fn node_api_is_sharedarraybuffer(
+        env: napi_env,
+        value: napi_value,
+        result: *mut bool,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
@@ -4045,6 +4073,11 @@ pub fn fix_dead_code_elimination() {
         node_api_throw_syntax_error,
         node_api_create_external_string_latin1,
         node_api_create_external_string_utf16,
+        node_api_set_prototype,
+        node_api_create_object_with_properties,
+        node_api_create_sharedarraybuffer,
+        node_api_create_external_sharedarraybuffer,
+        node_api_is_sharedarraybuffer,
     );
 
     // uv_functions_to_export

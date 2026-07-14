@@ -1289,6 +1289,20 @@ describe("--interactive", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `process._eval` carries the raw `-e` bytes, which are UTF-8. Decoding them
+  // as Latin-1 turns every multi-byte character into mojibake, so both the
+  // evaluated source and the reported `process._eval` must round-trip.
+  test("-e round-trips multi-byte UTF-8 through process._eval", async () => {
+    const source = `console.log("한글-🎉-café")`;
+    const { stdout, stderr, exitCode } = await runInteractive(["-e", source], "process._eval\n");
+    // The -e script itself ran with its literal intact...
+    expect(stdout).toContain("한글-🎉-café");
+    // ...and process._eval reports the source verbatim, not re-encoded.
+    expect(stdout).toContain(source);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+  });
+
   // `node -i -e '<bad>'`: Node exits 1 with a SyntaxError code frame at
   // [eval]:1 and never accepts REPL input; not caught by the REPL error handler.
   test("-e with a syntax error is fatal and never enters the REPL", async () => {
@@ -1396,6 +1410,24 @@ describe("--interactive", () => {
     expect(stdout).toContain("Welcome to Bun");
     expect(stdout).toContain("2");
     expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+  });
+
+  // The "run" subcommand word is a dispatch artifact, not user input: it must
+  // not survive into the REPL's process.argv the way a script name would.
+  test("bun run --interactive keeps 'run' out of process.argv", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--interactive"],
+      env,
+      // Tagged so the match can't be confused with the REPL's own echo.
+      stdin: Buffer.from(`console.log("ARGV:" + JSON.stringify(process.argv.slice(1)))\n`),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const match = stdout.match(/ARGV:(\[.*\])/);
+    expect(match).not.toBeNull();
+    expect(JSON.parse(match![1])).toEqual([]);
     expect(exitCode).toBe(0);
   });
 

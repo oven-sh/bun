@@ -2200,16 +2200,16 @@ pub(super) extern "C" fn napi_get_uv_event_loop(
         // A past alignment assertion here fired spuriously.
         // TODO(@190n) investigate
         *loop_out = VirtualMachine::get().uv_loop();
+        env.ok()
     }
     #[cfg(not(windows))]
     {
-        // there is no uv event loop on posix, we use our event loop handle.
-        // SAFETY: `VirtualMachine::event_loop` already yields `*mut EventLoop`;
-        // no const→mut cast needed.
-        // SAFETY: bun_vm() never null for a Bun-owned global.
-        *loop_out = env.to_js().bun_vm().event_loop();
+        // There is no uv event loop on posix. Returning Bun's internal EventLoop* here used to
+        // pass every caller's (status == napi_ok && loop != NULL) guard, then crash in the
+        // uv-posix-stubs panic on first touch. Fail honestly at the acquisition site instead.
+        *loop_out = ptr::null_mut();
+        env.generic_failure()
     }
-    env.ok()
 }
 
 unsafe extern "C" {

@@ -24,8 +24,11 @@ function uafTest(fixture, iterations = 2) {
     },
     // The express fixture pushes 10k aborted requests; one iteration runs
     // ~10 s under ASAN instrumentation (~1 s on release), so two iterations
-    // can never fit the 5 s default there.
-    isASAN ? 90_000 : 5_000,
+    // can never fit the 5 s default there. The full file measures ~2.1 s on a
+    // release x64 box, and the windows-11-aarch64 agent ran a single fixture
+    // to 5006 ms - just over the default - so give release the same measured
+    // headroom instead of sitting on the line.
+    isASAN ? 90_000 : 20_000,
   );
 }
 

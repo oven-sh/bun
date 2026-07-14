@@ -852,8 +852,14 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        server?.emit("tlsClientError", verifyError, self);
         if (self._rejectUnauthorized) {
+          // The connection is refused: report the verification result through
+          // tlsClientError before tearing down. When the connection is kept
+          // (rejectUnauthorized: false) it proceeds with authorized=false and
+          // no tlsClientError - Node's onServerSocketSecure never emits it
+          // there and test-tls-sni-option asserts mustNotCall on it for the
+          // authorized=false cases.
+          server?.emit("tlsClientError", verifyError, self);
           // if we reject we still need to emit secure
           self.emit("secure", self);
           // No error argument: the socket has no 'error' listener yet, so destroy(err)
@@ -908,9 +914,28 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         SocketHandlers.error(socket, error, true);
         return;
       }
+      SocketHandlers.error(socket, error, true);
+      this.server?.emit("clientError", error, data);
+      return;
     }
-    SocketHandlers.error(socket, error, true);
-    this.server?.emit("clientError", error, data);
+    // Plain TCP: the delegation above is a no-op (_hadError was just set and
+    // SocketHandlers.error's guard returns on it). On kqueue a fatal-flush
+    // from on_writable is the only place the errno is visible (the close it
+    // issues short-circuits the read dispatch at loop.c's
+    // us_socket_is_closed check), so swallowing it hung the server behind an
+    // un-failed pending write (test-net-stream on darwin). Shape it like
+    // Node's onWriteComplete: fail the pending write callback, then destroy
+    // with the error. destroy() owns the single 'error' emission via the
+    // stream's errorEmitted guard; callback(error) may have already
+    // destroyed, in which case this is a no-op.
+    const callback = data[kwriteCallback];
+    if (callback) {
+      data[kwriteCallback] = null;
+      callback(error);
+    }
+    if (!data.destroyed) {
+      data.destroy(error);
+    }
   },
   timeout(socket) {
     SocketHandlers.timeout(socket);

@@ -29,7 +29,15 @@ async function runLateRstStages(sendPing: boolean) {
   const t = (name: string) => tape.push(name);
 
   const rawSocket = Promise.withResolvers<net.Socket>();
-  const TYPE_NAME: Record<number, string> = { 0: "DATA", 1: "HEADERS", 3: "RST", 4: "SETTINGS", 6: "PING", 7: "GOAWAY", 8: "WINDOW_UPDATE" };
+  const TYPE_NAME: Record<number, string> = {
+    0: "DATA",
+    1: "HEADERS",
+    3: "RST",
+    4: "SETTINGS",
+    6: "PING",
+    7: "GOAWAY",
+    8: "WINDOW_UPDATE",
+  };
   let rbuf = Buffer.alloc(0);
   let sawPreface = false;
   const onRawData = (d: Buffer) => {
@@ -43,7 +51,12 @@ async function runLateRstStages(sendPing: boolean) {
       if (rbuf.length < 9 + len) break;
       const type = rbuf.readUInt8(3);
       const id = rbuf.readUInt32BE(5) & 0x7fffffff;
-      const code = type === 3 && len >= 4 ? `(code ${rbuf.readUInt32BE(9)})` : type === 7 && len >= 8 ? `(code ${rbuf.readUInt32BE(13)})` : "";
+      const code =
+        type === 3 && len >= 4
+          ? `(code ${rbuf.readUInt32BE(9)})`
+          : type === 7 && len >= 8
+            ? `(code ${rbuf.readUInt32BE(13)})`
+            : "";
       t(`recv:${TYPE_NAME[type] ?? type}#${id}${code}`);
       rbuf = rbuf.subarray(9 + len);
     }

@@ -812,16 +812,26 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* uid = propertyName.uid();
+
+    // Node's EnvDefiner rejects accessors on every env store, not just the real
+    // one, so the SHARE_ENV map answers exactly like the regular map above.
+    // Rejecting here also keeps a getter off the base object, where it would be
+    // shadowed by the store entry that getOwnPropertySlot reads first.
+    if (descriptor.isAccessorDescriptor()) {
+        throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' does not accept an accessor(getter/setter) descriptor"_s);
+        return false;
+    }
+
     if (propertyName.isSymbol() || !uid || !descriptor.isDataDescriptor() || !descriptor.value()) {
         // The descriptor lands on the Base object, but getOwnPropertySlot reads the
         // store first, so a store entry would shadow it. Move the entry onto Base as
         // an enumerable data property first so a partial descriptor keeps that
         // enumerability.
         //
-        // Node's EnvDefiner rejects accessors and partial descriptors on every env
-        // store, which is what JSEnvironmentVariableMap::defineOwnProperty does; this
-        // map still accepts them. Divergence tracked separately — tightening it is a
-        // behavior change to SHARE_ENV that belongs with its own tests.
+        // Node's EnvDefiner also rejects partial descriptors, which
+        // JSEnvironmentVariableMap::defineOwnProperty does but this map does not
+        // yet. Divergence tracked separately — tightening it is a behavior change
+        // to SHARE_ENV that belongs with its own tests.
         if (!propertyName.isSymbol() && uid) {
             if (auto* store = sharedEnvStoreFor(object)) {
                 String existing = store->get(String(uid));

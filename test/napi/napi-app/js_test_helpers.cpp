@@ -240,6 +240,34 @@ static napi_value create_latin1_string(const Napi::CallbackInfo &info) {
   return result;
 }
 
+// get_all_property_names(object, key_mode, key_filter, key_conversion)
+// returns { status, keys }
+static napi_value get_all_property_names(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value object = info[0];
+  uint32_t key_mode, key_filter, key_conversion;
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[1], &key_mode));
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[2], &key_filter));
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[3], &key_conversion));
+
+  napi_value keys = nullptr;
+  napi_status status = napi_get_all_property_names(
+      env, object, static_cast<napi_key_collection_mode>(key_mode),
+      static_cast<napi_key_filter>(key_filter),
+      static_cast<napi_key_conversion>(key_conversion), &keys);
+
+  napi_value result;
+  NODE_API_CALL(env, napi_create_object(env, &result));
+  napi_value status_val;
+  NODE_API_CALL(env, napi_create_uint32(env, status, &status_val));
+  NODE_API_CALL(env, napi_set_named_property(env, result, "status", status_val));
+  if (keys == nullptr) {
+    NODE_API_CALL(env, napi_get_undefined(env, &keys));
+  }
+  NODE_API_CALL(env, napi_set_named_property(env, result, "keys", keys));
+  return result;
+}
+
 static napi_value make_empty_array(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_value js_size = info[0];
@@ -445,6 +473,7 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, throw_error);
   REGISTER_FUNCTION(env, exports, create_and_throw_error);
   REGISTER_FUNCTION(env, exports, create_latin1_string);
+  REGISTER_FUNCTION(env, exports, get_all_property_names);
   REGISTER_FUNCTION(env, exports, make_empty_array);
   REGISTER_FUNCTION(env, exports, make_empty_object);
   REGISTER_FUNCTION(env, exports, add_tag);

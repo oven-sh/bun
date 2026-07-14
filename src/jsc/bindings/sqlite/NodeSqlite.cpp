@@ -161,33 +161,27 @@ static ALWAYS_INLINE WTF::String sqliteText(const char* p)
 // Error helpers (match Node.js node_sqlite.cc shapes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-static JSObject* createNodeSqliteError(JSGlobalObject* globalObject, sqlite3* db)
+// Every ERR_SQLITE_ERROR carries `errcode` (the extended result code) and
+// `errstr` (its canonical English text), matching node_sqlite.cc.
+static JSObject* createNodeSqliteError(JSGlobalObject* globalObject, int errcode, const WTF::String& message)
 {
     auto& vm = getVM(globalObject);
-    int errcode = sqlite3_extended_errcode(db);
-    const char* errstr = sqlite3_errstr(errcode);
-    const char* errmsg = sqlite3_errmsg(db);
     auto* zigGlobal = defaultGlobalObject(globalObject);
-    JSObject* error = createError(zigGlobal, ErrorCode::ERR_SQLITE_ERROR, sqliteText(errmsg));
+    JSObject* error = createError(zigGlobal, ErrorCode::ERR_SQLITE_ERROR, message);
     error->putDirect(vm, Identifier::fromString(vm, "errcode"_s), jsNumber(errcode), 0);
-    error->putDirect(vm, Identifier::fromString(vm, "errstr"_s), jsString(vm, WTF::String::fromUTF8(errstr)), 0);
+    error->putDirect(vm, Identifier::fromString(vm, "errstr"_s), jsString(vm, WTF::String::fromUTF8(sqlite3_errstr(errcode))), 0);
     return error;
 }
 
 static void throwSqliteError(JSGlobalObject* globalObject, ThrowScope& scope, sqlite3* db)
 {
-    scope.throwException(globalObject, createNodeSqliteError(globalObject, db));
+    scope.throwException(globalObject,
+        createNodeSqliteError(globalObject, sqlite3_extended_errcode(db), sqliteText(sqlite3_errmsg(db))));
 }
 
 static void throwSqliteMessage(JSGlobalObject* globalObject, ThrowScope& scope, int errcode, const WTF::String& message)
 {
-    auto& vm = getVM(globalObject);
-    auto* zigGlobal = defaultGlobalObject(globalObject);
-    JSObject* error = createError(zigGlobal, ErrorCode::ERR_SQLITE_ERROR, message);
-    const char* errstr = sqlite3_errstr(errcode);
-    error->putDirect(vm, Identifier::fromString(vm, "errcode"_s), jsNumber(errcode), 0);
-    error->putDirect(vm, Identifier::fromString(vm, "errstr"_s), jsString(vm, WTF::String::fromUTF8(errstr)), 0);
-    scope.throwException(globalObject, error);
+    scope.throwException(globalObject, createNodeSqliteError(globalObject, errcode, message));
 }
 
 // The session extension, sqlite3_deserialize, sqlite3_db_config, and friends

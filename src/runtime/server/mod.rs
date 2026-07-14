@@ -1544,15 +1544,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             return;
         };
-        if abrupt || (self.pending_requests == 0 && !self.has_active_web_sockets()) {
-            self.unref();
-        }
-        // A graceful stop with work still in flight keeps the ref:
-        // deinit_if_we_can unrefs when the drain completes, and the drain
-        // itself requires the loop to keep polling - on Windows, uv_run
-        // skips I/O delivery entirely when no ref'd handles exist, so
-        // releasing the ref here wedged server.close() awaiting a
-        // half-closed connection's teardown forever.
+        self.unref();
 
         if !SSL {
             // SAFETY: `listener` is a live uws ListenSocket FFI handle just taken

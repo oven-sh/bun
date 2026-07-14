@@ -32,10 +32,6 @@ struct us_loop_t {
 
   uv_prepare_t *uv_pre;
   uv_check_t *uv_check;
-  /* Bounds us_loop_run_bun_tick's wait with the caller's deadline (Bun's JS
-   * timer heap lives outside uv, so uv's own timer heap can be empty while a
-   * JS timer is due). Lazily initialized on the first bun_tick. */
-  uv_timer_t *uv_tick_timer;
 };
 
 // it is no longer valid to cast a pointer to us_poll_t to a pointer of

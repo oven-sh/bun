@@ -2708,8 +2708,17 @@ pub mod JSZlib {
                 leak_list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
-                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level.unwrap_or(6))
-                else {
+                let level = level.unwrap_or(6);
+                if !(bun_libdeflate::MIN_COMPRESSION_LEVEL..=bun_libdeflate::MAX_COMPRESSION_LEVEL)
+                    .contains(&level)
+                {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Compression level must be between {} and {} for libdeflate",
+                        bun_libdeflate::MIN_COMPRESSION_LEVEL,
+                        bun_libdeflate::MAX_COMPRESSION_LEVEL,
+                    )));
+                }
+                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level) else {
                     return Err(global_this.throw_out_of_memory());
                 };
                 let encoding = if is_gzip {

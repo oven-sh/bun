@@ -601,7 +601,9 @@ public:
          * realloc + copy a multi-GB backpressure buffer. */
         if (length > 1024 * 1024) {
             auto &bp = Super::getAsyncSocketData()->buffer;
-            bp.reserve(bp.length() + length + 32);
+            size_t need = bp.totalLength() + length + 32;
+            /* libc++ reserve() is exact-fit; keep geometric growth explicit. */
+            bp.buffer.reserve(std::max(bp.buffer.capacity() * 2, need));
         }
 
         // Special handling for extremely large data (greater than UINT_MAX bytes)

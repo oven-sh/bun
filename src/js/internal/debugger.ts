@@ -538,31 +538,80 @@ function versionInfo(): unknown {
 
 function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {
   return {
-    write: message => !!ws.sendText(message),
+    write: message => {
+      // ws.sendText() returns a JS number: -1 (BACKPRESSURE), 0 (DROPPED), or
+      // a positive byte count (SUCCESS). Previously this was collapsed with
+      // `!!`, which coerces -1 to `true` -- indistinguishable from success --
+      // so bufferedWriter (below) never reacted to backpressure at all. We
+      // now surface the real tri-state result so bufferedWriter can retry a
+      // genuine drop (0) and pace -- without re-sending -- a message that
+      // merely reported backpressure (-1).
+      const result = ws.sendText(message);
+      if (result === 0) return "dropped";
+      if (result < 0) return "backpressure";
+      return "success";
+    },
     close: () => ws.close(),
   };
 }
 
 function bufferedWriter(writer: Writer): Writer {
   let draining = false;
+  // Set once a write reports "backpressure" and cleared at the start of the
+  // next drain(). While set, new writes are queued (not attempted) rather
+  // than sent immediately, so we stop adding to the connection's backlog
+  // until it has had a chance to drain. This intentionally does NOT requeue
+  // the message that reported backpressure itself: per webSocketWriter's
+  // contract above, that message was already accepted by uWS, and resending
+  // it would duplicate it on the wire.
+  let paced = false;
   let pendingMessages: string[] = [];
 
   return {
     write: message => {
-      if (draining || !writer.write(message)) {
+      if (draining || paced) {
         pendingMessages.push(message);
+        return "success";
       }
-      return true;
+
+      const result = writer.write(message);
+      if (result === "dropped") {
+        pendingMessages.push(message);
+      } else if (result === "backpressure") {
+        paced = true;
+      }
+      return "success";
     },
     drain: () => {
       draining = true;
+      // A new drain cycle gets a fresh chance to write without pacing; if the
+      // flush below hits backpressure again, `paced` is re-set below.
+      paced = false;
       try {
         for (let i = 0; i < pendingMessages.length; i++) {
-          if (!writer.write(pendingMessages[i])) {
+          const result = writer.write(pendingMessages[i]);
+          if (result === "dropped") {
+            // Not sent at all -- keep this message (and everything queued
+            // after it, to preserve order) for the next drain.
             pendingMessages = pendingMessages.slice(i);
             return;
           }
+          if (result === "backpressure") {
+            // This message WAS accepted (see webSocketWriter) -- do not keep
+            // it for retry, just pace subsequent messages until the next
+            // drain.
+            paced = true;
+            pendingMessages = pendingMessages.slice(i + 1);
+            return;
+          }
         }
+        // Every pending message was fully flushed: nothing left to retry.
+        // (Previously this array was never cleared on a fully successful
+        // pass, which would have re-sent already-delivered messages on the
+        // next drain -- a duplicate-send bug of its own, and one that would
+        // trigger far more often now that "backpressure" also routes through
+        // this same queue.)
+        pendingMessages.length = 0;
       } finally {
         draining = false;
       }
@@ -711,8 +760,25 @@ type Connection = {
   backend?: Backend;
 };
 
+/**
+ * Result of a single write attempt, mirroring the three-way contract of
+ * `ServerWebSocket.sendText()` (see `packages/bun-uws/src/WebSocket.h`,
+ * `WebSocket::send()`'s doc comment and `SendStatus` enum):
+ *   - "success"      the message was fully accepted with buffer room to spare.
+ *   - "backpressure" the message WAS accepted into the socket's outbound
+ *                     buffer (it will still be delivered), but the buffer is
+ *                     now running high; callers should pace further writes
+ *                     until the next `drain()` rather than re-send this
+ *                     message -- resending it would duplicate it on the wire,
+ *                     since uWS has already queued it once.
+ *   - "dropped"       the message was NOT sent at all (outbound buffering
+ *                      already exceeds the connection's backpressure limit);
+ *                      this is a genuine loss and must be retried.
+ */
+type WriteResult = "success" | "backpressure" | "dropped";
+
 type Writer = {
-  write: (message: string) => boolean;
+  write: (message: string) => WriteResult;
   drain?: () => void;
   close: () => void;
 };

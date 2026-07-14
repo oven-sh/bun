@@ -310,4 +310,136 @@ afterAll(async () => {
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);
   });
+
+  test("delivers every TestReporter event exactly once, in order, when write() reports WebSocket backpressure", async () => {
+    // Regression test for the "pace on backpressure" fix in bufferedWriter()/
+    // webSocketWriter() (src/js/internal/debugger.ts).
+    //
+    // ws.sendText() returns a JS number with a three-way contract (see
+    // packages/bun-uws/src/WebSocket.h, `WebSocket::send()`'s doc comment and
+    // `SendStatus` enum): -1 (BACKPRESSURE, message WAS accepted into uWS's
+    // outbound buffer but the buffer is running high), 0 (DROPPED, message
+    // was NOT sent at all), or a positive byte count (SUCCESS).
+    //
+    // Previously `webSocketWriter` collapsed this with `!!`, coercing -1 to
+    // `true` and making backpressure indistinguishable from success, so
+    // bufferedWriter() -- which only requeues on a falsy return -- never
+    // reacted to backpressure at all. The fix under test here distinguishes
+    // all three cases and, on backpressure, PACES further writes (queues them
+    // rather than sending immediately) until the next drain(), instead of
+    // re-sending the message that reported backpressure. Re-sending that
+    // specific message would duplicate it on the wire, since uWS's own
+    // contract says BACKPRESSURE means the message was already accepted --
+    // unlike DROPPED, which means it was discarded and must be retried.
+    //
+    // This test drives the debugger socket into genuine backpressure using
+    // the same technique as the sibling backpressure test above (pause our
+    // reads before the subprocess starts emitting), then asserts every
+    // found/end event for every test arrives EXACTLY once (catching a naive
+    // "resend the backpressured message" implementation, which would produce
+    // duplicates) and that ids are observed in non-decreasing order (catching
+    // paced messages being flushed out of order relative to ones already
+    // sent). Tests run sequentially with no `describe` nesting, so found ids
+    // are expected in declaration order (collected in one synchronous pass)
+    // and end ids are expected in the same sequential execution order.
+
+    const TEST_COUNT = 500;
+
+    const testFileLines = [`import { test, expect } from "bun:test";`];
+    for (let i = 0; i < TEST_COUNT; i++) {
+      // A sizeable console.log per test increases the bytes queued on the
+      // debugger socket while it is paused, helping push sendText() past
+      // uWS's backpressure threshold.
+      testFileLines.push(
+        `test("backpressure order test ${i}", () => { console.log("x".repeat(2000)); expect(${i}).toBe(${i}); });`,
+      );
+    }
+
+    using dir = tempDir("test-reporter-backpressure-order", {
+      "backpressure-order.test.ts": testFileLines.join("\n"),
+    });
+
+    const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
+
+    const session = new TestReporterSession();
+    const framer = new SocketFramer((message: string) => {
+      session.onMessage(message);
+    });
+
+    // Track raw arrival order/count independent of TestReporterSession's
+    // internal Map (which is keyed by id and would silently absorb a
+    // duplicate rather than surface it).
+    const foundIds: number[] = [];
+    const endedIds: number[] = [];
+    session.addEventListener("TestReporter.found", (params: any) => foundIds.push(params.id));
+    session.addEventListener("TestReporter.end", (params: any) => endedIds.push(params.id));
+
+    const socketPromise = connect(`unix://${socketPath}`).then(s => {
+      socket = s;
+      session.socket = s;
+      session.framer = framer;
+      s.data = {
+        onData: framer.onData.bind(framer),
+      };
+      return s;
+    });
+
+    proc = spawn({
+      cmd: [
+        bunExe(),
+        `--inspect-wait=unix:${socketPath}`,
+        "test",
+        "--timeout",
+        "30000",
+        "backpressure-order.test.ts",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    await socketPromise;
+
+    // Pause reading on our side immediately, before the subprocess even
+    // starts emitting protocol messages, so its writes queue up and
+    // back-pressure.
+    socket!.pause();
+
+    session.enableInspector();
+    session.enableTestReporter();
+    session.send("Console.enable");
+    session.initialize();
+
+    // Give the subprocess time to run all tests and attempt to emit every
+    // found/start/end event and console message while our socket is paused
+    // and not draining anything.
+    await Bun.sleep(2000);
+
+    // Now resume reading. Paced messages should flush in order, with no
+    // duplicates, once the connection drains.
+    socket!.resume();
+
+    await session.waitForFoundTests(TEST_COUNT, 30000);
+    await session.waitForEndedTests(TEST_COUNT, 30000);
+
+    // Exactly one `found`/`end` per test -- no message was silently dropped,
+    // and none was duplicated by a naive resend-on-backpressure.
+    expect(foundIds.length).toBe(TEST_COUNT);
+    expect(new Set(foundIds).size).toBe(TEST_COUNT);
+    expect(endedIds.length).toBe(TEST_COUNT);
+    expect(new Set(endedIds).size).toBe(TEST_COUNT);
+
+    // Ids arrive in non-decreasing order: a paced (queued) message is never
+    // flushed ahead of a message that was already sent before it.
+    for (let i = 1; i < foundIds.length; i++) {
+      expect(foundIds[i]).toBeGreaterThanOrEqual(foundIds[i - 1]);
+    }
+    for (let i = 1; i < endedIds.length; i++) {
+      expect(endedIds[i]).toBeGreaterThanOrEqual(endedIds[i - 1]);
+    }
+
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(0);
+  });
 });

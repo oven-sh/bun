@@ -2818,6 +2818,7 @@ impl ThreadSafeFunction {
     /// SAFETY: `this` is a live allocation from `new`, the caller holds no
     /// lock on it, and no other thread holds a reference.
     unsafe fn free_orphaned(this: *mut ThreadSafeFunction) {
+        // SAFETY: see the function's safety contract above.
         drop(unsafe { bun_core::heap::take(this) });
     }
 

@@ -372,19 +372,11 @@ const SocketHandlers: SocketHandler = {
     if (tlsKeylogPath !== undefined) appendTlsKeylog(line);
     self.server?.emit?.("keylog", line, self);
   },
-  error(socket, error, flagAlreadySet = false) {
+  error(socket, error) {
     const self = socket.data;
     if (!self) return;
-    // ServerHandlers.error sets _hadError before delegating here (its own
-    // once-guard) and passes flagAlreadySet - honoring the flag in that case
-    // swallowed every native error dispatch on server-side sockets (the
-    // socket never emitted 'error' and sat alive; test-net-stream's server
-    // hung exactly there on darwin, where post-reset sends surface through
-    // the bounded-retry fatal path).
-    if (!flagAlreadySet) {
-      if (self._hadError) return;
-      self._hadError = true;
-    }
+    if (self._hadError) return;
+    self._hadError = true;
 
     const callback = self[kwriteCallback];
     if (callback) {

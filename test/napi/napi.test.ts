@@ -1175,6 +1175,7 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("class/plain-obj: status=0 result=false pending=false");
       expect(output).toContain("arrow+hasInstance: status=0 result=true pending=false");
       expect(output).toContain("bound+hasInstance: status=0 result=true pending=false");
+      expect(output).toContain("bare-arrow ctor: status=9 result=false pending=true errName=TypeError");
       expect(output).toContain("hasInstance throws: status=9 result=false pending=true errName=RangeError");
       expect(output).toContain("proxy get throws: status=9 result=false pending=true errName=RangeError");
       expect(output).toContain(

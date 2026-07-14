@@ -845,6 +845,9 @@ nativeTests.test_napi_instanceof = () => {
   Object.defineProperty(bound, Symbol.hasInstance, { value: () => true });
   dump("bound+hasInstance", nativeTests.perform_instanceof({}, bound));
 
+  const bareArrow = () => 1;
+  dump("bare-arrow ctor", nativeTests.perform_instanceof({}, bareArrow));
+
   class Throws {
     static [Symbol.hasInstance]() {
       throw new RangeError("boom");

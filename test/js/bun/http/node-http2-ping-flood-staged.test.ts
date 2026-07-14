@@ -56,10 +56,7 @@ test("PING flood tears the session down at every stage", async () => {
     Promise.race([
       p,
       new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`stage timed out: ${name}; reached: ${stages.join(" -> ")}`)),
-          10_000,
-        ),
+        setTimeout(() => reject(new Error(`stage timed out: ${name}; reached: ${stages.join(" -> ")}`)), 10_000),
       ),
     ]);
 

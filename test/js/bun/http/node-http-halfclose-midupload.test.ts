@@ -62,9 +62,7 @@ test("write after res.socket.end() mid-upload completes every teardown stage", a
   expect(await withTimeout(writeResult.promise, "write-after-end")).toBeTrue();
   await withTimeout(fetchSettled, "fetch-settled");
   await withTimeout(connectionClosed.promise, "connection-closed");
-  const serverClosed = new Promise<void>((resolve, reject) =>
-    server.close(err => (err ? reject(err) : resolve())),
-  );
+  const serverClosed = new Promise<void>((resolve, reject) => server.close(err => (err ? reject(err) : resolve())));
   await withTimeout(serverClosed, "server-closed");
   expect(stages).toContain("write-returned");
 }, 45_000);

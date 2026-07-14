@@ -120,9 +120,9 @@ void NapiClass::finishCreation(VM& vm, const String& name, napi_callback constru
         const napi_property_descriptor& property = properties[i];
 
         if (property.attributes & napi_static) {
-            Napi::defineProperty(env, this, property, true, throwScope);
+            (void)Napi::defineProperty(env, this, property, true, throwScope);
         } else {
-            Napi::defineProperty(env, prototype, property, false, throwScope);
+            (void)Napi::defineProperty(env, prototype, property, false, throwScope);
         }
 
         if (throwScope.exception())

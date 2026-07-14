@@ -236,6 +236,86 @@ nativeTests.test_set_property = () => {
   }
 };
 
+nativeTests.test_define_properties = () => {
+  const statusNames = [
+    "napi_ok",
+    "napi_invalid_arg",
+    "napi_object_expected",
+    "napi_string_expected",
+    "napi_name_expected",
+    "napi_function_expected",
+    "napi_number_expected",
+    "napi_boolean_expected",
+    "napi_array_expected",
+    "napi_generic_failure",
+    "napi_pending_exception",
+  ];
+  const fmtStatus = s => statusNames[s] ?? String(s);
+  const fmtDesc = d =>
+    d === undefined
+      ? "undefined"
+      : JSON.stringify({
+          value: d.value,
+          get: typeof d.get,
+          set: typeof d.set,
+          writable: d.writable,
+          enumerable: d.enumerable,
+          configurable: d.configurable,
+        });
+
+  const run = (label, target, kind, name, inspectKey) => {
+    const { status, pending } = nativeTests.define_properties(target, kind, name);
+    let descText = "";
+    if (inspectKey !== null) {
+      descText = " desc=" + fmtDesc(Object.getOwnPropertyDescriptor(target, inspectKey));
+    }
+    console.log(`${label}: status=${fmtStatus(status)} pending=${pending}${descText}`);
+  };
+
+  for (const kind of ["value", "getter", "setter", "accessor", "method"]) {
+    // frozen target: [[DefineOwnProperty]] must fail
+    run(`frozen ${kind}`, Object.freeze({}), kind, undefined, "k");
+
+    // proxy whose defineProperty trap records calls and forwards
+    let trapCalls = 0;
+    const proxTarget = {};
+    const prox = new Proxy(proxTarget, {
+      defineProperty(t, k, d) {
+        trapCalls++;
+        return Reflect.defineProperty(t, k, d);
+      },
+    });
+    run(`proxy ${kind}`, prox, kind, undefined, null);
+    console.log(
+      `proxy ${kind}: trapCalls=${trapCalls} targetDesc=${fmtDesc(Object.getOwnPropertyDescriptor(proxTarget, "k"))}`,
+    );
+
+    // proxy with throwing trap
+    const throwing = new Proxy(
+      {},
+      {
+        defineProperty() {
+          throw new TypeError("boom");
+        },
+      },
+    );
+    run(`throwing-proxy ${kind}`, throwing, kind, undefined, "k");
+
+    // plain object: check descriptor shape (no synthetic getter for setter-only)
+    run(`plain ${kind}`, {}, kind, undefined, "k");
+  }
+
+  // name as a napi_value string
+  run("name=string", {}, "value", "k", "k");
+  // name as a napi_value symbol
+  const sym = Symbol("s");
+  run("name=symbol", {}, "value", sym, sym);
+  // name as a napi_value number (not a valid property name)
+  run("name=number", {}, "value", 5, "5");
+  // name as a napi_value object (not a valid property name)
+  run("name=object", {}, "value", { toString: () => "x" }, "x");
+};
+
 nativeTests.test_number_integer_conversions_from_js = () => {
   const i32 = { min: -(2 ** 31), max: 2 ** 31 - 1 };
   const u32Max = 2 ** 32 - 1;

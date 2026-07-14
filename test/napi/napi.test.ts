@@ -574,6 +574,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_define_properties", () => {
+    it("goes through [[DefineOwnProperty]] and validates the name", async () => {
+      await checkSameOutput("test_define_properties", []);
+    });
+  });
+
   describe("napi_value <=> integer conversion", () => {
     it("works", async () => {
       await checkSameOutput("test_number_integer_conversions_from_js", []);

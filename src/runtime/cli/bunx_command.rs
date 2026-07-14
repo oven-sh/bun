@@ -584,6 +584,26 @@ impl BunxCommand {
         true
     }
 
+    /// Refuse to forward a `bunfig.toml` discovered by walking up from the
+    /// invoking cwd unless it is a regular file owned by the current user.
+    /// The walk may cross into world-writable ancestors (e.g. `/tmp`), where
+    /// another local user could plant a `bunfig.toml` redirecting `[install]
+    /// registry` to a host they control; bunx would then fetch and execute
+    /// their package. Same threat model as `is_trusted_cached_binary`.
+    #[cfg(unix)]
+    fn is_trusted_local_bunfig(path: &ZStr, uid: libc::uid_t) -> bool {
+        match bun_sys::lstat(path) {
+            Ok(st) => st.st_uid == uid && (st.st_mode & libc::S_IFMT) == libc::S_IFREG,
+            Err(_) => false,
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[inline(always)]
+    fn is_trusted_local_bunfig(_path: &ZStr, _uid: u32) -> bool {
+        true
+    }
+
     fn exit_with_usage() -> ! {
         crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
         Global::exit(1);
@@ -1231,8 +1251,11 @@ impl BunxCommand {
         // workspace root before loading bunfig.toml; replicating that walk
         // would require parsing each ancestor package.json's `workspaces`, so
         // instead walk up from the invoking cwd and take the first
-        // bunfig.toml found. This is a superset of what `bun add` would find,
-        // which is the safe direction for registry pinning.
+        // bunfig.toml found. On Unix the candidate is rejected unless it is a
+        // regular file owned by the current user (see
+        // `is_trusted_local_bunfig`), so a bunfig.toml planted by another
+        // local user in a world-writable ancestor cannot redirect the
+        // install.
         let mut local_bunfig_buf = PathBuffer::uninit();
         let local_bunfig_arg: Option<&[u8]> = 'find_bunfig: {
             const PREFIX: &[u8] = b"--config=";
@@ -1253,6 +1276,14 @@ impl BunxCommand {
                 local_bunfig_buf[len] = 0;
                 let path_z = ZStr::from_buf(&local_bunfig_buf[PREFIX.len()..], len - PREFIX.len());
                 if bun_sys::exists_z(path_z) {
+                    if !Self::is_trusted_local_bunfig(path_z, uid) {
+                        bun_output::scoped_log!(
+                            bunx,
+                            "ignoring untrusted bunfig.toml: {}",
+                            BStr::new(path_z.as_bytes())
+                        );
+                        break 'find_bunfig None;
+                    }
                     break 'find_bunfig Some(&local_bunfig_buf[..len]);
                 }
                 match bun_paths::dirname(dir) {

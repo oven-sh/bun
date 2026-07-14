@@ -679,7 +679,7 @@ impl Response {
         W: core::fmt::Write,
     {
         // return type narrowed to `core::fmt::Result`. The trait
-        // methods produce `fmt::Error`/`JsError`/`bun_core::Error`; none of
+        // methods produce `fmt::Error`/`JsError`/`crate::Error`; none of
         // those convert into the others, so funnel everything through
         // `fmt::Error`.
         let js_err = |_: JsError| core::fmt::Error;

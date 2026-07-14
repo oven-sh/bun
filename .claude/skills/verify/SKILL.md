@@ -1,58 +1,30 @@
 ---
 name: verify
-description: Build bun and drive the change through the real binary to observe it working.
+description: Verify a Bun runtime change by driving the debug binary end-to-end.
 ---
 
-# Verifying a change in this repo
+# Verify a Bun runtime change
+
+Build and drive the debug binary directly — never `bun test`, never import-and-call.
 
 ## Build
 
-The Homebrew `rustc` shadows the pinned nightly, so always export the toolchain:
-
 ```sh
-export PATH="$HOME/.cargo/bin:$PATH" RUSTUP_TOOLCHAIN=nightly-2026-05-06
-bun bd              # -> build/debug/bun-debug ; NEVER set a timeout on this
+bun bd --version   # builds ./build/debug/bun-debug and prints its version
 ```
-
-Cold build ~20 min, incremental ~2-4 min. Run it as a background task and chain
-the drive step onto the same command (`bun bd && ./build/debug/bun-debug ...`) —
-a separate follow-up command races the relink.
-
-Network: cargo/rustup need the network, so run the build with the sandbox
-disabled. Many runtime tests (quic/net/tls/http) also need loopback sockets and
-fail universally under the sandbox — drive them with the sandbox off too.
 
 ## Drive
 
-The surface is the CLI. Write a small script and run it through the built binary
-rather than importing internals:
+For any JS-visible change, run the debug binary with `-e` and observe stdout:
 
 ```sh
-BUN_DEBUG_QUIET_LOGS=1 ./build/debug/bun-debug [flags] script.mjs
+bun bd -e '<repro>'   # builds, then runs; sets BUN_DEBUG_QUIET_LOGS for you
 ```
 
-Pass whatever flags the feature is gated behind (e.g. `--experimental-quic`).
-`BUN_DEBUG_QUIET_LOGS=1` is essential — otherwise `[sys]`/`[cachefs]` scope logs
-bury the output. `BUN_DEBUG_<scope>=1` turns a specific scope back on
-(`BUN_DEBUG_lsquic=1` routes lsquic's own log to stderr).
+For worker/subprocess-shaped changes, spawn a subprocess (still `-e`) so worker teardown / event-loop-idle paths are exercised. Cross-check against `node -e '<same repro>'` for Node-compat changes.
 
-## Node compat tests (`test/js/node/test/parallel/*.mjs`)
+## Gotchas
 
-`bun bd test` does NOT run these — it only picks up `*.test.ts`. The real runner
-(`scripts/runner.node.mjs`) wants to `bun install` the test fixtures, which 404s
-against the corporate registry. Just run the file directly with the flags from
-its own `// Flags:` header line:
-
-```sh
-./build/debug/bun-debug --experimental-quic --no-warnings test/js/node/test/parallel/test-quic-foo.mjs
-```
-
-Loop it (30-50x) when hunting a flake; several quic/net tests are timing races
-that only show up a few percent of the time.
-
-## Mutation-check the fix
-
-Before trusting a new test, break the fix and confirm the test fails. A mutation
-that stops the crate from compiling is not a valid mutation (e.g. removing a
-call also orphans its `use`, and the workspace denies unused imports) — prefer a
-one-token change that still builds.
+- `BUN_DEBUG_QUIET_LOGS=1` suppresses debug-build log spam.
+- MessagePort's `.on/.off` are added by requiring `worker_threads` — plain `new MessageChannel()` ports only have `addEventListener` until then.
+- The debug+asan build is 10-100× slower than release; large-allocation stress tests can time out locally while passing in CI.

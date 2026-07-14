@@ -127,8 +127,7 @@ impl Crypto {
 
     // DOMJIT fast path.
     pub fn random_uuid_without_type_checks(&self, global: &JSGlobalObject) -> JSValue {
-        let (str, bytes) = BunString::create_uninitialized_latin1(36);
-        // `defer str.deref()` — BunString's Drop handles the deref.
+        let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
 
         // randomUUID must have been called already many times before this kicks
         // in so we can skip the rare_data pointer check.
@@ -142,7 +141,7 @@ impl Crypto {
                 .expect("infallible: size matches"),
         );
         // DOMJIT fast path returns bare JSValue; OOM here is unrecoverable.
-        str.to_js(global).unwrap_or(JSValue::ZERO)
+        str.transfer_to_js(global).unwrap_or(JSValue::ZERO)
     }
 
     // `#[JsClass]` emits `CryptoClass__construct` calling this.
@@ -166,7 +165,7 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
             slice[..src.len()].copy_from_slice(src);
         }
         _ => {
-            bun_core::csprng(slice);
+            bun_boringssl_sys::rand_bytes(slice);
         }
     }
 }
@@ -237,9 +236,9 @@ pub(crate) fn bun_random_uuid_v7(
     };
 
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-    let entropy = global.bun_vm().as_mut().rare_data().entropy_slice(8);
+    let entropy = global.bun_vm().as_mut().rare_data().entropy_slice(10);
 
-    let uuid = UUID7::init(timestamp, <[u8; 8]>::try_from(&entropy[0..8]).unwrap());
+    let uuid = UUID7::init(timestamp, <[u8; 10]>::try_from(&entropy[0..10]).unwrap());
 
     if encoding == Encoding::Hex {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);

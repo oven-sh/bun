@@ -44,9 +44,9 @@ pub mod ssl_wrapper {
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
         handlers: Handlers<T>,
-    ) -> Result<SSLWrapper<T>, bun_core::Error> {
+    ) -> Result<SSLWrapper<T>, crate::Error> {
         SSLWrapper::<T>::init_from_options(&ssl_options.as_usockets(), is_client, handlers)
-            .map_err(bun_core::Error::from)
+            .map_err(crate::Error::from)
     }
 }
 

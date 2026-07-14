@@ -2459,6 +2459,13 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     };
 
     // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm
+    // The grammar is <percentage [0,100]>; values outside that range are invalid.
+    if first_percent.is_some_and(|p| !(0.0..=1.0).contains(&p))
+        || second_percent.is_some_and(|p| !(0.0..=1.0).contains(&p))
+    {
+        return Err(input.new_custom_error(css::ParserError::invalid_value));
+    }
+
     let (p1, p2): (f32, f32) = if first_percent.is_none() && second_percent.is_none() {
         (0.5, 0.5)
     } else {

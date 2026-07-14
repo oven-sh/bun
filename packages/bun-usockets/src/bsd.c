@@ -1298,7 +1298,8 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
                 return LIBUS_SOCKET_ERROR;
             }
 
-            int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%s", socket_dir_fd, path + dirname_len);
+            // `path` is a ptr+len pair (not NUL-terminated), so bound the basename copy with %.*s.
+            int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%.*s", socket_dir_fd, (int)(path_len - dirname_len), path + dirname_len);
             if (sun_path_len >= sizeof(server_address->sun_path) || sun_path_len < 0) {
                 close(socket_dir_fd);
                 errno = ENAMETOOLONG;

@@ -222,8 +222,7 @@ FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCoun
         JSC::MarkedArgumentBuffer arguments;
         for (size_t i = 0; i < argsVec.size(); ++i)
             arguments.appendWithCrashOnOverflow(JSC::JSValue::decode(argsVec[i]));
-        invokeFFICallback(globalObject, protectedWrapper->m_function.get(), arguments);
-    });
+        invokeFFICallback(globalObject, protectedWrapper->m_function.get(), arguments); });
 }
 
 extern "C" JSC::EncodedJSValue

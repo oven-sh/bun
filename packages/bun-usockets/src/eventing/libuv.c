@@ -31,10 +31,12 @@
  * touching the stream: 0 on a healthy socket, SOCKET_ERROR with a fatal
  * code once the connection died hard. */
 int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd) {
-  if (bsd_send(fd, "", 0, 0) >= 0) {
+  /* Raw winsock send: this file only builds on the libuv (Windows) path and
+   * bsd_send's Windows signature has no flags parameter. */
+  if (send(fd, "", 0, 0) != SOCKET_ERROR) {
     return 0;
   }
-  return !bsd_would_block();
+  return WSAGetLastError() != WSAEWOULDBLOCK;
 }
 
 static struct us_socket_t *us_internal_poll_cb_adopted_socket(struct us_poll_t *wp) {

@@ -18,6 +18,8 @@
 #include "internal/internal.h"
 #include "libusockets.h"
 #include <stdlib.h>
+/* struct timespec for us_loop_run_bun_tick (UCRT defines it in time.h) */
+#include <time.h>
 
 #ifdef LIBUS_USE_LIBUV
 

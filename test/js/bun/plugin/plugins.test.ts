@@ -11,6 +11,9 @@ declare global {
   var asyncObject: any;
   var asyncfail: any;
   var asyncret: any;
+  var __cjsSyncSideEffect: any;
+  var __cjsAsyncSideEffect: any;
+  var __cjsGhostRan: any;
 }
 
 plugin({

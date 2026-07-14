@@ -20,26 +20,39 @@ if (cluster.isPrimary) {
   }, 30_000);
   watchdog.unref();
 
+  let stopSending = () => {};
+
   cluster.on("listening", (_worker, address) => {
     if (++listening < NUM_WORKERS) return;
     // All workers share one fd; send everything at that port. The shared fd
     // binds INADDR_ANY, but sending to 0.0.0.0 is not portably deliverable.
+    // Datagrams may be dropped, so keep sending until the workers have
+    // actually received TOTAL_PACKETS rather than assuming every send lands.
     const sender = dgram.createSocket("udp4");
-    let sent = 0;
+    let sending = true;
+    stopSending = () => {
+      if (!sending) return;
+      sending = false;
+      sender.close();
+    };
+    // setImmediate between sends: a send->callback->send chain never yields,
+    // so the primary would never process the workers' IPC reports.
     (function next() {
-      sender.send("hello", address.port, "127.0.0.1", () => {
-        if (++sent < TOTAL_PACKETS) next();
-        else sender.close();
-      });
+      if (!sending) return;
+      sender.send("hello", address.port, "127.0.0.1", () => setImmediate(next));
     })();
   });
 
+  // In-flight worker reports keep arriving after the target is reached; only
+  // the first crossing may stop the sender and the workers.
+  let stopped = false;
   for (const worker of workers) {
     worker.on("message", (msg: { got: number }) => {
       received += msg.got;
-      if (received >= TOTAL_PACKETS) {
-        for (const w of workers) w.send("stop");
-      }
+      if (received < TOTAL_PACKETS || stopped) return;
+      stopped = true;
+      stopSending();
+      for (const w of workers) w.send("stop");
     });
   }
 
@@ -62,11 +75,12 @@ if (cluster.isPrimary) {
     got++;
     process.send!({ got: 1 });
   });
+  let stopping = false;
   process.on("message", msg => {
-    if (msg === "stop") {
-      socket.close();
-      cluster.worker!.disconnect();
-    }
+    if (msg !== "stop" || stopping) return;
+    stopping = true;
+    socket.close();
+    cluster.worker!.disconnect();
   });
   // Non-exclusive: routes through the primary for a shared descriptor.
   socket.bind(0);

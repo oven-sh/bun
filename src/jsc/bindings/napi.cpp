@@ -126,10 +126,16 @@ using namespace Zig;
 
 // Node's CHECK_TO_OBJECT: ToObject coerces primitives and throws on
 // null/undefined; on failure the TypeError is left pending and the call
-// returns napi_object_expected. Declares `_result` in the enclosing scope.
-#define NAPI_CHECK_TO_OBJECT(_env, _globalObject, _result, _src) \
-    JSObject* _result = (_src).toObject((_globalObject));        \
-    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__,             \
+// returns napi_object_expected. Node's own NAPI_PREAMBLE has already returned
+// napi_pending_exception for an env-stashed exception (from napi_throw) by this
+// point; bun's preamble only checks the VM scope, so re-check here so callers
+// keep bailing before any observable side effect (matching the
+// NAPI_RETURN_IF_EXCEPTION they previously used). Declares `_result` in the
+// enclosing scope.
+#define NAPI_CHECK_TO_OBJECT(_env, _globalObject, _result, _src)                                \
+    NAPI_RETURN_EARLY_IF_FALSE((_env), !(_env)->hasPendingException(), napi_pending_exception); \
+    JSObject* _result = (_src).toObject((_globalObject));                                       \
+    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__,                                            \
         napi_set_last_error((_env), napi_object_expected))
 
 // Return an error code if an exception was thrown after NAPI_PREAMBLE

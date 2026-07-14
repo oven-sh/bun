@@ -324,6 +324,18 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_get_version / node_api_create_external_string_*", () => {
+    it("reports Node-API v10 and accepts zero-length external strings", async () => {
+      const result = await checkSameOutput("test_napi_v10_surface", []);
+      expect(result).toContain("napi_get_version >= 10 = true");
+      expect(result).toContain("external latin1 empty: status=0 copied=0 finalized=1");
+      expect(result).toContain("external latin1 empty: length=0");
+      expect(result).toContain("external utf16 empty: status=0 copied=0 finalized=1");
+      expect(result).toContain("external utf16 empty: length=0");
+      expect(result).toContain("external utf16 nonempty: copied=0");
+    });
+  });
+
   describe("napi_create_external_buffer", () => {
     it("handles empty/null data without throwing", async () => {
       const result = await checkSameOutput("test_napi_create_external_buffer_empty", []);

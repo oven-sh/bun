@@ -2130,6 +2130,59 @@ test_napi_create_external_buffer_empty(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static int empty_external_string_finalized = 0;
+
+static void empty_external_string_finalizer(napi_env env, void *data,
+                                            void *hint) {
+  empty_external_string_finalized++;
+}
+
+static napi_value test_napi_v10_surface(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  uint32_t version = 0;
+  NODE_API_CALL(env, napi_get_version(env, &version));
+  printf("napi_get_version >= 10 = %s\n", version >= 10 ? "true" : "false");
+
+  static char latin1_empty[1] = {0};
+  static char16_t utf16_empty[1] = {0};
+  static char16_t utf16_hi[] = u"hi";
+
+  const char *names[] = {"latin1", "utf16"};
+  for (int i = 0; i < 2; i++) {
+    empty_external_string_finalized = 0;
+    bool copied = true;
+    napi_value result = nullptr;
+    napi_status status;
+    if (i == 0) {
+      status = node_api_create_external_string_latin1(
+          env, latin1_empty, 0, empty_external_string_finalizer, nullptr,
+          &result, &copied);
+    } else {
+      status = node_api_create_external_string_utf16(
+          env, utf16_empty, 0, empty_external_string_finalizer, nullptr,
+          &result, &copied);
+    }
+    printf("external %s empty: status=%d copied=%d finalized=%d\n", names[i],
+           (int)status, (int)copied, empty_external_string_finalized);
+    if (status == napi_ok) {
+      size_t length = 99;
+      NODE_API_CALL(
+          env, napi_get_value_string_utf8(env, result, nullptr, 0, &length));
+      printf("external %s empty: length=%zu\n", names[i], length);
+    }
+  }
+
+  bool copied = true;
+  napi_value result = nullptr;
+  NODE_API_CALL(env,
+                node_api_create_external_string_utf16(
+                    env, utf16_hi, 2, nullptr, nullptr, &result, &copied));
+  printf("external utf16 nonempty: copied=%d\n", (int)copied);
+
+  return ok(env);
+}
+
 static napi_value test_napi_empty_buffer_info(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
@@ -2915,6 +2968,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_object_coercion);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
+  REGISTER_FUNCTION(env, exports, test_napi_v10_surface);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
   REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);

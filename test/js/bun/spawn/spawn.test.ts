@@ -1320,18 +1320,15 @@ describe.skipIf(!isWindows)("ignore stdio NUL substitution", () => {
   it("all-ignore slots become discard pipes and a 1MB write succeeds", async () => {
     using dir = tempDir("spawn-nul-substitute", {
       "probe.js": `
-        const { dlopen, FFIType } = require("bun:ffi");
-        const k32 = dlopen("kernel32.dll", {
-          GetStdHandle: { args: [FFIType.i32], returns: FFIType.u64 },
-          GetFileType: { args: [FFIType.u64], returns: FFIType.u32 },
-        }).symbols;
-        // STD_OUTPUT_HANDLE = -11
-        const type = k32.GetFileType(k32.GetStdHandle(-11));
         const fs = require("fs");
+        // Discriminator: the substitute pipe reports isFIFO; real NUL is a char device.
+        const s = fs.fstatSync(1);
+        const isFIFO = s.isFIFO();
+        const isChar = s.isCharacterDevice();
         const chunk = Buffer.alloc(64 * 1024, "x");
         let wrote = 0;
         for (let i = 0; i < 16; i++) wrote += fs.writeSync(1, chunk);
-        fs.writeFileSync(process.argv[2], JSON.stringify({ type, wrote }));
+        fs.writeFileSync(process.argv[2], JSON.stringify({ isFIFO, isChar, wrote }));
       `,
       "mid.js": `
         const child = Bun.spawn({
@@ -1350,10 +1347,12 @@ describe.skipIf(!isWindows)("ignore stdio NUL substitution", () => {
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const r = existsSync(results) ? JSON.parse(readFileSync(results, "utf8")) : {};
-    // FILE_TYPE_PIPE = 3; the real NUL device reports FILE_TYPE_CHAR = 2.
-    expect(r.type).toBe(3);
-    expect(r.wrote).toBe(16 * 64 * 1024);
-    expect(JSON.parse(stdout.trim())).toEqual({ grandExit: 0 });
+    expect({ ...r, stdout: stdout.trim() }).toEqual({
+      isFIFO: true,
+      isChar: false,
+      wrote: 16 * 64 * 1024,
+      stdout: JSON.stringify({ grandExit: 0 }),
+    });
     expect(exitCode).toBe(0);
   });
 

@@ -3380,14 +3380,15 @@ mod posix_impl {
     }
 
     /// `bun.sys.mmapFile` — open `path` RDWR, fstat for size, mmap [offset, offset+len).
-    /// Returns a process-lifetime mmap slice; caller is responsible for
-    /// `munmap`.
+    /// Returns `(map, delta)` where `map` is the full page-aligned mapping and
+    /// `delta = offset % page_size` is the byte offset into `map` at which the
+    /// requested `offset` begins. Caller is responsible for `munmap(map)`.
     pub fn mmap_file(
         path: &ZStr,
         flags: libc::c_int,
         wanted_size: Option<usize>,
         offset: usize,
-    ) -> Maybe<&'static mut [u8]> {
+    ) -> Maybe<(&'static mut [u8], usize)> {
         let fd = open(path, O::RDWR, 0)?;
         // close fd regardless of mmap outcome (the mapping outlives the fd).
         let _close = CloseOnDrop::new(fd);
@@ -3396,22 +3397,33 @@ mod posix_impl {
             let result = fstat(fd)?;
             usize::try_from(result.st_size).unwrap_or(0)
         };
+
+        // mmap requires a page-aligned file offset. Map from the aligned
+        // offset and report the delta so the caller can slice to the
+        // requested byte.
+        let page = bun_alloc::page_size();
+        let delta = offset % page;
+        let aligned_offset = offset - delta;
+
         let mut size = stat_size.saturating_sub(offset);
         if let Some(size_) = wanted_size {
             size = size.min(size_);
         }
+        // When size == 0 (offset at/past EOF or size: 0) pass 0 so mmap
+        // returns EINVAL instead of mapping the leading delta bytes.
+        let map_len = if size == 0 { 0 } else { size + delta };
 
         match mmap(
             core::ptr::null_mut(),
-            size,
+            map_len,
             libc::PROT_READ | libc::PROT_WRITE,
             flags,
             fd,
-            offset as i64,
+            aligned_offset as i64,
         ) {
             Ok(ptr) => {
-                // SAFETY: mmap returned a valid mapping of `size` bytes.
-                Ok(unsafe { core::slice::from_raw_parts_mut(ptr, size) })
+                // SAFETY: mmap returned a valid mapping of `map_len` bytes.
+                Ok((unsafe { core::slice::from_raw_parts_mut(ptr, map_len) }, delta))
             }
             Err(err) => Err(err),
         }

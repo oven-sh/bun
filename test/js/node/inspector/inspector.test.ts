@@ -786,7 +786,10 @@ export { after };
   await send("Debugger.enable");
   await send("Debugger.setBreakpointsActive", { active: true });
 
+  // FileSink buffers: without the flush the child never sees "go" and both
+  // sides wait on each other until the test times out.
   proc.stdin.write("go\n");
+  proc.stdin.flush();
   await waitForStdout("importing");
   await waitForStdout("}\n");
   ws.close();
@@ -893,7 +896,10 @@ export { after };
   await send("Debugger.enable");
   await send("Runtime.runIfWaitingForDebugger");
 
+  // FileSink buffers: without the flush the child never sees "go", never
+  // reaches the `debugger;` statement, and the pause never arrives.
   proc.stdin.write("go\n");
+  proc.stdin.flush();
   await paused.promise;
   expect(pausedReason).toBe("other");
   await send("Debugger.resume");

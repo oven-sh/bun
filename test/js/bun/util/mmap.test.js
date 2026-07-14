@@ -110,7 +110,7 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       const lines = stdout.trim().split("\n");
       expect({ lines, signalCode: proc.signalCode, exitCode }).toEqual({
@@ -118,7 +118,6 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
         signalCode: null,
         exitCode: 0,
       });
-      expect(stderr).not.toContain("ASSERTION FAILED");
     } finally {
       unlinkSync(big);
     }

@@ -1116,6 +1116,11 @@ nativeTests.test_async_cleanup_hook_remove_nonexistent = () => {
   addon.test();
 };
 
+nativeTests.test_async_cleanup_hook_deferred = (_gc, mode) => {
+  const addon = require("./build/Debug/test_async_cleanup_hook_deferred.node");
+  addon.arm(Number(mode));
+};
+
 nativeTests.test_cleanup_hook_duplicates = () => {
   const addon = require("./build/Debug/test_cleanup_hook_duplicates.node");
   addon.test();

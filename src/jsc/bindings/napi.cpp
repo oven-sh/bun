@@ -3100,6 +3100,15 @@ extern "C" JS_EXPORT napi_status napi_remove_async_cleanup_hook(napi_async_clean
     }
 
     napi_env env = handle->env;
+
+    if (handle->started.load(std::memory_order_acquire)) {
+        // drain() already fired this hook; this is the completion signal and may
+        // come from any thread. NAPI_PREAMBLE is not thread-safe, so only touch
+        // the atomic counter (env is alive: JS thread is parked in the wait).
+        env->asyncCleanupHookCompleted(handle);
+        return napi_ok;
+    }
+
     NAPI_PREAMBLE_NO_PENDING_CHECK(env);
 
     // Always attempt removal like Node.js (no VM terminating check)

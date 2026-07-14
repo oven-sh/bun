@@ -1512,6 +1512,54 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("async cleanup hooks", () => {
+    const addonPath = join(__dirname, "napi-app/build/Debug/test_async_cleanup_hook_deferred.node");
+
+    it("waits for a hook that completes synchronously inside the callback", async () => {
+      const out = await checkSameOutput("test_async_cleanup_hook_deferred", [0]);
+      expect(out.split(/\r?\n/)).toEqual(["armed:0 status=0", "hook-invoked", "hook-completed"]);
+    });
+
+    it("blocks env teardown until the addon calls napi_remove_async_cleanup_hook", async () => {
+      // The hook spawns a detached thread that sleeps, then calls
+      // napi_remove_async_cleanup_hook. Process exit must not happen before
+      // the completer thread prints "hook-completed" (Node.js: RunCleanup
+      // spins uv_run while request_waiting_ > 0).
+      const out = await checkSameOutput("test_async_cleanup_hook_deferred", [1]);
+      expect(out.split(/\r?\n/)).toEqual(["armed:1 status=0", "hook-invoked", "hook-completed"]);
+    });
+
+    it("does not free the handle before remove is called when a Worker env tears down", async () => {
+      // Before the fix, drain() freed the handle immediately after invoking the
+      // hook; a completer that outlived the Worker's env read a freed handle in
+      // napi_remove_async_cleanup_hook (ASAN: heap-use-after-free in
+      // NapiEnv::vm). With the fix, drain() waits for the remove call, so the
+      // handle and env are both alive when the completer runs.
+      const code = `
+        const { Worker } = require("worker_threads");
+        const w = new Worker(
+          "require(" + JSON.stringify(${JSON.stringify(addonPath)}) + ").arm(1);",
+          { eval: true },
+        );
+        w.on("exit", () => { console.log("worker-exited"); });
+        w.on("error", err => { console.error("worker-error", err); process.exitCode = 1; });
+      `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", code],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.split(/\r?\n/).filter(Boolean), stderr, exitCode }).toEqual({
+        stdout: ["armed:1 status=0", "hook-invoked", "hook-completed", "worker-exited"],
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(proc.signalCode).toBeNull();
+    });
+  });
+
   describe("duplicate prevention", () => {
     it("should crash on duplicate hooks", async () => {
       await checkBothFail("test_cleanup_hook_duplicates", []);

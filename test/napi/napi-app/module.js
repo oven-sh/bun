@@ -865,6 +865,8 @@ nativeTests.test_napi_instanceof = () => {
 
   dump("number ctor", nativeTests.perform_instanceof({}, 5));
   dump("plain-obj ctor", nativeTests.perform_instanceof({}, { x: 1 }));
+  dump("null ctor", nativeTests.perform_instanceof({}, null));
+  dump("undefined ctor", nativeTests.perform_instanceof({}, undefined));
 };
 
 nativeTests.test_get_value_string = () => {

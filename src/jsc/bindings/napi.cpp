@@ -2873,9 +2873,10 @@ extern "C" napi_status napi_instanceof(napi_env env, napi_value object, napi_val
 
     JSValue objectValue = toJS(object);
     JSValue constructorValue = toJS(constructor);
-    JSC::JSObject* constructorObject = constructorValue.getObject();
+    JSC::JSObject* constructorObject = constructorValue.toObject(globalObject);
+    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_object_expected));
 
-    if (!constructorObject || !constructorObject->isCallable()) {
+    if (!constructorObject->isCallable()) {
         napi_throw_type_error(env, "ERR_NAPI_CONS_FUNCTION", "Constructor must be a function");
         return napi_set_last_error(env, napi_function_expected);
     }

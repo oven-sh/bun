@@ -1665,6 +1665,19 @@ fn run_security_scanner(manager: &mut PackageManager, ctx: Command::Context, ori
         return;
     }
 
+    // bunx forwards the project's bunfig.toml to this `bun add`, but runs it
+    // with cwd set to the bunx cache dir. A `[install.security] scanner`
+    // named there is not installed in (or a dependency of) the cache dir's
+    // `{}` package.json, so resolving it would always fail and abort the
+    // bunx invocation. The scanner gates what enters the project's
+    // dependency tree, not one-off tool executions.
+    if bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL
+        .get()
+        .unwrap_or(false)
+    {
+        return;
+    }
+
     match security_scanner::perform_security_scan_after_resolution(manager, ctx, original_cwd) {
         Err(err) => {
             match err {

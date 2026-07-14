@@ -585,16 +585,29 @@ impl BunxCommand {
     }
 
     /// Refuse to forward a `bunfig.toml` discovered by walking up from the
-    /// invoking cwd unless it is a regular file owned by the current user.
-    /// The walk may cross into world-writable ancestors (e.g. `/tmp`), where
-    /// another local user could plant a `bunfig.toml` redirecting `[install]
-    /// registry` to a host they control; bunx would then fetch and execute
-    /// their package. Same threat model as `is_trusted_cached_binary`.
+    /// invoking cwd unless it is (or resolves to) a regular file owned by
+    /// the current user. The walk may cross into world-writable ancestors
+    /// (e.g. `/tmp`), where another local user could plant a `bunfig.toml`
+    /// redirecting `[install] registry` to a host they control; bunx would
+    /// then fetch and execute their package. Symlinks are followed once so a
+    /// dotfile-managed config is accepted when both link and target are
+    /// uid-owned, mirroring `is_trusted_cached_binary`.
     #[cfg(unix)]
     fn is_trusted_local_bunfig(path: &ZStr, uid: libc::uid_t) -> bool {
+        let reg_ok =
+            |st: &bun_sys::Stat| st.st_uid == uid && (st.st_mode & libc::S_IFMT) == libc::S_IFREG;
         match bun_sys::lstat(path) {
-            Ok(st) => st.st_uid == uid && (st.st_mode & libc::S_IFMT) == libc::S_IFREG,
-            Err(_) => false,
+            Ok(st) if st.st_uid == uid => {
+                let kind = st.st_mode & libc::S_IFMT;
+                if kind == libc::S_IFREG {
+                    true
+                } else if kind == libc::S_IFLNK {
+                    matches!(bun_sys::stat(path), Ok(target) if reg_ok(&target))
+                } else {
+                    false
+                }
+            }
+            _ => false,
         }
     }
 
@@ -747,6 +760,76 @@ impl BunxCommand {
             };
         // Cloned to avoid borrowck overlap when PATH is reassigned below.
 
+        #[cfg(unix)]
+        // SAFETY: getuid() is always safe to call (no preconditions, never fails)
+        let uid = unsafe { libc::getuid() };
+        #[cfg(windows)]
+        let uid = bun_sys::windows::user_unique_id();
+
+        // The spawned `bun add` runs with cwd = `bunx_cache_dir`, so it cannot
+        // discover a project-local bunfig.toml on its own. Resolve it here from
+        // the invoking directory and forward it via `--config=<path>` so
+        // `[install]` settings such as `registry` are honored. `--config`'s
+        // value is optional in the install arg parser, so the `=` form is
+        // required for the path to be consumed. Discovery runs before
+        // `package_fmt` so the cache directory can be namespaced per bunfig
+        // (the registry may differ per project; without this a warm cache from
+        // one project would serve another).
+        //
+        // `bun add` run directly from a workspace member chdirs to the
+        // workspace root before loading bunfig.toml; replicating that walk
+        // would require parsing each ancestor package.json's `workspaces`, so
+        // instead walk up from the invoking cwd and take the first
+        // bunfig.toml found. On Unix the candidate is rejected unless it is
+        // (or resolves to) a regular file owned by the current user (see
+        // `is_trusted_local_bunfig`), so a bunfig.toml planted by another
+        // local user in a world-writable ancestor cannot redirect the
+        // install.
+        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
+        let top_level_dir: &[u8] = unsafe { (*this_transpiler.fs).top_level_dir };
+        let local_bunfig_arg: Option<Vec<u8>> = 'find_bunfig: {
+            const PREFIX: &[u8] = b"--config=";
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let total = buf.len();
+            let mut dir: &[u8] = strings::without_trailing_slash(top_level_dir);
+            loop {
+                let Ok(len) = (|| {
+                    let mut cursor: &mut [u8] = &mut buf[..total - 1];
+                    write!(
+                        cursor,
+                        "--config={dir}{sep}bunfig.toml",
+                        dir = BStr::new(dir),
+                        sep = bun_paths::SEP as char,
+                    )?;
+                    Ok::<_, std::io::Error>((total - 1) - cursor.len())
+                })() else {
+                    break 'find_bunfig None;
+                };
+                buf[len] = 0;
+                let path_z = ZStr::from_buf(&buf[PREFIX.len()..], len - PREFIX.len());
+                if bun_sys::exists_z(path_z) {
+                    if !Self::is_trusted_local_bunfig(path_z, uid) {
+                        bun_core::warn!(
+                            "ignoring <b>{}<r> because it is not a regular file owned by the current user",
+                            BStr::new(path_z.as_bytes()),
+                        );
+                        break 'find_bunfig None;
+                    }
+                    break 'find_bunfig Some(buf[..len].to_vec());
+                }
+                match bun_paths::dirname(dir) {
+                    Some(parent) => {
+                        let parent = strings::without_trailing_slash(parent);
+                        if parent.len() >= dir.len() {
+                            break 'find_bunfig None;
+                        }
+                        dir = parent;
+                    }
+                    None => break 'find_bunfig None,
+                }
+            }
+        };
+
         let display_version: &[u8] = if update_request.version.literal.is_empty() {
             b"latest"
         } else {
@@ -791,6 +874,12 @@ impl BunxCommand {
                     BStr::new(display_version),
                 )
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+            }
+            if let Some(arg) = &local_bunfig_arg {
+                // Namespace the cache dir by bunfig path so projects pinning
+                // different registries do not share a cache entry.
+                write!(&mut v, "@{:x}", hash(&arg[b"--config=".len()..]))
+                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             }
             break 'brk v;
         };
@@ -880,12 +969,6 @@ impl BunxCommand {
         //     where a user can replace the directory with malicious code.
         //
         // If this format changes, please update cache clearing code in package_manager_command.rs
-        #[cfg(unix)]
-        // SAFETY: getuid() is always safe to call (no preconditions, never fails)
-        let uid = unsafe { libc::getuid() };
-        #[cfg(windows)]
-        let uid = bun_sys::windows::user_unique_id();
-
         path = {
             let mut v = Vec::new();
             let path_is_nonzero = !path.is_empty();
@@ -917,7 +1000,6 @@ impl BunxCommand {
         // `path_buf` is a stack local so
         // `bun_which::which`'s returned slice can borrow it for the rest of exec().
         let mut path_buf = PathBuffer::uninit();
-        let top_level_dir: &[u8] = fs.top_level_dir;
 
         let mut absolute_in_cache_dir_buf = PathBuffer::uninit();
         let buf_total = absolute_in_cache_dir_buf.len();
@@ -1239,66 +1321,6 @@ impl BunxCommand {
             );
             Global::exit(1);
         }
-
-        // The spawned `bun add` runs with cwd = `bunx_cache_dir`, so it cannot
-        // discover a project-local bunfig.toml on its own. Resolve it here from
-        // the invoking directory and forward it via `--config=<path>` so
-        // `[install]` settings such as `registry` are honored. `--config`'s
-        // value is optional in the install arg parser, so the `=` form is
-        // required for the path to be consumed.
-        //
-        // `bun add` run directly from a workspace member chdirs to the
-        // workspace root before loading bunfig.toml; replicating that walk
-        // would require parsing each ancestor package.json's `workspaces`, so
-        // instead walk up from the invoking cwd and take the first
-        // bunfig.toml found. On Unix the candidate is rejected unless it is a
-        // regular file owned by the current user (see
-        // `is_trusted_local_bunfig`), so a bunfig.toml planted by another
-        // local user in a world-writable ancestor cannot redirect the
-        // install.
-        let mut local_bunfig_buf = PathBuffer::uninit();
-        let local_bunfig_arg: Option<&[u8]> = 'find_bunfig: {
-            const PREFIX: &[u8] = b"--config=";
-            let mut dir: &[u8] = strings::without_trailing_slash(top_level_dir);
-            loop {
-                let len = {
-                    let total = local_bunfig_buf.len();
-                    let mut cursor: &mut [u8] = &mut local_bunfig_buf[..];
-                    write!(
-                        cursor,
-                        "--config={dir}{sep}bunfig.toml",
-                        dir = BStr::new(dir),
-                        sep = bun_paths::SEP as char,
-                    )
-                    .map_err(|_| crate::Error::PathTooLong)?;
-                    total - cursor.len()
-                };
-                local_bunfig_buf[len] = 0;
-                let path_z = ZStr::from_buf(&local_bunfig_buf[PREFIX.len()..], len - PREFIX.len());
-                if bun_sys::exists_z(path_z) {
-                    if !Self::is_trusted_local_bunfig(path_z, uid) {
-                        bun_output::scoped_log!(
-                            bunx,
-                            "ignoring untrusted bunfig.toml: {}",
-                            BStr::new(path_z.as_bytes())
-                        );
-                        break 'find_bunfig None;
-                    }
-                    break 'find_bunfig Some(&local_bunfig_buf[..len]);
-                }
-                match bun_paths::dirname(dir) {
-                    Some(parent) => {
-                        let parent = strings::without_trailing_slash(parent);
-                        if parent.len() >= dir.len() {
-                            break 'find_bunfig None;
-                        }
-                        dir = parent;
-                    }
-                    None => break 'find_bunfig None,
-                }
-            }
-        };
-
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
         'create_package_json: {
@@ -1323,7 +1345,7 @@ impl BunxCommand {
         let mut args: BoundedArray<&[u8], 9> =
             BoundedArray::from_slice(&install_args).expect("unreachable"); // upper bound is known
 
-        if let Some(config_arg) = local_bunfig_arg {
+        if let Some(config_arg) = local_bunfig_arg.as_deref() {
             args.append(config_arg).expect("unreachable"); // upper bound is known
         }
 

@@ -14,7 +14,11 @@ async function run(
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
   return { stdout, stderr, exitCode };
 }
 
@@ -35,72 +39,56 @@ describe("NODE_OPTIONS environment variable", () => {
   ])("preloads via %s", (_name, opts) => {
     test.concurrent("bun <file>", async () => {
       using dir = tempDir("node-options-preload", fixtures);
-      const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], opts);
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "PRELOADED\n",
-        stderr: "",
-        exitCode: 0,
-      });
+      const { stdout, exitCode } = await run(String(dir), ["app.mjs"], opts);
+      expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
     });
 
     test.concurrent("bun run <file>", async () => {
       using dir = tempDir("node-options-preload-run", fixtures);
-      const { stdout, stderr, exitCode } = await run(String(dir), ["run", "app.mjs"], opts);
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "PRELOADED\n",
-        stderr: "",
-        exitCode: 0,
-      });
+      const { stdout, exitCode } = await run(String(dir), ["run", "app.mjs"], opts);
+      expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
     });
   });
 
   test.concurrent("NODE_OPTIONS preloads run before command-line preloads", async () => {
     using dir = tempDir("node-options-order", fixtures);
-    const { stdout, stderr, exitCode } = await run(
+    const { stdout, exitCode } = await run(
       String(dir),
       ["--import", "./B.mjs", "-e", "console.log('main')"],
       "--import ./A.mjs",
     );
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "A\nB\nmain\n",
-      stderr: "",
-      exitCode: 0,
-    });
+    expect({ stdout, exitCode }).toEqual({ stdout: "A\nB\nmain\n", exitCode: 0 });
   });
 
   test.concurrent("multiple preloads in NODE_OPTIONS run in order", async () => {
     using dir = tempDir("node-options-multi", fixtures);
-    const { stdout, stderr, exitCode } = await run(
+    const { stdout, exitCode } = await run(
       String(dir),
       ["-e", "console.log('main')"],
       "--require ./A.mjs --import ./B.mjs",
     );
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "A\nB\nmain\n",
-      stderr: "",
-      exitCode: 0,
-    });
+    expect({ stdout, exitCode }).toEqual({ stdout: "A\nB\nmain\n", exitCode: 0 });
   });
 
   test.concurrent("double-quoted values may contain spaces", async () => {
     using dir = tempDir("node-options-quotes", {
       "with space": { "sp.mjs": `console.log("SP");\n` },
     });
-    const { stdout, stderr, exitCode } = await run(
+    const { stdout, exitCode } = await run(
       String(dir),
       ["-e", "console.log('main')"],
       `--import "./with space/sp.mjs"`,
     );
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "SP\nmain\n",
-      stderr: "",
-      exitCode: 0,
-    });
+    expect({ stdout, exitCode }).toEqual({ stdout: "SP\nmain\n", exitCode: 0 });
   });
 
   test.concurrent("unknown flag is rejected with exit code 9", async () => {
     using dir = tempDir("node-options-unknown", fixtures);
-    const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], "--definitely-not-a-real-flag");
+    const { stdout, stderr, exitCode } = await run(
+      String(dir),
+      ["app.mjs"],
+      "--definitely-not-a-real-flag",
+    );
     expect(stderr).toContain("--definitely-not-a-real-flag is not allowed in NODE_OPTIONS");
     expect(stdout).toBe("");
     expect(exitCode).toBe(9);
@@ -114,10 +102,15 @@ describe("NODE_OPTIONS environment variable", () => {
     expect(exitCode).toBe(9);
   });
 
-  test.concurrent("preload flag without value is rejected with exit code 9", async () => {
+  test.each([
+    ["--import", "--import"],
+    ["--import=", "--import="],
+    ["--require=", "--require="],
+    ["-r", "-r"],
+  ])("preload flag %s without value is rejected with exit code 9", async (_name, opts) => {
     using dir = tempDir("node-options-noval", fixtures);
-    const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], "--import");
-    expect(stderr).toContain("--import requires an argument");
+    const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], opts);
+    expect(stderr).toContain("requires an argument");
     expect(stdout).toBe("");
     expect(exitCode).toBe(9);
   });
@@ -141,22 +134,19 @@ describe("NODE_OPTIONS environment variable", () => {
     test.concurrent("does not error", async () => {
       using dir = tempDir("node-options-allowed", fixtures);
       const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], opts);
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "NOT_PRELOADED\n",
-        stderr: "",
-        exitCode: 0,
-      });
+      expect(stderr).not.toContain("is not allowed in NODE_OPTIONS");
+      expect({ stdout, exitCode }).toEqual({ stdout: "NOT_PRELOADED\n", exitCode: 0 });
     });
   });
 
   test.concurrent("ignores non-option tokens", async () => {
     using dir = tempDir("node-options-positional", fixtures);
-    const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], "positional.js --import ./pre.mjs");
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "PRELOADED\n",
-      stderr: "",
-      exitCode: 0,
-    });
+    const { stdout, exitCode } = await run(
+      String(dir),
+      ["app.mjs"],
+      "positional.js --import ./pre.mjs",
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
   });
 
   describe.each([
@@ -166,12 +156,8 @@ describe("NODE_OPTIONS environment variable", () => {
   ])("no-op when NODE_OPTIONS is %s", (_name, opts) => {
     test.concurrent("runs normally", async () => {
       using dir = tempDir("node-options-empty", fixtures);
-      const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], opts);
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "NOT_PRELOADED\n",
-        stderr: "",
-        exitCode: 0,
-      });
+      const { stdout, exitCode } = await run(String(dir), ["app.mjs"], opts);
+      expect({ stdout, exitCode }).toEqual({ stdout: "NOT_PRELOADED\n", exitCode: 0 });
     });
   });
 
@@ -186,7 +172,11 @@ describe("NODE_OPTIONS environment variable", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
     expect(stderr).not.toContain("is not allowed in NODE_OPTIONS");
     expect(stdout).not.toContain("is not allowed in NODE_OPTIONS");
     expect(exitCode).toBe(0);

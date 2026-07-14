@@ -82,7 +82,11 @@ pub struct LimitedWriter<'a, W: Write> {
 impl<'a, W: Write> LimitedWriter<'a, W> {
     #[inline]
     pub fn new(inner: &'a mut W, limit: usize) -> Self {
-        Self { inner, remaining: limit, truncated: false }
+        Self {
+            inner,
+            remaining: limit,
+            truncated: false,
+        }
     }
 }
 

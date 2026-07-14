@@ -305,6 +305,32 @@ nativeTests.test_define_properties = () => {
     run(`plain ${kind}`, {}, kind, undefined, "k");
   }
 
+  // setter-only/getter-only over an existing accessor: a missing side must
+  // leave that slot ABSENT in the descriptor (preserving the existing value),
+  // not present-undefined.
+  for (const kind of ["getter", "setter"]) {
+    const existing = {};
+    Object.defineProperty(existing, "k", {
+      get: () => 1,
+      set: () => {},
+      configurable: true,
+    });
+    run(`redefine ${kind}`, existing, kind, undefined, "k");
+
+    let trapDesc;
+    const prox = new Proxy(
+      {},
+      {
+        defineProperty(t, k, d) {
+          trapDesc = { hasGet: "get" in d, hasSet: "set" in d };
+          return Reflect.defineProperty(t, k, d);
+        },
+      },
+    );
+    nativeTests.define_properties(prox, kind, undefined);
+    console.log(`proxy-shape ${kind}:`, JSON.stringify(trapDesc));
+  }
+
   // name as a napi_value string
   run("name=string", {}, "value", "k", "k");
   // name as a napi_value symbol
@@ -314,6 +340,15 @@ nativeTests.test_define_properties = () => {
   run("name=number", {}, "value", 5, "5");
   // name as a napi_value object (not a valid property name)
   run("name=object", {}, "value", { toString: () => "x" }, "x");
+
+  // napi_define_class should also reject non-string/symbol property names
+  for (const [label, name] of [
+    ["string", "k"],
+    ["number", 5],
+  ]) {
+    const { status, pending } = nativeTests.define_properties({}, "method", name, true);
+    console.log(`define_class name=${label}: status=${fmtStatus(status)} pending=${pending}`);
+  }
 };
 
 nativeTests.test_number_integer_conversions_from_js = () => {

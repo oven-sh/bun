@@ -905,7 +905,8 @@ public:
         napi_callback constructor,
         void* data,
         size_t property_count,
-        const napi_property_descriptor* properties);
+        const napi_property_descriptor* properties,
+        napi_status* propertyStatus = nullptr);
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
@@ -926,7 +927,7 @@ private:
     {
     }
 
-    void finishCreation(VM&, const String& name, napi_callback constructor,
+    napi_status finishCreation(VM&, const String& name, napi_callback constructor,
         void* data,
         size_t property_count,
         const napi_property_descriptor* properties);

@@ -333,14 +333,10 @@ napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_pro
         if (property.getter) {
             auto name = makeString("get "_s, propertyName.isSymbol() ? String() : propertyName.string());
             descriptor.setGetter(NapiClass::create(vm, env, name, property.getter, dataPtr, 0, nullptr));
-        } else {
-            descriptor.setGetter(JSC::jsUndefined());
         }
         if (property.setter) {
             auto name = makeString("set "_s, propertyName.isSymbol() ? String() : propertyName.string());
             descriptor.setSetter(NapiClass::create(vm, env, name, property.setter, dataPtr, 0, nullptr));
-        } else {
-            descriptor.setSetter(JSC::jsUndefined());
         }
     } else if (property.method != nullptr) {
         WTF::String name;
@@ -1894,9 +1890,14 @@ extern "C" napi_status napi_define_class(napi_env env,
         len = strlen(utf8name);
     }
     auto name = WTF::String::fromUTF8(std::span { utf8name, len }).isolatedCopy();
-    NapiClass* napiClass = NapiClass::create(vm, env, name, constructor, data, property_count, properties);
+    napi_status propertyStatus = napi_ok;
+    NapiClass* napiClass = NapiClass::create(vm, env, name, constructor, data, property_count, properties, &propertyStatus);
     JSValue value = JSValue(napiClass);
     JSC::EnsureStillAliveScope ensureStillAlive1(value);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    if (propertyStatus != napi_ok) {
+        return napi_set_last_error(env, propertyStatus);
+    }
     if (data != nullptr) {
         napiClass->dataPtr() = data;
     }

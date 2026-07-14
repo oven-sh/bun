@@ -218,12 +218,14 @@ static napi_value define_properties_method(napi_env env,
   return result;
 }
 
-// define_properties(target, kind, name)
+// define_properties(target, kind, name, isClass)
 // kind: "value" | "getter" | "setter" | "accessor" | "method"
 // name: if undefined, utf8name "k" is used; otherwise the napi_value itself is
 //       passed as the descriptor's name (any type).
-// Returns { status, pending } where status is the napi_status returned by
-// napi_define_properties and pending is whether an exception was left pending.
+// isClass: if true, passes the descriptor to napi_define_class instead of
+//          napi_define_properties (target is ignored).
+// Returns { status, pending } where status is the napi_status returned and
+// pending is whether an exception was left pending.
 static napi_value define_properties(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_value target = info[0];
@@ -256,7 +258,17 @@ static napi_value define_properties(const Napi::CallbackInfo &info) {
     return nullptr;
   }
 
-  napi_status status = napi_define_properties(env, target, 1, &desc);
+  napi_status status;
+  bool is_class = false;
+  napi_get_value_bool(env, info[3], &is_class);
+  if (is_class) {
+    napi_value cls = nullptr;
+    status = napi_define_class(env, "C", NAPI_AUTO_LENGTH,
+                               define_properties_method, nullptr, 1, &desc,
+                               &cls);
+  } else {
+    status = napi_define_properties(env, target, 1, &desc);
+  }
 
   bool pending = false;
   napi_is_exception_pending(env, &pending);

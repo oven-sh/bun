@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "path";
-import { fakeNodeRun, tempDirWithFiles } from "../../harness";
+import { bunEnv, bunExe, fakeNodeRun, tempDir, tempDirWithFiles } from "../../harness";
 
 describe("fake node cli", () => {
   test("the node cli actually works", () => {
@@ -100,5 +100,124 @@ describe("fake node cli", () => {
   test("no args is exit code zero for now", () => {
     const temp = tempDirWithFiles("fake-node", {});
     expect(() => fakeNodeRun(temp, [])).toThrow();
+  });
+});
+
+describe("node value-taking CLI flags do not eat the entrypoint", () => {
+  // Node.js flags that take a value and which Bun does not otherwise implement
+  // must still consume their value argument so the *next* arg is parsed as the
+  // entrypoint. Otherwise `bun --experimental-loader ./hooks.mjs app.mjs`
+  // silently runs hooks.mjs as the program and app.mjs never executes.
+  const appBody = `console.log(JSON.stringify({ argv: process.argv.slice(2), execArgv: process.execArgv }));`;
+  const wrongBody = `throw new Error("flag value was run as the entrypoint");`;
+
+  async function run(preArgs: string[], cwd: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...preArgs, "app.mjs", "scriptarg"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  test("--experimental-loader ./hooks.mjs app.mjs runs app.mjs, not hooks.mjs", async () => {
+    using dir = tempDir("node-value-flag", {
+      "hooks.mjs": wrongBody,
+      "app.mjs": appBody,
+    });
+    const { stdout, stderr, exitCode } = await run(["--experimental-loader", "./hooks.mjs"], String(dir));
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify({ argv: ["scriptarg"], execArgv: ["--experimental-loader", "./hooks.mjs"] }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  const valueFlags = [
+    "--experimental-loader",
+    "--allow-fs-read",
+    "--allow-fs-write",
+    "--build-sea",
+    "--build-snapshot-config",
+    "--diagnostic-dir",
+    "--disable-proto",
+    "--disable-warning",
+    "--env-file-if-exists",
+    "--experimental-config-file",
+    "--experimental-sea-config",
+    "--heap-prof-interval",
+    "--heapsnapshot-near-heap-limit",
+    "--heapsnapshot-signal",
+    "--icu-data-dir",
+    "--input-type",
+    "--inspect-port",
+    "--debug-port",
+    "--inspect-publish-uid",
+    "--localstorage-file",
+    "--max-old-space-size-percentage",
+    "--network-family-autoselection-attempt-timeout",
+    "--openssl-config",
+    "--redirect-warnings",
+    "--report-dir",
+    "--report-directory",
+    "--report-filename",
+    "--report-signal",
+    "--secure-heap",
+    "--secure-heap-min",
+    "--snapshot-blob",
+    "--tls-cipher-list",
+    "--tls-keylog",
+    "--trace-require-module",
+    "--use-largepages",
+    "--v8-pool-size",
+    "--watch-path",
+    "--watch-kill-signal",
+    "--test-concurrency",
+    "--test-coverage-branches",
+    "--test-coverage-exclude",
+    "--test-coverage-functions",
+    "--test-coverage-include",
+    "--test-coverage-lines",
+    "--test-global-setup",
+    "--test-isolation",
+    "--experimental-test-isolation",
+    "--test-random-seed",
+    "--test-reporter",
+    "--test-reporter-destination",
+    "--test-rerun-failures",
+    "--test-shard",
+    "--test-skip-pattern",
+    "--experimental-test-tag-filter",
+    "--test-timeout",
+  ];
+
+  describe.each([[[]], [["run"]]])("bun %p", runArg => {
+    test.concurrent.each(valueFlags)("%s <value> app.mjs runs app.mjs", async flag => {
+      using dir = tempDir("node-value-flag", {
+        "value.mjs": wrongBody,
+        "app.mjs": appBody,
+      });
+      const { stdout, stderr, exitCode } = await run([...runArg, flag, "./value.mjs"], String(dir));
+      expect(stderr).not.toContain("flag value was run as the entrypoint");
+      expect(JSON.parse(stdout)).toEqual({ argv: ["scriptarg"], execArgv: [flag, "./value.mjs"] });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test("hidden from --help", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--help"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).not.toContain("--experimental-loader");
+    expect(stdout).not.toContain("--openssl-config");
+    expect(stdout).not.toContain("--v8-pool-size");
+    expect(exitCode).toBe(0);
   });
 });

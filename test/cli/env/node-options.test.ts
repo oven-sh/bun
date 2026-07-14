@@ -14,11 +14,7 @@ async function run(
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
@@ -84,11 +80,7 @@ describe("NODE_OPTIONS environment variable", () => {
 
   test.concurrent("unknown flag warns but does not exit", async () => {
     using dir = tempDir("node-options-unknown", fixtures);
-    const { stdout, stderr, exitCode } = await run(
-      String(dir),
-      ["app.mjs"],
-      "--definitely-not-a-real-flag",
-    );
+    const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], "--definitely-not-a-real-flag");
     expect(stderr).toContain("--definitely-not-a-real-flag is not allowed in NODE_OPTIONS");
     expect({ stdout, exitCode }).toEqual({ stdout: "NOT_PRELOADED\n", exitCode: 0 });
   });
@@ -100,34 +92,24 @@ describe("NODE_OPTIONS environment variable", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "NOT_PRELOADED\n", exitCode: 0 });
   });
 
-  test.concurrent(
-    "unknown flag after a preload still preloads and warns once",
-    async () => {
-      using dir = tempDir("node-options-mixed", fixtures);
-      const { stdout, stderr, exitCode } = await run(
-        String(dir),
-        ["app.mjs"],
-        "--import ./pre.mjs --definitely-not-a-real-flag --also-junk",
-      );
-      expect(stderr).toContain("--definitely-not-a-real-flag is not allowed in NODE_OPTIONS");
-      expect(stderr).not.toContain("--also-junk");
-      expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
-    },
-  );
+  test.concurrent("unknown flag after a preload still preloads and warns once", async () => {
+    using dir = tempDir("node-options-mixed", fixtures);
+    const { stdout, stderr, exitCode } = await run(
+      String(dir),
+      ["app.mjs"],
+      "--import ./pre.mjs --definitely-not-a-real-flag --also-junk",
+    );
+    expect(stderr).toContain("--definitely-not-a-real-flag is not allowed in NODE_OPTIONS");
+    expect(stderr).not.toContain("--also-junk");
+    expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
+  });
 
-  test.concurrent(
-    "Bun-specific flags propagated via execArgv are accepted silently",
-    async () => {
-      using dir = tempDir("node-options-bunflag", fixtures);
-      const { stdout, stderr, exitCode } = await run(
-        String(dir),
-        ["app.mjs"],
-        "--bun --import ./pre.mjs",
-      );
-      expect(stderr).not.toContain("is not allowed in NODE_OPTIONS");
-      expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
-    },
-  );
+  test.concurrent("Bun-specific flags propagated via execArgv are accepted silently", async () => {
+    using dir = tempDir("node-options-bunflag", fixtures);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], "--bun --import ./pre.mjs");
+    expect(stderr).not.toContain("is not allowed in NODE_OPTIONS");
+    expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
+  });
 
   test.each([
     ["--import", "--import"],
@@ -189,11 +171,7 @@ describe("NODE_OPTIONS environment variable", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("is not allowed in NODE_OPTIONS");
     expect(stdout).not.toContain("is not allowed in NODE_OPTIONS");
     expect(exitCode).toBe(0);

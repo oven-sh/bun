@@ -281,6 +281,17 @@ impl Image {
         )
     }
 
+    /// Wrap already-encoded container bytes (PNG/JPEG/…) as a fresh
+    /// `Bun.Image`. Used by native producers (e.g. `Bun.QR`) that want to
+    /// hand back a first-class Image without round-tripping through JS.
+    pub fn from_owned_bytes_js(global: &JSGlobalObject, bytes: Vec<u8>) -> JSValue {
+        let img = Box::new(Image {
+            source: JsCell::new(Source::Owned(bytes)),
+            ..Default::default()
+        });
+        img.to_js(global)
+    }
+
     /// `Bun.file("…").image()` / `Bun.s3("…").image()` / `Blob#image()`. Same
     /// allocation as `new Bun.Image(blob, opts)`. Everything that can throw runs
     /// BEFORE `toJS()` — once the wrapper exists its `m_ctx` owns the *Image and

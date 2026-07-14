@@ -1,7 +1,8 @@
+diff --git a/src/win/poll.c b/src/win/poll.c
+index ecc6cf3..361b0fc 100644
 --- a/src/win/poll.c
 +++ b/src/win/poll.c
-@@ -113,7 +113,12 @@
-     afd_poll_info->Handles[0].Events |= AFD_POLL_RECEIVE |
+@@ -115,7 +115,12 @@ static void uv__fast_poll_submit_poll_req(uv_loop_t* loop, uv_poll_t* handle) {
          AFD_POLL_DISCONNECT | AFD_POLL_ACCEPT | AFD_POLL_ABORT;
    } else {
      if (handle->events & UV_DISCONNECT) {
@@ -15,22 +16,20 @@
      }
    }
    if (handle->events & UV_WRITABLE) {
-@@ -168,12 +173,16 @@
+@@ -168,9 +173,13 @@ static void uv__fast_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
      if ((afd_poll_info->Handles[0].Events & (AFD_POLL_RECEIVE |
          AFD_POLL_DISCONNECT | AFD_POLL_ACCEPT | AFD_POLL_ABORT)) != 0) {
        events |= UV_READABLE;
 -      if ((afd_poll_info->Handles[0].Events & AFD_POLL_DISCONNECT) != 0) {
 -        events |= UV_DISCONNECT;
 -      }
-     }
++    }
 +    if ((afd_poll_info->Handles[0].Events &
 +        (AFD_POLL_DISCONNECT | AFD_POLL_ABORT)) != 0) {
 +      /* Graceful FIN and abortive RST both mean the peer is gone. Report
 +       * DISCONNECT for either, outside the READABLE block, so it survives
 +       * the requested-events mask when only UV_DISCONNECT is armed. */
 +      events |= UV_DISCONNECT;
-+    }
+     }
      if ((afd_poll_info->Handles[0].Events & (AFD_POLL_SEND |
          AFD_POLL_CONNECT_FAIL)) != 0) {
-       events |= UV_WRITABLE;
-     }

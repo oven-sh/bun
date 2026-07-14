@@ -2,6 +2,22 @@ import { spawn } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 
+// Bun.serve with hostname "localhost" may bind to ::1 only on some systems,
+// while WebSocket("ws://localhost:...") resolves to 127.0.0.1. Try both.
+async function connectInspector(url: string): Promise<WebSocket> {
+  const attempt = (u: string) =>
+    new Promise<WebSocket>((resolve, reject) => {
+      const ws = new WebSocket(u);
+      ws.onopen = () => resolve(ws);
+      ws.onerror = e => reject(e);
+    });
+  try {
+    return await attempt(url);
+  } catch {
+    return await attempt(url.replace("localhost", "[::1]"));
+  }
+}
+
 // Inspector tests spawn subprocesses and wait for inspector activation — 5s default is too short.
 setDefaultTimeout(60_000);
 
@@ -352,11 +368,7 @@ describe("Runtime inspector activation", () => {
       const wsUrl = wsMatch![0];
 
       // Connect via WebSocket to the inspector
-      const ws = new WebSocket(wsUrl);
-      const { promise: openPromise, resolve: openResolve, reject: openReject } = Promise.withResolvers<void>();
-      ws.onopen = () => openResolve();
-      ws.onerror = e => openReject(e);
-      await openPromise;
+      const ws = await connectInspector(wsUrl);
 
       try {
         let msgId = 1;
@@ -439,8 +451,8 @@ describe("Runtime inspector activation", () => {
       const wsUrl = wsMatch![0];
 
       // Helper to create a CDP WebSocket client
-      function createCDPClient(url: string) {
-        const ws = new WebSocket(url);
+      async function createCDPClient(url: string) {
+        const ws = await connectInspector(url);
         let msgId = 1;
         const pendingResponses = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
 
@@ -463,19 +475,11 @@ describe("Runtime inspector activation", () => {
           return promise;
         }
 
-        async function waitForOpen(): Promise<void> {
-          const { promise, resolve, reject } = Promise.withResolvers<void>();
-          ws.onopen = () => resolve();
-          ws.onerror = e => reject(e);
-          return promise;
-        }
-
-        return { ws, sendCDP, waitForOpen };
+        return { ws, sendCDP };
       }
 
       // First connection: verify CDP works
-      const client1 = createCDPClient(wsUrl);
-      await client1.waitForOpen();
+      const client1 = await createCDPClient(wsUrl);
 
       const result1 = await client1.sendCDP("Runtime.evaluate", { expression: "1 + 1" });
       expect(result1.result.result.value).toBe(2);
@@ -486,8 +490,7 @@ describe("Runtime inspector activation", () => {
       await promise;
 
       // Second connection: verify CDP still works after reconnect
-      const client2 = createCDPClient(wsUrl);
-      await client2.waitForOpen();
+      const client2 = await createCDPClient(wsUrl);
 
       const result2 = await client2.sendCDP("Runtime.evaluate", { expression: "2 + 3" });
       expect(result2.result.result.value).toBe(5);

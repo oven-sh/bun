@@ -1293,15 +1293,16 @@ describe.concurrent("unhandledRejection async context", () => {
     expect(exitCode).toBe(0);
   });
 
-  // An unhandledRejection listener that throws reaches uncaughtException, but Node's
-  // processPromiseRejections restores the previous frame in a finally before that
-  // throw propagates. The strict-mode direct dispatch above is the only path where
-  // uncaughtException sees the promise's context.
+  // A throwing unhandledRejection listener halts iteration (subsequent listeners are
+  // skipped) and reaches uncaughtException, which Node's processPromiseRejections
+  // restores the previous frame for in a finally before that throw propagates. The
+  // strict-mode direct dispatch above is the only path where uncaughtException sees
+  // the promise's context.
   test.each([
     ["bun", bunExe()],
     ["node", nodeExe()],
   ])(
-    "a throwing unhandledRejection listener reaches uncaughtException without the promise's context (%s)",
+    "a throwing unhandledRejection listener halts later listeners and reaches uncaughtException without the promise's context (%s)",
     async (_name, exe) => {
       await using proc = Bun.spawn({
         cmd: [
@@ -1309,22 +1310,29 @@ describe.concurrent("unhandledRejection async context", () => {
           "-e",
           `const { AsyncLocalStorage } = require("node:async_hooks");
         const als = new AsyncLocalStorage();
+        const log = [];
         process.on("unhandledRejection", () => {
-          console.log("unhandledRejection store:", JSON.stringify(als.getStore() ?? null));
+          log.push("first store=" + JSON.stringify(als.getStore() ?? null));
           throw new Error("from-listener");
         });
-        process.on("uncaughtException", () => {
-          console.log("uncaughtException store:", JSON.stringify(als.getStore() ?? null));
-          process.exit(0);
+        process.on("unhandledRejection", () => {
+          log.push("second ran");
         });
-        als.run(7, () => Promise.reject(new Error("e")));`,
+        process.on("uncaughtException", () => {
+          log.push("uncaught store=" + JSON.stringify(als.getStore() ?? null));
+        });
+        als.run(7, () => Promise.reject(new Error("e")));
+        setImmediate(() => {
+          console.log(log.join(" | "));
+          process.exit(0);
+        });`,
         ],
         env: bunEnv,
         stderr: "pipe",
       });
 
       const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toBe("unhandledRejection store: 7\nuncaughtException store: null\n");
+      expect(stdout).toBe("first store=7 | uncaught store=null\n");
       expect(exitCode).toBe(0);
     },
   );

@@ -200,11 +200,16 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     });
     await debug2.exited;
 
-    // Kill and collect remaining stderr — parent drives termination
+    // Kill and collect remaining stderr via the existing reader until EOF.
     targetProc.kill();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+    stderr += decoder.decode();
     stderrReader.releaseLock();
-    const remainingStderr = await targetProc.stderr.text();
-    stderr += remainingStderr;
     await targetProc.exited;
 
     // Should only see one "Bun Inspector" banner (two occurrences of the text, for header and footer)

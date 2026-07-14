@@ -416,15 +416,6 @@ mod platform {
             true
         }
     }
-
-    #[allow(dead_code)]
-    pub(super) fn uninstall() {
-        let h = MAPPING_HANDLE.swap(core::ptr::null_mut(), Ordering::AcqRel);
-        if !h.is_null() {
-            // SAFETY: handle was returned by `CreateFileMappingW`.
-            unsafe { CloseHandle(h) };
-        }
-    }
 }
 
 #[cfg(not(any(unix, windows)))]

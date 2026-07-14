@@ -266,39 +266,21 @@ SIGNAL_3
   });
 
   test.skipIf(isASAN)("SIGUSR1 to self activates inspector", async () => {
-    // Use a PID file approach instead of setTimeout to avoid timing-dependent self-signal
-    using dir = tempDir("sigusr1-self-test", {
-      "test.js": `
-        const fs = require("fs");
-        const path = require("path");
-
-        // Write PID so parent can send signal
-        fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
-        console.log("READY");
-
-        // Keep process alive until test kills it
-        setInterval(() => {}, 1000);
-      `,
-    });
-
+    // The child signals itself so the handler fires on the JS thread while it
+    // is returning from kill(). setImmediate runs after the handler is
+    // installed, so there is no install race.
     await using proc = spawn({
-      cmd: [bunExe(), "--inspect-port=0", "test.js"],
-      cwd: String(dir),
+      cmd: [
+        bunExe(),
+        "--inspect-port=0",
+        "-e",
+        `setImmediate(() => process.kill(process.pid, "SIGUSR1")); setInterval(() => {}, 1000);`,
+      ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    const stdoutReader = proc.stdout.getReader();
-    await readStreamUntil(stdoutReader, s => s.includes("READY"));
-    stdoutReader.releaseLock();
-
-    const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
-
-    // Send SIGUSR1 from parent (equivalent to self-signal but without setTimeout race)
-    process.kill(pid, "SIGUSR1");
-
-    // Wait for inspector banner
     const reader = proc.stderr.getReader();
     const stderr = await readStreamUntil(reader, hasBanner);
     reader.releaseLock();
@@ -327,7 +309,7 @@ SIGNAL_3
     });
 
     await using proc = spawn({
-      cmd: [bunExe(), "--inspect", "test.js"],
+      cmd: [bunExe(), "--inspect=0", "test.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -368,7 +350,7 @@ SIGNAL_3
     // When the process is started with --inspect-wait, the debugger is already active.
     // Sending SIGUSR1 should NOT activate the inspector again.
     await using proc = spawn({
-      cmd: [bunExe(), "--inspect-wait", "-e", "setInterval(() => {}, 1000)"],
+      cmd: [bunExe(), "--inspect-wait=0", "-e", "setInterval(() => {}, 1000)"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -408,7 +390,7 @@ SIGNAL_3
     // When the process is started with --inspect-brk, the debugger is already active.
     // Sending SIGUSR1 should NOT activate the inspector again.
     await using proc = spawn({
-      cmd: [bunExe(), "--inspect-brk", "-e", "setInterval(() => {}, 1000)"],
+      cmd: [bunExe(), "--inspect-brk=0", "-e", "setInterval(() => {}, 1000)"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

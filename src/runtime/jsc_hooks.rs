@@ -522,6 +522,7 @@ unsafe fn configure_sigusr1_handler(vm: *mut VirtualMachine, opts: &InitOptions)
     }
     if opts.disable_sigusr1 {
         runtime_inspector::set_default_sigusr1_action();
+        // SAFETY: per fn contract; `debugger` written by `configure_debugger`.
     } else if unsafe { (*vm).debugger.is_some() } {
         runtime_inspector::ignore_sigusr1();
     } else {

@@ -4314,19 +4314,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
 
     HANDLE hMapping = OpenFileMappingW(FILE_MAP_READ, FALSE, mappingName);
     if (!hMapping) {
-        DWORD err = GetLastError();
-        if (err == ERROR_FILE_NOT_FOUND) {
-            throwVMError(globalObject, scope, "The system cannot find the file specified."_s);
-        } else {
-            throwVMError(globalObject, scope, makeString("OpenFileMappingW failed with error "_s, static_cast<unsigned>(err)));
-        }
+        throwSystemError(scope, globalObject, "OpenFileMappingW"_s, uv_translate_sys_error(GetLastError()));
         return {};
     }
 
     void* pFunc = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, sizeof(void*));
     if (!pFunc) {
+        int err = uv_translate_sys_error(GetLastError());
         CloseHandle(hMapping);
-        throwVMError(globalObject, scope, makeString("Failed to map debug handler for process "_s, pid));
+        throwSystemError(scope, globalObject, "MapViewOfFile"_s, err);
         return {};
     }
 
@@ -4334,16 +4330,26 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
     UnmapViewOfFile(pFunc);
     CloseHandle(hMapping);
 
+    // The target writes the handler pointer after creating the named mapping;
+    // a reader that races the install window sees zeroed memory. Treat that
+    // the same as no mapping so the caller retries instead of CreateRemoteThread
+    // failing (or worse, succeeding with a bogus entry point).
+    if (!threadProc) {
+        throwSystemError(scope, globalObject, "OpenFileMappingW"_s, UV_ENOENT);
+        return {};
+    }
+
     HANDLE hProcess = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
     if (!hProcess) {
-        throwVMError(globalObject, scope, makeString("Failed to open process "_s, pid, ": access denied or process not found"_s));
+        throwSystemError(scope, globalObject, "OpenProcess"_s, uv_translate_sys_error(GetLastError()));
         return {};
     }
 
     HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0, threadProc, NULL, 0, NULL);
     if (!hThread) {
+        int err = uv_translate_sys_error(GetLastError());
         CloseHandle(hProcess);
-        throwVMError(globalObject, scope, makeString("Failed to create remote thread in process "_s, pid));
+        throwSystemError(scope, globalObject, "CreateRemoteThread"_s, err);
         return {};
     }
 

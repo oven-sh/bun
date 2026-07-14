@@ -992,12 +992,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             | CommandTag::RunAsNodeCommand
     ) {
         {
+            let node_options = crate::cli::node_options::parse_env();
             let preloads = args.options(b"--preload");
             let preloads2 = args.options(b"--require");
             let preloads3 = args.options(b"--import");
             let preload4 = env_var::BUN_INSPECT_PRELOAD.get();
 
             let total_preloads = ctx.preloads.len()
+                + node_options.preloads.len()
                 + preloads.len()
                 + preloads2.len()
                 + preloads3.len()
@@ -1006,6 +1008,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 let mut all: Vec<Box<[u8]>> = Vec::with_capacity(total_preloads);
                 if !ctx.preloads.is_empty() {
                     all.append(&mut ctx.preloads);
+                }
+                // NODE_OPTIONS preloads run before command-line preloads (Node.js parity).
+                for p in node_options.preloads {
+                    all.push(p);
                 }
                 for p in preloads {
                     all.push(Box::<[u8]>::from(*p));

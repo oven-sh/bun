@@ -11,6 +11,7 @@ use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{null, null_mut};
 
+use bun_collections::smallvec::SmallVec;
 use bun_io::KeepAlive;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult,
@@ -345,6 +346,11 @@ thread_local! {
         const { core::cell::RefCell::new(Vec::new()) };
 }
 
+/// Inline capacity for snapshots of `ENDPOINT_REGISTRY`. A process rarely
+/// binds more than a handful of QUIC endpoints per thread, so this keeps the
+/// unclaimed-packet path allocation-free in practice.
+const ENDPOINT_REGISTRY_INLINE_CAP: usize = 4;
+
 /// The endpoint bound to `addr` on this thread, if any (excluding `not`).
 fn registry_find_by_addr(addr: &StoredAddr, not: *const QuicEndpoint) -> Option<*mut QuicEndpoint> {
     let want = addr.decode().map(|(f, p, ip)| (f, p, ip.to_vec()));
@@ -493,16 +499,25 @@ extern "C" fn on_data(
                 // strictly smaller than the packet that triggered it and
                 // refuses below the 21-byte minimum, so this cannot loop.
                 if payload.len() >= STATELESS_RESET_MIN_LEN {
-                    let others: Vec<*mut QuicEndpoint> = ENDPOINT_REGISTRY.with_borrow(|v| {
-                        v.iter()
-                            .copied()
-                            .filter(|&other| !core::ptr::eq(other, this))
-                            .collect()
-                    });
+                    let others: SmallVec<[*mut QuicEndpoint; ENDPOINT_REGISTRY_INLINE_CAP]> =
+                        ENDPOINT_REGISTRY.with_borrow(|v| {
+                            v.iter()
+                                .copied()
+                                .filter(|&other| !core::ptr::eq(other, this))
+                                .collect()
+                        });
                     for other_ptr in others {
-                        // SAFETY: registered endpoints outlive their entry;
-                        // the borrow above ended, so re-entrant registry
-                        // mutation from process() is fine.
+                        // `process()` below runs JS, which can tear down (and
+                        // let the GC finalize) another endpoint in this
+                        // snapshot. Registration is the liveness guarantee:
+                        // `teardown` unregisters before dropping the strong
+                        // self-reference that gates finalize, so a still-listed
+                        // pointer is still allocated.
+                        if !ENDPOINT_REGISTRY.with_borrow(|v| v.contains(&other_ptr)) {
+                            continue;
+                        }
+                        // SAFETY: registered as of the check above, so its
+                        // backing storage is live.
                         let other = unsafe { &*other_ptr };
                         for engine in [other.server_engine.get(), other.client_engine.get()] {
                             if engine.is_null() {
@@ -2274,11 +2289,8 @@ impl QuicEndpoint {
         )?;
         let mut dcid = [0u8; VERNEG_PROBE_CID_LEN];
         let mut scid = [0u8; VERNEG_PROBE_CID_LEN];
-        // SAFETY: plain out-buffers of the stated length.
-        unsafe {
-            bun_boringssl_sys::RAND_bytes(dcid.as_mut_ptr(), dcid.len());
-            bun_boringssl_sys::RAND_bytes(scid.as_mut_ptr(), scid.len());
-        }
+        bun_boringssl_sys::rand_bytes(&mut dcid);
+        bun_boringssl_sys::rand_bytes(&mut scid);
         // RFC 8999 sec 5.1 long header: form+fixed bits, version, then
         // length-prefixed DCID and SCID; the rest is padding (any payload
         // works — the server can't parse an unknown version past the

@@ -499,9 +499,13 @@ NQ_SET(honor_prst, int)
 NQ_SET(sreset_burst, unsigned)
 NQ_SET(sreset_rate, double)
 NQ_SET(h3_connect_protocol, int)
-void us_nq_settings_set_preferred_address(struct lsquic_engine_settings *s,
-                                          const unsigned char addr[24]) {
-    memcpy(s->es_preferred_address, addr, 24);
+/* RFC 9000 sec 18.2 preferred_address: 4-byte IPv4 + 2-byte port + 16-byte
+ * IPv6 + 2-byte port. Excludes the CID/reset-token tail, which lsquic fills. */
+#define US_NQ_PREFERRED_ADDRESS_LEN 24
+void us_nq_settings_set_preferred_address(
+        struct lsquic_engine_settings *s,
+        const unsigned char addr[US_NQ_PREFERRED_ADDRESS_LEN]) {
+    memcpy(s->es_preferred_address, addr, US_NQ_PREFERRED_ADDRESS_LEN);
 }
 /* The blob is NOT copied — the caller keeps it alive for the engine's
  * lifetime (it lives on the Rust QuicEndpoint). */

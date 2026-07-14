@@ -1152,6 +1152,4 @@ unsafe extern "C" {
     ) -> *mut SSL_SESSION;
     pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
     pub fn SSL_SESSION_free(session: *mut SSL_SESSION);
-
-    pub fn RAND_bytes(buf: *mut u8, len: usize) -> c_int;
 }

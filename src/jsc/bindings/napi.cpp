@@ -1661,6 +1661,7 @@ extern "C" JS_EXPORT napi_status node_api_create_object_with_properties(napi_env
     }
 
     JSValue prototype = prototype_or_null ? toJS(prototype_or_null) : jsNull();
+    NAPI_RETURN_EARLY_IF_FALSE(env, prototype.isObject() || prototype.isNull(), napi_invalid_arg);
     JSObject* obj;
     if (prototype.isObject()) {
         obj = constructEmptyObject(globalObject, prototype.getObject());

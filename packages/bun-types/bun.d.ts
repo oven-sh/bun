@@ -4248,7 +4248,8 @@ declare module "bun" {
     /**
      * HTTP proxy to use for the WebSocket connection.
      *
-     * Can be a string URL or an object with `url` and optional `headers`.
+     * Can be a string URL, a URL instance, or an object with `url` and
+     * optional `headers`.
      *
      * @example
      * ```ts
@@ -4275,6 +4276,7 @@ declare module "bun" {
      */
     proxy?:
       | string
+      | URL
       | {
           /**
            * The proxy URL (http:// or https://), as a string or a `URL`.
@@ -7218,10 +7220,10 @@ declare module "bun" {
      *
      * Entries beyond index 2 are `number` for `"pipe"` and `"socket-fd"` slots and,
      * on POSIX, for slots where a raw file descriptor was supplied (the same fd is
-     * returned). For `"pipe"`, the subprocess owns and closes the fd. For
-     * `"socket-fd"` and raw-fd slots, the fd remains owned by the caller and is
-     * never closed by the subprocess. Other slots — including raw fds on Windows —
-     * are `null`.
+     * returned). On POSIX, reading this property transfers ownership of any
+     * `"pipe"` fds to the caller, who is then responsible for closing them; the
+     * subprocess will not close them. `"socket-fd"` and raw-fd slots are likewise
+     * caller-owned. Other slots — including raw fds on Windows — are `null`.
      */
     readonly stdio: [null, null, null, ...(number | null)[]];
 

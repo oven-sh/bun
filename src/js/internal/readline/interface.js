@@ -44,17 +44,22 @@ const {
 } = require("internal/repl/node-errors");
 
 const { validateAbortSignal, validateString, validateUint32 } = require("internal/validators");
-const { assignFunctionName, kEmptyObject } = require("internal/repl/node-shims");
+// node-shims eagerly loads node:{util,module,path,vm}; readline only needs
+// kEmptyObject/addAbortListener, so import them from their tiny sources.
+const { kEmptyObject } = require("internal/shared");
 const { inspect, getStringWidth, stripVTControlCharacters } = require("internal/repl/node-inspect");
 const EventEmitter = require("node:events");
-const { addAbortListener } = require("internal/repl/node-shims");
+const { addAbortListener } = require("internal/abort_listener");
 const { charLengthAt, charLengthLeft, commonPrefix, kSubstringSearch } = require("internal/readline/utils");
 let emitKeypressEvents;
 let kFirstEventParam;
 const { clearScreenDown, cursorTo, moveCursor } = require("internal/readline/callbacks");
 
 const { StringDecoder } = require("node:string_decoder");
-const { ReplHistory } = require("internal/repl/history");
+// history.js eagerly loads node:{fs,os,path,timers}; keep it lazy so
+// non-terminal readline interfaces (FileHandle#readLines, tty cursor calls)
+// stay cheap.
+let ReplHistory;
 
 const kMaxUndoRedoStackSize = 2048;
 const kMincrlfDelay = 100;
@@ -353,6 +358,7 @@ class Interface extends InterfaceConstructor {
   }
 
   setupHistoryManager(options) {
+    ReplHistory ??= require("internal/repl/history").ReplHistory;
     this.historyManager = new ReplHistory(this, options);
 
     if (options.onHistoryFileLoaded) {
@@ -1493,9 +1499,13 @@ class Interface extends InterfaceConstructor {
     return this[kLineObjectStream];
   }
 }
-Interface.prototype[SymbolDispose] = assignFunctionName(SymbolDispose, function () {
-  this.close();
-});
+Interface.prototype[SymbolDispose] = ObjectDefineProperty(
+  function () {
+    this.close();
+  },
+  "name",
+  { __proto__: null, configurable: true, value: SymbolDispose },
+);
 
 __node_module__.exports = {
   Interface,

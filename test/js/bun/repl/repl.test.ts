@@ -1289,6 +1289,20 @@ describe("--interactive", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `process._eval` carries the raw `-e` bytes, which are UTF-8. Decoding them
+  // as Latin-1 turns every multi-byte character into mojibake, so both the
+  // evaluated source and the reported `process._eval` must round-trip.
+  test("-e round-trips multi-byte UTF-8 through process._eval", async () => {
+    const source = `console.log("한글-🎉-café")`;
+    const { stdout, stderr, exitCode } = await runInteractive(["-e", source], "process._eval\n");
+    // The -e script itself ran with its literal intact...
+    expect(stdout).toContain("한글-🎉-café");
+    // ...and process._eval reports the source verbatim, not re-encoded.
+    expect(stdout).toContain(source);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+  });
+
   // `node -i -e '<bad>'`: Node exits 1 with a SyntaxError code frame at
   // [eval]:1 and never accepts REPL input; not caught by the REPL error handler.
   test("-e with a syntax error is fatal and never enters the REPL", async () => {
@@ -1341,6 +1355,82 @@ describe("--interactive", () => {
     expect(exitCode).toBe(0);
   });
 
+  // exec_node_repl boots the bootstrap through the [eval] slot; process._eval
+  // must still report the user's -e string (used by child_process.fork's
+  // execArgv stripping), not the bootstrap.
+  test("process._eval reports the user's -e string, not the bootstrap", async () => {
+    const eScript = 'console.log("EVAL=" + JSON.stringify(process._eval)); process.exit(0)';
+    const { stdout, stderr, exitCode } = await runInteractive(["-e", eScript], "");
+    expect(stdout).toContain(`EVAL=${JSON.stringify(eScript)}`);
+    expect(stdout + stderr).not.toMatch(/__BUN_EVAL_SCRIPT__|createInternalRepl/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("process._eval is undefined without -e", async () => {
+    const { stdout, exitCode } = await runInteractive([], 'console.log("EVAL=" + process._eval)\n');
+    expect(stdout).toContain("EVAL=undefined");
+    expect(exitCode).toBe(0);
+  });
+
+  // The bootstrap runs -e via vm.runInThisContext (raw JS, matching
+  // `node -i -e`); TypeScript syntax is a SyntaxError, not transpiled.
+  test("-e is raw JavaScript (not transpiled)", async () => {
+    const { stdout, stderr, exitCode } = await runInteractive(["-e", "const x: number = 1"], "");
+    expect(stdout + stderr).toMatch(/SyntaxError/);
+    expect(exitCode).toBe(1);
+  });
+
+  // bun-as-node --interactive routes through exec_as_if_node, which used to
+  // print "does not support a repl" and exit 1.
+  test("bun-as-node --interactive enters the REPL", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--interactive"],
+      argv0: "node",
+      env,
+      stdin: Buffer.from("1+1\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("Welcome to Bun");
+    expect(stdout).toContain("2");
+    expect(stderr).not.toContain("does not support a repl");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun run --interactive is not a silent no-op", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--interactive"],
+      env,
+      stdin: Buffer.from("1+1\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("Welcome to Bun");
+    expect(stdout).toContain("2");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+  });
+
+  // The "run" subcommand word is a dispatch artifact, not user input: it must
+  // not survive into the REPL's process.argv the way a script name would.
+  test("bun run --interactive keeps 'run' out of process.argv", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--interactive"],
+      env,
+      // Tagged so the match can't be confused with the REPL's own echo.
+      stdin: Buffer.from(`console.log("ARGV:" + JSON.stringify(process.argv.slice(1)))\n`),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const match = stdout.match(/ARGV:(\[.*\])/);
+    expect(match).not.toBeNull();
+    expect(JSON.parse(match![1])).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
   test("NODE_REPL_EXTERNAL_MODULE replaces the built-in REPL", async () => {
     using dir = tempDir("ext-repl", { "ext.js": `console.log("external-repl-42")` });
     const { stdout, stderr, exitCode } = await runInteractive([], "", {
@@ -1381,6 +1471,49 @@ describe("node:repl process-global side effects", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain("userGot=boom");
     expect(stderr).not.toContain("ALREADY_SET");
+    expect(exitCode).toBe(0);
+  });
+
+  // Node filters slash-modules in addBuiltinLibsToObject (not
+  // getBuiltinLibs), so `fs/promises` etc. never land on the REPL context
+  // while repl.builtinModules and require-completion still list them.
+  test("addBuiltinLibsToObject does not install slash-modules on the REPL context", async () => {
+    const script = `
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const inp = new PassThrough(), out = new PassThrough(); out.resume();
+      const r = repl.start({ input: inp, output: out, terminal: false, prompt: "" });
+      const slash = Object.getOwnPropertyNames(r.context).filter(n => n.includes("/"));
+      const listed = repl.builtinModules.filter(n => n.includes("/"));
+      console.log("SLASH=" + JSON.stringify(slash) + " LISTED=" + (listed.includes("fs/promises")));
+      r.close();
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("SLASH=[] LISTED=true");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+  });
+
+  // decorateErrorStack runs after user code, so a tampered String.prototype.split
+  // must not stop the REPL from rendering the next error.
+  test("error rendering survives a tampered String.prototype.split", async () => {
+    const script = `
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const inp = new PassThrough(), out = new PassThrough();
+      let buf = ""; out.on("data", d => buf += d);
+      const r = repl.start({ input: inp, output: out, terminal: false, prompt: "> " });
+      r.on("exit", () => { console.log(buf); process.exit(0); });
+      inp.write("String.prototype.split = () => { throw 0 }\\n");
+      inp.write("oops\\n");
+      inp.write("1+1\\n");
+      inp.end();
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("Uncaught ReferenceError");
+    expect(stdout).toContain("> 2");
     expect(exitCode).toBe(0);
   });
 

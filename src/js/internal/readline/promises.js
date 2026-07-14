@@ -8,10 +8,11 @@ const { ArrayPrototypeJoin, ArrayPrototypePush, Promise } = primordials;
 
 const { CSI } = require("internal/readline/utils");
 const { validateBoolean, validateInteger } = require("internal/validators");
-const { isWritable } = require("internal/repl/node-shims");
 const {
   codes: { ERR_INVALID_ARG_TYPE },
 } = require("internal/repl/node-errors");
+// Inlined from node-shims (which eagerly loads node:{util,module,path,vm}).
+const isWritable = stream => typeof stream?.write === "function";
 
 const { kClearToLineBeginning, kClearToLineEnd, kClearLine, kClearScreenDown } = CSI;
 

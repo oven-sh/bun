@@ -6,8 +6,10 @@
 // ported code. Safe* containers re-export the real makeSafe()-wrapped
 // implementations from internal/primordials so there is one definition per
 // name. Weaker than Node only in that capture happens at (lazy) module load
-// rather than realm bootstrap.
-const { SafeMap, SafeSet, SafeWeakSet, SafeStringIterator } = require("internal/primordials");
+// rather than realm bootstrap; SafePromiseRace additionally wraps its input in
+// a SafeArrayIterator because spec Promise.race reads
+// Array.prototype[Symbol.iterator] at CALL time.
+const { SafeMap, SafeSet, SafeWeakSet, SafeStringIterator, SafeArrayIterator } = require("internal/primordials");
 
 const ArrayFromFn = Array.from;
 const ArrayPrototypeAtFn = Array.prototype.at;
@@ -125,7 +127,7 @@ export default {
   RegExpPrototypeExec: (re, s) => RegExpPrototypeExecFn.$call(re, s),
   RegExpPrototypeSymbolReplace: (re, s, replacement) => RegExpPrototypeSymbolReplaceFn.$call(re, s, replacement),
   RegExpPrototypeSymbolSplit: (re, s, limit) => RegExpPrototypeSymbolSplitFn.$call(re, s, limit),
-  SafePromiseRace: promises => PromiseRaceFn.$call(Promise, promises),
+  SafePromiseRace: promises => PromiseRaceFn.$call(Promise, new SafeArrayIterator(promises)),
   SafeSet,
   SafeMap,
   SafeWeakSet,

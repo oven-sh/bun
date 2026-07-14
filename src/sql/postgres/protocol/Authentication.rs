@@ -32,8 +32,8 @@ pub struct SASLContinue {
 }
 
 impl SASLContinue {
-    pub fn iteration_count(&self) -> Result<u32, bun_core::Error> {
-        bun_core::fmt::parse_int(self.i.slice(), 10).map_err(|_| bun_core::err!("InvalidCharacter"))
+    pub fn iteration_count(&self) -> crate::Result<u32> {
+        bun_core::fmt::parse_int(self.i.slice(), 10).map_err(|_| crate::Error::InvalidCharacter)
     }
 }
 

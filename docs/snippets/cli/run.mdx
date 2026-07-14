@@ -64,7 +64,9 @@ bun run <file or script>
 
 <ParamField path="--interactive" type="boolean">
   Open the Node.js-compatible REPL (<code>node:repl</code>). When combined with <code>-e</code>, evaluates the script
-  first, then enters the REPL. Distinct from <code>bun repl</code>, which is Bun's native REPL.
+  first, then enters the REPL. Under <code>--interactive</code>, <code>-e</code> is raw JavaScript (matching{" "}
+  <code>node -i -e</code>); use <code>bun repl</code> for TypeScript. Distinct from <code>bun repl</code>, which is
+  Bun's native REPL.
 </ParamField>
 
 <ParamField path="--smol" type="boolean">

@@ -4,11 +4,10 @@
 // createInternalRepl via a Symbol.for hook on node:repl and never re-implements
 // the NODE_REPL_* env parsing that internal/repl.js already owns.
 
-// exec_node_repl injects the user's `-e` script as a JSON string literal here
-// (data, not code — a syntax error or unterminated token in `-e` cannot bleed
-// into this bootstrap). Read and clear it before any user code runs.
-declare const __BUN_EVAL_SCRIPT__: string | undefined;
-const evalScript: string | undefined = typeof __BUN_EVAL_SCRIPT__ === "string" ? __BUN_EVAL_SCRIPT__ : undefined;
+// exec_node_repl stashes the user's `-e` bytes on `process._eval` (undefined
+// when no `-e`), so no source splicing — a syntax error or unterminated
+// token in `-e` cannot bleed into this bootstrap.
+const evalScript: string | undefined = (process as { _eval?: string })._eval;
 
 const ext = process.env.NODE_REPL_EXTERNAL_MODULE;
 if (ext) {

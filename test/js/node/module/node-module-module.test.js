@@ -233,8 +233,10 @@ describe.concurrent("node-module-module", () => {
         const req = createRequire(import.meta.url);
         const oR = Module._resolveFilename;
         const rows = [];
+        const parents = [];
         Module._resolveFilename = function (request, parent, isMain, options) {
           if (request.endsWith("real.cjs")) {
+            parents.push(parent);
             rows.push({
               parentType: typeof parent,
               parentFilename: path.basename(String(parent && parent.filename)),
@@ -248,8 +250,12 @@ describe.concurrent("node-module-module", () => {
         };
         req("./real.cjs");
         req.resolve("./real.cjs");
+        req.resolve("./real.cjs");
         Module._resolveFilename = oR;
-        console.log(JSON.stringify(rows));
+        console.log(JSON.stringify({
+          rows,
+          sameParentAcrossRequireAndResolve: parents[0] === parents[1] && parents[1] === parents[2],
+        }));
       `,
     });
     await using proc = Bun.spawn({
@@ -259,10 +265,14 @@ describe.concurrent("node-module-module", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual([
-      { parentType: "object", parentFilename: "main.mjs", isMain: false, argc: 4, thisIsModule: true },
-      { parentType: "object", parentFilename: "main.mjs", isMain: false, options: {}, argc: 4, thisIsModule: true },
-    ]);
+    expect(JSON.parse(stdout)).toEqual({
+      rows: [
+        { parentType: "object", parentFilename: "main.mjs", isMain: false, argc: 4, thisIsModule: true },
+        { parentType: "object", parentFilename: "main.mjs", isMain: false, options: {}, argc: 4, thisIsModule: true },
+        { parentType: "object", parentFilename: "main.mjs", isMain: false, options: {}, argc: 4, thisIsModule: true },
+      ],
+      sameParentAcrossRequireAndResolve: true,
+    });
     expect(exitCode).toBe(0);
   });
 

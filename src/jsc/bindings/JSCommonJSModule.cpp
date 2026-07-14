@@ -129,7 +129,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         resolveFunction = JSC::JSBoundFunction::create(vm,
             globalObject,
             globalObject->requireResolveFunctionUnbound(),
-            moduleObject->filename(),
+            moduleObject,
             ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
         RETURN_IF_EXCEPTION(scope, );
 
@@ -327,7 +327,12 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
         return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
     }
     JSValue boundThis = requireResolveBound->boundThis();
-    JSString* filename = dynamicDowncast<JSString>(boundThis);
+    JSString* filename = nullptr;
+    if (auto* boundModule = dynamicDowncast<Bun::JSCommonJSModule>(boundThis)) {
+        filename = dynamicDowncast<JSString>(boundModule->filename());
+    } else {
+        filename = dynamicDowncast<JSString>(boundThis);
+    }
     if (!filename) [[unlikely]] {
         return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
     }
@@ -1669,7 +1674,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
     JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
-        moduleObject->filename(),
+        moduleObject,
         ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
     RETURN_IF_EXCEPTION(scope, nullptr);
 

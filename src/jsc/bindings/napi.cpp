@@ -1790,22 +1790,22 @@ extern "C" napi_status napi_create_typedarray(
     size_t size_of_element;
     const char* alignment_msg;
     switch (type) {
-#define NAPI_TYPED_ARRAY_CASE(napi_type, js_type, size)                         \
-    case napi_type:                                                             \
-        size_of_element = size;                                                 \
+#define NAPI_TYPED_ARRAY_CASE(napi_type, js_type, size)                                \
+    case napi_type:                                                                    \
+        size_of_element = size;                                                        \
         alignment_msg = "start offset of " #js_type " should be a multiple of " #size; \
         break;
-    NAPI_TYPED_ARRAY_CASE(napi_int8_array, Int8Array, 1)
-    NAPI_TYPED_ARRAY_CASE(napi_uint8_array, Uint8Array, 1)
-    NAPI_TYPED_ARRAY_CASE(napi_uint8_clamped_array, Uint8ClampedArray, 1)
-    NAPI_TYPED_ARRAY_CASE(napi_int16_array, Int16Array, 2)
-    NAPI_TYPED_ARRAY_CASE(napi_uint16_array, Uint16Array, 2)
-    NAPI_TYPED_ARRAY_CASE(napi_int32_array, Int32Array, 4)
-    NAPI_TYPED_ARRAY_CASE(napi_uint32_array, Uint32Array, 4)
-    NAPI_TYPED_ARRAY_CASE(napi_float32_array, Float32Array, 4)
-    NAPI_TYPED_ARRAY_CASE(napi_float64_array, Float64Array, 8)
-    NAPI_TYPED_ARRAY_CASE(napi_bigint64_array, BigInt64Array, 8)
-    NAPI_TYPED_ARRAY_CASE(napi_biguint64_array, BigUint64Array, 8)
+        NAPI_TYPED_ARRAY_CASE(napi_int8_array, Int8Array, 1)
+        NAPI_TYPED_ARRAY_CASE(napi_uint8_array, Uint8Array, 1)
+        NAPI_TYPED_ARRAY_CASE(napi_uint8_clamped_array, Uint8ClampedArray, 1)
+        NAPI_TYPED_ARRAY_CASE(napi_int16_array, Int16Array, 2)
+        NAPI_TYPED_ARRAY_CASE(napi_uint16_array, Uint16Array, 2)
+        NAPI_TYPED_ARRAY_CASE(napi_int32_array, Int32Array, 4)
+        NAPI_TYPED_ARRAY_CASE(napi_uint32_array, Uint32Array, 4)
+        NAPI_TYPED_ARRAY_CASE(napi_float32_array, Float32Array, 4)
+        NAPI_TYPED_ARRAY_CASE(napi_float64_array, Float64Array, 8)
+        NAPI_TYPED_ARRAY_CASE(napi_bigint64_array, BigInt64Array, 8)
+        NAPI_TYPED_ARRAY_CASE(napi_biguint64_array, BigUint64Array, 8)
 #undef NAPI_TYPED_ARRAY_CASE
     default:
         return napi_set_last_error(env, napi_invalid_arg);

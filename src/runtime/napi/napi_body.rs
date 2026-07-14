@@ -1469,8 +1469,7 @@ pub(super) extern "C" fn napi_get_dataview_info(
     let env = get_env!(env_);
     env.check_gc();
     let dataview = dataview_.get();
-    if dataview.is_empty_or_undefined_or_null()
-        || dataview.js_type_loose() != jsc::JSType::DataView
+    if dataview.is_empty_or_undefined_or_null() || dataview.js_type_loose() != jsc::JSType::DataView
     {
         return env.invalid_arg();
     }

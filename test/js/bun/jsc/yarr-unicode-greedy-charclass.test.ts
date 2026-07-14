@@ -38,6 +38,10 @@ describe("backtracking greedy /u character class", () => {
     // greedy '+' variant
     [/([^"]+)Z/u, "\u{1F600}Z", "\u{1F600}Z"],
     [/([^"]+)Z/u, "Z", null],
+    // U+F800/U+FC00 are not surrogates; backward step must agree with forward read on width
+    [/([^"]*)Z/u, "Z\uF800\uFC00\uF800\uFC00", "Z"],
+    [/([^"]*)Z/u, "aZ\uF800\uFC00", "aZ"],
+    [/([^"]*)Z/u, "\uF800\uFC00Z", "\uF800\uFC00Z"],
     // real-world shape from @typescript-eslint JSX detection
     [/(?:^[^"'`]*<\/)|(?:^[^/]{2}.*\/>)/mu, "abc</", "abc</"],
     [/(?:^[^"'`]*<\/)|(?:^[^/]{2}.*\/>)/mu, "\u2014\nabc", null],

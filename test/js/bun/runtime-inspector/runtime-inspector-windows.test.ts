@@ -106,45 +106,21 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
   });
 
   test.skipIf(isASAN)("_debugProcess works with current process's own pid", async () => {
-    // On Windows, calling _debugProcess with our own PID should work.
-    // Use PID file approach to avoid timing-dependent setTimeout.
-    using dir = tempDir("windows-self-debug-test", {
-      "target.js": `
-        const fs = require("fs");
-        const path = require("path");
-
-        fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
-        console.log("READY");
-
-        // Keep process alive until parent sends _debugProcess and then kills us
-        setInterval(() => {}, 1000);
-      `,
-    });
-
+    // The target calls _debugProcess(process.pid) on itself: it opens its own
+    // file mapping, reads its own handler pointer, and CreateRemoteThread's
+    // into itself while the JS thread is returning from the syscall.
     await using proc = spawn({
-      cmd: [bunExe(), "--inspect-port=0", "target.js"],
-      cwd: String(dir),
+      cmd: [
+        bunExe(),
+        "--inspect-port=0",
+        "-e",
+        `setImmediate(() => process._debugProcess(process.pid)); setInterval(() => {}, 1000);`,
+      ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    const reader = proc.stdout.getReader();
-    await readStreamUntil(reader, s => s.includes("READY"));
-    reader.releaseLock();
-
-    const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
-
-    // Activate inspector via _debugProcess from a separate process
-    await using debugProc = spawn({
-      cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await debugProc.exited;
-
-    // Wait for inspector banner
     const stderrReader = proc.stderr.getReader();
     const stderr = await readStreamUntil(stderrReader, hasBanner);
     stderrReader.releaseLock();

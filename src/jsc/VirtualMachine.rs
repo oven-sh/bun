@@ -4305,13 +4305,12 @@ impl VirtualMachine {
             if let Some(hardcoded) = hardcoded_alias {
                 let canonical = hardcoded.path.as_bytes();
                 if global.is_builtin_module_cached(canonical) {
-                    *res = ErrorableString::ok(
-                        if is_user_require_resolve && hardcoded.node_builtin {
+                    *res =
+                        ErrorableString::ok(if is_user_require_resolve && hardcoded.node_builtin {
                             specifier.dupe_ref()
                         } else {
                             bun_core::String::init(canonical)
-                        },
-                    );
+                        });
                     return Ok(());
                 }
             }

@@ -3326,36 +3326,42 @@ static napi_value
 test_node_api_create_object_with_properties(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
-  napi_value names[3];
-  napi_value values[3];
+  napi_value names[4];
+  napi_value values[4];
   NODE_API_CALL(env,
                 napi_create_string_utf8(env, "a", NAPI_AUTO_LENGTH, &names[0]));
   NODE_API_CALL(env,
                 napi_create_string_utf8(env, "b", NAPI_AUTO_LENGTH, &names[1]));
   NODE_API_CALL(env, napi_create_symbol(env, nullptr, &names[2]));
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, "0", NAPI_AUTO_LENGTH, &names[3]));
   NODE_API_CALL(env, napi_create_int32(env, 1, &values[0]));
   NODE_API_CALL(env, napi_create_int32(env, 2, &values[1]));
   NODE_API_CALL(env, napi_create_int32(env, 3, &values[2]));
+  NODE_API_CALL(env, napi_create_int32(env, 4, &values[3]));
 
   napi_value obj;
   NODE_API_CALL(env, node_api_create_object_with_properties(
-                         env, nullptr, names, values, 3, &obj));
+                         env, nullptr, names, values, 4, &obj));
 
   napi_value proto;
   NODE_API_CALL(env, napi_get_prototype(env, obj, &proto));
   napi_valuetype proto_t;
   NODE_API_CALL(env, napi_typeof(env, proto, &proto_t));
 
-  napi_value a, b, sym;
+  napi_value a, b, sym, idx;
   NODE_API_CALL(env, napi_get_named_property(env, obj, "a", &a));
   NODE_API_CALL(env, napi_get_named_property(env, obj, "b", &b));
   NODE_API_CALL(env, napi_get_property(env, obj, names[2], &sym));
-  int32_t ai = 0, bi = 0, si = 0;
+  NODE_API_CALL(env, napi_get_element(env, obj, 0, &idx));
+  int32_t ai = 0, bi = 0, si = 0, ii = 0;
   NODE_API_CALL(env, napi_get_value_int32(env, a, &ai));
   NODE_API_CALL(env, napi_get_value_int32(env, b, &bi));
   NODE_API_CALL(env, napi_get_value_int32(env, sym, &si));
-  printf("create_object_with_properties: proto_type=%d a=%d b=%d sym=%d\n",
-         static_cast<int>(proto_t), ai, bi, si);
+  NODE_API_CALL(env, napi_get_value_int32(env, idx, &ii));
+  printf("create_object_with_properties: proto_type=%d a=%d b=%d sym=%d "
+         "idx0=%d\n",
+         static_cast<int>(proto_t), ai, bi, si, ii);
 
   napi_value bad_name;
   NODE_API_CALL(env, napi_create_int32(env, 7, &bad_name));

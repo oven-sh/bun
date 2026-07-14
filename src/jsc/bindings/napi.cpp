@@ -1626,7 +1626,12 @@ extern "C" JS_EXPORT napi_status node_api_set_prototype(napi_env env,
     JSObject* obj = toJS(object).getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, obj, napi_object_expected);
 
-    bool didSet = obj->setPrototype(vm, globalObject, toJS(value), false);
+    // JSC's setPrototypeDirect asserts prototype.isObject() || prototype.isNull();
+    // reject primitives here rather than reaching the engine assertion.
+    JSValue protoValue = toJS(value);
+    NAPI_RETURN_EARLY_IF_FALSE(env, protoValue.isObject() || protoValue.isNull(), napi_invalid_arg);
+
+    bool didSet = obj->setPrototype(vm, globalObject, protoValue, false);
     NAPI_RETURN_IF_EXCEPTION(env);
     NAPI_RETURN_EARLY_IF_FALSE(env, didSet, napi_generic_failure);
     NAPI_RETURN_SUCCESS(env);
@@ -1668,7 +1673,8 @@ extern "C" JS_EXPORT napi_status node_api_create_object_with_properties(napi_env
         auto name = JSC::PropertyName(toJS(property_names[i]).toPropertyKey(globalObject));
         NAPI_RETURN_IF_EXCEPTION(env);
         JSValue value = toJS(property_values[i]);
-        obj->putDirect(vm, name, value.isEmpty() ? jsUndefined() : value, 0);
+        obj->putDirectMayBeIndex(globalObject, name, value.isEmpty() ? jsUndefined() : value);
+        NAPI_RETURN_IF_EXCEPTION(env);
     }
 
     *result = toNapi(obj, globalObject);

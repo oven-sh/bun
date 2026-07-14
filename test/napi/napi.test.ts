@@ -766,7 +766,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("node_api_create_object_with_properties creates an object with the given prototype and properties", async () => {
       const output = await checkSameOutput("test_node_api_create_object_with_properties", []);
       expect(output.split(/\r?\n/)).toEqual([
-        "create_object_with_properties: proto_type=1 a=1 b=2 sym=3",
+        "create_object_with_properties: proto_type=1 a=1 b=2 sym=3 idx0=4",
         "create_object_with_properties: bad_name_status=4",
         "create_object_with_properties: custom_proto_matches=true",
       ]);

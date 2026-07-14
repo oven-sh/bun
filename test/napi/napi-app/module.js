@@ -1008,6 +1008,52 @@ nativeTests.test_ref_unref_underflow = () => {
   }
 };
 
+nativeTests.test_napi_instanceof = () => {
+  function dump(label, r) {
+    const errName = r.exception && r.exception.constructor ? r.exception.constructor.name : undefined;
+    const errCode = r.exception ? r.exception.code : undefined;
+    console.log(
+      `${label}: status=${r.status} result=${r.result} pending=${r.pending} errName=${errName} errCode=${errCode}`,
+    );
+  }
+
+  class Base {}
+  const instance = new Base();
+  dump("class/instance", nativeTests.perform_instanceof(instance, Base));
+  dump("class/plain-obj", nativeTests.perform_instanceof({}, Base));
+
+  const arrow = () => 1;
+  Object.defineProperty(arrow, Symbol.hasInstance, { value: () => true });
+  dump("arrow+hasInstance", nativeTests.perform_instanceof({}, arrow));
+
+  const bound = function () {}.bind(null);
+  Object.defineProperty(bound, Symbol.hasInstance, { value: () => true });
+  dump("bound+hasInstance", nativeTests.perform_instanceof({}, bound));
+
+  const bareArrow = () => 1;
+  dump("bare-arrow ctor", nativeTests.perform_instanceof({}, bareArrow));
+
+  class Throws {
+    static [Symbol.hasInstance]() {
+      throw new RangeError("boom");
+    }
+  }
+  dump("hasInstance throws", nativeTests.perform_instanceof({}, Throws));
+
+  const proxy = new Proxy(Base, {
+    get(t, k) {
+      if (k === Symbol.hasInstance) throw new RangeError("proxy");
+      return Reflect.get(t, k);
+    },
+  });
+  dump("proxy get throws", nativeTests.perform_instanceof({}, proxy));
+
+  dump("number ctor", nativeTests.perform_instanceof({}, 5));
+  dump("plain-obj ctor", nativeTests.perform_instanceof({}, { x: 1 }));
+  dump("null ctor", nativeTests.perform_instanceof({}, null));
+  dump("undefined ctor", nativeTests.perform_instanceof({}, undefined));
+};
+
 nativeTests.test_get_value_string = () => {
   function to16Bit(string) {
     if (typeof Bun != "object") return string;

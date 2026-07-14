@@ -385,6 +385,20 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       ]) {
         expect(result).toContain(`${fn}: status=10`);
       }
+      // functions Node.js does NOT gate (CHECK_ENV) must still succeed
+      for (const fn of [
+        "napi_get_global",
+        "napi_create_reference",
+        "napi_reference_unref",
+        "napi_get_reference_value",
+        "napi_create_bigint_int64",
+        "napi_create_symbol",
+        "napi_is_buffer",
+        "napi_is_typedarray",
+        "napi_get_instance_data",
+      ]) {
+        expect(result).toContain(`${fn}: status=0`);
+      }
       // side effects must NOT have happened
       expect(result).toContain("side_effect frozen=false");
       expect(result).toContain("side_effect arr[7]=undefined");

@@ -2464,6 +2464,30 @@ static napi_value test_pending_exception_gate(const Napi::CallbackInfo &info) {
   napi_status resolve_st = napi_resolve_deferred(env, deferred_pre, five);
   printf("napi_resolve_deferred: status=%d\n", (int)resolve_st);
 
+  // Functions Node.js does NOT gate (CHECK_ENV): must still succeed with a
+  // pending exception. Pins the NO_PENDING_CHECK set so future preamble
+  // changes don't over-gate them.
+  napi_ref ref = nullptr;
+  void *inst_data;
+  st = napi_get_global(env, &out);
+  printf("napi_get_global: status=%d\n", (int)st);
+  st = napi_create_reference(env, obj, 1, &ref);
+  printf("napi_create_reference: status=%d\n", (int)st);
+  st = napi_reference_unref(env, ref, &u32_out);
+  printf("napi_reference_unref: status=%d\n", (int)st);
+  st = napi_get_reference_value(env, ref, &out);
+  printf("napi_get_reference_value: status=%d\n", (int)st);
+  st = napi_create_bigint_int64(env, 42, &out);
+  printf("napi_create_bigint_int64: status=%d\n", (int)st);
+  st = napi_create_symbol(env, nullptr, &out);
+  printf("napi_create_symbol: status=%d\n", (int)st);
+  st = napi_is_buffer(env, arr, &bool_out);
+  printf("napi_is_buffer: status=%d\n", (int)st);
+  st = napi_is_typedarray(env, arr, &bool_out);
+  printf("napi_is_typedarray: status=%d\n", (int)st);
+  st = napi_get_instance_data(env, &inst_data);
+  printf("napi_get_instance_data: status=%d\n", (int)st);
+
   // Clear the pending exception so we can inspect side effects.
   napi_value exc;
   NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
@@ -2493,6 +2517,7 @@ static napi_value test_pending_exception_gate(const Napi::CallbackInfo &info) {
   if (resolve_st != napi_ok) {
     NODE_API_CALL(env, napi_resolve_deferred(env, deferred_pre, five));
   }
+  NODE_API_CALL(env, napi_delete_reference(env, ref));
 
   return ok(env);
 }

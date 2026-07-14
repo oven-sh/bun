@@ -88,7 +88,10 @@ function tmpdirTestMkdir(): string {
   if (!res?.includes(now)) {
     expect(res).toInclude("fs.test.ts");
   }
-  expect(res).not.toInclude("1234");
+  // res is the first directory created (the ${now} segment). Check the last
+  // path segment rather than a "1234" substring, which can occur in Date.now().
+  expect(path.basename(res!)).not.toBe("1234");
+  expect(path.basename(res!)).not.toBe("hi");
   expect(existsSync(tempdir)).toBe(true);
   return tempdir;
 }

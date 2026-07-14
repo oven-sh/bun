@@ -394,6 +394,10 @@ test("explicitly-closed close-listener ports are collected; open ones are pinned
   Bun.gc(true);
   // All 20 closed pairs must be swept (allow small slack for GC nondeterminism).
   expect(count() - base).toBeLessThanOrEqual(4);
+  // Re-baseline: ports left over from earlier tests may be in `base` but get swept by the
+  // GCs above (a conservative stack scan kept them past the first GC). Measuring the
+  // still-open pairs against `base` then undercounts by that many.
+  const afterClosed = count();
   (() => {
     for (let i = 0; i < 20; i++) {
       const { port1, port2 } = new MessageChannel();
@@ -404,7 +408,7 @@ test("explicitly-closed close-listener ports are collected; open ones are pinned
   Bun.gc(true);
   Bun.gc(true);
   // Node parity: still-open close-listener pairs survive GC (>= 40 ports pinned).
-  expect(count() - base).toBeGreaterThanOrEqual(40);
+  expect(count() - afterClosed).toBeGreaterThanOrEqual(40);
 });
 
 // registerCloseContext()'s retroactive peer-Closed check posts a peerClosed task before

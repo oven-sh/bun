@@ -9,9 +9,10 @@
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
 //
 // Preview build of oven-sh/WebKit#268 (AsyncFunctionResume keeps the async
-// context installed across the settle), on top of WebKit main 4895f45d.
-// Re-pin to the autobuild tag of its merge commit once it lands on main.
-export const WEBKIT_VERSION = "autobuild-preview-pr-268-48232e38";
+// context installed across the settle, and PromiseFinallyAwaitJob carries it
+// across), on top of WebKit main 4895f45d. Re-pin to the autobuild tag of its
+// merge commit once it lands on main.
+export const WEBKIT_VERSION = "autobuild-preview-pr-268-0aef04ea";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

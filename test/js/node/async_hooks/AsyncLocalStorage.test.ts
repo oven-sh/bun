@@ -1153,7 +1153,7 @@ describe("async context passes through", () => {
   });
 });
 
-describe("unhandledRejection async context", () => {
+describe.concurrent("unhandledRejection async context", () => {
   // Bun replays the context the promise was *rejected* in. Node >= 24 (and Node 22
   // with --experimental-async-context-frame) does the same; Node 22's default
   // async_hooks-based AsyncLocalStorage replays the *creation* context instead.

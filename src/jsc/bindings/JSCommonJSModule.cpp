@@ -83,8 +83,6 @@
 #include "ErrorCode.h"
 #include "WebCoreJSBuiltins.h"
 
-extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
-
 namespace Bun {
 using namespace JSC;
 

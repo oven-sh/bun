@@ -2624,6 +2624,123 @@ test_dataview_info_byte_offset(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static void print_pending_exception_code(napi_env env) {
+  bool is_pending = false;
+  napi_is_exception_pending(env, &is_pending);
+  if (!is_pending) {
+    printf("  no pending exception\n");
+    return;
+  }
+  napi_value exception;
+  napi_get_and_clear_last_exception(env, &exception);
+  napi_value code_val;
+  char code[128] = "(no .code)";
+  if (napi_get_named_property(env, exception, "code", &code_val) == napi_ok) {
+    size_t len;
+    napi_get_value_string_utf8(env, code_val, code, sizeof(code), &len);
+  }
+  bool is_range = false;
+  napi_value global, range_ctor;
+  napi_get_global(env, &global);
+  napi_get_named_property(env, global, "RangeError", &range_ctor);
+  napi_instanceof(env, exception, range_ctor, &is_range);
+  printf("  code=%s instanceof RangeError=%d\n", code, is_range ? 1 : 0);
+}
+
+static napi_value
+test_napi_create_typedarray_errors(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  napi_value arraybuffer;
+  void *data = nullptr;
+  NODE_API_CALL(env, napi_create_arraybuffer(env, 16, &data, &arraybuffer));
+
+  napi_value ta = nullptr;
+  napi_status s =
+      napi_create_typedarray(env, napi_int32_array, 2, arraybuffer, 2, &ta);
+  printf("misaligned int32 offset=2: status=%d\n", s);
+  print_pending_exception_code(env);
+
+  // A subsequent call must succeed; there must be no leftover VM exception.
+  napi_value str = nullptr;
+  napi_status s2 =
+      napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &str);
+  printf("create_string_utf8 after misalign: status=%d\n", s2);
+
+  s = napi_create_typedarray(env, napi_float64_array, 2, arraybuffer, 4, &ta);
+  printf("misaligned float64 offset=4: status=%d\n", s);
+  print_pending_exception_code(env);
+
+  s = napi_create_typedarray(env, napi_uint8_array, 32, arraybuffer, 0, &ta);
+  printf("uint8 length=32 over 16-byte buffer: status=%d\n", s);
+  print_pending_exception_code(env);
+
+  s = napi_create_typedarray(env, napi_int32_array, 4, arraybuffer, 4, &ta);
+  printf("int32 length=4 offset=4 over 16-byte buffer: status=%d\n", s);
+  print_pending_exception_code(env);
+
+  napi_value not_a_buffer;
+  NODE_API_CALL(env, napi_create_object(env, &not_a_buffer));
+  s = napi_create_typedarray(env, napi_uint8_array, 4, not_a_buffer, 0, &ta);
+  printf("create_typedarray(non-buffer): status=%d\n", s);
+  napi_value dv;
+  s = napi_create_dataview(env, 4, not_a_buffer, 0, &dv);
+  printf("create_dataview(non-buffer): status=%d\n", s);
+
+  s = napi_create_typedarray(env, napi_int32_array, 4, arraybuffer, 0, &ta);
+  printf("int32 length=4 offset=0 exact fit: status=%d\n", s);
+
+  return ok(env);
+}
+
+static napi_value
+test_napi_view_info_type_check(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  napi_value arraybuffer;
+  void *data = nullptr;
+  NODE_API_CALL(env, napi_create_arraybuffer(env, 16, &data, &arraybuffer));
+  napi_value uint8;
+  NODE_API_CALL(env, napi_create_typedarray(env, napi_uint8_array, 8,
+                                            arraybuffer, 0, &uint8));
+  napi_value dataview;
+  NODE_API_CALL(env, napi_create_dataview(env, 8, arraybuffer, 0, &dataview));
+  napi_value plain;
+  NODE_API_CALL(env, napi_create_object(env, &plain));
+
+  size_t len = 12345;
+  void *p = nullptr;
+  napi_value ab = nullptr;
+  size_t off = 12345;
+  napi_status s;
+
+  s = napi_get_dataview_info(env, uint8, &len, &p, &ab, &off);
+  printf("get_dataview_info(Uint8Array): status=%d\n", s);
+  s = napi_get_dataview_info(env, arraybuffer, &len, &p, &ab, &off);
+  printf("get_dataview_info(ArrayBuffer): status=%d\n", s);
+  s = napi_get_dataview_info(env, plain, &len, &p, &ab, &off);
+  printf("get_dataview_info(Object): status=%d\n", s);
+  s = napi_get_dataview_info(env, dataview, &len, &p, &ab, &off);
+  printf("get_dataview_info(DataView): status=%d len=%zu off=%zu\n", s, len,
+         off);
+
+  napi_typedarray_type ty;
+  s = napi_get_typedarray_info(env, dataview, &ty, &len, &p, &ab, &off);
+  printf("get_typedarray_info(DataView): status=%d\n", s);
+  s = napi_get_typedarray_info(env, arraybuffer, &ty, &len, &p, &ab, &off);
+  printf("get_typedarray_info(ArrayBuffer): status=%d\n", s);
+  s = napi_get_typedarray_info(env, dataview, nullptr, nullptr, nullptr,
+                               nullptr, nullptr);
+  printf("get_typedarray_info(DataView, all-null out): status=%d\n", s);
+  s = napi_get_typedarray_info(env, plain, &ty, &len, &p, &ab, &off);
+  printf("get_typedarray_info(Object): status=%d\n", s);
+  s = napi_get_typedarray_info(env, uint8, &ty, &len, &p, &ab, &off);
+  printf("get_typedarray_info(Uint8Array): status=%d type=%d len=%zu\n", s,
+         static_cast<int>(ty), len);
+
+  return ok(env);
+}
+
 static napi_value
 test_create_arraybuffer_zeroed(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
@@ -2668,6 +2785,8 @@ test_create_arraybuffer_zeroed(const Napi::CallbackInfo &info) {
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
+  REGISTER_FUNCTION(env, exports, test_napi_create_typedarray_errors);
+  REGISTER_FUNCTION(env, exports, test_napi_view_info_type_check);
   REGISTER_FUNCTION(env, exports, test_create_arraybuffer_zeroed);
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);

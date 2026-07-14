@@ -2,16 +2,15 @@
  * Standalone server-side TLSSocket wraps: `new tls.TLSSocket(socket, { isServer: true })`.
  * https://github.com/oven-sh/bun/issues/33954
  *
- * Works with both:
- *   bun bd test test/js/node/tls/node-tls-socket-server-wrap.test.mjs
- *   node --test test/js/node/tls/node-tls-socket-server-wrap.test.mjs
+ * Runtime-agnostic (node:test): executed under both runtimes by
+ * node-tls-socket-server-wrap.test.ts.
  */
 import assert from "node:assert";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { Duplex } from "node:stream";
-import { describe, test } from "node:test";
+import { test } from "node:test";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 
@@ -150,17 +149,3 @@ test("new TLSSocket(duplex, { isServer, requestCert, rejectUnauthorized }) reque
     server.destroy();
   }
 });
-
-if (typeof Bun !== "undefined") {
-  describe("Node.js compatibility", () => {
-    test("tests should run on node.js", async () => {
-      await using proc = Bun.spawn({
-        cmd: [Bun.which("node") || "node", "--test", import.meta.filename],
-        stdout: "inherit",
-        stderr: "inherit",
-        stdin: "ignore",
-      });
-      assert.strictEqual(await proc.exited, 0);
-    });
-  });
-}

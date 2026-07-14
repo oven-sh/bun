@@ -9,6 +9,7 @@ import {
   zstdDecompressSync,
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import path from "path";
 
 describe("Zstandard compression", async () => {
@@ -327,6 +328,42 @@ describe("sync compression argument handling", () => {
       Bun.gc(true);
     }
   });
+
+  // libdeflate is one-shot, so Bun retries with a doubling output buffer; the
+  // retry cap must not be tighter than the zlib backend's (ArrayBuffer max).
+  // Spawned so the multi-GB buffer is released with the child.
+  it("gunzipSync({library:'libdeflate'}) decompresses output larger than 1 GiB", async () => {
+    const MiB = 1024 * 1024;
+    const expected = 17 * 64 * MiB; // 1088 MiB
+    const script = `
+      import * as zlib from "node:zlib";
+      const chunk = Buffer.alloc(64 * ${MiB});
+      const bomb = await new Promise((resolve, reject) => {
+        const g = zlib.createGzip({ level: 9 });
+        const out = [];
+        g.on("data", c => out.push(c));
+        g.on("end", () => resolve(Buffer.concat(out)));
+        g.on("error", reject);
+        let left = 17;
+        const w = () => { if (!left--) return g.end(); g.write(chunk) ? w() : g.once("drain", w); };
+        w();
+      });
+      const out = Bun.gunzipSync(bomb, { library: "libdeflate" });
+      console.log(JSON.stringify({ libdeflate: out.length, head: out[0], tail: out[out.length - 1] }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ libdeflate: expected, head: 0, tail: 0 }),
+      stderr: expect.not.stringContaining("Out of memory"),
+    });
+    expect(exitCode).toBe(0);
+  }, 60_000);
 });
 
 describe.concurrent("Zstandard HTTP compression", () => {

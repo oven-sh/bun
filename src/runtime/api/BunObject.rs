@@ -2578,17 +2578,25 @@ pub mod JSZlib {
                 } else {
                     bun_libdeflate::Encoding::Deflate
                 };
+                let max_output = ArrayBuffer::MAX_SIZE as usize;
                 let result = decompressor.decompress_to_vec_grow(
                     compressed,
                     &mut list,
                     encoding,
-                    1024 * 1024 * 1024,
+                    max_output,
                 );
                 match result.status {
-                    bun_libdeflate::Status::Success => {}
-                    bun_libdeflate::Status::InsufficientSpace => {
+                    bun_libdeflate::Status::Success if list.len() <= max_output => {}
+                    bun_libdeflate::Status::Success | bun_libdeflate::Status::InsufficientSpace => {
                         drop(list);
-                        return Err(global_this.throw_out_of_memory());
+                        return Err(global_this
+                            .err(
+                                jsc::ErrCode::BUFFER_TOO_LARGE,
+                                format_args!(
+                                    "Cannot create a Buffer larger than {max_output} bytes",
+                                ),
+                            )
+                            .throw());
                     }
                     _ => {
                         drop(list);

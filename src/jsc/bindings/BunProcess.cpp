@@ -209,7 +209,7 @@ static JSValue constructPlatform(VM& vm, JSObject* processObject)
 
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = processObject->globalObject();
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
     RETURN_IF_EXCEPTION(scope, {});
@@ -269,12 +269,14 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* release = JSC::constructEmptyObject(globalObject);
 
     release->putDirect(vm, vm.propertyNames->name, jsOwnedString(vm, String("node"_s)), 0); // maybe this should be 'bun' eventually
     release->putDirect(vm, Identifier::fromString(vm, "sourceUrl"_s), jsOwnedString(vm, WTF::String(std::span { Bun__githubURL, strlen(Bun__githubURL) })), 0);
     release->putDirect(vm, Identifier::fromString(vm, "headersUrl"_s), jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)), 0);
 
+    RETURN_IF_EXCEPTION(scope, {});
     return release;
 }
 
@@ -1240,18 +1242,28 @@ static bool shouldAbortOnUncaughtException()
 #endif
 }
 
-// `origin` mirrors bun_jsc::virtual_machine::UncaughtExceptionOrigin:
-// 0 = synchronous uncaught exception, 1 = unhandled promise rejection,
-// 2 = rejected entry-point module promise (how a synchronous throw from the
-// main module surfaces; treated like 0 for the abort ordering below, like 1
-// for the origin string listeners observe).
+// Mirrors `bun_jsc::virtual_machine::UncaughtExceptionOrigin`. Keep the
+// discriminants in sync with the Rust enum: they cross the FFI boundary as a
+// plain `int`.
+enum class UncaughtExceptionOrigin : int {
+    // A synchronous uncaught exception.
+    Exception = 0,
+    // A true unhandled promise rejection.
+    Rejection = 1,
+    // The entry-point module promise rejected, which is how a synchronous
+    // throw from the main module surfaces. Aborts like `Exception` (V8 aborts
+    // at throw time), but listeners observe the 'unhandledRejection' origin
+    // string like `Rejection`.
+    EntryPointRejection = 2,
+};
+
 // `substituteError` (out): when the domain handler or capture callback
 // throws in a Worker, the thrown value is written here and false is
 // returned so the Rust caller routes it through the worker error-dispatch
 // path (parent 'error' + exit code 1) instead of exiting 7.
-extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int origin, JSC::EncodedJSValue* substituteError)
+extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int originValue, JSC::EncodedJSValue* substituteError)
 {
-    constexpr int OriginRejection = 1;
+    const auto origin = static_cast<UncaughtExceptionOrigin>(originValue);
 
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
@@ -1276,7 +1288,7 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     // the JS-side triggerUncaughtException binding abort unconditionally
     // regardless of capture/domain (node_errors.cc
     // TriggerUncaughtException(FunctionCallbackInfo)).
-    if (shouldAbortOnUncaughtException() && origin != OriginRejection
+    if (shouldAbortOnUncaughtException() && origin != UncaughtExceptionOrigin::Rejection
         && !domainHandler.isEmpty() && !domainHandler.isUndefinedOrNull()) {
         // node:domain is loaded — ask its predicate whether any domain on
         // the effective stack has an 'error' listener.
@@ -1298,16 +1310,33 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         }
     }
     if (shouldAbortOnUncaughtException()
-        && (origin == OriginRejection
+        && (origin == UncaughtExceptionOrigin::Rejection
             || ((domainHandler.isEmpty() || domainHandler.isUndefinedOrNull())
                 && (captureAtThrow.isEmpty() || captureAtThrow.isUndefinedOrNull())))) {
         Bun__logUnhandledException(JSValue::encode(exception));
         abortOnUncaughtException();
     }
 
+    // node parity (exitWithUndefinedFatalException): the internal fatal-exception
+    // handler is monkey-patchable as process._fatalException. If user code
+    // replaces it with a non-callable value, node cannot dispatch and exits with
+    // code 6 (InvalidFatalExceptionMonkeyPatching). This runs after the abort
+    // checks above: V8 aborts inside Isolate::Throw, before node ever reaches
+    // TriggerUncaughtException and consults _fatalException.
+    {
+        auto fatalScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSValue fatalException = process->get(globalObject, Identifier::fromString(vm, "_fatalException"_s));
+        if (fatalScope.exception()) {
+            (void)fatalScope.tryClearException();
+        } else if (!fatalException.isCallable()) {
+            Bun__Process__exit(globalObject, 6);
+            return true;
+        }
+    }
+
     MarkedArgumentBuffer args;
     args.append(exception);
-    if (origin != 0) {
+    if (origin != UncaughtExceptionOrigin::Exception) {
         args.append(jsString(vm, String("unhandledRejection"_s)));
     } else {
         args.append(jsString(vm, String("uncaughtException"_s)));
@@ -1361,7 +1390,7 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     // exception into a SIGABRT (node has no post-monitor abort path). This
     // gate covers node:domain loaded before the throw with the predicate
     // slot missing, and stays as a defensive assert otherwise.
-    if (origin != OriginRejection && shouldAbortOnUncaughtException()
+    if (origin != UncaughtExceptionOrigin::Rejection && shouldAbortOnUncaughtException()
         && (captureAtThrow.isEmpty() || captureAtThrow.isUndefinedOrNull())) {
         Bun__logUnhandledException(JSValue::encode(exception));
         abortOnUncaughtException();
@@ -2638,6 +2667,7 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     auto process = uncheckedDowncast<Process>(processObject);
 
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 10);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "compact"_s), JSC::jsBoolean(false), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "directory"_s), JSC::jsEmptyString(vm), 0);
@@ -2649,6 +2679,7 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     report->putDirect(vm, JSC::Identifier::fromString(vm, "excludeEnv"_s), JSC::jsBoolean(false), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "excludeEnv"_s), JSC::jsString(vm, String("SIGUSR2"_s)), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "writeReport"_s), JSC::JSFunction::create(vm, globalObject, 1, String("writeReport"_s), Process_functionWriteReport, ImplementationVisibility::Public), 0);
+    RETURN_IF_EXCEPTION(scope, {});
     return report;
 }
 
@@ -2782,6 +2813,7 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
 #endif
 
     config->freeze(vm);
+    RETURN_IF_EXCEPTION(scope, {});
     return config;
 }
 
@@ -4030,7 +4062,10 @@ static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
 static JSValue Process_stubEmptySet(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    return JSSet::create(vm, globalObject->setStructure());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSSet* result = JSSet::create(vm, globalObject->setStructure());
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
 }
 
 static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)
@@ -4235,6 +4270,7 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     //     cached_builtins: [Getter]
     // }
     auto* globalObject = processObject->globalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* object = constructEmptyObject(globalObject);
 
     object->putDirect(vm, Identifier::fromString(vm, "inspector"_s), jsBoolean(true));
@@ -4256,10 +4292,11 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     object->putDirect(vm, Identifier::fromString(vm, "require_module"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "typescript"_s), jsString(vm, String("transform"_s)));
 
+    RETURN_IF_EXCEPTION(scope, {});
     return object;
 }
 
-static uint16_t debugPort;
+static uint16_t debugPort = 9229;
 
 JSC_DEFINE_CUSTOM_GETTER(processDebugPort, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {

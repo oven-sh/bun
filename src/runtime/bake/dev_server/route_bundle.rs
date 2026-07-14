@@ -92,10 +92,9 @@ impl RouteBundle {
             // outstanding `&`/`&mut` borrow exists across this call.
             unsafe { StaticRoute::deref_(bundle.as_ptr()) };
         }
-        // OS CSPRNG.
         self.client_script_generation = {
             let mut buf = [0u8; 4];
-            bun_core::csprng(&mut buf);
+            bun_boringssl_sys::rand_bytes(&mut buf);
             u32::from_ne_bytes(buf)
         };
         match &mut self.data {

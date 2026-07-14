@@ -463,6 +463,18 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 let argv0_str = argv0_.get_zig_string(global_this)?;
                 if argv0_str.len > 0 {
                     let owned = argv0_str.to_owned_slice_z();
+                    // Check for null bytes in argv0 (security: prevent null byte injection)
+                    if strings::index_of_char(owned.as_bytes(), 0).is_some() {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::INVALID_ARG_VALUE,
+                                format_args!(
+                                    "The property 'options.argv0' must be a string without null bytes. Received {}",
+                                    bun_fmt::quote(owned.as_bytes())
+                                ),
+                            )
+                            .throw());
+                    }
                     argv0 = Some(owned.as_ptr());
                     cstr_storage.push(owned);
                 }
@@ -473,6 +485,18 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 let cwd_str = cwd_.get_zig_string(global_this)?;
                 if cwd_str.len > 0 {
                     cwd_owned = cwd_str.to_owned_slice_z();
+                    // Check for null bytes in cwd (security: prevent null byte injection)
+                    if strings::index_of_char(cwd_owned.as_bytes(), 0).is_some() {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::INVALID_ARG_VALUE,
+                                format_args!(
+                                    "The property 'options.cwd' must be a string without null bytes. Received {}",
+                                    bun_fmt::quote(cwd_owned.as_bytes())
+                                ),
+                            )
+                            .throw());
+                    }
                     // `cwd_owned` is never mutated again, so this borrow is valid
                     // for every read of `cwd` below.
                     cwd = cwd_owned.as_bytes();
@@ -1155,7 +1179,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut spawned = match unsafe {
         spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
     } {
-        Err(err) if err == bun_core::err!("EMFILE") || err == bun_core::err!("ENFILE") => {
+        Err(err)
+            if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
+                || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
+        {
             // Windows: close+free the heap `uv::Pipe` handles that
             // `as_spawn_option` allocated and `spawn_process_windows` may have
             // `uv_pipe_init`-registered on the spawn-sync loop. Skipping this
@@ -1170,7 +1197,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 ZStr::EMPTY
             };
             let mut systemerror = sys::Error::from_code(
-                if err == bun_core::err!("EMFILE") {
+                if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
                     sys::Errno::EMFILE
                 } else {
                     sys::Errno::ENFILE
@@ -1179,7 +1206,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             )
             .with_path(display_path)
             .to_system_error();
-            systemerror.errno = if err == bun_core::err!("EMFILE") {
+            systemerror.errno = if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
                 -UV_E::MFILE
             } else {
                 -UV_E::NFILE
@@ -1189,7 +1216,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         Err(err) => {
             // See EMFILE arm above.
             spawn_options.deinit();
-            let _ = global_this.throw_error(err, ": failed to spawn process");
+            let _ = global_this.throw_error(crate::Error::from(err), ": failed to spawn process");
             return Ok(JSValue::ZERO);
         }
         Ok(maybe) => match maybe {
@@ -1394,7 +1421,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             subprocess.deref();
             subprocess.deref();
             // Note: `Writable::init` returns
-            // `bun_core::Error`. Map non-thrown to OOM.
+            // `crate::Error`. Map non-thrown to OOM.
             if global_this.has_exception() {
                 return Err(JsError::Thrown);
             }

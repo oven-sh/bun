@@ -59,7 +59,7 @@ pub fn generate_chunk_json(
     c: &LinkerContext,
     chunk: &Chunk,
     chunks: &[Chunk],
-) -> Result<Box<[u8]>, bun_core::Error> {
+) -> crate::Result<Box<[u8]>> {
     let mut json: Vec<u8> = Vec::new();
     // errdefer json.deinit() — handled by Drop on early return
 
@@ -202,7 +202,7 @@ pub fn generate_chunk_json(
 /// Called after all chunks have been generated in parallel.
 /// Chunk references (unique_keys) are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
-pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>, bun_core::Error> {
+pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Box<[u8]>> {
     // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
     let mut j = StringJoiner::default();
     // errdefer j.deinit() — handled by Drop
@@ -739,15 +739,15 @@ struct PathOnly<'a> {
 /// This is a post-processing step that parses the JSON and produces LLM-friendly output.
 /// Designed to help diagnose bundle bloat, dependency chains, and entry point analysis.
 /// The caller is responsible for freeing the returned slice.
-pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Error> {
+pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     let root = match JsonParser::parse(metafile_json) {
         Ok(v) => v,
-        Err(_) => return Err(bun_core::err!(InvalidJSON)),
+        Err(_) => return Err(crate::Error::InvalidJSON),
     };
     // defer parsed.deinit() — handled by Drop
 
     let JsonValue::Object(root_obj) = &root else {
-        return Err(bun_core::err!(InvalidJSON));
+        return Err(crate::Error::InvalidJSON);
     };
 
     let mut md: Vec<u8> = Vec::new();
@@ -755,14 +755,14 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
 
     // Get inputs and outputs
     let Some(inputs) = root_obj.get(b"inputs") else {
-        return Err(bun_core::err!(InvalidJSON));
+        return Err(crate::Error::InvalidJSON);
     };
     let Some(outputs) = root_obj.get(b"outputs") else {
-        return Err(bun_core::err!(InvalidJSON));
+        return Err(crate::Error::InvalidJSON);
     };
 
     let (JsonValue::Object(inputs_obj), JsonValue::Object(outputs_obj)) = (inputs, outputs) else {
-        return Err(bun_core::err!(InvalidJSON));
+        return Err(crate::Error::InvalidJSON);
     };
 
     // Header

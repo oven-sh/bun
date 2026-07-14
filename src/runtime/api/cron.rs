@@ -2404,7 +2404,7 @@ fn resolve_path(
     global: &JSGlobalObject,
     frame: &CallFrame,
     path_: &[u8],
-) -> Result<ZString, bun_core::Error> {
+) -> crate::Result<ZString> {
     // SAFETY: `bun_vm()` returns the per-thread singleton.
     let vm = global.bun_vm().as_mut();
     let srcloc = frame.get_caller_src_loc(global);
@@ -2415,10 +2415,8 @@ fn resolve_path(
         .transpiler
         .resolver
         .resolve(source_dir, path_, bun_ast::ImportKind::EntryPointRun)
-        .map_err(|_| bun_core::err!("ModuleNotFound"))?;
-    let entry_path = resolved
-        .path()
-        .ok_or_else(|| bun_core::err!("ModuleNotFound"))?;
+        .map_err(|_| crate::Error::ModuleNotFound)?;
+    let entry_path = resolved.path().ok_or(crate::Error::ModuleNotFound)?;
     Ok(ZString::from_bytes(entry_path.text))
 }
 
@@ -2540,12 +2538,6 @@ pub enum CalendarError {
     InvalidCron,
     #[error("OutOfMemory")]
     OutOfMemory,
-}
-
-impl From<CalendarError> for bun_core::Error {
-    fn from(e: CalendarError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
 }
 
 pub fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarError> {
@@ -2717,12 +2709,6 @@ pub enum TaskXmlError {
     TooManyTriggers,
     #[error("OutOfMemory")]
     OutOfMemory,
-}
-
-impl From<TaskXmlError> for bun_core::Error {
-    fn from(e: TaskXmlError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
 }
 
 /// Build a Windows Task Scheduler XML definition from a parsed cron expression.

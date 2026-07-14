@@ -1540,7 +1540,7 @@ impl CrossChunkImport {
         list: &mut Vec<CrossChunkImport>,
         chunks: &mut [Chunk],
         imports_from_other_chunks: &mut ImportsFromOtherChunks,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         list.clear();
         list.reserve(imports_from_other_chunks.count());
 

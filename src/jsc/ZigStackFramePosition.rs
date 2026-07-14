@@ -23,7 +23,7 @@ impl ZigStackFramePosition {
         *self == Self::INVALID
     }
 
-    pub fn decode<R>(reader: &mut R) -> Result<Self, bun_core::Error>
+    pub fn decode<R>(reader: &mut R) -> Result<Self, bun_analytics::Error>
     where
         R: ?Sized + bun_analytics::Reader,
     {

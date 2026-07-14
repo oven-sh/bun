@@ -40,7 +40,7 @@ const exports: any = {};
 
 // The domain context, carried through async boundaries by the async-context
 // machinery. Each box snapshots the active domain and a token identifying
-// the synchronous execution that wrote it (see the notes on writeBox/adopt
+// the synchronous execution that wrote it (see the notes on setActive/adopt
 // below). Boxes are immutable; every state change writes a fresh one. The
 // domain stack itself is not in the box — it is the module-global below.
 const als = new AsyncLocalStorage();
@@ -63,7 +63,9 @@ let globalActive: any = null;
 // firing for the callback's async resource.
 let currentToken = 0;
 
-function writeBox(d: any) {
+// Sets the active domain: updates the module global and writes a fresh box
+// so async callbacks scheduled from here pair with `d`.
+function setActive(d: any) {
   globalActive = d;
   AlsEnterWith.$call(als, { d, token: ++currentToken });
 }
@@ -141,12 +143,8 @@ function adopt() {
     adoptedDomain = box.d;
     adoptedIndex = stack.length;
     ArrayPrototypePush.$call(stack, box.d);
-    writeBox(box.d);
+    setActive(box.d);
   }
-}
-
-function setActive(d: any) {
-  writeBox(d);
 }
 
 // Overwrite process.domain with a getter/setter. Node backs this with
@@ -168,6 +166,11 @@ ObjectDefineProperty(process, "domain", {
   },
 } as PropertyDescriptor);
 
+// Node exposes `_stack` as a plain data property aliasing its module-global
+// array. It must be an accessor here: the array is reassigned (see the emit
+// override below), and inside an async callback the observable stack is the
+// residual global stack plus the callback's paired domain, which node
+// materializes via its before() hook rather than storing.
 ObjectDefineProperty(exports, "_stack", {
   __proto__: null,
   enumerable: true,

@@ -417,15 +417,16 @@ impl UDPSocketConfig {
                 )));
             };
             let connect_port = connect_port_js.coerce_to_i32(global_this)?;
+            if connect_port < 1 || connect_port > 0xffff {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Expected \"connect.port\" to be an integer between 1 and 65535"
+                )));
+            }
 
             let connect_host = connect_host_js.to_bun_string(global_this)?;
 
             config.connect = Some(ConnectConfig {
-                port: if connect_port < 1 || connect_port > 0xffff {
-                    0
-                } else {
-                    u16::try_from(connect_port).expect("int cast")
-                },
+                port: u16::try_from(connect_port).expect("int cast"),
                 address: connect_host,
             });
         }

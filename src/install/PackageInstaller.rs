@@ -1553,6 +1553,12 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
+                            Err(ForTarballError::AlreadyFailed) => self
+                                .increment_tree_install_count(
+                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    self.current_tree_id,
+                                    log_level,
+                                ),
                         }
                     }
                     resolution::Tag::LocalTarball => {
@@ -1579,6 +1585,12 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
+                            Err(ForTarballError::AlreadyFailed) => self
+                                .increment_tree_install_count(
+                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    self.current_tree_id,
+                                    log_level,
+                                ),
                         }
                     }
                     resolution::Tag::Npm => {
@@ -1611,6 +1623,12 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
+                            Err(ForTarballError::AlreadyFailed) => self
+                                .increment_tree_install_count(
+                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    self.current_tree_id,
+                                    log_level,
+                                ),
                         }
                     }
                     _ => {

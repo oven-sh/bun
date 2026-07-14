@@ -165,6 +165,16 @@ static napi_value create_and_throw_error(const Napi::CallbackInfo &info) {
   }
 }
 
+// call_fatal_exception(value) -> napi_status as int32
+static napi_value call_fatal_exception(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value err = info[0];
+  napi_status status = napi_fatal_exception(env, err);
+  napi_value result;
+  NODE_API_CALL(env, napi_create_int32(env, (int32_t)status, &result));
+  return result;
+}
+
 // perform_get(object, key)
 static napi_value perform_get(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
@@ -227,6 +237,41 @@ static napi_value perform_set(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// perform_instanceof(object, constructor) ->
+//   { status, result, pending, exception }
+static napi_value perform_instanceof(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value object = info[0];
+  napi_value constructor = info[1];
+
+  bool instance_result = false;
+  napi_status status = napi_instanceof(env, object, constructor, &instance_result);
+
+  bool pending = false;
+  napi_is_exception_pending(env, &pending);
+
+  napi_value exception;
+  if (pending) {
+    napi_get_and_clear_last_exception(env, &exception);
+  } else {
+    napi_get_undefined(env, &exception);
+  }
+
+  napi_value out;
+  NODE_API_CALL(env, napi_create_object(env, &out));
+
+  napi_value status_val, result_val, pending_val;
+  NODE_API_CALL(env, napi_create_uint32(env, status, &status_val));
+  NODE_API_CALL(env, napi_get_boolean(env, instance_result, &result_val));
+  NODE_API_CALL(env, napi_get_boolean(env, pending, &pending_val));
+
+  NODE_API_CALL(env, napi_set_named_property(env, out, "status", status_val));
+  NODE_API_CALL(env, napi_set_named_property(env, out, "result", result_val));
+  NODE_API_CALL(env, napi_set_named_property(env, out, "pending", pending_val));
+  NODE_API_CALL(env, napi_set_named_property(env, out, "exception", exception));
+  return out;
+}
+
 // create_latin1_string(byte_length): returns a JS string created via
 // napi_create_string_latin1. Used by the leak test in napi.test.ts.
 static napi_value create_latin1_string(const Napi::CallbackInfo &info) {
@@ -237,6 +282,34 @@ static napi_value create_latin1_string(const Napi::CallbackInfo &info) {
   napi_value result;
   NODE_API_CALL(env,
                 napi_create_string_latin1(env, buf.data(), buf.size(), &result));
+  return result;
+}
+
+// get_all_property_names(object, key_mode, key_filter, key_conversion)
+// returns { status, keys }
+static napi_value get_all_property_names(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value object = info[0];
+  uint32_t key_mode, key_filter, key_conversion;
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[1], &key_mode));
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[2], &key_filter));
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[3], &key_conversion));
+
+  napi_value keys = nullptr;
+  napi_status status = napi_get_all_property_names(
+      env, object, static_cast<napi_key_collection_mode>(key_mode),
+      static_cast<napi_key_filter>(key_filter),
+      static_cast<napi_key_conversion>(key_conversion), &keys);
+
+  napi_value result;
+  NODE_API_CALL(env, napi_create_object(env, &result));
+  napi_value status_val;
+  NODE_API_CALL(env, napi_create_uint32(env, status, &status_val));
+  NODE_API_CALL(env, napi_set_named_property(env, result, "status", status_val));
+  if (keys == nullptr) {
+    NODE_API_CALL(env, napi_get_undefined(env, &keys));
+  }
+  NODE_API_CALL(env, napi_set_named_property(env, result, "keys", keys));
   return result;
 }
 
@@ -255,6 +328,14 @@ static napi_value make_empty_object(const Napi::CallbackInfo &info) {
   napi_value object;
   NODE_API_CALL(env, napi_create_object(env, &object));
   return object;
+}
+
+// get_property_names(object) -> array
+static napi_value get_property_names(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value result;
+  NODE_API_CALL(env, napi_get_property_names(env, info[0], &result));
+  return result;
 }
 
 // add_tag(object, lower, upper)
@@ -442,11 +523,15 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, call_and_get_exception);
   REGISTER_FUNCTION(env, exports, perform_get);
   REGISTER_FUNCTION(env, exports, perform_set);
+  REGISTER_FUNCTION(env, exports, perform_instanceof);
   REGISTER_FUNCTION(env, exports, throw_error);
   REGISTER_FUNCTION(env, exports, create_and_throw_error);
+  REGISTER_FUNCTION(env, exports, call_fatal_exception);
   REGISTER_FUNCTION(env, exports, create_latin1_string);
+  REGISTER_FUNCTION(env, exports, get_all_property_names);
   REGISTER_FUNCTION(env, exports, make_empty_array);
   REGISTER_FUNCTION(env, exports, make_empty_object);
+  REGISTER_FUNCTION(env, exports, get_property_names);
   REGISTER_FUNCTION(env, exports, add_tag);
   REGISTER_FUNCTION(env, exports, try_add_tag);
   REGISTER_FUNCTION(env, exports, check_tag);

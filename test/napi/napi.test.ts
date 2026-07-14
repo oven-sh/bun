@@ -1194,6 +1194,19 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("NULL napi_value arguments", () => {
+    it("returns napi_invalid_arg instead of crashing", async () => {
+      const output = await checkSameOutput("test_napi_null_value_args", []);
+      expect(output).toContain("napi_detach_arraybuffer(NULL) -> 1");
+      expect(output).toContain("napi_strict_equals(NULL, NULL) -> 1");
+      expect(output).toContain("napi_instanceof(NULL, NULL) -> 1");
+      expect(output).toContain("napi_new_instance(NULL) -> 1");
+      expect(output).toContain("napi_is_array(NULL) -> 1");
+      expect(output).toContain("napi_get_array_length(NULL) -> 1");
+      expect(output).toContain("napi_get_dataview_info(NULL) -> 1");
+    });
+  });
+
   describe("napi_typeof", () => {
     it("should handle empty/invalid values", async () => {
       const output = await checkSameOutput("test_napi_typeof_empty_value", []);

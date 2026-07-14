@@ -934,6 +934,9 @@ pub(super) extern "C" fn napi_is_array(
     env.check_gc();
     let result = get_out!(env, result_);
     let value = value_.get();
+    if value.is_empty() {
+        return env.invalid_arg();
+    }
     *result = value.js_type().is_array();
     env.ok()
 }
@@ -948,6 +951,9 @@ pub(super) extern "C" fn napi_get_array_length(
     let env = get_env!(env_);
     let result = get_out!(env, result_);
     let value = value_.get();
+    if value.is_empty() {
+        return env.invalid_arg();
+    }
 
     if !value.js_type().is_array() {
         return NapiEnv::set_last_error(Some(env), NapiStatus::array_expected);
@@ -971,6 +977,9 @@ pub(super) extern "C" fn napi_strict_equals(
     let env = get_env!(env_);
     let result = get_out!(env, result_);
     let (lhs, rhs) = (lhs_.get(), rhs_.get());
+    if lhs.is_empty() || rhs.is_empty() {
+        return env.invalid_arg();
+    }
     *result = match lhs.is_strict_equal(rhs, env.to_js()) {
         Ok(b) => b,
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
@@ -1470,6 +1479,9 @@ pub(super) extern "C" fn napi_get_dataview_info(
     let env = get_env!(env_);
     env.check_gc();
     let dataview = dataview_.get();
+    if dataview.is_empty() {
+        return env.invalid_arg();
+    }
     let Some(array_buffer) = dataview.as_array_buffer(env.to_js()) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     };

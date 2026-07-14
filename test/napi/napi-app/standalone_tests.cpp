@@ -1723,6 +1723,35 @@ static napi_value test_napi_typeof_empty_value(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Node returns napi_invalid_arg for a NULL napi_value argument (CHECK_ARG in
+// js_native_api_v8.cc). Print the raw status for each call so the output can
+// be diffed against Node.
+static napi_value test_napi_null_value_args(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  bool b = false;
+  uint32_t len = 0;
+  size_t sz = 0;
+  napi_value out = nullptr;
+
+  printf("napi_detach_arraybuffer(NULL) -> %d\n",
+         (int)napi_detach_arraybuffer(env, nullptr));
+  printf("napi_strict_equals(NULL, NULL) -> %d\n",
+         (int)napi_strict_equals(env, nullptr, nullptr, &b));
+  printf("napi_instanceof(NULL, NULL) -> %d\n",
+         (int)napi_instanceof(env, nullptr, nullptr, &b));
+  printf("napi_new_instance(NULL) -> %d\n",
+         (int)napi_new_instance(env, nullptr, 0, nullptr, &out));
+  printf("napi_is_array(NULL) -> %d\n",
+         (int)napi_is_array(env, nullptr, &b));
+  printf("napi_get_array_length(NULL) -> %d\n",
+         (int)napi_get_array_length(env, nullptr, &len));
+  printf("napi_get_dataview_info(NULL) -> %d\n",
+         (int)napi_get_dataview_info(env, nullptr, &sz, nullptr, nullptr,
+                                     nullptr));
+
+  return ok(env);
+}
+
 // Test for Object.freeze and Object.seal with indexed properties
 static napi_value
 test_napi_freeze_seal_indexed(const Napi::CallbackInfo &info) {
@@ -2715,6 +2744,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_create_array_boundary);
   REGISTER_FUNCTION(env, exports, test_napi_dataview_bounds_errors);
   REGISTER_FUNCTION(env, exports, test_napi_typeof_empty_value);
+  REGISTER_FUNCTION(env, exports, test_napi_null_value_args);
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);

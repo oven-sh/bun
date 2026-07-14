@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-describe.skipIf(isOhos)("MessageEvent constructor", () => {
+describe("MessageEvent constructor", () => {
   test("returns an Event instance", () => {
     expect(new MessageEvent("message")).toBeInstanceOf(Event);
   });

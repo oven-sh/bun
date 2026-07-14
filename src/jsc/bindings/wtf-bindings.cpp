@@ -286,9 +286,4 @@ extern "C" int WTF__numberOfProcessorCores()
     return WTF::numberOfProcessorCores();
 }
 
-extern "C" void WTF__releaseFastMallocFreeMemoryForThisThread()
-{
-    WTF::releaseFastMallocFreeMemoryForThisThread();
-}
-
 }

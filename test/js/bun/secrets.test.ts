@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isCI, isMacOS, isOhos, isWindows } from "harness";
+import { isCI, isMacOS, isWindows } from "harness";
 
 // Helper to determine if we should use unrestricted keychain access
 // This is needed for macOS CI environments where user interaction is not available
@@ -9,7 +9,7 @@ function shouldUseUnrestrictedAccess(): boolean {
 
 // Setup keyring environment for Linux CI
 
-test.todoIf(isCI && !isWindows || isOhos)("Bun.secrets API", async () => {
+test.todoIf(isCI && !isWindows)("Bun.secrets API", async () => {
   const testService = "bun-test-service-" + Date.now();
   const testUser = "test-name-" + Math.random();
   const testPassword = "super-secret-value-123!@#";

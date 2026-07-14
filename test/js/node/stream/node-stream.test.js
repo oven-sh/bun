@@ -512,6 +512,82 @@ it("Readable.fromWeb destroyed before the first read cancels the web stream", as
   expect(r.destroyed).toBe(true);
 });
 
+it("Readable.fromWeb: breaking out of for-await cancels the web source with ABORT_ERR", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 6; i++) c.enqueue(new Uint8Array(64).fill(i));
+      c.close();
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const r = Readable.fromWeb(web);
+  r.on("error", () => {});
+  const closed = new Promise(resolve => r.once("close", resolve));
+  let seen = 0;
+  for await (const chunk of r) {
+    seen++;
+    break;
+    void chunk;
+  }
+  await closed;
+  expect(seen).toBe(1);
+  expect({ code: cancelReason?.code, name: cancelReason?.name }).toEqual({ code: "ABORT_ERR", name: "AbortError" });
+});
+
+it("Readable.fromWeb: destroy(err) after consuming a chunk cancels the web source with that error", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 6; i++) c.enqueue(new Uint8Array(64).fill(i));
+      c.close();
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const r = Readable.fromWeb(web);
+  r.on("error", () => {});
+  const closed = new Promise(resolve => r.once("close", resolve));
+  const gotData = new Promise(resolve => r.once("data", resolve));
+  const first = await gotData;
+  expect(first.length).toBe(64);
+  r.destroy(new RangeError("consumer-gone"));
+  await closed;
+  expect({ name: cancelReason?.name, message: cancelReason?.message }).toEqual({
+    name: "RangeError",
+    message: "consumer-gone",
+  });
+});
+
+it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web source", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 6; i++) c.enqueue(new Uint8Array(64).fill(i));
+      c.close();
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const inner = Readable.fromWeb(web);
+  inner.on("error", () => {});
+  const innerClosed = new Promise(resolve => inner.once("close", resolve));
+  const outer = Readable.toWeb(inner);
+  const reader = outer.getReader();
+  const first = await reader.read();
+  expect(first.done).toBe(false);
+  await reader.cancel(new RangeError("consumer-gone")).catch(() => {});
+  await innerClosed;
+  expect({ name: cancelReason?.name, message: cancelReason?.message }).toEqual({
+    name: "RangeError",
+    message: "consumer-gone",
+  });
+});
+
 it("#9242.5 Stream has constructor", () => {
   const s = new Stream({});
   expect(s.constructor).toBe(Stream);
@@ -855,9 +931,6 @@ describe("webstreams adapters (Node v26 sync)", () => {
     duplex.destroy();
   });
 
-  // Readable.fromWeb()'s pump pushes several chunks per _read(), and Readable
-  // calls _read() again as soon as push() is called. Two pumps racing on one
-  // reader used to hand back the chunks out of order.
   it("Readable.fromWeb(Readable.toWeb()) preserves chunk order", async () => {
     const src = Readable.from(["A", "B", "C", "D", "E", "F"]);
     const chunks = [];

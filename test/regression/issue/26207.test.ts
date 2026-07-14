@@ -5,9 +5,8 @@
 import { expect, test } from "bun:test";
 import { chmodSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
-import { isOhos } from "harness";
 
-test.skipIf(isOhos)("bun run --workspaces creates node symlink when NODE env points to non-existent path", async () => {
+test("bun run --workspaces creates node symlink when NODE env points to non-existent path", async () => {
   const dir = tempDirWithFiles("workspaces-node-fallback", {
     "package.json": JSON.stringify({
       name: "root",
@@ -43,7 +42,7 @@ test.skipIf(isOhos)("bun run --workspaces creates node symlink when NODE env poi
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isOhos)("bun run --filter creates node symlink when NODE env points to non-existent path", async () => {
+test("bun run --filter creates node symlink when NODE env points to non-existent path", async () => {
   const dir = tempDirWithFiles("filter-node-fallback", {
     "package.json": JSON.stringify({
       name: "root",

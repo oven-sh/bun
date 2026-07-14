@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
-import { bunEnv, bunExe, isOhos, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path from "path";
 
-test.skipIf(isOhos)("done() causes the test to fail when it should", async () => {
+test("done() causes the test to fail when it should", async () => {
   const dir = tempDirWithFiles("done", {
     "done.test.ts": await Bun.file(path.join(import.meta.dir, "done-infinity.fixture.ts")).text(),
     "package.json": JSON.stringify({

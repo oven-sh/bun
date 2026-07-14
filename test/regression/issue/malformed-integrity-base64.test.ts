@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
-import { isOhos } from "harness";
 
-test.skipIf(isOhos)("malformed integrity base64 in lockfile should be handled gracefully", async () => {
+test("malformed integrity base64 in lockfile should be handled gracefully", async () => {
   const dir = tempDirWithFiles("malformed-integrity-test", {
     "package.json": JSON.stringify({
       name: "test-malformed-integrity",

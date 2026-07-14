@@ -930,7 +930,7 @@ export class Client extends EventEmitter {
       this.#proc.send({ type: "exit" });
     } catch (e) {}
     await this.#proc.exited;
-    if (this.exitCode !== null && this.exitCode !== "0" && this.exitCode !== 0 && this.exitCode !== "0\n") {
+    if (this.exitCode !== null && this.exitCode !== "0") {
       let code;
       if (exitCodeMapStrings[this.exitCode]) {
         code = ": " + JSON.stringify(exitCodeMapStrings[this.exitCode]);

@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tls } from "harness";
-import { isOhos } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import https from "node:https";
@@ -1914,7 +1913,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
 // Serial: this test reads the subprocess's stderr stream mid-flight to gate
 // the server-side body write, which interferes with sibling tests' TLS
 // handshakes under describe.concurrent on aarch64/musl.
-test.skipIf(isOhos)("await fetch() over HTTP/2 resolves on headers, before a content-length body is fully received", async () => {
+test("await fetch() over HTTP/2 resolves on headers, before a content-length body is fully received", async () => {
   let heldStream: http2.ServerHttp2Stream | undefined;
   const server = makeH2Server();
   server.on("stream", stream => {
@@ -1964,7 +1963,7 @@ test.skipIf(isOhos)("await fetch() over HTTP/2 resolves on headers, before a con
 // https://github.com/oven-sh/bun/issues/16682 (h2 aggregate path): the
 // session's shared socket timer is the max over every attached client's
 // effective idle deadline.
-test.skipIf(isOhos)("h2: per-request `timeout` extends the session idle deadline, and {timeout:false} is not killed by a sibling's shorter explicit timeout", async () => {
+test("h2: per-request `timeout` extends the session idle deadline, and {timeout:false} is not killed by a sibling's shorter explicit timeout", async () => {
   const HOLD_MS = 10_000;
   const holdTimers = new Set<ReturnType<typeof setTimeout>>();
   const server = makeH2Server({}, (_req, res) => {

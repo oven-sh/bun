@@ -1,8 +1,8 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, fileDescriptorLeakChecker, isPosix, isWindows, tmpdirSync } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "node:path";
-import fs from "node:fs";
 
 describe("FileSink", () => {
   const fixturesInput = [
@@ -55,29 +55,29 @@ describe("FileSink", () => {
   var decoder = new TextDecoder();
 
   function getFd(label: string, byteLength = 0) {
-    const [readFd, writeFd] = createSocketPair();
+    const path = join(tmpdirSync(), `${Bun.hash(label).toString(10)}.txt`);
+    try {
+      require("fs").unlinkSync(path);
+    } catch (e) {}
+    mkfifo(path, 0o666);
     activeFIFO = (async function (stream: ReadableStream<Uint8Array>, byteLength = 0) {
       var chunks: Uint8Array[] = [];
       const original = byteLength;
       var got = 0;
-      try {
-        for await (const chunk of stream) {
-          chunks.push(chunk);
-          got += chunk.byteLength;
-        }
-      } finally {
-        fs.closeSync(readFd);
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+        got += chunk.byteLength;
       }
       if (got !== original) throw new Error(`Expected ${original} bytes, got ${got} (${label})`);
       return Buffer.concat(chunks).toString();
       // test it on a small chunk size
-    })(Bun.file(readFd).stream(64), byteLength);
-    return writeFd;
+    })(Bun.file(path).stream(64), byteLength);
+    return path;
   }
 
   for (let isPipe of [true, false] as const) {
-    // Pipe tests use createSocketPair instead of mkfifo for portability
-    // (mkfifo requires mknodat(S_IFIFO) which is blocked by SELinux on some platforms)
+    // TODO: fix the `mkfifo` function for windows. They do have an API but calling it from bun:ffi didn't get great results.
+    // once #8166 is merged, this can be written using it's 'bun:iternals-for-testing' feature
     describe.skipIf(isPipe && isWindows)(isPipe ? "pipe" : "file", () => {
       fixtures.forEach(([input, expected, label]) => {
         const getPathOrFd = () => (isPipe ? getFd(label, expected.byteLength) : getPath(label));
@@ -92,10 +92,6 @@ describe("FileSink", () => {
               sink.write(input[i]);
             }
             await sink.end();
-
-            // socketpair: writer.end() doesn't close numeric fd,
-            // need explicit close to send EOF to the reader.
-            if (isPipe) fs.closeSync(path as number);
 
             // For the file descriptor leak checker.
             await Bun.sleep(10);
@@ -126,10 +122,6 @@ describe("FileSink", () => {
             }
             await sink.end();
 
-            // socketpair: writer.end() doesn't close numeric fd,
-            // need explicit close to send EOF to the reader.
-            if (isPipe) fs.closeSync(path as number);
-
             // For the file descriptor leak checker.
             await Bun.sleep(10);
           }
@@ -156,11 +148,6 @@ describe("FileSink", () => {
               await sink.flush();
             }
             await sink.end();
-
-            // socketpair: writer.end() doesn't close numeric fd,
-            // need explicit close to send EOF to the reader.
-            if (isPipe) fs.closeSync(path as number);
-
             await Bun.sleep(10); // For the file descriptor leak checker.
           }
 
@@ -180,6 +167,7 @@ describe("FileSink", () => {
   }
 });
 
+import fs from "node:fs";
 import path from "node:path";
 import util from "node:util";
 

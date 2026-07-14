@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { isOhos } from "harness";
 
-test.skipIf(isOhos)("lifecycle script should handle directory deletion gracefully", async () => {
+test("lifecycle script should handle directory deletion gracefully", async () => {
   const dir = tempDirWithFiles("lifecycle-crash-test", {
     "package.json": JSON.stringify({
       name: "test-package",
@@ -46,7 +45,7 @@ test.skipIf(isOhos)("lifecycle script should handle directory deletion gracefull
   expect(exitCode).not.toBe(0);
 });
 
-test.skipIf(isOhos)("lifecycle script with optional dependency should handle directory deletion", async () => {
+test("lifecycle script with optional dependency should handle directory deletion", async () => {
   const depDir = tempDirWithFiles("optional-dep", {
     "package.json": JSON.stringify({
       name: "optional-dep",

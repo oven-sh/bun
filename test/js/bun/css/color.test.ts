@@ -535,6 +535,30 @@ describe("input forms", () => {
     expect(color("#f00", "{rgb}")).toEqual({ r: 255, g: 0, b: 0 });
     expect(color("#f00", "[rgb]")).toEqual([255, 0, 0]);
   });
+
+  // The r/g/b keys of an object input and the CSS rgba() parser both clamp
+  // out-of-range values; the object's `a` key must too (it used to wrap mod 256,
+  // so a: 1.004 became fully transparent).
+  test("out-of-range object alpha clamps to [0, 1]", () => {
+    expect(color({ r: 10, g: 20, b: 30, a: 1.004 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: 2 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: 100 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: -1 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 0 });
+    expect(color({ r: 10, g: 20, b: 30, a: -0.5 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 0 });
+    expect(color({ r: 10, g: 20, b: 30, a: Infinity }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: -Infinity }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 0 });
+  });
+
+  test("object alpha agrees with the CSS parser's clamping", () => {
+    for (const a of [1.5, 2, -0.5, -1, 1.004]) {
+      expect(color({ r: 10, g: 20, b: 30, a }, "{rgba}")).toEqual(color(`rgba(10, 20, 30, ${a})`, "{rgba}"));
+    }
+  });
+
+  test("in-range object alpha is unchanged", () => {
+    expect(color({ r: 10, g: 20, b: 30, a: 1 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: 0.5 }, "[rgba]")).toEqual([10, 20, 30, 127]);
+  });
 });
 
 // https://drafts.csswg.org/css-color-5/#color-mix — the grammar is

@@ -1,13 +1,12 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { isOhos } from "harness";
 
 // These tests install npm packages, so they need a longer timeout
 setDefaultTimeout(30_000);
 
 // Test for GitHub issue #26225
 // Multipart uploads using form-data + node-fetch@2 + fs.createReadStream() are truncated
-test.skipIf(isOhos)("node-fetch with form-data and fs.createReadStream works correctly", async () => {
+test("node-fetch with form-data and fs.createReadStream works correctly", async () => {
   using server = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -105,7 +104,7 @@ fetch('http://localhost:${server.port}', {
 });
 
 // Test that regular async iterables still work
-test.skipIf(isOhos)("node-fetch with async iterable body still works", async () => {
+test("node-fetch with async iterable body still works", async () => {
   using server = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -184,7 +183,7 @@ fetch('http://localhost:${server.port}', {
 });
 
 // Test with larger file to ensure streaming works
-test.skipIf(isOhos)("node-fetch with form-data and large file stream", async () => {
+test("node-fetch with form-data and large file stream", async () => {
   const fileSize = 1024 * 100; // 100KB
 
   using server = Bun.serve({

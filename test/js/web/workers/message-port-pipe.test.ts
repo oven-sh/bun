@@ -1,13 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
-import { isOhos } from "harness";
 import { receiveMessageOnPort } from "node:worker_threads";
 
 // Exercises the MessagePortPipe layer that backs MessagePort/MessageChannel:
 // cross-thread wakeup coalescing, per-pipe isolation (no global registry),
 // and thread-safety under concurrent channel churn.
 
-describe.skipIf(isOhos)("MessagePort pipe", () => {
+describe("MessagePort pipe", () => {
   test("microtasks run between message events (task-source semantics)", async () => {
     const { port1, port2 } = new MessageChannel();
     const order: string[] = [];
@@ -370,7 +369,7 @@ describe.skipIf(isOhos)("MessagePort pipe", () => {
 // inbox+batch-drain path as MessagePortPipe. Verify the observable ordering
 // matches Node: messages arrive in order with a microtask checkpoint between
 // each, for both directions.
-describe.skipIf(isOhos)("Worker postMessage inbox", () => {
+describe("Worker postMessage inbox", () => {
   test.skipIf(!isDebug && !isASAN)("round-trip burst delivers in order with microtasks between each", async () => {
     await using proc = Bun.spawn({
       cmd: [

@@ -4,9 +4,9 @@
 // drive, never a plugin namespace; resolving "C:\\..." with a one-letter
 // namespace registered must still reach the filesystem resolver.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
-test.skipIf(!isWindows)("single-letter plugin namespace does not capture Windows drive paths", async () => {
+test("single-letter plugin namespace does not capture Windows drive paths", async () => {
   using dir = tempDir("plugin-ns-drive-letter", {
     "preload.ts": `
       Bun.plugin({

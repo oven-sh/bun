@@ -31,18 +31,14 @@ impl Z {
         Some(result)
     }
 
-    /// # Safety
-    /// `buf` must describe a live allocation obtained from [`Self::alloc`]
-    /// with `alignment`.
-    pub unsafe fn resize(
+    pub fn resize(
         &self,
         buf: &mut [u8],
         alignment: Alignment,
         new_len: usize,
         return_address: usize,
     ) -> bool {
-        // SAFETY: caller contract — `Self::alloc` allocates via `c_allocator`.
-        if !unsafe { c_allocator.raw_resize(buf, alignment, new_len, return_address) } {
+        if !c_allocator.raw_resize(buf, alignment, new_len, return_address) {
             return false;
         }
         let old_len = buf.len();
@@ -67,13 +63,8 @@ impl Z {
         None
     }
 
-    /// # Safety
-    /// `buf` must describe a live allocation obtained from [`Self::alloc`]
-    /// with `alignment`. The allocation is freed exactly once; its memory must
-    /// not be accessed after this call.
-    pub unsafe fn free(self, buf: &mut [u8], alignment: Alignment, return_address: usize) {
-        // SAFETY: caller contract — `Self::alloc` allocates via `c_allocator`.
-        unsafe { c_allocator.raw_free(buf, alignment, return_address) };
+    pub fn free(self, buf: &mut [u8], alignment: Alignment, return_address: usize) {
+        c_allocator.raw_free(buf, alignment, return_address);
     }
 }
 

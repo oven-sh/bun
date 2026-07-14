@@ -1,5 +1,4 @@
 import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
-import { isOhos } from "harness";
 import { createTest } from "node-harness";
 import fs from "node:fs";
 import http2 from "node:http2";

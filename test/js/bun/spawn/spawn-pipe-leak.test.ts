@@ -5,9 +5,9 @@
  * and then exits. We only await the `process.exited` promise without reading
  * any of the output data to test for potential memory leaks.
  */
-import { bunExe, isASAN, isCI, isOhos, isWindows } from "harness";
+import { bunExe, isASAN, isCI, isWindows } from "harness";
 
-describe.skipIf(isOhos).todoIf(
+describe.todoIf(
   /**
    * ASAN CI runs out of file descriptors? Or maybe it's virtual memory
    *

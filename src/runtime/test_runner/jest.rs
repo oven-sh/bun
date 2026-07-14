@@ -553,8 +553,6 @@ pub mod on_unhandled_rejection {
             let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
-            // Save before the entry match check below may overwrite it to Start
-            let original_state_data = current_state_data.clone();
             // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)
@@ -573,18 +571,7 @@ pub mod on_unhandled_rejection {
                 true,
                 &current_state_data,
             );
-            // When the data was changed to Start (entry mismatch for hook errors),
-            // use the original state data so the current test is properly advanced
-            // rather than skipped. This ensures done-callback tests with delayed
-            // exceptions (setTimeout/setImmediate/nextTick) complete correctly.
-            // OHOS: hmmac policy may delay async callbacks, causing entry mismatch
-            // for done-callback tests. On other OS the original Start behavior
-            // is correct for hook errors.
-            if cfg!(target_env = "ohos") && matches!(&current_state_data, RefDataValue::Start) {
-                buntest.add_result(original_state_data);
-            } else {
-                buntest.add_result(current_state_data);
-            }
+            buntest.add_result(current_state_data);
             // `report_unhandled` reports the uncaught exception, with a guard
             // for `Terminated` (which carries no pending exception to take).
             use bun_jsc::JsResultExt as _;

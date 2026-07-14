@@ -1778,10 +1778,7 @@ trait ArchivePtrExt {
     fn write_set_options(self, opts: &ZStr) -> ArchiveResult;
     fn write_open_filename(self, path: &ZStr) -> ArchiveResult;
     fn write_close(self) -> ArchiveResult;
-    /// # Safety
-    /// See [`Archive::write_free`]: `self` must be a live handle that no
-    /// other owner frees, and it must not be used after this call.
-    unsafe fn write_free(self) -> ArchiveResult;
+    fn write_free(self) -> ArchiveResult;
     fn error_string(self) -> &'static [u8];
     fn read_support_format_tar(self) -> ArchiveResult;
     fn read_support_format_gnutar(self) -> ArchiveResult;
@@ -1791,10 +1788,7 @@ trait ArchivePtrExt {
     fn read_next_header(self, entry: &mut *mut ArchiveEntry) -> ArchiveResult;
     fn read_data(self, buf: &mut [u8]) -> isize;
     fn read_close(self) -> ArchiveResult;
-    /// # Safety
-    /// See [`Archive::read_free`]: `self` must be a live handle that no
-    /// other owner frees, and it must not be used after this call.
-    unsafe fn read_free(self) -> ArchiveResult;
+    fn read_free(self) -> ArchiveResult;
 }
 impl ArchivePtrExt for *mut Archive {
     #[inline]
@@ -1827,9 +1821,8 @@ impl ArchivePtrExt for *mut Archive {
         Archive::opaque_ref(self).write_close()
     }
     #[inline]
-    unsafe fn write_free(self) -> ArchiveResult {
-        // SAFETY: forwarded to the caller.
-        unsafe { Archive::opaque_ref(self).write_free() }
+    fn write_free(self) -> ArchiveResult {
+        Archive::opaque_ref(self).write_free()
     }
     #[inline]
     fn error_string(self) -> &'static [u8] {
@@ -1871,9 +1864,8 @@ impl ArchivePtrExt for *mut Archive {
         Archive::opaque_ref(self).read_close()
     }
     #[inline]
-    unsafe fn read_free(self) -> ArchiveResult {
-        // SAFETY: forwarded to the caller.
-        unsafe { Archive::opaque_ref(self).read_free() }
+    fn read_free(self) -> ArchiveResult {
+        Archive::opaque_ref(self).read_free()
     }
 }
 
@@ -2837,9 +2829,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         }
     }
 
-    // SAFETY: `entry` is the `archive_entry_new2` handle created at the top
-    // of this function; it is freed exactly once here and not used again.
-    unsafe { ArchiveEntry::opaque_ref(entry).free() };
+    ArchiveEntry::opaque_ref(entry).free();
 
     match archive.write_close() {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
@@ -2852,11 +2842,16 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         _ => {}
     }
 
-    // `archive_write_free` destroys the handle and its error string even
-    // when it reports an error, so a failure here has nothing to report;
-    // real errors surface through `write_close` above.
-    // SAFETY: `archive` is freed exactly once here and not used afterwards.
-    let _ = unsafe { archive.write_free() };
+    match archive.write_free() {
+        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
+            Output::err_generic(
+                "failed to free archive: {}",
+                format_args!("{}", bstr::BStr::new(archive.error_string())),
+            );
+            Global::crash();
+        }
+        _ => {}
+    }
 
     let mut shasum: [u8; sha::SHA1::DIGEST] = [0; sha::SHA1::DIGEST];
     let mut integrity: [u8; sha::SHA512::DIGEST] = [0; sha::SHA512::DIGEST];
@@ -4270,11 +4265,15 @@ pub mod bindings {
             }
             _ => {}
         }
-        // `archive_read_free` destroys the handle and its error string even
-        // when it reports an error, so a failure here has nothing to report;
-        // real errors surface through `read_close` above.
-        // SAFETY: `archive` is freed exactly once here and not used afterwards.
-        let _ = unsafe { archive.read_free() };
+        match archive.read_free() {
+            ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
+                return Err(global.throw(format_args!(
+                    "failed to close read archive: {}",
+                    bstr::BStr::new(archive.error_string())
+                )));
+            }
+            _ => {}
+        }
 
         let entries = JSArray::create_empty(global, entries_info.len())?;
 

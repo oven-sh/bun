@@ -146,10 +146,7 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
     let package_manifest: npm::PackageManifest = match maybe_package_manifest {
         Some(m) => m,
         None => {
-            return Err(global.throw(format_args!(
-                "manifest is invalid (file: {})",
-                BStr::new(manifest_filename.slice()),
-            )));
+            return Err(global.throw(format_args!("manifest is invalid ")));
         }
     };
 

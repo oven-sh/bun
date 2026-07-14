@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunExe, tempDirWithFiles } from "harness";
-import { isOhos } from "harness";
 
-test.skipIf(isOhos)("11806", () => {
+test("11806", () => {
   const dir = tempDirWithFiles("11806", {
     "package.json": JSON.stringify({
       "name": "project",

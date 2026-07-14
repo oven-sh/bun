@@ -97,7 +97,7 @@ function createDelayedChunksServer(compression: "gzip" | "br" | "zstd" | "deflat
 }
 
 // Test truncated gzip stream
-test.skipIf(isOhos)("truncated gzip stream should throw error", async () => {
+test("truncated gzip stream should throw error", async () => {
   using server = createTruncatedServer("gzip", 5);
 
   try {
@@ -110,7 +110,7 @@ test.skipIf(isOhos)("truncated gzip stream should throw error", async () => {
 });
 
 // Test truncated brotli stream
-test.skipIf(isOhos)("truncated brotli stream should throw error", async () => {
+test("truncated brotli stream should throw error", async () => {
   using server = createTruncatedServer("br", 5);
 
   try {
@@ -123,7 +123,7 @@ test.skipIf(isOhos)("truncated brotli stream should throw error", async () => {
 });
 
 // Test truncated zstd stream
-test.skipIf(isOhos)("truncated zstd stream should throw error", async () => {
+test("truncated zstd stream should throw error", async () => {
   using server = createTruncatedServer("zstd", 5);
 
   try {
@@ -136,7 +136,7 @@ test.skipIf(isOhos)("truncated zstd stream should throw error", async () => {
 });
 
 // Test truncated deflate stream
-test.skipIf(isOhos)("truncated deflate stream should throw error", async () => {
+test("truncated deflate stream should throw error", async () => {
   using server = createTruncatedServer("deflate", 1);
 
   try {
@@ -149,7 +149,7 @@ test.skipIf(isOhos)("truncated deflate stream should throw error", async () => {
 });
 
 // Test delayed chunks for gzip (should succeed)
-test.skipIf(isOhos)("gzip with delayed chunks should succeed", async () => {
+test("gzip with delayed chunks should succeed", async () => {
   using server = createDelayedChunksServer("gzip", 50);
 
   const response = await fetch(`http://localhost:${server.port}`);
@@ -158,7 +158,7 @@ test.skipIf(isOhos)("gzip with delayed chunks should succeed", async () => {
 });
 
 // Test delayed chunks for brotli (should succeed)
-test.skipIf(isOhos)("brotli with delayed chunks should succeed", async () => {
+test("brotli with delayed chunks should succeed", async () => {
   using server = createDelayedChunksServer("br", 50);
 
   const response = await fetch(`http://localhost:${server.port}`);
@@ -167,7 +167,7 @@ test.skipIf(isOhos)("brotli with delayed chunks should succeed", async () => {
 });
 
 // Test delayed chunks for zstd (should succeed)
-test.skipIf(isOhos)("zstd with delayed chunks should succeed", async () => {
+test("zstd with delayed chunks should succeed", async () => {
   using server = createDelayedChunksServer("zstd", 50);
 
   const response = await fetch(`http://localhost:${server.port}`);
@@ -176,7 +176,7 @@ test.skipIf(isOhos)("zstd with delayed chunks should succeed", async () => {
 });
 
 // Test delayed chunks for deflate (should succeed)
-test.skipIf(isOhos)("deflate with delayed chunks should succeed", async () => {
+test("deflate with delayed chunks should succeed", async () => {
   using server = createDelayedChunksServer("deflate", 50);
 
   const response = await fetch(`http://localhost:${server.port}`);
@@ -185,7 +185,7 @@ test.skipIf(isOhos)("deflate with delayed chunks should succeed", async () => {
 });
 
 // Test mismatched Content-Encoding
-test.skipIf(isOhos)("mismatched Content-Encoding should fail gracefully", async () => {
+test("mismatched Content-Encoding should fail gracefully", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {
@@ -211,7 +211,7 @@ test.skipIf(isOhos)("mismatched Content-Encoding should fail gracefully", async 
 });
 
 // Test sending zero-byte compressed body
-test.skipIf(isOhos)("zero-byte body with gzip Content-Encoding and Content-Length: 0", async () => {
+test("zero-byte body with gzip Content-Encoding and Content-Length: 0", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {
@@ -232,7 +232,7 @@ test.skipIf(isOhos)("zero-byte body with gzip Content-Encoding and Content-Lengt
 });
 
 // Test sending invalid compressed data
-test.skipIf(isOhos)("invalid gzip data should fail", async () => {
+test("invalid gzip data should fail", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {
@@ -258,7 +258,7 @@ test.skipIf(isOhos)("invalid gzip data should fail", async () => {
 });
 
 // Test sending first chunk delayed with empty initial chunk
-test.skipIf(isOhos)("empty first chunk followed by valid gzip should succeed", async () => {
+test("empty first chunk followed by valid gzip should succeed", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {

@@ -11,7 +11,7 @@ beforeEach(() => {
   v6 = new SocketAddress({ family: "ipv6" });
 });
 
-describe.skipIf(isOhos)("SocketAddress constructor", () => {
+describe("SocketAddress constructor", () => {
   it("is named SocketAddress", () => {
     expect(SocketAddress.name).toBe("SocketAddress");
   });
@@ -133,7 +133,7 @@ describe.skipIf(isOhos)("SocketAddress constructor", () => {
   });
 }); // </SocketAddress constructor>
 
-describe.skipIf(isOhos)("SocketAddress.isSocketAddress", () => {
+describe("SocketAddress.isSocketAddress", () => {
   it("is a function that takes 1 argument", () => {
     expect(SocketAddress).toHaveProperty("isSocketAddress");
     expect(SocketAddress.isSocketAddress).toBeInstanceOf(Function);
@@ -180,7 +180,7 @@ describe.skipIf(isOhos)("SocketAddress.isSocketAddress", () => {
   });
 }); // </SocketAddress.isSocketAddress>
 
-describe.skipIf(isOhos)("SocketAddress.parse", () => {
+describe("SocketAddress.parse", () => {
   it("is a function that takes 1 argument", () => {
     expect(SocketAddress).toHaveProperty("parse");
     expect(SocketAddress.parse).toBeInstanceOf(Function);
@@ -226,7 +226,7 @@ describe.skipIf(isOhos)("SocketAddress.parse", () => {
   });
 }); // </SocketAddress.parse>
 
-describe.skipIf(isOhos)("SocketAddress.prototype.address", () => {
+describe("SocketAddress.prototype.address", () => {
   it("has the correct property descriptor", () => {
     const desc = Object.getOwnPropertyDescriptor(SocketAddress.prototype, "address");
     expect(desc).toEqual({
@@ -244,7 +244,7 @@ describe.skipIf(isOhos)("SocketAddress.prototype.address", () => {
   });
 }); // </SocketAddress.prototype.address>
 
-describe.skipIf(isOhos)("SocketAddress.prototype.port", () => {
+describe("SocketAddress.prototype.port", () => {
   it("has the correct property descriptor", () => {
     const desc = Object.getOwnPropertyDescriptor(SocketAddress.prototype, "port");
     expect(desc).toEqual({
@@ -256,7 +256,7 @@ describe.skipIf(isOhos)("SocketAddress.prototype.port", () => {
   });
 }); // </SocketAddress.prototype.port>
 
-describe.skipIf(isOhos)("SocketAddress.prototype.family", () => {
+describe("SocketAddress.prototype.family", () => {
   it("has the correct property descriptor", () => {
     const desc = Object.getOwnPropertyDescriptor(SocketAddress.prototype, "family");
     expect(desc).toEqual({
@@ -268,7 +268,7 @@ describe.skipIf(isOhos)("SocketAddress.prototype.family", () => {
   });
 }); // </SocketAddress.prototype.family>
 
-describe.skipIf(isOhos)("SocketAddress.prototype.flowlabel", () => {
+describe("SocketAddress.prototype.flowlabel", () => {
   it("has the correct property descriptor", () => {
     const desc = Object.getOwnPropertyDescriptor(SocketAddress.prototype, "flowlabel");
     expect(desc).toEqual({
@@ -280,7 +280,7 @@ describe.skipIf(isOhos)("SocketAddress.prototype.flowlabel", () => {
   });
 }); // </SocketAddress.prototype.flowlabel>
 
-describe.skipIf(isOhos)("SocketAddress.prototype.toJSON", () => {
+describe("SocketAddress.prototype.toJSON", () => {
   it("is a function that takes 0 arguments", () => {
     expect(SocketAddress.prototype).toHaveProperty("toJSON");
     expect(SocketAddress.prototype.toJSON).toBeInstanceOf(Function);

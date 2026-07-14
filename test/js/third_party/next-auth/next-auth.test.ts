@@ -1,9 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { cpSync } from "fs";
 import { bunEnv, bunRun, isCI, isWindows, runBunInstall, tmpdirSync } from "harness";
-import { isOhos } from "harness";
 import { join } from "path";
-describe.skipIf(isOhos)("next-auth", () => {
+describe("next-auth", () => {
   // This test OOMs on Windows.
   it.todoIf(isCI && isWindows)(
     "should be able to call server action multiple times using auth middleware #18977",

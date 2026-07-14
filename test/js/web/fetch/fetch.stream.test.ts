@@ -2,7 +2,6 @@ import { Socket } from "bun";
 import { describe, expect, it } from "bun:test";
 import { createReadStream, readFileSync } from "fs";
 import { gcTick, isWindows, tempDirWithFilesAnon } from "harness";
-import { isOhos } from "harness";
 import http from "http";
 import type { AddressInfo } from "net";
 import path, { join } from "path";

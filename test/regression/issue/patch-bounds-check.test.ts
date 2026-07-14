@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
-import { isOhos } from "harness";
 
 const normalizeBunSnapshot = (str: string) => {
   str = normalizeBunSnapshot_(str);
@@ -10,7 +9,7 @@ const normalizeBunSnapshot = (str: string) => {
   return str;
 };
 
-test.skipIf(isOhos)("patch application should handle out-of-bounds line numbers gracefully", async () => {
+test("patch application should handle out-of-bounds line numbers gracefully", async () => {
   const dir = tempDirWithFiles("patch-bounds-test", {
     "package.json": JSON.stringify({
       name: "test-pkg",
@@ -51,7 +50,7 @@ test.skipIf(isOhos)("patch application should handle out-of-bounds line numbers 
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
 });
 
-test.skipIf(isOhos)("patch application should handle deletion beyond file bounds", async () => {
+test("patch application should handle deletion beyond file bounds", async () => {
   const dir = tempDirWithFiles("patch-deletion-bounds-test", {
     "package.json": JSON.stringify({
       name: "test-pkg",
@@ -93,7 +92,7 @@ test.skipIf(isOhos)("patch application should handle deletion beyond file bounds
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
 });
 
-test.skipIf(isOhos)("patch application should work correctly with valid patches", async () => {
+test("patch application should work correctly with valid patches", async () => {
   const dir = tempDirWithFiles("patch-valid-test", {
     "package.json": JSON.stringify({
       name: "test-pkg",

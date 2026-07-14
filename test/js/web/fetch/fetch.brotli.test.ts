@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import brotliFile from "./fetch.brotli.test.ts.br" with { type: "file" };
 import gzipFile from "./fetch.brotli.test.ts.gzip" with { type: "file" };
 
-test.skipIf(isOhos)("fetch brotli response works", async () => {
+test("fetch brotli response works", async () => {
   const brotli = await Bun.file(brotliFile).arrayBuffer();
   const gzip = await Bun.file(gzipFile).arrayBuffer();
 

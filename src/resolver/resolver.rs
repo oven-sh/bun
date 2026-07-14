@@ -4387,7 +4387,7 @@ impl<'a> Resolver<'a> {
         let mut _safe_path: Option<&'static [u8]> = None;
 
         // Start at the top.
-        'queue_walk: while queue_slice_len > 0 {
+        while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
             let mut queue_top = unsafe { queue[queue_slice_len - 1].assume_init_ref() }.clone();
             // `unsafe_path` was set to a slice of the threadlocal
@@ -4475,19 +4475,6 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
-
-                            // OHOS: ancestor directories like / or /storage/ may return
-                            // EACCES/EPERM due to sandbox restrictions. Skip the unreadable
-                            // ancestor and continue processing child directories.
-                            // Only on OHOS: on other platforms EACCES/EPERM on a directory
-                            // in the resolve path is a real error that should be reported.
-                            if cfg!(target_env = "ohos")
-                                && (err == crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                                    || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM))
-                            {
-                                continue 'queue_walk;
-                            }
-
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
@@ -5734,9 +5721,7 @@ impl<'a> Resolver<'a> {
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
-                | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                | crate::Error::Sys(bun_errno::SystemErrno::EPERM) => {}
+                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,

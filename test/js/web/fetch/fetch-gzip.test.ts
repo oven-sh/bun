@@ -1,7 +1,6 @@
 import { Socket } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick } from "harness";
-import { isOhos } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -129,7 +128,7 @@ it("fetch() with a gzip response works (one chunk, streamed, with a delay)", asy
 // registered deprecated alias of `gzip`. Node/undici lowercase the
 // Content-Encoding value before matching and accept `x-gzip`; we must too,
 // otherwise res.text()/res.json() silently return raw compressed bytes.
-describe.skipIf(isOhos)("fetch() decodes Content-Encoding case-insensitively", () => {
+describe("fetch() decodes Content-Encoding case-insensitively", () => {
   const payload = JSON.stringify({ hello: "world", n: 42 });
   const bodies = {
     gzip: gzipSync(payload),
@@ -427,7 +426,7 @@ it("fetch() with a buffered gzip response whose decompressed size exceeds 1 GiB 
   });
 }, 60_000);
 
-describe.skipIf(isOhos)("corrupt compressed responses", () => {
+describe("corrupt compressed responses", () => {
   // A body decompression failure is a body error: fetch() must resolve (status
   // and headers are available) and the body reader rejects. Previously, when
   // head+body arrived in a single read, the decompress error failed the HTTP
@@ -573,7 +572,7 @@ describe.skipIf(isOhos)("corrupt compressed responses", () => {
 // RFC 1952 §2.2: a gzip file is a sequence of members. Concatenated members
 // (cat a.gz b.gz, bgzf, pigz, pre-compressed segment stitching) must all be
 // decoded. Previously fetch() silently returned only the first member.
-describe.skipIf(isOhos)("fetch() decodes multi-member Content-Encoding: gzip", () => {
+describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
   const P1 = Buffer.alloc(18000, "The quick brown fox jumps over the lazy dog. ");
   const P2 = Buffer.alloc(14000, "SECOND-MEMBER-");
   const M1 = gzipSync(P1);
@@ -787,7 +786,7 @@ describe.skipIf(isOhos)("fetch() decodes multi-member Content-Encoding: gzip", (
   });
 });
 
-describe.skipIf(isOhos)("empty compressed responses", () => {
+describe("empty compressed responses", () => {
   // A response that declares Content-Encoding but sends zero body bytes must
   // resolve as an empty body, like Node — not fail with ZlibError.
   // https://github.com/oven-sh/bun/issues/23149

@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import path from "path";
 
-test.skipIf(isOhos)("pathToFileURL doesn't leak memory", () => {
+test("pathToFileURL doesn't leak memory", () => {
   expect([path.join(import.meta.dir, "pathToFileURL-leak-fixture.js")]).toRun();
 });
 
-test.skipIf(isOhos)("pathToFileURL escapes special characters", () => {
+test("pathToFileURL escapes special characters", () => {
   const cases = [
     ["\0", "%00"], // '\0' == 0x00
     ["\t", "%09"], // '\t' == 0x09

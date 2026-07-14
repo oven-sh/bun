@@ -1,4 +1,4 @@
-import { bunExe, isOhos } from "harness";
+import { bunExe } from "harness";
 
 const { isWindows } = require("../../node/test/common");
 
@@ -12,7 +12,7 @@ async function toUtf8(out: ReadableStream<Uint8Array>): Promise<string> {
   return result;
 }
 
-describe.skipIf(isOhos)("yes is killed", () => {
+describe("yes is killed", () => {
   // TODO
   test("Bun.spawn", async () => {
     const timeStart = Date.now();

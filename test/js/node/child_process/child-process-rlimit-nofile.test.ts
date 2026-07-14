@@ -17,7 +17,7 @@ import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
 
-test.skipIf(isOhos)(
+test(
   "child process inherits a sane RLIMIT_NOFILE (capped at 1<<20)",
   { skip: process.platform === "win32" },
   async () => {

@@ -2,10 +2,9 @@
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { isOhos } from "harness";
 import { join } from "path";
 
-test.skipIf(isOhos)("bun build --compile keeps the asset [dir] in Bun.embeddedFiles[].name (issue #31575)", async () => {
+test("bun build --compile keeps the asset [dir] in Bun.embeddedFiles[].name (issue #31575)", async () => {
   using dir = tempDir("issue-31575", {
     "assets/nested/data.txt": "hello",
     "entry.ts": `

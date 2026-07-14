@@ -60,9 +60,7 @@ unsafe fn resize(
     if self_.fixed.owns_ptr(buf.as_ptr()) {
         return FixedBufferAllocator::resize(&mut self_.fixed, buf, alignment, new_len, ra);
     }
-    // SAFETY: vtable contract — `buf` was allocated by this allocator, and
-    // `owns_ptr` is false, so it came from the fallback allocator.
-    unsafe { self_.fallback.raw_resize(buf, alignment, new_len, ra) }
+    self_.fallback.raw_resize(buf, alignment, new_len, ra)
 }
 
 unsafe fn remap(
@@ -79,9 +77,9 @@ unsafe fn remap(
         return FixedBufferAllocator::remap(&mut self_.fixed, memory, alignment, new_len, ra)
             .unwrap_or(core::ptr::null_mut());
     }
-    // SAFETY: vtable contract — `memory` was allocated by this allocator, and
-    // `owns_ptr` is false, so it came from the fallback allocator.
-    unsafe { self_.fallback.raw_remap(memory, alignment, new_len, ra) }
+    self_
+        .fallback
+        .raw_remap(memory, alignment, new_len, ra)
         .unwrap_or(core::ptr::null_mut())
 }
 
@@ -92,7 +90,5 @@ unsafe fn free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, ra: usize
     if self_.fixed.owns_ptr(buf.as_ptr()) {
         return FixedBufferAllocator::free(&mut self_.fixed, buf, alignment, ra);
     }
-    // SAFETY: vtable contract — `buf` was allocated by this allocator, and
-    // `owns_ptr` is false, so it came from the fallback allocator.
-    unsafe { self_.fallback.raw_free(buf, alignment, ra) }
+    self_.fallback.raw_free(buf, alignment, ra)
 }

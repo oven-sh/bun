@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { access, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join } from "path";
@@ -295,4 +295,129 @@ it("retries on 500", async () => {
       ))(),
     async () => await access(join(package_dir, "bun.lockb")),
   ]);
+});
+
+// A tarball that fails permanently must run its download (and retry cycle)
+// exactly once and be reported as exactly one error. Previously the resolve
+// phase's failure dropped the dedupe entry so the install phase re-ran the
+// entire download: a 500 endpoint saw 12 GETs instead of 6 and the same
+// `error: GET ...` line was printed twice.
+describe.each(["hoisted", "isolated"])("linker=%s", linker => {
+  it.each([
+    { status: 404, expectedGets: 1 },
+    { status: 500, expectedGets: 6 },
+  ])("does not re-download a tarball that already failed with $status", async ({ status, expectedGets }) => {
+    const urls: string[] = [];
+    setHandler(async request => {
+      const { pathname } = new URL(request.url);
+      urls.push(pathname);
+      if (pathname === "/BaR") {
+        return Response.json({
+          name: "BaR",
+          "dist-tags": { latest: "0.0.2" },
+          versions: {
+            "0.0.2": { name: "BaR", version: "0.0.2", dist: { tarball: `${root_url}/BaR-0.0.2.tgz` } },
+          },
+        });
+      }
+      if (pathname === "/BaR-0.0.2.tgz") {
+        return new Response("no", { status });
+      }
+      return new Response("unexpected", { status: 404 });
+    });
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      `[install]\ncache = false\nregistry = "${root_url}/"\nlinker = "${linker}"\n`,
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { BaR: "0.0.2" } }),
+    );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--no-progress", "--ignore-scripts"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    const tarballGets = urls.filter(u => u === "/BaR-0.0.2.tgz");
+    const errorLines = err.split("\n").filter(l => l.startsWith("error:"));
+    expect({ tarballGets: tarballGets.length, errorLines }).toEqual({
+      tarballGets: expectedGets,
+      errorLines: [`error: GET ${root_url}/BaR-0.0.2.tgz - ${status}`],
+    });
+    expect(out).not.toContain("installed");
+    expect(exitCode).toBe(1);
+  });
+
+  it("does not re-download an optional dependency's tarball that already failed", async () => {
+    const urls: string[] = [];
+    setHandler(async request => {
+      const { pathname } = new URL(request.url);
+      urls.push(pathname);
+      if (pathname === "/BaR") {
+        return Response.json({
+          name: "BaR",
+          "dist-tags": { latest: "0.0.2" },
+          versions: {
+            "0.0.2": { name: "BaR", version: "0.0.2", dist: { tarball: `${root_url}/BaR-0.0.2.tgz` } },
+          },
+        });
+      }
+      if (pathname === "/BaR-0.0.2.tgz") return new Response("no", { status: 404 });
+      if (pathname === "/baz") {
+        return Response.json({
+          name: "baz",
+          "dist-tags": { latest: "0.0.3" },
+          versions: {
+            "0.0.3": { name: "baz", version: "0.0.3", dist: { tarball: `${root_url}/baz-0.0.3.tgz` } },
+          },
+        });
+      }
+      if (pathname === "/baz-0.0.3.tgz") return new Response(file(join(import.meta.dir, "baz-0.0.3.tgz")));
+      return new Response("unexpected", { status: 404 });
+    });
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      `[install]\ncache = false\nregistry = "${root_url}/"\nlinker = "${linker}"\n`,
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { baz: "0.0.3" },
+        optionalDependencies: { BaR: "0.0.2" },
+      }),
+    );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--no-progress", "--ignore-scripts"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    const tarballGets = urls.filter(u => u === "/BaR-0.0.2.tgz");
+    const warnLines = err.split("\n").filter(l => l.startsWith("warn:"));
+    const errorLines = err.split("\n").filter(l => l.startsWith("error:"));
+    expect({ tarballGets: tarballGets.length, warnLines, errorLines }).toEqual({
+      tarballGets: 1,
+      warnLines: [`warn: GET ${root_url}/BaR-0.0.2.tgz - 404`],
+      errorLines: [],
+    });
+    expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+      name: "baz",
+      version: "0.0.3",
+    });
+    if (linker === "hoisted") {
+      expect(out).not.toContain("Failed to install");
+      expect(exitCode).toBe(0);
+    }
+  });
 });

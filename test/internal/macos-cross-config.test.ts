@@ -8,7 +8,7 @@
  * where the same inputs intentionally resolve to the native toolchain instead.
  */
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isOhos, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -59,7 +59,7 @@ function resolveDarwin(partial: PartialConfig = {}, toolchain = mockToolchain())
   return resolveConfig({ os: "darwin", arch: "aarch64", buildType: "Release", ...partial }, toolchain);
 }
 
-describe.skipIf(isMacOS || isOhos)("macOS cross-compile config (non-darwin host)", () => {
+describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
   test("darwin target resolves to a cross-compile with ld64.lld and llvm-strip", () => {
     const cfg = resolveDarwin();
     expect(cfg.darwin).toBe(true);

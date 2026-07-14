@@ -207,7 +207,7 @@ pub(crate) fn bun_random_uuid_v7(
     };
 
     let timestamp: u64 = 'brk: {
-        let timestamp_value: JSValue = if !encoding_value.is_undefined() && arguments.len > 1 {
+        let timestamp_value: JSValue = if arguments.len > 1 {
             arguments.ptr[1]
         } else if arguments.len == 1 && encoding_value.is_undefined() {
             arguments.ptr[0]
@@ -216,15 +216,30 @@ pub(crate) fn bun_random_uuid_v7(
         };
 
         if !timestamp_value.is_undefined() {
+            // UUIDv7's unix_ts_ms field is 48 bits (RFC 9562 §5.7).
+            const MAX_TIMESTAMP: i64 = (1i64 << 48) - 1;
+            let range_opts = bun_jsc::RangeErrorOptions {
+                min: 0,
+                max: MAX_TIMESTAMP,
+                field_name: b"timestamp",
+                ..Default::default()
+            };
             if timestamp_value.is_date() {
                 let date = timestamp_value.get_unix_timestamp();
-                break 'brk date.max(0.0) as u64;
+                if !date.is_finite() || date < 0.0 || date > MAX_TIMESTAMP as f64 {
+                    return Err(global.throw_range_error(date, range_opts));
+                }
+                break 'brk date as u64;
+            }
+            if timestamp_value.is_number() && timestamp_value.as_number().is_nan() {
+                return Err(global.throw_range_error(f64::NAN, range_opts));
             }
             break 'brk u64::try_from(global.validate_integer_range::<i64>(
                 timestamp_value,
                 0,
                 bun_jsc::IntegerRange {
                     min: 0,
+                    max: i128::from(MAX_TIMESTAMP),
                     field_name: b"timestamp",
                     ..Default::default()
                 },

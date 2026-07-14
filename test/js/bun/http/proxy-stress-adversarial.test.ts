@@ -11,7 +11,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { isASAN, isOhos } from "harness";
+import { isASAN } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
@@ -41,7 +41,7 @@ afterAll(() => {
 // tunnel type.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe.skipIf(isOhos)("stacked adversarial", () => {
+describe("stacked adversarial", () => {
   for (const { proxyTls, splitConnect, encoding, keepalive } of cartesian({
     proxyTls: [false, true] as const,
     splitConnect: [1, 3, 10] as const,

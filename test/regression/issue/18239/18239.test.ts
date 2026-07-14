@@ -1,7 +1,6 @@
 import { spawnSync } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
-import { isOhos } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/18239

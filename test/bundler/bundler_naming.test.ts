@@ -1,7 +1,7 @@
 import { describe } from "bun:test";
 import { ESBUILD, itBundled } from "./expectBundled";
 
-describe.skipIf(isOhos)("bundler", () => {
+describe("bundler", () => {
   itBundled("naming/EntryNamingCollission", {
     files: {
       "/a/entry.js": /* js */ `

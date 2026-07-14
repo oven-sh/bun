@@ -12,16 +12,6 @@ describe("randomUUIDv7", () => {
     expect(Bun.randomUUIDv7()["0192ce01-8345-".length]).toBe("7");
   });
 
-  test("timestamp", () => {
-    const now = Date.now();
-    const uuid = Bun.randomUUIDv7(undefined, now).replaceAll("-", "");
-    const timestampOriginal = parseInt(uuid.slice(0, 12).toString(), 16);
-
-    // On Windows, timers drift by about 16ms. Let's 2x that.
-    const timestamp = Math.max(timestampOriginal, now) - Math.min(timestampOriginal, now);
-    expect(timestamp).toBeLessThanOrEqual(32);
-  });
-
   test("base64 format", () => {
     const uuid = Bun.randomUUIDv7("base64");
     expect(uuid).toMatch(/^[0-9a-zA-Z+/=]+$/);
@@ -53,6 +43,89 @@ describe("randomUUIDv7", () => {
       prev = u;
     }
     expect(firstBreak).toBe(-1);
+  });
+
+  describe("timestamp range validation", () => {
+    test.each([
+      ["2**48", 2 ** 48],
+      ["2**53 - 1", 2 ** 53 - 1],
+      ["NaN", NaN],
+      ["Date(-1)", new Date(-1)],
+      ["Date(2**48)", new Date(2 ** 48)],
+      ["Date(8.64e15)", new Date(8.64e15)],
+      ["Invalid Date", new Date(NaN)],
+    ])("rejects %s", (_, ts) => {
+      expect(() => Bun.randomUUIDv7("hex", ts)).toThrow(RangeError);
+      expect(() => Bun.randomUUIDv7(undefined, ts)).toThrow(RangeError);
+      // @ts-expect-error single-arg timestamp overload
+      expect(() => Bun.randomUUIDv7(ts)).toThrow(RangeError);
+    });
+
+    test("RangeError message advertises the 48-bit bound", () => {
+      const err = (() => {
+        try {
+          Bun.randomUUIDv7("hex", 2 ** 48);
+        } catch (e) {
+          return e as RangeError;
+        }
+        throw new Error("did not throw");
+      })();
+      expect(err).toBeInstanceOf(RangeError);
+      expect(err.message).toContain("281474976710655");
+      expect(err.message).not.toContain("9007199254740991");
+    });
+
+    test("accepts 2**48 - 1 (max 48-bit value)", async () => {
+      // Subprocess: 2**48-1 would park the process-global timestamp at year 10889.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const tsOf = u => parseInt(u.replaceAll("-", "").slice(0, 12), 16);
+            const max = 2 ** 48 - 1;
+            console.log(JSON.stringify([
+              tsOf(Bun.randomUUIDv7("hex", max)),
+              tsOf(Bun.randomUUIDv7(undefined, max)),
+              tsOf(Bun.randomUUIDv7("hex", new Date(max))),
+            ]));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const max = 2 ** 48 - 1;
+      expect(JSON.parse(stdout)).toEqual([max, max, max]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("counter rollover at 2**48-1 clamps instead of wrapping to epoch 0", async () => {
+      // 5000 calls at the max 48-bit timestamp forces the 12-bit counter to roll
+      // over at least once; the bumped timestamp must clamp at 2**48-1, not wrap.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const tsOf = u => parseInt(u.replaceAll("-", "").slice(0, 12), 16);
+            const max = 2 ** 48 - 1;
+            let bad = -1;
+            for (let i = 0; i < 5000; i++) {
+              if (tsOf(Bun.randomUUIDv7("hex", max)) !== max) { bad = i; break; }
+            }
+            console.log(bad);
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("-1");
+      expect(exitCode).toBe(0);
+    });
   });
 
   // The remaining tests pass far-future timestamps. UUID_V7_LAST_TIMESTAMP is a

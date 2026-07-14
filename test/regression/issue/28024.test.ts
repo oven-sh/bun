@@ -8,7 +8,7 @@ function getNativeHandle(hash: any) {
   return hash[sym!];
 }
 
-test.skipIf(isOhos)("Hash native update() throws ERR_INVALID_THIS instead of segfaulting on bad this", () => {
+test("Hash native update() throws ERR_INVALID_THIS instead of segfaulting on bad this", () => {
   const hash = createHash("sha256");
   const native = getNativeHandle(hash);
   const nativeUpdate = native.update;
@@ -18,7 +18,7 @@ test.skipIf(isOhos)("Hash native update() throws ERR_INVALID_THIS instead of seg
   expect(() => nativeUpdate.call(42, hash, "data")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
 });
 
-test.skipIf(isOhos)("Hash native digest() throws ERR_INVALID_THIS instead of segfaulting on bad this", () => {
+test("Hash native digest() throws ERR_INVALID_THIS instead of segfaulting on bad this", () => {
   const hash = createHash("sha256");
   const native = getNativeHandle(hash);
   const nativeDigest = native.digest;
@@ -27,7 +27,7 @@ test.skipIf(isOhos)("Hash native digest() throws ERR_INVALID_THIS instead of seg
   expect(() => nativeDigest.call(null)).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
 });
 
-test.skipIf(isOhos)("Hash.update() does not crash on a detached ArrayBufferView", () => {
+test("Hash.update() does not crash on a detached ArrayBufferView", () => {
   const hash = createHash("sha256");
   const view = new Uint8Array(16);
   // @ts-ignore - transfer() detaches the underlying buffer

@@ -1,5 +1,4 @@
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { isOhos } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -23,7 +22,7 @@ import wt, {
   workerData,
 } from "worker_threads";
 
-test.skipIf(isOhos)("support eval in worker", async () => {
+test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
     eval: true,
   });
@@ -34,7 +33,7 @@ test.skipIf(isOhos)("support eval in worker", async () => {
   await worker.terminate();
 });
 
-test.skipIf(isOhos)("all worker_threads module properties are present", () => {
+test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
   expect(wt).toHaveProperty("markAsUntransferable");
@@ -86,7 +85,7 @@ test.skipIf(isOhos)("all worker_threads module properties are present", () => {
 
 // The markers are JSC private names (node uses v8 Privates): invisible to user code,
 // unforgeable via the registry symbol or a public property, and not removable.
-test.skipIf(isOhos)("markAsUncloneable and markAsUntransferable markers are private, unforgeable, and permanent", () => {
+test("markAsUncloneable and markAsUntransferable markers are private, unforgeable, and permanent", () => {
   const expectDataCloneError = (fn: () => void) => {
     let err: any;
     try {
@@ -134,7 +133,7 @@ test.skipIf(isOhos)("markAsUncloneable and markAsUntransferable markers are priv
   expectDataCloneError(() => structuredClone(unmarkAttempt));
 });
 
-test.skipIf(isOhos)("all worker_threads worker instance properties are present", async () => {
+test("all worker_threads worker instance properties are present", async () => {
   const worker = new Worker(new URL("./worker.js", import.meta.url));
   expect(worker).toHaveProperty("threadId");
   expect(worker).toHaveProperty("ref");
@@ -192,7 +191,7 @@ test.skipIf(isOhos)("all worker_threads worker instance properties are present",
   await worker.terminate();
 });
 
-test.skipIf(isOhos)("threadId module and worker property is consistent", async () => {
+test("threadId module and worker property is consistent", async () => {
   const worker1 = new Worker(new URL("./worker-thread-id.ts", import.meta.url));
   expect(threadId).toBe(0);
   expect(worker1.threadId).toBeGreaterThan(0);
@@ -204,7 +203,7 @@ test.skipIf(isOhos)("threadId module and worker property is consistent", async (
   await worker2.terminate();
 });
 
-test.skipIf(isOhos)("receiveMessageOnPort works across threads", async () => {
+test("receiveMessageOnPort works across threads", async () => {
   const { port1, port2 } = new MessageChannel();
   const worker = new Worker(new URL("./worker.js", import.meta.url), {
     workerData: port2,
@@ -221,7 +220,7 @@ test.skipIf(isOhos)("receiveMessageOnPort works across threads", async () => {
   await worker.terminate();
 }, 9999999);
 
-test.skipIf(isOhos)("receiveMessageOnPort works as FIFO", () => {
+test("receiveMessageOnPort works as FIFO", () => {
   const { port1, port2 } = new MessageChannel();
 
   const message1 = { hello: "world" };
@@ -253,7 +252,7 @@ test.skipIf(isOhos)("receiveMessageOnPort works as FIFO", () => {
   }
 }, 9999999);
 
-test.skipIf(isOhos)("you can override globalThis.postMessage", async () => {
+test("you can override globalThis.postMessage", async () => {
   const worker = new Worker(new URL("./worker-override-postMessage.js", import.meta.url));
   const message = await new Promise(resolve => {
     worker.on("message", resolve);
@@ -263,7 +262,7 @@ test.skipIf(isOhos)("you can override globalThis.postMessage", async () => {
   await worker.terminate();
 });
 
-test.skipIf(isOhos)("support require in eval", async () => {
+test("support require in eval", async () => {
   const worker = new Worker(`postMessage(require('process').argv[0])`, { eval: true });
   const result = await new Promise(resolve => {
     worker.on("message", resolve);
@@ -273,7 +272,7 @@ test.skipIf(isOhos)("support require in eval", async () => {
   await worker.terminate();
 });
 
-test.skipIf(isOhos)("support require in eval for a file", async () => {
+test("support require in eval for a file", async () => {
   const cwd = process.cwd();
   console.log("cwd", cwd);
   const dir = import.meta.dir;
@@ -290,7 +289,7 @@ test.skipIf(isOhos)("support require in eval for a file", async () => {
   await worker.terminate();
 });
 
-test.skipIf(isOhos)("support require in eval for a file that doesnt exist", async () => {
+test("support require in eval for a file that doesnt exist", async () => {
   const worker = new Worker(`postMessage(require('./fixture-invalid.js').argv[0])`, { eval: true });
   const result = await new Promise(resolve => {
     worker.on("message", resolve);
@@ -300,7 +299,7 @@ test.skipIf(isOhos)("support require in eval for a file that doesnt exist", asyn
   await worker.terminate();
 });
 
-test.skipIf(isOhos)("support worker eval that throws", async () => {
+test("support worker eval that throws", async () => {
   const worker = new Worker(`postMessage(throw new Error("boom"))`, { eval: true });
   const result = await new Promise(resolve => {
     worker.on("message", resolve);
@@ -311,7 +310,7 @@ test.skipIf(isOhos)("support worker eval that throws", async () => {
   await worker.terminate();
 });
 
-describe.skipIf(isOhos)("execArgv option", async () => {
+describe("execArgv option", async () => {
   // this needs to be a subprocess to ensure that the parent's execArgv is not empty
   // otherwise we could not distinguish between the worker inheriting the parent's execArgv
   // vs. the worker getting a fresh empty execArgv
@@ -341,7 +340,7 @@ describe.skipIf(isOhos)("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
-test.skipIf(isOhos)("eval does not leak source code", async () => {
+test("eval does not leak source code", async () => {
   const proc = Bun.spawn({
     cmd: [bunExe(), "eval-source-leak-fixture.js"],
     env: bunEnv,
@@ -355,7 +354,7 @@ test.skipIf(isOhos)("eval does not leak source code", async () => {
   expect(proc.exitCode).toBe(0);
 });
 
-describe.skipIf(isOhos)("captured stdio backpressure", () => {
+describe("captured stdio backpressure", () => {
   // node flow control (lib/internal/worker/io.js): a writev batch's callback is
   // withheld until the reader acks (STDIO_WANTS_MORE_DATA), so 'drain' must not
   // fire while the parent is not consuming worker.stdout.
@@ -425,7 +424,7 @@ describe.skipIf(isOhos)("captured stdio backpressure", () => {
   });
 });
 
-describe.skipIf(isOhos)("worker event", () => {
+describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
     const { promise, resolve } = Promise.withResolvers();
     let worker: Worker | undefined = undefined;
@@ -480,7 +479,7 @@ describe.skipIf(isOhos)("worker event", () => {
   });
 });
 
-describe.skipIf(isOhos)("environmentData", () => {
+describe("environmentData", () => {
   test("can pass a value to a child", async () => {
     setEnvironmentData("foo", new Map([["hello", "world"]]));
     const worker = new Worker(
@@ -532,7 +531,7 @@ describe.skipIf(isOhos)("environmentData", () => {
   });
 });
 
-describe.skipIf(isOhos)("error event", () => {
+describe("error event", () => {
   test("is fired with a copy of the error value", async () => {
     const worker = new Worker("throw new TypeError('oh no')", { eval: true });
     const [err] = await once(worker, "error");
@@ -554,7 +553,7 @@ describe.skipIf(isOhos)("error event", () => {
   });
 });
 
-describe.skipIf(isOhos)("getHeapSnapshot", () => {
+describe("getHeapSnapshot", () => {
   test("throws if the wrong options are passed", () => {
     const worker = new Worker("", { eval: true });
     // @ts-expect-error
@@ -670,7 +669,7 @@ describe.skipIf(isOhos)("getHeapSnapshot", () => {
   });
 });
 
-test.skipIf(isOhos)("failed Worker construction restores transferred FileHandles", async () => {
+test("failed Worker construction restores transferred FileHandles", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -686,7 +685,7 @@ test.skipIf(isOhos)("failed Worker construction restores transferred FileHandles
   await fh.close();
 });
 
-test.skipIf(isOhos)("transferred FileHandles are not neutered when name/filename validation rejects", async () => {
+test("transferred FileHandles are not neutered when name/filename validation rejects", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -713,7 +712,7 @@ test.skipIf(isOhos)("transferred FileHandles are not neutered when name/filename
   }
 });
 
-test.skipIf(isOhos)("partially transferred FileHandles are restored when a later transfer throws", async () => {
+test("partially transferred FileHandles are restored when a later transfer throws", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -730,7 +729,7 @@ test.skipIf(isOhos)("partially transferred FileHandles are restored when a later
   await fh2.close();
 });
 
-test.skipIf(isOhos)("a FileHandle referenced twice in workerData deserializes to one instance", async () => {
+test("a FileHandle referenced twice in workerData deserializes to one instance", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -753,7 +752,7 @@ test.skipIf(isOhos)("a FileHandle referenced twice in workerData deserializes to
   expect(message).toEqual({ same: true, closed: true });
 });
 
-test.skipIf(isOhos)("duplicate FileHandle transferList entries throw DataCloneError and roll back", async () => {
+test("duplicate FileHandle transferList entries throw DataCloneError and roll back", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -767,7 +766,7 @@ test.skipIf(isOhos)("duplicate FileHandle transferList entries throw DataCloneEr
   await fh.close();
 });
 
-test.skipIf(isOhos)("a FileHandle in transferList but not in workerData is detached without leaking", async () => {
+test("a FileHandle in transferList but not in workerData is detached without leaking", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -794,7 +793,7 @@ test.skipIf(isOhos)("a FileHandle in transferList but not in workerData is detac
   expect(closedOrRecycled).toBe(true);
 });
 
-test.skipIf(isOhos)("failed construction restores an unreferenced transferred FileHandle intact", async () => {
+test("failed construction restores an unreferenced transferred FileHandle intact", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -810,7 +809,7 @@ test.skipIf(isOhos)("failed construction restores an unreferenced transferred Fi
   await fh.close();
 });
 
-test.skipIf(isOhos)("FileHandles nested in Map and Set workerData are transferred", async () => {
+test("FileHandles nested in Map and Set workerData are transferred", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -838,7 +837,7 @@ test.skipIf(isOhos)("FileHandles nested in Map and Set workerData are transferre
   expect(message).toEqual({ sameInstance: true, text: "hello" });
 });
 
-test.skipIf(isOhos)("MessagePort.hasRef() reports actual loop-ref state", () => {
+test("MessagePort.hasRef() reports actual loop-ref state", () => {
   const { port1 } = new MessageChannel();
   expect(port1.hasRef()).toBe(false);
   port1.on("message", () => {});
@@ -852,7 +851,7 @@ test.skipIf(isOhos)("MessagePort.hasRef() reports actual loop-ref state", () => 
 
 // Collecting the unreferenced peer must not look like a peer close: node never
 // closes a channel because a port was garbage-collected, so ref() still works.
-test.skipIf(isOhos)("hasRef() survives collection of the unreferenced peer", () => {
+test("hasRef() survives collection of the unreferenced peer", () => {
   const { port1 } = new MessageChannel(); // port2 unreachable from birth
   Bun.gc(true);
   Bun.gc(true);
@@ -866,7 +865,7 @@ test.skipIf(isOhos)("hasRef() survives collection of the unreferenced peer", () 
 
 // markAsUncloneable blocks *cloning*, not transfer: a marked port in the transfer
 // list is moved, so node lets it through and it still works on the far side.
-test.skipIf(isOhos)("markAsUncloneable blocks cloning a port but not transferring it", async () => {
+test("markAsUncloneable blocks cloning a port but not transferring it", async () => {
   const { port1, port2 } = new MessageChannel();
   const { port1: a, port2: b } = new MessageChannel();
   markAsUncloneable(a);
@@ -892,7 +891,7 @@ test.skipIf(isOhos)("markAsUncloneable blocks cloning a port but not transferrin
 
 // postMessageToThread routes through a Map of thread -> port. A user-replaced
 // Map.prototype must not be able to break cross-thread delivery.
-test.skipIf(isOhos)("postMessageToThread survives a tampered Map prototype", async () => {
+test("postMessageToThread survives a tampered Map prototype", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -927,7 +926,7 @@ test.skipIf(isOhos)("postMessageToThread survives a tampered Map prototype", asy
 // The listener registry must not route through user-overridable Map/Set/WeakMap:
 // not their methods, not the `size` getter, not their iterators. Spawned, because
 // it clobbers prototypes and would poison the whole runner.
-test.skipIf(isOhos)("the listener registry survives tampered Map/Set/WeakMap prototypes", async () => {
+test("the listener registry survives tampered Map/Set/WeakMap prototypes", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -993,7 +992,7 @@ test.each([
 
 // off() used to resolve the wrapper through a single slot stamped on the user's
 // function, so one listener shared across two events (or two ports) lost track.
-test.skipIf(isOhos)("off() removes only the listener it names, per event and per port", () => {
+test("off() removes only the listener it names, per event and per port", () => {
   const fn = () => {};
   {
     const { port1, port2 } = new MessageChannel();
@@ -1024,7 +1023,7 @@ test.skipIf(isOhos)("off() removes only the listener it names, per event and per
 // bun collects entangled ports; node never does. A worker that drops its transferred
 // port must therefore still notify the peer, or the peer's loop ref is never released
 // and the parent hangs forever. Spawned: the symptom is "the process never exits".
-test.skipIf(isOhos)("a collected port in a worker does not strand its peer", async () => {
+test("a collected port in a worker does not strand its peer", async () => {
   const proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1078,7 +1077,7 @@ test.each([
 });
 
 // An orphaned transferred endpoint IS a real close -- node fires 'close' on its peer.
-test.skipIf(isOhos)("dropping a transferred port notifies its peer", async () => {
+test("dropping a transferred port notifies its peer", async () => {
   const { port1, port2 } = new MessageChannel();
   const { port1: a, port2: b } = new MessageChannel();
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -1092,7 +1091,7 @@ test.skipIf(isOhos)("dropping a transferred port notifies its peer", async () =>
 
 // close() outside a dispatch drops whatever is queued; close() from inside a
 // 'message' handler lets the in-flight drain finish. Both are node's behaviour.
-test.skipIf(isOhos)("close() drops queued messages unless it runs inside a dispatch", async () => {
+test("close() drops queued messages unless it runs inside a dispatch", async () => {
   {
     const { port1, port2 } = new MessageChannel();
     let got = 0;
@@ -1121,7 +1120,7 @@ test.skipIf(isOhos)("close() drops queued messages unless it runs inside a dispa
 
 // node reports every bad transfer-list entry the same way, from both the array
 // overload and the options bag, and accepts any iterable -- not just arrays.
-describe.skipIf(isOhos)("postMessage transfer list", () => {
+describe("postMessage transfer list", () => {
   const dataClone = expect.objectContaining({ name: "DataCloneError", code: 25 });
 
   test.each([
@@ -1203,7 +1202,7 @@ describe.skipIf(isOhos)("postMessage transfer list", () => {
   });
 });
 
-test.skipIf(isOhos)("MessagePort NodeEventTarget methods", () => {
+test("MessagePort NodeEventTarget methods", () => {
   const { port1 } = new MessageChannel();
   expect(typeof port1.listenerCount).toBe("function");
   expect(typeof port1.eventNames).toBe("function");
@@ -1224,7 +1223,7 @@ test.skipIf(isOhos)("MessagePort NodeEventTarget methods", () => {
 // jsRef() only gated on m_isDetached, so .ref()/onmessage= after the peer closed
 // re-took an event-loop ref that nothing releases and the process hung. Node no-ops
 // both. Spawned, because the symptom is "the process never exits".
-test.skipIf(isOhos)("ref()/onmessage after the peer closes does not pin the loop", async () => {
+test("ref()/onmessage after the peer closes does not pin the loop", async () => {
   const proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1255,7 +1254,7 @@ test.skipIf(isOhos)("ref()/onmessage after the peer closes does not pin the loop
 
 // EventTarget removes a {once:true} listener natively, so the JS-side registry
 // backing listenerCount()/eventNames() has to drop it too.
-test.skipIf(isOhos)("a fired once() listener stops being counted", async () => {
+test("a fired once() listener stops being counted", async () => {
   const { port1, port2 } = new MessageChannel();
   let fired = 0;
   port1.once("message", () => fired++);
@@ -1274,7 +1273,7 @@ test.skipIf(isOhos)("a fired once() listener stops being counted", async () => {
 
 // once() re-points listener[wrappedListener] at the self-purging wrapper, so
 // off() must still find it through the user's original function.
-test.skipIf(isOhos)("off() removes a pending once() listener", () => {
+test("off() removes a pending once() listener", () => {
   const { port1, port2 } = new MessageChannel();
   const fn = () => {};
   port1.once("message", fn);
@@ -1285,7 +1284,7 @@ test.skipIf(isOhos)("off() removes a pending once() listener", () => {
   port2.close();
 });
 
-test.skipIf(isOhos)("close(cb) interleaves with other close listeners in registration order", async () => {
+test("close(cb) interleaves with other close listeners in registration order", async () => {
   // node's mechanism is `this.once('close', cb)`, so cb interleaves with other
   // close listeners in the order they were registered (verified against node).
   const { port1 } = new MessageChannel();
@@ -1306,7 +1305,7 @@ test.skipIf(isOhos)("close(cb) interleaves with other close listeners in registr
   expect(order2).toEqual(["B", "C"]);
 });
 
-test.skipIf(isOhos)("getHeapStatistics settles when terminated mid-request", async () => {
+test("getHeapStatistics settles when terminated mid-request", async () => {
   const w = new Worker("setInterval(() => {}, 1e6)", { eval: true });
   await once(w, "online");
   const p = w.getHeapStatistics();
@@ -1320,7 +1319,7 @@ test.skipIf(isOhos)("getHeapStatistics settles when terminated mid-request", asy
   ).resolves.toMatch(/^(ok|ERR_WORKER_NOT_RUNNING)$/);
 });
 
-test.skipIf(isOhos)("*Internal introspection methods are DontEnum on Worker.prototype", () => {
+test("*Internal introspection methods are DontEnum on Worker.prototype", () => {
   const enumerable: string[] = [];
   for (const k in globalThis.Worker.prototype) enumerable.push(k);
   expect(enumerable).not.toContain("startCpuProfileInternal");
@@ -1328,7 +1327,7 @@ test.skipIf(isOhos)("*Internal introspection methods are DontEnum on Worker.prot
   expect(enumerable).not.toContain("cpuUsageInternal");
 });
 
-describe.skipIf(isOhos)("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
+describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
   async function run(mode: string) {
     const proc = Bun.spawn({
       cmd: [bunExe(), "fixture-share-env-tree.js", mode],
@@ -1484,7 +1483,7 @@ describe.skipIf(isOhos)("env: SHARE_ENV shares the spawning thread's env, not a 
   });
 });
 
-test.skipIf(isOhos)("postMessage with a non-object transfer element throws DataCloneError", () => {
+test("postMessage with a non-object transfer element throws DataCloneError", () => {
   // Both the array-form and options-bag paths converge on Node's
   // DataCloneError, not TypeError / ERR_INVALID_ARG_TYPE.
   const { port1 } = new MessageChannel();
@@ -1504,7 +1503,7 @@ test.skipIf(isOhos)("postMessage with a non-object transfer element throws DataC
   port1.close();
 });
 
-test.skipIf(isOhos)("MessageEvent ports validation walks the iterator once and gives a detailed error for any iterable", () => {
+test("MessageEvent ports validation walks the iterator once and gives a detailed error for any iterable", () => {
   expect(() => new MessageEvent("message", { ports: new Set([{}]) })).toThrow(
     /Expected eventInitDict\.ports\[0\] \("\{\}"\) to be an instance of MessagePort/,
   );
@@ -1525,7 +1524,7 @@ test.skipIf(isOhos)("MessageEvent ports validation walks the iterator once and g
   port1.close();
 });
 
-test.skipIf(isOhos)("MessagePort: transferring a port from inside its own close()'s flush window throws DataCloneError", async () => {
+test("MessagePort: transferring a port from inside its own close()'s flush window throws DataCloneError", async () => {
   // Queue two messages. The first handler calls A.close(); close()'s flush
   // (running because m_inMessageDispatch is true) delivers the second, whose
   // handler tries to transfer A. A is m_isClosing at that point, so the
@@ -1561,7 +1560,7 @@ test.skipIf(isOhos)("MessagePort: transferring a port from inside its own close(
   B2.close();
 });
 
-test.skipIf(isOhos)("MessagePort: peer closing while a port is in transit still delivers 'close' and doesn't hang", async () => {
+test("MessagePort: peer closing while a port is in transit still delivers 'close' and doesn't hang", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1594,7 +1593,7 @@ test.skipIf(isOhos)("MessagePort: peer closing while a port is in transit still 
   });
 });
 
-test.skipIf(isOhos)("workerData is not unwrapped for a non-node globalThis.Worker", async () => {
+test("workerData is not unwrapped for a non-node globalThis.Worker", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1621,7 +1620,7 @@ test.skipIf(isOhos)("workerData is not unwrapped for a non-node globalThis.Worke
 // process.debugPort defaults to 9229 on the main thread (node parity). Lives here, not
 // in the vendored test/js/node/test/parallel/test-set-process-debug-port.js, which should
 // stay byte-identical to upstream.
-test.skipIf(isOhos)("process.debugPort defaults to 9229 on the main thread", async () => {
+test("process.debugPort defaults to 9229 on the main thread", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", "console.log(process.debugPort)"],
     env: bunEnv,
@@ -1638,7 +1637,7 @@ test.skipIf(isOhos)("process.debugPort defaults to 9229 on the main thread", asy
 // so this guards the swap -- it cannot observe Windows' SetEnvironmentVariableW, which
 // has no JS-visible reader.
 
-test.skipIf(isOhos)("the SHARE_ENV founding thread's process.env stays live after the swap", async () => {
+test("the SHARE_ENV founding thread's process.env stays live after the swap", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

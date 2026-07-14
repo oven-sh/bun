@@ -3,7 +3,7 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Jimp } from "jimp";
 import { join } from "path";
 
-describe.skipIf(isOhos)("@napi-rs/canvas", () => {
+describe("@napi-rs/canvas", () => {
   it("produces correct output", async () => {
     const canvas = createCanvas(200, 200);
     const ctx = canvas.getContext("2d");

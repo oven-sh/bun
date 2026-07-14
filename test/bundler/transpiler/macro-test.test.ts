@@ -1,6 +1,8 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import defaultMacro, {
   addStrings,
   addStringsUTF16,
@@ -154,5 +156,90 @@ test("object argument with a sparse numeric key", async () => {
     stdout: expect.stringMatching(/200000\n$/),
     exitCode: 0,
     signalCode: null,
+  });
+});
+
+describe("--no-macros", () => {
+  const files = {
+    "macro.ts": `
+      import { writeFileSync } from "node:fs";
+      export function f() {
+        writeFileSync("MACRO_RAN", "macro executed");
+        return "INLINED_RESULT";
+      }
+    `,
+    "entry.ts": `
+      import { f } from "./macro.ts" with { type: "macro" };
+      console.log(f());
+    `,
+  };
+
+  test("bun build --no-macros refuses to run macros", async () => {
+    using dir = tempDir("bundler-no-macros-cli", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-macros", "./entry.ts", "--outdir", "dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({
+      stderr: expect.stringContaining("Macros are disabled"),
+      exitCode: 1,
+    });
+    expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(false);
+    expect(existsSync(path.join(String(dir), "dist", "entry.js"))).toBe(false);
+  });
+
+  test("Bun.build({ macros: false }) refuses to run macros", async () => {
+    using dir = tempDir("bundler-no-macros-api", {
+      ...files,
+      "build.ts": `
+        const result = await Bun.build({
+          entrypoints: ["./entry.ts"],
+          outdir: "./dist",
+          macros: false,
+          throw: false,
+        });
+        console.log(JSON.stringify({
+          success: result.success,
+          logs: result.logs.map(l => l.message),
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const parsed = JSON.parse(stdout.trim().split("\n").pop()!);
+    expect({ parsed, stderr, exitCode }).toMatchObject({
+      parsed: {
+        success: false,
+        logs: expect.arrayContaining([expect.stringContaining("Macros are disabled")]),
+      },
+      exitCode: 0,
+    });
+    expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(false);
+  });
+
+  test("bun build without --no-macros still runs macros", async () => {
+    using dir = tempDir("bundler-macros-enabled", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.ts", "--outdir", "dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const out = await Bun.file(path.join(String(dir), "dist", "entry.js")).text();
+    expect(out).toContain("INLINED_RESULT");
+    expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(true);
   });
 });

@@ -16,7 +16,6 @@
 import { expect, test } from "bun:test";
 import { existsSync, unlinkSync } from "fs";
 import { bunEnv, bunExe, isPosix, isWindows, tempDir } from "harness";
-import { isOhos } from "harness";
 import { join } from "path";
 
 const cc = Bun.which("clang") || Bun.which("gcc") || Bun.which("cc");

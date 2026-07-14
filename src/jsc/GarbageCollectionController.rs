@@ -39,6 +39,8 @@ pub struct GarbageCollectionController {
     pub gc_timer_interval: i32,
     pub gc_repeating_timer_fast: bool,
     pub disabled: bool,
+    /// A finished HTTP transaction wants the heap looked at; see `request_hint`.
+    hint_pending: bool,
 }
 
 bun_event_loop::impl_timer_owner!(
@@ -59,6 +61,7 @@ impl Default for GarbageCollectionController {
             gc_timer_interval: 0,
             gc_repeating_timer_fast: true,
             disabled: false,
+            hint_pending: false,
         }
     }
 }
@@ -121,6 +124,22 @@ impl GarbageCollectionController {
         }
 
         self.disabled = env.is_some_and(|e| e.has(b"BUN_GC_TIMER_DISABLE"));
+    }
+
+    /// A completed HTTP transaction asked us to look at the heap. We do not act here: the
+    /// response's JS handling and its microtasks have not run yet, so the garbage does not
+    /// exist to be measured. Acted on at the next event-loop park, by which point it does.
+    pub fn request_hint(&mut self) {
+        self.hint_pending = true;
+    }
+
+    /// Called just before the event loop blocks. Microtasks have drained by now.
+    pub fn drain_pending_hint(&mut self) {
+        if !self.hint_pending {
+            return;
+        }
+        self.hint_pending = false;
+        self.process_gc_timer();
     }
 
     pub fn schedule_gc_timer(&mut self) {

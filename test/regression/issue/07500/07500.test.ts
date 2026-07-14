@@ -1,9 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
-import { isOhos } from "harness";
 import { join } from "path";
 
-test.skipIf(isOhos)("7500 - Bun.stdin.text() doesn't read all data", async () => {
+test("7500 - Bun.stdin.text() doesn't read all data", async () => {
   const filename = join(tmpdirSync(), "bun.test.offset.txt");
   const text = "contents of file to be read with several lines of text and lots and lots and lots and lots of bytes! "
     .repeat(1000)

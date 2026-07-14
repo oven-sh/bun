@@ -647,6 +647,10 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
     line_in = line.oneBasedInt();
     column_in = column.oneBasedInt();
 
+    // materializeErrorInfoIfNeeded putDirect()s this unconditionally; an empty JSValue
+    // in property storage crashes the next read. https://github.com/oven-sh/bun/issues/34095
+    if (!result) [[unlikely]]
+        return jsUndefined();
     return result;
 }
 

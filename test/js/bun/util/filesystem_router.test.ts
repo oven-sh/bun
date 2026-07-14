@@ -777,13 +777,44 @@ it("match() does not panic on a leading '?' or a path that percent-decodes to em
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
+  // These inputs do not start with '/', so they are not valid path strings and
+  // must not match any route (including the index route). The subprocess still
+  // proves the original invariant: no panic on degenerate input.
   expect(JSON.parse(stdout.trim())).toEqual({
-    "?": { name: "/", query: {} },
-    "?foo=bar": { name: "/", query: { foo: "bar" } },
-    "%PUBLIC_URL%": { name: "/", query: {} },
-    "%PUBLIC_URL%?x=1": { name: "/", query: { x: "1" } },
+    "?": null,
+    "?foo=bar": null,
+    "%PUBLIC_URL%": null,
+    "%PUBLIC_URL%?x=1": null,
   });
   expect(exitCode).toBe(0);
+});
+
+it("match() returns null when the path string does not start with '/'", () => {
+  const { dir } = make(["index.tsx", "top.tsx", "op.tsx", "sub/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  // Control: '/'-prefixed inputs resolve.
+  expect(router.match("/top")?.name).toBe("/top");
+  expect(router.match("/op")?.name).toBe("/op");
+  expect(router.match("/sub/x")).toMatchObject({ name: "/sub/[id]", params: { id: "x" } });
+  expect(router.match("/")?.name).toBe("/");
+  expect(router.match("/?q=1")).toMatchObject({ name: "/", query: { q: "1" } });
+  expect(router.match("")?.name).toBe("/");
+
+  // URLPath::parse used to strip byte 0 unconditionally, so any single junk byte
+  // in the '/' position produced a match against the rest of the string.
+  for (const input of ["Xtop", " top", "\ttop", "\\top", ".top", "%58top", "%2Ftop"]) {
+    expect({ input, match: router.match(input) }).toEqual({ input, match: null });
+  }
+  // The bare name (no prefix at all) must not match either: previously "top"
+  // became "op" and matched the /op route.
+  expect(router.match("top")).toBeNull();
+  expect(router.match("ttop")).toBeNull();
+  // Dynamic routes were affected the same way.
+  expect(router.match("Xsub/x")).toBeNull();
+  expect(router.match("sub/x")).toBeNull();
+  // A leading '?' has no path component and must not fall through to index.
+  expect(router.match("?anything")).toBeNull();
 });
 
 it("reload() while Bun.build() resolves the same directory", async () => {

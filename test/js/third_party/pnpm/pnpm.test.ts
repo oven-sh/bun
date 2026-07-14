@@ -1,6 +1,5 @@
 import { expect, it } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { isOhos } from "harness";
 import { cpSync } from "node:fs";
 import * as path from "node:path";
 

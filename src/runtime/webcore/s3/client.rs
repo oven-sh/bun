@@ -1252,9 +1252,7 @@ pub fn readable_stream(
     let reader_mut = unsafe { &mut *reader };
 
     reader_mut.context.setup();
-    // SAFETY: `reader_mut` is the fresh heap allocation from `Source::new`
-    // above; no wrapper exists yet.
-    let readable_value = unsafe { reader_mut.to_readable_stream(global_this) }?;
+    let readable_value = reader_mut.to_readable_stream(global_this)?;
 
     let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {
         readable_stream_ref: ReadableStreamStrong::init(

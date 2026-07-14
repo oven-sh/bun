@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, isOhos, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -60,7 +60,7 @@ async function buildDeepTree(root: string, depth: number, segName: string, fileN
   expect(buildCode).toBe(0);
 }
 
-describe.skipIf(isWindows || isOhos)("Glob path length", () => {
+describe.skipIf(isWindows)("Glob path length", () => {
   test("deep directory tree does not overflow path buffer", async () => {
     const root = tmpdirSync("bun-glob-overflow-deep-");
     await buildDeepTree(root, 18, "D".repeat(255));

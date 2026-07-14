@@ -11,7 +11,7 @@
  * native toolchain instead.
  */
 import { describe, expect, test } from "bun:test";
-import { isOhos, isWindows, tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
@@ -74,7 +74,7 @@ function resolveWindowsCross(partial: PartialConfig = {}, toolchain = mockToolch
   );
 }
 
-describe.skipIf(isWindows || isOhos)("Windows cross-compile LTO config (non-windows host)", () => {
+describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)", () => {
   test("ci release x64 cross builds default to non-LTO; --lto=on opts into ThinLTO with cross-language LTO", () => {
     const cfg = resolveWindowsCross();
     expect(cfg.windows).toBe(true);

@@ -8,7 +8,6 @@ import {
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
-import { isOhos } from "harness";
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -55,7 +54,7 @@ it("TransformStream", async () => {
   expect(Buffer.concat(chunks).toString()).toEqual("helloworld");
 });
 
-describe.skipIf(isOhos)("readableStreamToFormData", () => {
+describe("readableStreamToFormData", () => {
   const fixtures = {
     withTextFile: [
       [
@@ -213,7 +212,7 @@ describe.skipIf(isOhos)("readableStreamToFormData", () => {
   });
 });
 
-describe.skipIf(isOhos)("WritableStream", () => {
+describe("WritableStream", () => {
   it("works", async () => {
     try {
       var chunks = [];
@@ -263,7 +262,7 @@ describe.skipIf(isOhos)("WritableStream", () => {
   });
 });
 
-describe.skipIf(isOhos)("ReadableStream.prototype.tee", () => {
+describe("ReadableStream.prototype.tee", () => {
   it("class", () => {
     const [a, b] = new ReadableStream().tee();
     expect(a instanceof ReadableStream).toBe(true);
@@ -574,7 +573,7 @@ it("ReadableStream (default)", async () => {
   expect(chunks[0].join("")).toBe(Buffer.from("abdefgh").join(""));
 });
 
-describe.skipIf(isOhos)("multi-chunk consumers produce exactly the concatenated bytes", () => {
+describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
   const source = chunks =>
     new ReadableStream({
       start(controller) {
@@ -1178,7 +1177,7 @@ it("readableStreamToBytes (default)", async () => {
   expect(new TextDecoder().decode(new Uint8Array(buffer))).toBe("abdefgh");
 });
 
-describe.skipIf(isOhos)("consuming an already-errored stream rejects instead of throwing", () => {
+describe("consuming an already-errored stream rejects instead of throwing", () => {
   const erroredStream = error =>
     new ReadableStream({
       start(controller) {
@@ -1890,7 +1889,7 @@ it("ReadableStream BYOB read pending at cancel() resolves with undefined", async
   await reader.closed;
 });
 
-describe.skipIf(isOhos)("pipeTo from a byte source", () => {
+describe("pipeTo from a byte source", () => {
   it("delivers the enqueued chunks and resolves", async () => {
     const rs = new ReadableStream({
       type: "bytes",
@@ -2020,7 +2019,7 @@ function serveStalledBody() {
   return { server, unpark };
 }
 
-test.skipIf(isOhos)("for await over a stream that errors natively includes async stack frames", async () => {
+test("for await over a stream that errors natively includes async stack frames", async () => {
   const { server, unpark } = serveStalledBody();
   async function level2() {
     const res = await fetch(server.url);
@@ -2049,7 +2048,7 @@ test.skipIf(isOhos)("for await over a stream that errors natively includes async
   expect(caught.stack).toContain("at async level1");
 });
 
-test.skipIf(isOhos)("pipeTo from a stream that errors natively includes async stack frames", async () => {
+test("pipeTo from a stream that errors natively includes async stack frames", async () => {
   const { server, unpark } = serveStalledBody();
   async function level2() {
     const res = await fetch(server.url);
@@ -2080,7 +2079,7 @@ test.skipIf(isOhos)("pipeTo from a stream that errors natively includes async st
 });
 
 // https://github.com/oven-sh/bun/issues/6860
-describe.skipIf(isOhos)("Bun.readableStreamTo* on an already used stream", () => {
+describe("Bun.readableStreamTo* on an already used stream", () => {
   const consumers = [
     "readableStreamToText",
     "readableStreamToArrayBuffer",
@@ -2136,7 +2135,7 @@ describe.skipIf(isOhos)("Bun.readableStreamTo* on an already used stream", () =>
 // Text assembly past the string limit must throw a catchable out-of-memory error, never
 // abort the process. The synthetic allocation limit makes the path testable without
 // multi-gigabyte inputs; a subprocess isolates the lowered limit.
-describe.skipIf(isOhos)("text consumers reject strings over the string allocation limit", () => {
+describe("text consumers reject strings over the string allocation limit", () => {
   const runInSubprocess = async source => {
     const script = `
       import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
@@ -2346,7 +2345,7 @@ it("TransformStreamDefaultController survives after a native sink tears down its
 
 // https://github.com/oven-sh/bun/pull/33193 — constructing any stream class with a newTarget
 // from a non-Zig realm (a node:vm context) must not downcast that realm's global object.
-test.skipIf(isOhos)("streams constructors survive a foreign-realm (node:vm) newTarget", async () => {
+test("streams constructors survive a foreign-realm (node:vm) newTarget", async () => {
   const script = `
     const vm = require("node:vm");
     const context = vm.createContext({});
@@ -2390,7 +2389,7 @@ test.skipIf(isOhos)("streams constructors survive a foreign-realm (node:vm) newT
 
 // https://github.com/oven-sh/bun/pull/33193 — TransferArrayBuffer must produce a
 // fixed-length buffer, or user resize() invalidates the byte controller's recorded sizes.
-test.skipIf(isOhos)("byte streams transfer resizable ArrayBuffers to fixed-length", async () => {
+test("byte streams transfer resizable ArrayBuffers to fixed-length", async () => {
   const script = `
     // BYOB read: the pull-into descriptor's transferred buffer must be fixed-length.
     {
@@ -2450,7 +2449,7 @@ test.skipIf(isOhos)("byte streams transfer resizable ArrayBuffers to fixed-lengt
 
 // https://github.com/oven-sh/bun/pull/33193 — the bulk drain must reset the queue BEFORE
 // the user pull(): reentrant enqueues must survive and a reentrant close() must take effect.
-describe.skipIf(isOhos)("bulk drain runs the user pull() against the already-reset queue", () => {
+describe("bulk drain runs the user pull() against the already-reset queue", () => {
   const makeSource = enqueue => {
     let pulls = 0;
     return {
@@ -2499,7 +2498,7 @@ describe.skipIf(isOhos)("bulk drain runs the user pull() against the already-res
 
 // https://github.com/oven-sh/bun/pull/33193 — a reentrant next()/return() from a
 // synchronous pull() must chain onto the in-flight iteration instead of racing it.
-describe.skipIf(isOhos)("ReadableStream async iterator reentrancy", () => {
+describe("ReadableStream async iterator reentrancy", () => {
   test("return() from inside a synchronous pull() does not crash", async () => {
     const script = `
       let it, phase = 0;

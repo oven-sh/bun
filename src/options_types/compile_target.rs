@@ -37,9 +37,7 @@ impl Default for CompileTarget {
                 tag: Default::default(),
                 _tag_padding: Default::default(),
             },
-            libc: if Environment::IS_OHOS {
-                Libc::Ohos
-            } else if Environment::IS_MUSL {
+            libc: if Environment::IS_MUSL {
                 Libc::Musl
             } else if Environment::IS_ANDROID {
                 Libc::Android
@@ -60,8 +58,6 @@ pub enum Libc {
     Musl,
     /// bionic (Android)
     Android,
-    /// HarmonyOS (OHOS) — musl-based, distinct npm package
-    Ohos,
 }
 
 impl Libc {
@@ -71,7 +67,6 @@ impl Libc {
             Libc::Default => "",
             Libc::Musl => "-musl",
             Libc::Android => "-android",
-            Libc::Ohos => "-ohos",
         }
     }
 }
@@ -118,9 +113,7 @@ impl CompileTarget {
 
     pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> crate::Result<&'a [u8]> {
         if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
-            if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://")
-                || strings::has_prefix(url, b"file://")
-            {
+            if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {
                 // The env var slice is `&'static [u8]`,
                 // which outlives `'a`, so return it directly instead of copying into `buf`.
                 return Ok(url);
@@ -312,10 +305,6 @@ impl CompileTarget {
                 this.libc = Libc::Android;
                 found_libc = true;
                 continue;
-            } else if token == b"ohos" {
-                this.libc = Libc::Ohos;
-                found_libc = true;
-                continue;
             } else {
                 return Err(ParseError::UnsupportedTarget);
             }
@@ -367,7 +356,6 @@ impl CompileTarget {
                         && token != b"baseline"
                         && token != b"musl"
                         && token != b"android"
-                        && token != b"ohos"
                         && !(strings::has_prefix(token, b"v1.")
                             || strings::has_prefix(token, b"v0."))
                     {
@@ -441,9 +429,8 @@ impl CompileTarget {
         // Use inline else to avoid extra allocations.
         match self.arch {
             Architecture::X64 => match self.libc {
-                // process.platform: Node reports "android" on Android, "ohos" on OHOS.
+                // process.platform: Node reports "android" on Android, not "linux".
                 Libc::Android => table!(b"\"android\"", b"\"x64\""),
-                Libc::Ohos => table!(b"\"ohos\"", b"\"x64\""),
                 _ => match self.os {
                     OperatingSystem::Mac => table!(b"\"darwin\"", b"\"x64\""),
                     OperatingSystem::Linux => table!(b"\"linux\"", b"\"x64\""),
@@ -454,7 +441,6 @@ impl CompileTarget {
             },
             Architecture::Arm64 => match self.libc {
                 Libc::Android => table!(b"\"android\"", b"\"arm64\""),
-                Libc::Ohos => table!(b"\"ohos\"", b"\"arm64\""),
                 _ => match self.os {
                     OperatingSystem::Mac => table!(b"\"darwin\"", b"\"arm64\""),
                     OperatingSystem::Linux => table!(b"\"linux\"", b"\"arm64\""),

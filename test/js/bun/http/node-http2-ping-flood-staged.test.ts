@@ -82,4 +82,8 @@ test("PING flood tears the session down at every stage (IPv4 loopback)", () => r
 // out there while the IPv4 variant passes. If the v6 loopback absorbs the
 // flood without ever jamming, no queue-depth guard (ours or nghttp2's) can
 // trip; this subtest measures whether the family is the variable.
-test.skipIf(!isIPv6())("PING flood tears the session down at every stage (IPv6 loopback)", () => runFloodStages("::1"), 45_000);
+test.skipIf(!isIPv6())(
+  "PING flood tears the session down at every stage (IPv6 loopback)",
+  () => runFloodStages("::1"),
+  45_000,
+);

@@ -14,7 +14,16 @@ function frame(len: number, type: number, flags: number, id: number, payload = B
   h.writeUInt32BE(id, 5);
   return Buffer.concat([h, payload]);
 }
-const TYPE_NAME: Record<number, string> = { 0: "DATA", 1: "HEADERS", 3: "RST", 4: "SETTINGS", 5: "PUSH_PROMISE", 6: "PING", 7: "GOAWAY", 8: "WINDOW_UPDATE" };
+const TYPE_NAME: Record<number, string> = {
+  0: "DATA",
+  1: "HEADERS",
+  3: "RST",
+  4: "SETTINGS",
+  5: "PUSH_PROMISE",
+  6: "PING",
+  7: "GOAWAY",
+  8: "WINDOW_UPDATE",
+};
 
 test("DATA on a reserved push stream is refused with RST(STREAM_CLOSED) (event-taped)", async () => {
   const tape: string[] = [];
@@ -33,7 +42,12 @@ test("DATA on a reserved push stream is refused with RST(STREAM_CLOSED) (event-t
     while (sawPreface && buf.length >= 9) {
       const len = buf.readUIntBE(0, 3);
       if (buf.length < 9 + len) break;
-      const f = { type: buf.readUInt8(3), flags: buf.readUInt8(4), id: buf.readUInt32BE(5) & 0x7fffffff, payload: Buffer.from(buf.subarray(9, 9 + len)) };
+      const f = {
+        type: buf.readUInt8(3),
+        flags: buf.readUInt8(4),
+        id: buf.readUInt32BE(5) & 0x7fffffff,
+        payload: Buffer.from(buf.subarray(9, 9 + len)),
+      };
       buf = buf.subarray(9 + len);
       frames.push(f);
       t(`recv:${TYPE_NAME[f.type] ?? f.type}#${f.id}`);

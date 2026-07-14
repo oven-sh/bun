@@ -41,11 +41,23 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
    * https://github.com/libuv/libuv/blob/v1.x/docs/src/poll.rst (UV_DISCONNECT
    * is Windows-only and best-effort; readable polling stays the primary
    * signal). */
+  int eof = status == UV_EOF;
   if (events & UV_DISCONNECT) {
-    uv_poll_start(p, us_poll_events((struct us_poll_t *)p->data), poll_cb);
+    struct us_poll_t *wp = (struct us_poll_t *)p->data;
+    uv_poll_start(p, us_poll_events(wp), poll_cb);
     events |= UV_READABLE;
+    /* For a socket whose write side we already shut down, AFD delivers no
+     * readable event for the peer's FIN at all - the exact half-closed state
+     * that hung server.close() - and with our writes closed there is no
+     * data-bearing flow left that an early EOF could truncate. Only there is
+     * DISCONNECT mapped to the eof hint (like kqueue's EV_EOF); every other
+     * socket keeps recv()-owned EOF discovery so mid-stream transfers are
+     * never cut at an EAGAIN. */
+    if ((us_internal_poll_type(wp) & POLL_TYPE_KIND_MASK) == POLL_TYPE_SOCKET_SHUT_DOWN) {
+      eof = 1;
+    }
   }
-  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, status < 0 && status != UV_EOF, status == UV_EOF,
+  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, status < 0 && status != UV_EOF, eof,
                                   events);
 }
 

@@ -1093,9 +1093,7 @@ impl Listener {
                     }
                     None => false,
                 },
-                UnixOrHost::Fd(fd) if fd.kind() == bun_core::FdKind::System => {
-                    false
-                }
+                UnixOrHost::Fd(fd) if fd.kind() == bun_core::FdKind::System => false,
                 UnixOrHost::Fd(fd) => {
                     let uvfd = fd.uv();
                     let fd_type = uv::uv_guess_handle(uvfd);

@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, nodeExe, tempDir } from "harness";
 
-
 const node = nodeExe();
 
 describe.skipIf(isWindows)("process.send(message, handle)", () => {

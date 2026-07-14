@@ -60,7 +60,7 @@ struct HttpResponseData;
 
 
     /* We require at least this much post padding */
-    static const unsigned int MINIMUM_HTTP_POST_PADDING = 32;
+    inline constexpr unsigned int MINIMUM_HTTP_POST_PADDING = 32;
 
     /* Monotonic millisecond clock used for the node:http headers/request
      * timeout tracking (HttpResponseData::lastMessageStartMs). Kept separate

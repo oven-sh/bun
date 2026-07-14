@@ -40,7 +40,7 @@ namespace uWS {
 template <bool, bool, typename> struct WebSocketContext;
 
 /* Some pre-defined status constants to use with writeStatus */
-static const char *HTTP_200_OK = "200 OK";
+inline constexpr const char* HTTP_200_OK = "200 OK";
 
 template <bool SSL>
 struct HttpResponse : public AsyncSocket<SSL> {

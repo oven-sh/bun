@@ -990,6 +990,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
         // SAFETY: `loop_` is the live per-thread uws loop.
         if unsafe { (*loop_).is_active() } {
+            // Before `get_timeout`, not after: both of these can arm the GC timer, and a
+            // timer armed after the poll deadline is computed is not in that deadline.
+            // SAFETY: `el` is the live per-thread event loop.
+            unsafe { (*el).drain_pending_gc_hint() };
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
             // Note (§Forbidden aliased-&mut): `get_timeout` may fire a
@@ -1001,6 +1005,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             // `timer::All::get_timeout` forms short-lived `&mut` only around
             // heap ops that cannot re-enter JS, releasing the borrow before
             // invoking `fire()`.
+            // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
+            // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
+            // and so is the hook: NOW_NS_UNKNOWN means it took none.
+            let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; the
             // `timer` field address is stable for the VM lifetime.
             let have_timeout = unsafe {
@@ -1010,11 +1018,14 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                     has_pending_immediate,
                     quic_next_tick_us,
                     vm.cast(),
+                    &mut now,
                 )
             };
+            let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
+                (*loop_)
+                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
             };
         } else {
             // SAFETY: `loop_` is the live per-thread uws loop.
@@ -1113,8 +1124,15 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
         // SAFETY: `loop_` is the live per-thread uws loop.
         if unsafe { (*loop_).is_active() } {
+            // Before `get_timeout` — see the matching call in `auto_tick`.
+            // SAFETY: `el` is the live per-thread event loop.
+            unsafe { (*el).drain_pending_gc_hint() };
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
+            // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
+            // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
+            // and so is the hook: NOW_NS_UNKNOWN means it took none.
+            let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; see
             // Note on `auto_tick` re: aliased-&mut across `fire()`.
             let have_timeout = unsafe {
@@ -1124,11 +1142,14 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                     has_pending_immediate,
                     quic_next_tick_us,
                     vm.cast(),
+                    &mut now,
                 )
             };
+            let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
+                (*loop_)
+                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
             };
         } else {
             // SAFETY: `loop_` is the live per-thread uws loop.

@@ -340,6 +340,8 @@ nativeTests.test_define_properties = () => {
   run("name=number", {}, "value", 5, "5");
   // name as a napi_value object (not a valid property name)
   run("name=object", {}, "value", { toString: () => "x" }, "x");
+  // utf8name with invalid bytes: decoded with U+FFFD replacement
+  run("utf8name=invalid", {}, "value", null, "\ufffd");
 
   // napi_define_class should also reject non-string/symbol property names
   for (const [label, name] of [

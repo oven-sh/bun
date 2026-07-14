@@ -239,6 +239,8 @@ static napi_value define_properties(const Napi::CallbackInfo &info) {
   desc.attributes = napi_default;
   if (name_arg.IsUndefined()) {
     desc.utf8name = "k";
+  } else if (name_arg.IsNull()) {
+    desc.utf8name = "\x80"; // lone continuation byte: invalid UTF-8
   } else {
     desc.name = name_arg;
   }

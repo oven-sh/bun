@@ -53,7 +53,6 @@
 #include "JSFFIFunction.h"
 #include <JavaScriptCore/JavaScript.h>
 #include "napi.h"
-#include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
@@ -308,7 +307,8 @@ napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_pro
 
     JSC::Identifier propertyName;
     if (property.utf8name != nullptr) {
-        propertyName = JSC::Identifier::fromString(vm, WTF::String::fromUTF8(property.utf8name).isolatedCopy());
+        auto span = std::span { reinterpret_cast<const Latin1Character*>(property.utf8name), strlen(property.utf8name) };
+        propertyName = JSC::Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(span).isolatedCopy());
     } else {
         if (!property.name) {
             return napi_name_expected;

@@ -116,12 +116,19 @@ bool Value::IsBigInt() const
 
 Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
 {
-    auto js_value = localToJSValue();
-    uint32_t value;
-    if (js_value.getUInt32(value)) {
-        return Just(value);
+    JSC::JSValue js_value = localToJSValue();
+    if (js_value.isInt32()) {
+        return Just(static_cast<uint32_t>(js_value.asInt32()));
     }
-    return Nothing<uint32_t>();
+    if (js_value.isDouble()) {
+        return Just(JSC::toUInt32(js_value.asDouble()));
+    }
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    uint32_t value = js_value.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, Nothing<uint32_t>());
+    return Just(value);
 }
 
 bool Value::StrictEquals(Local<Value> that) const

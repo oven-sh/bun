@@ -231,6 +231,36 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("can compare values using StrictEquals", async () => {
       await checkSameOutput("test_v8_strict_equals");
     });
+
+    describe("Uint32Value", () => {
+      it.each([
+        "[42]",
+        "[0]",
+        "[3.7]",
+        "[-1]",
+        "[-3.7]",
+        "[2 ** 32 - 1]",
+        "[2 ** 32]",
+        "[2 ** 32 + 5]",
+        "[NaN]",
+        "[Infinity]",
+        "[-Infinity]",
+        "['12']",
+        "['not a number']",
+        "[true]",
+        "[false]",
+        "[null]",
+        "[undefined]",
+        "[[7]]",
+        "[{}]",
+      ])("coerces %s like V8", async args => {
+        await checkSameOutput("perform_uint32_value", args);
+      });
+
+      it("runs valueOf and propagates its exception", async () => {
+        await checkSameOutput("test_v8_uint32_value_valueof");
+      });
+    });
   });
 
   describe("Object", () => {

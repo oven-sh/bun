@@ -1342,37 +1342,34 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
   // regular file owned by the current user, and a warning is printed so the
   // fallback is not silent. chown to another uid needs root, so exercise the
   // regular-file check via a directory named bunfig.toml.
-  it.skipIf(isWindows)(
-    "warns and ignores an ancestor bunfig.toml that is not a trusted regular file",
-    async () => {
-      const hits: string[] = [];
-      await using srv = registry(await makePkgTarball("GLOBAL"), hits);
+  it.skipIf(isWindows)("warns and ignores an ancestor bunfig.toml that is not a trusted regular file", async () => {
+    const hits: string[] = [];
+    await using srv = registry(await makePkgTarball("GLOBAL"), hits);
 
-      const { x_dir, env } = setup();
-      const home = tmpdirSync();
-      const cwd = join(x_dir, "work");
-      await mkdir(cwd, { recursive: true });
-      await mkdir(join(x_dir, "bunfig.toml"), { recursive: true });
-      await writeFile(join(home, ".bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:${srv.port}/"\n`);
+    const { x_dir, env } = setup();
+    const home = tmpdirSync();
+    const cwd = join(x_dir, "work");
+    await mkdir(cwd, { recursive: true });
+    await mkdir(join(x_dir, "bunfig.toml"), { recursive: true });
+    await writeFile(join(home, ".bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:${srv.port}/"\n`);
 
-      await using proc = spawn({
-        cmd: [bunExe(), "x", "px-probe"],
-        cwd,
-        stdout: "pipe",
-        stdin: "ignore",
-        stderr: "pipe",
-        env: bunxEnv(env, home),
-      });
-      const [err, out, exited] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    await using proc = spawn({
+      cmd: [bunExe(), "x", "px-probe"],
+      cwd,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: bunxEnv(env, home),
+    });
+    const [err, out, exited] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
 
-      expect(err).toContain("ignoring");
-      expect(err).toContain(join(x_dir, "bunfig.toml"));
-      expect(err).toContain("not a regular file owned by the current user");
-      expect(out.trim()).toBe("SERVED-BY-GLOBAL");
-      expect(hits).toEqual(["/px-probe", "/px-probe-1.0.0.tgz"]);
-      expect(exited).toBe(0);
-    },
-  );
+    expect(err).toContain("ignoring");
+    expect(err).toContain(join(x_dir, "bunfig.toml"));
+    expect(err).toContain("not a regular file owned by the current user");
+    expect(out.trim()).toBe("SERVED-BY-GLOBAL");
+    expect(hits).toEqual(["/px-probe", "/px-probe-1.0.0.tgz"]);
+    expect(exited).toBe(0);
+  });
 
   // A uid-owned symlink to a uid-owned regular file is accepted (dotfile
   // managers commonly symlink config files).

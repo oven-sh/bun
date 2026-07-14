@@ -52,6 +52,7 @@ static void init_debug_logging() {
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <arpa/inet.h>
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -1155,9 +1156,98 @@ int bsd_set_defer_accept(LIBUS_SOCKET_DESCRIPTOR listenFd) {
 #endif
 }
 
+/* Build a wildcard or numeric-IP bind address without calling getaddrinfo.
+ * Returns 1 and fills ai/ss on success, 0 if host is a name that needs resolution. */
+static int bsd_build_listen_addr(const char *host, int port, int family,
+                                 struct addrinfo *ai, struct sockaddr_storage *ss) {
+    memset(ss, 0, sizeof(*ss));
+    memset(ai, 0, sizeof(*ai));
+    ai->ai_addr = (struct sockaddr *) ss;
+    ai->ai_socktype = SOCK_STREAM;
+
+    if (family == AF_INET6) {
+        struct sockaddr_in6 *a6 = (struct sockaddr_in6 *) ss;
+        a6->sin6_family = AF_INET6;
+        a6->sin6_port = htons((unsigned short) port);
+#ifdef __APPLE__
+        a6->sin6_len = sizeof(*a6);
+#endif
+        if (host != NULL && inet_pton(AF_INET6, host, &a6->sin6_addr) != 1) {
+            return 0;
+        }
+        /* host == NULL leaves sin6_addr as in6addr_any (all-zero from memset). */
+        ai->ai_family = AF_INET6;
+        ai->ai_addrlen = sizeof(*a6);
+        return 1;
+    }
+
+    struct sockaddr_in *a4 = (struct sockaddr_in *) ss;
+    a4->sin_family = AF_INET;
+    a4->sin_port = htons((unsigned short) port);
+#ifdef __APPLE__
+    a4->sin_len = sizeof(*a4);
+#endif
+    if (host != NULL && inet_pton(AF_INET, host, &a4->sin_addr) != 1) {
+        return 0;
+    }
+    /* host == NULL leaves sin_addr as INADDR_ANY (0 from memset). */
+    ai->ai_family = AF_INET;
+    ai->ai_addrlen = sizeof(*a4);
+    return 1;
+}
+
+static LIBUS_SOCKET_DESCRIPTOR bsd_try_listen_addr(struct addrinfo *a, int port, int options, int *error) {
+    LIBUS_SOCKET_DESCRIPTOR listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
+    if (listenFd == LIBUS_SOCKET_ERROR) {
+        return LIBUS_SOCKET_ERROR;
+    }
+    if (bsd_bind_listen_fd(listenFd, a, port, options, error) != LIBUS_SOCKET_ERROR) {
+        return listenFd;
+    }
+    bsd_close_socket(listenFd);
+    return LIBUS_SOCKET_ERROR;
+}
+
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
+    /* Fast path for the wildcard and numeric-IP hosts: build the sockaddr
+     * directly instead of calling getaddrinfo. glibc's getaddrinfo runs an
+     * RFC 3484 source-address-selection probe (a UDP connect() per candidate)
+     * whenever it has more than one result to sort; under ephemeral-port or
+     * routing-cache pressure that connect() can fail EAGAIN and glibc's own
+     * IN6_IS_ADDR_V4MAPPED assertion in the probe bookkeeping abort()s the
+     * whole process. The listen path never needs the sort, and this also
+     * avoids a blocking resolver call on the main thread. */
+    struct addrinfo ai;
+    struct sockaddr_storage ss;
+
+    if (host == NULL) {
+        LIBUS_SOCKET_DESCRIPTOR listenFd;
+        if (bsd_build_listen_addr(NULL, port, AF_INET6, &ai, &ss)) {
+            listenFd = bsd_try_listen_addr(&ai, port, options, error);
+            if (listenFd != LIBUS_SOCKET_ERROR) {
+                return listenFd;
+            }
+        }
+        if (bsd_build_listen_addr(NULL, port, AF_INET, &ai, &ss)) {
+            listenFd = bsd_try_listen_addr(&ai, port, options, error);
+            if (listenFd != LIBUS_SOCKET_ERROR) {
+                return listenFd;
+            }
+        }
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    if (bsd_build_listen_addr(host, port, AF_INET6, &ai, &ss)) {
+        return bsd_try_listen_addr(&ai, port, options, error);
+    }
+    if (bsd_build_listen_addr(host, port, AF_INET, &ai, &ss)) {
+        return bsd_try_listen_addr(&ai, port, options, error);
+    }
+
+    /* Hostname (not a literal IP): fall back to getaddrinfo. Rare for listen
+     * sockets; Bun.serve's default and every IP hostname are handled above. */
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
@@ -1173,38 +1263,23 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
     }
 
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
-    struct addrinfo *listenAddr;
     for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
         if (a->ai_family == AF_INET6) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
-            if (listenFd == LIBUS_SOCKET_ERROR) {
-                continue;
-            }
-
-            listenAddr = a;
-            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options, error) != LIBUS_SOCKET_ERROR) {
+            listenFd = bsd_try_listen_addr(a, port, options, error);
+            if (listenFd != LIBUS_SOCKET_ERROR) {
                 freeaddrinfo(result);
                 return listenFd;
             }
-
-            bsd_close_socket(listenFd);
         }
     }
 
     for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
         if (a->ai_family == AF_INET) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
-            if (listenFd == LIBUS_SOCKET_ERROR) {
-                continue;
-            }
-
-            listenAddr = a;
-            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options, error) != LIBUS_SOCKET_ERROR) {
+            listenFd = bsd_try_listen_addr(a, port, options, error);
+            if (listenFd != LIBUS_SOCKET_ERROR) {
                 freeaddrinfo(result);
                 return listenFd;
             }
-
-            bsd_close_socket(listenFd);
         }
     }
 
@@ -1415,50 +1490,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     return listenFd;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
-    if (err != NULL) {
-        *err = 0;
-    }
-
-    struct addrinfo hints, *result;
-    memset(&hints, 0, sizeof(struct addrinfo));
-
-    hints.ai_flags = AI_PASSIVE;
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_DGRAM;
-
-    char port_string[16];
-    snprintf(port_string, 16, "%d", port);
-
-    int gai_result = getaddrinfo(host, port_string, &hints, &result);
-    if (gai_result != 0) {
-        if (err != NULL) {
-            *err = -gai_result;
-        }
-        return LIBUS_SOCKET_ERROR;
-    }
-
-    LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
-    struct addrinfo *listenAddr = NULL;
-    for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
-        if (a->ai_family == AF_INET6) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, err);
-            listenAddr = a;
-        }
-    }
-
-    for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
-        if (a->ai_family == AF_INET) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, err);
-            listenAddr = a;
-        }
-    }
-
-    if (listenFd == LIBUS_SOCKET_ERROR) {
-        freeaddrinfo(result);
-        return LIBUS_SOCKET_ERROR;
-    }
-
+static LIBUS_SOCKET_DESCRIPTOR bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR listenFd, int ai_family,
+                                               struct sockaddr *addr, socklen_t addrlen,
+                                               int options, int *err) {
     if (bsd_set_reuse(listenFd, options) != 0) {
         if (err != NULL) {
 #ifdef _WIN32
@@ -1468,12 +1502,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 #endif
         }
         bsd_close_socket(listenFd);
-        freeaddrinfo(result);
         return LIBUS_SOCKET_ERROR;
     }
 
 #ifdef IPV6_V6ONLY
-    if (listenAddr->ai_family == AF_INET6) {
+    if (ai_family == AF_INET6) {
         int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
         if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
             return LIBUS_SOCKET_ERROR;
@@ -1529,14 +1562,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     setsockopt(listenFd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
 #endif
 #ifdef IPV6_RECVERR
-    if (listenAddr->ai_family == AF_INET6) {
+    if (ai_family == AF_INET6) {
         setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
     }
 #endif
 #endif
 
     /* We bind here as well */
-    if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {
+    if (bind(listenFd, addr, addrlen)) {
         if (err != NULL) {
 #ifdef _WIN32
             *err = WSAGetLastError();
@@ -1545,18 +1578,106 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 #endif
         }
         bsd_close_socket(listenFd);
-        freeaddrinfo(result);
         return LIBUS_SOCKET_ERROR;
     }
 
-    freeaddrinfo(result);
     if (err != NULL) {
         *err = 0;
     }
     return listenFd;
 }
 
+LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
+    if (err != NULL) {
+        *err = 0;
+    }
+
+    /* Same glibc-getaddrinfo avoidance as bsd_create_listen_socket: wildcard
+     * and numeric-IP hosts go straight to a hand-built sockaddr. */
+    struct addrinfo ai;
+    struct sockaddr_storage ss;
+    LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
+
+    if (host == NULL) {
+        if (bsd_build_listen_addr(NULL, port, AF_INET6, &ai, &ss)) {
+            listenFd = bsd_create_socket(ai.ai_family, SOCK_DGRAM, 0, err);
+        }
+        if (listenFd == LIBUS_SOCKET_ERROR && bsd_build_listen_addr(NULL, port, AF_INET, &ai, &ss)) {
+            listenFd = bsd_create_socket(ai.ai_family, SOCK_DGRAM, 0, err);
+        }
+        if (listenFd == LIBUS_SOCKET_ERROR) {
+            return LIBUS_SOCKET_ERROR;
+        }
+        return bsd_bind_udp_fd(listenFd, ai.ai_family, ai.ai_addr, (socklen_t) ai.ai_addrlen, options, err);
+    }
+
+    if (bsd_build_listen_addr(host, port, AF_INET6, &ai, &ss) ||
+        bsd_build_listen_addr(host, port, AF_INET, &ai, &ss)) {
+        listenFd = bsd_create_socket(ai.ai_family, SOCK_DGRAM, 0, err);
+        if (listenFd == LIBUS_SOCKET_ERROR) {
+            return LIBUS_SOCKET_ERROR;
+        }
+        return bsd_bind_udp_fd(listenFd, ai.ai_family, ai.ai_addr, (socklen_t) ai.ai_addrlen, options, err);
+    }
+
+    struct addrinfo hints, *result;
+    memset(&hints, 0, sizeof(struct addrinfo));
+
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+
+    char port_string[16];
+    snprintf(port_string, 16, "%d", port);
+
+    int gai_result = getaddrinfo(host, port_string, &hints, &result);
+    if (gai_result != 0) {
+        if (err != NULL) {
+            *err = -gai_result;
+        }
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    struct addrinfo *listenAddr = NULL;
+    for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
+        if (a->ai_family == AF_INET6) {
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, err);
+            listenAddr = a;
+        }
+    }
+
+    for (struct addrinfo *a = result; a && listenFd == LIBUS_SOCKET_ERROR; a = a->ai_next) {
+        if (a->ai_family == AF_INET) {
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, err);
+            listenAddr = a;
+        }
+    }
+
+    if (listenFd == LIBUS_SOCKET_ERROR) {
+        freeaddrinfo(result);
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    listenFd = bsd_bind_udp_fd(listenFd, listenAddr->ai_family, listenAddr->ai_addr,
+                               (socklen_t) listenAddr->ai_addrlen, options, err);
+    freeaddrinfo(result);
+    return listenFd;
+}
+
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port) {
+    /* Numeric-IP fast path (see bsd_create_listen_socket for the why). */
+    if (host != NULL) {
+        struct addrinfo ai;
+        struct sockaddr_storage ss;
+        if (bsd_build_listen_addr(host, port, AF_INET6, &ai, &ss) ||
+            bsd_build_listen_addr(host, port, AF_INET, &ai, &ss)) {
+            if (connect(fd, ai.ai_addr, (socklen_t) ai.ai_addrlen) == 0) {
+                return 0;
+            }
+            return (int)LIBUS_SOCKET_ERROR;
+        }
+    }
+
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 

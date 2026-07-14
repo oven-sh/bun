@@ -1,21 +1,28 @@
 // Multi-worker shared-fd traffic + close: exercises DGRAM_FDS Owned/Adopted
-// and SharedHandle teardown. Unlike Node's test-cluster-dgram-1 this does not
-// assert per-worker counts — Bun batches recvmmsg so distribution is uneven.
+// and SharedHandle teardown. A regression removing the double-close guard
+// would EBADF an IPC pipe and hang this fixture.
+//
+// The invariant is that every worker can read from the one shared descriptor,
+// not that any particular datagram lands: UDP may drop, and which of the
+// readers wins a given packet is up to the kernel. So the sender retransmits
+// on an interval until each worker has reported its first packet, and each
+// worker reports exactly once -- a per-packet report makes the run a test of
+// IPC throughput rather than of the shared descriptor.
 import cluster from "node:cluster";
 import dgram from "node:dgram";
 
 const NUM_WORKERS = 4;
-const TOTAL_PACKETS = 40;
+const SEND_INTERVAL_MS = 2;
 
 if (cluster.isPrimary) {
   let listening = 0;
-  let received = 0;
+  const reported = new Set<number>();
   const workers: cluster.Worker[] = [];
   for (let i = 0; i < NUM_WORKERS; i++) workers.push(cluster.fork());
 
   const watchdog = setTimeout(() => {
     for (const w of workers) w.process.kill("SIGKILL");
-    console.error("timed out: workers received", received, "of", TOTAL_PACKETS);
+    console.error("timed out: workers that received traffic:", [...reported].join(",") || "(none)");
     process.exit(1);
   }, 30_000);
   watchdog.unref();
@@ -26,30 +33,19 @@ if (cluster.isPrimary) {
     if (++listening < NUM_WORKERS) return;
     // All workers share one fd; send everything at that port. The shared fd
     // binds INADDR_ANY, but sending to 0.0.0.0 is not portably deliverable.
-    // Datagrams may be dropped, so keep sending until the workers have
-    // actually received TOTAL_PACKETS rather than assuming every send lands.
     const sender = dgram.createSocket("udp4");
-    let sending = true;
+    const timer = setInterval(() => sender.send("hello", address.port, "127.0.0.1"), SEND_INTERVAL_MS);
     stopSending = () => {
-      if (!sending) return;
-      sending = false;
+      clearInterval(timer);
       sender.close();
     };
-    // setImmediate between sends: a send->callback->send chain never yields,
-    // so the primary would never process the workers' IPC reports.
-    (function next() {
-      if (!sending) return;
-      sender.send("hello", address.port, "127.0.0.1", () => setImmediate(next));
-    })();
   });
 
-  // In-flight worker reports keep arriving after the target is reached; only
-  // the first crossing may stop the sender and the workers.
   let stopped = false;
   for (const worker of workers) {
-    worker.on("message", (msg: { got: number }) => {
-      received += msg.got;
-      if (received < TOTAL_PACKETS || stopped) return;
+    worker.on("message", (msg: { id: number }) => {
+      reported.add(msg.id);
+      if (reported.size < NUM_WORKERS || stopped) return;
       stopped = true;
       stopSending();
       for (const w of workers) w.send("stop");
@@ -64,16 +60,18 @@ if (cluster.isPrimary) {
     }
     if (++exited === NUM_WORKERS) {
       // Primary must exit cleanly once every worker's shared handle is released.
-      console.log("ok: workers received", received, "packets across", NUM_WORKERS, "workers");
+      console.log("ok: all", NUM_WORKERS, "workers received traffic on the shared descriptor");
       clearTimeout(watchdog);
     }
   });
 } else {
   const socket = dgram.createSocket("udp4");
-  let got = 0;
+  const id = cluster.worker!.id;
+  let announced = false;
   socket.on("message", () => {
-    got++;
-    process.send!({ got: 1 });
+    if (announced) return;
+    announced = true;
+    process.send!({ id });
   });
   let stopping = false;
   process.on("message", msg => {

@@ -13,6 +13,7 @@
 #include <bun-uws/src/App.h>
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
+extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
 extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBuffer);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
@@ -117,6 +118,11 @@ void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody)
         upgradeToTunnelModeImpl<true>(socket, afterBody);
     } else {
         upgradeToTunnelModeImpl<false>(socket, afterBody);
+    }
+    /* The exchange leaves HTTP here: let the response release the server's
+     * pending-request accounting (see Flags::TUNNELED in NodeHTTPResponse.rs). */
+    if (auto* res = currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+        Bun__NodeHTTPResponse_markTunneled(res->m_ctx);
     }
 }
 

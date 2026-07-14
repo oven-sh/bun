@@ -3305,6 +3305,35 @@ it("HEAD response with explicit chunked TE carries no terminating chunk", async 
   }
 });
 
+// https://github.com/oven-sh/bun/issues/34158
+it("server.close(cb) completes after a raw upgrade once both sockets are destroyed", async () => {
+  // Node v26.3.0 contract (verified): after the 'upgrade' handoff, destroying
+  // both ends of the tunneled connection lets server.close(cb) fire promptly.
+  const server = createServer();
+  let serverSocket: import("node:net").Socket;
+  server.on("upgrade", (req, socket) => {
+    serverSocket = socket;
+    socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: WebSocket\r\n\r\n");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const request = http.get({
+    host: "127.0.0.1",
+    port,
+    headers: { Connection: "Upgrade", Upgrade: "WebSocket" },
+  });
+  request.on("error", () => {});
+  const [, clientSocket] = (await once(request, "upgrade")) as [unknown, import("node:net").Socket];
+
+  clientSocket.destroy();
+  serverSocket!.destroy();
+  const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+  server.close(() => onClosed());
+  await closed;
+});
+
 it("req.upgrade is true inside the 'connect' listener", async () => {
   let upgradeValue: unknown = "unset";
   const { promise: sawConnect, resolve: onConnect } = Promise.withResolvers<void>();

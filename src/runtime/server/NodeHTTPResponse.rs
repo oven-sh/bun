@@ -76,7 +76,7 @@ pub struct NodeHTTPResponse {
 bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub struct Flags: u8 {
+    pub struct Flags: u16 {
         const SOCKET_CLOSED                       = 1 << 0;
         const REQUEST_HAS_COMPLETED               = 1 << 1;
         const ENDED                               = 1 << 2;
@@ -86,6 +86,9 @@ bitflags! {
         const IS_DATA_BUFFERED_DURING_PAUSE       = 1 << 6;
         /// Did we receive the last chunk of data during pause?
         const IS_DATA_BUFFERED_DURING_PAUSE_LAST  = 1 << 7;
+        /// node:http handed this connection to a raw 'upgrade'/'connect'
+        /// tunnel (JSNodeHTTPServerSocket::upgradeToTunnelMode).
+        const TUNNELED                            = 1 << 8;
     }
 }
 
@@ -587,6 +590,13 @@ impl NodeHTTPResponse {
             return false;
         }
 
+        // A raw 'upgrade'/'connect' tunnel handoff ends the HTTP exchange the
+        // same way, except an Upgrade carrying a body keeps parsing as HTTP
+        // until the body's fin chunk (the actual tunnel start).
+        if flags.contains(Flags::TUNNELED) {
+            return self.body_read_state.get() == BodyReadState::Pending;
+        }
+
         if flags.contains(Flags::ENDED) {
             return self.body_read_state.get() == BodyReadState::Pending;
         }
@@ -656,7 +666,7 @@ impl NodeHTTPResponse {
         self.deref();
     }
 
-    fn mark_request_as_done_if_necessary(&self) {
+    pub(crate) fn mark_request_as_done_if_necessary(&self) {
         if self.flags.get().contains(Flags::IS_REQUEST_PENDING) && !self.should_request_be_pending()
         {
             self.mark_request_as_done();
@@ -1252,6 +1262,14 @@ impl NodeHTTPResponse {
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_setClosed", no_catch)]
     pub(crate) fn set_closed(&self) {
         self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
+    }
+
+    /// Flag-only: the pending-request release happens deterministically in
+    /// the dispatch tail (`on_node_http_request*` in `mod.rs`) or, for an
+    /// Upgrade with a body, at the body's fin chunk.
+    #[uws::uws_callback(export = "Bun__NodeHTTPResponse_markTunneled", no_catch)]
+    pub(crate) fn mark_tunneled(&self) {
+        self.update_flags(|f| f.insert(Flags::TUNNELED));
     }
 
     pub(crate) fn on_timeout(&self, _resp: uws::AnyResponse) {
@@ -2283,7 +2301,10 @@ impl NodeHTTPResponse {
         let flags = self.flags.get();
         debug_assert!(!flags.contains(Flags::IS_REQUEST_PENDING));
         debug_assert!(
-            flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::REQUEST_HAS_COMPLETED)
+            flags.contains(Flags::SOCKET_CLOSED)
+                || flags.contains(Flags::REQUEST_HAS_COMPLETED)
+                // A tunneled response can be finalized while its socket lives.
+                || flags.contains(Flags::TUNNELED)
         );
 
         self.buffered_request_body_data_during_pause

@@ -1368,6 +1368,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         nhr.maybe_stop_reading_body(unsafe { &mut *vm }, this_value);
                     }
                 }
+                if nhr_flags.contains(NhrFlags::TUNNELED) {
+                    // Raw 'upgrade'/'connect' handoff: the exchange left HTTP, so
+                    // release the pending-request accounting now - a half-open
+                    // tunnel never closes, which stranded `pending_requests`.
+                    nhr.mark_request_as_done_if_necessary();
+                }
             } else if nhr_flags.contains(NhrFlags::IS_REQUEST_PENDING) {
                 // The socket was adopted by the WebSocket context inside the
                 // handler; `raw_response` is gone and no further uws abort/end
@@ -2058,6 +2064,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             websocket.global_object =
                 bun_ptr::BackRef::new(bun_opaque::opaque_deref(self.global_this));
             websocket.handler.app = Some(std::ptr::from_mut(app).cast::<c_void>());
+            websocket.handler.server = Some(any_server);
             websocket
                 .handler
                 .flags
@@ -3520,6 +3527,10 @@ impl AnyServer {
 
     pub fn on_static_request_complete(&mut self) {
         any_server_dispatch_mut!(self, |s| s.on_static_request_complete())
+    }
+
+    pub fn deinit_if_we_can(&mut self) {
+        any_server_dispatch_mut!(self, |s| s.deinit_if_we_can())
     }
 
     pub fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {

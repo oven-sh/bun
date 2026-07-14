@@ -778,7 +778,7 @@ function getVerifyBaselineStep(platform, options) {
           // sha256 check makes a truncated/hijacked download a hard failure before anything runs under it.
           ...(emulator === PINNED_QEMU_X64.path
             ? [
-                `curl -fsSL --retry 5 -o ${PINNED_QEMU_X64.path} '${PINNED_QEMU_X64.url}'`,
+                `curl -fsSL --retry 5 --connect-timeout 15 --max-time 60 -o ${PINNED_QEMU_X64.path} '${PINNED_QEMU_X64.url}'`,
                 `echo '${PINNED_QEMU_X64.sha256}  ${PINNED_QEMU_X64.path}' | sha256sum -c -`,
                 `chmod +x ${PINNED_QEMU_X64.path}`,
               ]

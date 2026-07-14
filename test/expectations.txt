@@ -283,19 +283,3 @@ test/js/node/test/parallel/test-http2-pipe.js [ FLAKY ]
 # node:http servers cannot listen on Windows named pipes yet (ENOENT from
 # uv_pipe bind), so common.PIPE-based http tests cannot run there.
 [ WINDOWS ] test/js/node/test/parallel/test-http-unix-socket-keep-alive.js [ FAIL ] # named-pipe listen unsupported
-
-# node:quic — two verbatim Node v26.3.0 tests bun cannot pass:
-#
-# test-quic-reject-unauthorized relies on Node discarding the client's TLS
-# Finished when close() runs in the same event-loop turn as handshake
-# completion, so the server never completes and its `opened` rejects. lsquic
-# flushes the handshake inside process_conns, so the server always completes
-# and `opened` resolves; the test's `rejects(serverSession.opened)` then throws
-# inside the onsession callback. Not emulatable without engine changes.
-test/js/node/test/parallel/test-quic-reject-unauthorized.mjs [ FAIL ] # server handshake completes where node's does not
-#
-# test-quic-stream-body-pooled-buffer's own precondition needs Buffer.from(string)
-# to be pooled (to share a larger ArrayBuffer). Bun allocates exact-size buffers,
-# so the buffer it asserts on is never a view into a pool. A Buffer
-# allocation-strategy question, not a QUIC one.
-test/js/node/test/parallel/test-quic-stream-body-pooled-buffer.mjs [ FAIL ] # bun does not pool Buffer.from(string)

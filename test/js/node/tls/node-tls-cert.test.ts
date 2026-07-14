@@ -630,7 +630,7 @@ it("tls.connect should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
 
   const results = await Promise.all(
     ["not-exist.pem", "", " "].map(async invalid => {
-      await using proc = Bun.spawn({
+      const proc = Bun.spawn({
         env: {
           ...bunEnv,
           SERVER_PORT: server.address.port.toString(),
@@ -667,7 +667,7 @@ it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", 
 
   const results = await Promise.all(
     [mixedValidAndInvalidCertsBundlePath, mixedInvalidAndValidCertsBundlePath].map(async invalid => {
-      await using proc = Bun.spawn({
+      const proc = Bun.spawn({
         env: {
           ...bunEnv,
           SERVER_PORT: server.address.port.toString(),

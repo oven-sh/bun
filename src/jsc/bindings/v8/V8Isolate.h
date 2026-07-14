@@ -23,6 +23,7 @@ public:
     static constexpr int kNullValueRootIndex = 2;
     static constexpr int kTrueValueRootIndex = 3;
     static constexpr int kFalseValueRootIndex = 4;
+    static constexpr int kEmptyStringRootIndex = 5;
 
     Isolate(shim::GlobalInternals* globalInternals);
 
@@ -47,6 +48,8 @@ public:
 
     TaggedPointer* falseSlot() { return &m_roots[Isolate::kFalseValueRootIndex]; }
 
+    TaggedPointer* emptyStringSlot() { return &m_roots[Isolate::kEmptyStringRootIndex]; }
+
     shim::GlobalInternals* m_globalInternals;
     Zig::GlobalObject* m_globalObject;
 
@@ -55,7 +58,7 @@ public:
     // (kExternalEntityTableSize) into the isolate-data layout ahead of the roots array.
     uintptr_t m_padding[84];
 
-    std::array<TaggedPointer, 5> m_roots;
+    std::array<TaggedPointer, kEmptyStringRootIndex + 1> m_roots;
 };
 
 } // namespace v8

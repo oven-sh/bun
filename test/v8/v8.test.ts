@@ -201,6 +201,12 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("can create and read back strings with only ASCII characters", async () => {
       await checkSameOutput("test_v8_string_ascii");
     });
+    it("String::Empty returns an empty string", async () => {
+      await checkSameOutput("test_v8_string_empty");
+    });
+    it("ReturnValue::SetEmptyString returns an empty string to JS", async () => {
+      await checkSameOutput("test_v8_return_value_set_empty_string");
+    });
     // non-ASCII strings are not implemented yet
     it("can create and read back strings with UTF-8 characters", async () => {
       await checkSameOutput("test_v8_string_utf8");

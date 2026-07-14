@@ -5,6 +5,7 @@
 
 #include "../V8Isolate.h"
 #include "Oddball.h"
+#include "Handle.h"
 
 namespace v8 {
 
@@ -104,6 +105,9 @@ private:
     Oddball m_nullValue;
     Oddball m_trueValue;
     Oddball m_falseValue;
+    // Backing object for Isolate::kEmptyStringRootIndex (String::Empty / ReturnValue::SetEmptyString
+    // read it via inline addon code). Populated in finishCreation.
+    ObjectLayout m_emptyString;
 
     Isolate m_isolate;
 

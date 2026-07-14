@@ -497,8 +497,13 @@ unsafe fn init_runtime_state(
 /// thread. Must run after [`configure_debugger`] so the `vm.debugger.is_some()`
 /// check reflects `--inspect*` flags.
 ///
+/// The per-VM trap callback is NOT installed here: `init_runtime_state` fires
+/// before `vm.jsc_vm` is set (same ordering as the `ParentDeathWatchdog` note
+/// above). It is installed lazily in `request_inspector_activation()` once
+/// `jsc_vm` is available.
+///
 /// # Safety
-/// `vm` is the freshly-boxed unique VM on this thread; `jsc_vm` is set.
+/// `vm` is the freshly-boxed unique VM on this thread.
 unsafe fn configure_sigusr1_handler(vm: *mut VirtualMachine, opts: &InitOptions) {
     // SAFETY: per fn contract.
     if !unsafe { (*vm).is_main_thread } {
@@ -507,14 +512,20 @@ unsafe fn configure_sigusr1_handler(vm: *mut VirtualMachine, opts: &InitOptions)
     use bun_jsc::runtime_inspector;
     // SAFETY: per fn contract.
     unsafe { (*vm).inspect_port = opts.inspect_port };
+    // On platforms where JSC's GC uses SIGUSR1 for thread suspend/resume
+    // (e.g. FreeBSD), replacing that handler would hang the first
+    // conservative stack scan. Leave the GC handler in place; runtime
+    // activation via `process._debugProcess` (Windows-style file mapping is
+    // not available here either) is simply unsupported on those platforms.
+    if runtime_inspector::gc_owns_sigusr1() {
+        return;
+    }
     if opts.disable_sigusr1 {
         runtime_inspector::set_default_sigusr1_action();
     } else if unsafe { (*vm).debugger.is_some() } {
         runtime_inspector::ignore_sigusr1();
     } else {
         runtime_inspector::install_if_not_already();
-        // SAFETY: `jsc_vm` set in `VirtualMachine::init`; live for process.
-        unsafe { runtime_inspector::install_debugger_trap_callback((*vm).jsc_vm) };
     }
 }
 

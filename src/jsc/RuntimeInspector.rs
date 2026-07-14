@@ -32,17 +32,11 @@ static ACTIVATION_REQUESTED: AtomicBool = AtomicBool::new(false);
 unsafe extern "C" {
     fn Bun__installDebuggerTrapCallback(vm: *mut VM);
     fn Bun__activateRuntimeInspectorMode();
+    #[cfg(unix)]
+    fn Bun__gcSuspendResumeSignal() -> core::ffi::c_int;
 }
 
-/// Arm the per-VM trap callback on the main JSC VM. Call once, after VM init,
-/// when the signal handler is installed.
-///
-/// # Safety
-/// `vm` must be the main VM's `JSC::VM*`, live for process lifetime.
-pub unsafe fn install_debugger_trap_callback(vm: *mut VM) {
-    // SAFETY: per fn contract.
-    unsafe { Bun__installDebuggerTrapCallback(vm) };
-}
+static TRAP_CALLBACK_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 /// Called from the SignalInspector thread (POSIX) or remote thread (Windows).
 /// Runs in normal thread context, so calling thread-safe JSC APIs is fine.
@@ -52,16 +46,34 @@ fn request_inspector_activation() {
     let Some(vm) = VirtualMachine::get_main_thread_vm() else {
         return;
     };
-    // SAFETY: main VM pointer is valid for process lifetime; `jsc_vm` is set
-    // in `VirtualMachine::init`. `notifyNeedDebuggerBreak` is CONCURRENT_SAFE
-    // and `EventLoop::wakeup` is safe to call from any thread.
+    // SAFETY: main VM pointer is valid for process lifetime. `jsc_vm` may be
+    // null only if SIGUSR1 arrives during the tiny window before
+    // `VirtualMachine::init` writes it; in that case the event-loop wakeup
+    // path below still activates via `check_and_activate_inspector`.
+    // `setDebuggerTrapCallback` and `notifyNeedDebuggerBreak` are
+    // CONCURRENT_SAFE; `EventLoop::wakeup` is safe from any thread.
     unsafe {
         let jsc_vm = (*vm).jsc_vm;
         if !jsc_vm.is_null() {
+            if !TRAP_CALLBACK_INSTALLED.swap(true, Ordering::AcqRel) {
+                Bun__installDebuggerTrapCallback(jsc_vm);
+            }
             VM::opaque_ref(jsc_vm).notify_need_debugger_break();
         }
         (*(*vm).event_loop()).wakeup();
     }
+}
+
+/// True on platforms where JSC's GC thread-suspend/resume handler owns
+/// SIGUSR1 (e.g. FreeBSD); installing our handler there would hang GC.
+pub fn gc_owns_sigusr1() -> bool {
+    #[cfg(unix)]
+    {
+        // SAFETY: pure read of g_wtfConfig.
+        return unsafe { Bun__gcSuspendResumeSignal() } == libc::SIGUSR1;
+    }
+    #[allow(unreachable_code)]
+    false
 }
 
 /// Called on the main thread from the event loop tick. Handles the idle-VM
@@ -72,6 +84,19 @@ pub fn check_and_activate_inspector() {
         return;
     }
     if try_activate_inspector() {
+        // Arm the trap callback for subsequent CDP message delivery; on this
+        // path the initial activation didn't go through the trap.
+        if !TRAP_CALLBACK_INSTALLED.swap(true, Ordering::AcqRel) {
+            if let Some(vm) = VirtualMachine::get_main_thread_vm() {
+                // SAFETY: main-thread; `jsc_vm` set by the time the event
+                // loop ticks.
+                let jsc_vm = unsafe { (*vm).jsc_vm };
+                if !jsc_vm.is_null() {
+                    // SAFETY: `jsc_vm` is the live main JSC::VM*.
+                    unsafe { Bun__installDebuggerTrapCallback(jsc_vm) };
+                }
+            }
+        }
         // SAFETY: pure C++ atomic store.
         unsafe { Bun__activateRuntimeInspectorMode() };
     }
@@ -137,8 +162,6 @@ unsafe fn activate_inspector(vm: *mut VirtualMachine) -> crate::CrateResult<()> 
         (saved, (*vm).global())
     };
 
-    crate::runtime_transpiler_cache::IS_DISABLED.store(true, Ordering::Relaxed);
-
     if let Err(e) = Debugger::create(vm, global) {
         // SAFETY: `vm` still valid; restore state on failure.
         unsafe {
@@ -151,6 +174,7 @@ unsafe fn activate_inspector(vm: *mut VirtualMachine) -> crate::CrateResult<()> 
         }
         return Err(e);
     }
+    crate::runtime_transpiler_cache::IS_DISABLED.store(true, Ordering::Relaxed);
     Ok(())
 }
 

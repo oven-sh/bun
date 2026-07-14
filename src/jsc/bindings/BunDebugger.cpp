@@ -871,11 +871,21 @@ static void onDebuggerTrap(JSC::VM& vm)
 
 extern "C" void Bun__installDebuggerTrapCallback(JSC::VM* vm)
 {
+    ASSERT(vm);
     vm->setDebuggerTrapCallback(onDebuggerTrap);
 }
 
 extern "C" void Bun__activateRuntimeInspectorMode()
 {
     runtimeInspectorActivated.store(true);
+}
+
+extern "C" int Bun__gcSuspendResumeSignal()
+{
+#if OS(WINDOWS) || OS(DARWIN)
+    return 0;
+#else
+    return g_wtfConfig.sigThreadSuspendResume;
+#endif
 }
 }

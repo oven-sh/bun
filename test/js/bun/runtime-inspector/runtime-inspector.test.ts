@@ -61,7 +61,7 @@ async function waitForDebuggerListening(
 // Windows uses file mapping mechanism, POSIX uses SIGUSR1
 describe("Runtime inspector activation", () => {
   describe("process._debugProcess", () => {
-    test.skipIf(isASAN)("activates inspector in target process", async () => {
+    test("activates inspector in target process", async () => {
       // Start target process - prints PID to stdout then stays alive
       await using targetProc = spawn({
         cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
@@ -317,7 +317,7 @@ describe("Runtime inspector activation", () => {
       expect(targetStderr).toMatch(/ws:\/\/localhost:\d+\//);
     });
 
-    test.skip("can pause execution during while(true) via CDP", async () => {
+    test("can pause execution during while(true) via CDP", async () => {
       // Start target process with infinite loop
       await using targetProc = spawn({
         cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); while (true) {}`],

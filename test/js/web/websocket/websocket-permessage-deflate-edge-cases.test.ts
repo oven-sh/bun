@@ -2,7 +2,7 @@ import { serve } from "bun";
 import { expect, setDefaultTimeout, test } from "bun:test";
 import crypto from "node:crypto";
 import net from "node:net";
-import { constants as zc, deflateRawSync } from "node:zlib";
+import { deflateRawSync, constants as zc } from "node:zlib";
 
 // The decompression bomb test needs extra time to compress 150MB of test data
 setDefaultTimeout(30_000);
@@ -520,7 +520,10 @@ test.each([false, true])(
         pre = Buffer.concat([pre, d]);
         if (pre.indexOf("\r\n\r\n") < 0) return;
         sock.off("data", onData);
-        const key = pre.toString("latin1").match(/^sec-websocket-key:\s*(.*)$/im)![1].trim();
+        const key = pre
+          .toString("latin1")
+          .match(/^sec-websocket-key:\s*(.*)$/im)![1]
+          .trim();
         const acc = crypto
           .createHash("sha1")
           .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")

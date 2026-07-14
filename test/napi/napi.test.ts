@@ -1323,6 +1323,27 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("napi_detach_arraybuffer", () => {
+    it("rejects SharedArrayBuffer instead of returning napi_ok for a no-op detach", async () => {
+      // napi_ok on a SharedArrayBuffer is a memory-lifetime lie: the addon
+      // believes the backing store is neutralized while JS (and other threads)
+      // still read and write it. Node rejects a SharedArrayBuffer with
+      // napi_arraybuffer_expected (19) because V8's IsArrayBuffer() is false
+      // for a SharedArrayBuffer. The same ArrayBuffer is passed twice so the
+      // third row covers a second detach on an already-detached buffer.
+      const output = await checkSameOutput(
+        "test_detach_arraybuffer",
+        "(() => { const ab = new ArrayBuffer(8); return [new SharedArrayBuffer(8), ab, ab, new Uint8Array(8)]; })()",
+      );
+      expect(output.split(/\r?\n/)).toEqual([
+        "napi_detach_arraybuffer=19 napi_is_detached_arraybuffer=0 is_detached=false napi_get_arraybuffer_info=0 length=8",
+        "napi_detach_arraybuffer=0 napi_is_detached_arraybuffer=0 is_detached=true napi_get_arraybuffer_info=0 length=0",
+        "napi_detach_arraybuffer=0 napi_is_detached_arraybuffer=0 is_detached=true napi_get_arraybuffer_info=0 length=0",
+        "napi_detach_arraybuffer=19 napi_is_detached_arraybuffer=0 is_detached=false napi_get_arraybuffer_info=1 length=0",
+      ]);
+    });
+  });
+
   describe("error handling", () => {
     it("removing non-existent env cleanup hook should not crash", async () => {
       // Test that removing non-existent hooks doesn't crash the process

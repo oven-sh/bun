@@ -757,6 +757,30 @@ static napi_value test_is_arraybuffer(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value test_detach_arraybuffer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  for (size_t i = 1; i < info.Length(); i++) {
+    napi_value value = info[i];
+
+    napi_status detach_status = napi_detach_arraybuffer(env, value);
+
+    bool is_detached = false;
+    napi_status is_detached_status =
+        napi_is_detached_arraybuffer(env, value, &is_detached);
+
+    size_t length = 0;
+    napi_status info_status =
+        napi_get_arraybuffer_info(env, value, nullptr, &length);
+
+    printf("napi_detach_arraybuffer=%d napi_is_detached_arraybuffer=%d "
+           "is_detached=%s napi_get_arraybuffer_info=%d length=%zu\n",
+           static_cast<int>(detach_status),
+           static_cast<int>(is_detached_status), is_detached ? "true" : "false",
+           static_cast<int>(info_status), length);
+  }
+  return ok(env);
+}
+
 static napi_value test_napi_get_default_values(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
@@ -2707,6 +2731,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_is_buffer);
   REGISTER_FUNCTION(env, exports, test_is_typedarray);
   REGISTER_FUNCTION(env, exports, test_is_arraybuffer);
+  REGISTER_FUNCTION(env, exports, test_detach_arraybuffer);
   REGISTER_FUNCTION(env, exports, test_napi_get_default_values);
   REGISTER_FUNCTION(env, exports, test_napi_numeric_string_keys);
   REGISTER_FUNCTION(env, exports, test_deferred_exceptions);

@@ -22,16 +22,25 @@ const step = (s: string) => {
   steps.push(s);
   fs.writeSync(2, `STEP: ${s}\n`);
 };
-const watchdog = setTimeout(() => {
-  fs.writeSync(2, `WATCHDOG: stalled after: ${steps.join(" -> ")}\n`);
-  fs.writeSync(2, `WATCHDOG: server connections=${(server as any)?._connections}\n`);
-  process.exit(1);
-}, 15_000);
-watchdog.unref?.();
+// REF'D ticker, not an unref'd timeout: round 2 showed zero watchdog output
+// despite fs.writeSync - an unref'd 15s timer never fired inside a 20s
+// stall, so either unref'd timers cannot wake a socket-waiting loop here or
+// the loop is wedged in an infinite poll. A ref'd 5s ticker discriminates:
+// TICK lines during the stall = loop turns, missing socket event; no TICK
+// lines = the event loop itself is wedged.
+let ticks = 0;
+const ticker = setInterval(() => {
+  ticks++;
+  fs.writeSync(2, `TICK ${ticks}: after: ${steps.join(" -> ")} connections=${(server as any)?._connections}\n`);
+  if (ticks >= 3) {
+    fs.writeSync(2, `WATCHDOG: stalled\n`);
+    process.exit(1);
+  }
+}, 5_000);
 
 const { promise, resolve, reject } = Promise.withResolvers();
 
-await using server = http.createServer((req, res) => {
+const server = http.createServer((req, res) => {
   step("request-received");
   req.socket.on("close", () => step("server-conn-close"));
   req.socket.on("error", (e: any) => step(`server-conn-error:${e.code}`));
@@ -64,3 +73,6 @@ step("fetch-settled");
 expect(await promise).toBeTrue();
 step("write-result-true");
 step("disposing-server");
+await (server as any)[Symbol.asyncDispose]();
+step("server-disposed");
+clearInterval(ticker);

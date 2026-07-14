@@ -123,8 +123,10 @@ pub(crate) const CLOSECONTEXT_LISTEN_FAILURE: u8 = 5;
 /// `PREFERRED_ADDRESS_USE` exposed to JS by `node_quic_binding.rs`
 /// (`preferredAddressPolicy: 'use'`).
 const PREFERRED_ADDRESS_USE: u64 = 1;
-/// Node's `DEFAULT_MAX_IDLE_TIMEOUT` (node/src/quic/transportparams.h).
-const DEFAULT_MAX_IDLE_TIMEOUT_MS: u64 = 10_000;
+/// Node's `DEFAULT_MAX_IDLE_TIMEOUT` (node/src/quic/transportparams.h), in the
+/// seconds unit `transportParams.maxIdleTimeout` uses.
+const DEFAULT_MAX_IDLE_TIMEOUT_SECS: u64 = 10;
+pub(super) const MS_PER_SEC: u64 = 1_000;
 
 /// Copy a sockaddr sized by its family (sockaddr_in = 16, sockaddr_in6 = 28)
 /// so an AF_INET address never over-reads past its allocation.
@@ -926,11 +928,11 @@ fn apply_transport_params(
         if let Some(v) = read_u64_option(global, tp, "initialMaxStreamsUni")? {
             s.init_max_streams_uni(v.min(c_uint::MAX as u64) as _);
         }
-        if let Some(ms) = read_u64_option(global, tp, "maxIdleTimeout")? {
-            // Node's maxIdleTimeout is milliseconds; the ms-granular
-            // override takes precedence over the seconds-granular
-            // es_idle_timeout default set above.
-            s.idle_timeout_ms(ms.min(c_uint::MAX as u64) as _);
+        if let Some(secs) = read_u64_option(global, tp, "maxIdleTimeout")? {
+            // Node's maxIdleTimeout is SECONDS: transportparams.cc:197 stores
+            // `max_idle_timeout * NGTCP2_SECONDS`; the getter at :473 divides
+            // it back out.
+            s.idle_timeout_ms(secs.saturating_mul(MS_PER_SEC).min(c_uint::MAX as u64) as _);
         }
         if let Some(v) = read_u64_option(global, tp, "maxUdpPayloadSize")? {
             s.max_udp_payload_size_rx(v.min(u16::MAX as u64) as _);
@@ -2177,7 +2179,9 @@ impl QuicEndpoint {
             .map(|tp| read_u64_option(global, tp, "maxIdleTimeout"))
             .transpose()?
             .flatten()
-            .unwrap_or(DEFAULT_MAX_IDLE_TIMEOUT_MS);
+            // Seconds, as in `apply_transport_params` above.
+            .map(|secs| secs.saturating_mul(MS_PER_SEC))
+            .unwrap_or(DEFAULT_MAX_IDLE_TIMEOUT_SECS * MS_PER_SEC);
         // SAFETY: the client engine exists after the branch above.
         unsafe {
             lsquic::lsquic_engine_set_idle_timeout_ms(

@@ -20,7 +20,7 @@ use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 use bun_lsquic_sys as lsquic;
 
 use super::callbacks;
-use super::endpoint::{QuicEndpoint, alloc_exposed_array_buffer};
+use super::endpoint::{MS_PER_SEC, QuicEndpoint, alloc_exposed_array_buffer};
 use super::ffi::lsquic_callback;
 use super::now_ns;
 use super::tls;
@@ -2425,7 +2425,9 @@ impl QuicSession {
         put(b"initialMaxData", tp.initial_max_data)?;
         put(b"initialMaxStreamsBidi", tp.initial_max_streams_bidi)?;
         put(b"initialMaxStreamsUni", tp.initial_max_streams_uni)?;
-        put(b"maxIdleTimeout", tp.max_idle_timeout)?;
+        // Node reports this in seconds (transportparams.cc:473 divides the
+        // stored value by NGTCP2_SECONDS); the snapshot holds milliseconds.
+        put(b"maxIdleTimeout", tp.max_idle_timeout / MS_PER_SEC)?;
         put(b"maxUdpPayloadSize", tp.max_udp_payload_size)?;
         put(b"ackDelayExponent", tp.ack_delay_exponent)?;
         put(b"maxAckDelay", tp.max_ack_delay)?;

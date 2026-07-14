@@ -16,7 +16,6 @@
 //! pointer that an external tool invokes via `CreateRemoteThread`, exactly as
 //! Node.js does.
 
-use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::debugger::{Debugger, Mode, Wait};
@@ -37,8 +36,11 @@ unsafe extern "C" {
 
 /// Arm the per-VM trap callback on the main JSC VM. Call once, after VM init,
 /// when the signal handler is installed.
-pub fn install_debugger_trap_callback(vm: *mut VM) {
-    // SAFETY: `vm` is the main VM's JSC::VM*, live for process lifetime.
+///
+/// # Safety
+/// `vm` must be the main VM's `JSC::VM*`, live for process lifetime.
+pub unsafe fn install_debugger_trap_callback(vm: *mut VM) {
+    // SAFETY: per fn contract.
     unsafe { Bun__installDebuggerTrapCallback(vm) };
 }
 
@@ -191,6 +193,7 @@ pub fn ignore_sigusr1() {
 #[cfg(unix)]
 mod platform {
     use super::*;
+    use core::ffi::c_void;
     use core::sync::atomic::AtomicPtr;
 
     // Async-signal-safe semaphore (Mach on macOS, POSIX sem_t on Linux).
@@ -277,6 +280,7 @@ mod platform {
 }
 
 #[cfg(windows)]
+#[allow(non_camel_case_types, non_snake_case)]
 mod platform {
     use super::*;
     use core::ffi::c_void as void;

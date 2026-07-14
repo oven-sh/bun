@@ -514,7 +514,7 @@ unsafe fn configure_sigusr1_handler(vm: *mut VirtualMachine, opts: &InitOptions)
     } else {
         runtime_inspector::install_if_not_already();
         // SAFETY: `jsc_vm` set in `VirtualMachine::init`; live for process.
-        runtime_inspector::install_debugger_trap_callback(unsafe { (*vm).jsc_vm });
+        unsafe { runtime_inspector::install_debugger_trap_callback((*vm).jsc_vm) };
     }
 }
 

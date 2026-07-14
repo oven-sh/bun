@@ -1941,6 +1941,7 @@ extern "C" napi_status napi_get_all_property_names(
             if (auto* impl = keyStr->impl()) {
                 if (auto index = parseIndex(*impl)) {
                     exportKeys->putDirectIndex(globalObject, i, jsNumber(*index));
+                    NAPI_RETURN_IF_EXCEPTION(env);
                 }
             }
         }

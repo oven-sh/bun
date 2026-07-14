@@ -2344,15 +2344,7 @@ impl BlobExt for Blob {
                 if store_size != MAX_SIZE {
                     self.offset.set(store_size.min(offset));
                     let available = store_size - self.offset.get();
-                    // Only resolve an unknown size. A slice already has a concrete
-                    // `size`; overwriting it with `store_size - offset` would widen
-                    // the view to the end of the backing store. Clamp a known size
-                    // to `available` so a bogus size can't report past the store end.
-                    if self.size.get() == MAX_SIZE {
-                        self.size.set(available);
-                    } else {
-                        self.size.set(self.size.get().min(available));
-                    }
+                    self.size.set(window_size(self.size.get(), available));
                 }
             }
             store::DataTag::File => {
@@ -2367,13 +2359,7 @@ impl BlobExt for Blob {
                     let offset = self.offset.get();
                     self.offset.set(store_size.min(offset));
                     let available = store_size - self.offset.get();
-                    // Matches the Bytes arm: a slice's concrete size must not
-                    // widen to the rest of the file; clamp it to `available`.
-                    if self.size.get() == MAX_SIZE {
-                        self.size.set(available);
-                    } else {
-                        self.size.set(self.size.get().min(available));
-                    }
+                    self.size.set(window_size(self.size.get(), available));
                     return;
                 }
 
@@ -2407,16 +2393,7 @@ impl BlobExt for Blob {
                 if store_size != MAX_SIZE {
                     let offset = store_size.min(offset);
                     let available = store_size - offset;
-                    // Matches `resolve_size`: a known size (e.g. a slice) is
-                    // authoritative; only an unknown size falls back to the
-                    // remainder of the backing store. Clamp to `available` so a
-                    // bogus size can't report past the store end.
-                    let size = if self.size.get() == MAX_SIZE {
-                        available
-                    } else {
-                        self.size.get().min(available)
-                    };
-                    return (offset, size);
+                    return (offset, window_size(self.size.get(), available));
                 }
                 (self.offset.get(), self.size.get())
             }
@@ -2430,14 +2407,7 @@ impl BlobExt for Blob {
                     let store_size = file.max_size;
                     let offset = store_size.min(self.offset.get());
                     let available = store_size - offset;
-                    // Matches `resolve_size`: a known size (e.g. a slice) is
-                    // authoritative, clamped to `available`.
-                    let size = if self.size.get() == MAX_SIZE {
-                        available
-                    } else {
-                        self.size.get().min(available)
-                    };
-                    return (offset, size);
+                    return (offset, window_size(self.size.get(), available));
                 }
                 if file.seekable == Some(false) {
                     return (self.offset.get(), self.size.get());
@@ -6258,6 +6228,18 @@ fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
     #[cfg(windows)]
     {
         jsc::to_js_time(stat.mtim.sec as isize, stat.mtim.nsec as isize)
+    }
+}
+
+/// Window clamp shared by the `resolve_size`/`resolved_size` arms: only an
+/// unknown (`MAX_SIZE`) size resolves to the store's remainder; a concrete
+/// size (a slice's window) is authoritative, clamped so a bogus or stale
+/// value can't report past the end of the backing store.
+fn window_size(current: SizeType, available: SizeType) -> SizeType {
+    if current == MAX_SIZE {
+        available
+    } else {
+        current.min(available)
     }
 }
 

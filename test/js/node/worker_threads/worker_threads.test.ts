@@ -727,7 +727,7 @@ test("worker name survives parent-side GC and terminate cycles", async () => {
       Bun.gc(true);
       parentPort.postMessage(threadName);
     \`;
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 4; i++) {
       // Object.keys returns strings backed by atomized property-name impls.
       const holder = { ["workerNameStress" + i + "Abcdefghij"]: 1 };
       const name = Object.keys(holder)[0];

@@ -32,7 +32,7 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 #include <string.h> // memset
 #endif
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout);
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns);
 
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
@@ -309,8 +309,8 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
 }
 
 /* Bound `timeout` by the socket-timeout sweep deadline (NULL == forever). */
-static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage) {
-    long long ns = us_internal_sweep_timeout_ns(loop);
+static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage, uint64_t now_ns) {
+    long long ns = us_internal_sweep_timeout_ns(loop, now_ns);
     if (ns < 0) {
         return timeout;
     }
@@ -333,7 +333,7 @@ void us_loop_run(struct us_loop_t *loop) {
         us_internal_loop_pre(loop);
 
         struct timespec sweep_ts;
-        const struct timespec *timeout = us_internal_clamp_to_sweep(loop, NULL, &sweep_ts);
+        const struct timespec *timeout = us_internal_clamp_to_sweep(loop, NULL, &sweep_ts, 0);
 
         /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -354,9 +354,9 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
+extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns);
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
         return;
 
@@ -380,13 +380,16 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         }
     }
 
+    /* `now_ns` is the instant the JS side already read to build `timeout`
+     * (timer::All::get_timeout), or 0 if it had none to share. Each consumer
+     * below takes its own reading only if it needs one. */
     struct timespec sweep_ts;
-    timeout = us_internal_clamp_to_sweep(loop, timeout, &sweep_ts);
+    timeout = us_internal_clamp_to_sweep(loop, timeout, &sweep_ts, now_ns);
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
-        Bun__JSC_onBeforeWait(loop->data.jsc_vm);
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns);
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL

@@ -990,6 +990,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             // `timer::All::get_timeout` forms short-lived `&mut` only around
             // heap ops that cannot re-enter JS, releasing the borrow before
             // invoking `fire()`.
+            // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
+            // same instant to the tick so uSockets' sweep clamp and the JS park hook reuse it.
+            // It is lazy, and so are they: 0 means it took none.
+            let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; the
             // `timer` field address is stable for the VM lifetime.
             let have_timeout = unsafe {
@@ -999,11 +1003,14 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                     has_pending_immediate,
                     quic_next_tick_us,
                     vm.cast(),
+                    &mut now,
                 )
             };
+            let now_ns = now.map_or(0, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
+                (*loop_)
+                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
             };
         } else {
             // SAFETY: `loop_` is the live per-thread uws loop.
@@ -1107,6 +1114,10 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             unsafe { (*el).drain_pending_gc_hint() };
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
+            // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
+            // same instant to the tick so uSockets' sweep clamp and the JS park hook reuse it.
+            // It is lazy, and so are they: 0 means it took none.
+            let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; see
             // Note on `auto_tick` re: aliased-&mut across `fire()`.
             let have_timeout = unsafe {
@@ -1116,11 +1127,14 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                     has_pending_immediate,
                     quic_next_tick_us,
                     vm.cast(),
+                    &mut now,
                 )
             };
+            let now_ns = now.map_or(0, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
+                (*loop_)
+                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
             };
         } else {
             // SAFETY: `loop_` is the live per-thread uws loop.

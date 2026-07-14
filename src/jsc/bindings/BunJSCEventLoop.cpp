@@ -10,6 +10,12 @@
 // Matches oven-sh/mimalloc's mi_attr_noexcept declaration; bmalloc's
 // vendored mimalloc.h predates this entry point.
 extern "C" void mi_on_thread_idle(void) noexcept;
+#if !OS(WINDOWS)
+// uSockets' CLOCK_MONOTONIC reading (packages/bun-usockets/src/loop.c). Must be
+// the same clock the caller's `nowNs` came from, or the rate limit below
+// compares two epochs. Windows always passes a reading, so it needs no fallback.
+extern "C" uint64_t us_internal_monotonic_ns(void);
+#endif
 #endif
 
 // Rust-side `AtomicI32` static (src/jsc/VirtualMachine.rs). Same layout as a plain
@@ -17,7 +23,7 @@ extern "C" void mi_on_thread_idle(void) noexcept;
 // it as an atomic rather than through a plain `int`.
 extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
 
-extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
+extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
 {
     ASSERT(vm);
     const bool previouslyHadAccess = vm->heap.hasHeapAccess();
@@ -80,10 +86,17 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             // Collect retired pages, punch free-block holes, hand the arena purge to
             // the scavenger. Rate-limited: with the per-page skip this measures as
             // noise on express, so it bounds per-park work on larger heaps, not a fix.
-            static thread_local MonotonicTime lastIdleSweep;
-            const auto now = MonotonicTime::now();
-            if ((now - lastIdleSweep) >= Seconds::fromMilliseconds(100)) {
-                lastIdleSweep = now;
+            // `nowNs` is the tick's own reading, reused rather than taken again; 0
+            // means it had none to share. Compared by addition, not subtraction: an
+            // out-of-order reading would underflow and force an unearned sweep.
+            static constexpr uint64_t idleSweepIntervalNs = 100 * 1000000ULL;
+            static thread_local uint64_t lastIdleSweepNs = 0;
+#if !OS(WINDOWS)
+            if (nowNs == 0)
+                nowNs = us_internal_monotonic_ns();
+#endif
+            if (nowNs >= lastIdleSweepNs + idleSweepIntervalNs) {
+                lastIdleSweepNs = nowNs;
                 mi_on_thread_idle();
             }
 #endif

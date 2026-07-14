@@ -628,23 +628,27 @@ it("tls.connect should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
     passphrase: "123123123",
   });
 
-  for (const invalid of ["not-exist.pem", "", " "]) {
-    const proc = Bun.spawn({
-      env: {
-        ...bunEnv,
-        SERVER_PORT: server.address.port.toString(),
-        NODE_EXTRA_CA_CERTS: invalid,
-      },
-      stderr: "pipe",
-      stdout: "inherit",
-      stdin: "inherit",
-      cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
-    });
+  // The three children are independent; running them sequentially exceeds the
+  // per-test budget under a debug build.
+  await Promise.all(
+    ["not-exist.pem", "", " "].map(async invalid => {
+      await using proc = Bun.spawn({
+        env: {
+          ...bunEnv,
+          SERVER_PORT: server.address.port.toString(),
+          NODE_EXTRA_CA_CERTS: invalid,
+        },
+        stderr: "pipe",
+        stdout: "inherit",
+        stdin: "inherit",
+        cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
+      });
 
-    expect(await proc.exited).toBe(1);
-    const stderr = await proc.stderr.text();
-    expect(stderr).toContain("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
-  }
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+      expect(exitCode).toBe(1);
+    }),
+  );
 });
 
 it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", async () => {
@@ -801,3 +805,71 @@ it.skipIf(isDebug)(
   },
   180_000,
 );
+
+// The altchain-* fixtures model a reissued intermediate: two CA certificates
+// with the same subject and key, one expired and one valid (fixtures/altchain-gen.sh).
+// An expired copy must not mask a valid chain, whether it arrives in the peer's
+// Certificate message (RFC 8446, section 4.4.2) or sits in the trust store.
+describe("expired duplicate issuer", () => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const root = fixture("altchain-root-cert.pem");
+  const intValid = fixture("altchain-int-valid-cert.pem");
+  const intExpired = fixture("altchain-int-expired-cert.pem");
+  const leaf = fixture("altchain-leaf-cert.pem");
+  const leafKey = fixture("altchain-leaf-key.pem");
+
+  // Handshakes against a server presenting `chain`, with `ca` as the client's
+  // complete trust store, and reports the client's verification result.
+  async function handshake(chain: string[], ca: string[]) {
+    const server = tls.createServer({ key: leafKey, cert: chain.join("\n") });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    try {
+      const socket = tls.connect({
+        host: "127.0.0.1",
+        port,
+        servername: "localhost",
+        ca,
+        rejectUnauthorized: false,
+      });
+      await once(socket, "secureConnect");
+      const result = {
+        authorized: socket.authorized,
+        authorizationError: socket.authorizationError ?? null,
+      };
+      socket.end();
+      await once(socket, "close");
+      return result;
+    } finally {
+      server.close();
+    }
+  }
+
+  const ok = { authorized: true, authorizationError: null };
+
+  it("prefers the time-valid intermediate when the peer also sends an expired copy", async () => {
+    expect(await handshake([leaf, intExpired, intValid], [root])).toEqual(ok);
+    expect(await handshake([leaf, intValid, intExpired], [root])).toEqual(ok);
+  });
+
+  it("prefers a time-valid trust store entry over an expired duplicate, in either order", async () => {
+    expect(await handshake([leaf], [root, intExpired, intValid])).toEqual(ok);
+    expect(await handshake([leaf], [root, intValid, intExpired])).toEqual(ok);
+  });
+
+  it("ignores an expired trust store duplicate when the peer presents a valid chain", async () => {
+    expect(await handshake([leaf, intValid], [root, intExpired, intValid])).toEqual(ok);
+  });
+
+  it("uses a time-valid trusted intermediate when the peer only sends an expired one", async () => {
+    expect(await handshake([leaf, intExpired], [root, intValid])).toEqual(ok);
+  });
+
+  it("still rejects a chain whose only intermediate is expired", async () => {
+    expect(await handshake([leaf, intExpired], [root])).toEqual({
+      authorized: false,
+      authorizationError: "CERT_HAS_EXPIRED",
+    });
+  });
+});

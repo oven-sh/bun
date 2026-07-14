@@ -244,11 +244,16 @@ function normalizeLf(s: string): string {
  * authored against upstream which may have different trailing whitespace.
  */
 function applyPatch(dest: string, patchPath: string, patchBody: string): void {
-  const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
+  // -v (with LC_ALL=C so the message is stable) reports every applied file on
+  // stderr, which lets us catch the cases where git apply exits zero without
+  // applying everything ("Skipped patch") instead of stamping the fetch
+  // against unpatched sources.
+  const result = spawnSync("git", ["apply", "-v", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
     cwd: dest,
     input: normalizeLf(patchBody),
     stdio: ["pipe", "ignore", "pipe"],
     encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
   });
 
   if (result.error) {
@@ -260,6 +265,13 @@ function applyPatch(dest: string, patchPath: string, patchBody: string): void {
     // partially fetched, which means .ref shouldn't exist, which means
     // we should have rm'd the dir. A "cleanly" error here = logic bug.
     throw new BuildError(`Patch failed: ${result.stderr}`, {
+      file: patchPath,
+      hint: "The patch may be out of date with the pinned commit",
+    });
+  }
+
+  if (result.stderr.includes("Skipped patch")) {
+    throw new BuildError(`Patch partially skipped: ${result.stderr}`, {
       file: patchPath,
       hint: "The patch may be out of date with the pinned commit",
     });

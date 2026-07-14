@@ -42,7 +42,6 @@
 #include <sys/stat.h>
 #include "ConsoleObject.h"
 #include <JavaScriptCore/GetterSetter.h>
-#include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -4229,15 +4228,6 @@ static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
         return JSC::jsUndefined();
     }
     return array;
-}
-
-static JSValue Process_stubEmptySet(VM& vm, JSObject* processObject)
-{
-    auto* globalObject = processObject->globalObject();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSSet* result = JSSet::create(vm, globalObject->setStructure());
-    RETURN_IF_EXCEPTION(scope, {});
-    return result;
 }
 
 static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)

@@ -1379,8 +1379,6 @@ extern "C" napi_status napi_fatal_exception(napi_env env,
     NAPI_CHECK_ARG(env, err);
     auto globalObject = toJS(env);
     JSValue value = toJS(err);
-    JSC::JSObject* obj = value.getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, obj && obj->isErrorInstance(), napi_invalid_arg);
 
     Bun__reportUnhandledError(globalObject, JSValue::encode(value));
 
@@ -1828,16 +1826,15 @@ extern "C" napi_status napi_get_all_property_names(
     auto* object = objectValue.getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, object, napi_object_expected);
 
-    DontEnumPropertiesMode jsc_key_mode = key_mode == napi_key_include_prototypes ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude;
+    // Always request non-enumerable properties from JSC; whether to exclude them is decided by
+    // key_filter (napi_key_enumerable) in the filter loop below. JSC only supports Exclude when
+    // PropertyNameMode is Strings, so passing Exclude with Symbols/StringsAndSymbols trips an assert.
+    DontEnumPropertiesMode jsc_key_mode = DontEnumPropertiesMode::Include;
     PropertyNameMode jsc_property_mode = PropertyNameMode::StringsAndSymbols;
-    // TODO verify changing == to & is correct
     if (key_filter & napi_key_skip_symbols) {
         jsc_property_mode = PropertyNameMode::Strings;
     } else if (key_filter & napi_key_skip_strings) {
         jsc_property_mode = PropertyNameMode::Symbols;
-    } else {
-        // JSC requires key mode to be Include if property mode is StringsAndSymbols
-        jsc_key_mode = DontEnumPropertiesMode::Include;
     }
 
     auto globalObject = toJS(env);

@@ -300,6 +300,17 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_get_all_property_names", () => {
+    it("own_only with skip_strings/skip_symbols includes non-enumerable own keys", async () => {
+      const result = await checkSameOutput("test_get_all_property_names_own_only", []);
+      expect(result).toContain(`own_only + skip_symbols: status=0 keys=["x", "ne"]`);
+      expect(result).toContain(`own_only + skip_strings: status=0 keys=[Symbol(s), Symbol(nes)]`);
+      expect(result).toContain(`own_only + all_properties: status=0 keys=["x", "ne", Symbol(s), Symbol(nes)]`);
+      expect(result).toContain(`own_only + skip_symbols|enumerable: status=0 keys=["x"]`);
+      expect(result).toContain(`own_only + skip_strings|enumerable: status=0 keys=[Symbol(s)]`);
+    });
+  });
+
   describe("napi_ref", () => {
     it("can recover the value from a weak ref", async () => {
       await checkSameOutput("test_napi_ref", []);
@@ -537,6 +548,40 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("can throw an exception from an async_complete_callback", async () => {
       const count = 10;
       await Promise.all(Array.from({ length: count }, () => checkSameOutput("create_promise", [true])));
+    });
+    it("napi_fatal_exception triggers uncaughtException for non-Error values", async () => {
+      // Node's napi_fatal_exception only guards against a null argument; any
+      // value reaches the uncaughtException path. Addons commonly forward
+      // whatever a JS callback threw (strings, plain objects) verbatim.
+      const addon = join(__dirname, "napi-app/build/Debug/napitests.node");
+      const code = `
+        const addon = require(${JSON.stringify(addon)});
+        const caught = [];
+        process.on("uncaughtException", e => {
+          caught.push(e);
+        });
+        const values = ["addon says: something fatal", 42, { plain: "object" }, new Error("real error")];
+        const statuses = values.map(v => addon.call_fatal_exception(v));
+        process.on("exit", () => {
+          console.log(JSON.stringify({
+            statuses,
+            caught: caught.map(e => e instanceof Error ? String(e) : e),
+          }));
+        });
+      `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", code],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({
+        statuses: [0, 0, 0, 0],
+        caught: ["addon says: something fatal", 42, { plain: "object" }, "Error: real error"],
+      });
+      expect(exitCode).toBe(0);
     });
   });
 

@@ -704,13 +704,20 @@ function needsBaselineVerification(platform) {
   return false;
 }
 
-// Ubuntu 20.04's qemu 4.2 mis-handles concurrent `lock cmpxchg` in x86_64-on-x86_64 user mode;
-// after #34009 (mimalloc per-thread heaps) the SIMD baseline test segfaults/deadlocks in
-// `_mi_theap_init` ~10-20% of the time. qemu 7.2 is 40/40 green. aarch64 is unaffected.
-const PINNED_QEMU_X64 = {
-  url: "https://github.com/multiarch/qemu-user-static/releases/download/v7.2.0-1/qemu-x86_64-static",
-  sha256: "7132ffd39aef71c26d3344cc0c7dffc530e10e3e720c58c8279a97ef6fdd7784",
-  path: "./qemu-x86_64-static",
+// Ubuntu 20.04's qemu 4.2 mis-emulates concurrent atomics in same-arch user mode; after #34009
+// (mimalloc per-thread heaps) the SIMD baseline test segfaults/deadlocks in `_mi_theap_init`
+// ~10-20% of x64 runs and ~5% of aarch64 runs. qemu 9.1 is 40/40 green. Static-pie binaries.
+const PINNED_QEMU = {
+  x64: {
+    url: "https://github.com/ziglang/qemu-static/releases/download/9.1.0/qemu-linux-x86_64-9.1.0.tar.xz",
+    sha256: "1ac92f632417d981810fda891e4a1b20f2d71f50f9ec705532afa8162b449c70",
+    binary: "qemu-linux-x86_64-9.1.0/bin/qemu-x86_64",
+  },
+  aarch64: {
+    url: "https://github.com/ziglang/qemu-static/releases/download/9.1.0/qemu-linux-aarch64-9.1.0.tar.xz",
+    sha256: "5a82a96ac74932a802fb5753673beff27359faea8736286477b0bf2c268fd06d",
+    binary: "qemu-linux-aarch64-9.1.0/bin/qemu-aarch64",
+  },
 };
 
 /**
@@ -725,9 +732,8 @@ function getEmulatorBinary(platform) {
   // (Install-IntelSde): downloadmirror.intel.com sits behind a bot challenge
   // that blocks non-browser clients, so it cannot be downloaded at job time.
   if (os === "windows") return "C:\\intel-sde\\sde.exe";
-  if (arch === "aarch64") return "qemu-aarch64-static";
-  // Fetched into the checkout root by the setup command below (see PINNED_QEMU_X64).
-  return PINNED_QEMU_X64.path;
+  // Fetched into the checkout root by the setup command below (see PINNED_QEMU).
+  return `./${PINNED_QEMU[arch].binary}`;
 }
 
 /**
@@ -777,15 +783,15 @@ function getVerifyBaselineStep(platform, options) {
           `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
           `unzip -o '${profileDir}.zip'`,
           `chmod +x ${profileDir}/${profileExe}`,
-          // x64 lanes pin a known-good qemu (see PINNED_QEMU_X64); aarch64 uses the system one.
-          // sha256 check makes a truncated/hijacked download a hard failure before anything runs under it.
-          ...(emulator === PINNED_QEMU_X64.path
-            ? [
-                `curl -fsSL --retry 5 --connect-timeout 15 --max-time 60 -o ${PINNED_QEMU_X64.path} '${PINNED_QEMU_X64.url}'`,
-                `echo '${PINNED_QEMU_X64.sha256}  ${PINNED_QEMU_X64.path}' | sha256sum -c -`,
-                `chmod +x ${PINNED_QEMU_X64.path}`,
-              ]
-            : []),
+          // Linux lanes pin a known-good qemu (see PINNED_QEMU). sha256 check makes a
+          // truncated/hijacked download a hard failure before anything runs under it.
+          ...(abi === "android"
+            ? [] // --skip-emulation: no emulator needed
+            : [
+                `curl -fsSL --retry 5 --connect-timeout 15 --max-time 120 -o ./qemu.tar.xz '${PINNED_QEMU[platform.arch].url}'`,
+                `echo '${PINNED_QEMU[platform.arch].sha256}  ./qemu.tar.xz' | sha256sum -c -`,
+                `tar -xJf ./qemu.tar.xz '${PINNED_QEMU[platform.arch].binary}'`,
+              ]),
         ];
 
   // Windows: the emulator phase runs bun-profile.exe under Intel SDE, so the

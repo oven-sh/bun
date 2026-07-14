@@ -5663,12 +5663,16 @@ class ClientHttp2Session extends Http2Session {
     if (this.#destroying) {
       return;
     }
+    const socket = this[bunHTTP2Socket];
+    if (this.#closed && !this.#connected && !this.#parser) {
+      // Nothing left to tear down. Do NOT latch here: latching on this
+      // early-out left the session permanently un-destroyable when a
+      // redundant destroy() ran first (zombie sessions on the darwin agents:
+      // half-torn sockets surfacing ECONNRESET, writes into closed handles).
+      return;
+    }
     this.#destroying = true;
     try {
-      const socket = this[bunHTTP2Socket];
-      if (this.#closed && !this.#connected && !this.#parser) {
-        return;
-      }
       if (this[kTimeout]) {
         clearTimeout(this[kTimeout]);
         this[kTimeout] = null;

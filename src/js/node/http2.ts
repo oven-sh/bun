@@ -3968,6 +3968,8 @@ class ServerHttp2Session extends Http2Session {
   [kServer]: Http2Server = null;
   /// close indicates that the session is shutting down (close() or destroy() was called)
   #closed: boolean = false;
+  // One-shot destroy latch (Node: "if (this.destroyed) return;" opens destroy()).
+  #destroying: boolean = false;
   /// closeCalled tracks whether close() specifically was called: `session.closed` only reports a
   /// graceful close() in node — destroy() leaves it false while `session.destroyed` flips to true.
   #closeCalled: boolean = false;
@@ -4633,6 +4635,20 @@ class ServerHttp2Session extends Http2Session {
   }
 
   destroy(error: Error | number | undefined = NGHTTP2_NO_ERROR, code?: number) {
+    // Node's destroy() is idempotent - "if (this.destroyed) return;" is its
+    // first line - so a second destroy (e.g. the received-GOAWAY handler
+    // destroying with a session error after a socket error's destroy already
+    // ran re-entrantly out of the 'goaway' emit) never re-runs the teardown or
+    // re-emits 'error' on a session whose one-shot listeners are consumed.
+    // Guard on a latch, not the destroyed getter: that getter reads "socket
+    // detached", which #onError sets before calling in here, and the
+    // error-carrying destroy must still run once.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
+    if (this.#destroying) {
+      return;
+    }
+    this.#destroying = true;
+    try {
     const server = this[kServer];
     if (server) {
       server[kSessions].delete(this);
@@ -4699,6 +4715,13 @@ class ServerHttp2Session extends Http2Session {
       parser.emitErrorToAllStreams(streamRstCode);
       parser.detach();
       this.#parser = null;
+    }
+    } catch (e) {
+      // A throwing destroy did not destroy: argument validation (goaway's
+      // validateInteger, the native session rejecting a non-numeric error
+      // code) throws mid-teardown, and a corrected retry must still run.
+      this.#destroying = false;
+      throw e;
     }
     this[bunHTTP2Socket] = null;
 
@@ -4841,6 +4864,8 @@ function streamRejectedByGoawaySession(stream: Http2Stream) {
 class ClientHttp2Session extends Http2Session {
   /// close indicates that the session is shutting down (close() or destroy() was called)
   #closed: boolean = false;
+  // One-shot destroy latch (Node: "if (this.destroyed) return;" opens destroy()).
+  #destroying: boolean = false;
   /// closeCalled tracks whether close() specifically was called: `session.closed` only reports a
   /// graceful close() in node — destroy() leaves it false while `session.destroyed` flips to true.
   #closeCalled: boolean = false;
@@ -5626,6 +5651,20 @@ class ClientHttp2Session extends Http2Session {
   }
 
   destroy(error?: Error | number, code?: number) {
+    // Node's destroy() is idempotent - "if (this.destroyed) return;" is its
+    // first line - so a second destroy (e.g. the received-GOAWAY handler
+    // destroying with a session error after a socket error's destroy already
+    // ran re-entrantly out of the 'goaway' emit) never re-runs the teardown or
+    // re-emits 'error' on a session whose one-shot listeners are consumed.
+    // Guard on a latch, not the destroyed getter: that getter reads "socket
+    // detached", which #onError sets before calling in here, and the
+    // error-carrying destroy must still run once.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
+    if (this.#destroying) {
+      return;
+    }
+    this.#destroying = true;
+    try {
     const socket = this[bunHTTP2Socket];
     if (this.#closed && !this.#connected && !this.#parser) {
       return;
@@ -5698,6 +5737,13 @@ class ClientHttp2Session extends Http2Session {
       // precedence over the destroy code when streams are torn down.
       parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
       parser.detach();
+    }
+    } catch (e) {
+      // A throwing destroy did not destroy: argument validation (goaway's
+      // validateInteger, the native session rejecting a non-numeric error
+      // code) throws mid-teardown, and a corrected retry must still run.
+      this.#destroying = false;
+      throw e;
     }
     this.#parser = null;
     this[bunHTTP2Socket] = null;

@@ -120,15 +120,70 @@ async function checkIfCollectableByCounting(fn, ctor, count, waitTime = 20) {
   throw new Error(`${name} cannot be collected`);
 }
 
-var finalizationRegistry = new FinalizationRegistry(heldValue => {
-  heldValue.ongc();
-})
+// Upstream implements onGC() with an async_hooks destroy hook, which gives it
+// this documented contract: "A full setImmediate() invocation passes between a
+// global.gc() call and the listener being invoked." Bun does not implement
+// destroy hooks (async_hooks.createHook only emits init), so onGC() is built on
+// FinalizationRegistry instead.
+//
+// FinalizationRegistry alone cannot honour that contract. JSC schedules cleanup
+// callbacks through DeferredWorkTimer, which Bun drains via the event loop's
+// concurrent task queue, while setImmediate() has its own separate queues. The
+// two have no defined order relative to each other, so the callback can land
+// after the setImmediate() a test uses to observe it.
+//
+// WeakRef has no such problem: gc() clears weak refs synchronously, so a sweep
+// performed right after an explicit gc() observes collection with no queue in
+// between. Listeners are therefore delivered by whichever comes first:
+//
+//   - flushGCListeners(), for tests that call gc() explicitly, and
+//   - the FinalizationRegistry, for tests that rely on a natural GC and never
+//     call gc() at all.
+//
+// pendingListeners keeps each entry reachable until it fires and doubles as the
+// guard that fires it exactly once, whichever path gets there first. An entry
+// never references the tracked value, only a WeakRef to it.
+const pendingListeners = new Set();
+
+const finalizationRegistry = new FinalizationRegistry(fireGCListener);
+
+function fireGCListener(entry) {
+  // Returns false if the other delivery path already fired this entry.
+  if (!pendingListeners.delete(entry)) {
+    return;
+  }
+  finalizationRegistry.unregister(entry);
+  entry.ongc();
+}
+
+// Fires the listeners whose tracked values are already collected. Values that
+// are still alive stay registered.
+function flushGCListeners() {
+  for (const entry of [...pendingListeners]) {
+    if (entry.ref.deref() === undefined) {
+      fireGCListener(entry);
+    }
+  }
+}
 
 function onGC(value, holder) {
   if (holder?.ongc) {
-
-    finalizationRegistry.register(value, { ongc: holder.ongc });
+    const entry = { ref: new WeakRef(value), ongc: holder.ongc };
+    pendingListeners.add(entry);
+    finalizationRegistry.register(value, entry, entry);
   }
+}
+
+// Deliver pending listeners synchronously on every explicit gc() so they are
+// always observable by the time the next setImmediate() runs. Tests spell this
+// both global.gc() and globalThis.gc(); those are the same property.
+if (typeof globalThis.gc === 'function') {
+  const realGC = globalThis.gc;
+  globalThis.gc = function gc(...args) {
+    const result = realGC.apply(this, args);
+    flushGCListeners();
+    return result;
+  };
 }
 
 /**

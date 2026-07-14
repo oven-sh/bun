@@ -9,7 +9,7 @@ import http from "node:http";
 // client is mid-upload, a write() after that must succeed silently, the
 // client's failed upload must not strand the connection, and server.close()
 // must complete once the connection dies.
-test("write after res.socket.end() mid-upload completes every teardown stage", async () => {
+async function runTeardownStages(bind: string | undefined, url: (port: number) => string) {
   const stages: string[] = [];
   const stage = (name: string) => {
     stages.push(name);
@@ -37,11 +37,10 @@ test("write after res.socket.end() mid-upload completes every teardown stage", a
     }
   });
 
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>(resolve => (bind === undefined ? server.listen(0, resolve) : server.listen(0, bind, resolve)));
   stage("listening");
 
-  const url = `http://127.0.0.1:${(server.address() as any).port}`;
-  const fetchSettled = fetch(url, {
+  const fetchSettled = fetch(url((server.address() as any).port), {
     method: "POST",
     body: Buffer.allocUnsafe(1024 * 1024 * 10),
   })
@@ -65,4 +64,15 @@ test("write after res.socket.end() mid-upload completes every teardown stage", a
   const serverClosed = new Promise<void>((resolve, reject) => server.close(err => (err ? reject(err) : resolve())));
   await withTimeout(serverClosed, "server-closed");
   expect(stages).toContain("write-returned");
-}, 45_000);
+}
+
+test("write after res.socket.end() mid-upload completes every teardown stage (IPv4 loopback)", () =>
+  runTeardownStages("127.0.0.1", port => `http://127.0.0.1:${port}`), 45_000);
+
+// The original test-http-should-not-emit-... fetches http://localhost against
+// a default-bound (dual-stack) server - the IPv6 loopback on the Windows
+// agents - and times out on windows-11-aarch64 while the IPv4 variant above
+// passes there. Same family split as the PING-flood probe: if the teardown
+// stalls only over the default path, the family is the variable.
+test("write after res.socket.end() mid-upload completes every teardown stage (default localhost)", () =>
+  runTeardownStages(undefined, port => `http://localhost:${port}`), 45_000);

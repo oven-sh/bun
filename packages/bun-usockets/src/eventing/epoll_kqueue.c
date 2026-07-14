@@ -32,7 +32,7 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 #include <string.h> // memset
 #endif
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout);
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns);
 
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
@@ -354,9 +354,9 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
+extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns);
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
         return;
 
@@ -385,8 +385,11 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
+    /* `now_ns` is the reading the JS side took to pick `timeout`
+     * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
+     * if it had none to share. Nothing measures a deadline against it. */
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
-        Bun__JSC_onBeforeWait(loop->data.jsc_vm);
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns);
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL

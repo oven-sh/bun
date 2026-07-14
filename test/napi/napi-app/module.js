@@ -353,6 +353,43 @@ nativeTests.test_define_properties = () => {
   }
 };
 
+nativeTests.test_property_names_cache_poisoning = () => {
+  // napi_key_include_prototypes = 0, napi_key_own_only = 1
+  // napi_key_all_properties = 0, napi_key_skip_symbols = 16
+  // napi_key_keep_numbers = 0
+  const mkA = () => ({ a: 1, b: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkA(), 0, 0, 0);
+  console.log("Reflect.ownKeys after get_all_property_names(include_prototypes):", Reflect.ownKeys(mkA()).join(","));
+  console.log("Object.keys after get_all_property_names(include_prototypes):", Object.keys(mkA()).join(","));
+
+  const proto = { pEnum: 9 };
+  const mkB = () => {
+    const o = Object.create(proto);
+    o.w1 = 1;
+    o.w2 = 2;
+    return o;
+  };
+  for (let i = 0; i < 20; i++) nativeTests.get_property_names(mkB());
+  console.log("Object.keys after get_property_names:", Object.keys(mkB()).join(","));
+  console.log("Reflect.ownKeys after get_property_names:", Reflect.ownKeys(mkB()).join(","));
+
+  const mkC = () => ({ c: 1, d: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkC(), 0, 16, 0);
+  console.log("Object.getOwnPropertyNames after skip_symbols chain walk:", Object.getOwnPropertyNames(mkC()).join(","));
+
+  // Own-only mode must still return only own keys and not poison anything.
+  const mkD = () => ({ e: 1, f: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkD(), 1, 0, 0);
+  console.log("Reflect.ownKeys after get_all_property_names(own_only):", Reflect.ownKeys(mkD()).join(","));
+
+  // The napi result itself should still include inherited keys.
+  const apnResult = nativeTests.get_all_property_names(mkA(), 0, 0, 0).keys;
+  console.log("napi include_prototypes result has own a,b:", apnResult.includes("a") && apnResult.includes("b"));
+  console.log("napi include_prototypes result has inherited toString:", apnResult.includes("toString"));
+  const gpnResult = nativeTests.get_property_names(mkB());
+  console.log("napi get_property_names result:", gpnResult.join(","));
+};
+
 nativeTests.test_number_integer_conversions_from_js = () => {
   const i32 = { min: -(2 ** 31), max: 2 ** 31 - 1 };
   const u32Max = 2 ** 32 - 1;
@@ -899,6 +936,37 @@ nativeTests.test_reference_unref_in_finalizer_experimental = async gc => {
 
 nativeTests.test_create_bigint_words = () => {
   console.log(nativeTests.create_weird_bigints());
+};
+
+nativeTests.test_get_all_property_names_own_only = () => {
+  // napi_key_collection_mode
+  const napi_key_own_only = 1;
+  // napi_key_filter
+  const napi_key_all_properties = 0;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_skip_strings = 1 << 3;
+  const napi_key_skip_symbols = 1 << 4;
+  // napi_key_conversion
+  const napi_key_keep_numbers = 0;
+
+  const sym = Symbol("s");
+  const neSym = Symbol("nes");
+  const o = { x: 1, [sym]: 2 };
+  Object.defineProperty(o, "ne", { value: 3, enumerable: false, configurable: true, writable: true });
+  Object.defineProperty(o, neSym, { value: 4, enumerable: false, configurable: true, writable: true });
+
+  const describe = keys => keys.map(k => (typeof k === "symbol" ? k.toString() : JSON.stringify(k)));
+
+  for (const [label, filter] of [
+    ["skip_symbols", napi_key_skip_symbols],
+    ["skip_strings", napi_key_skip_strings],
+    ["all_properties", napi_key_all_properties],
+    ["skip_symbols|enumerable", napi_key_skip_symbols | napi_key_enumerable],
+    ["skip_strings|enumerable", napi_key_skip_strings | napi_key_enumerable],
+  ]) {
+    const { status, keys } = nativeTests.get_all_property_names(o, napi_key_own_only, filter, napi_key_keep_numbers);
+    console.log(`own_only + ${label}: status=${status} keys=[${describe(keys).join(", ")}]`);
+  }
 };
 
 nativeTests.test_bigint_word_count = () => {

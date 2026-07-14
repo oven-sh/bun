@@ -1,6 +1,3 @@
-// Canonical lives in `bun_alloc::wtf` so it is callable without a T6 dep.
-pub use bun_alloc::wtf::release_fast_malloc_free_memory_for_this_thread;
-
 // `WTF.parseDouble` canonical lives in bun_core::fmt (tier-0); re-exported here
 // as `bun_jsc::wtf::parse_double`.
 pub use bun_core::fmt::{InvalidCharacter, parse_double};

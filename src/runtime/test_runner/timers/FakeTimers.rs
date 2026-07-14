@@ -64,8 +64,10 @@ impl CurrentTime {
             date_now_offset = js.floor() - timespec_ms;
             self.date_now_offset.store(date_now_offset.to_bits(), Ordering::Relaxed);
         }
+        let date_now = date_now_offset + timespec_ms;
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
-        JSMock__setOverridenDateNow(global, date_now_offset + timespec_ms);
+        JSMock__setOverridenDateNow(global, date_now);
+        bun_core::mock_time::set_wall_ms(date_now);
 
         vm.overridden_performance_now = Some(offset.ns());
     }
@@ -76,10 +78,33 @@ impl CurrentTime {
             *self.offset_raw.write() = MIN_TIMESPEC;
         }
         bun_core::mock_time::clear();
+        bun_core::mock_time::clear_wall();
+        // NaN is JSGlobalObject::overridenDateNow's "no override" sentinel; a
+        // real -1 would pin Date.now() at 1969-12-31T23:59:59.999Z.
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
-        JSMock__setOverridenDateNow(global, -1.0);
+        JSMock__setOverridenDateNow(global, f64::NAN);
         vm.overridden_performance_now = None;
     }
+}
+
+/// `jest.setSystemTime` (C++ `JSMock__jsSetSystemTime`) writes
+/// `globalObject->overridenDateNow` directly; rebase `date_now_offset` here so
+/// the next `advanceTimersByTime` recomputes `Date.now` from the set time
+/// instead of the stale activation-time offset. No-op when fake timers are
+/// inactive or `ms` is NaN (the "clear override" sentinel).
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__FakeTimers__setSystemTime(ms: f64) {
+    if ms.is_nan() {
+        return;
+    }
+    let Some(current) = CURRENT_TIME.get_timespec_now() else {
+        return;
+    };
+    let date_now_offset = ms - current.ms() as f64;
+    CURRENT_TIME
+        .date_now_offset
+        .store(date_now_offset.to_bits(), Ordering::Relaxed);
+    bun_core::mock_time::set_wall_ms(ms);
 }
 
 use crate::jsc_hooks::timer_all;
@@ -314,7 +339,7 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) {
     let Ok(Some(set_timeout_fn)) = global_this.get(global, "setTimeout") else {
         return;
     };
-    if !set_timeout_fn.is_cell() {
+    if !set_timeout_fn.is_object() {
         return;
     }
     // testing-library/react checks Object.hasOwnProperty.call(setTimeout, 'clock')

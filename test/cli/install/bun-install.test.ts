@@ -1,6 +1,6 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
-import { readlinkSync } from "fs";
+import { readlinkSync, realpathSync } from "fs";
 import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
@@ -27,6 +27,7 @@ import {
   setContextHandler,
   type TestContext,
 } from "./dummy.registry.js";
+import { constructStdCollision } from "./wyhash-std-collision.js";
 
 expect.extend({
   toBeWorkspaceLink,
@@ -9545,6 +9546,100 @@ for (const field of ["resolutions", "overrides"]) {
   });
 }
 
+it("installs the transitive file: dependency of a file: dependency", async () => {
+  using dir = tempDir("transitive-file-dep", {
+    "package.json": JSON.stringify({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        lib: "file:./vendor/lib",
+      },
+    }),
+    "vendor/lib/package.json": JSON.stringify({
+      name: "lib",
+      version: "1.0.0",
+      main: "index.js",
+      dependencies: {
+        nested: "file:../nested",
+      },
+    }),
+    "vendor/lib/index.js": `module.exports = require("nested");`,
+    "vendor/nested/package.json": JSON.stringify({
+      name: "nested",
+      version: "1.0.0",
+      main: "index.js",
+    }),
+    "vendor/nested/index.js": `module.exports = "it worked";`,
+  });
+
+  // The first pass resolves from package.json; the second installs from the
+  // lockfile the first pass wrote.
+  for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+    await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    expect(err).not.toContain("error:");
+    expect(out).toContain("2 packages installed");
+    expect(exitCode).toBe(0);
+
+    // `lib/index.js` requires "nested", so this only passes when the
+    // transitive file: dependency is materialized under node_modules.
+    await using runProc = spawn({
+      cmd: [bunExe(), "-e", `console.log(require("lib"))`],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runOut, runErr, runExit] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
+    expect(runErr).not.toContain("error:");
+    expect(runOut.trim()).toBe("it worked");
+    expect(runExit).toBe(0);
+  }
+});
+
+it("fails when a transitive file: dependency's folder does not exist", async () => {
+  using dir = tempDir("transitive-file-dep-missing", {
+    "package.json": JSON.stringify({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        lib: "file:./vendor/lib",
+      },
+    }),
+    "vendor/lib/package.json": JSON.stringify({
+      name: "lib",
+      version: "1.0.0",
+      dependencies: {
+        nested: "file:../nested",
+      },
+    }),
+    "vendor/lib/index.js": `module.exports = require("nested");`,
+  });
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+  // The printed folder path uses the platform separator on Windows.
+  expect(err.replaceAll(sep, "/")).toContain('Could not find folder "file:vendor/nested" for dependency "nested"');
+  expect(out).not.toContain("2 packages installed");
+  expect(exitCode).toBe(1);
+});
+
 it("does not extract a local file: tarball outside the temp dir for a dependency alias containing '..' path segments", async () => {
   // For `file:` tarball dependencies, the dependency alias (the key in
   // `dependencies`) is used to derive the temporary extraction folder name.
@@ -9704,4 +9799,223 @@ it("does not create a cache index entry outside the cache directory for a depend
   expect(errOk).not.toContain("error:");
   expect(outOk).toContain("1 package installed");
   expect(exitCodeOk).toBe(0);
+});
+
+// Two distinct local `file:` dependencies whose absolute package.json paths
+// collide under the seed-0 std.Wyhash that keys the folder-resolution dedupe
+// map must each resolve to their own package, not share one identity.
+// https://github.com/oven-sh/bun/issues/32741
+it.skipIf(isWindows)("file: deps with colliding abs-path hashes resolve to distinct packages", async () => {
+  using dir = tempDir("folder-resolution-collision", {
+    "package.json": JSON.stringify({ name: "victim", version: "0.0.0" }),
+  });
+  // Use the canonical path so the folder resolver hashes the same bytes we
+  // construct the collision from (macOS /tmp -> /private/var symlink, etc.).
+  const victimDir = realpathSync(String(dir));
+  const prefix = `${victimDir}/`;
+  const suffix = "/package.json";
+
+  const collision = constructStdCollision({ seed: 0n, prefixStr: prefix, suffixStr: suffix });
+  const name1 = collision.str1.slice(prefix.length, collision.str1.length - suffix.length);
+  const name2 = collision.str2.slice(prefix.length, collision.str2.length - suffix.length);
+
+  // Confirm the collision holds against the exact hash the resolver uses before
+  // relying on it (Bun.hash.wyhash == bun.hash seed 0 == FolderResolution key).
+  const abs1 = `${victimDir}/${name1}/package.json`;
+  const abs2 = `${victimDir}/${name2}/package.json`;
+  expect(name1).not.toBe(name2);
+  expect(name1.includes("/")).toBe(false);
+  expect(name2.includes("/")).toBe(false);
+  expect(Bun.hash.wyhash(abs1, 0n)).toBe(Bun.hash.wyhash(abs2, 0n));
+
+  await write(join(victimDir, name1, "package.json"), JSON.stringify({ name: "pkg-alpha", version: "1.0.0" }));
+  await write(join(victimDir, name1, "index.js"), "module.exports = 'ALPHA';");
+  await write(join(victimDir, name2, "package.json"), JSON.stringify({ name: "pkg-beta", version: "2.0.0" }));
+  await write(join(victimDir, name2, "index.js"), "module.exports = 'BETA';");
+  await write(
+    join(victimDir, "package.json"),
+    JSON.stringify({
+      name: "victim",
+      version: "0.0.0",
+      dependencies: { alphadep: `file:./${name1}`, betadep: `file:./${name2}` },
+    }),
+  );
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: victimDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  // Each alias must carry its own package's identity despite the hash collision.
+  const alpha = await file(join(victimDir, "node_modules", "alphadep", "package.json")).json();
+  const beta = await file(join(victimDir, "node_modules", "betadep", "package.json")).json();
+  expect({ alpha: alpha.name, beta: beta.name }).toEqual({ alpha: "pkg-alpha", beta: "pkg-beta" });
+});
+
+it("reports an invalid URL for a manifest tarball URL containing a newline", async () => {
+  await withContext(defaultOpts, async ctx => {
+    const tarballRequests: string[] = [];
+    setContextHandler(ctx, async request => {
+      const url = new URL(request.url);
+      if (url.pathname.includes(".tgz")) {
+        tarballRequests.push(request.url);
+        return new Response("Not Found", { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({
+          name: "baz",
+          versions: {
+            "0.0.2": {
+              name: "baz",
+              version: "0.0.2",
+              dist: {
+                tarball: `${ctx.registry_url}baz\n-0.0.2.tgz`,
+              },
+            },
+          },
+          "dist-tags": {
+            latest: "0.0.2",
+          },
+        }),
+      );
+    });
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          baz: "0.0.2",
+        },
+      }),
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain("InvalidURL downloading tarball");
+    expect(tarballRequests).toEqual([]);
+    expect(out).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
+});
+
+it("reports an invalid URL for a manifest tarball URL containing a space", async () => {
+  await withContext(defaultOpts, async ctx => {
+    setContextHandler(ctx, async request => {
+      const url = new URL(request.url);
+      if (url.pathname.includes(".tgz")) {
+        return new Response("Not Found", { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({
+          name: "baz",
+          versions: {
+            "0.0.2": {
+              name: "baz",
+              version: "0.0.2",
+              dist: {
+                tarball: `${ctx.registry_url}baz -0.0.2.tgz`,
+              },
+            },
+          },
+          "dist-tags": {
+            latest: "0.0.2",
+          },
+        }),
+      );
+    });
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          baz: "0.0.2",
+        },
+      }),
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain("InvalidURL downloading tarball");
+    expect(out).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
+});
+
+it.each([
+  ["tab", "\t"],
+  ["vertical tab", "\x0b"],
+])("reports an invalid URL for a manifest tarball URL containing a %s", async (_name, char) => {
+  await withContext(defaultOpts, async ctx => {
+    const tarballRequests: string[] = [];
+    setContextHandler(ctx, async request => {
+      const url = new URL(request.url);
+      if (url.pathname.includes(".tgz")) {
+        tarballRequests.push(request.url);
+        return new Response("Not Found", { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({
+          name: "baz",
+          versions: {
+            "0.0.2": {
+              name: "baz",
+              version: "0.0.2",
+              dist: {
+                tarball: `${ctx.registry_url}baz${char}-0.0.2.tgz`,
+              },
+            },
+          },
+          "dist-tags": {
+            latest: "0.0.2",
+          },
+        }),
+      );
+    });
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          baz: "0.0.2",
+        },
+      }),
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain("InvalidURL downloading tarball");
+    expect(tarballRequests).toEqual([]);
+    expect(out).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
 });

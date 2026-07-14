@@ -46,6 +46,18 @@ void JSHash::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
 }
 
+template<typename Visitor>
+void JSHash::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSHash* thisObject = uncheckedDowncast<JSHash>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.reportExtraMemoryVisited(thisObject->m_sizeForGC);
+}
+
+DEFINE_VISIT_CHILDREN(JSHash);
+
 template<typename, JSC::SubspaceAccess mode>
 JSC::GCClient::IsoSubspace* JSHash::subspaceFor(JSC::VM& vm)
 {
@@ -94,6 +106,9 @@ bool JSHash::init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const EV
         m_mdLen = xofLen.value();
     }
 
+    m_sizeForGC = sizeof(EVP_MD_CTX) + m_mdLen;
+    globalObject->vm().heap.reportExtraMemoryAllocated(this, m_sizeForGC);
+
     return true;
 }
 
@@ -113,6 +128,9 @@ bool JSHash::initZig(JSGlobalObject* globalObject, ThrowScope& scope, ExternZigH
         }
         m_mdLen = xofLen.value();
     }
+
+    m_sizeForGC = m_mdLen;
+    globalObject->vm().heap.reportExtraMemoryAllocated(this, m_sizeForGC);
 
     return true;
 }
@@ -194,9 +212,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
         return JSValue::encode(hashWrapper);
     } else if (auto* view = dynamicDowncast<JSArrayBufferView>(inputValue)) {
-        if (view->isDetached()) [[unlikely]] {
-            return Bun::ERR::INVALID_STATE(scope, globalObject, "Cannot hash a detached buffer"_s);
-        }
         if (!hash->update(view->span())) {
             return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
         }

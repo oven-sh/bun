@@ -481,7 +481,7 @@ impl<T: VersionInt> VersionType<T> {
         }
         let mut is_done = false;
 
-        let mut i: usize = 0;
+        let mut i: usize = input.len();
 
         for c in 0..input.len() {
             match input[c] {
@@ -505,6 +505,8 @@ impl<T: VersionInt> VersionType<T> {
 
         if i == input.len() {
             result.valid = false;
+            result.wildcard = Wildcard::Major;
+            result.len = u32::try_from(i).expect("int cast");
             return result;
         }
 

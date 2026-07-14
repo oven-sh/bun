@@ -1,6 +1,7 @@
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
 
+use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
 use crate::parser::{ParseStatementOptions, Ref, ScopeOrder};
@@ -16,7 +17,6 @@ use bun_ast::{
     StmtData, TSNamespaceMember, TSNamespaceMemberMap,
 };
 use bun_core::strings;
-use bun_core::{Error, err};
 
 // `ts::Data` carries only Copy payloads but lacks a `derive(Clone)` upstream;
 // local helper so we can re-insert values fetched from `ref_to_ts_namespace_member`.
@@ -89,7 +89,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Must start with an identifier
         if p.lexer.token != T::TIdentifier {
             p.lexer.expect(T::TIdentifier)?;
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         let ident = p.lexer.identifier;
@@ -118,14 +118,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     err_loc,
                     b"Optional chaining is not allowed in decorator expressions",
                 );
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
 
             p.lexer.next()?;
 
             if !p.lexer.is_identifier_or_keyword() {
                 p.lexer.expect(T::TIdentifier)?;
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
 
             let name = E::Str::new(p.lexer.identifier);
@@ -210,7 +210,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..ParseStatementOptions::default()
             };
             if !p.stack_check.is_safe_to_recurse() {
-                return Err(err!("StackOverflow"));
+                return Err(crate::Error::StackOverflow);
             }
             stmts.push(p.parse_type_script_namespace_stmt(dot_loc, &mut _opts)?);
         } else if opts.is_typescript_declare && p.lexer.token != T::TOpenBrace {
@@ -557,12 +557,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name.ref_ = p.declare_symbol(SymbolKind::TsEnum, name_loc, name_text)?;
             let _ = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
             p.current_scope_mut().ts_namespace = Some(ts_namespace);
-            // debug-assert no prior entry.
-            let prev = p.ref_to_ts_namespace_member.insert(
+            // Overwrite allowed: on a forbidden redeclaration `declare_symbol` returns
+            // the existing ref for every colliding enum, so the key repeats; the value
+            // is the same map `get_or_create_exported_namespace_members` already reused.
+            p.ref_to_ts_namespace_member.insert(
                 name.ref_,
                 TSNamespaceMemberData::Namespace(exported_members),
             );
-            debug_assert!(prev.is_none());
         }
 
         p.lexer.expect(T::TOpenBrace)?;
@@ -593,7 +594,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 p.lexer.expect(T::TIdentifier)?;
                 // error early, name is still `undefined`
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
             p.lexer.next()?;
 

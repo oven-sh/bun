@@ -1,5 +1,6 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import net from "node:net";
 
 describe("path parameters", () => {
   let server: Server;
@@ -69,6 +70,27 @@ describe("path parameters", () => {
       method: "GET",
     });
   });
+
+  it.each([
+    ["valid UTF-8 bytes", [0xc3, 0xa9], "é"],
+    ["an invalid UTF-8 byte", [0xe9], "�"],
+  ])("decodes raw %s in a parameter segment", async (_label, bytes, expected) => {
+    const request = Buffer.concat([
+      Buffer.from("GET /users/"),
+      Buffer.from(bytes),
+      Buffer.from(" HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+    ]);
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(server.port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.on("connect", () => socket.write(request));
+    const response = await promise;
+    expect(response).toContain("HTTP/1.1 200");
+    expect(JSON.parse(response.slice(response.indexOf("\r\n\r\n") + 4))).toEqual({ id: expected, method: "GET" });
+  });
 });
 
 describe("HTTP methods", () => {
@@ -105,6 +127,158 @@ describe("HTTP methods", () => {
     } else {
       expect(await res.text()).toBe(method);
     }
+  });
+});
+
+describe("implicit HEAD for per-method route objects", () => {
+  // HEAD must return the same representation as GET without the body
+  // (RFC 9110 section 9.3.2).
+  test("HEAD is served by the GET handler when no HEAD handler is declared", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/m": { GET: () => new Response("hello-get") },
+        "/*": () => new Response("from-catch-all"),
+      },
+    });
+
+    const get = await fetch(new URL("/m", server.url));
+    expect(await get.text()).toBe("hello-get");
+    expect(get.status).toBe(200);
+
+    const head = await fetch(new URL("/m", server.url), { method: "HEAD" });
+    expect(await head.text()).toBe("");
+    expect(head.headers.get("content-length")).toBe("9");
+    expect(head.status).toBe(200);
+
+    // Other methods still fall through to the next matching route.
+    const post = await fetch(new URL("/m", server.url), { method: "POST" });
+    expect(await post.text()).toBe("from-catch-all");
+  });
+
+  test("HEAD does not 404 when there is no later route to fall through to", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/only-get": { GET: () => new Response("ok") } },
+    });
+
+    const res = await fetch(new URL("/only-get", server.url), { method: "HEAD" });
+    expect(await res.text()).toBe("");
+    expect(res.headers.get("content-length")).toBe("2");
+    expect(res.status).toBe(200);
+  });
+
+  test("the GET handler observes the real request method", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/echo": { GET: req => new Response("body", { headers: { "x-seen-method": req.method } }) },
+      },
+    });
+
+    const res = await fetch(new URL("/echo", server.url), { method: "HEAD" });
+    expect(res.headers.get("x-seen-method")).toBe("HEAD");
+    expect(res.headers.get("content-length")).toBe("4");
+    expect(await res.text()).toBe("");
+    expect(res.status).toBe(200);
+  });
+
+  test("an explicit HEAD handler takes precedence over the GET handler", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/explicit": {
+          GET: () => new Response("get-body"),
+          HEAD: () => new Response(null, { headers: { "x-explicit-head": "1" } }),
+        },
+      },
+    });
+
+    const res = await fetch(new URL("/explicit", server.url), { method: "HEAD" });
+    expect(res.headers.get("x-explicit-head")).toBe("1");
+    expect(res.status).toBe(200);
+  });
+
+  test("an explicit static HEAD Response takes precedence over the GET handler", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/explicit-static": {
+          GET: () => new Response("get-body"),
+          HEAD: new Response(null, { headers: { "x-static-head": "1" } }),
+        },
+      },
+    });
+
+    const res = await fetch(new URL("/explicit-static", server.url), { method: "HEAD" });
+    expect(res.headers.get("x-static-head")).toBe("1");
+    expect(res.status).toBe(200);
+  });
+
+  test("an explicit HEAD handler takes precedence over a static GET Response", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/static-get": {
+          GET: new Response("get-static"),
+          HEAD: () => new Response(null, { headers: { "x-callable-head": "1" } }),
+        },
+      },
+    });
+
+    const head = await fetch(new URL("/static-get", server.url), { method: "HEAD" });
+    expect(head.headers.get("x-callable-head")).toBe("1");
+    expect(head.status).toBe(200);
+
+    const get = await fetch(new URL("/static-get", server.url));
+    expect(await get.text()).toBe("get-static");
+    expect(get.status).toBe(200);
+  });
+
+  test("a static Response for another method does not capture HEAD away from GET", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/mixed": {
+          GET: () => new Response("hello-get"),
+          POST: new Response("static-post-response"),
+        },
+      },
+    });
+
+    const head = await fetch(new URL("/mixed", server.url), { method: "HEAD" });
+    expect(await head.text()).toBe("");
+    expect(head.headers.get("content-length")).toBe("9");
+    expect(head.status).toBe(200);
+
+    const get = await fetch(new URL("/mixed", server.url));
+    expect(await get.text()).toBe("hello-get");
+    const post = await fetch(new URL("/mixed", server.url), { method: "POST" });
+    expect(await post.text()).toBe("static-post-response");
+  });
+
+  test("HEAD is not derived for route objects without a GET handler", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/post-only": { POST: () => new Response("p") } },
+    });
+
+    const res = await fetch(new URL("/post-only", server.url), { method: "HEAD" });
+    expect(res.status).toBe(404);
+  });
+
+  test("HEAD is not derived for a static Response under a non-GET method", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/post-only-static": { POST: new Response("post-only") } },
+    });
+
+    const head = await fetch(new URL("/post-only-static", server.url), { method: "HEAD" });
+    expect(head.status).toBe(404);
+
+    const post = await fetch(new URL("/post-only-static", server.url), { method: "POST" });
+    expect(await post.text()).toBe("post-only");
+    expect(post.status).toBe(200);
   });
 });
 

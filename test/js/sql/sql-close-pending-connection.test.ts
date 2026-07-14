@@ -1,3 +1,9 @@
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+
 // https://github.com/oven-sh/bun/issues/32095
 //
 // A forced pool close (`close({ timeout: "0" })`) must resolve even when a
@@ -12,32 +18,16 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import net from "node:net";
+import { neverAnsweringServer } from "./wire-frames";
 
 const drivers = [
   ["postgres", "postgres://postgres@", "ERR_POSTGRES_CONNECTION_CLOSED"],
   ["mysql", "mysql://root@", "ERR_MYSQL_CONNECTION_CLOSED"],
 ] as const;
 
-async function neverAnsweringServer(): Promise<{
-  port: number;
-  server: net.Server;
-  sockets: net.Socket[];
-  accepted: Promise<void>;
-}> {
-  const first = Promise.withResolvers<void>();
-  const sockets: net.Socket[] = [];
-  const server = net.createServer(socket => {
-    sockets.push(socket);
-    first.resolve();
-  });
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  return { port: (server.address() as net.AddressInfo).port, server, sockets, accepted: first.promise };
-}
-
 for (const [name, scheme, closedCode] of drivers) {
   test(`${name}: forced close() resolves while a connection is mid-handshake`, async () => {
-    const { port, server, sockets, accepted } = await neverAnsweringServer();
+    const { port, server, accepted } = await neverAnsweringServer();
     try {
       const sql = new SQL({ url: `${scheme}127.0.0.1:${port}/db`, max: 1, connectionTimeout: 0 });
       const queryError = sql`SELECT 1`.catch(e => e);
@@ -47,13 +37,12 @@ for (const [name, scheme, closedCode] of drivers) {
       await sql.close({ timeout: "0" });
       expect((await queryError).code).toBe(closedCode);
     } finally {
-      for (const socket of sockets) socket.destroy();
       server.close();
     }
   });
 
   test(`${name}: forced close() resolves when called before the native handle is stored`, async () => {
-    const { port, server, sockets } = await neverAnsweringServer();
+    const { port, server } = await neverAnsweringServer();
     try {
       const sql = new SQL({ url: `${scheme}127.0.0.1:${port}/db`, max: 1, connectionTimeout: 0 });
       const connectError = sql.connect().catch(e => e);
@@ -62,7 +51,6 @@ for (const [name, scheme, closedCode] of drivers) {
       await sql.close({ timeout: "0" });
       expect((await connectError).code).toBe(closedCode);
     } finally {
-      for (const socket of sockets) socket.destroy();
       server.close();
     }
   });
@@ -75,7 +63,7 @@ for (const [name, scheme, closedCode] of drivers) {
 // runs synchronously during that fill, so pool methods re-entered from it
 // used to dereference unassigned slots and throw a raw TypeError.
 test("pool scans tolerate unassigned connection slots during pool start", async () => {
-  const { port, server, sockets } = await neverAnsweringServer();
+  const { port, server } = await neverAnsweringServer();
   let passwordCalls = 0;
   const errors: unknown[] = [];
   const sql = new SQL({
@@ -110,7 +98,6 @@ test("pool scans tolerate unassigned connection slots during pool start", async 
   } finally {
     // force an immediate close even with waiters queued
     await sql.close({ timeout: "0" });
-    for (const socket of sockets) socket.destroy();
     server.close();
   }
 });

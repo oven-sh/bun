@@ -160,8 +160,6 @@ pub enum SubtreeError {
 
 bun_core::oom_from_alloc!(SubtreeError);
 
-bun_core::named_error_set!(SubtreeError);
-
 // ──────────────────────────────────────────────────────────────────────────
 // Iterator
 // ──────────────────────────────────────────────────────────────────────────

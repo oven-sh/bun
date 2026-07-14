@@ -37,8 +37,6 @@ pub enum RedisError {
 
 bun_core::impl_tag_error!(RedisError);
 
-bun_core::named_error_set!(RedisError);
-
 impl From<bun_core::Error> for RedisError {
     /// Reverse of the `RedisError → bun_core::Error` interning above so the
     /// `JSValkeyClient::send` → `valkey_error_to_js` path round-trips through
@@ -813,5 +811,19 @@ impl SubscriptionPushMessage {
     #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied()
+    }
+
+    /// Pattern (`p`-prefixed) and sharded (`s`-prefixed) variants of the
+    /// `Subscribe`/`Unsubscribe` push kinds; the unprefixed kinds are matched by
+    /// `from_bytes` before this is consulted.
+    #[inline]
+    pub fn is_reply_kind(kind: &[u8]) -> bool {
+        match kind.split_first() {
+            Some((b'p' | b's', base)) => matches!(
+                Self::from_bytes(base),
+                Some(Self::Subscribe | Self::Unsubscribe)
+            ),
+            _ => false,
+        }
     }
 }

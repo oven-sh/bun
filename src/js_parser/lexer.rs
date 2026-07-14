@@ -185,7 +185,6 @@ pub enum Error {
 }
 bun_core::impl_tag_error!(Error);
 bun_core::oom_from_alloc!(Error);
-bun_core::named_error_set!(Error);
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum StringLiteralRawFormat {
@@ -336,13 +335,13 @@ pub struct LexerType<
     pub has_newline_before: bool,
     pub has_pure_comment_before: bool,
     pub has_no_side_effect_comment_before: bool,
-    /// Set (and never cleared by `next()`) once an `eslint-disable[-line|-next-line]`
+    /// Set (and never cleared by `next()`) once an `eslint-disable[-next-line]`
     /// comment naming `react-hooks/rules-of-hooks` or `react-hooks/exhaustive-deps`
     /// has been scanned. The parser reads this at function-body close to set
     /// `flags::Function::HasReactHooksSuppression` / `E::Arrow::has_react_hooks_suppression`.
     pub has_react_hooks_suppression_before: bool,
     /// Sticky variant of the above: set when the suppression comment is a bare
-    /// `eslint-disable` (no `-line`/`-next-line` suffix). Never cleared by the
+    /// `eslint-disable` (no `-next-line` suffix). Never cleared by the
     /// parser, so it applies to every subsequent function in the file.
     pub has_react_hooks_block_suppression: bool,
     pub preserve_all_comments_before: bool,
@@ -836,7 +835,8 @@ lexer_impl_header! {
                                 let mut is_out_of_range = false;
                                 'variable_length: loop {
                                     if !iterator.next(&mut iter) {
-                                        break 'variable_length;
+                                        // Ran out of literal before the closing `}`.
+                                        return self.syntax_error();
                                     }
                                     c3 = iter.c;
 
@@ -849,7 +849,9 @@ lexer_impl_header! {
                                         break 'variable_length;
                                     }
                                     match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = (value * 16) | d as i64,
+                                        // Saturate: `is_out_of_range` is sticky, so any
+                                        // digit count still reports the range error.
+                                        Some(d) => value = value.saturating_mul(16) | d as i64,
                                         None => {
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);
@@ -1087,6 +1089,7 @@ lexer_impl_header! {
                                     continue;
                                 }
                                 None => {
+                                    self.current += remainder.len();
                                     self.step_with(contents);
                                     continue;
                                 }
@@ -2340,19 +2343,25 @@ lexer_impl_header! {
             let body = &text[..end_comment_text];
             if let Some(i) = strings::index_of(body, b"eslint-disable") {
                 let after = &body[i + b"eslint-disable".len()..];
-                let (is_block, rest) = if strings::has_prefix_comptime(after, b"-next-line") {
-                    (false, &after[b"-next-line".len()..])
-                } else if strings::has_prefix_comptime(after, b"-line") {
-                    (false, &after[b"-line".len()..])
+                // Only `eslint-disable[-next-line] <rule>` with a word boundary; not `-line`.
+                let at_word_boundary =
+                    |s: &[u8]| s.first().is_none_or(|b| b.is_ascii_whitespace());
+                let matched = if strings::has_prefix_comptime(after, b"-next-line") {
+                    let rest = &after[b"-next-line".len()..];
+                    at_word_boundary(rest).then_some((false, rest))
+                } else if at_word_boundary(after) {
+                    Some((true, after))
                 } else {
-                    (true, after)
+                    None
                 };
-                if strings::contains(rest, b"react-hooks/rules-of-hooks")
-                    || strings::contains(rest, b"react-hooks/exhaustive-deps")
-                {
-                    self.has_react_hooks_suppression_before = true;
-                    if is_block {
-                        self.has_react_hooks_block_suppression = true;
+                if let Some((is_block, rest)) = matched {
+                    if strings::contains(rest, b"react-hooks/rules-of-hooks")
+                        || strings::contains(rest, b"react-hooks/exhaustive-deps")
+                    {
+                        self.has_react_hooks_suppression_before = true;
+                        if is_block {
+                            self.has_react_hooks_block_suppression = true;
+                        }
                     }
                 }
             }

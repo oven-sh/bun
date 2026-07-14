@@ -1,3 +1,9 @@
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
 // During database-server startup (e.g. a postgres/mysql docker container that
 // is still initializing), clients hit two socket-level failures that are not
 // protocol errors: the connection is refused outright, or an intermediary
@@ -18,26 +24,16 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import net from "node:net";
+import type net from "node:net";
+import { closedPort, listeningServer, pgAuthenticationOk, pgErrorResponse, pgReadyForQuery } from "./wire-frames";
 
-async function listeningServer(onSocket: (socket: net.Socket) => void): Promise<{ port: number; server: net.Server }> {
-  const server = net.createServer(onSocket);
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  return { port: (server.address() as net.AddressInfo).port, server };
-}
-
-async function closedPort(): Promise<number> {
-  const server = net.createServer();
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  const port = (server.address() as net.AddressInfo).port;
-  await new Promise<void>(resolve => server.close(() => resolve()));
-  return port;
-}
-
-// connectionTimeout (seconds) bounds the connect-retry budget; keep it short
-// in tests that expect the failure to surface.
-async function connectError(url: string): Promise<any> {
-  const db = new SQL({ url, max: 1, connectionTimeout: 1 });
+// connectionTimeout (seconds, fractional allowed) bounds the connect-retry
+// budget; keep it short in tests that expect the failure to surface. Tests
+// that assert a retry COUNT need enough budget for the 40ms first backoff to
+// fire on a slow debug/ASAN runner, so they use a larger value than tests
+// that only assert the resulting error.
+async function connectError(url: string, connectionTimeout = 1): Promise<any> {
+  const db = new SQL({ url, max: 1, connectionTimeout });
   try {
     await db.connect();
     throw new Error("expected connect() to reject");
@@ -49,15 +45,7 @@ async function connectError(url: string): Promise<any> {
 }
 
 function postgresAuthOkAndReady(socket: net.Socket) {
-  const authOk = Buffer.alloc(9);
-  authOk.write("R", 0);
-  authOk.writeInt32BE(8, 1);
-  authOk.writeInt32BE(0, 5);
-  const ready = Buffer.alloc(6);
-  ready.write("Z", 0);
-  ready.writeInt32BE(5, 1);
-  ready.write("I", 5);
-  socket.write(Buffer.concat([authOk, ready]));
+  socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
 }
 
 test("postgres: connection refused is reported distinctly and fails fast", async () => {
@@ -75,7 +63,8 @@ test("postgres: connection closed before handshake completes is a connect failur
   // initializing: accept, then close with no data.
   const { port, server } = await listeningServer(socket => socket.destroy());
   try {
-    const err = await connectError(`postgres://postgres@127.0.0.1:${port}/postgres`);
+    // only the error is asserted, not a retry count: the smallest budget works
+    const err = await connectError(`postgres://postgres@127.0.0.1:${port}/postgres`, 0.25);
     expect(err.message).toBe("Connection closed before the connection was established");
     expect(err.code).toBe("ERR_POSTGRES_CONNECTION_FAILED");
   } finally {
@@ -90,7 +79,9 @@ test("postgres: connect failures are retried while queries wait", async () => {
     socket.destroy();
   });
   try {
-    const err = await connectError(`postgres://postgres@127.0.0.1:${port}/postgres`);
+    // 0.5s budget: the first retry fires after a 40ms backoff, leaving plenty
+    // of headroom for the >= 2 assertion below even on slow debug/ASAN lanes
+    const err = await connectError(`postgres://postgres@127.0.0.1:${port}/postgres`, 0.5);
     expect(err.code).toBe("ERR_POSTGRES_CONNECTION_FAILED");
     // at least one retry happened; the exact count depends on machine speed
     expect(connections).toBeGreaterThanOrEqual(2);
@@ -129,27 +120,14 @@ test("postgres: server ErrorResponse during startup is still surfaced (57P03)", 
   const { port, server } = await listeningServer(socket => {
     connections++;
     socket.on("data", () => {
-      const fields: [string, string][] = [
-        ["S", "FATAL"],
-        ["V", "FATAL"],
-        ["C", "57P03"],
-        ["M", "the database system is starting up"],
-      ];
-      let len = 4;
-      for (const [, v] of fields) len += 1 + v.length + 1;
-      len += 1;
-      const buf = Buffer.alloc(1 + len);
-      let o = 0;
-      buf.write("E", o++);
-      buf.writeInt32BE(len, o);
-      o += 4;
-      for (const [k, v] of fields) {
-        buf.write(k, o++);
-        buf.write(v + "\0", o);
-        o += v.length + 1;
-      }
-      buf[o] = 0;
-      socket.end(buf);
+      socket.end(
+        pgErrorResponse({
+          S: "FATAL",
+          V: "FATAL",
+          C: "57P03",
+          M: "the database system is starting up",
+        }),
+      );
     });
   });
   try {
@@ -204,7 +182,8 @@ test("mysql: connection refused is reported distinctly and fails fast", async ()
 test("mysql: connection closed before handshake completes is a connect failure", async () => {
   const { port, server } = await listeningServer(socket => socket.destroy());
   try {
-    const err = await connectError(`mysql://root@127.0.0.1:${port}/mysql`);
+    // only the error is asserted, not a retry count: the smallest budget works
+    const err = await connectError(`mysql://root@127.0.0.1:${port}/mysql`, 0.25);
     expect(err.message).toBe("Connection closed before the connection was established");
     expect(err.code).toBe("ERR_MYSQL_CONNECTION_FAILED");
   } finally {
@@ -219,7 +198,9 @@ test("mysql: connect failures are retried while queries wait", async () => {
     socket.destroy();
   });
   try {
-    const err = await connectError(`mysql://root@127.0.0.1:${port}/mysql`);
+    // 0.5s budget: the first retry fires after a 40ms backoff, leaving plenty
+    // of headroom for the >= 2 assertion below even on slow debug/ASAN lanes
+    const err = await connectError(`mysql://root@127.0.0.1:${port}/mysql`, 0.5);
     expect(err.code).toBe("ERR_MYSQL_CONNECTION_FAILED");
     // at least one retry happened; the exact count depends on machine speed
     expect(connections).toBeGreaterThanOrEqual(2);
@@ -258,7 +239,9 @@ test("postgres: onclose fires once per closed connection, not per retry attempt"
   const db = new SQL({
     url: `postgres://postgres@127.0.0.1:${port}/postgres`,
     max: 1,
-    connectionTimeout: 1,
+    // 0.5s: enough for the 40ms-backoff first retry (connections >= 2 below)
+    // without waiting out a full second once the budget is exhausted
+    connectionTimeout: 0.5,
     onclose: () => {
       oncloseCalls++;
     },
@@ -319,7 +302,9 @@ test("mysql: onclose fires once per closed connection, not per retry attempt", a
   const db = new SQL({
     url: `mysql://root@127.0.0.1:${port}/mysql`,
     max: 1,
-    connectionTimeout: 1,
+    // 0.5s: enough for the 40ms-backoff first retry (connections >= 2 below)
+    // without waiting out a full second once the budget is exhausted
+    connectionTimeout: 0.5,
     onclose: () => {
       oncloseCalls++;
     },

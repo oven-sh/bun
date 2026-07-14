@@ -573,10 +573,7 @@ impl<'a> Part<'a> {
         }
     }
 
-    pub fn write_as_serialized(
-        &self,
-        writer: &mut impl bun_io::Write,
-    ) -> Result<(), bun_core::Error> {
+    pub fn write_as_serialized(&self, writer: &mut impl bun_io::Write) -> crate::Result<()> {
         if let Part::Text(text) = self {
             debug_assert!(!text.is_empty());
             debug_assert!(strings::index_of_char(text, b'/').is_none());
@@ -705,7 +702,7 @@ impl Style {
         log: &mut TinyLog,
         allow_layouts: bool,
         arena: &'bump Arena,
-    ) -> Result<Option<ParsedPattern<'bump>>, bun_core::Error> {
+    ) -> crate::Result<Option<ParsedPattern<'bump>>> {
         debug_assert!(file_path[0] == b'/');
 
         match self {
@@ -742,7 +739,7 @@ impl Style {
         log: &mut TinyLog,
         allow_layouts: bool,
         arena: &'bump Arena,
-    ) -> Result<Option<ParsedPattern<'bump>>, bun_core::Error> {
+    ) -> crate::Result<Option<ParsedPattern<'bump>>> {
         let mut file_path = &file_path_raw[0..file_path_raw.len() - ext.len()];
         let mut kind = ParsedPatternKind::Page;
         if file_path.ends_with(b"/index") {
@@ -771,7 +768,7 @@ impl Style {
         log: &mut TinyLog,
         allow_layouts: bool,
         arena: &'bump Arena,
-    ) -> Result<Option<ParsedPattern<'bump>>, bun_core::Error> {
+    ) -> crate::Result<Option<ParsedPattern<'bump>>> {
         let without_ext = &file_path_raw[0..file_path_raw.len() - ext.len()];
         let basename = paths::basename(without_ext);
         let Some(loader) = bun_ast::Loader::from_string(ext) else {
@@ -828,7 +825,7 @@ impl Style {
         route_segment: &'bump [u8],
         log: &mut TinyLog,
         arena: &'bump Arena,
-    ) -> Result<&'bump [Part<'bump>], bun_core::Error> {
+    ) -> crate::Result<&'bump [Part<'bump>]> {
         let mut i: usize = 1;
         let mut parts: ArenaVec<'bump, Part<'bump>> = ArenaVec::new_in(arena);
         let stop_chars: &[u8] = match CONVENTIONS {
@@ -898,7 +895,6 @@ impl Style {
                 }
                 // Potential future proofing
                 if let Some(bad_char_index) = strings::index_of_any(param_name, b"?*{}()=:#,") {
-                    let bad_char_index = bad_char_index as usize;
                     return Err(log
                         .fail(
                             format_args!(
@@ -1323,9 +1319,11 @@ pub enum PatternParseError {
     InvalidRoutePattern,
 }
 
-impl From<PatternParseError> for bun_core::Error {
+impl From<PatternParseError> for crate::Error {
     fn from(e: PatternParseError) -> Self {
-        bun_core::Error::intern(<&'static str>::from(&e))
+        match e {
+            PatternParseError::InvalidRoutePattern => crate::Error::InvalidRoutePattern,
+        }
     }
 }
 
@@ -1434,11 +1432,7 @@ impl TinyLog {
 }
 
 /// Local shim — `bun_core::io::Writer` exposes only `write_all`/`print`.
-fn writer_splat_byte_all(
-    w: &mut bun_core::io::Writer,
-    byte: u8,
-    n: usize,
-) -> Result<(), bun_core::Error> {
+fn writer_splat_byte_all(w: &mut bun_core::io::Writer, byte: u8, n: usize) -> crate::Result<()> {
     let chunk = [byte; 256];
     let mut remain = n;
     while remain > 0 {
@@ -1453,7 +1447,7 @@ fn writer_splat_bytes_all(
     w: &mut bun_core::io::Writer,
     bytes: &str,
     n: usize,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     for _ in 0..n {
         w.write_all(bytes.as_bytes())?;
     }
@@ -1536,7 +1530,7 @@ impl FrameworkRouter {
         // `addr_of_mut!` only computes a field address without forming a reference.
         let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
 
-        if let Some(entries) = dir_info.get_entries_const() {
+        {
             // Note: `entries.data` is backed by `std::collections::HashMap`,
             // whose iteration order is unspecified. The route-tree child order
             // is this iteration order (see `insert`), and
@@ -1550,14 +1544,23 @@ impl FrameworkRouter {
                 *mut bun_resolver::fs::Entry,
                 ZigStringHashContext,
             > = Default::default();
-            for (k, &v) in entries.data.iter() {
-                let _ = zig_order.put(Box::from(&**k), v);
+            {
+                // Copy under `entries_mutex`: other threads rewrite the cached
+                // `DirEntry` map in place under that lock. Dropped before the
+                // walk so the `read_dir_info_ignore_error` recursion can re-lock.
+                let _entries_lock = fs_ref.fs.entries_mutex.lock_guard();
+                if let Some(entries) = dir_info.get_entries_const() {
+                    for (k, &v) in entries.data.iter() {
+                        let _ = zig_order.put(Box::from(&**k), v);
+                    }
+                }
             }
             let mut it = zig_order.iter();
             'outer: while let Some(entry) = it.next() {
                 let file_ptr: *mut bun_resolver::fs::Entry = *entry.1;
-                // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton; entries
-                // outlive this scan and are serialized via `RealFS.entries_mutex`.
+                // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton
+                // (process lifetime); the lazy-stat rewrite in `kind()` below is
+                // serialized on the per-entry `Entry.mutex`.
                 let file = unsafe { &*file_ptr };
                 let base = file.base();
                 // Note: reshaped for borrowck — fetch type fields fresh each iteration.
@@ -2016,7 +2019,7 @@ impl JSFrameworkRouter {
             true,
             &arena,
         ) {
-            Err(e) if e == bun_core::err!("InvalidRoutePattern") => {
+            Err(crate::Error::InvalidRoutePattern) => {
                 return Err(global.throw(format_args!(
                     "{} ({}:{})",
                     bstr::BStr::new(log.msg.slice()),

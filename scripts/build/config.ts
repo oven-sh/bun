@@ -144,6 +144,12 @@ export interface Config {
   tinycc: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
+  /**
+   * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
+   * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
+   * acquire atomic load per syscall, zero when compiled out.
+   */
+  socketFaultInjection: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -336,6 +342,7 @@ export interface PartialConfig {
   tinycc?: boolean;
   valgrind?: boolean;
   fuzzilli?: boolean;
+  socketFaultInjection?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -863,6 +870,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   const valgrind = partial.valgrind ?? false;
   const fuzzilli = partial.fuzzilli ?? false;
+  // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
+  // release-asan, off everywhere else. The fuzz tests are most useful when
+  // memory errors are detectable, and the disarmed-hot-path cost (one acquire
+  // atomic load) is acceptable in asan builds but not in shipped release.
+  const socketFaultInjection = partial.socketFaultInjection ?? asan;
 
   // ─── Paths ───
   const cwd = findRepoRoot();
@@ -1125,6 +1137,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     tinycc,
     valgrind,
     fuzzilli,
+    socketFaultInjection,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
@@ -1449,6 +1462,9 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.baseline) features.push("baseline");
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
+  if (cfg.socketFaultInjection !== cfg.asan) {
+    features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
+  }
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

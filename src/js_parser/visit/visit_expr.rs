@@ -1685,9 +1685,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .data
                         .e_string()
                         .expect("infallible: variant checked")
-                        .data
-                        == b"__proto__"
-                // __proto__ is utf8, assume it lives in refs
+                        .eql_comptime(b"__proto__")
                 {
                     if has_proto {
                         let r = js_lexer::range_of_identifier(p.source, key.loc);
@@ -2215,21 +2213,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         name,
                     ) {
                     Ok(r) => r,
-                    Err(err) => {
-                        if err == bun_core::err!("MacroFailed") {
-                            if p.log().msgs.len() == start_error_count {
-                                p.log().add_error(
-                                    Some(p.source),
-                                    expr.loc,
-                                    b"macro threw exception",
-                                );
-                            }
-                        } else {
-                            p.log().add_error_fmt(
-                                Some(p.source),
-                                expr.loc,
-                                format_args!("\"{}\" error in macro", err.name()),
-                            );
+                    Err(_) => {
+                        if p.log().msgs.len() == start_error_count {
+                            p.log()
+                                .add_error(Some(p.source), expr.loc, b"macro threw exception");
                         }
                         return;
                     }

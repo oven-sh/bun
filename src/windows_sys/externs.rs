@@ -389,9 +389,95 @@ impl FILE_INFORMATION_CLASS {
     pub const FileBasicInformation: Self = Self(4);
     pub const FileRenameInformation: Self = Self(10);
     pub const FileDispositionInformation: Self = Self(13);
+    pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
     pub const FileDispositionInformationEx: Self = Self(64);
 }
+
+/// `FS_INFORMATION_CLASS` (`ntifs.h`) — selector for
+/// `NtQueryVolumeInformationFile`. Newtype-over-u32 so unmapped values
+/// round-trip.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct FS_INFORMATION_CLASS(pub u32);
+impl FS_INFORMATION_CLASS {
+    pub const FileFsVolumeInformation: Self = Self(1);
+    pub const FileFsDeviceInformation: Self = Self(4);
+}
+
+/// `FILE_STANDARD_INFORMATION` (`wdm.h`).
+#[repr(C)]
+pub struct FILE_STANDARD_INFORMATION {
+    pub AllocationSize: LARGE_INTEGER,
+    pub EndOfFile: LARGE_INTEGER,
+    pub NumberOfLinks: ULONG,
+    pub DeletePending: BOOLEAN,
+    pub Directory: BOOLEAN,
+}
+
+/// `FILE_INTERNAL_INFORMATION` (`ntifs.h`) — the NTFS file reference number.
+#[repr(C)]
+pub struct FILE_INTERNAL_INFORMATION {
+    pub IndexNumber: LARGE_INTEGER,
+}
+
+/// `FILE_ALL_INFORMATION` (`ntifs.h`) — aggregate returned by
+/// `NtQueryInformationFile(.., FileAllInformation)`. `NameInformation` is
+/// variable-length; with a fixed-size buffer the call returns
+/// `STATUS_BUFFER_OVERFLOW` (a warning, not an error) and the fixed fields
+/// are still populated.
+#[repr(C)]
+pub struct FILE_ALL_INFORMATION {
+    pub BasicInformation: FILE_BASIC_INFORMATION,
+    pub StandardInformation: FILE_STANDARD_INFORMATION,
+    pub InternalInformation: FILE_INTERNAL_INFORMATION,
+    pub EaSize: ULONG,                    // FILE_EA_INFORMATION
+    pub AccessFlags: ULONG,               // FILE_ACCESS_INFORMATION
+    pub CurrentByteOffset: LARGE_INTEGER, // FILE_POSITION_INFORMATION
+    pub Mode: ULONG,                      // FILE_MODE_INFORMATION
+    pub AlignmentRequirement: ULONG,      // FILE_ALIGNMENT_INFORMATION
+    pub FileNameLength: ULONG,            // FILE_NAME_INFORMATION
+    pub FileName: [WCHAR; 1],
+}
+
+/// `FILE_FS_DEVICE_INFORMATION` (`ntifs.h`).
+#[repr(C)]
+pub struct FILE_FS_DEVICE_INFORMATION {
+    pub DeviceType: ULONG,
+    pub Characteristics: ULONG,
+}
+
+/// `FILE_FS_VOLUME_INFORMATION` (`ntifs.h`). `VolumeLabel` is variable-length;
+/// with a fixed-size buffer the call returns `STATUS_BUFFER_OVERFLOW` and the
+/// fixed fields are still populated.
+#[repr(C)]
+pub struct FILE_FS_VOLUME_INFORMATION {
+    pub VolumeCreationTime: LARGE_INTEGER,
+    pub VolumeSerialNumber: ULONG,
+    pub VolumeLabelLength: ULONG,
+    pub SupportsObjects: BOOLEAN,
+    pub VolumeLabel: [WCHAR; 1],
+}
+
+// Layout asserts against the C headers (checked via clang on Windows). Gated on
+// `windows` because this crate is also compiled on LP64 targets where
+// `c_ulong` is 64-bit, which perturbs these offsets.
+#[cfg(windows)]
+const _: () = {
+    assert!(core::mem::size_of::<FILE_ALL_INFORMATION>() == 104);
+    assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, StandardInformation) == 40);
+    assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, InternalInformation) == 64);
+    assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, CurrentByteOffset) == 80);
+    assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, FileNameLength) == 96);
+    assert!(core::mem::size_of::<FILE_FS_DEVICE_INFORMATION>() == 8);
+    assert!(core::mem::size_of::<FILE_FS_VOLUME_INFORMATION>() == 24);
+    assert!(core::mem::offset_of!(FILE_FS_VOLUME_INFORMATION, VolumeSerialNumber) == 8);
+};
+
+/// `DEVICE_TYPE` values (`ntddk.h`).
+pub const FILE_DEVICE_NAMED_PIPE: ULONG = 0x00000011;
+pub const FILE_DEVICE_NULL: ULONG = 0x00000015;
+pub const FILE_DEVICE_CONSOLE: ULONG = 0x00000050;
 
 /// `FILE_END_OF_FILE_INFORMATION` (`ntifs.h`) — payload for
 /// `NtSetInformationFile(.., FileEndOfFileInformation)`.
@@ -448,6 +534,8 @@ pub enum VolumeName {
     #[default]
     Dos,
     Nt,
+    /// `VOLUME_NAME_NONE`: the path relative to the volume root, no device.
+    None,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -518,6 +606,15 @@ pub mod ntdll {
             FileInformation: *mut c_void,
             Length: ULONG,
             FileInformationClass: FILE_INFORMATION_CLASS,
+        ) -> NTSTATUS;
+        /// `NtQueryVolumeInformationFile` (`ntifs.h`) — volume/device
+        /// counterpart to `NtQueryInformationFile`.
+        pub fn NtQueryVolumeInformationFile(
+            FileHandle: HANDLE,
+            IoStatusBlock: *mut IO_STATUS_BLOCK,
+            FsInformation: *mut c_void,
+            Length: ULONG,
+            FsInformationClass: FS_INFORMATION_CLASS,
         ) -> NTSTATUS;
         pub fn NtClose(Handle: HANDLE) -> NTSTATUS;
 
@@ -642,6 +739,14 @@ pub mod kernel32 {
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
+        /// `SetFileTime` (`fileapi.h`). Any of the three `FILETIME` pointers
+        /// may be null to leave that timestamp unchanged.
+        pub fn SetFileTime(
+            hFile: HANDLE,
+            lpCreationTime: *const FILETIME,
+            lpLastAccessTime: *const FILETIME,
+            lpLastWriteTime: *const FILETIME,
+        ) -> BOOL;
         /// `SetHandleInformation` (`handleapi.h`). No pointer preconditions:
         /// `hObject` is an opaque kernel handle (validated kernel-side; bad
         /// handle → `FALSE` + `GetLastError`), `dwMask`/`dwFlags` are by-value.
@@ -783,6 +888,7 @@ impl NTSTATUS {
     /// `NtSetInformationFile(FileDispositionInformation)`.
     pub const CANNOT_DELETE: NTSTATUS = NTSTATUS(0xC000_0121);
     pub const OBJECT_PATH_SYNTAX_BAD: NTSTATUS = NTSTATUS(0xC000_003B);
+    pub const NOT_IMPLEMENTED: NTSTATUS = NTSTATUS(0xC000_0002);
     pub const NO_MORE_FILES: NTSTATUS = NTSTATUS(0x8000_0006);
     pub const NO_SUCH_FILE: NTSTATUS = NTSTATUS(0xC000_000F);
     /// `STATUS_TIMEOUT` — returned by `NtWaitForSingleObject` /
@@ -804,6 +910,12 @@ impl NTSTATUS {
 #[inline]
 pub const fn NT_SUCCESS(status: NTSTATUS) -> bool {
     (status.0 as i32) >= 0
+}
+/// `NT_ERROR` (`ntdef.h`) — severity `== STATUS_SEVERITY_ERROR`. Unlike
+/// `!NT_SUCCESS`, this excludes warnings such as `STATUS_BUFFER_OVERFLOW`.
+#[inline]
+pub const fn NT_ERROR(status: NTSTATUS) -> bool {
+    (status.0 >> 30) == 3
 }
 pub const STATUS_SUCCESS: NTSTATUS = NTSTATUS::SUCCESS;
 

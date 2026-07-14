@@ -203,7 +203,9 @@ void *us_udp_socket_user(struct us_udp_socket_t *s);
 /* Binds the UDP socket to an interface and port */
 int us_udp_socket_bind(struct us_udp_socket_t *s, const char *hostname, unsigned int port);
 
-/* Public interfaces for timers */
+/* Public interfaces for timers. libuv (Windows) only — epoll/kqueue schedules
+ * on bun.JSC.EventLoopTimer, no file descriptor or syscall. */
+#ifdef _WIN32
 
 /* Create a new high precision, low performance timer. May fail and return null */
 struct us_timer_t *us_create_timer(us_loop_r loop, int fallthrough, unsigned int ext_size);
@@ -220,6 +222,8 @@ void us_timer_set(struct us_timer_t *timer, void (*cb)(struct us_timer_t *t), in
 
 /* Returns the loop for this timer */
 struct us_loop_t *us_timer_loop(struct us_timer_t *t);
+
+#endif
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Socket groups & dispatch
@@ -395,6 +399,10 @@ void us_connecting_socket_shutdown_read(struct us_connecting_socket_t *c) nonnul
 int us_connecting_socket_is_shut_down(struct us_connecting_socket_t *c) nonnull_fn_decl;
 int us_connecting_socket_is_closed(struct us_connecting_socket_t *c) nonnull_fn_decl;
 int us_connecting_socket_get_error(struct us_connecting_socket_t *c) nonnull_fn_decl;
+/* Raw getaddrinfo(3) return code when the name lookup itself failed; 0 for a
+ * connect failure past name resolution. Nonzero means us_connecting_socket_get_error
+ * returns the same getaddrinfo code, not an errno (the two namespaces overlap). */
+int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) nonnull_fn_decl;
 void *us_connecting_socket_get_native_handle(struct us_connecting_socket_t *c) nonnull_fn_decl;
 struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c) nonnull_fn_decl;
 struct us_socket_group_t *us_connecting_socket_group(struct us_connecting_socket_t *c) nonnull_fn_decl;

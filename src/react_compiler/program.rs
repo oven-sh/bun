@@ -88,6 +88,23 @@ pub trait Host {
     }
 
     fn new_generated(&mut self, name: &[u8]) -> Ref;
+
+    fn new_import_item(&mut self, name: &[u8]) -> Ref {
+        self.new_generated(name)
+    }
+
+    /// `Ref` for the `__MEMO_CACHE_SENTINEL` / `__EARLY_RETURN_SENTINEL`
+    /// runtime export, declared on the parser's `runtime_imports` table on
+    /// first use so the linker wires it to `runtime.js` exactly like
+    /// `__toESM` / `__require` (no `S::Import` AST node).
+    fn runtime_sentinel(&mut self, _early: bool) -> Ref {
+        unreachable!("runtime_sentinel requires the bun parser host")
+    }
+
+    fn global_ref(&mut self, name: &[u8]) -> Ref {
+        self.new_generated(name)
+    }
+
     fn record_usage(&mut self, ref_: Ref);
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }
@@ -680,9 +697,10 @@ fn returns_non_node_in_stmts(stmts: &[Stmt]) -> bool {
 fn returns_non_node_in_stmt(stmt: &Stmt, result: &mut bool) {
     match &stmt.data {
         StmtData::SReturn(ret) => {
+            // Visit folds `return undefined` → bare `return;`, so None ≡ undefined here.
             *result = match &ret.value {
                 Some(arg) => is_non_node(arg),
-                None => true,
+                None => false,
             };
         }
         StmtData::SBlock(block) => {

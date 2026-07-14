@@ -3601,9 +3601,9 @@ mod v8_api {
         pub(super) fn v8_Isolate_ThrowError() -> *mut c_void;
         #[link_name = "?ThrowException@Isolate@v8@@QEAA?AV?$Local@VValue@v8@@@2@V32@@Z"]
         pub(super) fn v8_Isolate_ThrowException() -> *mut c_void;
-        #[link_name = "?Call@Function@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@HPEAV52@@Z"]
+        #[link_name = "?Call@Function@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@HQEAV52@@Z"]
         pub(super) fn v8_Function_Call() -> *mut c_void;
-        #[link_name = "?Call@Function@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@HPEAV62@@Z"]
+        #[link_name = "?Call@Function@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@HQEAV62@@Z"]
         pub(super) fn v8_Function_Call_iso() -> *mut c_void;
         #[link_name = "??0TryCatch@v8@@QEAA@PEAVIsolate@1@@Z"]
         pub(super) fn v8_TryCatch_ctor() -> *mut c_void;

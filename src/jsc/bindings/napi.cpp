@@ -1914,7 +1914,9 @@ extern "C" napi_status napi_get_all_property_names(
                 include = include && desc.enumerable();
             }
             if (key_filter & napi_key_writable) {
-                include = include && desc.writable();
+                // V8's ONLY_WRITABLE filters on the ReadOnly attribute; accessor
+                // descriptors never carry it, so they always pass.
+                include = include && (desc.isAccessorDescriptor() || desc.writable());
             }
             if (key_filter & napi_key_configurable) {
                 include = include && desc.configurable();

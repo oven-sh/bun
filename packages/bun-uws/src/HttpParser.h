@@ -51,7 +51,7 @@ namespace uWS
 {
 
     /* We require at least this much post padding */
-    static const unsigned int MINIMUM_HTTP_POST_PADDING = 32;
+    inline constexpr unsigned int MINIMUM_HTTP_POST_PADDING = 32;
 
     enum HttpParserError: uint8_t {
         HTTP_PARSER_ERROR_NONE = 0,

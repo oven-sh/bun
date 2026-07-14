@@ -135,7 +135,7 @@ typedef struct ResolvedSource {
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
 } ResolvedSource;
-static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
+inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
     ZigErrorType err;
@@ -160,19 +160,19 @@ typedef struct SystemError {
 typedef void* ArrayBufferSink;
 
 typedef uint8_t BunPluginTarget;
-const BunPluginTarget BunPluginTargetBun = 0;
-const BunPluginTarget BunPluginTargetBrowser = 1;
-const BunPluginTarget BunPluginTargetNode = 2;
-const BunPluginTarget BunPluginTargetMax = BunPluginTargetNode;
+inline constexpr BunPluginTarget BunPluginTargetBun = 0;
+inline constexpr BunPluginTarget BunPluginTargetBrowser = 1;
+inline constexpr BunPluginTarget BunPluginTargetNode = 2;
+inline constexpr BunPluginTarget BunPluginTargetMax = BunPluginTargetNode;
 
 typedef uint8_t ZigStackFrameCode;
-const ZigStackFrameCode ZigStackFrameCodeNone = 0;
-const ZigStackFrameCode ZigStackFrameCodeEval = 1;
-const ZigStackFrameCode ZigStackFrameCodeModule = 2;
-const ZigStackFrameCode ZigStackFrameCodeFunction = 3;
-const ZigStackFrameCode ZigStackFrameCodeGlobal = 4;
-const ZigStackFrameCode ZigStackFrameCodeWasm = 5;
-const ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeNone = 0;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeEval = 1;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeModule = 2;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeFunction = 3;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeGlobal = 4;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeWasm = 5;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
 
 extern "C" void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)

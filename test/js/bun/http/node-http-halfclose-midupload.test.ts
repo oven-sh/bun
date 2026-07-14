@@ -37,7 +37,9 @@ async function runTeardownStages(bind: string | undefined, url: (port: number) =
     }
   });
 
-  await new Promise<void>(resolve => (bind === undefined ? server.listen(0, resolve) : server.listen(0, bind, resolve)));
+  await new Promise<void>(resolve =>
+    bind === undefined ? server.listen(0, resolve) : server.listen(0, bind, resolve),
+  );
   stage("listening");
 
   const fetchSettled = fetch(url((server.address() as any).port), {
@@ -66,13 +68,19 @@ async function runTeardownStages(bind: string | undefined, url: (port: number) =
   expect(stages).toContain("write-returned");
 }
 
-test("write after res.socket.end() mid-upload completes every teardown stage (IPv4 loopback)", () =>
-  runTeardownStages("127.0.0.1", port => `http://127.0.0.1:${port}`), 45_000);
+test(
+  "write after res.socket.end() mid-upload completes every teardown stage (IPv4 loopback)",
+  () => runTeardownStages("127.0.0.1", port => `http://127.0.0.1:${port}`),
+  45_000,
+);
 
 // The original test-http-should-not-emit-... fetches http://localhost against
 // a default-bound (dual-stack) server - the IPv6 loopback on the Windows
 // agents - and times out on windows-11-aarch64 while the IPv4 variant above
 // passes there. Same family split as the PING-flood probe: if the teardown
 // stalls only over the default path, the family is the variable.
-test("write after res.socket.end() mid-upload completes every teardown stage (default localhost)", () =>
-  runTeardownStages(undefined, port => `http://localhost:${port}`), 45_000);
+test(
+  "write after res.socket.end() mid-upload completes every teardown stage (default localhost)",
+  () => runTeardownStages(undefined, port => `http://localhost:${port}`),
+  45_000,
+);

@@ -407,14 +407,20 @@ fn is_allowed(flag: &[u8]) -> bool {
     ALLOWED.binary_search(&flag).is_ok()
 }
 
+/// Bun-specific flags that commonly reach NODE_OPTIONS via tooling that
+/// forwards `process.execArgv` to worker processes (Next.js, jest-worker).
+/// Accepted silently so that `bun --bun next build` keeps working.
+fn is_bun_flag(flag: &[u8]) -> bool {
+    matches!(flag, b"--bun" | b"-b" | b"--smol" | b"--hot" | b"--watch")
+}
+
 #[cold]
 #[inline(never)]
-fn fail_not_allowed(flag: &[u8]) -> ! {
-    Output::err_generic(
-        "{} is not allowed in NODE_OPTIONS",
-        format_args!("{}", BStr::new(flag)),
+fn warn_not_allowed(flag: &[u8]) {
+    bun_core::warn!(
+        "{} is not allowed in NODE_OPTIONS (ignored)",
+        BStr::new(flag),
     );
-    Global::exit(9);
 }
 
 #[cold]
@@ -439,9 +445,11 @@ fn fail_tokenize(detail: &str) -> ! {
 
 /// Tokenize and validate a `NODE_OPTIONS` value. Preload flags (`--import`,
 /// `--require`, `-r`) are collected into `Parsed.preloads` in declaration
-/// order; other allowed flags are currently accepted without effect.
-/// Validation failures and tokenizer errors print a diagnostic to stderr and
-/// exit with status 9 (matching Node.js).
+/// order; other allowed flags are currently accepted without effect. Flags
+/// outside Node's allowlist produce a warning (not a hard error: tooling such
+/// as Next.js forwards `process.execArgv` into worker NODE_OPTIONS and may
+/// carry Bun-specific flags). Tokenizer errors and missing preload values
+/// remain fatal with status 9.
 ///
 /// `#[cold]`: only reached when the env var is set; the caller checks
 /// `env_var::NODE_OPTIONS.get()` on the hot path so the common unset case
@@ -456,18 +464,26 @@ pub fn parse(raw: &[u8]) -> Parsed {
     };
 
     let mut parsed = Parsed::default();
+    let mut warned = false;
     let mut i = 0usize;
     while i < tokens.len() {
         let tok: &[u8] = &tokens[i];
         i += 1;
-        if tok.is_empty() || tok[0] != b'-' {
-            // Node.js ignores non-option tokens in NODE_OPTIONS.
+        // Node.js stops option processing at the first non-option token (or a
+        // bare `-`). Without per-flag arity for every allowed option we cannot
+        // distinguish a genuine positional from the value of a preceding
+        // value-taking flag, so skip rather than break.
+        if tok.is_empty() || tok[0] != b'-' || tok == b"-" {
             continue;
         }
         let (name, inline_value) = split_name_value(tok);
         let normalized = normalize(name);
         if !is_allowed(&normalized) {
-            fail_not_allowed(name);
+            if !is_bun_flag(&normalized) && !warned {
+                warned = true;
+                warn_not_allowed(name);
+            }
+            continue;
         }
 
         let is_preload = matches!(&*normalized, b"--import" | b"--require" | b"-r");

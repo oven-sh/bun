@@ -1173,7 +1173,11 @@ impl EventLoop {
     ///
     /// Liveness-gated drivers (the main run loop via `auto_tick_active`,
     /// `wait_for_tasks`) must NOT use this — their exit condition is
-    /// precisely that nothing refs the loop.
+    /// precisely that nothing refs the loop. A driver that checks liveness
+    /// inside the loop but is otherwise condition-gated (the Worker entry
+    /// loader, `wait_for_worker_entry_evaluation`) must scope the guard to
+    /// `auto_tick` only, after the liveness check, so that check reads the
+    /// real ref state.
     pub fn ref_loop_scoped(&self) -> LoopRefGuard {
         let loop_ = self.usockets_loop();
         // SAFETY: `usockets_loop()` returns the live per-thread uws loop;
@@ -1436,6 +1440,9 @@ impl EventLoop {
                 // Nothing in flight can settle the load; let spin() decide.
                 break;
             }
+            // Scoped to auto_tick only, so the check above reads the
+            // real ref state — see ref_loop_scoped's contract.
+            let _loop_ref = self.ref_loop_scoped();
             self.auto_tick();
         }
     }

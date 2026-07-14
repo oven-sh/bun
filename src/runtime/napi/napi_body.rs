@@ -70,6 +70,7 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
+    fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
     fn napi_internal_get_version(env: *mut NapiEnv) -> u32;
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
@@ -119,6 +120,11 @@ impl NapiEnv {
     pub fn get_version(&self) -> u32 {
         // SAFETY: env is non-null; C++ side is read-only here.
         unsafe { napi_internal_get_version(self.as_mut_ptr()) }
+    }
+
+    pub fn has_pending_exception(&self) -> bool {
+        // SAFETY: interior mutability via `as_mut_ptr`; the C++ side is read-only.
+        unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }
     }
 
     pub fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
@@ -873,7 +879,19 @@ pub(super) extern "C" fn napi_get_prototype(
     if object.is_empty() {
         return env.invalid_arg();
     }
-    if !object.is_object() {
+    // Node's NAPI_PREAMBLE bails with napi_pending_exception before
+    // CHECK_TO_OBJECT when an exception from napi_throw is already stashed on
+    // the env. Mirror that so ToObject on null/undefined below does not push a
+    // fresh VM TypeError that would shadow the addon's original exception.
+    if env.has_pending_exception() {
+        return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
+    }
+    // Node's CHECK_TO_OBJECT: ToObject throws on null/undefined; leave the
+    // TypeError pending and return napi_object_expected. Other primitives are
+    // coerced, so `get_prototype` (which synthesizes the prototype for
+    // non-object values) handles them without an allocation.
+    if object.is_undefined_or_null() {
+        let _ = object.to_object(env.to_js());
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     }
 
@@ -2812,6 +2830,7 @@ impl ThreadSafeFunction {
     /// SAFETY: `this` is a live allocation from `new`, the caller holds no
     /// lock on it, and no other thread holds a reference.
     unsafe fn free_orphaned(this: *mut ThreadSafeFunction) {
+        // SAFETY: per this function's contract, `this` is a live allocation from `new`.
         drop(unsafe { bun_core::heap::take(this) });
     }
 

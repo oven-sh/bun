@@ -185,6 +185,9 @@ pub fn enqueue_tarball_for_download(
     patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), EnqueueTarballForDownloadError> {
     let task_id = Task::Id::for_tarball(url);
+    if this.network_task_has_failed(task_id) {
+        return Err(EnqueueTarballForDownloadError::AlreadyFailed);
+    }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
         *task_queue.value_ptr = TaskCallbackList::default();
@@ -390,6 +393,9 @@ pub fn enqueue_package_for_download(
     patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), EnqueuePackageForDownloadError> {
     let task_id = Task::Id::for_npm_package(name, version);
+    if this.network_task_has_failed(task_id) {
+        return Err(EnqueuePackageForDownloadError::AlreadyFailed);
+    }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
         *task_queue.value_ptr = TaskCallbackList::default();

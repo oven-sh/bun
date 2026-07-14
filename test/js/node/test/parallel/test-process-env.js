@@ -112,7 +112,13 @@ if (common.isWindows) {
 }
 
 // https://github.com/nodejs/node/issues/45380
-{
+// Deviation from upstream: skipped on Windows, where bun's process.env is a
+// Proxy providing case-insensitive lookups rather than the exotic object used
+// on POSIX. The structured clone algorithm rejects Proxy objects with
+// DataCloneError, so this block cannot pass until Windows case-insensitivity
+// moves into JSEnvironmentVariableMap and the Proxy goes away. The rest of the
+// file runs on Windows.
+if (!common.isWindows) {
   const env = structuredClone(process.env);
   // deepEqual(), not deepStrictEqual(), because of different prototypes.
   // eslint-disable-next-line no-restricted-properties

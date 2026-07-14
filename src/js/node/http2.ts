@@ -3717,13 +3717,13 @@ function rejectNoPayloadContentLengthNT(req) {
 
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
-    if (stream.destroyed) {
-      // The synchronous teardown pass (destroyStreamForSessionDestroy) already
-      // destroyed this stream before this deferred tick ran. Destroying again
-      // with an error re-emits 'error' on a stream whose consumer already let
-      // go - node never double-emits (errorEmitted) - and on the Windows
-      // agents that surfaced the session error as an uncaught exception
-      // (grpc-js test-server, "Session closed with error code 8").
+    if (stream.destroyed && stream.listenerCount("error") === 0) {
+      // Already destroyed with no consumer listening: re-destroying with an
+      // error re-emits it as an uncaught exception (the Windows agents hit
+      // this in grpc-js test-server, "Session closed with error code 8").
+      // A destroyed stream that IS listened keeps the delivery below -
+      // node's errorEmitted de-dupes the re-emission, and grpc's status
+      // codes ride exactly this deferred path.
       if (destroy_self) self.destroy();
       return;
     }

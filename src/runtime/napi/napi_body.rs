@@ -3308,11 +3308,9 @@ mod v8_api {
         pub(super) fn _ZN2v812api_internal9ClearWeakEPm() -> *mut c_void;
         pub(super) fn _ZN2v86Object3HasENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() -> *mut c_void;
         pub(super) fn _ZN2v86Object3HasENS_5LocalINS_7ContextEEEj() -> *mut c_void;
-        pub(super) fn _ZN2v86Object6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE()
-        -> *mut c_void;
+        pub(super) fn _ZN2v86Object6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() -> *mut c_void;
         pub(super) fn _ZN2v86Object6DeleteENS_5LocalINS_7ContextEEEj() -> *mut c_void;
-        pub(super) fn _ZN2v86String9Utf8ValueC1EPNS_7IsolateENS_5LocalINS_5ValueEEE()
-        -> *mut c_void;
+        pub(super) fn _ZN2v86String9Utf8ValueC1EPNS_7IsolateENS_5LocalINS_5ValueEEE() -> *mut c_void;
         pub(super) fn _ZN2v86String9Utf8ValueD1Ev() -> *mut c_void;
         pub(super) fn _ZN2v86String9Utf8ValuedeEv() -> *mut c_void;
         pub(super) fn _ZNK2v86String9Utf8ValuedeEv() -> *mut c_void;

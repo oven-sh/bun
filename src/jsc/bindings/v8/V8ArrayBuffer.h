@@ -5,7 +5,8 @@
 
 namespace v8 {
 
-enum class BackingStoreInitializationMode { kZeroInitialized, kUninitialized };
+enum class BackingStoreInitializationMode { kZeroInitialized,
+    kUninitialized };
 
 class ArrayBuffer : public Object {
 public:

@@ -6,6 +6,7 @@
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
+#include "JavaScriptCore/DeferTermination.h"
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorInstance.h"
@@ -639,6 +640,11 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
 
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
 {
+    // ErrorInstance::getOwnPropertySlot doesn't check for exceptions after materializeErrorInfoIfNeeded,
+    // so a TerminationException raised in here trips getOwnPropertyDescriptor's EXCEPTION_ASSERT.
+    // https://github.com/oven-sh/bun/issues/34095
+    JSC::DeferTerminationForAWhile deferTermination(vm);
+
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
@@ -647,6 +653,10 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
     line_in = line.oneBasedInt();
     column_in = column.oneBasedInt();
 
+    // materializeErrorInfoIfNeeded putDirect()s this unconditionally; an empty JSValue
+    // in property storage crashes the next read.
+    if (!result) [[unlikely]]
+        return jsUndefined();
     return result;
 }
 

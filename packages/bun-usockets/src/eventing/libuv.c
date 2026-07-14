@@ -24,32 +24,28 @@
 /* uv_poll_t->data always (except for most times after calling us_poll_stop)
  * points to the us_poll_t */
 static void poll_cb(uv_poll_t *p, int status, int events) {
-  int eof = status == UV_EOF;
-  /* UV_DISCONNECT (Windows AFD): the peer gracefully closed its write side.
-   * A client FIN after this side already half-closed and stopped reading
-   * otherwise never fires another poll, and the socket (and server.close())
-   * waits forever. It IS the EOF hint, so hand it to the shared dispatch the
-   * way kqueue hands EV_EOF: readable is added so the read loop drains
-   * whatever is still queued before the EOF handling runs, and the eof flag
-   * routes shut-down sockets straight to the prompt close (loop.c handles
-   * paused/shutdown/half-open states there).
+  /* UV_DISCONNECT (Windows AFD): the peer closed its write side. A FIN
+   * arriving after this side already half-closed and stopped reading never
+   * fires another readable poll, and the socket (and server.close()) waits
+   * forever - so DISCONNECT is armed unconditionally in us_poll_start/change
+   * and surfaced here as a readable dispatch: the read loop's recv() then
+   * discovers the true end of stream (0) after consuming whatever is still
+   * queued. It is NOT mapped to the eof hint: unlike kqueue's EV_EOF, which
+   * the kernel sets only alongside the final data, AFD can signal DISCONNECT
+   * while data is still in flight, and treating it as EOF closed connections
+   * at a mid-stream EAGAIN (truncated bodies across the fetch/backpressure
+   * suites). One-shot: AFD keeps reporting DISCONNECT once signaled, so
+   * re-arm without it - us_poll_start/us_poll_change add it back on the next
+   * poll change, and the FIN itself is never lost because recv() owns EOF
+   * discovery.
    * https://github.com/libuv/libuv/blob/v1.x/docs/src/poll.rst (UV_DISCONNECT
    * is Windows-only and best-effort; readable polling stays the primary
    * signal). */
   if (events & UV_DISCONNECT) {
-    /* One-shot: AFD keeps reporting DISCONNECT once it is signaled, and when
-     * the EOF is deferred (a paused socket under read backpressure) a
-     * level-triggered re-fire would spin the loop and starve the write side
-     * (observed as byte-count drops in the backpressure suites). Re-arm with
-     * just the ordinary requested events; us_poll_start/us_poll_change add
-     * DISCONNECT back on the next change (e.g. the resume that lifts the
-     * pause), and the FIN itself is not lost - the resumed drain observes it
-     * through recv(). */
     uv_poll_start(p, us_poll_events((struct us_poll_t *)p->data), poll_cb);
-    eof = 1;
     events |= UV_READABLE;
   }
-  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, status < 0 && status != UV_EOF, eof,
+  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, status < 0 && status != UV_EOF, status == UV_EOF,
                                   events);
 }
 

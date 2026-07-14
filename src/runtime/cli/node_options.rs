@@ -558,7 +558,10 @@ mod tests {
 
     #[test]
     fn underscore_normalization() {
-        assert_eq!(&*normalize(b"--max_old_space_size"), b"--max-old-space-size");
+        assert_eq!(
+            &*normalize(b"--max_old_space_size"),
+            b"--max-old-space-size"
+        );
         assert_eq!(&*normalize(b"-r"), b"-r");
     }
 }

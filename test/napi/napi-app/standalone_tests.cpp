@@ -1911,6 +1911,17 @@ static napi_value test_napi_object_coercion(const Napi::CallbackInfo &info) {
                 napi_delete_element(env, v_num, 0, &bresult));
   report_status(env, "delete_element(null)",
                 napi_delete_element(env, v_null, 0, &bresult));
+  {
+    // result may be NULL; the delete must still happen.
+    napi_value arr;
+    NODE_API_CALL(env, napi_create_array_with_length(env, 1, &arr));
+    NODE_API_CALL(env, napi_set_element(env, arr, 0, v_one));
+    report_status(env, "delete_element(array,result=NULL)",
+                  napi_delete_element(env, arr, 0, nullptr));
+    bool has = true;
+    NODE_API_CALL(env, napi_has_element(env, arr, 0, &has));
+    printf("delete_element(array,result=NULL) has[0]=%d\n", has ? 1 : 0);
+  }
 
   // napi_get_property_names
   report_status(env, "get_property_names(string)",

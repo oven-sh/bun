@@ -988,7 +988,17 @@ pub unsafe fn spawn_process_posix(
         use std::io::Read as _;
         use std::os::unix::ffi::OsStrExt as _;
         let path = std::ffi::OsStr::from_bytes(argv0_cstr.to_bytes());
-        let mut buf = [0u8; 128];
+        // 128 bytes is the traditional kernel binfmt_script limit, but we do
+        // our own parsing here rather than relying on the kernel, and this
+        // needs to comfortably fit a `#!<interpreter>` line where the
+        // interpreter is an absolute path under a deeply-nested tmpdir (this
+        // OHOS sandbox's TMPDIR routinely produces 150+ byte paths) — 128
+        // silently truncated the interpreter path mid-string, and since the
+        // truncated remainder still looked like a syntactically valid
+        // absolute path, the shim exec'd it anyway instead of bailing out,
+        // producing a confusing EACCES (exec of a directory) instead of the
+        // real problem. 4096 matches PATH_MAX headroom.
+        let mut buf = [0u8; 4096];
         let n = match std::fs::File::open(path).and_then(|mut f| f.read(&mut buf)) {
             Ok(n) if n >= 2 => n,
             _ => break 'shim None,
@@ -996,7 +1006,17 @@ pub unsafe fn spawn_process_posix(
         if &buf[..2] != b"#!" {
             break 'shim None;
         }
-        let line_end = buf[..n].iter().position(|&b| b == b'\n').unwrap_or(n);
+        let line_end = match buf[..n].iter().position(|&b| b == b'\n') {
+            Some(pos) => pos,
+            // No newline in what we read. If we filled the whole buffer,
+            // the real line may continue past it — treating `n` as the end
+            // would silently truncate the interpreter path (see the buffer
+            // comment above) rather than fail loudly. Only safe to treat
+            // `n` as the line end when the read stopped short of the
+            // buffer (i.e. hit real EOF).
+            None if n == buf.len() => break 'shim None,
+            None => n,
+        };
         let line = &buf[2..line_end];
         let mut i = 0usize;
         while i < line.len() && matches!(line[i], b' ' | b'\t') {

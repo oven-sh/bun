@@ -401,15 +401,31 @@ fn encoding_to_node(e: Encoding) -> bun_core::NodeEncoding {
 /// `super::stat` swaps to `pub use bun_sys::PosixStat` this alias collapses.
 use super::stat::PosixStat;
 
-/// Node `fs.rm` mapping helper — `bun_core::err!("Name")` produces a
-/// `bun_core::Error` from a static error-set name; the *reverse* (name →
-/// `Error` for return) needs the same constructor. The macro caches per
-/// *call site*, but `dt_err` feeds a runtime-selected name from a `match`,
-/// so route through the underlying `Error::intern` (process-global string→u16
-/// table; idempotent, lock-free after first hit on the SEED set).
+/// Node `fs.rm` mapping helper — maps an error-set *name* string back to a
+/// `crate::Error` variant so the callers' `map_anyerror_to_errno*` tables (which
+/// match on `err.name()`) keep round-tripping.
 #[inline]
-fn err_from_static(name: &'static str) -> bun_core::Error {
-    bun_core::Error::intern(name)
+fn err_from_static(name: &'static str) -> crate::Error {
+    match name {
+        "FileNotFound" => crate::Error::FileNotFound,
+        "AccessDenied" => crate::Error::AccessDenied,
+        "PermissionDenied" => crate::Error::PermissionDenied,
+        "SymLinkLoop" => crate::Error::SymLinkLoop,
+        "NameTooLong" => crate::Error::NameTooLong,
+        "SystemResources" => crate::Error::SystemResources,
+        "ReadOnlyFileSystem" => crate::Error::ReadOnlyFileSystem,
+        "FileSystem" => crate::Error::FileSystem,
+        "FileBusy" => crate::Error::FileBusy,
+        "NotDir" => crate::Error::NotDir,
+        "IsDir" => crate::Error::IsDir,
+        "DirNotEmpty" => crate::Error::DirNotEmpty,
+        "SystemFdQuotaExceeded" => crate::Error::SystemFdQuotaExceeded,
+        "ProcessFdQuotaExceeded" => crate::Error::ProcessFdQuotaExceeded,
+        "BadPathName" => crate::Error::BadPathName,
+        "FileTooBig" => crate::Error::FileTooBig,
+        "NoDevice" => crate::Error::NoDevice,
+        _ => crate::Error::Unexpected,
+    }
 }
 
 /// `preallocate_supported` / `preallocate_length` — these consts have
@@ -1160,12 +1176,6 @@ mod _async_tasks {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(crate::node::types::FdJsc::to_js(*self, global))
-        }
-    }
-    impl FsReturn for ZigString {
-        #[inline]
-        fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(bun_jsc::ZigStringJsc::to_js(self, global))
         }
     }
     impl FsReturn for StringOrBuffer {
@@ -4615,7 +4625,7 @@ pub mod ret {
     pub type Link = ();
     pub type Lstat = StatOrNotFound;
     pub type Mkdir = StringOrUndefined;
-    pub type Mkdtemp = ZigString;
+    pub type Mkdtemp = StringOrBuffer;
     pub type Open = FD;
     pub type WriteFile = ();
     pub type Readv = Read;
@@ -4809,6 +4819,25 @@ impl Default for NodeFS {
 // containing module level instead so `NodeFS::ReturnType::Foo` callers (none
 // yet in-tree) keep working via `node::fs::ReturnType::Foo`.
 pub use ret as ReturnType;
+
+/// Encode a path returned by the OS (`mkdtemp`/`readlink`/`realpath`) using the
+/// caller's `encoding` option, matching Node.js: `"buffer"` yields a `Buffer`
+/// of the raw bytes, any other encoding is `Buffer.from(bytes).toString(enc)`.
+fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer {
+    match encoding {
+        Encoding::Buffer => {
+            StringOrBuffer::Buffer(Buffer::from_string(bytes).expect("unreachable"))
+        }
+        Encoding::Utf8 => StringOrBuffer::String(node::SliceWithUnderlyingString {
+            underlying: BunString::clone_utf8(bytes),
+            ..Default::default()
+        }),
+        enc => StringOrBuffer::String(node::SliceWithUnderlyingString {
+            underlying: webcore::encoding::to_bun_string(bytes, enc),
+            ..Default::default()
+        }),
+    }
+}
 
 impl NodeFS {
     pub fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
@@ -6074,10 +6103,8 @@ impl NodeFS {
             // SAFETY: on success libuv populates `req.path` with a NUL-terminated
             // UTF-8 string owned by the request; `UvFsReq::drop` runs
             // `uv_fs_req_cleanup` in place after we've copied the bytes out.
-            return Ok(
-                ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(req.path) }.to_bytes())
-                    .expect("oom"),
-            );
+            let bytes = unsafe { bun_core::ffi::cstr(req.path) }.to_bytes();
+            return Ok(encode_path_result(bytes, args.encoding));
         }
 
         #[cfg(not(windows))]
@@ -6089,7 +6116,7 @@ impl NodeFS {
                 // SAFETY: `rc` is non-null and points back into `prefix_buf`, which is
                 // NUL-terminated and outlives this borrow.
                 let bytes = unsafe { bun_core::ffi::cstr(rc) }.to_bytes();
-                return Ok(ZigString::dupe_for_js(bytes).expect("oom"));
+                return Ok(encode_path_result(bytes, args.encoding));
             }
 
             let errno = sys::last_errno();
@@ -7143,12 +7170,18 @@ impl NodeFS {
         // The sync case borrows `vm.rareData().pipeReadBuffer()` (a per-VM
         // 256 KB heap slab) when a VM is present, otherwise leaves the buffer
         // zero-length so the loop is skipped and we fall through to fstat.
-        // The async path heap-allocates a 256 KB buffer instead.
-        let mut async_stack_buffer: Vec<u8> = if flavor == Flavor::Sync {
-            Vec::new()
-        } else {
-            vec![0u8; 256 * 1024]
-        };
+        // The async path heap-allocates a 256 KB buffer instead (Zig used a
+        // comptime-sized stack array; Rust cannot size a stack array on
+        // `flavor`, so heap is forced, but the slab stays uninitialised: it
+        // is write-only, `Syscall::read` hands it straight to the kernel).
+        use bun_collections::vec_ext::VecExt as _;
+        let mut async_stack_buffer: Vec<u8> = Vec::new();
+        if flavor != Flavor::Sync && async_stack_buffer.try_reserve_exact(256 * 1024).is_ok() {
+            // SAFETY: `u8` has no validity invariant; the buffer is handed
+            // straight to the kernel which only stores into it. Only the
+            // `[..total]` prefix actually filled by `read` is ever observed.
+            unsafe { async_stack_buffer.expand_to_capacity() };
+        }
         let pre_stat_buf: &mut [u8] = if flavor == Flavor::Sync {
             match self.vm {
                 // SAFETY: `self.vm` is the live owning `*mut VirtualMachine`;
@@ -7290,7 +7323,6 @@ impl NodeFS {
         // specialisation), which dominated `readFileSync` of large files. Use
         // `VecExt::expand_to_capacity` (the tail is write-only — `Syscall::read`
         // hands it straight to the kernel, which only stores into it).
-        use bun_collections::vec_ext::VecExt as _;
         // SAFETY: `u8` has no validity invariant; the buffer is handed straight
         // to the kernel which only stores into it.
         unsafe { buf.expand_to_capacity() };
@@ -7561,22 +7593,14 @@ impl NodeFS {
             Ok(result) => result,
         };
         let link_path: &[u8] = &outbuf[..link_len];
-        Ok(match args.encoding {
-            Encoding::Buffer => {
-                StringOrBuffer::Buffer(Buffer::from_string(link_path).expect("unreachable"))
-            }
-            _ => {
-                if let PathLike::SliceWithUnderlyingString(s) = &args.path {
-                    if strings::eql_long(s.slice(), link_path, true) {
-                        return Ok(StringOrBuffer::String(s.dupe_ref()));
-                    }
+        if args.encoding == Encoding::Utf8 {
+            if let PathLike::SliceWithUnderlyingString(s) = &args.path {
+                if strings::eql_long(s.slice(), link_path, true) {
+                    return Ok(StringOrBuffer::String(s.dupe_ref()));
                 }
-                StringOrBuffer::String(node::SliceWithUnderlyingString {
-                    underlying: BunString::clone_utf8(link_path),
-                    ..Default::default()
-                })
             }
-        })
+        }
+        Ok(encode_path_result(link_path, args.encoding))
     }
 
     pub fn realpath_non_native(
@@ -7659,26 +7683,14 @@ impl NodeFS {
                     buf = &buf[..buf.len() - 1];
                 }
             }
-            return Ok(match args.encoding {
-                Encoding::Buffer => {
-                    StringOrBuffer::Buffer(Buffer::from_string(buf).expect("unreachable"))
-                }
-                Encoding::Utf8 => {
-                    if let PathLike::SliceWithUnderlyingString(s) = &args.path {
-                        if strings::eql_long(s.slice(), buf, true) {
-                            return Ok(StringOrBuffer::String(s.dupe_ref()));
-                        }
+            if args.encoding == Encoding::Utf8 {
+                if let PathLike::SliceWithUnderlyingString(s) = &args.path {
+                    if strings::eql_long(s.slice(), buf, true) {
+                        return Ok(StringOrBuffer::String(s.dupe_ref()));
                     }
-                    StringOrBuffer::String(node::SliceWithUnderlyingString {
-                        underlying: BunString::clone_utf8(buf),
-                        ..Default::default()
-                    })
                 }
-                enc => StringOrBuffer::String(node::SliceWithUnderlyingString {
-                    underlying: webcore::encoding::to_bun_string(buf, enc),
-                    ..Default::default()
-                }),
-            });
+            }
+            return Ok(encode_path_result(buf, args.encoding));
         }
 
         #[cfg(not(windows))]
@@ -7724,26 +7736,14 @@ impl NodeFS {
             };
 
             let _ = variant;
-            Ok(match args.encoding {
-                Encoding::Buffer => {
-                    StringOrBuffer::Buffer(Buffer::from_string(buf).expect("unreachable"))
-                }
-                Encoding::Utf8 => {
-                    if let PathLike::SliceWithUnderlyingString(s) = &args.path {
-                        if strings::eql_long(s.slice(), buf, true) {
-                            return Ok(StringOrBuffer::String(s.dupe_ref()));
-                        }
+            if args.encoding == Encoding::Utf8 {
+                if let PathLike::SliceWithUnderlyingString(s) = &args.path {
+                    if strings::eql_long(s.slice(), buf, true) {
+                        return Ok(StringOrBuffer::String(s.dupe_ref()));
                     }
-                    StringOrBuffer::String(node::SliceWithUnderlyingString {
-                        underlying: BunString::clone_utf8(buf),
-                        ..Default::default()
-                    })
                 }
-                enc => StringOrBuffer::String(node::SliceWithUnderlyingString {
-                    underlying: webcore::encoding::to_bun_string(buf, enc),
-                    ..Default::default()
-                }),
-            })
+            }
+            Ok(encode_path_result(buf, args.encoding))
         }
     }
 
@@ -7776,7 +7776,7 @@ impl NodeFS {
             let resolved = args.path.slice();
             if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::Directory)
             {
-                let mut errno: E = map_anyerror_to_errno(err);
+                let mut errno: E = map_anyerror_to_errno(&err);
                 if cfg!(windows) && errno == E::ENOTDIR {
                     errno = E::ENOENT;
                 }
@@ -7813,13 +7813,13 @@ impl NodeFS {
             #[cfg(not(windows))]
             let resolved = args.path.slice();
             if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File) {
-                let errno = if err == bun_core::err!("FileNotFound") {
+                let errno = if matches!(err, crate::Error::FileNotFound) {
                     if args.force {
                         return Ok(());
                     }
                     E::ENOENT
                 } else {
-                    map_anyerror_to_errno_rm_tree(err)
+                    map_anyerror_to_errno_rm_tree(&err)
                 };
                 return Err(sys::Error::from_code(errno, sys::Tag::rm).with_path(args.path.slice()));
             }
@@ -9623,7 +9623,7 @@ impl ReaddirEntry for Buffer {
 // collapsed them into one, which silently mapped AccessDenied→EPERM for `rm`
 // (Node returns EACCES there) and widened the narrow table. Split back out
 // per call site.
-fn map_anyerror_to_errno(err: bun_core::Error) -> E {
+fn map_anyerror_to_errno(err: &crate::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EPERM,
         "PermissionDenied" => E::EPERM,
@@ -9646,7 +9646,7 @@ fn map_anyerror_to_errno(err: bun_core::Error) -> E {
 
 // `rm` recursive (zig_delete_tree) — same shape as the rmdir table above except
 // AccessDenied maps to EACCES, not EPERM.
-fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
+fn map_anyerror_to_errno_rm_tree(err: &crate::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EACCES,
         "PermissionDenied" => E::EPERM,
@@ -9714,7 +9714,7 @@ pub unsafe extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const 
 // treat_as_dir flip-flop, close-then-deleteDir, retry-on-DirNotEmpty.
 
 #[inline]
-fn dt_err(errno: E) -> bun_core::Error {
+fn dt_err(errno: E) -> crate::Error {
     // Reverse of the `map_anyerror_to_errno*` tables above — round-trip through
     // the error-set name so existing callers don't have to change.
     err_from_static(match errno {
@@ -9832,7 +9832,7 @@ pub fn zig_delete_tree(
     self_: &sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let initial_iterable_dir =
         match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
             Some(d) => d,
@@ -10004,7 +10004,7 @@ fn zig_delete_tree_open_initial_subpath(
     self_: &sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
-) -> Result<Option<sys::Dir>, bun_core::Error> {
+) -> crate::Result<Option<sys::Dir>> {
     // Treat as a file by default
     let mut treat_as_dir = kind_hint == sys::FileKind::Directory;
     loop {
@@ -10033,7 +10033,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
     self_: &sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     'start_over: loop {
         let mut dir = match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
             Some(d) => d,
@@ -10055,7 +10055,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
         // Here we must avoid recursion, in order to provide O(1) memory guarantee of this function.
         // Go through each entry and if it is not a directory, delete it. If it is a directory,
         // open it, and close the original directory. Repeat. Then start the entire operation over.
-        let result: Result<(), bun_core::Error> = 'scan_dir: loop {
+        let result: crate::Result<()> = 'scan_dir: loop {
             let mut dir_it = DirIterator::WrappedIterator::init(dir.fd);
             'dir_it: loop {
                 let entry = match dir_it.next() {

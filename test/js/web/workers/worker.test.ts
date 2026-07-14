@@ -129,6 +129,45 @@ describe("web worker", () => {
     };
   });
 
+  // https://github.com/oven-sh/bun/issues/32247
+  // Spawned: founding a SHARE_ENV tree permanently replaces this thread's
+  // process.env object, so doing it in-process would leave every later test
+  // (and any module that captured process.env at import) holding a stale one.
+  test("worker-env: SHARE_ENV via the global Worker constructor", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const wt = require("worker_threads");
+         const key = "BUN_TEST_SHARE_ENV";
+         process.env[key] = "from-parent";
+         // The Web Worker constructor doesn't go through node:worker_threads, so the
+         // native option parser must recognize the SHARE_ENV registry symbol itself.
+         const worker = new Worker(
+           "data:text/javascript," + encodeURIComponent(\`
+             self.onmessage = e => {
+               const seen = process.env[e.data.key];
+               process.env[e.data.key] = "from-worker";
+               self.postMessage(seen);
+             };
+           \`),
+           { env: wt.SHARE_ENV },
+         );
+         worker.onerror = e => { console.error(e.message); process.exit(1); };
+         worker.onmessage = e => {
+           console.log(JSON.stringify({ seen: e.data, parentSees: process.env[key] }));
+           worker.terminate();
+         };
+         worker.postMessage({ key });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ seen: "from-parent", parentSees: "from-worker" });
+    expect(exitCode).toBe(0);
+  });
+
   test("worker-env with a lot of properties", done => {
     const obj: any = {};
 
@@ -258,7 +297,7 @@ describe("web worker", () => {
   });
 
   test("worker with process.exit", done => {
-    const worker = new Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
+    const worker = new Worker(new URL("worker-fixture-process-exit.js", import.meta.url), {
       smol: true,
     });
     worker.addEventListener("close", e => {
@@ -301,7 +340,7 @@ describe("web worker", () => {
 // TODO: move to node:worker_threads tests directory
 describe("worker_threads", () => {
   test("worker with process.exit", done => {
-    const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
+    const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url), {
       smol: true,
     });
     worker.on("exit", code => {
@@ -327,7 +366,7 @@ describe("worker_threads", () => {
     // - the exit code is never something other than 0 or 1
     const codes: number[] = [];
     for (let i = 0; i < 10; i++) {
-      const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url).href, {
+      const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url), {
         smol: true,
       });
       worker.on("error", expect.unreachable);
@@ -339,19 +378,19 @@ describe("worker_threads", () => {
   });
 
   test("worker with process.exit (delay) and terminate", async () => {
-    const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
+    const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url), {
       smol: true,
     });
     // Wait for the worker to self-exit (its setTimeout fires process.exit(2)
     // after 10 ms) — a fixed sleep races with worker startup, which under
     // debug/ASAN can exceed 200 ms.
-    await once(worker, "exit");
-    const code = await worker.terminate();
+    const [code] = await once(worker, "exit");
+    await worker.terminate();
     expect(code).toBe(2);
   });
 
   test.todo("worker terminating forcefully properly interrupts", async () => {
-    const worker = new wt.Worker(new URL("worker-fixture-while-true.js", import.meta.url).href, {});
+    const worker = new wt.Worker(new URL("worker-fixture-while-true.js", import.meta.url), {});
     await new Promise<void>(done => {
       worker.on("message", () => done());
     });
@@ -392,12 +431,18 @@ describe("worker_threads", () => {
     expect(process.execArgv).toEqual(original_execArgv);
   });
 
-  test("worker with eval = false fails with code", async () => {
-    let has_error = false;
-    const worker = new wt.Worker("console.log('this should not get printed')", { eval: false });
-    const [err] = await once(worker, "error");
-    expect(err.constructor.name).toEqual("Error");
-    expect(err.message).toMatch(/BuildMessage: ModuleNotFound.+/);
+  test("worker with eval = false validates the filename", () => {
+    // eval:false is equivalent to omitting eval, so a bare string that isn't a
+    // path is rejected synchronously like Node (ERR_WORKER_PATH), rather than
+    // being treated as a module specifier.
+    let err: any;
+    try {
+      new wt.Worker("console.log('this should not get printed')", { eval: false });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_WORKER_PATH");
+    expect(err?.constructor.name).toBe("TypeError");
   });
 
   test("worker with eval = true succeeds with valid code", async () => {

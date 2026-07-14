@@ -460,7 +460,7 @@ pub mod BunInfo {
 
     /// `_transpiler` is an unused witness; expressions allocate from the
     /// global expr `Store` used by `Expr::init`.
-    pub fn generate<B>(_transpiler: B) -> Result<Expr, bun_core::Error> {
+    pub fn generate<B>(_transpiler: B) -> Result<Expr, crate::Error> {
         let info = BunInfo {
             bun_version: Global::package_json_version.as_bytes(),
             platform: generate_platform::for_os(),
@@ -1648,7 +1648,7 @@ where
         path: &[u8],
         route: super::AnyRoute,
         method: server_config::MethodOptional,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.config.append_static_route(path, route, method)
     }
 
@@ -2243,7 +2243,7 @@ where
         }
     }
 
-    pub fn reload_static_routes(&mut self) -> Result<bool, bun_core::Error> {
+    pub fn reload_static_routes(&mut self) -> Result<bool, crate::Error> {
         if self.app.is_none() {
             // Static routes will get cleaned up when the server is stopped
             return Ok(false);
@@ -2422,14 +2422,7 @@ where
             // sentinel and calls `clone_into(.., preserve_url=false)`.
             unsafe { (*request_).clone(ctx)? }
         } else {
-            // SAFETY: FFI call into JSC C API; `ctx` is a live JSGlobalObject and
-            // `first_arg.as_ref()` produces a valid `JSValueRef`.
-            let js_type =
-                unsafe { jsc::c_api::JSValueGetType(ctx.as_ptr(), first_arg.as_ref()) } as usize;
-            let fetch_error = Fetch::FETCH_TYPE_ERROR_STRINGS
-                .get(js_type)
-                .copied()
-                .unwrap_or(Fetch::FETCH_TYPE_ERROR_STRINGS[0]);
+            let fetch_error = Fetch::fetch_type_error_string(first_arg);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err),

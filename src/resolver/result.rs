@@ -215,7 +215,7 @@ impl ResultFlags {
 
 pub enum ResultUnion {
     Success(Result),
-    Failure(bun_core::Error),
+    Failure(crate::Error),
     Pending(PendingResolution),
     NotFound,
 }
@@ -342,8 +342,8 @@ impl DebugMeta {
         source: Option<&bun_ast::Source>,
         r: bun_ast::Range,
         args: core::fmt::Arguments<'_>,
-    ) -> core::result::Result<(), bun_core::Error> {
-        // Uses the broad `bun_core::Error` per repo-wide convention.
+    ) -> core::result::Result<(), crate::Error> {
+        // Uses the broad `crate::Error` per repo-wide convention.
         if source.is_some() && !self.suggestion_message.is_empty() {
             let suggestion_range = if self.suggestion_range == SuggestionRange::End {
                 bun_ast::Range {
@@ -517,7 +517,7 @@ pub enum MatchStatus {
     NotFound,
     Success,
     Pending(Box<PendingResolution>),
-    Failure(bun_core::Error),
+    Failure(crate::Error),
 }
 
 impl MatchStatus {
@@ -561,7 +561,7 @@ impl PendingResolution {
         esm: crate::package_json::Package<'_>,
         dependency: Dependency::Version,
         resolution_id: Install::PackageID,
-    ) -> core::result::Result<PendingResolution, bun_core::Error> {
+    ) -> core::result::Result<PendingResolution, crate::Error> {
         // NOTE: `Package::copy` is the count→allocate→clone Builder dance the live
         // call sites open-code, so thread the freshly-allocated buffer into
         // `string_buf` here so `Drop` frees what backs the cloned `esm` strings.

@@ -590,6 +590,7 @@ EXPORTS
   ?Utf8LengthV2@String@v8@@QEBA_KPEAVIsolate@2@@Z
   ?ToLocalEmpty@api_internal@v8@@YAXXZ
   ?Length@String@v8@@QEBAHXZ
+  ?Empty@String@v8@@SA?AV?$Local@VString@v8@@@2@PEAVIsolate@2@@Z
   ?New@External@v8@@SA?AV?$Local@VExternal@v8@@@2@PEAVIsolate@2@PEAX@Z
   ?Value@External@v8@@QEBAPEAXXZ
   ?New@External@v8@@SA?AV?$Local@VExternal@v8@@@2@PEAVIsolate@2@PEAXG@Z

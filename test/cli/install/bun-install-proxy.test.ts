@@ -1,4 +1,4 @@
-import { beforeAll, it } from "bun:test";
+import { beforeAll, expect, it } from "bun:test";
 import { exec } from "child_process";
 import { rm } from "fs/promises";
 import { bunEnv, bunExe, dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
@@ -62,36 +62,35 @@ if (isDockerEnabled()) {
         },
       }),
     };
-    const promises = new Array(5);
-    // this repro a hang when using a proxy, we run multiple times to make sure it's not a flaky test
+    // Regression test for the proxy hang (#19771). Run sequentially so all five
+    // installs don't push ~240 concurrent CONNECT tunnels through a single squid
+    // instance at once; a real hang is caught by the test-level timeout.
     for (let i = 0; i < 5; i++) {
       const package_dir = tempDirWithFiles("codex-" + i, files);
-
-      const { exited } = Bun.spawn([bunExe(), "install", "--ignore-scripts"], {
-        cwd: package_dir,
-        // @ts-ignore
-        env: {
-          ...bunEnv,
-          BUN_INSTALL_CACHE_DIR: join(package_dir, ".bun-install-cache"),
-          TMPDIR: join(package_dir, ".tmp"),
-          BUN_TMPDIR: join(package_dir, ".tmp"),
-          HTTPS_PROXY: SQUID_URL,
-          HTTP_PROXY: SQUID_URL,
-        },
-        stdio: ["inherit", "inherit", "inherit"],
-        timeout: 20_000,
-      });
-      promises[i] = exited
-        .then(r => {
-          if (r !== 0) {
-            throw new Error("failed to install with exit code " + r);
-          }
-        })
-        .finally(() => {
-          return rm(package_dir, { recursive: true, force: true });
+      try {
+        await using proc = Bun.spawn([bunExe(), "install", "--ignore-scripts"], {
+          cwd: package_dir,
+          // @ts-ignore
+          env: {
+            ...bunEnv,
+            BUN_INSTALL_CACHE_DIR: join(package_dir, ".bun-install-cache"),
+            TMPDIR: join(package_dir, ".tmp"),
+            BUN_TMPDIR: join(package_dir, ".tmp"),
+            HTTPS_PROXY: SQUID_URL,
+            HTTP_PROXY: SQUID_URL,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
         });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        if (exitCode !== 0) {
+          console.error(`iteration ${i} stdout:\n${stdout}`);
+          console.error(`iteration ${i} stderr:\n${stderr}`);
+        }
+        expect(exitCode).toBe(0);
+      } finally {
+        await rm(package_dir, { recursive: true, force: true });
+      }
     }
-
-    await Promise.all(promises);
-  }, 60_000);
+  }, 120_000);
 }

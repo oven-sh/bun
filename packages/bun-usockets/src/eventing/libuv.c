@@ -26,6 +26,17 @@
  * pointing at the live one) and skips closed sockets. The paused-probe below
  * must honor the same contract - dereferencing the raw poll cast crashed the
  * CONNECT-tunnel tests on the aarch64 agent. */
+/* Windows does not reliably latch a received RST in SO_ERROR (POSIX does);
+ * the reset surfaces on the next I/O. A zero-byte send observes it without
+ * touching the stream: 0 on a healthy socket, SOCKET_ERROR with a fatal
+ * code once the connection died hard. */
+int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd) {
+  if (bsd_send(fd, "", 0, 0) >= 0) {
+    return 0;
+  }
+  return !bsd_would_block();
+}
+
 static struct us_socket_t *us_internal_poll_cb_adopted_socket(struct us_poll_t *wp) {
   struct us_socket_t *s = (struct us_socket_t *)wp;
   if (s->flags.adopted && s->prev) {
@@ -94,7 +105,7 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
         events |= UV_READABLE;
       } else if (peeked > 0) {
         struct us_socket_t *sock = us_internal_poll_cb_adopted_socket(wp);
-        if (us_socket_get_error(sock) != 0) {
+        if (us_socket_get_error(sock) != 0 || us_internal_libuv_peer_reset_probe(us_poll_fd(wp))) {
           /* Data is buffered ahead of whatever ended the connection. If the
            * peer ABORTED, the kernel already discarded the stream's tail and
            * a paused socket that never resumes would otherwise never learn -

@@ -394,7 +394,9 @@ void sweep_timer_cb(struct us_internal_callback_t *cb) {
         struct us_socket_t *victim = 0;
         for (struct us_socket_group_t *g = cb->loop->data.head; g && !victim; g = g->next) {
             for (struct us_socket_t *s = g->head_sockets; s; s = s->next) {
-                if (s->fin_deferred && !s->flags.is_closed && us_socket_get_error(s) != 0) {
+                if (s->fin_deferred && !s->flags.is_closed
+                    && (us_socket_get_error(s) != 0
+                        || us_internal_libuv_peer_reset_probe(us_poll_fd(&s->p)))) {
                     victim = s;
                     break;
                 }

@@ -56,12 +56,13 @@ describe("NODE_OPTIONS environment variable", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "A\nB\nmain\n", exitCode: 0 });
   });
 
-  test.concurrent("multiple preloads in NODE_OPTIONS run in order", async () => {
+  test.concurrent("--require entries run before --import entries (Node parity)", async () => {
     using dir = tempDir("node-options-multi", fixtures);
+    // --import is declared first but --require runs first (matches Node and `bun --import ... --require ...`).
     const { stdout, exitCode } = await run(
       String(dir),
       ["-e", "console.log('main')"],
-      "--require ./A.mjs --import ./B.mjs",
+      "--import ./B.mjs --require ./A.mjs",
     );
     expect({ stdout, exitCode }).toEqual({ stdout: "A\nB\nmain\n", exitCode: 0 });
   });

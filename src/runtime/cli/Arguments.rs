@@ -948,7 +948,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             let preload4 = env_var::BUN_INSPECT_PRELOAD.get();
 
             let total_preloads = ctx.preloads.len()
-                + node_options.preloads.len()
+                + node_options.requires.len()
+                + node_options.imports.len()
                 + preloads.len()
                 + preloads2.len()
                 + preloads3.len()
@@ -958,15 +959,19 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 if !ctx.preloads.is_empty() {
                     all.append(&mut ctx.preloads);
                 }
-                // NODE_OPTIONS preloads run before command-line preloads (Node.js parity).
-                for p in node_options.preloads {
-                    all.push(p);
-                }
                 for p in preloads {
                     all.push(Box::<[u8]>::from(*p));
                 }
+                // NODE_OPTIONS preloads of each kind run before the
+                // corresponding command-line preloads (Node.js parity).
+                for p in node_options.requires {
+                    all.push(p);
+                }
                 for p in preloads2 {
                     all.push(Box::<[u8]>::from(*p));
+                }
+                for p in node_options.imports {
+                    all.push(p);
                 }
                 for p in preloads3 {
                     all.push(Box::<[u8]>::from(*p));

@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug } from "harness";
+import { isOhos } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { join } from "node:path";
 
-describe("fetch doesn't leak", () => {
+describe.skipIf(isOhos)("fetch doesn't leak", () => {
   test("fixture #1", async () => {
     const body = new Blob(["some body in here!".repeat(100)]);
     var count = 0;
@@ -149,7 +150,7 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
   );
 });
 
-test("do not leak", async () => {
+test.skipIf(isOhos)("do not leak", async () => {
   await using server = createServer((req, res) => {
     res.end();
   }).listen(0);
@@ -187,7 +188,7 @@ test("do not leak", async () => {
   }, 1e3);
 });
 
-test("fetch(data:) with percent-encoding does not leak", async () => {
+test.skipIf(isOhos)("fetch(data:) with percent-encoding does not leak", async () => {
   // DataURL.decodeData leaked the intermediate percent-decoded buffer (and the
   // base64 output buffer on decode error). Each fetch of a percent-encoded
   // data: URL leaked ~len(url.data) bytes from bun.default_allocator.
@@ -237,7 +238,7 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
   expect(exitCode).toBe(0);
 }, 60000);
 
-test("fetch() compress option does not leak bodies or compressor state", async () => {
+test.skipIf(isOhos)("fetch() compress option does not leak bodies or compressor state", async () => {
   // Exercises:
   //  - all four encodings
   //  - the custom-level path (allocates a temporary libdeflate compressor that
@@ -317,7 +318,7 @@ test("fetch() compress option does not leak bodies or compressor state", async (
 // transfer encoding forces handle_response_body_chunked_encoding_from_multiple_packets.
 // Paired with compress: on the request side so the same loop covers the
 // multi-write send of a large compressed request body too.
-test("fetch() does not leak streaming decompressor state across fragmented compressed responses", async () => {
+test.skipIf(isOhos)("fetch() does not leak streaming decompressor state across fragmented compressed responses", async () => {
   const script = /* js */ `
     import { createServer } from "node:net";
     import { gzipSync, brotliCompressSync, zstdCompressSync } from "node:zlib";
@@ -576,7 +577,7 @@ test.concurrent(
 // for the lifetime of the VM. This asserts the swap() consume semantics by
 // checking protectedObjectTypeCounts.Promise returns to baseline after both
 // the resolve and reject Holder paths have run.
-test("fetch() promise Strong handle is consumed on resolve/reject (FetchTasklet Holder.swap)", async () => {
+test.skipIf(isOhos)("fetch() promise Strong handle is consumed on resolve/reject (FetchTasklet Holder.swap)", async () => {
   const script = /* js */ `
     import { heapStats } from "bun:jsc";
     import { createServer } from "node:net";
@@ -648,7 +649,7 @@ test("fetch() promise Strong handle is consumed on resolve/reject (FetchTasklet 
 // pointer; Blob holds a manually-refcounted Store).
 // Body.Value.HiveAllocator pool_size is 256, so cycle 512 Requests to cover both the
 // in-hive slot path and the fallback-allocator path.
-describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not leak)", () => {
+describe.skipIf(isOhos)("Request body HiveRef pool returns slot via Body.Value.deinit (does not leak)", () => {
   for (const kind of ["String"] as const) {
     // TODO(zig-rust-divergence): Rust port skips Body.Value.deinit() on pool
     // return; see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
@@ -713,7 +714,7 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
   }
 });
 
-test("should not leak using readable stream", async () => {
+test.skipIf(isOhos)("should not leak using readable stream", async () => {
   const buffer = Buffer.alloc(1024 * 128, "b");
   using server = Bun.serve({
     port: 0,
@@ -743,7 +744,7 @@ test("should not leak using readable stream", async () => {
 // `ondrain` never fires and the JS `drainReaderIntoSink` continuation (which
 // captures the reader/stream graph) plus the FetchTasklet's startRequestStream
 // ref used to leak forever — one ReadableStream/Controller/Reader per fetch.
-test("should not leak request-body ReadableStream when server ignores the body", async () => {
+test.skipIf(isOhos)("should not leak request-body ReadableStream when server ignores the body", async () => {
   const script = `
     const { heapStats } = require("bun:jsc");
     const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });

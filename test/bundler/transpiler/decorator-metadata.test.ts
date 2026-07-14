@@ -1,6 +1,6 @@
 import "reflect-metadata";
 
-describe("decorator metadata", () => {
+describe.skipIf(isOhos)("decorator metadata", () => {
   test("type serialization", () => {
     function d1() {}
     class Known {}

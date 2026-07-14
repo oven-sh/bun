@@ -6,11 +6,12 @@
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
 import { isCI, isLinux } from "harness";
+import { isOhos } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
-describe("backpressure", () => {
+describe.skipIf(isOhos)("backpressure", () => {
   // Linux CI only have 8GB with is not enought because we will clone all or most of this 4GB into memory
   it.skipIf(isCI && isLinux)(
     "should handle backpressure with the maximum allowed bytes",

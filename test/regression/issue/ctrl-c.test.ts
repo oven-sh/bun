@@ -1,5 +1,6 @@
 import { beforeAll, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { isOhos } from "harness";
 import { join } from "path";
 
 test.skipIf(isWindows)("verify that we can call sigint 4096 times", () => {

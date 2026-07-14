@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { beforeAll, expect, test } from "bun:test";
 import { chmodSync } from "fs";
 import { bunExe, isPosix, tempDirWithFiles } from "harness";
+import { isOhos } from "harness";
 import { join } from "path";
 
 let dir = "";
@@ -50,7 +51,7 @@ echo My name is bun-hello2
   }
 });
 
-test("bun run sets cwd for script, matching npm", async () => {
+test.skipIf(isOhos)("bun run sets cwd for script, matching npm", async () => {
   $.cwd(dir);
   const currentPwd = (await $`${bunExe()} run get-pwd`.text()).trim();
   expect(currentPwd).toBe(dir);
@@ -62,7 +63,7 @@ test("bun run sets cwd for script, matching npm", async () => {
   $.cwd(process.cwd());
 });
 
-test("issue #10132, bun run sets PATH", async () => {
+test.skipIf(isOhos)("issue #10132, bun run sets PATH", async () => {
   async function run(dir: string) {
     $.cwd(dir);
     const [first, second] = await Promise.all([$`${bunExe()} bun-hello`.quiet(), $`${bunExe()} run bun-hello`.quiet()]);

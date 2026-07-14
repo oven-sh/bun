@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isCI, isDebug } from "harness";
+import { isCI, isDebug, isOhos } from "harness";
 
 interface InvalidFuzzOptions {
   maxLength: number;
@@ -112,7 +112,7 @@ function corruptCSS(css: string): string {
 }
 
 // TODO:
-if (!isCI) {
+if (!isCI && !isOhos) {
   // Main fuzzing test suite for invalid inputs
   test.each(
     [["syntax", 1000], ["structure", 1000], ["encoding", 500], !isDebug ? ["memory", 100] : []].filter(

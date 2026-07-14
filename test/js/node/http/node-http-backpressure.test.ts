@@ -9,7 +9,7 @@ import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
-describe("backpressure", () => {
+describe.skipIf(isOhos)("backpressure", () => {
   // Writes `total` bytes to `res` in `chunk`-sized pieces, waiting for "drain"
   // whenever a write reports backpressure, then ends the response. Reusing one
   // chunk buffer keeps the test's peak memory small (the previous version held

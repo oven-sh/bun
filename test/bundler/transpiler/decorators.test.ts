@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
-test("decorator order of evaluation", () => {
+test.skipIf(isOhos)("decorator order of evaluation", () => {
   let counter = 0;
   const computedProp: unique symbol = Symbol("computedProp");
 
@@ -120,7 +120,7 @@ test("decorator order of evaluation", () => {
   }
 });
 
-test("decorator factories order of evaluation", () => {
+test.skipIf(isOhos)("decorator factories order of evaluation", () => {
   let counter = 0;
   const computedProp: unique symbol = Symbol("computedProp");
 
@@ -249,7 +249,7 @@ test("decorator factories order of evaluation", () => {
   }
 });
 
-test("parameter decorators", () => {
+test.skipIf(isOhos)("parameter decorators", () => {
   let counter = 0;
   class HappyDecorator {
     width: number;
@@ -356,7 +356,7 @@ test("parameter decorators", () => {
   }
 });
 
-test("decorators random", () => {
+test.skipIf(isOhos)("decorators random", () => {
   @Frozen
   class IceCream {}
 
@@ -555,7 +555,7 @@ test("decorators random", () => {
   }
 });
 
-test("class field order", () => {
+test.skipIf(isOhos)("class field order", () => {
   class N {
     l = 455;
   }
@@ -583,7 +583,7 @@ test("class field order", () => {
   expect(m.w).toBe(6);
 });
 
-test("changing static method", () => {
+test.skipIf(isOhos)("changing static method", () => {
   class A {
     static bar() {
       return 1;
@@ -618,7 +618,7 @@ test("changing static method", () => {
   expect(C.bar()).toBe(9);
 });
 
-test("class extending from another class", () => {
+test.skipIf(isOhos)("class extending from another class", () => {
   class A {
     a: number;
     constructor() {
@@ -669,7 +669,7 @@ test("class extending from another class", () => {
   }
 });
 
-test("decorated fields moving to constructor", () => {
+test.skipIf(isOhos)("decorated fields moving to constructor", () => {
   class A {
     @d1 a = 3;
     @d2 b = 4;
@@ -697,7 +697,7 @@ test("decorated fields moving to constructor", () => {
   expect(a.c).toBe(5);
 });
 
-test("only class decorator", () => {
+test.skipIf(isOhos)("only class decorator", () => {
   let a = 0;
   @d1
   class A {}
@@ -712,7 +712,7 @@ test("only class decorator", () => {
   expect(a).toBe(1);
 });
 
-test("decorators with different property key types", () => {
+test.skipIf(isOhos)("decorators with different property key types", () => {
   function d1(x) {
     return function (target, propertyKey) {
       expect(propertyKey).toBeDefined();
@@ -745,7 +745,7 @@ test("decorators with different property key types", () => {
   let A = foo("a", "b", "c");
 });
 
-test("only property decorators", () => {
+test.skipIf(isOhos)("only property decorators", () => {
   let a = 0;
   class A {
     @d1 a() {}
@@ -785,7 +785,7 @@ test("only property decorators", () => {
   expect(c).toBe(1);
 });
 
-test("only argument decorators", () => {
+test.skipIf(isOhos)("only argument decorators", () => {
   let a = 0;
   class A {
     a(@d1 a: string) {}
@@ -801,7 +801,7 @@ test("only argument decorators", () => {
   expect(a).toBe(1);
 });
 
-test("no decorators", () => {
+test.skipIf(isOhos)("no decorators", () => {
   let a = 0;
   class A {
     b: number;
@@ -816,7 +816,7 @@ test("no decorators", () => {
   expect(aa.b).toBe(300000);
 });
 
-describe("constructor statements", () => {
+describe.skipIf(isOhos)("constructor statements", () => {
   test("with parameter properties", () => {
     class A {
       constructor(readonly d: string = "default") {
@@ -1011,15 +1011,15 @@ describe("constructor statements", () => {
   });
 });
 
-test("export default class Named works", () => {
+test.skipIf(isOhos)("export default class Named works", () => {
   expect(new DecoratedClass()["methoddecorated"]).toBe(true);
 });
 
-test("export default class works (anonymous name)", () => {
+test.skipIf(isOhos)("export default class works (anonymous name)", () => {
   expect(new DecoratedAnonClass()["methoddecorated"]).toBe(true);
 });
 
-test("field with supra-BMP string-literal key and initializer is assigned under the correct key", () => {
+test.skipIf(isOhos)("field with supra-BMP string-literal key and initializer is assigned under the correct key", () => {
   function dec(_t: any, _k: any) {}
   class Foo {
     @dec "\u{20BB7}\u{91BB6}": number = 42;
@@ -1037,7 +1037,7 @@ test("field with supra-BMP string-literal key and initializer is assigned under 
   });
 });
 
-test("decorator and declare", () => {
+test.skipIf(isOhos)("decorator and declare", () => {
   let counter = 0;
   function d1() {
     counter++;

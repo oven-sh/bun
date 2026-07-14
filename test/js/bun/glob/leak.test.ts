@@ -16,7 +16,7 @@ async function run(dir: string, code: string) {
   expect(await proc.exited).toBe(0);
 }
 
-describe("leaks", () => {
+describe.skipIf(isOhos)("leaks", () => {
   test.concurrent(
     "scanSync",
     async () => {

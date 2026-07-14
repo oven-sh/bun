@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { isOhos } from "harness";
 import path from "path";
 
 // https://github.com/oven-sh/bun/issues/3768

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunExe } from "harness";
+import { isOhos } from "harness";
 import { spawn, spawnSync } from "node:child_process";
 import { Readable } from "node:stream";
 

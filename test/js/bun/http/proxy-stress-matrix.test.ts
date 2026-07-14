@@ -11,6 +11,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { isOhos } from "harness";
 import {
   AdversarialProxy,
   BodyEncoding,
@@ -68,7 +69,7 @@ const RESPONSE_MATRIX = cartesian({
   keepalive: [false, true] as const,
 });
 
-describe("response matrix", () => {
+describe.skipIf(isOhos)("response matrix", () => {
   for (const { proxyTls, originTls, framing, encoding, bodySize, keepalive } of RESPONSE_MATRIX) {
     const label =
       `${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin ` +

@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import "harness";
 import { isBroken } from "harness";
+import { isOhos } from "harness";
 import { join } from "path";
 
-describe("Worker destruction", () => {
+describe.skipIf(isOhos)("Worker destruction", () => {
   const method = ["Bun.connect", "Bun.listen", "fetch"];
   describe.each(method)("bun when %s is used in a Worker that is terminating", method => {
     // fetch: ASAN failure

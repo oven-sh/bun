@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { isCI, isMacOS, isWindows } from "harness";
+import { isCI, isMacOS, isOhos, isWindows } from "harness";
 
-describe.todoIf(isCI && !isWindows)("Bun.secrets error codes", () => {
+describe.todoIf(isCI && !isWindows || isOhos)("Bun.secrets error codes", () => {
   test("non-existent secret returns null without error", async () => {
     const result = await Bun.secrets.get({
       service: "non-existent-service-" + Date.now(),

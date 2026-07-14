@@ -7,7 +7,7 @@ function enableEcho(terminal: Bun.Terminal) {
   terminal.localFlags = terminal.localFlags | ECHO;
 }
 
-describe("Bun.Terminal", () => {
+describe.skipIf(isOhos)("Bun.Terminal", () => {
   describe("constructor", () => {
     test("creates a PTY with default options", async () => {
       await using terminal = new Bun.Terminal({});

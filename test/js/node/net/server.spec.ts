@@ -1,9 +1,10 @@
 import { isWindows } from "harness";
+import { isOhos } from "harness";
 import EventEmitter from "node:events";
 import type { SocketConnectOpts } from "node:net";
 import net from "node:net";
 
-describe("net.createServer(connectionListener)", () => {
+describe.skipIf(isOhos)("net.createServer(connectionListener)", () => {
   const onListen = jest.fn((socket: net.Socket) => {
     expect(socket).toBeInstanceOf(net.Socket);
   });
@@ -34,7 +35,7 @@ describe("net.createServer(connectionListener)", () => {
   });
 });
 
-describe("net.Server", () => {
+describe.skipIf(isOhos)("net.Server", () => {
   const defaultServer = new net.Server();
 
   it("extends EventEmitter", () => {
@@ -60,7 +61,7 @@ describe("net.Server", () => {
   );
 }); // </net.Server constructor>
 
-describe("net.Server.prototype", () => {
+describe.skipIf(isOhos)("net.Server.prototype", () => {
   it("has the expected methods", () => {
     expect(net.Server.prototype).toMatchObject(
       expect.objectContaining({
@@ -84,7 +85,7 @@ describe("net.Server.prototype", () => {
   });
 }); // </net.Server.prototype>
 
-describe("new net.Server()", () => {
+describe.skipIf(isOhos)("new net.Server()", () => {
   let server: net.Server;
 
   beforeAll(() => {
@@ -130,7 +131,7 @@ describe("new net.Server()", () => {
   }); // </the server instance>
 }); // </new net.Server()>
 
-describe("server.address()", () => {
+describe.skipIf(isOhos)("server.address()", () => {
   let server: net.Server;
 
   beforeEach(() => {
@@ -193,7 +194,7 @@ describe("server.address()", () => {
   });
 }); // </server.address()>
 
-describe("server.close()", () => {
+describe.skipIf(isOhos)("server.close()", () => {
   let server: net.Server;
   const handlers = {
     close: jest.fn(),

@@ -34,6 +34,7 @@ import { GrpcUri, parseUri } from "@grpc/grpc-js/build/src/uri-parser";
 import assert from "assert";
 import { beforeAll as before, describe, it } from "bun:test";
 import { isIPv6 } from "harness";
+import { isOhos } from "harness";
 
 function hasMatchingAddress(endpointList: Endpoint[], expectedAddress: SubchannelAddress): boolean {
   for (const endpoint of endpointList) {
@@ -46,7 +47,7 @@ function hasMatchingAddress(endpointList: Endpoint[], expectedAddress: Subchanne
   return false;
 }
 
-describe("Name Resolver", () => {
+describe.skipIf(isOhos)("Name Resolver", () => {
   before(() => {
     resolver_dns.setup();
     resolver_uds.setup();

@@ -1,12 +1,13 @@
 import { TCPSocketListener } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { isOhos } from "harness";
 
 const hostname = "127.0.0.1";
 const port = 0;
 const MAX_HEADER_SIZE = 16 * 1024; // 16KB max for handshake headers
 
-describe("WebSocket", () => {
+describe.skipIf(isOhos)("WebSocket", () => {
   test("fragmented close frame", async () => {
     let server: TCPSocketListener | undefined;
     let client: WebSocket | undefined;

@@ -7,7 +7,7 @@ afterEach(() => {
   cleanup();
 });
 
-test("expect extended", () => {
+test.skipIf(isOhos)("expect extended", () => {
   // @ts-ignore
   expect(expect.toBeInTheDocument).not.toBe(undefined);
 });

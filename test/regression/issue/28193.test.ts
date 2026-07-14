@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { isOhos } from "harness";
 
-test("bun install prints error when security scanner is unavailable", async () => {
+test.skipIf(isOhos)("bun install prints error when security scanner is unavailable", async () => {
   using dir = tempDir("issue-28193", {
     "package.json": JSON.stringify({
       name: "test-28193",
@@ -27,7 +28,7 @@ test("bun install prints error when security scanner is unavailable", async () =
   expect(exitCode).toBe(1);
 }, 30_000);
 
-test("bun install prints error when scanner package is invalid", async () => {
+test.skipIf(isOhos)("bun install prints error when scanner package is invalid", async () => {
   // When the scanner is a devDependency but not a valid scanner module,
   // the install should fail with a clear error message
   using dir = tempDir("issue-28193-invalid", {

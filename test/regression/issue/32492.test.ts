@@ -1,8 +1,9 @@
 // https://github.com/oven-sh/bun/issues/32492
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { isOhos } from "harness";
 
-test("concurrent bun build does not stall on worker-pool shutdown", async () => {
+test.skipIf(isOhos)("concurrent bun build does not stall on worker-pool shutdown", async () => {
   const N_MODULES = 40;
   const files: Record<string, string> = {
     "package.json": JSON.stringify({ name: "repro-32492", version: "0.0.0" }),

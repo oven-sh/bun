@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { isOhos } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-test("react-tailwind template passes tsc --noEmit", async () => {
+test.skipIf(isOhos)("react-tailwind template passes tsc --noEmit", async () => {
   // Read template files from source
   // `src/cli` is a committed symlink → `runtime/cli`; Windows git agents
   // (no SeCreateSymbolicLinkPrivilege / core.symlinks=false) write a

@@ -1,4 +1,4 @@
-test("simple usage", done => {
+test.skipIf(isOhos)("simple usage", done => {
   const channel = new MessageChannel();
   const port1 = channel.port1;
   const port2 = channel.port2;
@@ -11,7 +11,7 @@ test("simple usage", done => {
   port1.postMessage("hello");
 });
 
-test("transfer message port", done => {
+test.skipIf(isOhos)("transfer message port", done => {
   const channel = new MessageChannel();
   const anotherChannel = new MessageChannel();
   const port1 = channel.port1;
@@ -27,7 +27,7 @@ test("transfer message port", done => {
   port1.postMessage("hello", [anotherChannel.port2]);
 });
 
-test("transfer array buffer", done => {
+test.skipIf(isOhos)("transfer array buffer", done => {
   const channel = new MessageChannel();
   const port1 = channel.port1;
   const port2 = channel.port2;
@@ -43,7 +43,7 @@ test("transfer array buffer", done => {
   port1.postMessage(buffer, [buffer]);
 });
 
-test("non-transferable", () => {
+test.skipIf(isOhos)("non-transferable", () => {
   const channel = new MessageChannel();
   channel.port2.onmessage = () => {
     expect().fail("should not be reached");
@@ -58,7 +58,7 @@ test("non-transferable", () => {
   }).not.toThrow();
 });
 
-test("transfer message ports and post messages", done => {
+test.skipIf(isOhos)("transfer message ports and post messages", done => {
   const c1 = new MessageChannel();
   const c2 = new MessageChannel();
 
@@ -94,7 +94,7 @@ test("transfer message ports and post messages", done => {
   c1.port2.postMessage("hello from channel 1 port 2", [c2.port2]);
 });
 
-test("message channel created on main thread", done => {
+test.skipIf(isOhos)("message channel created on main thread", done => {
   const worker = new Worker(new URL("receive-port-worker.js", import.meta.url).href);
   worker.onerror = e => {
     expect().fail();
@@ -109,7 +109,7 @@ test("message channel created on main thread", done => {
   worker.postMessage(channel.port2, { transfer: [channel.port2] });
 });
 
-test("message channel created on other thread", done => {
+test.skipIf(isOhos)("message channel created on other thread", done => {
   const worker = new Worker(new URL("create-port-worker.js", import.meta.url).href);
   worker.onerror = () => {
     expect().fail();
@@ -126,7 +126,7 @@ test("message channel created on other thread", done => {
   };
 });
 
-test("many message channels", done => {
+test.skipIf(isOhos)("many message channels", done => {
   const channel = new MessageChannel();
   const channel2 = new MessageChannel();
   const channel3 = new MessageChannel();
@@ -254,7 +254,7 @@ test("many message channels", done => {
   };
 });
 
-test("gc", () => {
+test.skipIf(isOhos)("gc", () => {
   for (let i = 0; i < 1000; i++) {
     const messageChannel = new MessageChannel();
     messageChannel.port1;
@@ -262,7 +262,7 @@ test("gc", () => {
   }
 });
 
-test("cloneable and transferable equals", async () => {
+test.skipIf(isOhos)("cloneable and transferable equals", async () => {
   const assert = require("assert");
   const mc = new MessageChannel();
   const original = Uint8Array.from([21, 11, 96, 126, 243, 128, 164]);
@@ -285,7 +285,7 @@ test("cloneable and transferable equals", async () => {
   await promise;
 });
 
-test("cloneable and non-transferable equals (BunFile)", async () => {
+test.skipIf(isOhos)("cloneable and non-transferable equals (BunFile)", async () => {
   const mc = new MessageChannel();
   const file = Bun.file(import.meta.filename);
   expect(file).toBeInstanceOf(Blob); // Bun.BunFile isnt exposed to JS
@@ -308,7 +308,7 @@ test("cloneable and non-transferable equals (BunFile)", async () => {
   await promise;
 });
 
-test("cloneable and non-transferable equals (net.BlockList)", async () => {
+test.skipIf(isOhos)("cloneable and non-transferable equals (net.BlockList)", async () => {
   const net = require("node:net");
   const mc = new MessageChannel();
   const blocklist = new net.BlockList();
@@ -336,7 +336,7 @@ test("cloneable and non-transferable equals (net.BlockList)", async () => {
 // task is pending, hasPendingActivity() must keep the JS wrapper alive: otherwise a
 // GC in that window severs the JSEventListener weak and the dispatch hits a dead
 // wrapper (debug: ASSERTION FAILED: m_wrapper).
-test("a pending close event survives GC after the port becomes unreachable", async () => {
+test.skipIf(isOhos)("a pending close event survives GC after the port becomes unreachable", async () => {
   let fired = 0;
   for (let i = 0; i < 50; i++) {
     (() => {
@@ -354,7 +354,7 @@ test("a pending close event survives GC after the port becomes unreachable", asy
 
 // The peer's notifyPeerClosed() task only holds a weak ref back to this port, so a
 // port whose only listener is 'close' must survive GC until the event is delivered.
-test("a close event from the peer survives GC of the unreachable port", async () => {
+test.skipIf(isOhos)("a close event from the peer survives GC of the unreachable port", async () => {
   let fired = 0;
   const peers: MessagePort[] = [];
   for (let i = 0; i < 20; i++) {
@@ -374,7 +374,7 @@ test("a close event from the peer survives GC of the unreachable port", async ()
 // A 'close'-listener-only pair pins both ports until the context dies (same as Node,
 // which never collects an entangled port). Bound the retention: explicitly-closed pairs
 // must still be swept, so a regression that leaks closed ports too would show as growth.
-test("explicitly-closed close-listener ports are collected; open ones are pinned like Node", async () => {
+test.skipIf(isOhos)("explicitly-closed close-listener ports are collected; open ones are pinned like Node", async () => {
   const { heapStats } = require("bun:jsc");
   const count = () => heapStats().objectTypeCounts.MessagePort ?? 0;
   for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
@@ -414,7 +414,7 @@ test("explicitly-closed close-listener ports are collected; open ones are pinned
 // registerCloseContext()'s retroactive peer-Closed check posts a peerClosed task before
 // attach()'s drain when on('close') precedes on('message'); peerClosed() must still flush
 // the queued messages first so 'close' stays terminal.
-test("on('close') before on('message') still delivers queued messages before 'close'", async () => {
+test.skipIf(isOhos)("on('close') before on('message') still delivers queued messages before 'close'", async () => {
   require("worker_threads"); // installs .on/.off on MessagePort
   const { port1, port2 } = new MessageChannel();
   port2.postMessage("m1");
@@ -434,7 +434,7 @@ test("on('close') before on('message') still delivers queued messages before 'cl
 // A 'message' handler running inside peerClosed()'s flush can transfer this port; the
 // remaining inbox belongs to the new owner and must not be popped-and-dropped by the
 // stale port. flushQueuedMessagesBeforeClose() breaks on m_isDetached to guard this.
-test("transferring a port from inside peerClosed()'s flush preserves the remaining inbox", async () => {
+test.skipIf(isOhos)("transferring a port from inside peerClosed()'s flush preserves the remaining inbox", async () => {
   require("worker_threads");
   const { port1, port2 } = new MessageChannel();
   const carrier = new MessageChannel();

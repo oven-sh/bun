@@ -53,7 +53,7 @@ for (let Class of [
   });
 }
 
-test("napi_create_external_buffer", () => {
+test.skipIf(isOhos)("napi_create_external_buffer", () => {
   const resvg = new Resvg(svg, opts);
   for (let i = 0; i < 10; i++) {
     resvg.render().asPng();

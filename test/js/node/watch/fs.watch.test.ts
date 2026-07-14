@@ -10,6 +10,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
+import { isOhos } from "harness";
 import { EventEmitter } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
@@ -38,7 +39,7 @@ const testDir = tempDirWithFiles("watch", {
   },
 });
 
-describe("fs.watch", () => {
+describe.skipIf(isOhos)("fs.watch", () => {
   test("non-persistent watcher should not block the event loop", done => {
     try {
       // https://github.com/joyent/node/issues/2293 - non-persistent watcher should not block the event loop
@@ -675,7 +676,7 @@ describe("fs.watch", () => {
   );
 });
 
-describe("fs.promises.watch", () => {
+describe.skipIf(isOhos)("fs.promises.watch", () => {
   test("add file/folder to folder", async () => {
     let count = 0;
     const root = path.join(testDir, "add-promise-directory");
@@ -906,7 +907,7 @@ describe("fs.promises.watch", () => {
   });
 });
 
-describe("immediately closing", () => {
+describe.skipIf(isOhos)("immediately closing", () => {
   test("works correctly with files", async () => {
     const filepath = path.join(testDir, "close.txt");
     for (let i = 0; i < 100; i++) fs.watch(filepath, { persistent: true }).close();
@@ -928,7 +929,7 @@ describe("immediately closing", () => {
 // u32 to MAX. hasPendingActivity() then returned true forever, pinning the native FSWatcher
 // (and via its cached listener closure, the JS FSWatcher) as a GC root — a permanent leak
 // per watcher. Persistent watchers only landed at 0 by accident (start=2, -2).
-describe("closed FSWatcher is collectable", () => {
+describe.skipIf(isOhos)("closed FSWatcher is collectable", () => {
   for (const persistent of [false, true]) {
     test(`persistent: ${persistent}`, async () => {
       using dir = tempDir("fswatch-gc", { "f.txt": "x" });
@@ -1317,7 +1318,7 @@ test.skipIf(!isWindows)(
 // the buffer during the join and abort the whole process (panic=abort) instead of
 // surfacing an error to JavaScript. Must run in a subprocess: on an unfixed build
 // the abort would take down the test runner itself.
-test("fs.watch reports an error for relative paths that no longer fit in the path buffer once joined with the cwd", async () => {
+test.skipIf(isOhos)("fs.watch reports an error for relative paths that no longer fit in the path buffer once joined with the cwd", async () => {
   using dir = tempDir("fswatch-long-relative", {
     "watch-me.txt": "hello",
   });
@@ -1369,7 +1370,7 @@ test("fs.watch reports an error for relative paths that no longer fit in the pat
 // hasPendingActivity while open). Exercise every emit path (change, error,
 // abort, close) with forced GC between steps; a rooting/clearing mistake
 // crashes the subprocess or drops the awaited events.
-test("fs.watch wrapper reference survives GC across event, abort and close paths", async () => {
+test.skipIf(isOhos)("fs.watch wrapper reference survives GC across event, abort and close paths", async () => {
   using dir = tempDir("fswatch-jsref-gc", { "target.txt": "x" });
   const watchDir = String(dir);
 

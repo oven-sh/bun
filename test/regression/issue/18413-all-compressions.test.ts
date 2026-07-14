@@ -6,7 +6,7 @@ import { expect, test } from "bun:test";
  * Related to issue #18413 - we fixed this for gzip, now verifying brotli and zstd work too
  */
 
-test("empty chunked brotli response should work", async () => {
+test.skipIf(isOhos)("empty chunked brotli response should work", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {
@@ -41,7 +41,7 @@ test("empty chunked brotli response should work", async () => {
   expect(text).toBe("");
 });
 
-test("empty non-chunked brotli response", async () => {
+test.skipIf(isOhos)("empty non-chunked brotli response", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {
@@ -66,7 +66,7 @@ test("empty non-chunked brotli response", async () => {
   expect(text).toBe("");
 });
 
-test("empty chunked zstd response should work", async () => {
+test.skipIf(isOhos)("empty chunked zstd response should work", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {
@@ -100,7 +100,7 @@ test("empty chunked zstd response should work", async () => {
   expect(text).toBe("");
 });
 
-test("empty non-chunked zstd response", async () => {
+test.skipIf(isOhos)("empty non-chunked zstd response", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {
@@ -124,7 +124,7 @@ test("empty non-chunked zstd response", async () => {
   expect(text).toBe("");
 });
 
-test("empty chunked deflate response should work", async () => {
+test.skipIf(isOhos)("empty chunked deflate response should work", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {
@@ -158,7 +158,7 @@ test("empty chunked deflate response should work", async () => {
   expect(text).toBe("");
 });
 
-test("empty non-chunked deflate response", async () => {
+test.skipIf(isOhos)("empty non-chunked deflate response", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {

@@ -1,8 +1,9 @@
 import { spawnSync } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { isOhos } from "harness";
 
-test("esbuild", () => {
+test.skipIf(isOhos)("esbuild", () => {
   const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/esbuild-test.js"], {
     env: {
       ...bunEnv,

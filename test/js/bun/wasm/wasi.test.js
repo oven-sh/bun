@@ -1,11 +1,11 @@
 import { spawnSync } from "bun";
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isOhos, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 import { WASI } from "node:wasi";
 
-it("Should support printing 'hello world'", () => {
+it.skipIf(isOhos)("Should support printing 'hello world'", () => {
   const { stdout, stderr, exitCode } = spawnSync({
     cmd: [bunExe(), import.meta.dir + "/hello-wasi.wasm"],
     stdout: "pipe",

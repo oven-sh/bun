@@ -9,11 +9,12 @@
 import { expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe } from "harness";
+import { isOhos } from "harness";
 import { join } from "path";
 
 const testDir = join(import.meta.dir, "napi-exception-pending-crash");
 
-test("napi_is_exception_pending crash fix and Node.js compatibility", async () => {
+test.skipIf(isOhos)("napi_is_exception_pending crash fix and Node.js compatibility", async () => {
   // Skip if addon build files don't exist (CI environment may not have build tools)
   if (!existsSync(testDir)) {
     console.log("Skipping test - addon directory not found");

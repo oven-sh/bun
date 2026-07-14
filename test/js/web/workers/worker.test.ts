@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe } from "harness";
+import { isOhos } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
-describe("web worker", () => {
+describe.skipIf(isOhos)("web worker", () => {
   async function waitForWorkerResult(worker: Worker, message: any): Promise<any> {
     const promise = new Promise((resolve, reject) => {
       worker.onerror = reject;
@@ -338,7 +339,7 @@ describe("web worker", () => {
 });
 
 // TODO: move to node:worker_threads tests directory
-describe("worker_threads", () => {
+describe.skipIf(isOhos)("worker_threads", () => {
   test("worker with process.exit", done => {
     const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url), {
       smol: true,

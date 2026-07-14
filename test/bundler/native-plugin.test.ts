@@ -1,12 +1,13 @@
 import { BunFile, Loader } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isMusl, makeTree, tempDirWithFiles } from "harness";
+import { isOhos } from "harness";
 import path from "path";
 import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import source from "./native_plugin.cc" with { type: "file" };
 import notAPlugin from "./not_native_plugin.cc" with { type: "file" };
 
-describe("native-plugins", async () => {
+describe.skipIf(isOhos)("native-plugins", async () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";

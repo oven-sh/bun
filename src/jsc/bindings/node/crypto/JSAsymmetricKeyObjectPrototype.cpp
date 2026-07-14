@@ -30,12 +30,17 @@ void JSAsymmetricKeyObjectPrototype::finishCreation(JSC::VM& vm)
     // https://github.com/nodejs/node/blob/95b0f9d448832eeb75586c89fab0777a1a4b0610/lib/internal/crypto/keys.js#L146
 }
 
-// Both getters brand-check `this`: it must be a KeyObject holding an asymmetric (public or
-// private) key, otherwise ERR_INVALID_THIS is thrown like Node does.
+// Both getters brand-check `this`. Like Node, a non-KeyObject names "KeyObject" while a
+// KeyObject holding a secret key names "AsymmetricKeyObject", so the two failures stay
+// distinguishable (lib/internal/crypto/keys.js).
 static JSKeyObject* asymmetricKeyObjectFromThis(JSGlobalObject* globalObject, ThrowScope& scope, JSValue thisValue)
 {
     JSKeyObject* keyObject = dynamicDowncast<JSKeyObject>(thisValue);
-    if (!keyObject || keyObject->handle().type() == CryptoKeyType::Secret) {
+    if (!keyObject) {
+        ERR::INVALID_THIS(scope, globalObject, "KeyObject"_s);
+        return nullptr;
+    }
+    if (keyObject->handle().type() == CryptoKeyType::Secret) {
         ERR::INVALID_THIS(scope, globalObject, "AsymmetricKeyObject"_s);
         return nullptr;
     }

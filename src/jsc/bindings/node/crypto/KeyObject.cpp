@@ -28,13 +28,13 @@ using namespace ncrypto;
 using namespace WebCore;
 
 // DEP0203: passing a WebCrypto CryptoKey (instead of a KeyObject) to node:crypto
-// functions is deprecated but still accepted. Emitted once per process, like Node.
+// functions is deprecated but still accepted. Emitted at most once per realm, like Node.
 static void emitCryptoKeyDeprecationWarning(JSGlobalObject* globalObject)
 {
-    static bool warned = false;
-    if (warned || Bun__Node__ProcessNoDeprecation)
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    if (zigGlobalObject->hasWarnedCryptoKeyDeprecation || Bun__Node__ProcessNoDeprecation)
         return;
-    warned = true;
+    zigGlobalObject->hasWarnedCryptoKeyDeprecation = true;
     auto& vm = globalObject->vm();
     Process::emitWarning(globalObject,
         jsString(vm, makeString("Passing a CryptoKey to node:crypto functions is deprecated."_s)),

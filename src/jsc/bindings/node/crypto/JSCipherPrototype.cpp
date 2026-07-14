@@ -142,7 +142,9 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
     }
 
     if (!cipher->m_ctx) {
-        return ERR::CRYPTO_INVALID_STATE(scope, lexicalGlobalObject, "Invalid state for operation final"_s);
+        // Node throws the bare "Invalid state" here (CipherBase::Final in crypto_cipher.cc);
+        // only the JS-layer checks name an operation.
+        return ERR::CRYPTO_INVALID_STATE(scope, lexicalGlobalObject, "Invalid state"_s);
     }
 
     const bool isAuthMode = cipher->isAuthenticatedMode();
@@ -345,7 +347,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAAD, (JSC::JSGlobalObject * globalObject, JS
     // Passing a NULL output buffer to EVP_CipherUpdate is only valid for AEAD
     // modes; for any other mode it writes the ciphertext through the NULL pointer.
     if (!cipher->m_ctx || !cipher->isAuthenticatedMode()) {
-        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "setAAD"_s);
+        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Invalid state for operation setAAD"_s);
     }
 
     MarkPopErrorOnReturn popError;

@@ -96,10 +96,10 @@ JSC_DEFINE_HOST_FUNCTION(jsKeyObjectConstructor_from, (JSGlobalObject * lexicalG
     WebCore::CryptoKey& wrappedKey = cryptoKey->wrapped();
 
     if (!wrappedKey.extractable()) {
-        // DEP0204: KeyObject.from() with a non-extractable CryptoKey still works but is deprecated.
-        static bool warned = false;
-        if (!warned && !Bun__Node__ProcessNoDeprecation) {
-            warned = true;
+        // DEP0204: KeyObject.from() with a non-extractable CryptoKey still works but is
+        // deprecated. Warned at most once per realm, like Node.
+        if (!globalObject->hasWarnedNonExtractableCryptoKeyDeprecation && !Bun__Node__ProcessNoDeprecation) {
+            globalObject->hasWarnedNonExtractableCryptoKeyDeprecation = true;
             Process::emitWarning(globalObject,
                 jsString(vm, makeString("Passing a non-extractable CryptoKey to KeyObject.from() is deprecated."_s)),
                 jsString(vm, makeString("DeprecationWarning"_s)),

@@ -18,6 +18,16 @@ const {
 const { types: { isKeyObject } } = require('node:util');
 
 const invalidThis = { code: 'ERR_INVALID_THIS', name: 'TypeError' };
+// A non-KeyObject receiver names "KeyObject"; a KeyObject of the wrong kind names the
+// specific subclass the getter lives on.
+const notKeyObject = {
+  ...invalidThis,
+  message: 'Value of "this" must be of type KeyObject',
+};
+const wrongKind = (expected) => ({
+  ...invalidThis,
+  message: `Value of "this" must be of type ${expected}`,
+});
 
 function getter(proto, name) {
   return Object.getOwnPropertyDescriptor(proto, name).get;
@@ -52,22 +62,25 @@ function getter(proto, name) {
 
   for (const value of [{}, { __proto__: null }, 1, null, undefined,
                        Buffer.alloc(1), function() {}]) {
-    assert.throws(() => type.call(value), invalidThis);
-    assert.throws(() => symmetricKeySize.call(value), invalidThis);
-    assert.throws(() => asymmetricKeyType.call(value), invalidThis);
-    assert.throws(() => asymmetricKeyDetails.call(value), invalidThis);
+    assert.throws(() => type.call(value), notKeyObject);
+    assert.throws(() => symmetricKeySize.call(value), notKeyObject);
+    assert.throws(() => asymmetricKeyType.call(value), notKeyObject);
+    assert.throws(() => asymmetricKeyDetails.call(value), notKeyObject);
   }
 
-  assert.throws(() => symmetricKeySize.call(publicKey), invalidThis);
-  assert.throws(() => asymmetricKeyType.call(secret), invalidThis);
-  assert.throws(() => asymmetricKeyDetails.call(secret), invalidThis);
+  assert.throws(() => symmetricKeySize.call(publicKey),
+                wrongKind('SecretKeyObject'));
+  assert.throws(() => asymmetricKeyType.call(secret),
+                wrongKind('AsymmetricKeyObject'));
+  assert.throws(() => asymmetricKeyDetails.call(secret),
+                wrongKind('AsymmetricKeyObject'));
 
   const spoofed = {};
   Object.setPrototypeOf(spoofed, Object.getPrototypeOf(secret));
   assert.strictEqual(spoofed instanceof KeyObject, true);
   assert.strictEqual(isKeyObject(spoofed), false);
-  assert.throws(() => type.call(spoofed), invalidThis);
-  assert.throws(() => symmetricKeySize.call(spoofed), invalidThis);
+  assert.throws(() => type.call(spoofed), notKeyObject);
+  assert.throws(() => symmetricKeySize.call(spoofed), notKeyObject);
   assert.throws(() => createHmac('sha256', spoofed), {
     code: 'ERR_INVALID_ARG_TYPE',
   });
@@ -82,10 +95,10 @@ function getter(proto, name) {
     const buf = Buffer.alloc(16);
     assert.strictEqual(buf instanceof KeyObject, true);
     assert.strictEqual(isKeyObject(buf), false);
-    assert.throws(() => type.call(buf), invalidThis);
-    assert.throws(() => symmetricKeySize.call(buf), invalidThis);
-    assert.throws(() => asymmetricKeyType.call(buf), invalidThis);
-    assert.throws(() => asymmetricKeyDetails.call(buf), invalidThis);
+    assert.throws(() => type.call(buf), notKeyObject);
+    assert.throws(() => symmetricKeySize.call(buf), notKeyObject);
+    assert.throws(() => asymmetricKeyType.call(buf), notKeyObject);
+    assert.throws(() => asymmetricKeyDetails.call(buf), notKeyObject);
   } finally {
     if (originalHasInstance === undefined) {
       delete KeyObject[Symbol.hasInstance];

@@ -336,6 +336,9 @@ const kUuidV7Buffer = Buffer.alloc(16);
 crypto_exports.randomUUIDv7 = function randomUUIDv7(options) {
   if (options !== undefined) validateObject(options, "options");
   const { disableEntropyCache = false } = options ?? {};
+  // Validated but unused: the option only chooses between Node's pooled entropy and a fresh
+  // read. This always reads fresh entropy, which is what `true` asks for and is
+  // indistinguishable from the pooled path for `false`, so both values are already honored.
   validateBoolean(disableEntropyCache, "options.disableEntropyCache");
 
   // Like Node, the 48-bit timestamp comes from Date.now() so it is never behind the caller's
@@ -359,6 +362,7 @@ crypto_exports.randomUUIDv7 = function randomUUIDv7(options) {
 
 // Node only provides Argon2 when built against OpenSSL >= 3.2; BoringSSL has no
 // Argon2, so these throw the same error an unsupported Node build throws.
+// The unused parameters are declared to keep `.length` equal to Node's (3 and 2).
 crypto_exports.argon2 = function argon2(_algorithm, _parameters, _callback) {
   throw $ERR_CRYPTO_ARGON2_NOT_SUPPORTED("Argon2 algorithm not supported");
 };

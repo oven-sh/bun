@@ -118,9 +118,9 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
         RETURN_IF_EXCEPTION(scope, std::nullopt);
     }
 
-    // BoringSSL hangs indefinitely generating an RSA key with e=1 and reports a misleading
-    // error for other invalid exponents only after running the full keygen loop, so reject
-    // them up-front like Node does (src/crypto/crypto_rsa.cc, OPENSSL_IS_BORINGSSL branch).
+    // BoringSSL hangs on e=1 and only reports a misleading error for other invalid exponents
+    // after the full keygen loop, so reject them up-front exactly like Node's BoringSSL branch.
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_rsa.cc#L138-L148
     if (publicExponent < 3 || (publicExponent & 1) == 0) {
         ERR::OUT_OF_RANGE(scope, globalObject, "publicExponent is invalid"_s);
         return std::nullopt;

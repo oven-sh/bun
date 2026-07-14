@@ -1475,6 +1475,9 @@ node_api_create_external_string_latin1(napi_env env,
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, str);
     NAPI_CHECK_ARG(env, result);
+    // Reject while a napi exception is pending before adopting str, so the caller
+    // cleanly retains ownership (matches napi_create_external_buffer/_arraybuffer).
+    NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
 
     length = length == NAPI_AUTO_LENGTH ? strlen(str) : length;
     Zig::GlobalObject* globalObject = toJS(env);
@@ -1517,6 +1520,9 @@ node_api_create_external_string_utf16(napi_env env,
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, str);
     NAPI_CHECK_ARG(env, result);
+    // Reject while a napi exception is pending before adopting str, so the caller
+    // cleanly retains ownership (matches napi_create_external_buffer/_arraybuffer).
+    NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
 
     length = length == NAPI_AUTO_LENGTH ? std::char_traits<char16_t>::length(str) : length;
     Zig::GlobalObject* globalObject = toJS(env);

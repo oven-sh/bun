@@ -11,5 +11,3 @@ pub enum InitError {
     #[error("InvalidCRL")]
     InvalidCRL,
 }
-
-bun_core::named_error_set!(InitError);

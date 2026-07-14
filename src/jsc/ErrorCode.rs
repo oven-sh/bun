@@ -76,16 +76,6 @@ include!(concat!(env!("BUN_CODEGEN_DIR"), "/ErrorCode.generated.rs"));
 impl ErrorCode {
     pub const PARSER_ERROR: ErrorCodeInt = 0xFFFE;
     pub const JS_ERROR_OBJECT: ErrorCodeInt = 0xFFFD;
-
-    #[inline]
-    pub fn from(code: bun_core::Error) -> ErrorCode {
-        ErrorCode(code.as_u16() as ErrorCodeInt)
-    }
-
-    #[inline]
-    pub fn to_error(self) -> bun_core::Error {
-        bun_core::Error::from_errno(self.0 as i32)
-    }
 }
 
 impl ErrorCode {
@@ -195,12 +185,6 @@ impl<'a, G: GlobalObjectRef + ?Sized> ErrorBuilder<'a, G> {
 
 // C++ compares parser-error sentinels against these exported statics
 // (`extern "C" ZigErrorCode Zig_ErrorCodeParserError;`, headers-handwritten.h).
-// CAUTION: `from()` above currently maps via `code.errno`, which never yields
-// the hard-coded 0xFFFE/0xFFFD placeholder values, so a code produced by
-// `from()` will never compare equal to these constants. Until
-// `bun_core::Error` gains NonZeroU16 anyerror interning
-// (`err!("ParserError").as_u16()`) so these constants can be derived from the
-// same source as `from()`, that mismatch stands.
 
 #[unsafe(no_mangle)]
 pub(crate) static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;

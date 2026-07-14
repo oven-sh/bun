@@ -17,7 +17,7 @@ impl CommandComplete {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         &mut self,
         mut reader: NewReader<Container>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         reader.length()?;
 
         let tag = reader.read_z()?;
@@ -28,7 +28,7 @@ impl CommandComplete {
     pub fn decode<Container: super::new_reader::ReaderContext>(
         &mut self,
         context: Container,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         self.decode_internal(NewReader { wrapped: context })
     }
 }

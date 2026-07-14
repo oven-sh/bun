@@ -353,6 +353,9 @@ impl WindowsNamedPipe {
 // Snake-case names are what `bun_uws` imports; `#[path]` points at the
 // PascalCase source files on disk.
 
+pub mod error;
+pub use error::{Error, Result};
+
 #[path = "App.rs"]
 pub mod app;
 #[path = "BodyReaderMixin.rs"]

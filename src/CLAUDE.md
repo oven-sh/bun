@@ -17,7 +17,7 @@ Conventions:
 - `cargo check -p <crate>` for fast iteration; `bun bd` builds and links everything.
 - Don't `.unwrap()` a fallible path that user input or the OS can hit at runtime — return the error. `.unwrap()` is for invariants you can prove.
 - The C ABI / syscall boundary uses `bun_sys::Maybe<T>` (= `Result<T, bun_sys::Error>`); ordinary Rust code uses `Result<T, E>` with `?`.
-- `bun_core::Error` is a lightweight interned `NonZeroU16` error code; `bun_sys::Error` is the rich syscall error (errno + syscall tag + path). `From<bun_sys::Error> for bun_core::Error` exists.
+- Each crate defines its own `Error` enum (a `thiserror::Error` at `<crate>/error.rs`, re-exported as `crate::Error` + `crate::Result`). Errno codes nest via `Sys(#[from] bun_errno::SystemErrno)`; OOM via `Alloc(#[from] bun_alloc::AllocError)`. `bun_sys::Error` is the rich syscall error (errno + syscall tag + path); `From<bun_sys::Error> for bun_errno::SystemErrno` exists for `?`-chaining.
 - NEVER add comments to deleted code blocks.
 - Do not add comments that reference context from the transcript.
 - Avoid adding comments where not necessary.

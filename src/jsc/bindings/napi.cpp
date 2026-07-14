@@ -3039,6 +3039,16 @@ extern "C" void napi_internal_cleanup_env_cpp(napi_env env)
     env->cleanup();
 }
 
+extern "C" bool NapiEnv__registerThreadSafeFunction(napi_env env, void* tsfn)
+{
+    return env->registerThreadSafeFunction(tsfn);
+}
+
+extern "C" void NapiEnv__unregisterThreadSafeFunction(napi_env env, void* tsfn)
+{
+    env->unregisterThreadSafeFunction(tsfn);
+}
+
 extern "C" void napi_internal_remove_finalizer(napi_env env, napi_finalize callback, void* hint, void* data)
 {
     env->removeFinalizer(callback, hint, data);

@@ -473,7 +473,7 @@ impl HttpThread {
     pub fn connect<const IS_SSL: bool>(
         &mut self,
         client: &mut HttpClient,
-    ) -> Result<Option<crate::HTTPSocket<IS_SSL>>, bun_core::Error> {
+    ) -> crate::Result<Option<crate::HTTPSocket<IS_SSL>>> {
         if IS_SSL {
             // First SSL connect: materialize the default HTTPS `SSL_CTX` +
             // socket group now (deferred from `on_start`). Runs once; every
@@ -553,7 +553,7 @@ impl HttpThread {
                         InitError::FailedToOpenSocket
                         | InitError::InvalidCA
                         | InitError::InvalidCAFile
-                        | InitError::LoadCAFile => bun_core::err!("FailedToOpenSocket"),
+                        | InitError::LoadCAFile => crate::Error::FailedToOpenSocket,
                     });
                 }
 
@@ -583,7 +583,7 @@ impl HttpThread {
                     {
                         custom_context.connect(client, url.hostname, url.get_port_auto())
                     } else {
-                        return Err(bun_core::err!("UnsupportedProxyProtocol"));
+                        return Err(crate::Error::UnsupportedProxyProtocol);
                     }
                 } else {
                     let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
@@ -603,7 +603,7 @@ impl HttpThread {
                         url.get_port_auto(),
                     );
                 }
-                return Err(bun_core::err!("UnsupportedProxyProtocol"));
+                return Err(crate::Error::UnsupportedProxyProtocol);
             }
         }
         let (hn, pt) = (client.url.hostname, client.url.get_port_auto());

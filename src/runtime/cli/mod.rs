@@ -512,12 +512,12 @@ pub(crate) type DefineColonList = colon_list_type::ColonListType<&'static [u8]>;
 
 impl colon_list_type::ColonListValue for bun_options_types::schema::api::Loader {
     const IS_LOADER: bool = true;
-    fn resolve_value(input: &[u8]) -> Result<Self, bun_core::Error> {
+    fn resolve_value(input: &[u8]) -> crate::Result<Self> {
         arguments::loader_resolver(input)
     }
 }
 impl colon_list_type::ColonListValue for &'static [u8] {
-    fn resolve_value(input: &[u8]) -> Result<Self, bun_core::Error> {
+    fn resolve_value(input: &[u8]) -> crate::Result<Self> {
         // SAFETY: argv slices are process-lifetime; see ColonListType::keys note.
         Ok(unsafe { bun_ptr::detach_lifetime(input) })
     }
@@ -525,7 +525,7 @@ impl colon_list_type::ColonListValue for &'static [u8] {
 
 #[cold]
 pub(crate) fn invalid_target(diag: &mut bun_clap::Diagnostic, _target: &[u8]) -> ! {
-    let _ = diag.report(Output::error_writer(), bun_core::err!("InvalidTarget"));
+    let _ = diag.report(Output::error_writer(), bun_clap::Error::InvalidArgument);
     Global::exit(1);
 }
 
@@ -607,7 +607,7 @@ pub mod help_command {
     }
 
     #[cold]
-    pub(crate) fn exec() -> Result<(), bun_core::Error> {
+    pub(crate) fn exec() -> crate::Result<()> {
         exec_with_reason(Reason::Explicit)
     }
 
@@ -769,7 +769,7 @@ pub mod reserved_command {
     use super::*;
 
     #[cold]
-    pub(crate) fn exec() -> Result<(), bun_core::Error> {
+    pub(crate) fn exec() -> crate::Result<()> {
         let mut command_name: &[u8] = b"";
         for (i, arg) in bun::argv().iter().enumerate() {
             if i == 0 {
@@ -1136,7 +1136,7 @@ pub mod command {
     pub fn create_context_data(
         cmd: Tag,
         log: &mut bun_ast::Log,
-    ) -> Result<&'static mut ContextData, bun_core::Error> {
+    ) -> crate::Result<&'static mut ContextData> {
         // SAFETY: single-threaded CLI startup — no other thread exists yet.
         // `CMD` is read by crash-reporter / debug logging only.
         unsafe { CMD.write(Some(cmd)) };
@@ -1180,7 +1180,7 @@ pub mod command {
     /// / `exec_auto_or_run` adjacent), instead of fat-LTO inlining it into
     /// `Cli::start` and re-scattering the per-tag tail calls.
     #[inline(never)]
-    pub fn start(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
+    pub fn start(log: &mut bun_ast::Log) -> crate::Result<()> {
         // WebView host subprocess entry. Must be before StandaloneModuleGraph,
         // before JSC init, before anything that touches a JS engine. The child
         // runs CFRunLoopRun() as its real main loop — no Bun runtime past this.
@@ -1340,7 +1340,7 @@ pub mod command {
     // (`bun foo.js`, `bun --version`), so it gets `#[inline(never)]` only —
     // no `#[cold]` — to avoid pessimising branch weights / section placement.
 
-    type CmdResult = Result<(), bun_core::Error>;
+    type CmdResult = crate::Result<()>;
 
     /// `bun build --compile` standalone-executable boot. Never taken for a
     /// plain `bun` binary; out-lined so the ~2 KB of argv-splice / ctx-setup
@@ -1434,7 +1434,7 @@ pub mod command {
         // exists in case a producer is ever added (Arguments.rs).
         let ctx = match init(tag, log) {
             Ok(ctx) => ctx,
-            Err(e) if tag == Tag::AutoCommand && e == bun_core::err!("MissingEntryPoint") => {
+            Err(e) if tag == Tag::AutoCommand && matches!(e, crate::Error::MissingEntryPoint) => {
                 return HelpCommand::exec();
             }
             Err(e) => return Err(e),
@@ -1576,7 +1576,7 @@ pub mod command {
             let ctx = init(Tag::FuzzilliCommand, log)?;
             return super::fuzzilli_command::FuzzilliCommand::exec(ctx);
         }
-        Err(bun_core::err!("UnrecognizedCommand"))
+        Err(crate::Error::UnrecognizedCommand)
     }
 
     /// Stamps out `#[cold] #[inline(never)] fn $name(log) { init($tag)?; $exec(ctx) }`
@@ -1646,7 +1646,7 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
-    fn bun_getcompletes(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
+    fn bun_getcompletes(log: &mut bun_ast::Log) -> crate::Result<()> {
         use super::add_completions;
         use super::run_command::{Filter, RunCommand};
         use super::shell_completions::ShellCompletions;
@@ -1759,7 +1759,7 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
-    fn bun_create(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
+    fn bun_create(log: &mut bun_ast::Log) -> crate::Result<()> {
         use super::bunx_command::BunxCommand;
         use super::create_command::{CreateCommand, ExampleTag};
         use bun_core::ZStr;
@@ -1883,7 +1883,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
     /// `bun ./bun.lockb` — print lockfile as yarn.lock (or its hash with `--hash`).
     #[cold]
     #[inline(never)]
-    fn bun_lockb(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+    fn bun_lockb(ctx: &mut ContextData) -> crate::Result<()> {
         use bun_install::lockfile::{Printer, PrinterFormat};
 
         for arg in bun::argv() {
@@ -1911,12 +1911,12 @@ To create a project with the official Next.js scaffolding tool, run\n\
         // SAFETY: single-threaded CLI dispatch; `ctx.log` was populated by
         // `create_context_data` and no other `&mut Log` borrow is live for the
         // duration of this `Printer::print` call.
-        Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn)
+        Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn).map_err(Into::into)
     }
 
     #[cold]
     #[inline(never)]
-    fn bun_info(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
+    fn bun_info(log: &mut bun_ast::Log) -> crate::Result<()> {
         use bun_install::package_manager_real::{CommandLineArguments, Subcommand as PmSubcommand};
         use bun_install::{PackageManager, Subcommand};
 

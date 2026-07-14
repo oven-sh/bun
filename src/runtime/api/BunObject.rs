@@ -2579,12 +2579,8 @@ pub mod JSZlib {
                     bun_libdeflate::Encoding::Deflate
                 };
                 let max_output = ArrayBuffer::MAX_SIZE as usize;
-                let result = decompressor.decompress_to_vec_grow(
-                    compressed,
-                    &mut list,
-                    encoding,
-                    max_output,
-                );
+                let result = decompressor
+                    .decompress_to_vec_grow(compressed, &mut list, encoding, max_output);
                 match result.status {
                     bun_libdeflate::Status::Success if list.len() <= max_output => {}
                     bun_libdeflate::Status::Success | bun_libdeflate::Status::InsufficientSpace => {
